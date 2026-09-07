@@ -174,16 +174,22 @@ mod tests {
             .next()
             .expect("build_router precedes the test module");
         let mut paths = BTreeSet::new();
-        for line in body.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("//") {
+        let mut rest = body;
+        while let Some(idx) = rest.find(".route(") {
+            rest = &rest[idx + ".route(".len()..];
+            // `.route_layer(` also contains the `.route(` prefix.
+            if rest.trim_start().starts_with("layer") {
                 continue;
             }
-            if let Some(after) = trimmed.split(".route(\"").nth(1) {
-                if let Some(path) = after.split('"').next() {
-                    paths.insert(path.to_string());
+            if let Some(q) = rest.find('"') {
+                let after = &rest[q + 1..];
+                if let Some(end) = after.find('"') {
+                    paths.insert(after[..end].to_string());
+                    rest = &after[end + 1..];
+                    continue;
                 }
             }
+            break;
         }
         paths
     }

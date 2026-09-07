@@ -284,6 +284,11 @@ pub fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
+/// Is `path` inside `root` (lexically, after normalizing both)?
+pub fn path_within(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,9 +311,4 @@ mod tests {
             assert!(!is_loopback_host(bad), "{bad}");
         }
     }
-}
-
-/// Is `path` inside `root` (lexically, after normalizing both)?
-pub fn path_within(path: &Path, root: &Path) -> bool {
-    path.starts_with(root)
 }
