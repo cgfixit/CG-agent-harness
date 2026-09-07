@@ -17,7 +17,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 39] = [
+pub const REGISTERED_PATHS: [&str; 42] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -52,6 +52,9 @@ pub const REGISTERED_PATHS: [&str; 39] = [
     "/api/agent/runs/{run_id}/push",
     "/api/agent/runs/{run_id}/publish",
     "/api/agent/runs/{run_id}/discard",
+    "/api/agent/jobs",
+    "/api/agent/jobs/{job_id}",
+    "/api/agent/jobs/{job_id}/cancel",
     "/api/harness/runs",
     "/api/auth/setup-status",
     "/api/auth/bootstrap-password",
@@ -117,6 +120,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/agent/runs/{run_id}/push", post(agent::agent_run_push))
         .route("/api/agent/runs/{run_id}/publish", post(agent::agent_run_publish))
         .route("/api/agent/runs/{run_id}/discard", post(agent::agent_run_discard))
+        .route(
+            "/api/agent/jobs",
+            get(agent::agent_jobs_list).post(agent::agent_job_create),
+        )
+        .route("/api/agent/jobs/{job_id}", get(agent::agent_job_get))
+        .route("/api/agent/jobs/{job_id}/cancel", post(agent::agent_job_cancel))
         .route_layer(middleware::from_fn_with_state(state.clone(), guards::guarded));
 
     let auth_open = Router::new()
@@ -135,12 +144,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/auth/users/{username}", delete(auth::delete_user))
         .route_layer(middleware::from_fn_with_state(state.clone(), guards::auth_sess));
 
-    Router::new()
+    let request_log = state.request_log;
+    let app = Router::new()
         .merge(open)
         .merge(guarded)
         .merge(auth_open)
         .merge(auth_sess)
         .layer(middleware::from_fn(super::headers::trusted_host))
-        .layer(middleware::from_fn(super::headers::security_headers))
-        .with_state(state)
+        .layer(middleware::from_fn(super::headers::security_headers));
+    // Outermost so the line records the status the client actually saw
+    // (including trusted-host 400s and header-layer rewrites).
+    let app = if request_log {
+        app.layer(middleware::from_fn(super::request_log::request_log))
+    } else {
+        app
+    };
+    app.with_state(state)
 }

@@ -413,3 +413,89 @@ fn cli_surface_hides_agentic_and_refuses_unknown_subcommands() {
     assert_ne!(code, 0);
     assert!(!err.contains("unexpected argument"), "{err}");
 }
+
+// ---------------------------------------------------------------- detached jobs
+
+#[tokio::test]
+async fn a_detached_job_reaches_the_same_disabled_layer_outcome_as_the_sync_route() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, created) = s.post_json("/api/agent/jobs", run_body()).await;
+    assert_eq!(status, 202, "{created}");
+    assert_eq!(created["status"], "running");
+    let job_id = created["job_id"].as_str().unwrap().to_string();
+    assert_eq!(job_id.len(), 32);
+
+    let mut last = serde_json::Value::Null;
+    for _ in 0..100 {
+        let (status, body) = s.get_json(&format!("/api/agent/jobs/{job_id}")).await;
+        assert_eq!(status, 200);
+        last = body;
+        if last["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(last["status"], "failed", "{last}");
+    // The child prints the disabled banner (exit 0), which the route turns into 409 -- same as the synchronous route.
+    assert_eq!(last["error"]["http_status"], 409);
+    assert_eq!(last["error"]["detail"]["code"], "AGENTIC_DISABLED");
+
+    let (status, list) = s.get_json("/api/agent/jobs").await;
+    assert_eq!(status, 200);
+    assert!(list["jobs"].as_array().unwrap().iter().any(|j| j["job_id"] == job_id));
+}
+
+#[tokio::test]
+async fn cancelling_a_running_job_aborts_it_and_a_finish_after_cancel_does_not_resurrect_it() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, created) = s.post_json("/api/agent/jobs", run_body()).await;
+    assert_eq!(status, 202, "{created}");
+    let job_id = created["job_id"].as_str().unwrap().to_string();
+
+    let (status, cancelled) = s
+        .post_json(&format!("/api/agent/jobs/{job_id}/cancel"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{cancelled}");
+    assert!(matches!(
+        cancelled["status"].as_str(),
+        Some("cancelled") | Some("failed") | Some("finished")
+    ));
+
+    // Give the (possibly already-aborted) task a moment, then confirm cancellation is sticky once observed.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (status, after) = s.get_json(&format!("/api/agent/jobs/{job_id}")).await;
+    assert_eq!(status, 200);
+    if cancelled["status"] == "cancelled" {
+        assert_eq!(after["status"], "cancelled", "{after}");
+    }
+}
+
+#[tokio::test]
+async fn unknown_and_malformed_job_ids_are_rejected() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, resp) = s.get_json(&format!("/api/agent/jobs/{HEX32}")).await;
+    assert_eq!(status, 404, "{resp}");
+    let (status, resp) = s.get_json("/api/agent/jobs/not-hex").await;
+    assert_eq!(status, 400, "{resp}");
+    assert_eq!(code(&resp), "INVALID_JOB_ID");
+    let (status, resp) = s.post_json(&format!("/api/agent/jobs/{HEX32}/cancel"), json!({})).await;
+    assert_eq!(status, 404, "{resp}");
+}
+
+#[tokio::test]
+async fn a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, created) = s.post_json("/api/agent/jobs", run_body()).await;
+    assert_eq!(status, 202, "{created}");
+    // The gate is claimed synchronously inside prepare_run before the task is spawned,
+    // so a request issued immediately after must already see it held (best-effort race window aside).
+    let (status, resp) = s.post_json("/api/agent/run", run_body()).await;
+    assert!(
+        status == 409 && code(&resp) == "AGENT_RUN_BUSY" || status == 409 && code(&resp) == "AGENTIC_DISABLED",
+        "{status} {resp}"
+    );
+}

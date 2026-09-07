@@ -212,3 +212,55 @@ pub async fn auth_sess(State(state): State<Arc<AppState>>, req: Request<Body>, n
 pub fn peer_ip(req: &Request<Body>) -> Option<IpAddr> {
     req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request as HttpRequest;
+
+    fn req(host: &str, origin: Option<&str>, sec_fetch_site: Option<&str>) -> HttpRequest<Body> {
+        let mut b = HttpRequest::builder().uri("/api/chat").header(header::HOST, host);
+        if let Some(o) = origin {
+            b = b.header(header::ORIGIN, o);
+        }
+        if let Some(s) = sec_fetch_site {
+            b = b.header("sec-fetch-site", s);
+        }
+        b.body(Body::empty()).unwrap()
+    }
+
+    #[test]
+    fn no_origin_header_is_allowed_curl_is_not_a_csrf_vector() {
+        assert!(enforce_same_origin(&req("127.0.0.1:8790", None, None)).is_ok());
+    }
+
+    #[test]
+    fn matching_scheme_host_and_canonical_port_is_same_origin() {
+        assert!(enforce_same_origin(&req("127.0.0.1:8790", Some("http://127.0.0.1:8790"), None)).is_ok());
+        // Default HTTP port on both sides still matches when neither names it.
+        assert!(enforce_same_origin(&req("127.0.0.1", Some("http://127.0.0.1"), None)).is_ok());
+    }
+
+    #[test]
+    fn a_different_origin_host_is_blocked() {
+        assert!(enforce_same_origin(&req("127.0.0.1:8790", Some("http://evil.example"), None)).is_err());
+    }
+
+    #[test]
+    fn a_mismatched_port_is_blocked_even_on_the_same_host() {
+        assert!(enforce_same_origin(&req("127.0.0.1:8790", Some("http://127.0.0.1:9999"), None)).is_err());
+    }
+
+    #[test]
+    fn cross_site_sec_fetch_site_is_blocked_even_without_an_origin_header() {
+        assert!(enforce_same_origin(&req("127.0.0.1:8790", None, Some("cross-site"))).is_err());
+        assert!(enforce_same_origin(&req("127.0.0.1:8790", None, Some("same-origin"))).is_ok());
+        assert!(enforce_same_origin(&req("127.0.0.1:8790", None, Some("none"))).is_ok());
+    }
+
+    #[test]
+    fn an_unparseable_origin_is_blocked_not_ignored() {
+        assert!(enforce_same_origin(&req("127.0.0.1:8790", Some("not a url"), None)).is_err());
+    }
+}

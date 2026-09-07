@@ -614,3 +614,80 @@ pub fn finalize_real_repo_change(
         .log(json!({"event": "agentic_real_repo_change_approved", "branch": f.branch_name}));
     Ok(json!({"status": "approved", "branch": f.branch_name}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_one_block_and_normalizes_crlf() {
+        let text = "=== FILE src/a.rs ===\r\nfn a() {}\r\n=== END FILE ===";
+        let blocks = parse_file_blocks(text).unwrap();
+        assert_eq!(blocks.get("src/a.rs").unwrap(), "fn a() {}");
+    }
+
+    #[test]
+    fn parses_several_blocks_in_order_and_ignores_surrounding_prose() {
+        let text = "Here is my plan.\n\n\
+                     === FILE a.txt ===\nA\n=== END FILE ===\n\n\
+                     Some commentary between blocks.\n\n\
+                     === FILE b.txt ===\nB\n=== END FILE ===\n";
+        let blocks = parse_file_blocks(text).unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks.get("a.txt").unwrap(), "A");
+        assert_eq!(blocks.get("b.txt").unwrap(), "B");
+    }
+
+    #[test]
+    fn the_same_destination_twice_is_refused_even_under_case_or_dot_aliasing() {
+        let text = "=== FILE README.md ===\nfirst\n=== END FILE ===\n\
+                     === FILE readme.md ===\nsecond\n=== END FILE ===";
+        let err = parse_file_blocks(text).unwrap_err();
+        assert!(err.message.contains("same file path"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_path_that_fails_canonicalization_falls_back_to_the_raw_string_rather_than_panicking() {
+        // '..' is rejected by canonical_repo_path; the parser must not crash, just keep the raw text as the key.
+        let text = "=== FILE ../escape.rs ===\nx\n=== END FILE ===";
+        let blocks = parse_file_blocks(text).unwrap();
+        assert!(blocks.contains_key("../escape.rs"));
+    }
+
+    #[test]
+    fn no_blocks_is_an_empty_map_not_an_error() {
+        assert!(parse_file_blocks("just prose, no file blocks here").unwrap().is_empty());
+    }
+
+    #[test]
+    fn protected_path_matching_is_directory_and_bare_filename_aware() {
+        let protected = vec![".github/".to_string(), "Cargo.lock".to_string()];
+        assert!(matches_protected_path(".github/workflows/ci.yml", &protected));
+        assert!(matches_protected_path("Cargo.lock", &protected));
+        assert!(
+            matches_protected_path("nested/dir/Cargo.lock", &protected),
+            "bare filename matches anywhere"
+        );
+        assert!(
+            !matches_protected_path("github/workflows/ci.yml", &protected),
+            "no trailing slash on the prefix itself"
+        );
+        assert!(!matches_protected_path("src/main.rs", &protected));
+    }
+
+    #[test]
+    fn protected_path_matching_folds_git_name_equivalence() {
+        // A trailing dot/space is stripped by fs_equiv_path, so 'Cargo.lock.' still matches 'Cargo.lock'.
+        let protected = vec!["Cargo.lock".to_string()];
+        assert!(matches_protected_path("Cargo.lock.", &protected));
+    }
+
+    proptest::proptest! {
+        /// The parser must terminate and produce keys that are a subset of the
+        /// text's own '=== FILE ... ===' announcements, for arbitrary input.
+        #[test]
+        fn never_panics_on_arbitrary_text(text in ".{0,300}") {
+            let _ = parse_file_blocks(&text);
+        }
+    }
+}

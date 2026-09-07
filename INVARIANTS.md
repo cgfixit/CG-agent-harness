@@ -58,13 +58,16 @@ Writes: canonical path -> per-segment `.git` name-equivalence refusal
 (trailing dot/space, NTFS `git~1`, HFS-ignored codepoints, case folding) ->
 resolve (dangling-leaf aware) -> containment -> landed-path vs the real
 `.git` dir -> report the LANDED path (so a symlink onto a protected file is
-judged by where it lands). Reads: canonicalize-and-contain, 256 KB cap,
-UTF-8 required, `O_NOFOLLOW` on the leaf (unix).
+judged by where it lands). Reads resolve inside a `cap_std::fs::Dir` capability
+held open on the clone: each path component is opened relative to the
+previous one (`openat` semantics), so a symlink pointing outside the clone
+fails to resolve rather than being followed; the leaf is additionally opened
+with `O_NOFOLLOW` (unix). 256 KB cap, UTF-8 required.
 
 - Locked by: `tests/agentic_foundations.rs::write_jail_refuses_escapes_and_reports_landed_paths`.
-- Residual: CyClaw's reads use a held directory fd (`openat`), which Rust's
-  standard library does not expose portably. The canonicalize-then-open window
-  is narrowed by `O_NOFOLLOW`, not closed.
+- This closes the canonicalize-then-open TOCTOU window the port previously
+  carried as a documented residual: capability-based resolution has no window
+  to race, because there is never a bare path handed to the OS a second time.
 
 ## Nothing lands before it is judged
 
@@ -96,6 +99,23 @@ tail only; the tool broker logs an argv digest, never argv; validation errors
 substitute `(unexpected field)` for a caller-supplied key.
 
 - Locked by: `tests/common_layer.rs`, `tests/panels.rs`, `tests/chat_and_sessions.rs`.
+
+## A detached run cannot outlive its gates
+
+`POST /api/agent/jobs` runs the identical validated request as
+`POST /api/agent/run` in a tokio task, but the run gate and (when the local
+model is also the planner) the chat gate are held by the TASK via
+`GateGuard`'s `Drop`, not by the HTTP request. A closed tab, a proxy timeout,
+or a client that never polls again cannot leave the gate stuck: cancelling
+(`POST /api/agent/jobs/{id}/cancel`) aborts the task, dropping the guards and
+the child (`kill_on_drop`). A job's terminal state is set exactly once —
+`JobStore::finish` is a no-op if the job was already cancelled — so a slow
+child finishing after cancellation can never resurrect a job the operator
+already killed.
+
+- Locked by: `tests/shim_and_agent_routes.rs::cancelling_a_running_job_aborts_it_and_a_finish_after_cancel_does_not_resurrect_it`,
+  `::a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy`,
+  `src/server/agent_jobs.rs` unit tests.
 
 ## Signals weaker than their name
 

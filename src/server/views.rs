@@ -98,7 +98,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 26] = [
+const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 29] = [
     ("chat", "(plain text)", "POST", "/api/chat", "local model chat turn"),
     (
         "goal",
@@ -184,6 +184,27 @@ const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 26] = [
         "POST",
         "/api/agent/run",
         "human-gated real-repo run (reason + confirm required)",
+    ),
+    (
+        "agent-job-start",
+        "(API only)",
+        "POST",
+        "/api/agent/jobs",
+        "same body as /api/agent/run, detached: returns a job id immediately",
+    ),
+    (
+        "agent-job-status",
+        "(API only)",
+        "GET",
+        "/api/agent/jobs/{job_id}",
+        "poll a detached run; carries the run record once finished",
+    ),
+    (
+        "agent-job-cancel",
+        "(API only)",
+        "POST",
+        "/api/agent/jobs/{job_id}/cancel",
+        "abort a detached run (kills the child process)",
     ),
     (
         "agent-status",

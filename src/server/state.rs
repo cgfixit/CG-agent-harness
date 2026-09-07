@@ -47,6 +47,10 @@ pub struct AppState {
     pub tool_allowlist_override: Option<BTreeSet<String>>,
     /// The only server -> agentic edge (a child process).
     pub shim: crate::shim::ShimContext,
+    /// Detached real-repo runs (`/api/agent/jobs`).
+    pub jobs: crate::server::agent_jobs::JobStore,
+    /// `logging.request_log`: one structured tracing line per request.
+    pub request_log: bool,
 }
 
 impl AppState {

@@ -1,7 +1,9 @@
 //! Jailed clone: reads, path-validated writes, and four fixed git subcommands.
 //! Port of `agentic/deepagent_github/repo_workspace.py`.
 //!
-//! Reads: canonicalize-and-contain plus `O_NOFOLLOW` on the leaf (unix). Writes:
+//! Reads: a capability `Dir` held open on the clone (`openat`-style component-wise
+//! resolution, so a symlink can never escape and there is no canonicalize-then-open
+//! window) plus `O_NOFOLLOW` on the leaf (unix). Writes:
 //! canonical path -> per-segment `.git` name-equivalence refusal -> resolve
 //! (strict for `add`; dangling-leaf-aware for `write_file`) -> containment ->
 //! landed-path vs the real `.git` dir -> return the LANDED relative path.
@@ -120,6 +122,9 @@ impl std::fmt::Debug for RepoWorkspace<'_> {
 
 pub struct RepoWorkspace<'a> {
     dest: PathBuf,
+    /// Capability handle on the clone: every read resolves relative to this
+    /// open directory, component by component, and cannot leave it.
+    dir: cap_std::fs::Dir,
     audit: &'a Audit,
     pub allow_git_write_tools: bool,
     pub max_read_bytes: u64,
@@ -162,8 +167,10 @@ impl<'a> RepoWorkspace<'a> {
             );
         }
         ctx.audit.log(json!({"event": "agentic_repo_workspace_cloned", "repo": ctx.acfg.repo, "dest": dest.display().to_string()}));
+        let dir = open_jail_dir(&dest)?;
         Ok(Self {
             dest,
+            dir,
             audit: &ctx.audit,
             allow_git_write_tools: ctx.acfg.deepagent.allow_git_write_tools,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
@@ -196,8 +203,10 @@ impl<'a> RepoWorkspace<'a> {
             return Err(HarnessError::agentic("cannot attach: clone directory does not exist")
                 .detail("dest", dest.display().to_string()));
         }
+        let dir = open_jail_dir(&dest_resolved)?;
         Ok(Self {
             dest: dest_resolved,
+            dir,
             audit: &ctx.audit,
             allow_git_write_tools: ctx.acfg.deepagent.allow_git_write_tools,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
@@ -208,8 +217,10 @@ impl<'a> RepoWorkspace<'a> {
     /// Test/constructor for an already-populated directory (no clone).
     pub fn open_existing(audit: &'a Audit, dest: &Path, allow_git_write_tools: bool) -> Result<Self> {
         let dest = dunce::canonicalize(dest)?;
+        let dir = open_jail_dir(&dest)?;
         Ok(Self {
             dest,
+            dir,
             audit,
             allow_git_write_tools,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
@@ -379,48 +390,45 @@ impl<'a> RepoWorkspace<'a> {
 
     // ------------------------------------------------------------ reads
 
-    fn read_target(&self, target: &str) -> Result<PathBuf> {
-        let canonical = crate::common::repo_paths::canonical_repo_relative_path(target).ok_or_else(|| {
+    /// Validate a repo-relative read target (never "cleaned"; see `repo_paths`).
+    fn read_target(&self, target: &str) -> Result<String> {
+        crate::common::repo_paths::canonical_repo_relative_path(target).ok_or_else(|| {
             HarnessError::agentic(format!("cannot read '{target}' from the cloned repository")).detail("target", target)
-        })?;
-        let dest_resolved = self.dest_resolved();
-        let candidate = dest_resolved.join(canonical.replace('/', std::path::MAIN_SEPARATOR_STR));
-        let resolved = dunce::canonicalize(&candidate).map_err(|_| {
-            HarnessError::agentic(format!("cannot read '{target}' from the cloned repository")).detail("target", target)
-        })?;
-        if !resolved.starts_with(&dest_resolved) {
-            return Err(
-                HarnessError::agentic(format!("cannot read '{target}' from the cloned repository"))
-                    .detail("target", target)
-                    .detail("error", "escape"),
-            );
-        }
-        Ok(resolved)
+        })
+    }
+
+    fn read_denied(&self, target: &str, why: &str) -> HarnessError {
+        self.audit
+            .log(json!({"event": "agentic_repo_workspace_denied", "op": "read_file", "target": target, "reason": why}));
+        HarnessError::agentic(format!("cannot read '{target}' from the cloned repository"))
+            .detail("target", target)
+            .detail("error", why)
     }
 
     /// Read one UTF-8 text file from the clone (bounded).
+    ///
+    /// Resolution happens inside the capability `Dir`: each path component is
+    /// opened relative to the previous one, and a symlink that points outside
+    /// the clone fails to resolve rather than being followed. The leaf is opened
+    /// with `O_NOFOLLOW` on unix so a leaf symlink is refused outright.
     pub fn read_file(&self, target: &str) -> Result<String> {
-        let path = self.read_target(target).inspect_err(|e| {
+        let rel = self.read_target(target).inspect_err(|e| {
             self.audit.log(json!({"event": "agentic_repo_workspace_denied", "op": "read_file", "target": target, "reason": e.message}));
         })?;
-        let meta = std::fs::symlink_metadata(&path)
-            .map_err(|_| HarnessError::agentic(format!("cannot read '{target}'")).detail("target", target))?;
+        let meta = self
+            .dir
+            .symlink_metadata(&rel)
+            .map_err(|_| self.read_denied(target, "escape or missing"))?;
         if !meta.is_file() {
-            return Err(
-                HarnessError::agentic(format!("cannot read '{target}' from the cloned repository"))
-                    .detail("target", target)
-                    .detail("error", "not a regular file"),
-            );
+            return Err(self.read_denied(target, "not a regular file"));
         }
         if meta.len() > self.max_read_bytes {
-            return Err(
-                HarnessError::agentic(format!("cannot read '{target}' from the cloned repository"))
-                    .detail("target", target)
-                    .detail("error", "exceeds max_read_bytes"),
-            );
+            return Err(self.read_denied(target, "exceeds max_read_bytes"));
         }
-        let data = open_nofollow(&path)
-            .map_err(|_| HarnessError::agentic(format!("cannot read '{target}'")).detail("target", target))?;
+        let data = open_nofollow(&self.dir, &rel).map_err(|_| self.read_denied(target, "escape or missing"))?;
+        if data.len() as u64 > self.max_read_bytes {
+            return Err(self.read_denied(target, "exceeds max_read_bytes"));
+        }
         self.audit
             .log(json!({"event": "agentic_repo_workspace_read", "op": "read_file", "target": target}));
         String::from_utf8(data)
@@ -429,8 +437,10 @@ impl<'a> RepoWorkspace<'a> {
 
     /// Stat one path (existence + kind) without reading it.
     pub fn stat_file(&self, target: &str) -> Result<Value> {
-        let path = self.read_target(target)?;
-        let meta = std::fs::metadata(&path)
+        let rel = self.read_target(target)?;
+        let meta = self
+            .dir
+            .metadata(&rel)
             .map_err(|_| HarnessError::agentic(format!("cannot stat '{target}'")).detail("target", target))?;
         self.audit
             .log(json!({"event": "agentic_repo_workspace_read", "op": "stat_file", "target": target}));
@@ -589,20 +599,26 @@ impl<'a> RepoWorkspace<'a> {
     }
 }
 
+/// Hold the clone open as a capability so reads cannot leave it.
+fn open_jail_dir(dest: &Path) -> Result<cap_std::fs::Dir> {
+    cap_std::fs::Dir::open_ambient_dir(dest, cap_std::ambient_authority()).map_err(|e| {
+        HarnessError::agentic(format!("cannot open clone directory: {e}")).detail("dest", dest.display().to_string())
+    })
+}
+
 #[cfg(unix)]
-fn open_nofollow(path: &Path) -> std::io::Result<Vec<u8>> {
+fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str) -> std::io::Result<Vec<u8>> {
+    use cap_std::fs::OpenOptionsExt;
     use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
+    let mut opts = cap_std::fs::OpenOptions::new();
+    opts.read(true).custom_flags(libc::O_NOFOLLOW);
+    let mut f = dir.open_with(rel, &opts)?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
     Ok(buf)
 }
 
 #[cfg(not(unix))]
-fn open_nofollow(path: &Path) -> std::io::Result<Vec<u8>> {
-    std::fs::read(path)
+fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str) -> std::io::Result<Vec<u8>> {
+    dir.read(rel)
 }
