@@ -1,15 +1,15 @@
 ## Branch naming (required for agent-opened PRs)
 
 Before opening a PR, create the head branch with the **driver-matched** prefix.
-Hooks and `utils/agent_identity.py` enforce this allowlist; casual / generic names are not a substitute.
+The allowlist is `TEMPLATE_BRANCH_PREFIXES` in `src/common/identity.rs`; casual / generic names are not a substitute.
 
 | Driver | Branch pattern | Example |
 |--------|----------------|---------|
-| Claude Code | `claude/<feature>` | `claude/telegram-media-audit` |
+| Claude Code | `claude/<feature>` | `claude/loopback-host-check` |
 | Codex | `codex/<feature>` | `codex/verify-dep-guard` |
 | Grok Build | `grok/<feature>` | `grok/pr-template-branch-rules` |
 | Kimi / Kimi Code | `kimi/<feature>` | `kimi/docs-sync` |
-| CyClaw direct / MCP | `CyClaw/<feature>-<YYYYMMDD>` or `cyclaw/<feature>` | `CyClaw/harness-timeout-20260805` |
+| Legacy CyClaw / MCP prefix | `CyClaw/<feature>-<YYYYMMDD>` or `cyclaw/<feature>` | `cyclaw/harness-timeout` |
 | Unknown / harness default | `agent/<feature>` | `agent/harness-browser-parity` |
 
 Rules for agents:
@@ -18,16 +18,16 @@ Rules for agents:
 3. `<feature>` must be short, kebab-case, and describe the change (no spaces, no leading `-`).
 4. If the branch name is wrong, rename **before** push: `git branch -m <prefix>/<feature>`.
 
-Also allowed by hooks (non-feature): `main`, `dependabot/*`, `renovate/*`, `release/*`, `hotfix/*`.
+Also allowed (non-feature): `main`, `dependabot/*`, `renovate/*`, `release/*`, `hotfix/*`.
 
 ## Title
 **Use this format:**  
 `[prefix] - Short descriptive sentence of the change`
 
 **Recommended prefixes (pick the most relevant):**  
-`[invariant]` • `[governance]` • `[fsconnect]` • `[agentic]` • `[rag]` • `[harness]` • `[security]` • `[docs]` • `[infra]` • `[fix]` • `[feat]`
+`[invariant]` • `[security]` • `[infra]` • `[fix]` • `[docs]` • `[harness]` • `[agentic]` • `[test]` • `[feat]`
 
-Example: `[governance] - add two-phase audit + quota enforcement to fsconnect write path`
+Example: `[docs] - Retarget PR template for CG-agent-harness`
 
 ---
 
@@ -36,38 +36,38 @@ Describe the big picture of your changes here. Explain **why** maintainers shoul
 If it fixes a bug or resolves a feature request, link the issue.
 
 **Invariant / Governance Impact** (required for any change touching core paths):
-- Which of the 6 security invariants or I6 module isolation does this change affect (or confirm none)?
-- Provide evidence it is preserved (e.g., graph topology unchanged, audit convergence maintained, soul evolution still human-gated, RAG-first entry point intact).
+- Which guarantee in `INVARIANTS.md` does this change affect (or confirm none)? Call out I6 (process isolation) and the write gates when relevant.
+- Provide evidence it is preserved (e.g., server still does not reference `crate::agentic`, `confirm` is never defaulted, write gates still ship closed, clone jail still refuses escapes).
 - If you are intentionally relaxing or evolving an invariant, explain the justification and compensating controls.
 
 ---
 
 ## Types of changes
-What types of changes does your code introduce to CyClaw?  
+What types of changes does your code introduce to CGagentHarness (`cgagentharness`)?  
 _Put an `x` in the boxes that apply_
 
 - [ ] Bugfix (non-breaking change which fixes an issue)
 - [ ] New feature (non-breaking change which adds functionality)
 - [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
 - [ ] Documentation Update (if none of the other choices apply)
-- [ ] Invariant / Governance refinement (use this for changes that strengthen or evolve the 6 invariants, I6 isolation, or harness phases)
+- [ ] Invariant / Governance refinement (use this for changes that strengthen or evolve I6 isolation, write gates, or harness phases)
 
 **Optional free-text scope note** (recommended):  
-Core graph/gate/soul path | Out-of-band agentic/fsconnect/sync layer | RAG retrieval/sanitization | Docs + audits | Infrastructure / CI only
+Core isolation / write-gate path (`src/shim`, guards, writer, sandbox, workspace, shipped config) | Agentic pipeline | Console / server | Docs + audits | Infrastructure / CI only
 
 ---
 
 ## Benefits / why
-- Why make this change? What is the concrete upside for CyClaw users, operators, or long-term maintainability?
-- How does this improve (or at least not degrade) production readiness, invariant strength, offline/air-gapped reliability, governance observability, or security posture?
-- For agentic or fsconnect changes: how does this increase governed capability without weakening the read-only core contract?
+- Why make this change? What is the concrete upside for CGagentHarness operators, contributors, or long-term maintainability?
+- How does this improve (or at least not degrade) loopback-only posture, I6 isolation, write-gate strength, or security posture?
+- For agentic or harness changes: how does this increase governed capability without weakening the child-process isolation contract or opening a write gate by default?
 
 ---
 
 ## Risks to monitor
 - What are the potential regressions, negative side-effects, or things that need extra attention after merge?
-- Could this introduce a new shortcut path around audit convergence, weaken RAG-first enforcement, create network assumptions, affect subprocess isolation, or change soul evolution behavior?
-- For write-enablement or quota changes: what failure modes exist if the two-phase audit or trash retention logic has a bug?
+- Could this introduce an in-process server→agentic call, default `confirm` on, weaken a write gate, create a non-loopback bind, or add a network assumption?
+- For write-enablement changes: what failure modes exist if a gate is skipped or `reason` becomes optional?
 - How will you (or future maintainers) detect drift from the intended behavior?
 
 ---
@@ -75,36 +75,38 @@ Core graph/gate/soul path | Out-of-band agentic/fsconnect/sync layer | RAG retri
 ## Checklist
 _Put an `x` in the boxes that apply. You can fill these out after creating the PR. If you're unsure about any item, ask before opening the PR._
 
-- [ ] I have read the latest `docs/CyClaw Architecture Guide` (and any relevant Phase docs) and `SECURITY.md`
-- [ ] This change preserves all 6 security invariants and I6 module isolation (explicit evidence or invariant matrix included for core changes)
-- [ ] Full sandbox validation has been run (`GROK_API_KEY=dummy pytest tests/ -q --tb=short`, and `bash .claude/skills/CyClaw-Sandbox/verify.sh` for core RAG/agentic paths) and passes with no regressions
-- [ ] No new external network dependencies or mandatory online LLM assumptions were introduced without explicit justification + offline fallback path
-- [ ] For any agentic/fsconnect/harness change: two-phase audit, quota enforcement, governed delete/trash, and write guards have been verified
-- [ ] Relevant architecture docs, threat model notes, or harness phase documentation have been updated if core behavior or topology changed
+- [ ] I have read `INVARIANTS.md` and `AGENTS.md`
+- [ ] This change preserves I6 process isolation and the write gates (explicit evidence for core-path changes)
+- [ ] Quality bar has been run (`cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets`; or `SKIP_LIVE=1 scripts/verify-local.sh`) and passes with no regressions
+- [ ] No new external network dependencies or mandatory online LLM assumptions were introduced without explicit justification + local/offline fallback
+- [ ] For any agentic/harness/write-path change: `confirm` is never defaulted, `reason` is required, and shipped write gates stay closed unless this PR is intentionally arming one (with justification)
+- [ ] Relevant docs (`INVARIANTS.md`, `AGENTS.md`, `README.md`) have been updated if core behavior or topology changed
 - [ ] Commit messages follow the title prefix convention above
-- [ ] For large or complex changes: before/after invariant matrix + sandbox evidence is included in "Further comments" or linked
+- [ ] For large or complex changes: before/after invariant notes + `cargo test` evidence is included in "Further comments" or linked
+- [ ] PR body was checked with `scripts/check-pr-template.sh` before opening
 
 ---
 
 ## Further comments
 If this is a relatively large, complex, or core-path change, kick off the discussion here in ELI5 technical tone.
 
-**For changes touching `graph.py`, `gate.py`, soul paths, RAG retrieval/sanitization, or agentic subsystems, include:**
-- Explicit before/after invariant matrix
-- Sandbox validation diff or key evidence
+**For changes touching `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`, `src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`, or `assets/config.default.yaml`, include:**
+- Explicit before/after invariant statement (which `INVARIANTS.md` guarantee holds and why)
+- Test or `scripts/verify-local.sh` evidence
 - Any compensating controls or observability added
 - A technical summary plus a plain-language (ELI5) summary of what changed, what is at risk, and where to monitor
 
 **Examples of what good "Further comments" look like for core changes:**
-- "No change to graph topology or entry points. RAG-first and audit convergence remain enforced by edges only."
-- "Added governed write path behind fifth gate + two-phase audit. Core request path untouched. Full sandbox run attached."
-- "Relaxed one non-critical logging path for observability; compensating SHA-256 audit still converges. See attached invariant matrix."
+- "No change to the I6 boundary. The server still does not reference `crate::agentic`; the only edge remains `src/shim` spawning a child."
+- "Write gates still ship closed. `confirm` is not defaulted; `reason` remains required. Clone jail tests still refuse escapes."
+- "Docs-only: no code, no config, no CI Windows parking. Invariants untouched."
 
 ---
 
 **Notes for contributors (including solo maintainer / multi-agent PRs):**
-- Core invariant or governance changes require the strongest evidence.
-- Out-of-band layers (`agentic/`, `sync/`, harness, `.claude/`) may use a lighter checklist, but still need Benefits + Risks + the relevant items.
-- Docs-only or audit PRs may skip some technical checklist rows; Benefits and Risks remain required.
+- Core invariant or write-gate changes require the strongest evidence.
+- `src/agentic/` and console-only changes may use a lighter checklist, but still need Benefits + Risks + the relevant items.
+- Docs-only PRs may skip some technical checklist rows; Benefits and Risks remain required.
 - Prefer squash-and-merge. The final squashed commit message is the permanent record; keep intermediate agent WIP out of `main`.
-- Be blunt about impact: if invariants, offline posture, or audit behavior are affected, say so explicitly.
+- Be blunt about impact: if I6, write gates, or loopback-only bind are affected, say so explicitly.
+- PRs are draft by default until a human marks them ready.
