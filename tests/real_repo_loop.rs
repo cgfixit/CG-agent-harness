@@ -5,6 +5,7 @@
 
 mod common;
 
+#[cfg(unix)]
 use std::cell::RefCell;
 use std::path::Path;
 
@@ -13,10 +14,12 @@ use axum::{Json, Router};
 use cgagentharness::agentic::cloud_proposer::{sanitize_handoff, settings_for, CloudProposerClient, CloudSettings};
 use cgagentharness::agentic::config::load_agentic_config;
 use cgagentharness::agentic::ctx::AgenticCtx;
+#[cfg(unix)]
 use cgagentharness::agentic::executor::{ArgvListSandbox, Check};
 use cgagentharness::agentic::governance::{inspect_candidate_text, inspect_code_shape};
 use cgagentharness::agentic::proposer::ProposerClient;
 use cgagentharness::agentic::real_repo_loop::*;
+#[cfg(unix)]
 use cgagentharness::agentic::workspace::RepoWorkspace;
 use cgagentharness::agentic::writer::{build_write_argv, env_value_disables, execute_write, plan_write, require_gates};
 use cgagentharness::common::audit::Audit;
@@ -25,6 +28,9 @@ use cgagentharness::common::injection::Scanner;
 use common::*;
 use serde_json::{json, Value};
 
+// Only exercised by the `#[cfg(unix)]` real-repo-loop tests below, which
+// (like the rest of the sandbox stack) run on unix only.
+#[cfg(unix)]
 const HEX_RE: &str = "^[0-9a-f]{32}$";
 
 // ---------------------------------------------------------------- parsing
@@ -148,12 +154,20 @@ fn code_shape_rules_are_combinations() {
 }
 
 // ---------------------------------------------------------------- the loop with a scripted proposer
+//
+// This whole section -- the proposer double and its four helpers -- exists
+// only to feed the `#[cfg(unix)]` real-repo-loop tests below (the sandbox
+// stack they exercise is unix-only), so it is gated the same way; otherwise
+// it is unused-and-therefore-a-warning (promoted to an error by `-D
+// warnings`) on a non-unix build.
 
+#[cfg(unix)]
 struct ScriptedProposer {
     replies: RefCell<Vec<String>>,
     prompts: RefCell<Vec<String>>,
 }
 
+#[cfg(unix)]
 impl ScriptedProposer {
     fn new(replies: &[&str]) -> Self {
         Self {
@@ -163,6 +177,7 @@ impl ScriptedProposer {
     }
 }
 
+#[cfg(unix)]
 impl ProposerClient for ScriptedProposer {
     fn invoke(&self, _system: &str, user: &str, _max_tokens: u64, _temperature: Option<f64>) -> Result<String> {
         self.prompts.borrow_mut().push(user.to_string());
@@ -173,6 +188,7 @@ impl ProposerClient for ScriptedProposer {
     }
 }
 
+#[cfg(unix)]
 fn loop_ctx(dir: &Path) -> AgenticCtx {
     let cfg = config_with(
         dir,
@@ -185,6 +201,7 @@ fn loop_ctx(dir: &Path) -> AgenticCtx {
     AgenticCtx::new(cfg, &dir.join("config.yaml")).unwrap()
 }
 
+#[cfg(unix)]
 fn clone_into_workspace(ctx: &AgenticCtx, dir: &Path) -> std::path::PathBuf {
     let bare = real_bare_repo(dir);
     let root = &ctx.acfg.deepagent.workspace_root;
@@ -194,10 +211,12 @@ fn clone_into_workspace(ctx: &AgenticCtx, dir: &Path) -> std::path::PathBuf {
     clone
 }
 
+#[cfg(unix)]
 fn block(path: &str, body: &str) -> String {
     format!("=== FILE {path} ===\n{body}\n=== END FILE ===\n")
 }
 
+#[cfg(unix)]
 fn params<'a>(checks: &'a [Check], protected: &'a [String], read_paths: &'a [String]) -> LoopParams<'a> {
     LoopParams {
         instruction: "make target say goodbye",
