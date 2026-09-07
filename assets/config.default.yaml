@@ -130,7 +130,7 @@ personality:
 
 agentic:
   enabled: false                 # master switch; CLI no-ops (exit 0) while false
-  repo: "cgfixit/CGagentHarness" # owner/name, no shell metacharacters
+  repo: "cgfixit/CG-agent-harness" # owner/name, no shell metacharacters
   mode: "write"                  # "read" | "write"
   writes_enabled: true           # writes need mode=write AND this AND reason AND confirm
   gh_min_version: "2.40.0"
@@ -167,7 +167,7 @@ agentic:
       - ".claude/"
       - ".codex/"
       - "config.yaml"
-      - "CLAUDE.md"
+      - "AGENTS.md"
       - "Cargo.toml"
       - "Cargo.lock"
       - "deny.toml"

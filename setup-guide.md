@@ -424,5 +424,5 @@ scripts/smoke-ollama.sh
 - **`INVARIANTS.md`** — the specific security guarantees this project enforces (process
   isolation, the guard chain, the write gates) and exactly what test locks each one down, if
   you're curious how it holds together.
-- **`CLAUDE.md`** — the operating rules for anyone (human or AI agent) contributing code to this
+- **`AGENTS.md`** — the operating rules for anyone (human or AI agent) contributing code to this
   repository, including the quality bar every change is held to.
