@@ -59,6 +59,13 @@ agentic:
 needs `agentic.mode: write`, `writes_enabled: true` (both ship open), a reason,
 and a fresh confirm. `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` is the rollback.
 
+A run can take minutes; the console's `/agent run` blocks on it the way CyClaw
+does. To avoid tying up a client, `POST /api/agent/jobs` accepts the identical
+body and returns a job id immediately (`202`); poll `GET /api/agent/jobs/{id}`
+for its outcome, or `POST /api/agent/jobs/{id}/cancel` to abort it. The run and
+chat gates are held by the job itself, not by the request, so this is safe
+against a closed tab or a proxy timeout.
+
 Cloud planners (`--provider grok|claude --confirm-online` on the CLI) sit
 behind a six-condition chain; keys come from `GROK_API_KEY` /
 `ANTHROPIC_API_KEY` only, and every outbound prompt is injection-scanned,
@@ -74,6 +81,14 @@ redacted, hashed and audited as egress before it leaves.
 | `CGAGENTHARNESS_AGENT_COMMIT_NAME` / `_EMAIL` / `_BRANCH_PREFIX` | Committer identity and preferred branch namespace |
 | `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` | Disable-only kill switch for `gh pr create` |
 | `GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY` | Optional planner credentials |
+
+## Logging
+
+`logging.request_log` (ships `true`) adds one `tracing` line per request under
+target `cgagentharness::http`: method, path (query stripped), status, latency,
+client. Select it with `RUST_LOG=cgagentharness::http=info` (or plain `info`
+for everything). This is separate from the redacted audit file, which records
+security-relevant events, not every request.
 
 ## Verify locally
 

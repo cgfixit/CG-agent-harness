@@ -50,6 +50,13 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   console lists them) or `/api/tools` reports them unwired.
 - New shim actions: extend `shim::ACTIONS`, the CLI dispatch, and the
   invariant guard's whitelist assertion together.
+- `/api/agent/run` (sync) and `/api/agent/jobs` (detached) must stay in lockstep:
+  both go through `agent::prepare_run` so the validation, budget check, tool
+  broker, and both gates can never drift between the two paths.
+- Prefer a small unit test with `#[cfg(test)] mod tests` beside the function
+  over another integration test when the thing under test is a pure parser or
+  matcher (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`'
+  same-origin check) — they run in milliseconds and don't need a server.
 - PRs are draft, one concern, on a driver-prefixed branch (`claude/`, `codex/`,
   `grok/`, `kimi/`, `agent/`), with the body from `.github/PULL_REQUEST_TEMPLATE.md`
   (run `scripts/check-pr-template.sh` first). Touching a core path requires an

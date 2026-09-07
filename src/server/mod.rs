@@ -5,6 +5,7 @@
 //! get back the router plus the shared state. `serve_blocking` adds the
 //! bind guard (loopback only), the port bounds and the port-in-use probe.
 
+pub mod agent_jobs;
 pub mod agent_policy;
 pub mod console;
 pub mod env_keys;
@@ -14,6 +15,7 @@ pub mod guards;
 pub mod headers;
 pub mod memory_notes;
 pub mod prompts;
+pub mod request_log;
 pub mod routes;
 pub mod schemas;
 pub mod sessions;
@@ -157,6 +159,8 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         auth,
         tool_allowlist_override: opts.tool_allowlist_override,
         shim,
+        jobs: agent_jobs::JobStore::new(),
+        request_log: cfg.flag_is_true("logging.request_log"),
     });
     Ok((routes::build_router(state.clone()), state))
 }

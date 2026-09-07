@@ -58,6 +58,9 @@ auth:
 
 logging:
   level: "INFO"
+  # One structured tracing line per HTTP request (method, path, status,
+  # latency, client). Never headers, bodies or query strings.
+  request_log: true
   audit_file: "logs/audit.jsonl"
   spend_file: "logs/spend.jsonl"
   audit_fields:

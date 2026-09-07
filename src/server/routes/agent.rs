@@ -112,10 +112,17 @@ fn canonical_backend_key(raw: &str) -> Option<(String, String, Option<u16>, Stri
     Some((scheme, host, port, u.path().trim_end_matches('/').to_string()))
 }
 
-pub async fn agent_run(
-    State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<AgentRunRequest>,
-) -> ApiResult<Json<Value>> {
+/// Everything `/api/agent/run` decides BEFORE a child exists: profile names ->
+/// fixed argv, the wall-clock budget check, the tool-broker allowlist, and the
+/// two gates. Shared verbatim by the synchronous route and the detached job
+/// route so the browser can never reach the shim by a weaker path.
+struct PreparedRun {
+    ops: OpsRequest,
+    _run_gate: crate::server::generation_gate::GateGuard,
+    _chat_gate: Option<crate::server::generation_gate::GateGuard>,
+}
+
+fn prepare_run(state: &AppState, req: &AgentRunRequest) -> ApiResult<PreparedRun> {
     let requested: Vec<String> = req
         .checks
         .clone()
@@ -172,7 +179,7 @@ pub async fn agent_run(
             "another agent run is already in progress",
         ));
     };
-    let _chat_gate = if agent_run_shares_chat_backend(&state) {
+    let _chat_gate = if agent_run_shares_chat_backend(state) {
         match state.generation_gate.claim("agent") {
             Some(g) => Some(g),
             None => {
@@ -201,7 +208,89 @@ pub async fn agent_run(
         issue: req.issue,
         ..Default::default()
     };
-    agentic_call(&state, ops).await
+    Ok(PreparedRun {
+        ops,
+        _run_gate,
+        _chat_gate,
+    })
+}
+
+/// Synchronous: blocks until the child finishes (the verbatim console expects this).
+pub async fn agent_run(
+    State(state): State<Arc<AppState>>,
+    ValidJson(req): ValidJson<AgentRunRequest>,
+) -> ApiResult<Json<Value>> {
+    let prepared = prepare_run(&state, &req)?;
+    agentic_call(&state, prepared.ops).await
+}
+
+// ---------------------------------------------------------------- detached jobs
+
+fn validated_job_id(job_id: &str) -> ApiResult<String> {
+    if !run_id_re().is_match(job_id) {
+        return Err(
+            ApiError::bad_request("INVALID_JOB_ID", "job_id must be 32 lowercase hex characters")
+                .details(json!({"job_id": crate::common::clip_chars(job_id, MAX_ECHOED_RUN_ID_LEN)})),
+        );
+    }
+    Ok(job_id.to_string())
+}
+
+/// Same validation and gates as `/api/agent/run`, then returns 202 with a job
+/// id while the child runs in a detached task that owns the gates.
+pub async fn agent_job_create(
+    State(state): State<Arc<AppState>>,
+    ValidJson(req): ValidJson<AgentRunRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let prepared = prepare_run(&state, &req)?;
+    let job_id = crate::common::random_hex(16);
+    let action = prepared.ops.action.clone();
+    let task_state = state.clone();
+    let task_job = job_id.clone();
+    let handle = tokio::spawn(async move {
+        // `prepared` (and both gate guards) live exactly as long as this task.
+        let PreparedRun {
+            ops,
+            _run_gate,
+            _chat_gate,
+        } = prepared;
+        let outcome = agentic_call(&task_state, ops).await.map(|Json(v)| v);
+        task_state.jobs.finish(&task_job, outcome);
+    });
+    state.jobs.insert_running(&job_id, &action, handle);
+    state
+        .audit
+        .log(json!({"event": "agent_job_started", "job_id": job_id, "action": action}));
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"job_id": job_id, "action": action, "status": crate::server::agent_jobs::RUNNING})),
+    ))
+}
+
+pub async fn agent_job_get(State(state): State<Arc<AppState>>, Path(job_id): Path<String>) -> ApiResult<Json<Value>> {
+    let id = validated_job_id(&job_id)?;
+    state
+        .jobs
+        .get(&id)
+        .map(Json)
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", "no such job"))
+}
+
+pub async fn agent_jobs_list(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(json!({"jobs": state.jobs.list(), "running": state.jobs.running_count()}))
+}
+
+pub async fn agent_job_cancel(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let id = validated_job_id(&job_id)?;
+    let v = state
+        .jobs
+        .cancel(&id)
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", "no such job"))?;
+    state.audit.log(json!({"event": "agent_job_cancelled", "job_id": id}));
+    Ok(Json(v))
 }
 
 pub async fn agent_run_status(

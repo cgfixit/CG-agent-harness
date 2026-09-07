@@ -45,6 +45,7 @@ anyhow = "1"
 url = "2"
 walkdir = "2"
 dunce = "1"
+cap-std = "4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -58,6 +59,7 @@ windows-sys = { version = "0.59", features = [
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+proptest = "1.6"
 
 # scrypt at n=2^17 is unusably slow unoptimized; optimize dependencies even in dev/test.
 [profile.dev.package."*"]
