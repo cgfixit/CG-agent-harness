@@ -32,9 +32,9 @@ jobs:
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner, repo: context.repo.repo, pull_number: context.payload.pull_request.number,
             });
-            const core = [/^src\/shim\//, /^src\/server\/guards\.rs$/, /^src\/server\/headers\.rs$/, /^src\/agentic\/writer\.rs$/,
+            const corePaths = [/^src\/shim\//, /^src\/server\/guards\.rs$/, /^src\/server\/headers\.rs$/, /^src\/agentic\/writer\.rs$/,
                           /^src\/agentic\/executor\/sandbox\.rs$/, /^src\/agentic\/workspace\.rs$/, /^assets\/config\.default\.yaml$/];
-            const touchesCore = files.some(f => core.some(re => re.test(f.filename)));
+            const touchesCore = files.some(f => corePaths.some(re => re.test(f.filename)));
             if (touchesCore && !/invariant/i.test(body)) {
               missing.push("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)");
             }
