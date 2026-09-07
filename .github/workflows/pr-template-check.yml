@@ -9,6 +9,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: pr-template-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
