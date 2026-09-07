@@ -1,5 +1,8 @@
 /target
+debug
 **/*.rs.bk
+*.pdb
+**/mutants.out*/
 .DS_Store
 *.log
 /upstream/
