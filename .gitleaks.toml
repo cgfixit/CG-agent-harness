@@ -1,0 +1,13 @@
+# Allowlist only. Default rules stay on. These matches are fixtures /
+# key-blanking, not live credentials. The pinned CLI (see
+# .github/workflows/gitleaks.yml) reads this file from the repo root.
+title = "CGagentHarness"
+
+[allowlist]
+description = "Operator-key blanking before cargo test, and a documented fake AWS-shaped token used to lock redaction"
+regexes = [
+    '''AKIAABCDEFGHIJKLMNOP''',
+    '''GROK_API_KEY=""''',
+    '''ANTHROPIC_API_KEY=""''',
+    '''DEEPAGENT_API_KEY=""''',
+]

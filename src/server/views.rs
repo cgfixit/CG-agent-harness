@@ -525,3 +525,29 @@ pub fn list_wired_skills(home: &Home) -> Value {
     let total = rows.len();
     json!({"skills": rows, "wired": count, "total": total, "diagram": render_skills_diagram(&wired, count, total)})
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::routes::registered_paths;
+
+    #[test]
+    fn harness_surfaces_are_registered_and_the_wired_count_matches() {
+        let registered = registered_paths();
+        let mut names = BTreeSet::new();
+        for (name, _, _, path, _) in HARNESS_SURFACES {
+            assert!(names.insert(name), "duplicate surface name {name}");
+            assert!(
+                registered.contains(path),
+                "HARNESS_SURFACES path {path} is not in registered_paths()"
+            );
+        }
+        assert_eq!(HARNESS_SURFACES.len(), 29);
+        let report = list_wired_tools(&registered);
+        assert_eq!(report["total"], 29);
+        assert_eq!(report["wired"], 29, "a catalog surface is unwired");
+        for t in report["tools"].as_array().unwrap() {
+            assert_eq!(t["wired"], true, "{}", t["path"]);
+        }
+    }
+}

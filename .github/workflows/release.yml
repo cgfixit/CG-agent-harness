@@ -10,6 +10,7 @@ jobs:
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
@@ -21,32 +22,38 @@ jobs:
           - os: macos-latest
             artifact: cgagentharness-macos-arm64
             bin: target/release/cgagentharness
-          - os: windows-latest
-            artifact: cgagentharness-windows-x86_64.exe
-            bin: target/release/cgagentharness.exe
+          # Parked 2026-09-07 — re-enable by uncommenting this include entry.
+          # - os: windows-latest
+          #   artifact: cgagentharness-windows-x86_64.exe
+          #   bin: target/release/cgagentharness.exe
+          # notes: same packaging contract as Bundle (scripts/package-release.sh
+          #        via `shell: bash`). Job Object / Win32_Security is the
+          #        hard-sandbox backend on this OS (not exercised by the
+          #        tag build). No rust-cache on this job (zizmor
+          #        cache-poisoning); keep that when restoring.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      # No rust-cache here: a tag-triggered publish job that writes (or
+      # even reads) a shared Actions cache is the cache-poisoning pattern
+      # zizmor flags. Bundle/CI may cache; release builds from a clean tree.
       - run: cargo build --release --locked
-      - name: Stage artifact with checksum
+      - name: Stage artifact with checksum (shared with Bundle)
         shell: bash
-        env:
-          BIN: ${{ matrix.bin }}
-          ARTIFACT: ${{ matrix.artifact }}
-        run: |
-          mkdir -p dist
-          cp "$BIN" "dist/$ARTIFACT"
-          (cd dist && shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256")
+        run: scripts/package-release.sh "${{ matrix.bin }}" "${{ matrix.artifact }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}
           path: dist/*
+          if-no-files-found: error
+          retention-days: 14
 
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
