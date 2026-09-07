@@ -414,7 +414,7 @@ mod tests {
         for (name, _, _, path, _) in HARNESS_SURFACES {
             assert!(names.insert(name), "duplicate surface name {name}");
             assert!(
-                registered.contains(*path),
+                registered.contains(path),
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }

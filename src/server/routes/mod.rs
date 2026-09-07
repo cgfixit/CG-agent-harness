@@ -192,7 +192,7 @@ mod tests {
     fn registered_paths_are_unique_and_cover_every_router_route() {
         let mut listed = BTreeSet::new();
         for p in REGISTERED_PATHS {
-            assert!(listed.insert(*p), "duplicate REGISTERED_PATHS entry {p}");
+            assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
         assert_eq!(REGISTERED_PATHS.len(), 42);
 
