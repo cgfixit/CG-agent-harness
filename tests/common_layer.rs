@@ -6,7 +6,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use cgagentharness::common::atomic::{write_atomic, write_json_atomic};
+use cgagentharness::common::apikey;
+#[cfg(unix)]
+use cgagentharness::common::atomic::write_atomic;
+use cgagentharness::common::atomic::write_json_atomic;
 use cgagentharness::common::audit::{Audit, Redactors};
 use cgagentharness::common::auth_store::{AuthManager, BOOTSTRAP_USERNAME};
 use cgagentharness::common::authn;
@@ -14,10 +17,11 @@ use cgagentharness::common::config::AppConfig;
 use cgagentharness::common::home::{validate_port, HarnessSettings, Home};
 use cgagentharness::common::identity::{Identity, DEFAULT_BRANCH_PREFIX, TEMPLATE_BRANCH_PREFIXES};
 use cgagentharness::common::injection::{normalize_for_scan, Scanner};
+#[cfg(unix)]
+use cgagentharness::common::process;
 use cgagentharness::common::ratelimit::RateLimiter;
 use cgagentharness::common::repo_paths::canonical_repo_relative_path;
 use cgagentharness::common::tool_broker::{argv_digest, assert_allowed, decide};
-use cgagentharness::common::{apikey, process};
 use serde_json::json;
 
 fn default_config(dir: &Path) -> AppConfig {

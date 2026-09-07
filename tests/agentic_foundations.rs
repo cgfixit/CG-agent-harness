@@ -6,13 +6,17 @@
 
 mod common;
 
+#[cfg(unix)]
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use cgagentharness::agentic::config::{load_agentic_config, resolve_data_path};
 use cgagentharness::agentic::ctx::AgenticCtx;
 use cgagentharness::agentic::executor::manifest::{build_manifest, git_head, verify_manifest};
-use cgagentharness::agentic::executor::sandbox::{production_sandbox, seatbelt_profile};
+#[cfg(unix)]
+use cgagentharness::agentic::executor::sandbox::production_sandbox;
+use cgagentharness::agentic::executor::sandbox::seatbelt_profile;
+#[cfg(unix)]
 use cgagentharness::agentic::executor::{run_verification, ArgvListSandbox, Check};
 use cgagentharness::agentic::gh_client::{
     build_read_argv, check_gh_version, is_transient_gh_error, run_read, ReadRequest,
