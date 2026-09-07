@@ -284,6 +284,35 @@ fn write_jail_refuses_escapes_and_reports_landed_paths() {
     assert!(ws.push_branch("main").is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn read_jail_refuses_symlink_escapes_without_following_the_leaf() {
+    let dir = tempfile::tempdir().unwrap();
+    let clone = seeded_clone(dir.path());
+    let cfg = config_with(dir.path(), &[]);
+    let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
+    let ws = RepoWorkspace::open_existing(&audit, &clone, true).unwrap();
+
+    let outside = dir.path().join("secret.txt");
+    std::fs::write(&outside, "exfiltrated\n").unwrap();
+    // Leaf symlink: O_NOFOLLOW must refuse even when the target is a regular file.
+    std::os::unix::fs::symlink(&outside, clone.join("leaf_out")).unwrap();
+    assert!(ws.read_file("leaf_out").is_err(), "leaf symlink out of the clone");
+    std::os::unix::fs::symlink("README.md", clone.join("leaf_in")).unwrap();
+    assert!(
+        ws.read_file("leaf_in").is_err(),
+        "O_NOFOLLOW refuses an in-repo leaf symlink too — no canonicalize-then-open window"
+    );
+    // Intermediate symlink to a directory outside the clone.
+    std::os::unix::fs::symlink(dir.path(), clone.join("out_dir")).unwrap();
+    assert!(ws.read_file("out_dir/secret.txt").is_err());
+    assert!(!ws.read_file("README.md").unwrap().is_empty());
+    for bad in ["../secret.txt", "/etc/passwd", "src/../README.md", "a/../../x"] {
+        assert!(ws.read_file(bad).is_err(), "{bad}");
+    }
+    assert!(!std::fs::read_to_string(&outside).unwrap().is_empty());
+}
+
 #[test]
 fn attach_requires_a_clone_output_under_workspace_root() {
     let dir = tempfile::tempdir().unwrap();

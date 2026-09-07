@@ -161,3 +161,73 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     };
     app.with_state(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn router_route_paths() -> BTreeSet<String> {
+        let src = include_str!("mod.rs");
+        let start = src.find("pub fn build_router").expect("build_router must exist");
+        let body = src[start..]
+            .split("#[cfg(test)]")
+            .next()
+            .expect("build_router precedes the test module");
+        let mut paths = BTreeSet::new();
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if let Some(after) = trimmed.split(".route(\"").nth(1) {
+                if let Some(path) = after.split('"').next() {
+                    paths.insert(path.to_string());
+                }
+            }
+        }
+        paths
+    }
+
+    #[test]
+    fn registered_paths_are_unique_and_cover_every_router_route() {
+        let mut listed = BTreeSet::new();
+        for p in REGISTERED_PATHS {
+            assert!(listed.insert(*p), "duplicate REGISTERED_PATHS entry {p}");
+        }
+        assert_eq!(REGISTERED_PATHS.len(), 42);
+
+        let all = registered_paths();
+        assert!(
+            all.len() > REGISTERED_PATHS.len(),
+            "registered_paths() must include the auth extras"
+        );
+        for extra in [
+            "/api/auth/whoami",
+            "/api/auth/users",
+            "/api/auth/users/{username}/password",
+            "/api/auth/users/{username}/role",
+            "/api/auth/users/{username}",
+        ] {
+            assert!(all.contains(extra), "missing extra {extra}");
+            assert!(
+                !REGISTERED_PATHS.contains(&extra),
+                "{extra} belongs in registered_paths extras, not the const table"
+            );
+        }
+
+        let routed = router_route_paths();
+        assert!(!routed.is_empty(), "parser found no .route(...) paths");
+        for path in &routed {
+            assert!(
+                all.contains(path),
+                "{path} is routed in build_router but missing from registered_paths() — add it to REGISTERED_PATHS or the extras"
+            );
+        }
+        for path in &all {
+            assert!(
+                routed.contains(path),
+                "{path} is listed in registered_paths() but not routed in build_router"
+            );
+        }
+    }
+}

@@ -138,6 +138,63 @@ fn shipped_config_keeps_every_gate_closed() {
     if std::env::var(cgagentharness::agentic::writer::WRITE_DISABLE_ENV).is_err() {
         assert!(cgagentharness::agentic::writer::execution_enabled());
     }
+
+    // Source of truth: the shipped YAML uses the literal boolean false (quoted
+    // "true" / "false" would be strings and flag_is_true would hide a mistake).
+    let yaml = cgagentharness::common::config::AppConfig::embedded_default();
+    for needle in ["api_key_optional: false", "allow_git_write_tools: false"] {
+        assert!(yaml.contains(needle), "shipped config lost {needle}");
+    }
+    assert!(
+        !yaml.contains("allow_git_write_tools: true"),
+        "allow_git_write_tools must ship false"
+    );
+    assert!(
+        !yaml.contains("api_key_optional: true") && !yaml.contains("api_key_optional: \"true\""),
+        "api_key_optional must ship the literal boolean false"
+    );
+}
+
+#[test]
+fn writer_kill_switch_is_and_not_or() {
+    let writer = include_str!("../src/agentic/writer.rs");
+    assert!(
+        writer.contains("EXECUTION_ENABLED && !disabled_by_env()"),
+        "execution_enabled must AND the disable-only env kill switch, never OR it"
+    );
+    assert!(writer.contains("CGAGENTHARNESS_AGENTIC_WRITE_DISABLE"));
+}
+
+#[test]
+fn agent_run_and_jobs_share_prepare_run() {
+    let src = include_str!("../src/server/routes/agent.rs");
+    assert!(
+        src.contains("fn prepare_run("),
+        "prepare_run is the shared validation/budget/broker/gate path"
+    );
+    let run_idx = src.find("pub async fn agent_run(").expect("agent_run must exist");
+    let job_idx = src
+        .find("pub async fn agent_job_create(")
+        .expect("agent_job_create must exist");
+    let run_slice = &src[run_idx..job_idx];
+    let job_slice = &src[job_idx..];
+    assert!(
+        run_slice.contains("prepare_run(&state, &req)?"),
+        "/api/agent/run must go through prepare_run"
+    );
+    assert!(
+        job_slice.contains("prepare_run(&state, &req)?"),
+        "/api/agent/jobs must go through prepare_run"
+    );
+    // Neither route builds an OpsRequest by hand — that would let them drift.
+    assert!(
+        !run_slice.contains("OpsRequest {"),
+        "agent_run must not construct OpsRequest itself"
+    );
+    assert!(
+        !job_slice.contains("OpsRequest {"),
+        "agent_job_create must not construct OpsRequest itself"
+    );
 }
 
 #[test]

@@ -405,8 +405,15 @@ fn cli_surface_hides_agentic_and_refuses_unknown_subcommands() {
     // sandbox" check fails and the CLI reports exit 2 -- same environment
     // dependence `real_repo_run_smoke` already tolerates by skipping.
     let (code, out, err) = run_agentic(&dir.path().join("config.yaml"), &["test"], &[], dir.path());
-    assert!(matches!(code, 0 | 2), "{out} / {err}");
+    assert!(
+        matches!(code, 0 | 2),
+        "self-test exit contract is 0 (all checks passed) or 2 (a check failed, including a missing hard sandbox): {out} / {err}"
+    );
     assert!(out.contains("Self-test:"), "{out}");
+    assert!(
+        out.contains("passed") || err.contains("passed"),
+        "self-test must report a passed/total tally: {out} / {err}"
+    );
     // Value starting with --confirm binds to its option, never becomes a flag.
     let (code, _, err) = run_agentic(
         &dir.path().join("config.yaml"),
@@ -416,6 +423,22 @@ fn cli_surface_hides_agentic_and_refuses_unknown_subcommands() {
     );
     assert_ne!(code, 0);
     assert!(!err.contains("unexpected argument"), "{err}");
+}
+
+#[test]
+fn serve_refuses_a_non_loopback_bind() {
+    for host in ["0.0.0.0", "1.2.3.4", "example.com"] {
+        let out = std::process::Command::new(BIN)
+            .args(["serve", "--host", host, "--port", "18791"])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "serve --host {host} must be refused");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("loopback"),
+            "non-loopback refusal must name the loopback rule: {err}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------- detached jobs
@@ -502,4 +525,49 @@ async fn a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy() {
         status == 409 && (code(&resp) == "AGENT_RUN_BUSY" || code(&resp) == "AGENTIC_DISABLED"),
         "{status} {resp}"
     );
+}
+
+#[tokio::test]
+async fn jobs_refuse_hostile_argv_and_unknown_profiles_like_the_sync_route() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    for hostile in [
+        json!({"argv": ["rm", "-rf", "/"]}),
+        json!({"checks": [{"name": "pytest", "argv": ["rm", "-rf", "/"]}]}),
+        json!({"command": "rm -rf /"}),
+    ] {
+        let mut body = run_body();
+        for (k, v) in hostile.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        let (status, resp) = s.post_json("/api/agent/jobs", body).await;
+        assert_eq!(status, 422, "{hostile}: {resp}");
+        assert_eq!(code(&resp), "VALIDATION_ERROR");
+        assert!(!resp.to_string().contains("rm"));
+    }
+    let mut body = run_body();
+    body["checks"] = json!(["nope"]);
+    let (status, resp) = s.post_json("/api/agent/jobs", body).await;
+    assert_eq!(status, 400, "{resp}");
+    assert_eq!(code(&resp), "UNKNOWN_CHECK_PROFILE");
+    let mut body = run_body();
+    body["branch"] = json!("main");
+    let (status, resp) = s.post_json("/api/agent/jobs", body).await;
+    assert_eq!(status, 422, "{resp}");
+    assert!(
+        resp["detail"]["details"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f.as_str().unwrap().contains("branch")),
+        "{resp}"
+    );
+    let deny = ServerOptions {
+        deny_all_tools: true,
+        ..Default::default()
+    };
+    let d = spawn_server(&model.base_url(), deny).await;
+    let (status, resp) = d.post_json("/api/agent/jobs", run_body()).await;
+    assert_eq!(status, 403, "{resp}");
+    assert_eq!(code(&resp), "TOOL_DENIED");
 }

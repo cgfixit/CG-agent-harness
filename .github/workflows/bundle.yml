@@ -1,19 +1,38 @@
-name: release
+# Package the loopback CLI/server binary (not a macOS .app / egui GUI).
+# Hygiene mirrors CyClaw-Net-Viewer's Bundle job: release build -> stage a
+# named artifact -> sha256 -> verify after extract -> upload. Ad-hoc
+# codesign on macOS only. DRY via scripts/package-release.sh (shared with
+# release.yml).
+name: Bundle
 
 on:
+  workflow_dispatch:
   push:
-    tags: ["v*"]
+    branches: [main]
+  pull_request:
+    branches: [main]
 
-permissions: {}
+permissions:
+  contents: read
+
+concurrency:
+  group: bundle-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  build:
-    name: build (${{ matrix.os }})
+  package:
+    name: package (${{ matrix.artifact }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -31,30 +50,21 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo build --release --locked
-      - name: Stage artifact with checksum (shared with Bundle)
+      - name: Release build
+        run: cargo build --release --locked
+      - name: Stage, checksum, extract-verify
         shell: bash
         run: scripts/package-release.sh "${{ matrix.bin }}" "${{ matrix.artifact }}"
+      - name: Smoke the staged binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="dist/${{ matrix.artifact }}"
+          "$BIN" --help | grep -q serve
+          if "$BIN" serve --host 0.0.0.0 --port 8790; then echo "non-loopback bind must be refused"; exit 1; fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Attach binaries to the GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --title "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY" || gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"

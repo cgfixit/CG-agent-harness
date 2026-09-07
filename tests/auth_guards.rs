@@ -28,6 +28,22 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
             json!({"instruction": "x", "branch": "claude/x", "commit_message": "m", "reason": "r"}),
         ),
         (
+            Method::POST,
+            "/api/agent/jobs",
+            json!({"instruction": "x", "branch": "claude/x", "commit_message": "m", "reason": "r"}),
+        ),
+        (Method::GET, "/api/agent/jobs", json!(null)),
+        (
+            Method::GET,
+            "/api/agent/jobs/00000000000000000000000000000000",
+            json!(null),
+        ),
+        (
+            Method::POST,
+            "/api/agent/jobs/00000000000000000000000000000000/cancel",
+            json!({}),
+        ),
+        (
             Method::GET,
             "/api/agent/runs/00000000000000000000000000000000",
             json!(null),

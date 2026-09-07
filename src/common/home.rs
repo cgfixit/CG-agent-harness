@@ -284,6 +284,30 @@ pub fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loopback_host_accepts_only_the_three_loopback_names() {
+        for ok in ["127.0.0.1", "localhost", "::1"] {
+            assert!(is_loopback_host(ok), "{ok}");
+        }
+        for bad in [
+            "0.0.0.0",
+            "1.2.3.4",
+            "127.0.0.1.evil",
+            "localhost.evil",
+            "",
+            "127.0.0.1 ",
+            "[::1]",
+            "example.com",
+        ] {
+            assert!(!is_loopback_host(bad), "{bad}");
+        }
+    }
+}
+
 /// Is `path` inside `root` (lexically, after normalizing both)?
 pub fn path_within(path: &Path, root: &Path) -> bool {
     path.starts_with(root)

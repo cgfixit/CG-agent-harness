@@ -524,3 +524,30 @@ where
         Ok(ValidJson(parsed))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn confirm_is_never_defaulted_on() {
+        let req: AgentRunRequest = serde_json::from_value(json!({
+            "instruction": "x",
+            "branch": "claude/x",
+            "commit_message": "m",
+            "reason": "r"
+        }))
+        .unwrap();
+        assert!(!req.confirm, "absent confirm must deserialize as false, never true");
+        let on: AgentRunRequest = serde_json::from_value(json!({
+            "instruction": "x",
+            "branch": "claude/x",
+            "commit_message": "m",
+            "reason": "r",
+            "confirm": true
+        }))
+        .unwrap();
+        assert!(on.confirm);
+    }
+}

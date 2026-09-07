@@ -515,6 +515,13 @@ fn quoted_true_is_off() {
     .unwrap();
     assert!(!cfg.flag_is_true("auth.enabled"));
     assert!(cfg.flag_is_true("x.y"));
+    for raw in ["\"true\"", "\"false\"", "false", "1", "\"1\""] {
+        let cfg = AppConfig::from_str(&format!("agentic:\n  enabled: {raw}\n"), &dir.path().join("c.yaml")).unwrap();
+        assert!(!cfg.flag_is_true("agentic.enabled"), "flag_is_true must reject {raw}");
+    }
+    let on = AppConfig::from_str("agentic:\n  enabled: true\n", &dir.path().join("c.yaml")).unwrap();
+    assert!(on.flag_is_true("agentic.enabled"));
+    assert!(!on.flag_is_true("agentic.missing"));
 }
 
 // ---------------------------------------------------------------- process

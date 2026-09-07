@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # This repo pins dtolnay/rust-toolchain to a commit that selects
+      # `stable`. Treat toolchain-action version noise as optional; cargo
+      # and Actions SHAs still get weekly PRs.
+      - dependency-name: dtolnay/rust-toolchain
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
