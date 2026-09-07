@@ -1,4 +1,4 @@
-# CLAUDE.md — CGagentHarness operating manual
+# AGENTS.md — CGagentHarness operating manual
 
 Follow literally. Where a rule says "never", there is no exception without
 explicit approval. Read `INVARIANTS.md` before touching `src/shim`,
