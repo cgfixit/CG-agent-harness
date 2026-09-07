@@ -1,0 +1,61 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: cgagentharness-linux-x86_64
+            bin: target/release/cgagentharness
+          - os: macos-latest
+            artifact: cgagentharness-macos-arm64
+            bin: target/release/cgagentharness
+          - os: windows-latest
+            artifact: cgagentharness-windows-x86_64.exe
+            bin: target/release/cgagentharness.exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - run: cargo build --release --locked
+      - name: Stage artifact with checksum
+        shell: bash
+        env:
+          BIN: ${{ matrix.bin }}
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          mkdir -p dist
+          cp "$BIN" "dist/$ARTIFACT"
+          (cd dist && shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256")
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach binaries to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --title "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY" || gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"

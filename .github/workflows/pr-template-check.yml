@@ -1,0 +1,53 @@
+# Blocking PR-body gate. Header regexes stay in lock-step with
+# scripts/check-pr-template.sh; the core-path rule requires an explicit
+# "invariant" mention when the isolation boundary or a security gate moves.
+name: PR template check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const required = [
+              ["Proposed changes (or Why/Benefits/Summary)", /^#{1,4}\s*(proposed changes|benefits|why|summary|what)\b/im],
+              ["Types of changes", /^#{1,4}\s*types of changes\b/im],
+              ["Benefits / why", /^#{1,4}\s*(benefits|why)\b/im],
+              ["Risks to monitor", /^#{1,4}\s*risks?(\s*(to\s*monitor|impact))?\b/im],
+              ["Checklist", /^#{1,4}\s*checklist\b/im],
+            ];
+            const missing = required.filter(([, re]) => !re.test(body)).map(([label]) => label);
+            if (body.trim().length < 40) missing.push("Body too short (< 40 chars)");
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: context.payload.pull_request.number,
+            });
+            const core = [/^src\/shim\//, /^src\/server\/guards\.rs$/, /^src\/server\/headers\.rs$/, /^src\/agentic\/writer\.rs$/,
+                          /^src\/agentic\/executor\/sandbox\.rs$/, /^src\/agentic\/workspace\.rs$/, /^assets\/config\.default\.yaml$/];
+            const touchesCore = files.some(f => core.some(re => re.test(f.filename)));
+            if (touchesCore && !/invariant/i.test(body)) {
+              missing.push("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)");
+            }
+            const marker = "<!-- pr-template-check -->";
+            const ok = missing.length === 0;
+            const text = ok
+              ? `${marker}\n✅ PR template check passed.`
+              : `${marker}\n❌ PR template check failed. Missing:\n${missing.map(m => `- ${m}`).join("\n")}\n\nFill in .github/PULL_REQUEST_TEMPLATE.md's sections (run scripts/check-pr-template.sh locally).`;
+            const comments = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.payload.pull_request.number });
+            const mine = comments.data.find(c => c.body && c.body.startsWith(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: mine.id, body: text });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.payload.pull_request.number, body: text });
+            }
+            if (!ok) core.setFailed(`PR body is missing: ${missing.join("; ")}`);

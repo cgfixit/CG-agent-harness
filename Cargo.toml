@@ -1,0 +1,69 @@
+[package]
+name = "cgagentharness"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "CGagentHarness: a loopback-only agentic coding harness console (Rust port of CyClaw's harness/ + agentic/ real-repo pipeline)"
+license = "MIT"
+repository = "https://github.com/cgfixit/CGagentHarness"
+default-run = "cgagentharness"
+
+[lib]
+name = "cgagentharness"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cgagentharness"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+http = "1"
+http-body-util = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+unicode-normalization = "0.1"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+subtle = "2"
+scrypt = { version = "0.11", default-features = false }
+rand = "0.8"
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+url = "2"
+walkdir = "2"
+dunce = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+# scrypt at n=2^17 is unusably slow unoptimized; optimize dependencies even in dev/test.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

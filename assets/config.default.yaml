@@ -1,0 +1,191 @@
+# CGagentHarness runtime configuration. Seeded into $CGAGENTHARNESS_HOME/config.yaml
+# on first run; the copy in the home directory is the one that is read.
+#
+# Every tunable lives here (single source of truth). The blocks below are the
+# subset of CyClaw's config.yaml that the coding harness and the agentic
+# real-repo pipeline actually read. Shipped gates keep CyClaw's defaults:
+# agentic.enabled, deepagent_github.enabled and allow_git_write_tools all ship
+# false, so nothing writes to a repository until an operator arms it.
+
+app:
+  name: "cgagentharness"
+  env: "local"
+  mode: "hybrid"  # "offline" | "hybrid"
+
+models:
+  local_llm:
+    provider: "ollama"
+    base_url: "http://127.0.0.1:11434/v1"  # loopback only; a non-loopback URL is refused
+    model: "qwen3.8:27b-mlx"
+    # Sent only for a resolved Ollama backend. none | low | medium | high | max;
+    # absent/empty omits the field, an invalid value fails at boot.
+    reasoning_effort: "none"
+    max_tokens: 4096
+    temperature: 0.2
+    timeout_sec: 720
+    # Optional loopback failover (LM Studio or any OpenAI-compatible server).
+    fallback:
+      enabled: false
+      provider: "lmstudio"
+      base_url: "http://127.0.0.1:1234/v1"
+      model: "qwen3.8-27b-instruct"
+      probe_timeout_sec: 1.5
+
+api:
+  rate_limit:
+    max_requests: 60       # per-IP request ceiling within the window
+    window_seconds: 60     # sliding-window length in seconds
+  # /loop turns get their own, tighter budget.
+  harness_loop_rate_limit:
+    max_requests: 8
+    window_seconds: 300
+    max_tokens: 2048
+
+security:
+  # Operator opt-out from the CGAGENTHARNESS_API_KEY Bearer gate. When true the
+  # bypass is granted ONLY to a loopback socket peer carrying no reverse-proxy
+  # forwarding header. Ships false.
+  api_key_optional: false
+
+# Per-user authentication. Ships false. When the literal boolean true, the
+# /api/auth/* routes come alive; a bootstrap "admin" account with an unusable
+# placeholder password is created and the first password is set over loopback.
+auth:
+  enabled: false
+  session:
+    idle_timeout_sec: 43200
+    absolute_timeout_sec: 604800
+
+logging:
+  level: "INFO"
+  audit_file: "logs/audit.jsonl"
+  spend_file: "logs/spend.jsonl"
+  audit_fields:
+    include_query_hash: true
+
+policy:
+  prompt_filter:
+    enabled: true
+    # Regex patterns compiled case-insensitively. Same 40 patterns CyClaw ships.
+    banned_patterns:
+      - 'ignore\s+(previous|all|prior)\s+instructions'
+      - 'ignore\s+all\s+previous'
+      - 'ignore\s+safety'
+      - 'disregard\s+(previous|all|prior)'
+      - 'forget\s+(previous|all|prior)\s+instructions'
+      - 'override\s+instructions'
+      - 'bypass\s+(safety|filters|restrictions|rules)'
+      - 'do\s+anything\s+now'
+      - 'ignore\s+(all|any)\s+\S+\s+(instructions|directives|guidance)'
+      - 'ignore\s+earlier\s+(instructions|directives|guidance)'
+      - 'you\s+are\s+now'
+      - 'you\s+are\s+no\s+longer'
+      - 'pretend\s+(you\s+are|to\s+be)'
+      - 'act\s+as\s+(?:\S+\s+){0,4}(if\b|your\s+developer|uncensored|dan\b|without\b|no\s+(?:restrictions?|filters?|limits?|rules?)|jailbreak|penetration\s+tester|unrestricted|\bai\b)'
+      - 'roleplay\s+as|assume\s+the\s+role'
+      - 'from\s+now\s+on\s+you\s+(will\s+)?(behave|act)\s+as'
+      - 'new\s+instructions\s*:'
+      - 'system\s+prompt\s*:'
+      - 'admin\s*:|developer\s+override'
+      - 'sudo\s+mode|root\s+access'
+      - 'maintenance\s+mode.*safety\s+filters\s+disabled'
+      - 'critical\s+update\s+to\s+your\s+instructions'
+      - 'message\s+from\s+your\s+(creators?|developers?|makers?)'
+      - 'remember\s+(for\s+future|this\s+for\s+later|as\s+permanent|in\s+memory)'
+      - 'save\s+this\s+(for\s+later|in\s+your\s+memory|permanently)'
+      - 'update\s+your\s+(memory|knowledge\s+base|soul)'
+      - 'store\s+this\s+as\s+(a\s+rule|permanent|core\s+instruction)'
+      - 'core\s+instruction,\s*never\s+forget'
+      - 'add\s+to\s+your\s+(knowledge|memory|personality)\s+base'
+      - 'store\s+this\s+as\s+a\s+core\s+instruction'
+      - 'persist\s+.{0,30}across\s+sessions\s*:\s*\S'
+      - 'critical\s+update|important\s+update'
+      - 'from\s+(it\s+department|system\s+administrator)'
+      - 'urgent\s+(action|request|override|update)|action\s+required'
+      - 'from\s+the\s+(it\s+department|system\s+administrator)\s*:\s*\S'
+      - 'execute\s+command|run\s+this\s+code'
+      - 'call\s+function|use\s+tool\s+to|invoke\s+tool'
+      - 'jailbreak|dan\s+mode|developer\s+mode'
+      - 'decode\s+and\s+execute|base64.{0,40}execute|execute.{0,40}base64'
+      - 'reveal\s+(your\s+)?(instructions|system\s+prompt)'
+    max_input_chars: 4000
+  privacy:
+    redact_emails: true
+    redact_ips: true
+    redact_secrets_like:
+      - 'Bearer\s+[A-Za-z0-9\-_.]+'
+      - '[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]["''\s]*[:=]["''\s]*[\w\-.]{4,}'
+      - "AKIA[0-9A-Z]{16}"
+      - "xox[baprs]-[0-9a-zA-Z-]+"
+      - "ghp_[a-zA-Z0-9]{36}"
+      - "sk-[a-zA-Z0-9]{20,}"
+      - "sk-ant-[a-zA-Z0-9_-]{20,}"
+      - "xai-[a-zA-Z0-9]{20,}"
+
+personality:
+  soul_max_chars: 8000
+
+agentic:
+  enabled: false                 # master switch; CLI no-ops (exit 0) while false
+  repo: "cgfixit/CGagentHarness" # owner/name, no shell metacharacters
+  mode: "write"                  # "read" | "write"
+  writes_enabled: true           # writes need mode=write AND this AND reason AND confirm
+  gh_min_version: "2.40.0"
+  gh_timeout_sec: 30
+  gh_retries: 2
+  registry_path: "data/agentic/skills_registry.json"  # must stay under the home data/ tree
+  allowed_read_ops:
+    - pr_view
+    - pr_list
+    - pr_diff
+    - issue_view
+    - issue_list
+    - repo_view
+  deepagent_github:
+    enabled: false
+    provider: "ollama"
+    base_url: "http://127.0.0.1:11434/v1"
+    model: "qwen3.8:27b-mlx"
+    planner_timeout_sec: 720
+    planner_max_tokens: 3072
+    allow_git_write_tools: false
+    protected_write_paths:
+      - "tests/"
+      - "conftest.py"
+      - ".github/"
+      - ".git/"
+      - "pyproject.toml"
+      - "setup.cfg"
+      - "pytest.ini"
+      - ".ruff.toml"
+      - "ruff.toml"
+      - "tox.ini"
+      - "noxfile.py"
+      - ".claude/"
+      - ".codex/"
+      - "config.yaml"
+      - "CLAUDE.md"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - "rustfmt.toml"
+    max_write_budget_bytes: 100000
+    scan_code_shape: true
+    max_handoff_chars: 200000
+    workspace_root: "data/agentic/workspaces"
+    allow_cloud_providers: true
+    providers:
+      grok:
+        enabled: true
+        model: "grok-4.5"
+      claude:
+        enabled: true
+        model: "claude-sonnet-5"
+  harness_optimizer:
+    enabled: false
+    max_iterations: 3
+    output_dir: "data/agentic/harness_optimizer/runs"
+
+unslop:
+  enabled: false
+  metrics_path: "logs/unslop.jsonl"
