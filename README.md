@@ -90,7 +90,7 @@ on that call; `confirm` is never defaulted on.
 
 `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` is the disable-only kill switch.
 Depth of the gates, clone jail, and digest-bound approval:
-[INVARIANTS.md](INVARIANTS.md). Operator rules: [CLAUDE.md](CLAUDE.md).
+[INVARIANTS.md](INVARIANTS.md). Operator rules: [AGENTS.md](AGENTS.md).
 Full arming walkthrough: [setup-guide.md](setup-guide.md) §9.
 
 ## Security defaults
@@ -117,14 +117,14 @@ SKIP_LIVE=1 scripts/verify-local.sh  # static + tests + build only
 
 CI blanks planner keys the same way. The live smoke
 (`scripts/smoke-ollama.sh`) needs Ollama; skip it with `SKIP_LIVE=1`.
-Quality bar and traps: [CLAUDE.md](CLAUDE.md).
+Quality bar and traps: [AGENTS.md](AGENTS.md).
 
 ## Docs
 
 | Doc | What it is |
 |---|---|
 | [INVARIANTS.md](INVARIANTS.md) | What the code enforces and where (I6, gates, clone jail) |
-| [CLAUDE.md](CLAUDE.md) | Operator / agent rules; do not "deduplicate" across the shim |
+| [AGENTS.md](AGENTS.md) | Operator / agent rules; do not "deduplicate" across the shim |
 | [setup-guide.md](setup-guide.md) | Fresh-machine walkthrough (macOS) |
 | [assets/config.default.yaml](assets/config.default.yaml) | Every tunable; no hardcoded tunables elsewhere |
 | [LICENSE](LICENSE) | MIT |

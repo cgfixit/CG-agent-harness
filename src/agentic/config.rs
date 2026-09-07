@@ -13,10 +13,10 @@ use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::llm::backend::is_loopback_url;
 
-pub const DEFAULT_REPO: &str = "cgfixit/CGagentHarness";
+pub const DEFAULT_REPO: &str = "cgfixit/CG-agent-harness";
 pub const DEFAULT_ALLOWED_READ_OPS: [&str; 6] =
     ["pr_view", "pr_list", "pr_diff", "issue_view", "issue_list", "repo_view"];
-pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 15] = [
+pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 19] = [
     "tests/",
     "conftest.py",
     ".github/",
@@ -31,7 +31,11 @@ pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 15] = [
     ".claude/",
     ".codex/",
     "config.yaml",
-    "CLAUDE.md",
+    "AGENTS.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "deny.toml",
+    "rustfmt.toml",
 ];
 pub const DEFAULT_MAX_WRITE_BUDGET_BYTES: u64 = 100_000;
 pub const DEFAULT_MAX_HANDOFF_CHARS: usize = 200_000;

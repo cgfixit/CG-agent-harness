@@ -155,6 +155,73 @@ fn shipped_config_keeps_every_gate_closed() {
     );
 }
 
+fn cargo_toml_github_slug() -> String {
+    let cargo = include_str!("../Cargo.toml");
+    for line in cargo.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("repository") else {
+            continue;
+        };
+        let url = rest.trim().trim_start_matches('=').trim().trim_matches('"');
+        let mut parts = url.trim_end_matches(".git").rsplit('/');
+        let name = parts.next().expect("repository URL has a repo name");
+        let owner = parts.next().expect("repository URL has an owner");
+        return format!("{owner}/{name}");
+    }
+    panic!("Cargo.toml missing repository = \"https://github.com/owner/name\"");
+}
+
+#[test]
+fn shipped_defaults_protect_agents_md() {
+    let yaml = cgagentharness::common::config::AppConfig::embedded_default();
+    assert!(
+        yaml.contains("- \"AGENTS.md\""),
+        "shipped config.default.yaml must list AGENTS.md in protected_write_paths"
+    );
+    assert!(
+        cgagentharness::agentic::config::DEFAULT_PROTECTED_WRITE_PATH_PREFIXES.contains(&"AGENTS.md"),
+        "Rust DEFAULT_PROTECTED_WRITE_PATH_PREFIXES must protect AGENTS.md"
+    );
+}
+
+#[test]
+fn default_repo_matches_cargo_toml_repository() {
+    let expected = cargo_toml_github_slug();
+    assert_eq!(
+        expected, "cgfixit/CG-agent-harness",
+        "Cargo.toml repository owner/name is the source of truth"
+    );
+    assert_eq!(
+        cgagentharness::agentic::config::DEFAULT_REPO,
+        expected,
+        "DEFAULT_REPO must match Cargo.toml repository owner/name"
+    );
+    let yaml = cgagentharness::common::config::AppConfig::embedded_default();
+    assert!(
+        yaml.contains(&format!("repo: \"{expected}\"")),
+        "embedded YAML agentic.repo must equal {expected}"
+    );
+}
+
+#[test]
+fn readme_does_not_link_to_missing_claude_md() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let readme = include_str!("../README.md");
+    assert!(
+        !readme.contains("(CLAUDE.md)"),
+        "README must not link to CLAUDE.md after the rename to AGENTS.md"
+    );
+    assert!(
+        readme.contains("(AGENTS.md)"),
+        "README must point operators at AGENTS.md"
+    );
+    assert!(manifest.join("AGENTS.md").is_file(), "AGENTS.md must exist");
+    assert!(
+        !manifest.join("CLAUDE.md").exists(),
+        "CLAUDE.md was renamed; do not resurrect the old filename"
+    );
+}
+
 #[test]
 fn writer_kill_switch_is_and_not_or() {
     let writer = include_str!("../src/agentic/writer.rs");
