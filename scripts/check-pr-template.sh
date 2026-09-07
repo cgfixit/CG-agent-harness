@@ -4,7 +4,8 @@
 # Usage:
 #   scripts/check-pr-template.sh PATH/TO/body.md
 #   gh pr view --json body -q .body | scripts/check-pr-template.sh -
-#   CYCLAW_PR_BODY_FILE=body.md scripts/check-pr-template.sh
+#   CGAGENTHARNESS_PR_BODY_FILE=body.md scripts/check-pr-template.sh
+#   CYCLAW_PR_BODY_FILE=body.md scripts/check-pr-template.sh   # fallback alias
 #
 # Exit 0 = ok; exit 1 = missing required sections.
 # Git hooks cannot intercept GitHub API / gh pr create bodies — agents and
@@ -12,11 +13,12 @@
 # blocking check (.github/workflows/pr-template-check.yml).
 set -euo pipefail
 
-input="${1:-${CYCLAW_PR_BODY_FILE:-}}"
+input="${1:-${CGAGENTHARNESS_PR_BODY_FILE:-${CYCLAW_PR_BODY_FILE:-}}}"
 if [[ -z "$input" ]]; then
   printf '%s\n' \
     "usage: scripts/check-pr-template.sh <body.md|->" \
-    "   or: CYCLAW_PR_BODY_FILE=body.md scripts/check-pr-template.sh" \
+    "   or: CGAGENTHARNESS_PR_BODY_FILE=body.md scripts/check-pr-template.sh" \
+    "   or: CYCLAW_PR_BODY_FILE=body.md scripts/check-pr-template.sh  # fallback alias" \
     >&2
   exit 2
 fi
@@ -42,8 +44,8 @@ require_header() {
   fi
 }
 
-# Align with template + advisory CI loose matching, but require the CyClaw-
-# named sections that Grok Build / agents must fill.
+# Align with template + advisory CI loose matching, but require the
+# CGagentHarness-named sections that Grok Build / agents must fill.
 require_header "Proposed changes (or Why/Benefits/Summary)" \
   '^#{1,4}[[:space:]]*(proposed changes|benefits|why|summary|what)\b'
 require_header "Types of changes" \
