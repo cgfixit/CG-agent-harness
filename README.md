@@ -1,4 +1,4 @@
-# CGagentHarness
+# [CGagentHarness](https://anchorclaw.ai)
 
 A loopback-only agentic coding harness in one Rust binary: the browser console
 CyClaw ships as `harness/` plus its real-repo coding pipeline (`agentic/`),
