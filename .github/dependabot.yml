@@ -5,6 +5,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     ignore:
       # This repo pins dtolnay/rust-toolchain to a commit that selects
       # `stable`. Treat toolchain-action version noise as optional; cargo
@@ -15,3 +17,5 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
