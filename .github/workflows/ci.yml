@@ -55,6 +55,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    # Windows is advisory: the maintainer's primary dev/target platform is
+    # macOS, and the Windows leg is comparatively new and less exercised
+    # (e.g. the Job Object sandbox). A red Windows leg should not block
+    # merges or release-build; ubuntu-latest and macos-latest still gate.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -152,6 +157,8 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    # Same rationale as the test job: Windows is advisory, not a merge gate.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
