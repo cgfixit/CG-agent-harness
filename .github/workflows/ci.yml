@@ -57,12 +57,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    # Windows is advisory: the maintainer's primary dev/target platform is
-    # macOS, and the Windows leg is comparatively new and less exercised
-    # (e.g. the Job Object sandbox). A red Windows leg should not block
-    # merges or release-build; ubuntu-latest and macos-latest still gate.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+        os: [ubuntu-latest, macos-latest]
+        # Parked 2026-09-07 — re-enable by adding windows-latest to `os` and
+        # restoring continue-on-error below.
+        #   runner:   windows-latest
+        #   artifact: cgagentharness-windows-latest   # release-build upload name
+        #   bin:      target/release/cgagentharness.exe
+        #   notes:    Job Object / Win32_Security is the least-exercised
+        #             hard-sandbox backend. This test job was advisory
+        #             (continue-on-error) so a red Windows leg did not
+        #             block merge; ubuntu-latest + macos-latest still gate.
+    # continue-on-error: ${{ matrix.os == 'windows-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -165,9 +170,17 @@ jobs:
       contents: read
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    # Same rationale as the test job: Windows is advisory, not a merge gate.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+        os: [ubuntu-latest, macos-latest]
+        # Parked 2026-09-07 — re-enable by adding windows-latest to `os` and
+        # restoring continue-on-error below.
+        #   runner:   windows-latest
+        #   artifact: cgagentharness-windows-latest
+        #   bin:      target/release/cgagentharness.exe
+        #   notes:    Same as the test job: Job Object / Win32_Security is
+        #             the least-exercised hard-sandbox backend. This
+        #             release-build job was advisory (continue-on-error).
+        #             The smoke/locate steps below already accept `.exe`.
+    # continue-on-error: ${{ matrix.os == 'windows-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

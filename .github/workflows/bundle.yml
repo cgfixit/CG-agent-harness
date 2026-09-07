@@ -41,9 +41,15 @@ jobs:
           - os: macos-latest
             artifact: cgagentharness-macos-arm64
             bin: target/release/cgagentharness
-          - os: windows-latest
-            artifact: cgagentharness-windows-x86_64.exe
-            bin: target/release/cgagentharness.exe
+          # Parked 2026-09-07 — re-enable by uncommenting this include entry.
+          # - os: windows-latest
+          #   artifact: cgagentharness-windows-x86_64.exe
+          #   bin: target/release/cgagentharness.exe
+          # notes: `shell: bash` + scripts/package-release.sh (GitHub-hosted
+          #        Windows has bash). Bundle was already green on this runner;
+          #        parked with the rest of Windows CI. Job Object /
+          #        Win32_Security is the hard-sandbox backend on this OS
+          #        (not exercised by Bundle itself).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
