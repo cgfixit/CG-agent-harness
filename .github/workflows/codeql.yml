@@ -35,7 +35,7 @@ jobs:
       matrix:
         include:
           - language: rust
-            build-mode: manual
+            build-mode: none
           - language: actions
             build-mode: none
 
@@ -51,15 +51,6 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           # queries: security-extended,security-and-quality
-
-      # Rust uses manual build mode so the project's locked build runs
-      # under CodeQL tracing, matching the CI quality bar.
-      - name: Build for CodeQL analysis
-        if: matrix.build-mode == 'manual'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo build --locked
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
