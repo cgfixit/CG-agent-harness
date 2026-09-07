@@ -42,7 +42,7 @@ fn compact_ascii_json(argv: &[String]) -> String {
                 c => {
                     let mut buf = [0u16; 2];
                     for unit in c.encode_utf16(&mut buf) {
-                        out.push_str(&format!("\\u{:04x}", unit));
+                        out.push_str(&format!("\\u{unit:04x}"));
                     }
                 }
             }

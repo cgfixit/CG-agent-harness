@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.88"
 description = "CGagentHarness: a loopback-only agentic coding harness console (Rust port of CyClaw's harness/ + agentic/ real-repo pipeline)"
 license = "MIT"
-repository = "https://github.com/cgfixit/CGagentHarness"
+repository = "https://github.com/cgfixit/CG-agent-harness"
 default-run = "cgagentharness"
 
 [lib]

@@ -5,7 +5,7 @@ CyClaw ships as `harness/` plus its real-repo coding pipeline (`agentic/`),
 ported from Python with the security posture intact and no RAG, terminal, or
 corpus machinery.
 
-[![CI](https://github.com/cgfixit/CGagentHarness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CGagentHarness/actions/workflows/ci.yml)
+[![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 
 ## What it does
 

@@ -133,8 +133,11 @@ fn shipped_config_keeps_every_gate_closed() {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }
     assert_eq!(cfg.str_list("policy.prompt_filter.banned_patterns").len(), 40);
-    // Armed by construction; held closed by agentic.enabled (compile-time check).
-    const _: () = assert!(cgagentharness::agentic::writer::EXECUTION_ENABLED);
+    // Armed by construction, held closed only by agentic.enabled (checked above) and
+    // the disable-only env kill switch -- never by EXECUTION_ENABLED flipping itself.
+    if std::env::var(cgagentharness::agentic::writer::WRITE_DISABLE_ENV).is_err() {
+        assert!(cgagentharness::agentic::writer::execution_enabled());
+    }
 }
 
 #[test]

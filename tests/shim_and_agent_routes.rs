@@ -495,7 +495,7 @@ async fn a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy() {
     // so a request issued immediately after must already see it held (best-effort race window aside).
     let (status, resp) = s.post_json("/api/agent/run", run_body()).await;
     assert!(
-        status == 409 && code(&resp) == "AGENT_RUN_BUSY" || status == 409 && code(&resp) == "AGENTIC_DISABLED",
+        status == 409 && (code(&resp) == "AGENT_RUN_BUSY" || code(&resp) == "AGENTIC_DISABLED"),
         "{status} {resp}"
     );
 }
