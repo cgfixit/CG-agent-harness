@@ -7,22 +7,26 @@ mod common;
 
 #[cfg(unix)]
 use std::cell::RefCell;
+#[cfg(unix)]
 use std::path::Path;
 
 use axum::routing::post;
 use axum::{Json, Router};
 use cgagentharness::agentic::cloud_proposer::{sanitize_handoff, settings_for, CloudProposerClient, CloudSettings};
 use cgagentharness::agentic::config::load_agentic_config;
+#[cfg(unix)]
 use cgagentharness::agentic::ctx::AgenticCtx;
 #[cfg(unix)]
 use cgagentharness::agentic::executor::{ArgvListSandbox, Check};
 use cgagentharness::agentic::governance::{inspect_candidate_text, inspect_code_shape};
+#[cfg(unix)]
 use cgagentharness::agentic::proposer::ProposerClient;
 use cgagentharness::agentic::real_repo_loop::*;
 #[cfg(unix)]
 use cgagentharness::agentic::workspace::RepoWorkspace;
 use cgagentharness::agentic::writer::{build_write_argv, env_value_disables, execute_write, plan_write, require_gates};
 use cgagentharness::common::audit::Audit;
+#[cfg(unix)]
 use cgagentharness::common::errors::Result;
 use cgagentharness::common::injection::Scanner;
 use common::*;
