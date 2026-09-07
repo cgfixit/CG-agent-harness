@@ -36,4 +36,6 @@ jobs:
           echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz' | sha256sum --check --strict
           tar -xzf gitleaks.tar.gz gitleaks
       - name: Scan complete reachable history with redacted output
-        run: '"$RUNNER_TEMP/gitleaks" git --redact --no-banner --log-opts="--all" .'
+        run: >
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner
+          --config .gitleaks.toml --log-opts="--all" .
