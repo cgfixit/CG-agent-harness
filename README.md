@@ -2,13 +2,16 @@
 
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 
-Loopback-only agentic coding harness. One Rust binary.
+Loopback-only agentic coding harness. One Rust binary: crate and CLI `cgagentharness`.
 
 This is **not** CyClaw. CyClaw is the offline-first RAG soul agent
 ([cgfixit/CyClaw](https://github.com/cgfixit/CyClaw)). This repo is the
 `harness/` console plus the `agentic/` real-repo pipeline, ported from that
 Python stack: same security posture, no RAG, no corpus, no terminal, no
 fsconnect / sqlconnect / netconnect.
+
+Status: `0.1.0`. MSRV Rust 1.88. [MIT](LICENSE). Bind is loopback-only. Every
+write gate ships **closed**.
 
 - Console: `http://127.0.0.1:8790/` (`assets/static/harness.html`, served verbatim)
 - Chat: local OpenAI-compatible model (Ollama on `127.0.0.1:11434` by default)
@@ -17,30 +20,20 @@ fsconnect / sqlconnect / netconnect.
   spawns `cgagentharness agentic …` as a child (`src/shim`). Exit codes
   `0 / 2 / 3 / 4` are the whole interface.
 
-Status: `0.1.0`. Rust 1.88. MIT. Bind is loopback-only. Every write gate
-ships **closed**.
+## Why it exists
 
-## Project summary
+CyClaw's Python `harness/` + `agentic/` layer is the part worth extracting:
+the console, the child-process I6 boundary, the clone jail, and the write
+gates. Everything else (RAG, soul, Telegram, fsconnect) stays in CyClaw.
 
-CGagentHarness is a single-binary, loopback-only coding console and
-governed GitHub write pipeline. You chat with a local model in the
-browser; when you arm it, the same binary can clone a repo, propose a
-patch, verify it in a hard sandbox, and open a draft PR — only after a
-human reviews a digest-bound diff.
+If you want an offline knowledge agent, use CyClaw. If you want a local
+coding harness that cannot reach the pipeline except through `src/shim`,
+use this.
 
-It exists because CyClaw's Python `harness/` + `agentic/` layer is the
-part worth extracting: the console, the child-process I6 boundary, the
-clone jail, and the write gates. Everything else (RAG, soul, Telegram,
-fsconnect) stays in CyClaw. If you want an offline knowledge agent, use
-CyClaw. If you want a local coding harness that cannot reach the
-pipeline except through `src/shim`, use this.
-
-Shipped defaults do nothing to a repository. `agentic.enabled`,
-`deepagent_github.enabled`, and `allow_git_write_tools` are false.
-Unset `CGAGENTHARNESS_API_KEY` → guarded routes 401. Non-loopback bind
-is refused.
-
----
+Shipped defaults do nothing to a repository. You chat with a local model
+in the browser; only after you arm the gates can the same binary clone a
+repo, propose a patch, verify it in a hard sandbox, and open a draft PR —
+and only after a human reviews a digest-bound diff.
 
 ## Prerequisites
 
@@ -54,7 +47,8 @@ is refused.
 Default model tag in config is `qwen3.8:27b-mlx`. Change
 `models.local_llm.model` if that is not what you run.
 
----
+Mutable state lives under `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`
+overrides), seeded from `assets/config.default.yaml`.
 
 ## Quick start (chat only)
 
@@ -66,3 +60,71 @@ cargo build --release
 export CGAGENTHARNESS_API_KEY="$(openssl rand -hex 20)"
 ./target/release/cgagentharness serve
 # http://127.0.0.1:8790/
+```
+
+Ollama must be running. Paste the same key into the console's key field
+(held in that tab only), send a line, then try `/status`, `/skills`,
+`/tools`. None of those touch a GitHub repository.
+
+Step-by-step macOS walkthrough: [setup-guide.md](setup-guide.md).
+
+## Optional: arm the pipeline
+
+The shipped config keeps every write gate closed. After `gh auth login`,
+edit `~/.CGagentHarness/config.yaml` and set all four:
+
+```yaml
+agentic:
+  enabled: true
+  repo: "owner/name"
+  deepagent_github:
+    enabled: true
+    allow_git_write_tools: true
+```
+
+Restart `serve`. In the console a typical loop is `/agent run …` (stage),
+`/agent confirm <why>` (clone → plan → sandbox verify; no commit yet),
+`/agent status`, then `/agent approve` → `/agent push` →
+`/agent publish <why>`. Publish needs a fresh `reason` and `confirm: true`
+on that call; `confirm` is never defaulted on.
+
+`CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` is the disable-only kill switch.
+Depth of the gates, clone jail, and digest-bound approval:
+[INVARIANTS.md](INVARIANTS.md). Operator rules: [CLAUDE.md](CLAUDE.md).
+Full arming walkthrough: [setup-guide.md](setup-guide.md) §9.
+
+## Security defaults
+
+| Default | Behavior |
+|---|---|
+| Unset `CGAGENTHARNESS_API_KEY` | Every guarded route **401** (fail-closed) |
+| Non-loopback bind (`--host 0.0.0.0`, …) | Refused at startup |
+| Host header not a loopback name | Refused (DNS-rebinding defense) |
+| `agentic.enabled`, `deepagent_github.enabled`, `allow_git_write_tools` | All ship **false** |
+| `security.api_key_optional` | Ships **false** |
+| `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` (`1` / `true` / `yes` / `on`) | Disable-only write kill switch (cannot arm writes) |
+| `GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY` in CI | Blanked; tests must not assert a developer key is present |
+
+Quoted YAML `"true"` is **off** for every gate (`flag_is_true`). A reason
+is never optional on a write.
+
+## Verify
+
+```bash
+scripts/verify-local.sh              # fmt, clippy -D warnings, deny, tests, release build, live smoke
+SKIP_LIVE=1 scripts/verify-local.sh  # static + tests + build only
+```
+
+CI blanks planner keys the same way. The live smoke
+(`scripts/smoke-ollama.sh`) needs Ollama; skip it with `SKIP_LIVE=1`.
+Quality bar and traps: [CLAUDE.md](CLAUDE.md).
+
+## Docs
+
+| Doc | What it is |
+|---|---|
+| [INVARIANTS.md](INVARIANTS.md) | What the code enforces and where (I6, gates, clone jail) |
+| [CLAUDE.md](CLAUDE.md) | Operator / agent rules; do not "deduplicate" across the shim |
+| [setup-guide.md](setup-guide.md) | Fresh-machine walkthrough (macOS) |
+| [assets/config.default.yaml](assets/config.default.yaml) | Every tunable; no hardcoded tunables elsewhere |
+| [LICENSE](LICENSE) | MIT |
