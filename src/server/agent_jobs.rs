@@ -1,7 +1,7 @@
 //! Background real-repo runs.
 //!
-//! `POST /api/agent/run` stays synchronous because the verbatim console blocks
-//! on it. `POST /api/agent/jobs` runs the same validated request in a detached
+//! `POST /api/agent/run` remains a synchronous API. The console submits through
+//! `POST /api/agent/jobs`, which runs the same validated request in a detached
 //! tokio task so a closed tab, a proxy timeout, or a slow planner cannot orphan
 //! the result: the child still crosses the shim, the run and chat gates are
 //! held by the task (not the request), and the outcome is kept here until it
@@ -109,7 +109,11 @@ impl JobStore {
             j.handle = None;
             match outcome {
                 Ok(v) => {
-                    j.status = FINISHED;
+                    j.status = if v.get("ok").and_then(Value::as_bool) == Some(false) {
+                        FAILED
+                    } else {
+                        FINISHED
+                    };
                     j.result = Some(v);
                 }
                 Err(e) => {
@@ -164,6 +168,20 @@ mod tests {
 
     fn idle_handle() -> JoinHandle<()> {
         tokio::spawn(async {})
+    }
+
+    #[tokio::test]
+    async fn cli_failure_is_a_failed_job_with_its_result_preserved() {
+        let store = JobStore::new();
+        store.insert_running("failed-child", "real-repo-run", idle_handle());
+        store.finish(
+            "failed-child",
+            Ok(json!({"ok": false, "exit_code": 4, "stderr": "write refused"})),
+        );
+        let value = store.get("failed-child").unwrap();
+        assert_eq!(value["status"], FAILED);
+        assert_eq!(value["result"]["exit_code"], 4);
+        assert_eq!(value["result"]["stderr"], "write refused");
     }
 
     #[tokio::test]

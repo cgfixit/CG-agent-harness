@@ -11,6 +11,7 @@ app:
   name: "cgagentharness"
   env: "local"
   mode: "hybrid"  # "offline" | "hybrid"
+  agent_job_poll_ms: 1500  # browser job polling, clamped to 1–30 seconds
 
 models:
   local_llm:

@@ -300,14 +300,8 @@ const LOOP_COOLDOWN_MS = 2000;
 const MAX_LOOP_TOTAL_COMPLETION_TOKENS = 12000;
 const MAX_LOOP_FAILURES = 2;
 const LOOP_RETRY_CAP_SEC = 30;
-/* Client deadlines for routes that block on a server-side subprocess
-   (utils/ops_runner.py): POST /api/agent/run holds the request up to
-   min(iters*planner_sec + iters*checks*120 + 300, 3600)s; the run
-   status/decision/push/discard/publish and github-status routes shell a CLI
-   bounded at 120s (_TIMEOUT_SEC). Each client deadline sits above its server
-   budget so the server's typed error envelope arrives instead of a browser
-   abort at 15s while the subprocess keeps burning. */
-const AGENT_RUN_TIMEOUT_MS = 3630000;  /* 3600s ops_runner cap + 30s margin */
+/* Status/decision/push/discard/publish and GitHub-status calls spawn a CLI
+   bounded at 120s. Job submission returns immediately; polling uses short calls. */
 const AGENT_CLI_TIMEOUT_MS = 130000;   /* 120s ops_runner._TIMEOUT_SEC + 10s margin */
 /* Active human-gated /loop. Never starts a real-repo run. Cleared on
    /loop stop, /clear, session switch, budget exhaust, or GOAL_DONE. */
@@ -773,6 +767,41 @@ function agentRecord(r) {
   }
   return r.parsed;
 }
+let agentWatchGeneration = 0;
+function rememberedAgentJob() {
+  const id = new URLSearchParams(location.hash.slice(1)).get('agent-job') || '';
+  return /^[0-9a-f]{32}$/.test(id) ? id : '';
+}
+function rememberAgentJob(id) {
+  if (!/^[0-9a-f]{32}$/.test(id)) throw new Error('invalid job ID');
+  history.replaceState(null, '', '#agent-job=' + id);
+}
+async function watchAgentJob(id) {
+  const generation = ++agentWatchGeneration;
+  try {
+    const settings = await api('/api/agent/checks');
+    let previous = '';
+    while (generation === agentWatchGeneration) {
+      const job = await api('/api/agent/jobs/' + encodeURIComponent(id));
+      if (generation !== agentWatchGeneration) return;
+      if (job.status !== previous) sys('job ' + id + ': ' + job.status);
+      previous = job.status;
+      if (job.status !== 'running') {
+        if (job.result) {
+          const record = agentRecord(job.result);
+          if (record) showAgentRecord(record);
+        } else if (job.error) {
+          sys('job failed: ' + JSON.stringify(job.error.detail));
+        }
+        if (job.status === 'cancelled') sys('Request cancelled. Descendant work may survive; inspect the run before further writes.');
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, settings.poll_interval_ms));
+    }
+  } catch (err) {
+    sys('job monitoring paused; ID retained: ' + id + '. After restoring authentication use /agent job ' + id + '. A server restart loses its in-memory job handle and work may survive. (' + err.message + ')');
+  }
+}
 function showPendingAgentRun() {
   if (!pendingAgentRun) return;
   sys(table([
@@ -781,7 +810,7 @@ function showPendingAgentRun() {
     ['commit message', pendingAgentRun.commit_message],
     ['plan', pendingAgentRun.plan ? 'loaded (' + pendingAgentRun.plan.length + ' chars)' : 'none'],
     ['read files', pendingAgentRun.read_files.join(', ') || 'none'],
-    ['checks', pendingAgentRun.checks.join(', ')],
+    ['checks', pendingAgentRun.checks ? pendingAgentRun.checks.join(', ') : 'server default'],
     ['iterations', pendingAgentRun.max_iterations === undefined ? 'server default' : String(pendingAgentRun.max_iterations)],
     ['PR', pendingAgentRun.pr === undefined ? 'none' : String(pendingAgentRun.pr)],
     ['issue', pendingAgentRun.issue === undefined ? 'none' : String(pendingAgentRun.issue)],
@@ -1007,7 +1036,8 @@ async function runSlash(line) {
       case 'model': {
         if (rest[0] === 'use' && rest[1]) {
           const r = await api('/api/model', 'POST', { model: rest.slice(1).join(' ') });
-          sys('model selected: ' + r.model);
+          const planner = await api('/api/agent/checks');
+          sys('chat model selected: ' + r.model + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
           await refreshStatus();
         } else {
           const s = await api('/api/status');
@@ -1180,15 +1210,18 @@ async function runSlash(line) {
             sys('usage: /agent run claude/<topic> <what the agent should do>');
             break;
           }
+          const capabilities = await api('/api/agent/checks');
+          if (!capabilities.capabilities || !capabilities.capabilities.jobs || !capabilities.default_profile) { sys('server does not advertise the required job workflow'); break; }
           pendingAgentRun = {
             branch: branch,
             instruction: instruction,
             commit_message: instruction.slice(0, 72),
-            checks: ['pytest'],
+            checks: null,
             plan: null,
             read_files: [],
           };
           showPendingAgentRun();
+          sys('server default check: ' + capabilities.default_profile + '; planner model: ' + capabilities.planner_model);
           sys('nothing has run yet. Optionally use /agent plan, /agent read, /agent checks, /agent iterations, /agent pr, or /agent issue; then authorize with:  /agent confirm <why you are doing this>');
         } else if (sub === 'iterations' || sub === 'pr' || sub === 'issue') {
           if (!pendingAgentRun) { sys('nothing staged — start with /agent run'); break; }
@@ -1244,7 +1277,7 @@ async function runSlash(line) {
           showPendingAgentRun();
         } else if (sub === 'cancel') {
           pendingAgentRun = null;
-          sys('staged run discarded');
+          sys('staged run discarded. Active jobs are unchanged; use /agent stop <job id> to request cancellation.');
         } else if (sub === 'confirm') {
           if (!pendingAgentRun) { sys('nothing staged — start with /agent run'); break; }
           const why = rest.slice(1).join(' ').trim();
@@ -1255,25 +1288,33 @@ async function runSlash(line) {
           const stagedRun = pendingAgentRun;
           const body = Object.assign({}, stagedRun, { reason: why, confirm: true });
           sendBtn.disabled = true;
-          sys('cloning, planning, patching and verifying — this blocks until the run finishes (server cap 60 minutes)…');
           try {
-            const rec = agentRecord(await api('/api/agent/run', 'POST', body, AGENT_RUN_TIMEOUT_MS));
-            /* agentRecord() returns null (not a throw) on ok=false or an
-               unparsed response, so only clear the staged run once a real
-               record confirms the server actually accepted it. */
-            if (rec) {
-              if (pendingAgentRun === stagedRun) pendingAgentRun = null;
-              showAgentRecord(rec);
-            }
+            const job = await api('/api/agent/jobs', 'POST', body);
+            if (!job.job_id) throw new Error('server did not return a job ID');
+            if (pendingAgentRun === stagedRun) pendingAgentRun = null;
+            rememberAgentJob(job.job_id);
+            sys('job accepted: ' + job.job_id + '. You can refresh or use /agent stop ' + job.job_id + '.');
+            watchAgentJob(job.job_id);
           } catch (err) {
-            if (pendingAgentRun === null || pendingAgentRun === stagedRun) {
-              pendingAgentRun = stagedRun;
-            }
-            sys('confirm failed — staged run kept. Fix the request or /agent cancel. (' + err.message + ')');
+            sys('job submission failed — staged request kept. (' + err.message + ')');
             showPendingAgentRun();
           } finally {
             sendBtn.disabled = false;
           }
+        } else if (sub === 'jobs') {
+          const result = await api('/api/agent/jobs');
+          sys(table(result.jobs.map(j => [j.job_id, j.status]), ['job', 'status']));
+        } else if (sub === 'job') {
+          const id = rest[1] || rememberedAgentJob();
+          if (!id) { sys('usage: /agent job <job id>'); break; }
+          rememberAgentJob(id);
+          watchAgentJob(id);
+        } else if (sub === 'stop') {
+          const id = rest[1] || rememberedAgentJob();
+          if (!id) { sys('usage: /agent stop <job id>'); break; }
+          const job = await api('/api/agent/jobs/' + encodeURIComponent(id) + '/cancel', 'POST', {});
+          agentWatchGeneration++;
+          sys('job ' + id + ': ' + job.status + '. The request is cancelled; descendant work may still survive. Inspect the run before further writes.');
         } else if (sub === 'status' || sub === 'approve' || sub === 'reject') {
           const id = (rest[1] || '').trim();
           if (!id) { sys('usage: /agent ' + sub + ' <run id>'); break; }
@@ -1340,7 +1381,10 @@ async function runSlash(line) {
             ['/agent pr <n>|clear', 'set a positive PR number (clears issue) or unset it'],
             ['/agent issue <n>|clear', 'set a positive issue number (clears PR) or unset it'],
             ['/agent confirm <reason>', 'authorize and start the staged run'],
-            ['/agent cancel', 'discard the staged run'],
+            ['/agent cancel', 'discard only the staged run'],
+            ['/agent jobs', 'list jobs retained by this server process'],
+            ['/agent job <id>', 'monitor or recover a job after refresh'],
+            ['/agent stop <id>', 'cancel the request; descendant work may survive'],
             ['/agent status <run id>', 'read a run record'],
             ['/agent approve <run id> <reason>', 'review an unseen or changed diff; repeat to commit'],
             ['/agent reject <run id>', 'discard the pending change'],
@@ -1702,6 +1746,8 @@ async function onSend() {
 
 /* ── wiring ── */
 sendBtn.addEventListener('click', onSend);
+const recoverJob = rememberedAgentJob();
+if (recoverJob) sys('retained job: ' + recoverJob + '. Enter your API key, then /agent job ' + recoverJob + ' to resume monitoring.');
 input.addEventListener('keydown', e => {
   // Ignore Enter while an IME composition is in progress; sending on the
   // commit keystroke submits a half-typed query.
@@ -1852,7 +1898,7 @@ buildCommands();
 refreshStatus();
 refreshSessions().catch(() => {});
 refreshRegistry().catch(() => {});
-sys('CyClaw harness — local coding console (PowerShell launcher: cyclaw).');
+sys('CGagentHarness — local coding console (CLI: cgagentharness).');
 sys('System prompt: ponytail + karpathy-guidelines discipline contracts for agentic GitHub coding.');
 sys('Type /help for commands. /skills and /tools list wired surfaces. /web is allowlist-only and off by default. /goal + /loop are chat-only (rate-limited for local 27b).');
 input.focus();
