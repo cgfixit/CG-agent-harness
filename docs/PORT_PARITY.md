@@ -140,3 +140,9 @@ Final Phase 2 `CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh`: exit
 fmt, all-target/all-feature clippy, 128 tests, release build. No ignored tests;
 live smoke explicitly omitted. `cargo-deny check`: exit 0, existing duplicate
 crate/unused-license warnings remain; no new root lockfile dependencies.
+
+Initial PR #17 CI correctly failed in a rustup/Xcode doctest: Cargo's target
+linker setting did not reach rustdoc, which invoked cc/xcrun outside permitted
+cache/SDK paths. Pass the prepared linker via encoded rustdoc flags as well.
+The corrected native full quality run again passed 128 tests and release build;
+no read/write grants or test assertions were weakened. Exact CI rerun pending.

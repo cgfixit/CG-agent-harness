@@ -105,6 +105,13 @@ impl CargoInputs {
             env.insert("SDKROOT".into(), sdk.display().to_string());
         }
         if let Some(linker) = &self.linker {
+            // Cargo's target linker setting does not reach rustdoc's doctest
+            // compilation on every toolchain. Use encoded arguments so spaces
+            // in an installed Xcode path remain one linker argument.
+            env.insert(
+                "CARGO_ENCODED_RUSTDOCFLAGS".into(),
+                format!("-C\u{1f}linker={}", linker.display()),
+            );
             env.insert(
                 "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER".into(),
                 linker.display().to_string(),
