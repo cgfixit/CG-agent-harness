@@ -39,6 +39,8 @@ fn fixture(home: &Path) -> (AgenticCtx, PathBuf, PathBuf, RealRepoRunRecord) {
     let mut rec = RealRepoRunRecord::new(&"a".repeat(32), &ctx.acfg.repo, dest.to_str().unwrap(), "approved");
     rec.branch_name = Some("codex/write-policy".into());
     rec.commit_message = Some("fixture".into());
+    rec.approved_commit = Some(git(&["rev-parse", "HEAD"], &dest));
+    rec.origin_url = Some(bare.display().to_string());
     save_run(&ctx.runs_dir(), &mut rec).unwrap();
     (ctx, dest, bare, rec)
 }

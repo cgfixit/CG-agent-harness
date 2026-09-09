@@ -129,12 +129,26 @@ required native tests, and remaining process/resource limitations.
 ## Approval is bound to what was reviewed
 
 `pending_decision` records carry an acceptance digest (`run_id + base HEAD +
-path->sha256`). `decide approve` re-verifies it against the live worktree AND a
-disposable copy with user/system git config disabled and hooks pinned to an
-empty directory, then re-checks scope against the policy in force NOW, then
-commits with `--no-verify` under the configured committer identity.
+path -> sha256 + file mode`). Approval rechecks live files and a disposable copy,
+then builds an exact tree in a private Git index. A pre-staged change or existing
+index lock refuses approval. The ordinary index lock remains held until the new
+index is installed. No unrelated staged content is incorporated or erased.
 
-- Locked by: `tests/real_repo_loop.rs::loop_iterates_on_feedback_then_accepts_and_finalizes`,
+The shared agentic Git boundary disables ambient Git configuration, executable
+extensions, replacement objects and automatic maintenance. Unsupported local
+configuration, graft/attribute/alternate metadata and content-transforming
+attributes refuse the operation. Inspection uses the same boundary. No server
+or shim imports this agentic helper.
+
+Runs retain their origin from candidate creation and the exact approved commit.
+Push checks those pins and uses an object-ID refspec; publication checks the
+remote branch. Current policy and separate reason/confirmation remain required.
+Older records missing the new bindings need a new reviewed run. No transaction
+against arbitrary hostile filesystem races or later remote changes is claimed.
+See `docs/GIT_APPROVAL.md` for compatibility changes and review limitations.
+
+- Locked by: `tests/git_approval.rs`, `tests/write_policy.rs`,
+  `tests/real_repo_loop.rs::loop_iterates_on_feedback_then_accepts_and_finalizes`,
   `tests/agentic_foundations.rs::manifest_digest_binds_files_and_head`.
 
 ## Secrets never reach a response or a log line

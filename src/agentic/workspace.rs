@@ -9,7 +9,6 @@
 //! landed-path vs the real `.git` dir -> return the LANDED relative path.
 //! Every mutation reloads the write policy and requires explicit human intent.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -19,7 +18,6 @@ use unicode_normalization::UnicodeNormalization;
 use crate::common::audit::Audit;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::identity;
-use crate::common::process::{self, RunSpec};
 
 use super::ctx::AgenticCtx;
 use super::gh_client::{run_read, ReadRequest, DEFAULT_CLONE_TIMEOUT_SEC};
@@ -28,7 +26,6 @@ pub const DEFAULT_MAX_READ_BYTES: u64 = 256_000;
 pub const DEFAULT_MAX_WRITE_BYTES: usize = 256_000;
 pub const DEFAULT_GIT_WRITE_TIMEOUT_SEC: u64 = 30;
 pub const DEFAULT_PUSH_TIMEOUT_SEC: u64 = 120;
-const GIT_ENV_ALLOWLIST: [&str; 4] = ["PATH", "HOME", "LANG", "LC_ALL"];
 
 /// Canonical repo-relative form, or `None` if unsafe (the WRITE-path rule).
 pub fn canonical_repo_path(target: &str) -> Option<String> {
@@ -81,20 +78,6 @@ pub fn fs_equiv_path(path: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn git_env() -> BTreeMap<String, String> {
-    let mut env: BTreeMap<String, String> = GIT_ENV_ALLOWLIST
-        .iter()
-        .filter_map(|n| std::env::var(n).ok().map(|v| (n.to_string(), v)))
-        .collect();
-    env.insert("GIT_OPTIONAL_LOCKS".into(), "0".into());
-    env
-}
-
-fn resolve_git() -> Result<PathBuf> {
-    process::which("git")
-        .ok_or_else(|| HarnessError::agentic("git binary not found on PATH").detail("looked_for", "git"))
 }
 
 /// Recursively delete, clearing read-only bits git leaves on objects.
@@ -334,29 +317,7 @@ impl<'a> RepoWorkspace<'a> {
     }
 
     fn run_git(&self, tool: &str, args: &[&str], timeout_sec: u64, extra_env: &[(&str, &str)]) -> Result<String> {
-        let binary = resolve_git()?;
-        let mut argv = vec![binary.display().to_string(), "-c".into(), "core.fsmonitor=false".into()];
-        argv.extend(args.iter().map(|a| a.to_string()));
-        let mut env = git_env();
-        for (k, v) in extra_env {
-            env.insert(k.to_string(), v.to_string());
-        }
-        let out = process::run(RunSpec {
-            argv: &argv,
-            cwd: Some(&self.dest),
-            env: Some(&env),
-            timeout: Duration::from_secs(timeout_sec),
-            stdin: None,
-        })
-        .map_err(|e| match e {
-            process::ProcessError::Timeout { .. } => {
-                self.audit
-                    .log(json!({"event": "agentic_repo_workspace_git_failed", "op": tool, "reason": "timeout"}));
-                HarnessError::agentic(format!("git {tool} timed out after {timeout_sec}s")).detail("tool", tool)
-            }
-            process::ProcessError::Capture(e) => HarnessError::agentic(e),
-            process::ProcessError::Spawn(e) => HarnessError::agentic(format!("git {tool} could not start: {e}")),
-        })?;
+        let out = super::git::run(&self.dest, args, Duration::from_secs(timeout_sec), extra_env, None)?;
         if out.status != Some(0) {
             self.audit
                 .log(json!({"event": "agentic_repo_workspace_git_failed", "op": tool, "exit_code": out.status}));
@@ -626,6 +587,7 @@ impl<'a> RepoWorkspace<'a> {
         for p in paths {
             validated.push(self.validate_write_path(tool, p, true)?);
         }
+        super::git::require_raw_paths(&self.dest, &validated)?;
         let mut args = vec!["add", "--"];
         args.extend(validated.iter().map(|s| s.as_str()));
         self.run_git(tool, &args, DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[])?;
@@ -654,30 +616,220 @@ impl<'a> RepoWorkspace<'a> {
         Ok(json!({}))
     }
 
-    /// Push one agent branch to origin. The only network write here; no credential of its own.
-    pub fn push_branch(&self, name: &str, reason: &str, confirm: bool) -> Result<Value> {
-        let tool = "push_branch";
-        self.require_write(tool, reason, confirm)?;
-        let id = identity::identity()?;
-        if !id.branch_is_valid(name) {
+    /// Build a commit from reviewed raw blobs in an owned index. Refuse a dirty
+    /// operator index; never incorporate or erase pre-staged content.
+    pub fn commit_accepted(&self, f: &super::real_repo_loop::FinalizeParams<'_>) -> Result<String> {
+        use super::executor::manifest;
+        self.require_write("approve", f.reason, f.confirm)?;
+        if !identity::identity()?.branch_is_valid(f.branch_name) || f.commit_message.trim().is_empty() {
+            return Err(self.deny("approve", "invalid branch or empty commit message", None));
+        }
+        let base = f.acceptance_base_head.unwrap_or("");
+        let expected = f.acceptance_digest.unwrap_or("");
+        manifest::verify_manifest(&self.dest, f.changed_files, f.run_id, base, expected)?;
+        let _index_lock = GitIndexLock::acquire(self.dest.join(".git/index.lock"))?;
+        let original_index = std::fs::read(self.dest.join(".git/index"))?;
+        let staged = self.run_git(
+            "inspect_index",
+            &[
+                "diff",
+                "--cached",
+                "--ita-visible-in-index",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                base,
+                "--",
+            ],
+            30,
+            &[],
+        )?;
+        if !staged.is_empty() {
             return Err(self.deny(
-                tool,
-                &format!(
-                    "push branch must start with one of [{}] and use only [A-Za-z0-9._/-] after the slash",
-                    id.allowed_prefixes_help()
-                ),
-                Some(name),
+                "approve",
+                "pre-existing staged changes require a new clean candidate; index preserved",
+                None,
             ));
         }
-        self.run_git(
-            tool,
-            &["push", "--set-upstream", "origin", "--", name],
-            DEFAULT_PUSH_TIMEOUT_SEC,
-            &[("GIT_TERMINAL_PROMPT", "0")],
+        super::git::require_raw_paths(&self.dest, f.changed_files)?;
+        let (accepted, captured_digest) = manifest::build_manifest(&self.dest, f.changed_files, f.run_id, base)?;
+        if captured_digest != expected {
+            return Err(self.deny("approve", "accepted snapshot changed", None));
+        }
+        let temporary = tempfile::Builder::new()
+            .prefix("cgah-index-")
+            .tempdir_in(self.dest.join(".git"))?;
+        let index = temporary.path().join("index");
+        let index_name = index
+            .to_str()
+            .ok_or_else(|| HarnessError::agentic("Git index path is not UTF-8"))?;
+        let extra = [("GIT_INDEX_FILE", index_name)];
+        let write = |args: &[&str], stdin: Option<&[u8]>| -> Result<String> {
+            self.require_write("approve", f.reason, f.confirm)?;
+            super::git::checked(&self.dest, args, Duration::from_secs(30), &extra, stdin)
+        };
+        write(&["read-tree", base], None)?;
+        for file in accepted["files"]
+            .as_array()
+            .ok_or_else(|| HarnessError::agentic("invalid acceptance manifest"))?
+        {
+            let path = file["path"]
+                .as_str()
+                .ok_or_else(|| HarnessError::agentic("invalid manifest path"))?;
+            let landed = self.validate_write_path("approve", path, true)?;
+            if landed != path {
+                return Err(self.deny("approve", "manifest destination changed", Some(path)));
+            }
+            let source = self.dest.join(path);
+            let bytes = std::fs::read(&source)?;
+            let mode = manifest::file_mode(&source)?;
+            if crate::common::sha256_bytes_hex(&bytes) != file["sha256"].as_str().unwrap_or("")
+                || mode != file["mode"].as_str().unwrap_or("")
+            {
+                return Err(self.deny("approve", "accepted content or mode changed", Some(path)));
+            }
+            let blob = write(&["hash-object", "-w", "--stdin"], Some(&bytes))?;
+            write(&["update-index", "--add", "--cacheinfo", mode, blob.trim(), path], None)?;
+        }
+        let tree = write(&["write-tree"], None)?;
+        manifest::verify_manifest(&self.dest, f.changed_files, f.run_id, base, expected)?;
+        let id = identity::identity()?;
+        let email = format!("user.email={}", id.commit_email);
+        let name = format!("user.name={}", id.commit_name);
+        let commit = write(
+            &[
+                "-c",
+                &email,
+                "-c",
+                &name,
+                "commit-tree",
+                tree.trim(),
+                "-p",
+                base,
+                "-m",
+                f.commit_message,
+            ],
+            None,
         )?;
+        let commit = commit.trim().to_string();
+        let branch = format!("refs/heads/{}", f.branch_name);
+        let zero = "0".repeat(commit.len());
+        write(&["update-ref", &branch, &commit, &zero], None)?;
+        // The new branch is now durable. Failures from here are explicitly
+        // indeterminate and must be inspected rather than automatically retried.
+        let finish = (|| -> Result<()> {
+            write(&["symbolic-ref", "HEAD", &branch], None)?;
+            self.require_write("approve", f.reason, f.confirm)?;
+            if std::fs::read(self.dest.join(".git/index"))? != original_index {
+                return Err(HarnessError::agentic("index changed during approval"));
+            }
+            std::fs::rename(&index, self.dest.join(".git/index"))?;
+            Ok(())
+        })();
+        finish.map_err(|_| {
+            HarnessError::agentic(
+                "commit created but checkout completion is indeterminate; inspect the run before retrying",
+            )
+            .detail("indeterminate", true)
+        })?;
         self.audit
-            .log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "branch": name}));
-        Ok(json!({"pushed": name}))
+            .log(json!({"event":"agentic_repo_workspace_reviewed_commit", "commit":commit, "tree":tree.trim()}));
+        Ok(commit)
+    }
+
+    /// Explicit direct API push; lifecycle callers must use push_approved with
+    /// the commit and destination persisted at acceptance.
+    pub fn push_branch(&self, name: &str, reason: &str, confirm: bool) -> Result<Value> {
+        self.require_write("push_branch", reason, confirm)?;
+        if !identity::identity()?.branch_is_valid(name) {
+            return Err(self.deny("push_branch", "invalid branch", None));
+        }
+        let origin = self.origin_url()?;
+        let reference = format!("refs/heads/{name}");
+        let commit = self.run_git("approved_source", &["rev-parse", "--verify", &reference], 30, &[])?;
+        self.push_approved(name, commit.trim(), &origin, reason, confirm)
+    }
+
+    pub fn origin_url(&self) -> Result<String> {
+        let remote = self.run_git("origin", &["config", "--get", "remote.origin.url"], 30, &[])?;
+        let remote = remote.trim().to_string();
+        let https = format!("https://github.com/{}", self.ctx.acfg.repo);
+        let ssh = format!("git@github.com:{}", self.ctx.acfg.repo);
+        let expected = [&https, &format!("{https}.git"), &ssh, &format!("{ssh}.git")];
+        // Absolute local paths are retained for fully offline fixture/remotes;
+        // they are pinned in the run record before proposal and checked on push.
+        let local = Path::new(&remote).is_absolute() && Path::new(&remote).is_dir();
+        if !local && !expected.iter().any(|url| remote.eq_ignore_ascii_case(url)) {
+            return Err(self.deny(
+                "origin",
+                "origin does not match the selected repository or an absolute local remote",
+                None,
+            ));
+        }
+        Ok(remote)
+    }
+
+    pub fn verify_approved_source(&self, branch: &str, commit: &str, origin: &str) -> Result<()> {
+        if !identity::identity()?.branch_is_valid(branch)
+            || ![40, 64].contains(&commit.len())
+            || !commit.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(self.deny(
+                "push",
+                "run lacks a valid approved commit; create and review a new run",
+                None,
+            ));
+        }
+        if self.origin_url()? != origin {
+            return Err(self.deny("push", "origin changed since candidate creation", None));
+        }
+        let reference = format!("refs/heads/{branch}");
+        let actual = self.run_git("approved_source", &["rev-parse", "--verify", &reference], 30, &[])?;
+        if actual.trim() != commit {
+            return Err(self.deny("push", "branch differs from the approved commit", None));
+        }
+        Ok(())
+    }
+
+    pub fn push_approved(
+        &self,
+        branch: &str,
+        commit: &str,
+        origin: &str,
+        reason: &str,
+        confirm: bool,
+    ) -> Result<Value> {
+        self.require_write("push_branch", reason, confirm)?;
+        self.verify_approved_source(branch, commit, origin)?;
+        // Object-ID refspec and a pinned URL prevent a later local branch or
+        // origin change from selecting different content/destination.
+        let refspec = format!("{commit}:refs/heads/{branch}");
+        self.require_write("push_branch", reason, confirm)?;
+        self.run_git(
+            "push_branch",
+            &["push", "--", origin, &refspec],
+            DEFAULT_PUSH_TIMEOUT_SEC,
+            &[],
+        )?;
+        Ok(json!({"pushed": branch, "approved_commit": commit}))
+    }
+
+    pub fn verify_published_source(&self, branch: &str, commit: &str, origin: &str) -> Result<()> {
+        self.verify_approved_source(branch, commit, origin)?;
+        let reference = format!("refs/heads/{branch}");
+        let remote = self.run_git(
+            "remote_approved_source",
+            &["ls-remote", "--refs", "--", origin, &reference],
+            DEFAULT_PUSH_TIMEOUT_SEC,
+            &[],
+        )?;
+        let expected = format!("{commit}\t{reference}");
+        if remote.trim() != expected {
+            return Err(self.deny("publish", "remote branch differs from the approved commit", None));
+        }
+        Ok(())
     }
 
     pub fn diff(&self, cached: bool) -> Result<String> {
@@ -744,6 +896,26 @@ pub fn is_proposal_rollback_quarantine(error: &HarnessError) -> bool {
 fn rollback_quarantine_error() -> HarnessError {
     HarnessError::agentic("proposal rollback failed; candidate is quarantined and must be discarded")
         .detail("quarantine", true)
+}
+
+/// Cooperates with Git index writers while finalization owns a private index.
+struct GitIndexLock {
+    path: PathBuf,
+}
+impl GitIndexLock {
+    fn acquire(path: PathBuf) -> Result<Self> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|_| HarnessError::write_refused("Git index is locked; inspect the candidate before retrying"))?;
+        Ok(Self { path })
+    }
+}
+impl Drop for GitIndexLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// One staged replacement and its recovery preimage.

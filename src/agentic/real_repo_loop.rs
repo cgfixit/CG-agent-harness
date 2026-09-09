@@ -574,12 +574,10 @@ pub fn finalize_real_repo_change(
         .detail("branch", f.branch_name)
         .detail("protected_paths", json!(out_of_scope)));
     }
-    tools.checkout_branch(f.branch_name, f.reason, f.confirm)?;
-    tools.add(f.changed_files, f.reason, f.confirm)?;
-    tools.commit(f.commit_message, f.reason, f.confirm)?;
+    let commit = tools.commit_accepted(f)?;
     ctx.audit
         .log(json!({"event": "agentic_real_repo_change_approved", "branch": f.branch_name}));
-    Ok(json!({"status": "approved", "branch": f.branch_name}))
+    Ok(json!({"status": "approved", "branch": f.branch_name, "approved_commit": commit}))
 }
 
 #[cfg(test)]

@@ -240,7 +240,15 @@ pub fn run_read(audit: &Audit, req: &ReadRequest<'_>) -> Result<Value> {
         &binary.display().to_string(),
         dest_str.as_deref(),
     )?;
-    let env = gh_env();
+    let mut env = gh_env();
+    let clone_template = if req.op == "repo_clone" {
+        Some(tempfile::tempdir()?)
+    } else {
+        None
+    };
+    if let Some(template) = &clone_template {
+        super::git::isolate_clone_environment(&mut env, template.path());
+    }
     let attempts = req.retries + 1;
     let mut completed: Option<process::Output> = None;
     for attempt in 1..=attempts {
