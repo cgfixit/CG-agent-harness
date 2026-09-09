@@ -440,6 +440,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     let dest = tools.worktree().display().to_string();
     // Persisted BEFORE the loop runs so a killed process still leaves a record.
     let mut record = RealRepoRunRecord::new(&run_id, &ctx.acfg.repo, &dest, "running");
+    record.origin_url = Some(tools.origin_url()?);
     record.provider = provider.clone();
     record.plan_sha256 = plan_sha.clone();
     save_run(&runs_dir, &mut record)?;
@@ -589,7 +590,13 @@ fn push_record(
         .branch_name
         .clone()
         .ok_or_else(|| HarnessError::agentic("run record has no branch_name to push"))?;
-    match tools.push_branch(&branch, reason, confirm) {
+    match tools.push_approved(
+        &branch,
+        record.approved_commit.as_deref().unwrap_or(""),
+        record.origin_url.as_deref().unwrap_or(""),
+        reason,
+        confirm,
+    ) {
         Ok(_) => {
             record.pushed = true;
             Ok(EXIT_OK)
@@ -714,6 +721,7 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         }
     };
     record.status = outcome["status"].as_str().unwrap_or("").to_string();
+    record.approved_commit = outcome["approved_commit"].as_str().map(str::to_string);
     // Record the local decision; push and publication are separate calls.
     save_run(&runs_dir, &mut record)?;
     print_json(&record.to_json());
@@ -772,7 +780,7 @@ fn cmd_real_repo_run_publish(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         Ok(v) => v,
         Err(code) => return Ok(code),
     };
-    let _tools = RepoWorkspace::attach(ctx, Path::new(&record.dest))?;
+    let tools = RepoWorkspace::attach(ctx, Path::new(&record.dest))?;
     super::writer::current_repository_policy(ctx, "pr_create", opts.get("reason").unwrap_or(""), true)?;
     use std::io::Read;
     let mut body = String::new();
@@ -788,6 +796,11 @@ fn cmd_real_repo_run_publish(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
             "publication requires a reviewed --body-file (or --body) of 1..65536 bytes; use the repository PR template",
         ));
     }
+    tools.verify_published_source(
+        record.branch_name.as_deref().unwrap_or(""),
+        record.approved_commit.as_deref().unwrap_or(""),
+        record.origin_url.as_deref().unwrap_or(""),
+    )?;
     let code = publish_record(
         ctx,
         &mut record,

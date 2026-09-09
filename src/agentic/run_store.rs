@@ -58,6 +58,10 @@ pub struct RealRepoRunRecord {
     #[serde(default)]
     pub acceptance_base_head: Option<String>,
     #[serde(default)]
+    pub approved_commit: Option<String>,
+    #[serde(default)]
+    pub origin_url: Option<String>,
+    #[serde(default)]
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
@@ -81,6 +85,8 @@ impl RealRepoRunRecord {
             plan_sha256: None,
             acceptance_digest: None,
             acceptance_base_head: None,
+            approved_commit: None,
+            origin_url: None,
             created_at: String::new(),
             updated_at: String::new(),
         }

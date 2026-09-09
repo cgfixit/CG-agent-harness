@@ -1,14 +1,10 @@
 //! Disposable-copy proof before finalize: copy the candidate tree to a
-//! throwaway directory, re-verify the acceptance digest there with user/system
-//! git config disabled and `core.hooksPath` pinned to an empty dir (passed as
-//! env to the git CHILD, never set on this process), then destroy the copy.
+//! throwaway directory and re-verify its acceptance digest through the same
+//! isolated Git boundary as the live clone, then destroy the copy.
 
-use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::Duration;
 
 use crate::common::errors::{HarnessError, Result};
-use crate::common::process::{self, RunSpec};
 
 use super::manifest::build_manifest;
 
@@ -42,31 +38,6 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn git_head_scrubbed(worktree: &Path, hooks_path: &Path) -> Result<String> {
-    let git = process::which("git").ok_or_else(|| HarnessError::agentic("git executable not found on PATH"))?;
-    let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
-    let mut env: BTreeMap<String, String> = std::env::vars().collect();
-    env.insert("GIT_CONFIG_GLOBAL".into(), null.into());
-    env.insert("GIT_CONFIG_SYSTEM".into(), null.into());
-    env.insert("GIT_CONFIG_COUNT".into(), "1".into());
-    env.insert("GIT_CONFIG_KEY_0".into(), "core.hooksPath".into());
-    env.insert("GIT_CONFIG_VALUE_0".into(), hooks_path.display().to_string());
-    let argv = vec![git.display().to_string(), "rev-parse".into(), "HEAD".into()];
-    let out = process::run(RunSpec {
-        argv: &argv,
-        cwd: Some(worktree),
-        env: Some(&env),
-        timeout: Duration::from_secs(30),
-        stdin: None,
-    })
-    .map_err(|e| HarnessError::agentic(format!("could not read disposable HEAD: {e}")))?;
-    let sha = out.stdout.trim().to_string();
-    if out.status != Some(0) || sha.len() < 7 {
-        return Err(HarnessError::agentic("disposable-copy proof: could not read HEAD"));
-    }
-    Ok(sha)
-}
-
 /// Copy, re-verify the digest in the copy, destroy. Never commits.
 pub fn prove_disposable_copy(
     worktree: &Path,
@@ -83,8 +54,6 @@ pub fn prove_disposable_copy(
     }
     let tmp = tempfile::Builder::new().prefix("cgah-disposable-apply-").tempdir()?;
     let dest = tmp.path().join("tree");
-    let hooks = tmp.path().join("empty-hooks");
-    std::fs::create_dir_all(&hooks)?;
     copy_tree(worktree, &dest).map_err(|e| {
         HarnessError::agentic("disposable-copy proof: failed to copy candidate tree")
             .detail("error", crate::common::clip_chars(&e.to_string(), 200))
@@ -95,7 +64,7 @@ pub fn prove_disposable_copy(
                 .detail("run_id", run_id),
         );
     }
-    let live = git_head_scrubbed(&dest, &hooks)?;
+    let live = super::manifest::git_head(&dest)?;
     if live != base_head {
         return Err(
             HarnessError::agentic("worktree HEAD drifted from the accepted base; refusing approve")

@@ -76,7 +76,7 @@ listed evidence; “unverified” means not yet executed at the required realism
 | Diff rendering | `commands.rs`, console asset | Complete human-readable diff before approval | 20000-character cap remains; browser refuses truncated diff | incomplete |
 | Path jail / protected scope | `workspace.rs`, loop policy | Containment and protected landed destinations | proposal scope checks raw/landed paths, denies symlinks; retained parent handles; concurrent rename/leaf-CAS residual remains | incomplete |
 | Hard sandbox | `executor/sandbox.rs` | Read/write/network/process confinement | Baseline outside read/.git write reproduced; this PR denies both plus network, cache and candidate writes; process/resource limits remain | incomplete |
-| Git execution/finalization | `workspace.rs`, `executor/apply.rs` | No hooks/filters/index contamination | Disposable proof disables hooks; actual later Git operations need further audit | incomplete |
+| Git execution/finalization | `workspace.rs`, `executor/apply.rs` | No hooks/filters/index contamination | shared Git isolation, private reviewed index/tree, mode binding, pinned push/publication, actual local-Git regressions; see GIT_APPROVAL.md | changed deliberately |
 | Child process runner / ops runner | `common/process.rs`, `shim/mod.rs` | Bounded output, time, descendants, resources | bounded Unix capture/deadline and native nested-group cancellation pass; escaped reparenting, memory/disk quotas unresolved | incomplete |
 | `harness/server.py`, auth routes | `server/guards.rs`, common auth | Rate → origin → key → CSRF; loopback Host, optional local auth | auth/security-header tests | verified (fixtures) |
 | Logger/error/telemetry controls | `common/audit.rs`, env scrubber, cloud proposer | Redaction, opt-outs, no cloud inference by default | common/chat/panel tests; exhaustive leak audit pending | incomplete |
@@ -117,9 +117,10 @@ Real-model/browser/Cargo evidence is recorded independently in MAC_ACCEPTANCE.md
 
 ## Remaining work, in priority order
 
-1. Audit later Git hooks, filters, configuration and staged-index state as a
-   trust boundary; actual acceptance used a reviewed clean candidate with no
-   active hooks or attributes. Do not generalize that inspection to all repos.
+1. Finish the independent Git-boundary review (interrupted by a tool-side
+   security filter) and assess broader compatibility. Current corrections and
+   real-Git regression evidence are in GIT_APPROVAL.md; custom transforms
+   deliberately refuse rather than commit an unreviewed representation.
 2. Durable job startup reconciliation and interruption recovery. Page refresh
    works while the server lives; abrupt server death and escaped/reparented
    descendants remain a limitation. Native cancellation is tested, not a kernel
@@ -136,7 +137,7 @@ Real-model/browser/Cargo evidence is recorded independently in MAC_ACCEPTANCE.md
 
 These are implementation gaps, not failures blamed on missing user permission.
 No cloud inference, CyClaw changes or global configuration changes are required
-for the next bounded Git-boundary investigation.
+for the remaining bounded runtime and parity work.
 
 ## Phase 1 verification
 

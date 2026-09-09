@@ -11,6 +11,7 @@ pub mod ctx;
 pub mod edits;
 pub mod executor;
 pub mod gh_client;
+pub(crate) mod git;
 pub mod governance;
 pub mod proposer;
 pub mod real_repo_loop;

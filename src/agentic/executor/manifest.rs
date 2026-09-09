@@ -1,4 +1,4 @@
-//! Immutable acceptance digest: `run_id + base HEAD + path->sha256`, snapshotted
+//! Immutable acceptance digest: `run_id + base HEAD + path->sha256 + mode`, snapshotted
 //! at propose time and re-verified at approve. Port of `agentic/executor/manifest.py`.
 
 use std::path::Path;
@@ -7,19 +7,9 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::common::errors::{HarnessError, Result};
-use crate::common::process::{self, RunSpec};
 
 pub fn git_head(worktree: &Path) -> Result<String> {
-    let git = process::which("git").ok_or_else(|| HarnessError::agentic("git executable not found on PATH"))?;
-    let argv = vec![git.display().to_string(), "rev-parse".into(), "HEAD".into()];
-    let out = process::run(RunSpec {
-        argv: &argv,
-        cwd: Some(worktree),
-        env: None,
-        timeout: Duration::from_secs(30),
-        stdin: None,
-    })
-    .map_err(|e| HarnessError::agentic(format!("could not read worktree HEAD: {e}")))?;
+    let out = super::super::git::run(worktree, &["rev-parse", "HEAD"], Duration::from_secs(30), &[], None)?;
     let sha = out.stdout.trim().to_string();
     if out.status != Some(0) || sha.len() < 7 {
         return Err(
@@ -28,6 +18,21 @@ pub fn git_head(worktree: &Path) -> Result<String> {
         );
     }
     Ok(sha)
+}
+
+pub fn file_mode(path: &Path) -> Result<&'static str> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.is_file() || meta.file_type().is_symlink() {
+        return Err(HarnessError::write_refused("accepted files must remain ordinary files"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o111 != 0 {
+            return Ok("100755");
+        }
+    }
+    Ok("100644")
 }
 
 fn jail(worktree: &Path, rel: &str) -> Result<std::path::PathBuf> {
@@ -55,7 +60,8 @@ pub fn build_manifest(worktree: &Path, paths: &[String], run_id: &str, base_head
             return Err(HarnessError::agentic("manifest path missing from worktree").detail("path", rel));
         }
         let bytes = std::fs::read(&target)?;
-        files.push(json!({"path": rel, "sha256": crate::common::sha256_bytes_hex(&bytes)}));
+        files
+            .push(json!({"path": rel, "sha256": crate::common::sha256_bytes_hex(&bytes), "mode": file_mode(&target)?}));
     }
     // Canonical form: keys sorted, compact separators (matches Python's json.dumps(sort_keys=True, separators=(",",":"))).
     let payload = json!({"base_head": base_head, "files": files, "run_id": run_id});
