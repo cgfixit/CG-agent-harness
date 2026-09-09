@@ -88,8 +88,12 @@ one-token model response returned the new typed truncation error. No Developer
 ID, notarization or release publication is claimed. The Cargo preparation helper
 is still a checkout script and is absent from the binary-only archive.
 
-Still incomplete: verification-time descendant cancellation, server restart reconciliation,
-resource peak/cleanup stress, and broader configuration/setup parity.
+Native verification-time cancellation across observed separate process groups now
+passes in PR #21, including preservation of an unrelated sibling process. Owned
+acceptance servers and the separate Ollama daemon were stopped; no owned PIDs
+remained, and the normal Ollama listener remained available. Escaped/reparented
+work, abrupt server death, startup reconciliation, resource peak/cleanup stress
+and broader configuration/setup parity remain incomplete.
 Automated correction regressions and the separate real Qwen exercise are
 distinct evidence. No broad usability,
 security, parity or release-readiness claim follows from these samples.

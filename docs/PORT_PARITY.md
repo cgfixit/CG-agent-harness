@@ -50,7 +50,7 @@ return when capability is absent. That must become a required real Cargo gate.
 ## Ledger
 
 Python paths below refer to the pinned comparison SHA. Rust paths refer to the
-baseline plus this PR where explicitly stated. “Verified” applies only to the
+hardening stack through PR #23; later sections preserve phase-specific history. “Verified” applies only to the
 listed evidence; “unverified” means not yet executed at the required realism.
 
 | Python reference | Rust implementation | Intended behavior | Evidence | Status |
@@ -63,11 +63,11 @@ listed evidence; “unverified” means not yet executed at the required realism
 | `harness/agent_policy.py` | `server/agent_policy.rs`, console asset | Authoritative supported checks/defaults | Server-advertised cargo-test/default capabilities; actual Chrome selection tests pass | incomplete |
 | `harness/chat_client.py`, `chat_cancel.py` | `llm/openai_chat.rs` | Local chat, complete output, cancel | mock and real Ollama chat/cancel; explicit non-streaming; stop required before content | incomplete |
 | `harness/server.py`, model settings | `llm/backend.rs`, `agentic/proposer.rs` | Consistent chat/planner model selection | Separate config paths explicitly shown; exact installed tag exercised in both clients | incomplete |
-| Chat usage/reasoning plumbing | `llm/openai_chat.rs`, `agentic/proposer.rs` | Correct usage and supported reasoning parameters | mocked usage plus real none/low effort and usage observations in MAC_ACCEPTANCE.md | unverified |
+| Chat usage/reasoning plumbing | `llm/openai_chat.rs`, `agentic/proposer.rs` | Correct usage and supported reasoning parameters | mocked usage plus real none/low effort and usage observations in MAC_ACCEPTANCE.md; no cross-provider equivalence | verified (sampled local requests) |
 | `harness/prompts.py`, `skills_view.py` | `server/prompts.rs`, `views.rs`, bundled skills | Skills/persona/context in prompt | panel/prompt fixture tests; real-model influence unverified | incomplete |
 | `harness/memory_notes.py` | `server/memory_notes.rs` | Local note CRUD and prompt wiring | panel tests | verified (fixtures) |
 | `harness/web_search.py` | `server/web_search.rs` | Explicit optional web with SSRF checks; offline semantics | local mock web tests; offline-mode audit pending | incomplete |
-| `agentic/gh_client.py`, `context.py` | matching Rust modules | Read-only GitHub access and selected repo | fake-gh tests; live auth verified, selection workflow pending | incomplete |
+| `agentic/gh_client.py`, `context.py` | matching Rust modules | Read-only GitHub access and selected repo | fake-gh tests plus selected authorized repository, exact README candidate and real draft #22 | verified (one repository workflow) |
 | `agentic/real_repo_loop.py` | `agentic/real_repo_loop.rs` | Bounded useful context and planning | Same bounded character ceilings; explicit line windows and hash-bound exact edits; tree/search still pending | incomplete |
 | Loop file blocks and workspace writes | `real_repo_loop.rs`, `workspace.rs` | Safe ordinary edits, stale preconditions, atomic proposals | strict parser + snapshot/excerpt tests; >12 KB exact edit and real Cargo correction pass; concurrency/crash limits documented | incomplete |
 | `agentic/executor/runner.py`, `hard_sandbox.py` | `executor/runner.rs`, `sandbox.rs` | Actual offline Cargo checks | Baseline serde fails under fresh HOME; prepared locked serde/build-script/unit/doctest now pass native Seatbelt | incomplete |
@@ -84,25 +84,59 @@ listed evidence; “unverified” means not yet executed at the required realism
 | Python synchronous run routes | `server/agent_jobs.rs`, `routes/agent.rs` | Detached jobs, refresh recovery, stop | actual Chrome asynchronous jobs and refresh recovery pass; startup reconciliation absent | incomplete |
 | Run store / cleanup | `agentic/run_store.rs`, `commands.rs` | Durable lifecycle and controlled cleanup | fixture record guards; crash/restart recovery not established | incomplete |
 | Python CLI/ops coverage | `agentic/cli.rs`, `shim/mod.rs`, views | Honest exposed capabilities | whitelist/invariant/surface scans | verified (structural) |
-| Python install scripts | packaging scripts and GitHub workflows | Apple Silicon package with assets/self-location | native arm64 archive/checksums/assets/shim self-location pass; ad-hoc signing only; preparation script absent from binary archive | unverified |
+| Python install scripts | packaging scripts and GitHub workflows | Apple Silicon package with assets/self-location | native arm64 archive/checksums/assets/shim self-location pass; ad-hoc signing only; preparation script absent from binary archive | incomplete |
 | RAG, terminal execution, fs/sql/netconnect, native desktop | no implementation | Excluded extraction scope | extraction commit explicitly omits RAG/terminal/connectors | intentionally omitted |
 
-## Ordered next work
+## Current delivery status
 
-1. Phase 1: close consistent write policy, keep reason/confirmation explicit,
-   regression-test actual operations and revoked policy, draft PR with this ledger.
-2. Phase 2: reproduce real Cargo inside Seatbelt, prepare dependencies separately,
-   isolate writable build/cache state; then test read/write/.git/child/resource boundaries.
-3. Phase 3: bounded exact edits with hash/context preconditions and atomicity;
-   protect canonical and landed destinations. Never unprotect tests wholesale.
-4. Phase 4: server defaults, jobs/recovery/diff controls and browser tests;
-   process-tree cancellation separately. Correct streaming claims.
-5. Phase 5: independent chat/planner, then disposable end-to-end Qwen acceptance,
-   measured cold/warm/cleanup/interruption behavior with explicit network isolation.
-6. Phase 6: reconcile every row, existing-home doctor, retained features, package QA.
+The original write-policy bypass is fixed and verified. Phases 2–6 have useful
+implemented and native-tested coverage, but remain partial. The complete local
+model workflow reached a legitimate real GitHub draft PR (#22), after separate
+review, approval/commit, push and publication. That sample does not close every
+row in this ledger.
 
-Each dependent concern gets a documented stacked draft PR. No merge, release,
-cloud inference, CyClaw edits, model changes, or global configuration changes.
+| Concern | Draft PR | Current commit |
+|---|---|---|
+| Consistent write policy | [#16](https://github.com/cgfixit/CG-agent-harness/pull/16) | `ad5d9f2` |
+| Prepared offline macOS Cargo | [#17](https://github.com/cgfixit/CG-agent-harness/pull/17) | `cde3699` |
+| Bounded exact edits | [#18](https://github.com/cgfixit/CG-agent-harness/pull/18) | `05cb797` |
+| Console jobs and browser workflow | [#19](https://github.com/cgfixit/CG-agent-harness/pull/19) | `5428704` |
+| Complete local-model responses | [#20](https://github.com/cgfixit/CG-agent-harness/pull/20) | `fc73e43` |
+| Bounded native process lifecycle | [#21](https://github.com/cgfixit/CG-agent-harness/pull/21) | `ea1287a` |
+| Actual model-authored README correction, independent base main | [#22](https://github.com/cgfixit/CG-agent-harness/pull/22) | `08b5928` |
+| Explicitly reviewed PR descriptions | [#23](https://github.com/cgfixit/CG-agent-harness/pull/23) | `7ee1d0e` |
+
+All eight exact heads have successful latest runs for every reported GitHub check.
+PR #17 also retains a superseded cancelled template run followed by a successful
+template run at the same SHA. Runtime branches are
+stacked in the listed order except independent #22. No PR was merged, no release
+published, and the operator's existing checkouts/model installation were preserved.
+The latest native quality run passed 147 tests, fmt, clippy and release build;
+standard live smoke was explicitly omitted. Dependency policy passed separately.
+Real-model/browser/Cargo evidence is recorded independently in MAC_ACCEPTANCE.md.
+
+## Remaining work, in priority order
+
+1. Audit later Git hooks, filters, configuration and staged-index state as a
+   trust boundary; actual acceptance used a reviewed clean candidate with no
+   active hooks or attributes. Do not generalize that inspection to all repos.
+2. Durable job startup reconciliation and interruption recovery. Page refresh
+   works while the server lives; abrupt server death and escaped/reparented
+   descendants remain a limitation. Native cancellation is tested, not a kernel
+   containment guarantee. General memory/disk/process quotas remain absent.
+3. Bounded tree/search interfaces, precise token budgeting, complete large-diff
+   delivery, and a narrowly reviewed mechanism for new protected tests. Current
+   line windows and exact edits work, while truncated diffs refuse approval.
+4. Accessible setup/doctor checks, configuration upgrades, corrupt-state recovery,
+   skills/persona influence, retained web/offline semantics and exhaustive error
+   redaction. The existing self-test is not a complete readiness certificate.
+5. Packaged Cargo-preparation availability, broader resource/restart stress and
+   signed/notarized distribution if separately authorized. Current artifact is
+   arm64 and ad-hoc signed only.
+
+These are implementation gaps, not failures blamed on missing user permission.
+No cloud inference, CyClaw changes or global configuration changes are required
+for the next bounded Git-boundary investigation.
 
 ## Phase 1 verification
 
@@ -145,7 +179,7 @@ Initial PR #17 CI correctly failed in a rustup/Xcode doctest: Cargo's target
 linker setting did not reach rustdoc, which invoked cc/xcrun outside permitted
 cache/SDK paths. Pass the prepared linker via encoded rustdoc flags as well.
 The corrected native full quality run again passed 128 tests and release build;
-no read/write grants or test assertions were weakened. Exact CI rerun pending.
+no read/write grants or test assertions were weakened. Exact corrected-head CI passed; see the current delivery record above.
 
 ## Phase 3: exact edits and complete proposal application
 
