@@ -500,7 +500,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
             record.status = "failed".into();
             record.error = Some(e.message.clone());
             save_run(&runs_dir, &mut record)?;
-            tools.close();
+            tools.close_after_loop(Some(&e));
             err(&e.message);
             return Ok(exit_code_for(&e));
         }

@@ -227,6 +227,42 @@ fn bounded_multifile_edits_preserve_unrelated_data_and_refuse_landed_protected_p
         .any(|e| e.file_name().to_string_lossy().starts_with(".cgah-")));
 }
 
+#[test]
+fn proposal_refuses_symlink_destination_to_unprotected_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = loop_ctx(dir.path());
+    let clone = clone_into_workspace(&ctx, dir.path());
+    let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+    std::fs::create_dir(clone.join("docs")).unwrap();
+    std::fs::write(clone.join("docs/notes.txt"), "hello\n").unwrap();
+    std::os::unix::fs::symlink("docs", clone.join("alias")).unwrap();
+    std::fs::write(clone.join("loose.txt"), "loose\n").unwrap();
+    std::os::unix::fs::symlink("loose.txt", clone.join("loose-alias.txt")).unwrap();
+    let context = edits::collect(&ws, &[]);
+    let ancestor = edits::parse(&block("alias/new.txt", "secret\n"), &context, 10000).unwrap();
+    let err = ws.apply_proposal(&ancestor, &[], "test", true).unwrap_err();
+    assert!(
+        err.message.contains("symlink proposal destinations are refused"),
+        "ancestor symlink must be refused as a symlink, not protected: {}",
+        err.message
+    );
+    assert!(!err.message.contains("protected"), "{}", err.message);
+    assert!(!clone.join("docs/new.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(clone.join("docs/notes.txt")).unwrap(),
+        "hello\n"
+    );
+    let leaf = edits::parse(&block("loose-alias.txt", "hijack\n"), &context, 10000).unwrap();
+    let err = ws.apply_proposal(&leaf, &[], "test", true).unwrap_err();
+    assert!(
+        err.message.contains("symlink proposal destinations are refused"),
+        "leaf symlink must be refused as a symlink, not protected: {}",
+        err.message
+    );
+    assert!(!err.message.contains("protected"), "{}", err.message);
+    assert_eq!(std::fs::read_to_string(clone.join("loose.txt")).unwrap(), "loose\n");
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn large_file_window_edit_gets_real_cargo_failure_feedback_then_corrects() {

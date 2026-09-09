@@ -531,12 +531,9 @@ impl<'a> RepoWorkspace<'a> {
                 .originals
                 .get(raw)
                 .ok_or_else(|| self.deny(tool, "missing original precondition", Some(raw)))?;
-            let actual = self.read_file(raw).ok();
-            if &actual != expected || (expected.is_none() && self.dir.symlink_metadata(raw).is_ok()) {
-                return Err(self.deny(tool, "stale or unseen existing file; select current context", Some(raw)));
-            }
             // Even in-jail symlink aliases are refused for proposal writes.
-            // The returned landed name is still scope-checked above.
+            // Checked before the stale/unseen gate so a leaf symlink is denied
+            // as a symlink, not as an unseen regular file.
             let canonical = canonical_repo_path(raw).ok_or_else(|| self.deny(tool, "unsafe destination", Some(raw)))?;
             let mut prefix = PathBuf::new();
             for part in Path::new(&canonical).components() {
@@ -548,6 +545,10 @@ impl<'a> RepoWorkspace<'a> {
                 {
                     return Err(self.deny(tool, "symlink proposal destinations are refused", Some(raw)));
                 }
+            }
+            let actual = self.read_file(raw).ok();
+            if &actual != expected || (expected.is_none() && self.dir.symlink_metadata(raw).is_ok()) {
+                return Err(self.deny(tool, "stale or unseen existing file; select current context", Some(raw)));
             }
             targets.push((landed, expected.clone(), content.clone()));
         }
@@ -569,9 +570,7 @@ impl<'a> RepoWorkspace<'a> {
         })();
         if let Err(error) = apply {
             for file in staged.iter_mut().rev() {
-                file.rollback().map_err(|_| {
-                    HarnessError::agentic("proposal rollback failed; candidate is quarantined and must be discarded")
-                })?;
+                file.rollback().map_err(|_| rollback_quarantine_error())?;
             }
             return Err(error);
         }
@@ -719,6 +718,31 @@ impl<'a> RepoWorkspace<'a> {
             rmtree_best_effort(parent);
         }
     }
+
+    /// Production dispose after `run_real_repo_loop`. A failed rollback keeps
+    /// the clone and `.cgah-backup-*` preimages for later discard.
+    pub fn close_after_loop(&self, error: Option<&HarnessError>) {
+        if error.is_some_and(is_proposal_rollback_quarantine) {
+            self.release();
+            return;
+        }
+        self.close();
+    }
+}
+
+/// True when proposal application aborted because rollback itself failed.
+pub fn is_proposal_rollback_quarantine(error: &HarnessError) -> bool {
+    error.message.contains("rollback failed")
+        || error
+            .details
+            .get("quarantine")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
+fn rollback_quarantine_error() -> HarnessError {
+    HarnessError::agentic("proposal rollback failed; candidate is quarantined and must be discarded")
+        .detail("quarantine", true)
 }
 
 /// One staged replacement and its recovery preimage.
@@ -779,6 +803,8 @@ impl StagedReplacement {
         }
         self.parent.rename(&self.staged, &self.parent, &self.leaf)?;
         self.installed = true;
+        #[cfg(test)]
+        after_install_hook(&self.leaf);
         Ok(())
     }
 
@@ -831,8 +857,59 @@ fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str) -> std::io::Result<Vec<u8>> 
 }
 
 #[cfg(test)]
+thread_local! {
+    static AFTER_INSTALL: std::cell::Cell<Option<fn(&str)>> = const { std::cell::Cell::new(None) };
+    static TAMPER: std::cell::RefCell<Option<(std::path::PathBuf, String, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn after_install_hook(leaf: &str) {
+    AFTER_INSTALL.with(|h| {
+        if let Some(hook) = h.get() {
+            hook(leaf);
+        }
+    });
+}
+
+#[cfg(test)]
+fn tamper_after_first_install(leaf: &str) {
+    TAMPER.with(|t| {
+        let Some((root, first, second)) = t.borrow().as_ref() else {
+            return;
+        };
+        if leaf == first {
+            let _ = std::fs::write(root.join(first), "tampered-first\n");
+            let _ = std::fs::write(root.join(second), "tampered-second\n");
+        }
+    });
+}
+
+#[cfg(test)]
 mod transaction_tests {
     use super::*;
+    use crate::agentic::ctx::AgenticCtx;
+    use crate::agentic::edits::Proposal;
+    use crate::common::config::AppConfig;
+    use std::collections::BTreeMap;
+
+    fn write_enabled_ctx(dir: &Path) -> AgenticCtx {
+        let text = AppConfig::embedded_default()
+            .replacen(
+                "enabled: false                 # master switch",
+                "enabled: true                  # master switch",
+                1,
+            )
+            .replacen(
+                "    enabled: false\n    provider:",
+                "    enabled: true\n    provider:",
+                1,
+            )
+            .replacen("allow_git_write_tools: false", "allow_git_write_tools: true", 1);
+        let path = dir.join("config.yaml");
+        std::fs::write(&path, &text).unwrap();
+        AgenticCtx::new(AppConfig::from_str(&text, &path).unwrap(), &path).unwrap()
+    }
 
     #[test]
     fn failed_second_install_rolls_back_first_without_overwriting_concurrent_change() {
@@ -853,5 +930,83 @@ mod transaction_tests {
         assert_eq!(std::fs::read_to_string(root.path().join("a")).unwrap(), "original a");
         assert_eq!(std::fs::read_to_string(root.path().join("b")).unwrap(), "concurrent b");
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn failed_rollback_keeps_recovery_backup() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a"), "original a").unwrap();
+        let parent = open_jail_dir(root.path()).unwrap();
+        let mut first = StagedReplacement::prepare(parent, "a".into(), Some("original a"), "new a").unwrap();
+        first.install().unwrap();
+        std::fs::write(root.path().join("a"), "tampered a").unwrap();
+        assert!(first.rollback().unwrap_err().message.contains("concurrent change"));
+        drop(first);
+        assert_eq!(std::fs::read_to_string(root.path().join("a")).unwrap(), "tampered a");
+        assert!(
+            std::fs::read_dir(root.path())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().starts_with(".cgah-backup-")),
+            "failed rollback must retain the recovery backup"
+        );
+    }
+
+    #[test]
+    fn production_error_path_retains_clone_and_backup_on_rollback_failure() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = write_enabled_ctx(home.path());
+        let holder = home.path().join("holder");
+        let clone = holder.join("repo");
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::write(clone.join("a.rs"), "old a\n").unwrap();
+        std::fs::write(clone.join("b.rs"), "old b\n").unwrap();
+        let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+        TAMPER.with(|t| {
+            *t.borrow_mut() = Some((clone.clone(), "a.rs".into(), "b.rs".into()));
+        });
+        AFTER_INSTALL.with(|h| h.set(Some(tamper_after_first_install)));
+        let mut files = BTreeMap::new();
+        files.insert("a.rs".into(), "new a\n".into());
+        files.insert("b.rs".into(), "new b\n".into());
+        let mut originals = BTreeMap::new();
+        originals.insert("a.rs".into(), Some("old a\n".into()));
+        originals.insert("b.rs".into(), Some("old b\n".into()));
+        let err = ws
+            .apply_proposal(&Proposal { files, originals }, &[], "test", true)
+            .unwrap_err();
+        AFTER_INSTALL.with(|h| h.set(None));
+        TAMPER.with(|t| *t.borrow_mut() = None);
+        assert!(is_proposal_rollback_quarantine(&err), "{}", err.message);
+        assert!(
+            walkdir::WalkDir::new(&clone)
+                .into_iter()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with(".cgah-backup-")),
+            "recovery backup must remain after rollback failure"
+        );
+        ws.close_after_loop(Some(&err));
+        assert!(clone.is_dir(), "production dispose must not rmtree a quarantined clone");
+        assert!(
+            walkdir::WalkDir::new(&clone)
+                .into_iter()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with(".cgah-backup-")),
+            "close_after_loop must leave .cgah-backup-* in place"
+        );
+    }
+
+    #[test]
+    fn ordinary_loop_error_still_deletes_the_clone() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = write_enabled_ctx(home.path());
+        let holder = home.path().join("holder");
+        let clone = holder.join("repo");
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::write(clone.join("keep.txt"), "x").unwrap();
+        let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+        ws.close_after_loop(Some(&HarnessError::agentic("verification failed")));
+        assert!(!clone.exists());
+        assert!(!holder.exists());
     }
 }

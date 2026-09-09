@@ -21,7 +21,7 @@ use super::executor::{run_verification, Check, HardSandbox, VerificationReport};
 use super::governance::{inspect_candidate_text, inspect_code_shape, GovernanceFinding, CRITICAL_SEVERITY};
 use super::proposer::ProposerClient;
 use super::unslop::UnslopProbe;
-use super::workspace::{canonical_repo_path, fs_equiv_path, RepoWorkspace};
+use super::workspace::{canonical_repo_path, fs_equiv_path, is_proposal_rollback_quarantine, RepoWorkspace};
 
 pub const UNTRUSTED_OPEN: &str = "<<<UNTRUSTED-GITHUB-CONTEXT";
 pub const UNTRUSTED_CLOSE: &str = "UNTRUSTED-GITHUB-CONTEXT>>>";
@@ -433,7 +433,7 @@ pub fn run_real_repo_loop(
             match tools.apply_proposal(&proposal, p.protected_write_paths, p.reason, p.confirm) {
                 Ok(paths) => written = paths,
                 Err(error) => {
-                    if error.message.contains("rollback failed") {
+                    if is_proposal_rollback_quarantine(&error) {
                         return Err(error);
                     }
                     write_failed = true;
@@ -647,6 +647,16 @@ mod tests {
         // A trailing dot/space is stripped by fs_equiv_path, so 'Cargo.lock.' still matches 'Cargo.lock'.
         let protected = vec!["Cargo.lock".to_string()];
         assert!(matches_protected_path("Cargo.lock.", &protected));
+    }
+
+    #[test]
+    fn rollback_failure_is_a_fatal_apply_error() {
+        assert!(is_proposal_rollback_quarantine(&HarnessError::agentic(
+            "proposal rollback failed; candidate is quarantined and must be discarded"
+        )));
+        assert!(!is_proposal_rollback_quarantine(&HarnessError::agentic(
+            "stale file at application boundary; rolling back proposal"
+        )));
     }
 
     proptest::proptest! {
