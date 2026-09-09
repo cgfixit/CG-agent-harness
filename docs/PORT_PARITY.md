@@ -165,3 +165,23 @@ Phase 3 final `CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh`: exit
 fmt, exact clippy, 133 tests and release build. `cargo-deny check`: exit 0 with
 pre-existing warnings. Native Cargo fixtures run without a skip; live model
 acceptance is recorded separately, not counted as a mocked regression success.
+
+## Phase 4: console jobs and authoritative defaults
+
+Depends on Phase 3 `05cb797a791feeaa43fecd2eb90c840a14ae099c` (PR #18).
+Actual browser inspection reproduced staged `pytest` against the server's
+`cargo-test`. Console submission now uses existing jobs, persists the job ID
+in the URL fragment, and resumes after refresh with renewed authentication.
+CLI failures produce failed terminal jobs. Staged cancellation and active
+request cancellation are distinct and disclose surviving-descendant risk.
+Chat selection explicitly reports the separately configured planner model.
+See `docs/CONSOLE_JOBS.md` for executable native browser acceptance.
+
+Native quality gates: fmt, exact clippy, 135 tests and release build pass;
+`SKIP_LIVE=1` applies only to the standard script's live smoke. Separate actual
+Chrome + installed Qwen + real Cargo acceptance passed against disposable Git.
+No new dependencies, no key persistence, no CSRF/CSP or rate-limit weakening.
+
+Phase 4 remains partial: durable jobs/startup reconciliation, live check progress,
+process-tree cancellation and oversized diff review remain unresolved. Streaming
+is explicitly unsupported. These are not established by the browser success.

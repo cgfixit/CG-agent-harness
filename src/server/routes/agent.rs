@@ -70,12 +70,18 @@ pub async fn github_status(State(state): State<Arc<AppState>>) -> ApiResult<Json
 }
 
 /// Open: a static allow-list listing, spawns nothing.
-pub async fn agent_checks() -> Json<Value> {
+pub async fn agent_checks(State(state): State<Arc<AppState>>) -> Json<Value> {
     let profiles: Vec<Value> = available_profiles()
         .into_iter()
         .map(|(n, d)| json!({"name": n, "description": d}))
         .collect();
-    Json(json!({"profiles": profiles}))
+    Json(json!({
+        "profiles": profiles,
+        "default_profile": crate::server::agent_policy::DEFAULT_CHECK_PROFILE,
+        "poll_interval_ms": state.cfg.u64_or("app.agent_job_poll_ms", 1500).clamp(1000, 30000),
+        "planner_model": state.cfg.str_or("agentic.deepagent_github.model", ""),
+        "capabilities": {"jobs": true, "streaming": false, "job_recovery": "server_process_lifetime", "descendant_stop_guaranteed": false},
+    }))
 }
 
 /// True when the run's planner and /api/chat target the same backend.

@@ -141,3 +141,5 @@ Quality bar and traps: [AGENTS.md](AGENTS.md).
 | [setup-guide.md](setup-guide.md) | Fresh-machine walkthrough (macOS) |
 | [assets/config.default.yaml](assets/config.default.yaml) | Every tunable; no hardcoded tunables elsewhere |
 | [LICENSE](LICENSE) | MIT |
+
+For asynchronous console runs and native browser acceptance, see [Console jobs](docs/CONSOLE_JOBS.md).

@@ -3,6 +3,20 @@
 
 mod common;
 
+#[tokio::test]
+async fn server_advertises_default_checks_and_honest_job_capabilities() {
+    let model = common::start_mock_model().await;
+    let server = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let (status, value) = server.get_json("/api/agent/checks").await;
+    assert_eq!(status, 200);
+    assert_eq!(value["default_profile"], "cargo-test");
+    assert_eq!(value["capabilities"]["jobs"], true);
+    assert_eq!(value["capabilities"]["streaming"], false);
+    assert_eq!(value["capabilities"]["descendant_stop_guaranteed"], false);
+    assert_eq!(value["capabilities"]["job_recovery"], "server_process_lifetime");
+    assert!(value["poll_interval_ms"].as_u64().unwrap() >= 1000);
+}
+
 use std::time::Duration;
 
 use cgagentharness::shim::{self, OpsRequest, ShimContext, ShimError};
