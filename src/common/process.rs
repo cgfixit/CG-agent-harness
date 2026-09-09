@@ -1,16 +1,24 @@
 //! Synchronous argv-list subprocess runner with a hard timeout.
 //!
 //! Every subprocess in this crate is an argv list (never a shell string).
-//! On unix the child is placed in its own process group so a timeout kills
-//! its descendants too (`sandbox-exec`/`unshare` wrappers would otherwise
-//! outlive their wrapper). Output is captured on reader threads so a chatty
-//! child cannot deadlock the pipe.
+//! Unix capture uses nonblocking pipes under one deadline and a fixed byte ceiling.
+//! The shim shares that runner with cooperative cancellation. macOS additionally
+//! stops observed descendants across process groups; ancestry cleanup is best-effort.
+//! Other platforms retain their existing runner and do not inherit these guarantees.
 
 use std::collections::BTreeMap;
+#[cfg(not(unix))]
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(unix))]
+use std::time::Instant;
+
+#[cfg(unix)]
+mod unix;
+/// Internal safety ceiling shared by machine-readable subprocess consumers.
+pub const MAX_CAPTURE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct Output {
@@ -26,6 +34,8 @@ pub enum ProcessError {
     Timeout { timeout_sec: f64 },
     #[error("cannot spawn command: {0}")]
     Spawn(std::io::Error),
+    #[error("subprocess capture failed: {0}")]
+    Capture(String),
 }
 
 pub struct RunSpec<'a> {
@@ -63,6 +73,18 @@ fn build_command(spec: &RunSpec<'_>) -> Command {
 
 /// Run to completion or timeout. A timed-out child is SIGKILLed (whole
 /// process group on unix) and reported as `Err(Timeout)`.
+#[cfg(unix)]
+pub fn run(spec: RunSpec<'_>) -> Result<Output, ProcessError> {
+    run_cancellable(spec, &std::sync::atomic::AtomicBool::new(false))
+}
+
+#[cfg(unix)]
+pub fn run_cancellable(spec: RunSpec<'_>, cancelled: &std::sync::atomic::AtomicBool) -> Result<Output, ProcessError> {
+    assert!(!spec.argv.is_empty(), "argv must not be empty");
+    unix::run(spec, cancelled)
+}
+
+#[cfg(not(unix))]
 pub fn run(spec: RunSpec<'_>) -> Result<Output, ProcessError> {
     assert!(!spec.argv.is_empty(), "argv must not be empty");
     let mut cmd = build_command(&spec);
@@ -110,6 +132,7 @@ pub fn run(spec: RunSpec<'_>) -> Result<Output, ProcessError> {
     }
 }
 
+#[cfg(not(unix))]
 fn read_all<R: Read>(reader: Option<R>) -> String {
     let mut buf = Vec::new();
     if let Some(mut r) = reader {

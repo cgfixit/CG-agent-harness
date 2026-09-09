@@ -70,6 +70,12 @@ impl HardSandbox for ArgvListSandbox {
                 stderr: format!("timed out after {timeout_sec}s"),
                 timed_out: true,
             },
+            Err(process::ProcessError::Capture(e)) => SandboxOutcome {
+                exit_code: -3,
+                stdout: String::new(),
+                stderr: e,
+                timed_out: false,
+            },
             Err(process::ProcessError::Spawn(e)) => SandboxOutcome {
                 exit_code: -2,
                 stdout: String::new(),

@@ -327,6 +327,14 @@ pub fn execute_write(ctx: &super::ctx::AgenticCtx, plan: &Value, confirm: bool, 
             .detail("op", op)
             .detail("indeterminate", true));
         }
+        Err(process::ProcessError::Capture(e)) => {
+            audit.log(json!({"event": "agentic_write_execute_capture_failed", "op": op, "repo": cfg.repo}));
+            return Err(HarnessError::agentic(format!(
+                "gh {op} capture failed ({e}); the outcome is INDETERMINATE and was deliberately not retried"
+            ))
+            .detail("op", op)
+            .detail("indeterminate", true));
+        }
         Err(process::ProcessError::Spawn(e)) => return Err(HarnessError::agentic(format!("gh could not start: {e}"))),
     };
     audit.log(json!({"event": "agentic_write_executed", "op": op, "repo": cfg.repo, "exit_code": out.status}));

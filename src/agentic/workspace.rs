@@ -354,6 +354,7 @@ impl<'a> RepoWorkspace<'a> {
                     .log(json!({"event": "agentic_repo_workspace_git_failed", "op": tool, "reason": "timeout"}));
                 HarnessError::agentic(format!("git {tool} timed out after {timeout_sec}s")).detail("tool", tool)
             }
+            process::ProcessError::Capture(e) => HarnessError::agentic(e),
             process::ProcessError::Spawn(e) => HarnessError::agentic(format!("git {tool} could not start: {e}")),
         })?;
         if out.status != Some(0) {

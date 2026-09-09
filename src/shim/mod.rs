@@ -395,6 +395,52 @@ pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
 }
 
 /// Spawn `argv` as a child and wait for it, killing the whole process group on timeout.
+#[cfg(unix)]
+pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<(i32, String, String), ShimError> {
+    use crate::common::process::{self, ProcessError, RunSpec};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    struct CancelOnDrop(Arc<AtomicBool>);
+    impl Drop for CancelOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _guard = CancelOnDrop(cancelled.clone());
+    let argv = argv.to_vec();
+    let cwd = cwd.to_path_buf();
+    // No reader tasks detach. The worker owns every pipe and observes cancellation
+    // during bounded nonblocking I/O, including when this future is aborted.
+    let worker = tokio::task::spawn_blocking(move || {
+        process::run_cancellable(
+            RunSpec {
+                argv: &argv,
+                cwd: Some(&cwd),
+                env: None,
+                timeout,
+                stdin: None,
+            },
+            &cancelled,
+        )
+    });
+    let output = match tokio::time::timeout(timeout, worker).await {
+        Ok(Ok(Ok(output))) => output,
+        Ok(Ok(Err(ProcessError::Timeout { .. }))) | Err(_) => {
+            return Err(ShimError::Timeout {
+                action: String::new(),
+                timeout_sec: timeout.as_secs(),
+            })
+        }
+        Ok(Ok(Err(error))) => return Err(ShimError::Io(error.to_string())),
+        Ok(Err(_)) => return Err(ShimError::Io("subprocess worker failed".into())),
+    };
+    Ok((output.status.unwrap_or(-1), output.stdout, output.stderr))
+}
+
+#[cfg(not(unix))]
 pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<(i32, String, String), ShimError> {
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..])

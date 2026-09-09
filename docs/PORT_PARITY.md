@@ -60,10 +60,10 @@ listed evidence; “unverified” means not yet executed at the required realism
 | Existing-home config/settings migration | `common/home.rs` | Upgrade existing homes without losing state | Seeds only missing files; full upgrade/recovery matrix absent | unverified |
 | `harness/sessions.py` | `server/sessions.rs` | Persist sessions and recover corrupt state | chat/session tests; broader corruption scenarios pending | incomplete |
 | `harness/server.py`, `schemas.py` | `server/routes/*`, `schemas.rs` | Compatible schemas, errors and timeouts | route tests; write intent deliberately extended in this PR | changed deliberately |
-| `harness/agent_policy.py` | `server/agent_policy.rs`, console asset | Authoritative supported checks/defaults | Server cargo-test; browser explicitly pytest | incomplete |
-| `harness/chat_client.py`, `chat_cancel.py` | `llm/openai_chat.rs` | Local chat, complete output, cancel | mocked response/cancel tests; client requests stream=false | incomplete |
-| `harness/server.py`, model settings | `llm/backend.rs`, `agentic/proposer.rs` | Consistent chat/planner model selection | Separate config paths; local tag inventoried only | incomplete |
-| Chat usage/reasoning plumbing | `llm/openai_chat.rs`, `agentic/proposer.rs` | Correct usage and supported reasoning parameters | mocked usage; real Ollama parameter behavior not established | unverified |
+| `harness/agent_policy.py` | `server/agent_policy.rs`, console asset | Authoritative supported checks/defaults | Server-advertised cargo-test/default capabilities; actual Chrome selection tests pass | incomplete |
+| `harness/chat_client.py`, `chat_cancel.py` | `llm/openai_chat.rs` | Local chat, complete output, cancel | mock and real Ollama chat/cancel; explicit non-streaming; stop required before content | incomplete |
+| `harness/server.py`, model settings | `llm/backend.rs`, `agentic/proposer.rs` | Consistent chat/planner model selection | Separate config paths explicitly shown; exact installed tag exercised in both clients | incomplete |
+| Chat usage/reasoning plumbing | `llm/openai_chat.rs`, `agentic/proposer.rs` | Correct usage and supported reasoning parameters | mocked usage plus real none/low effort and usage observations in MAC_ACCEPTANCE.md | unverified |
 | `harness/prompts.py`, `skills_view.py` | `server/prompts.rs`, `views.rs`, bundled skills | Skills/persona/context in prompt | panel/prompt fixture tests; real-model influence unverified | incomplete |
 | `harness/memory_notes.py` | `server/memory_notes.rs` | Local note CRUD and prompt wiring | panel tests | verified (fixtures) |
 | `harness/web_search.py` | `server/web_search.rs` | Explicit optional web with SSRF checks; offline semantics | local mock web tests; offline-mode audit pending | incomplete |
@@ -77,14 +77,14 @@ listed evidence; “unverified” means not yet executed at the required realism
 | Path jail / protected scope | `workspace.rs`, loop policy | Containment and protected landed destinations | proposal scope checks raw/landed paths, denies symlinks; retained parent handles; concurrent rename/leaf-CAS residual remains | incomplete |
 | Hard sandbox | `executor/sandbox.rs` | Read/write/network/process confinement | Baseline outside read/.git write reproduced; this PR denies both plus network, cache and candidate writes; process/resource limits remain | incomplete |
 | Git execution/finalization | `workspace.rs`, `executor/apply.rs` | No hooks/filters/index contamination | Disposable proof disables hooks; actual later Git operations need further audit | incomplete |
-| Child process runner / ops runner | `common/process.rs`, `shim/mod.rs` | Bounded output, time, descendants, resources | timeout tests; nested groups, hung pipes, memory/disk limits unresolved | incomplete |
+| Child process runner / ops runner | `common/process.rs`, `shim/mod.rs` | Bounded output, time, descendants, resources | bounded Unix capture/deadline and native nested-group cancellation pass; escaped reparenting, memory/disk quotas unresolved | incomplete |
 | `harness/server.py`, auth routes | `server/guards.rs`, common auth | Rate → origin → key → CSRF; loopback Host, optional local auth | auth/security-header tests | verified (fixtures) |
 | Logger/error/telemetry controls | `common/audit.rs`, env scrubber, cloud proposer | Redaction, opt-outs, no cloud inference by default | common/chat/panel tests; exhaustive leak audit pending | incomplete |
 | Optional cloud proposer | `agentic/cloud_proposer.rs` | Gated provider wire formats without real cloud tests | local Grok/Claude mocks; no actual cloud credentials used | verified (mocks only) |
-| Python synchronous run routes | `server/agent_jobs.rs`, `routes/agent.rs` | Detached jobs, refresh recovery, stop | API job tests; browser remains synchronous; startup reconciliation absent | incomplete |
+| Python synchronous run routes | `server/agent_jobs.rs`, `routes/agent.rs` | Detached jobs, refresh recovery, stop | actual Chrome asynchronous jobs and refresh recovery pass; startup reconciliation absent | incomplete |
 | Run store / cleanup | `agentic/run_store.rs`, `commands.rs` | Durable lifecycle and controlled cleanup | fixture record guards; crash/restart recovery not established | incomplete |
 | Python CLI/ops coverage | `agentic/cli.rs`, `shim/mod.rs`, views | Honest exposed capabilities | whitelist/invariant/surface scans | verified (structural) |
-| Python install scripts | packaging scripts and GitHub workflows | Apple Silicon package with assets/self-location | baseline Bundle green; native packaged acceptance pending; ad-hoc signing only | unverified |
+| Python install scripts | packaging scripts and GitHub workflows | Apple Silicon package with assets/self-location | native arm64 archive/checksums/assets/shim self-location pass; ad-hoc signing only; preparation script absent from binary archive | unverified |
 | RAG, terminal execution, fs/sql/netconnect, native desktop | no implementation | Excluded extraction scope | extraction commit explicitly omits RAG/terminal/connectors | intentionally omitted |
 
 ## Ordered next work
@@ -201,3 +201,22 @@ Completion-contract quality gates passed: fmt, exact clippy, 137 tests, release
 build and cargo-deny. Real two-file correction passed in two iterations (Cargo
 101 then 0), and the extracted arm64 package passed assets, shim self-location,
 checksums/ad-hoc signature and real-model truncation checks. No release published.
+
+
+## Process lifecycle correction (Phases 2/4)
+
+Native repro: a 100 ms deadline waited about two seconds for inherited pipes.
+Shared nonblocking Unix capture now bounds stdin/output/drain with cancellation
+cleanup and a 4 MiB raw-output ceiling. Native JobStore cancellation stops an
+observed separate-group Seatbelt check and preserves an unrelated sibling.
+Independent review found ordinary early-exit descendants surviving after leader
+reaping; wait-without-reaping now retains group identity through cleanup, with
+a regression. Publication capture failures retain indeterminate outcome/audit
+semantics and are not retried. No sandbox permission or dependency changes.
+
+Residual limits are in `docs/PROCESS_LIFECYCLE.md`: escaped reparenting, abrupt
+server death, general resource quotas and non-Unix parity remain incomplete.
+
+Process correction final quality gates passed: fmt, exact clippy, 145 tests,
+release build and cargo-deny. Required native cancellation and separated-scratch
+regressions pass; no capability skip or additional sandbox grant.

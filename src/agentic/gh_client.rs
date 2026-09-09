@@ -101,6 +101,7 @@ pub fn check_gh_version(min_version: (u32, u32, u32)) -> Result<(u32, u32, u32)>
                     std::thread::sleep(Duration::from_secs(1));
                 }
             }
+            Err(process::ProcessError::Capture(e)) => return Err(HarnessError::agentic(e)),
             Err(process::ProcessError::Spawn(e)) => {
                 return Err(HarnessError::gh_not_installed(format!(
                     "Could not execute GitHub CLI (gh): {e}"
@@ -280,6 +281,7 @@ pub fn run_read(audit: &Audit, req: &ReadRequest<'_>) -> Result<Value> {
                         .detail("repo", req.repo),
                 );
             }
+            Err(process::ProcessError::Capture(e)) => return Err(HarnessError::agentic(e)),
             Err(process::ProcessError::Spawn(e)) => {
                 return Err(HarnessError::gh_not_installed(format!("Could not execute gh: {e}")));
             }

@@ -9,7 +9,7 @@ The HTTP console (`src/server`, `src/shim`, `src/llm`, `src/common`) never links
 or calls the agentic pipeline (`src/agentic`). The only edge is
 `src/shim/mod.rs`, which builds an argv list from an 11-action whitelist and
 spawns `current_exe() agentic <action>` as a CHILD PROCESS with a hard timeout
-(`kill_on_drop`, process-group SIGKILL on unix). The agentic side never references
+(shared bounded Unix runner with cancellation cleanup; `kill_on_drop` elsewhere). The agentic side never references
 the server or the shim.
 
 - Locked by: `tests/invariant_guard.rs` (source scan, both directions; only the
@@ -171,3 +171,8 @@ already killed.
 - The Windows sandbox is a process-tree kill boundary, not a network namespace.
 - `security.api_key_optional` on a host fronted by a header-stripping proxy is
   indistinguishable from no proxy: do not enable it there.
+
+Unix subprocess I/O shares an operation deadline and a fixed aggregate capture
+ceiling. The direct child stays unreaped through process-group cleanup. macOS
+also stops observed descendants across groups; this is best-effort ancestry
+cleanup, not containment. See `docs/PROCESS_LIFECYCLE.md` for limits and tests.
