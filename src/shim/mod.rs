@@ -263,6 +263,17 @@ pub fn validate(req: &OpsRequest) -> Result<(), ShimError> {
             "real-repo-run-publish requires a non-empty reason".into(),
         ));
     }
+    if a == "real-repo-run-publish"
+        && req.confirm
+        && req
+            .body
+            .as_ref()
+            .is_none_or(|body| body.trim().is_empty() || body.len() > crate::common::MAX_PR_BODY_BYTES)
+    {
+        return Err(ShimError::Ops(
+            "publication requires a reviewed body of 1..65536 bytes".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -371,6 +382,14 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
         "real-repo-run-push" | "real-repo-run-publish" => {
             argv.push(format!("--run-id={}", req.run_id.clone().unwrap_or_default()));
             argv.push(format!("--reason={}", req.reason.clone().unwrap_or_default()));
+            if req.action == "real-repo-run-publish" {
+                if let Some(body) = &req.body {
+                    let temp = write_temp(&ctx.tmp_dir, "cgah_pr_body_", body)?;
+                    argv.push("--body-file".into());
+                    argv.push(temp.display().to_string());
+                    temps.push(temp);
+                }
+            }
             if req.confirm {
                 argv.push("--confirm".into());
             }

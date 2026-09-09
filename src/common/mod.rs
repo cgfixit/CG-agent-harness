@@ -67,3 +67,6 @@ pub fn sha256_bytes_hex(data: &[u8]) -> String {
 pub fn clip_chars(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
+
+/// Fixed byte ceiling for an explicitly reviewed pull-request description.
+pub const MAX_PR_BODY_BYTES: usize = 65_536;

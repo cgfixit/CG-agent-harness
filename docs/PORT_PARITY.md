@@ -220,3 +220,18 @@ server death, general resource quotas and non-Unix parity remain incomplete.
 Process correction final quality gates passed: fmt, exact clippy, 145 tests,
 release build and cargo-deny. Required native cancellation and separated-scratch
 regressions pass; no capability skip or additional sandbox grant.
+
+
+## Reviewed draft-publication descriptions
+
+Real-repository acceptance exposed a hardcoded one-line draft body. CLI, shim,
+API and console now transport bounded explicitly reviewed Markdown. The browser
+loads a local completed template file and previews the full body before a
+separate publication action. Both subprocess hops use temporary body files.
+Missing text is refused; reason/confirm remain separate requirements. The
+operator remains responsible for the repository's actual template and content.
+
+Publication-body final gates passed: fmt, exact clippy, 147 tests, release build
+and unchanged dependency checks. Actual Chrome/mock-publication byte readback
+passed. Real GitHub draft #22 completed the separate commit/push/publication
+workflow with an exact-template readback and a README-only change.

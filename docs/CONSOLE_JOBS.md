@@ -23,7 +23,11 @@ of process-tree termination. Chat output remains non-streaming.
 Inspect `/agent status <run id>` and the complete diff before
 `/agent approve <run id> <reason>`. Approval commits locally. Push and draft
 publication require their own explicit `/agent push` and `/agent publish`
-actions with reasons. A truncated diff cannot satisfy console review.
+actions with reasons. Before publication, complete the repository's actual PR
+template in a local Markdown file, then use `/agent pr-body <run id>` to select
+and preview it. `/agent publish <run id> <reason>` sends that reviewed text.
+Reselect after any file edit; refresh clears staged bodies. A truncated diff
+cannot satisfy console review.
 
 ## Reproduce browser acceptance on macOS
 
@@ -55,7 +59,9 @@ The test starts a fresh headless Chrome profile, checks authentication and CSRF,
 stages an explicit large-file window, verifies server defaults/check selection,
 submits an asynchronous job, refreshes, restores authentication, reviews the
 complete expected one-expression diff, approves a local commit, separately
-pushes to the local bare remote, and distinguishes staged and active cancellation.
+pushes to the local bare remote, loads/previews a PR body through the browser
+file chooser, verifies exact mock draft publication, and distinguishes staged
+and active cancellation.
 Missing Chrome, model failure, failed verification or wrong diff fails the test.
 No npm dependency or Chrome sandbox bypass is used. Stop the fixture server with
 Ctrl-C; its disposable directory remains for inspection.
@@ -71,3 +77,12 @@ with installed `qwen3.8:27b`, a separate Ollama process with Seatbelt non-loopba
 network denial, and real offline sandboxed Cargo. This is real local-model
 browser evidence, separate from Rust route tests. The operator's normal Ollama
 process and model files were unchanged.
+
+
+Direct CLI publication requires `--body-file /path/to/reviewed-description.md`
+(or an explicit `--body` argument), a reason and confirmation. Descriptions must
+contain 1..65536 UTF-8 bytes. The server transfers text through a temporary file;
+the final GitHub invocation also uses `--body-file`, preserving literal newlines
+and avoiding description text in process arguments. This replaces the previous
+hardcoded one-line description. The harness does not invent or certify a
+repository's PR template: the operator completes and reviews it.

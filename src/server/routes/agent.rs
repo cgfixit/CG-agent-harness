@@ -326,7 +326,7 @@ pub async fn agent_run_decision(
 pub async fn agent_run_push(
     State(state): State<Arc<AppState>>,
     Path(run_id): Path<String>,
-    ValidJson(req): ValidJson<AgentPublishRequest>,
+    ValidJson(req): ValidJson<AgentPushRequest>,
 ) -> ApiResult<Json<Value>> {
     let checked = validated_run_id(&run_id)?;
     let mut ops = OpsRequest::new("real-repo-run-push");
@@ -345,6 +345,7 @@ pub async fn agent_run_publish(
     let mut ops = OpsRequest::new("real-repo-run-publish");
     ops.run_id = Some(checked);
     ops.reason = Some(req.reason.clone());
+    ops.body = req.body;
     ops.confirm = req.confirm;
     agentic_call(&state, ops).await
 }

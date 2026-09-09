@@ -76,12 +76,16 @@ fakebin = root / 'fakebin'
 fakebin.mkdir()
 (fakebin / 'gh').write_text('''#!/usr/bin/env python3
 import json, os, sys
+from pathlib import Path
 command = sys.argv[1:3]
 if sys.argv[1:] == ['--version']: print('gh version 2.60.0')
 elif command == ['repo', 'view']: print(json.dumps({'name': 'fixture', 'description': 'Disposable arithmetic fixture', 'defaultBranchRef': {'name': 'main'}, 'url': 'https://example.invalid/fixture'}))
 elif command == ['repo', 'clone']: os.execvp('git', ['git', 'clone', '-q', ''' + repr(str(bare)) + ''', sys.argv[4]])
 elif command in [['pr', 'list'], ['issue', 'list']]: print('[]')
-elif command == ['pr', 'create']: print('https://example.invalid/pull/1')
+elif command == ['pr', 'create']:
+    body = Path(sys.argv[sys.argv.index('--body-file') + 1]).read_text()
+    Path(''' + repr(str(root / 'published-body')) + ''').write_text(body)
+    print('https://example.invalid/pull/1')
 else: sys.exit('unsupported fixture operation')
 ''')
 (fakebin / 'gh').chmod(0o700)

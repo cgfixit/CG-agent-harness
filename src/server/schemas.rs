@@ -355,14 +355,41 @@ impl Validate for AgentDecisionRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct AgentPushRequest {
+    pub reason: String,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl Validate for AgentPushRequest {
+    fn validate(&self) -> Vec<String> {
+        if len_ok(&self.reason, 1, MAX_REASON_LEN) {
+            vec![]
+        } else {
+            vec!["reason".into()]
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentPublishRequest {
     pub reason: String,
+    #[serde(default)]
+    pub body: Option<String>,
     #[serde(default)]
     pub confirm: bool,
 }
 
 impl Validate for AgentPublishRequest {
     fn validate(&self) -> Vec<String> {
+        if self
+            .body
+            .as_ref()
+            .is_some_and(|body| body.trim().is_empty() || body.len() > crate::common::MAX_PR_BODY_BYTES)
+        {
+            return vec!["body".into()];
+        }
         if len_ok(&self.reason, 1, MAX_REASON_LEN) {
             vec![]
         } else {

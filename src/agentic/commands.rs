@@ -617,10 +617,11 @@ fn publish_record(
     runs_dir: &Path,
     reason: &str,
     confirm: bool,
+    body: &str,
 ) -> Result<u8> {
     let params = json!({
         "head": record.branch_name, "title": record.commit_message,
-        "body": format!("Automated real-repo-run candidate (run_id={}).", record.run_id),
+        "body": body,
     });
     let current = super::writer::current_repository_policy(ctx, "pr_create", reason, confirm)?;
     let outcome = plan_write(&current, &ctx.audit, "pr_create", reason, confirm, params)
@@ -640,7 +641,8 @@ fn publish_record(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false)
             {
-                record.pr_url = Some("INDETERMINATE: gh pr create timed out; verify on GitHub before retrying".into());
+                record.pr_url =
+                    Some("INDETERMINATE: gh pr create outcome unknown; verify on GitHub before retrying".into());
             }
             save_run(runs_dir, record)?;
             err(&format!(
@@ -771,7 +773,29 @@ fn cmd_real_repo_run_publish(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         Err(code) => return Ok(code),
     };
     let _tools = RepoWorkspace::attach(ctx, Path::new(&record.dest))?;
-    let code = publish_record(ctx, &mut record, &runs_dir, opts.get("reason").unwrap_or(""), true)?;
+    super::writer::current_repository_policy(ctx, "pr_create", opts.get("reason").unwrap_or(""), true)?;
+    use std::io::Read;
+    let mut body = String::new();
+    if let Some(path) = opts.get("body-file") {
+        std::fs::File::open(path)?
+            .take((crate::common::MAX_PR_BODY_BYTES + 1) as u64)
+            .read_to_string(&mut body)?;
+    } else if let Some(value) = opts.get("body") {
+        body = value.to_string();
+    }
+    if body.trim().is_empty() || body.len() > crate::common::MAX_PR_BODY_BYTES {
+        return Err(HarnessError::agentic(
+            "publication requires a reviewed --body-file (or --body) of 1..65536 bytes; use the repository PR template",
+        ));
+    }
+    let code = publish_record(
+        ctx,
+        &mut record,
+        &runs_dir,
+        opts.get("reason").unwrap_or(""),
+        true,
+        &body,
+    )?;
     if code != EXIT_OK {
         return Ok(code);
     }
