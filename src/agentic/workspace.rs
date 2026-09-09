@@ -875,7 +875,8 @@ fn after_install_hook(leaf: &str) {
 #[cfg(test)]
 fn tamper_after_first_install(leaf: &str) {
     TAMPER.with(|t| {
-        let Some((root, first, second)) = t.borrow().as_ref() else {
+        let state = t.borrow();
+        let Some((root, first, second)) = state.as_ref() else {
             return;
         };
         if leaf == first {
