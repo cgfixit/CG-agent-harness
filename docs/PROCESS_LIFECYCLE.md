@@ -48,3 +48,9 @@ Missing native sandbox capability fails that test.
 `tests/process_writer_outcome.rs` uses a local fake `gh` that records one accepted
 mutation then floods stdout. It verifies exactly one invocation, an indeterminate
 error identifying the operation, and an audit record. No remote service is used.
+
+CI exposed timer throttling from sleeping after ready output chunks. The runner
+now continues draining ready data while retaining per-chunk budget/cancellation
+checks; it sleeps only when neither stream advances. The early-exit fixture
+uses one second for process startup and a five-second descendant, preserving
+its termination assertion; the separate 100 ms deadline regressions remain.

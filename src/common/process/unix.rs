@@ -261,6 +261,7 @@ pub(super) fn run(spec: RunSpec<'_>, cancelled: &AtomicBool) -> Result<Output, P
                 }
             }
         }
+        let before = total;
         read_chunk(&mut stdout, &mut out, &mut total)?;
         read_chunk(&mut stderr, &mut err, &mut total)?;
         if stdout.is_none() && stderr.is_none() && exited(&owner.child)? {
@@ -277,6 +278,8 @@ pub(super) fn run(spec: RunSpec<'_>, cancelled: &AtomicBool) -> Result<Output, P
                 timed_out: false,
             });
         }
-        std::thread::sleep(Duration::from_millis(2));
+        if total == before {
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 }

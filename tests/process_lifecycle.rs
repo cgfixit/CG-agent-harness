@@ -28,7 +28,7 @@ fn early_leader_exit_does_not_orphan_an_ordinary_background_child() {
     let argv = vec![
         "/bin/sh".into(),
         "-c".into(),
-        "/bin/sleep 0.02; /bin/sleep 2 & echo $! > \"$1\"; exit 0".into(),
+        "/bin/sleep 0.02; /bin/sleep 5 & echo $! > \"$1\"; exit 0".into(),
         "fixture".into(),
         marker.display().to_string(),
     ];
@@ -36,7 +36,7 @@ fn early_leader_exit_does_not_orphan_an_ordinary_background_child() {
         argv: &argv,
         cwd: None,
         env: None,
-        timeout: Duration::from_millis(100),
+        timeout: Duration::from_secs(1),
         stdin: None,
     });
     assert!(result.is_err());
