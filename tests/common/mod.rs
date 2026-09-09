@@ -233,7 +233,7 @@ impl MockModel {
 pub fn ok_reply(text: &str, prompt: u64, completion: u64) -> Value {
     json!({
         "model": "mock-model",
-        "choices": [{"message": {"role": "assistant", "content": text}}],
+        "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": text}}],
         "usage": {"prompt_tokens": prompt, "completion_tokens": completion},
     })
 }

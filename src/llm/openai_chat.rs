@@ -80,6 +80,11 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         .and_then(|c| c.as_str())
         .ok_or_else(|| llm_err("malformed response from model server"))?
         .to_string();
+    match first.get("finish_reason").and_then(Value::as_str) {
+        Some("stop") => {}
+        Some("length") => return Err(llm_err("model output was truncated; reduce the requested output or adjust the configured token budget before retrying")),
+        _ => return Err(llm_err("model response did not report a normal completion (finish_reason=stop required)")),
+    }
     let usage = obj.get("usage").and_then(|u| u.as_object());
     Ok(ChatResult {
         body_text,

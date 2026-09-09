@@ -128,6 +128,18 @@ impl ProposerClient for LocalProposerClient<'_> {
             failed("ValueError");
             HarnessError::agentic("local proposer invocation failed (ValueError)")
         })?;
+        let choice = data.get("choices").and_then(Value::as_array).and_then(|a| a.first());
+        match choice.and_then(|c| c.get("finish_reason")).and_then(Value::as_str) {
+            Some("stop") => {}
+            Some("length") => {
+                failed("IncompleteOutput");
+                return Err(HarnessError::config("local planner output was truncated; this response was not applied. Reduce the task or adjust agentic.deepagent_github.planner_max_tokens before retrying"));
+            }
+            _ => {
+                failed("IncompleteOutput");
+                return Err(HarnessError::config("local planner did not report a normal completion (finish_reason=stop required); this response was not applied"));
+            }
+        }
         let content = data
             .get("choices")
             .and_then(|c| c.as_array())

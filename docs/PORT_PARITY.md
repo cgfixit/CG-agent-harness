@@ -185,3 +185,19 @@ No new dependencies, no key persistence, no CSRF/CSP or rate-limit weakening.
 Phase 4 remains partial: durable jobs/startup reconciliation, live check progress,
 process-tree cancellation and oversized diff review remain unresolved. Streaming
 is explicitly unsupported. These are not established by the browser success.
+
+## Phase 5: model completion contract
+
+At Phase 4 `831846596753e5066bd437883e93a27795f287e0` (#19), real installed
+`qwen3.8:27b` returned `finish_reason=length` under a one-token budget. Both
+chat and planner regressions reproduced accepting nonempty truncated content,
+including a syntactically complete file-block prefix. Both local clients now
+require `finish_reason=stop`; planner truncation is an actionable configuration
+error before patch parsing. Missing/unknown completion states are refused.
+Normal mock responses now explicitly report `stop`; existing assertions remain.
+See `docs/MAC_ACCEPTANCE.md` for measured real-model evidence and its limits.
+
+Completion-contract quality gates passed: fmt, exact clippy, 137 tests, release
+build and cargo-deny. Real two-file correction passed in two iterations (Cargo
+101 then 0), and the extracted arm64 package passed assets, shim self-location,
+checksums/ad-hoc signature and real-model truncation checks. No release published.

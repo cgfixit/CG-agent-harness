@@ -61,7 +61,7 @@ async fn model_errors_are_502_without_echoing_the_body() {
     assert_eq!(status, 502);
     assert!(message(&body).contains("malformed"));
     // Usage is cosmetic: a malformed usage block degrades to 0, not an error.
-    model.set_reply(json!({"choices": [{"message": {"content": "ok"}}], "usage": "nope"}));
+    model.set_reply(json!({"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}], "usage": "nope"}));
     let (status, body) = s.post_json("/api/chat", json!({"message": "x"})).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["usage"]["prompt_tokens"], 0);
