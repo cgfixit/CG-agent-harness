@@ -1,13 +1,13 @@
 # Setup guide (macOS, Apple Silicon)
 
 This is a full, step-by-step walkthrough for getting CGagentHarness running on a Mac with an
-Apple Silicon chip (M1, M2, M3, or M4), written for someone comfortable in a terminal but new to
+Apple Silicon chip (including M5), written for someone comfortable in a terminal but new to
 this particular project. If you just want the two-minute pitch, read `README.md` first — this
 document is the thing you actually follow, top to bottom, on a fresh machine.
 
 A few terms used throughout: **loopback-only** means the program only ever listens on
-`127.0.0.1`, your own machine's internal address — nothing outside your Mac can reach it, and it
-will refuse to bind to anything else. The **console** is the browser page you'll chat through.
+a loopback address such as `127.0.0.1`. It refuses a non-loopback bind. This does
+not by itself prevent outbound traffic or protect a deliberately configured proxy. The **console** is the browser page you'll chat through.
 The **coding pipeline** is a separate, optional feature that can clone a real GitHub repository
 and propose patches to it; it ships completely switched off, and arming it is its own section
 near the end.
@@ -65,40 +65,39 @@ brew --version
 
 ### 2.4 Rust
 
-Install Rust through `rustup`, the official installer, rather than through Homebrew — this
-project pins an exact toolchain version (more on that in a moment) and `rustup` is what makes
-that pin work automatically.
+Inspect the installation already on PATH before changing it:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-When it asks, choose option 1 ("Proceed with installation (default)"). Once it finishes, load
-Rust into your current shell:
-
-```bash
-source "$HOME/.cargo/env"
-```
-
-(New terminal windows will pick this up automatically from now on; you only need to `source` it
-manually in the terminal you already have open.) Confirm with:
-
-```bash
+command -v rustc cargo rustup
 rustc --version
 cargo --version
+rustc --print sysroot
 ```
 
-You don't need to install a specific version yourself — this repository ships a
-`rust-toolchain.toml` file that pins Rust 1.88 with the `clippy` and `rustfmt` components. The
-first time you run any `cargo` command inside the project folder, `rustup` will notice that file
-and silently download exactly that toolchain if you don't already have it. That first command
-will pause for a little while ("info: syncing channel updates...", "info: downloading N
-components") — that's expected, not a hang.
+Preserve a working existing toolchain. The acceptance machine used Homebrew
+Rust/Cargo 1.98.0 without rustup on PATH and passed the native gates. Homebrew
+executables do not enforce `rust-toolchain.toml`; Rust 1.88 compatibility is
+checked separately in CI.
+
+If you already use rustup, explicitly prepare the repository's pinned toolchain
+and components while engineering network access is available:
+
+```bash
+rustup toolchain install 1.88 --component clippy --component rustfmt
+```
+
+On a fresh machine without Rust, install a toolchain using the official
+[Rust installation instructions](https://www.rust-lang.org/tools/install).
+Toolchain installation and dependency downloads belong to preparation. Offline
+verification must not attempt a rustup download or depend on credentials from
+the operator's real home. See [Offline Cargo verification](docs/OFFLINE_CARGO.md).
 
 ### 2.5 Ollama
 
 [Ollama](https://ollama.com) runs the language model locally and is what the console talks to
-for chat. Install it with Homebrew:
+for chat and planning. Check `command -v ollama` and `ollama --version` first.
+If it is already installed, preserve that installation. On a fresh machine you
+can install the app with Homebrew:
 
 ```bash
 brew install --cask ollama
@@ -128,47 +127,47 @@ cd CG-agent-harness
 Every command in the rest of this guide assumes your terminal's current directory is this
 `CG-agent-harness` folder.
 
-## 4. Pull a model and start Ollama
+## 4. Select an installed model and check Ollama
 
-The console needs a chat model available through Ollama before it can hold a conversation. The
-project's default configuration expects a model tagged `qwen3.8:27b-mlx`, which is a good match
-for Apple Silicon (it uses Apple's MLX format). Pull it now — this downloads several gigabytes,
-so it may take a while depending on your connection:
+Inspect the full local inventory before choosing a model:
 
 ```bash
-ollama pull qwen3.8:27b-mlx
+ollama --version
+ollama list
+curl --fail --silent --show-error http://127.0.0.1:11434/v1/models
 ```
 
-If you'd rather start with something smaller and faster while you get everything else working,
-substitute a lighter model here (for example `ollama pull qwen2.5:7b`) — you'll just need to tell
-the console to use that model instead once it's running (see the `/model` command in section 7),
-or edit `models.local_llm.model` in the config file described in section 9.
+If the endpoint is unavailable, start the existing Ollama app or `ollama serve`.
+Do not start a second daemon on an occupied port. Leave a terminal-started daemon
+running in its terminal while you use another terminal for the harness.
 
-Ollama needs to be running as a background server for the console to reach it. If you already
-opened the Ollama app once, it's likely already running. To start it explicitly from the
-terminal instead:
+Choose the **exact installed identifier**. On the acceptance Mac it was
+`qwen3.8:27b`; the separately installed `qwen3.8:27b-mlx` had a different digest.
+Neither is assumed to exist on another machine. This guide does not ask you to
+pull, replace or rename a model. An `-mlx` suffix alone proves no execution
+backend. Inspect the chosen model, using its actual inventory spelling:
 
 ```bash
-ollama serve
+ollama show qwen3.8:27b
 ```
 
-This will occupy that terminal window (it keeps running in the foreground) — open a **new**
-terminal tab or window for the rest of this guide, or run `ollama serve &` to background it in
-the same window. Either way, confirm it's actually listening before moving on:
+Configure both `models.local_llm.model` (chat) and
+`agentic.deepagent_github.model` (planner) with your chosen tag in section 6.
+`/model use <tag>` changes chat selection only. Existing persisted chat selection
+can override the chat config, so inspect `/status` after restart.
 
-```bash
-curl -s http://127.0.0.1:11434/v1/models | head -c 200
-```
-
-You should see a chunk of JSON starting with `{"object":"list","data":[...`. If instead you get
-`curl: (7) Failed to connect`, Ollama isn't running yet — go back and start it.
+The measured M5 Pro/48 GiB run used GGUF Q4_K_M through Metal, context 8192 and
+one request at a time. It did not maximize context or modify the operator's
+normal daemon. See [Native acceptance](docs/MAC_ACCEPTANCE.md) for measurements,
+network isolation and limitations. A loopback URL alone does not establish
+Ollama's outbound-network policy.
 
 ## 5. Build the binary
 
 From inside the `CG-agent-harness` folder:
 
 ```bash
-cargo build --release
+cargo build --release --locked
 ```
 
 The first build compiles every dependency from scratch and will take a few minutes (longer if
@@ -201,6 +200,23 @@ You should see one log line confirming the console is up, something like:
 CGagentHarness console on http://127.0.0.1:8790/ (home /Users/you/.CGagentHarness)
 ```
 
+On first run the binary seeds its application home. Before the first chat, stop
+it with Ctrl-C, open that home's `config.yaml`, and merge your exact installed
+model into these existing fields (do not duplicate the YAML mappings):
+
+```yaml
+models:
+  local_llm:
+    model: "qwen3.8:27b"       # replace with your exact installed tag
+agentic:
+  deepagent_github:
+    model: "qwen3.8:27b"       # same selected tag; writes remain disarmed
+```
+
+Restart the same `serve` command. Existing homes are not overwritten with new
+configuration defaults; review new fields when upgrading. Do not create a
+`soul.md` file just to satisfy a setup check.
+
 This terminal is now occupied by the running server (leave it be — `Ctrl+C` stops it). Open a
 web browser and go to:
 
@@ -225,11 +241,11 @@ worth trying right away:
 
 - `/status` — shows the running configuration: which model is selected, the backend URL, and
   whether the coding pipeline is armed (it won't be yet).
-- `/model <name>` — switches the active chat model, if you pulled more than one.
+- `/model use <name>` — selects an exact installed chat model; the planner stays separately configured.
 - `/skills` — lists the bundled skill files under `assets/skills/` (small prompt snippets the
   console can inject into context).
 - `/tools` — lists every API surface the console exposes and whether it's actually wired up; a
-  healthy install shows every entry marked wired.
+  wired entry means a registered surface, not complete behavioral acceptance.
 - `/session` — lists your chat sessions (each browser conversation is saved to disk under the
   home directory described in section 8).
 - `/soul` — shows whether the "soul" personality file is active.
@@ -245,29 +261,26 @@ As set up so far, closing the terminal window running `serve` stops the console,
 only exists in that one shell's environment. Two things to fix, in order of how much you probably
 want them:
 
-**Persist the API key.** Instead of re-running `export CGAGENTHARNESS_API_KEY=...` in every new
-terminal, add it to your shell's startup file once:
+For manual starts, generate a fresh API key in the launching shell as shown in
+section 6 and paste it into the browser. To check presence without printing it:
 
 ```bash
-echo 'export CGAGENTHARNESS_API_KEY="'"$CGAGENTHARNESS_API_KEY"'"' >> ~/.zshrc
+test -n "${CGAGENTHARNESS_API_KEY:-}" && printf 'API key is set\n'
 ```
 
-(Use `~/.zprofile` instead if you'd rather it apply to login shells only. If you're on `bash`
-instead of the default `zsh`, use `~/.bash_profile`.) Open a new terminal to confirm it's picked
-up: `echo $CGAGENTHARNESS_API_KEY` should print your key.
+The application does not install a login service or configure secure credential
+storage for you. Keep deployment-specific credential handling separate from
+this manual setup; do not put a key in command output or shared logs.
 
 Everything the console persists to disk — sessions, the config file, logs — lives under a home
 directory of its own, `~/.CGagentHarness` by default (override it by setting
 `CGAGENTHARNESS_HOME` before you first run `serve`). You never need to create this folder
 yourself; the binary creates and populates it on first run.
 
-**Auto-start on login (optional, more advanced).** If you want the console running in the
-background permanently without a terminal window open, the standard macOS mechanism is a
-LaunchAgent — a small XML file under `~/Library/LaunchAgents/` that tells `launchd` to run the
-binary for you at login. Setting one up is outside the scope of this guide; search for "macOS
-LaunchAgent plist" if you want to go this route, and point its `ProgramArguments` at the full
-path to `target/release/cgagentharness serve` with the `CGAGENTHARNESS_API_KEY` environment
-variable set in the plist's `EnvironmentVariables` dictionary.
+Automatic login startup is not configured or verified by this guide. Job handles
+currently live in the server process: restarting loses them, and interrupted
+work may survive. Session files and run records persist, but they are not a
+complete restart-recovery mechanism. See [Console jobs](docs/CONSOLE_JOBS.md).
 
 ## 9. (Optional, advanced) Arm the coding pipeline
 
@@ -304,54 +317,78 @@ the first time you ran `serve` in section 6 — it's a copy of this repository's
 open -e ~/.CGagentHarness/config.yaml
 ```
 
-Find the `agentic:` block near the bottom and change these four values:
+Merge the following fields into the existing configuration. The repository is a
+selector string, not a boolean gate. Use the installed model chosen in section 4:
 
 ```yaml
 agentic:
-  enabled: true                # the master switch for this whole layer
-  repo: "your-github-user/your-repo"   # the repository the pipeline will operate on
+  enabled: true
+  repo: "your-github-user/your-repo"
+  mode: "write"
+  writes_enabled: true
   deepagent_github:
-    enabled: true               # lets the pipeline actually use a planner model
-    allow_git_write_tools: true # lets it run git add/commit/push inside its own clone
+    enabled: true
+    provider: "ollama"
+    model: "qwen3.8:27b"
+    allow_git_write_tools: true
+    allow_cloud_providers: false
+    providers:
+      grok:
+        enabled: false
+      claude:
+        enabled: false
 ```
 
-Each of those four settings guards something different, and all of them have to be `true` at once
-before anything can write to a repository:
-
-| Setting | What it unlocks |
-|---|---|
-| `agentic.enabled` | The pipeline responds at all instead of printing "Agentic layer disabled" |
-| `agentic.repo` | Which repository it's allowed to touch |
-| `agentic.deepagent_github.enabled` | It's allowed to ask a model to propose a patch |
-| `agentic.deepagent_github.allow_git_write_tools` | It's allowed to run git write commands inside its own isolated clone |
-
-There's a fifth gate you don't set in the config file: even with all of the above on, opening an
-actual pull request additionally requires you to type a `reason` and pass `confirm: true` on that
-specific request — a fresh, explicit confirmation every single time, which the console's
-`/agent publish` command prompts you for.
+Master enablement, write mode, writes-enabled, deepagent enablement and clone-write
+capability must all permit the operation. The emergency switch can only disable
+writes. Local approval, push and publication each also require their own explicit
+reason and confirmation; an earlier approval does not override later policy.
+Keep cloud-provider child flags false when their parent allow flag is false.
 
 Restart the server (`Ctrl+C` in its terminal, then re-run the `serve` command from section 6) so
 it picks up the config change.
 
 ### 9.3 Run it from the console
 
-Back in the browser, a typical session looks like:
+Select the repository in configuration, then prepare its committed Cargo.lock
+into the same application home. From the harness checkout, substitute the actual
+repository path and configured home:
 
-1. `/agent checks` — lists the named verification profiles you can run (for example, running the
-   target repo's own test suite) without needing to know the underlying command.
-2. `/agent confirm` — starts one coding run: give it an instruction describing what to change, a
-   branch name, a commit message, and a reason. This step clones the target repository, has the
-   model propose a patch, and verifies it inside a sandbox — it does **not** commit anything yet.
-3. `/agent status` — check on a run's progress or see its final proposed diff once it's done.
-4. `/agent approve <run-id> <reason>` — after you've reviewed the diff, this is the one command that actually
-   commits inside the local clone.
-5. `/agent push <run-id> <reason>` — separately authorizes and pushes the approved branch to GitHub.
-6. `/agent publish <run-id> <reason>` — separately authorizes a draft pull request.
-   Approval, push, and publication each need fresh `reason` and explicit confirmation.
-   Direct CLI calls require `--reason=<why> --confirm`; API calls require `reason` and
-   `confirm: true`. Combined CLI approval/push/publication is refused.
-7. `/agent reject <run-id>` rejects a pending candidate; `/agent discard <run-id>`
-   cleans up a run that has already reached a terminal state.
+```bash
+python3 scripts/prepare-cargo.py /path/to/selected/repository "$HOME/.CGagentHarness"
+```
+
+Preparation defaults to offline. If locked dependencies are missing, review the
+repository and rerun with `--online` only while explicitly allowing engineering
+dependency access. Actual checks remain offline, with fresh bounded writable
+locations and read-only prepared sources. See [Offline Cargo](docs/OFFLINE_CARGO.md).
+
+Back in the browser:
+
+1. `/agent run codex/fix-topic Describe the intended change` stages an instruction.
+2. `/agent checks` lists supported profiles. The server default is `cargo-test`;
+   `/agent checks cargo-fmt` is an example explicit selection.
+3. `/agent read src/lib.rs#L40-L80` declares a bounded existing-file window.
+4. `/agent confirm <reason>` submits a job and returns its ID immediately.
+5. `/agent job <job-id>` resumes monitoring, including after refresh/key re-entry.
+6. `/agent status <run-id>` displays the candidate and complete diff. A truncated
+   diff cannot satisfy console approval.
+7. `/agent approve <run-id> <reason>` commits after explicit diff review.
+8. `/agent push <run-id> <reason>` separately pushes the approved branch.
+9. Complete the actual repository PR template in a local Markdown file.
+   `/agent pr-body <run-id>` selects and previews it; then
+   `/agent publish <run-id> <reason>` separately opens the draft PR.
+
+`/agent cancel` discards only a staged request. `/agent stop <job-id>` requests
+active cancellation; observed native descendants are cleaned up, but escaped or
+interrupted work may survive. `/agent reject <run-id>` rejects a pending candidate;
+`/agent discard <run-id>` cleans up a terminal run.
+
+Direct CLI writes require `--reason=<why> --confirm`. Publication additionally
+requires a reviewed `--body-file`. API writes require `reason` and `confirm: true`;
+publication also requires `body`. Combined approval/push/publication is refused.
+Protected tests/build configuration remain protected; do not weaken that policy
+to get a proposal accepted. See [Bounded edits](docs/BOUNDED_EDITS.md).
 
 ### 9.4 The kill switch
 
@@ -389,40 +426,66 @@ simpler and this section can stay off.
 
 ## 11. Verify your setup
 
-Two scripts in the repository double-check that everything above actually works, and are useful
-any time you pull new changes or aren't sure something's configured correctly.
+Start with read-only inventory and configuration checks:
 
 ```bash
-scripts/verify-local.sh
+sw_vers
+uname -m
+command -v rustc cargo git gh ollama
+rustc --version
+cargo --version
+ollama list
+gh auth status
+git remote get-url origin
 ```
 
-This runs formatting and lint checks, the full automated test suite, a release build, and then a
-live smoke test against your running Ollama instance — a real chat turn included. It takes a few
-minutes. If you'd rather skip the part that needs Ollama running (for example, to just confirm
-the code itself is sound):
+Check both configured model tags, the selected repository and write gates. The
+existing hidden `agentic test` command checks some configuration/tools, but is
+not a complete doctor: it does not certify model selection, authentication,
+prepared dependencies or the end-to-end workflow.
+
+Run the repository gates with application inference omitted:
 
 ```bash
-SKIP_LIVE=1 scripts/verify-local.sh
+CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
-If you only want the live smoke test on its own (after you've already built once):
+This runs formatting, clippy, tests and release build. It runs cargo-deny only
+when installed; record a skipped audit and run the dependency policy separately
+when needed. Tests include required native Cargo sandbox and process tests.
+An outer tool sandbox can prevent nested Seatbelt; run native acceptance from
+the operator's terminal without weakening the application profile.
+
+For the existing live chat smoke, set the exact installed tag explicitly:
 
 ```bash
-scripts/smoke-ollama.sh
+SMOKE_MODEL=qwen3.8:27b scripts/smoke-ollama.sh
 ```
+
+**Read its output:** the current smoke exits successfully if the model endpoint
+is unavailable and the chat turn is skipped. Its success alone is not real-model
+acceptance, and it does not exercise the editing pipeline. Full disposable
+Chrome/model/edit/verification/approval/publication acceptance is documented in
+[Console jobs](docs/CONSOLE_JOBS.md). Measured native results and remaining gaps
+are in [Native acceptance](docs/MAC_ACCEPTANCE.md) and [Port parity](docs/PORT_PARITY.md).
+
+The native package was verified as arm64 with checksums, embedded assets and
+child self-location. It is ad-hoc signed, with no Developer ID or notarization.
+The current binary-only archive does not include `scripts/prepare-cargo.py`;
+retain the matching checkout for Cargo preparation. No release was published.
 
 ## 12. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `401 Unauthorized` on every request | `CGAGENTHARNESS_API_KEY` isn't set in the terminal that ran `serve`, or you haven't pasted it into the console's key field | Re-check section 6; confirm `echo $CGAGENTHARNESS_API_KEY` prints something in that same terminal |
+| `401 Unauthorized` on every request | `CGAGENTHARNESS_API_KEY` isn't set in the terminal that ran `serve`, or you haven't pasted it into the console's key field | Re-check section 6; check `test -n "${CGAGENTHARNESS_API_KEY:-}"` in that same terminal without printing the key |
 | Chat hangs forever with no reply | Ollama isn't running, or hasn't finished loading the model into memory | Run the `curl` check from section 4; give the first request extra time after a fresh `ollama serve` |
 | `cgagentharness: harness binds loopback only` and the server refuses to start | You passed `--host` with something other than a loopback address (e.g. `0.0.0.0`) | This is intentional — the console will never bind to a non-loopback address. Omit `--host` or use `127.0.0.1` |
 | `Address already in use` when starting `serve` | Another process (maybe a previous `serve` you forgot about) is already on port 8790 | Find and stop it (`lsof -i :8790`), or start this one on a different port with `--port` |
 | First `cargo build`/`cargo clippy` is very slow or seems stuck on "downloading components" | `rustup` is fetching the pinned 1.88 toolchain declared in `rust-toolchain.toml` | Expected on first use; let it finish. If it seems to genuinely hang, check your network connection |
 | `gh: command not found` when trying `/agent` commands | The GitHub CLI isn't installed (only needed for the optional pipeline in section 9) | `brew install gh && gh auth login` |
 | `/agent` commands report "Agentic layer disabled" | `agentic.enabled` is still `false` in `config.yaml` | Follow section 9.2, and make sure you restarted `serve` after editing the file |
-| A write action (`/agent publish`) is refused even with everything configured | You forgot the fresh `reason`/`confirm` that command needs on top of the config gates, or `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` is set | Re-read section 9.3/9.4; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` |
+| A write action is refused | A current policy gate is closed, reason/confirm is absent, publication has no reviewed body, or the emergency switch is set | Re-read section 9.3/9.4; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` |
 
 ## 13. Where to go next
 
