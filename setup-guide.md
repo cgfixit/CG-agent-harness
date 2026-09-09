@@ -433,3 +433,12 @@ scripts/smoke-ollama.sh
   you're curious how it holds together.
 - **`AGENTS.md`** — the operating rules for anyone (human or AI agent) contributing code to this
   repository, including the quality bar every change is held to.
+
+## Cargo verification preparation
+
+Before running the coding pipeline with Cargo checks, follow
+[Offline Cargo verification](docs/OFFLINE_CARGO.md). The dependency preparation
+step may use authorized engineering network access; actual checks run offline.
+Select the repository first and prepare its committed Cargo.lock into the same
+application home used by the harness. A fresh home does not inherit the operator's
+Cargo cache. Tests must put generated state in their supplied temporary directory.

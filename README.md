@@ -40,6 +40,7 @@ and only after a human reviews a digest-bound diff.
 | Need | Why |
 |---|---|
 | Rust 1.88+ (`rust-toolchain.toml`) | Build |
+| Python 3 (standard library only) | Explicit Cargo dependency preparation |
 | Ollama on `127.0.0.1:11434` with a chat model | Console chat and local planner |
 | `gh` ≥ 2.40.0, logged in | Real-repo pipeline only |
 | `openssl` (or any CSPRNG) | Generate `CGAGENTHARNESS_API_KEY` |
@@ -89,6 +90,12 @@ Restart `serve`. In the console a typical loop is `/agent run …` (stage),
 requires fresh explicit intent. CLI approval, push and publication each require
 `--reason=<why> --confirm`; API calls require `reason` and `confirm: true`.
 Approval commits locally only; combined `decide --push/--publish` is refused.
+
+Before a Cargo check, prepare the selected repository's unchanged `Cargo.lock`
+outside verification using [the offline Cargo preparation flow](docs/OFFLINE_CARGO.md).
+Checks get read-only sources/toolchain and a fresh writable build directory;
+missing preparation refuses before asking the planner. Tests must write temporary
+state under their supplied temporary directory, not into the candidate repository.
 
 `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` disables repository and PR mutations
 when inherited by the process. Exporting it in another shell does not stop an

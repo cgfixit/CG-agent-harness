@@ -22,6 +22,17 @@ pub struct SandboxOutcome {
 
 pub trait HardSandbox {
     fn run(&self, argv: &[String], cwd: &Path, env: &BTreeMap<String, String>, timeout_sec: u64) -> SandboxOutcome;
+    fn run_prepared(
+        &self,
+        argv: &[String],
+        cwd: &Path,
+        env: &BTreeMap<String, String>,
+        timeout_sec: u64,
+        _scratch: &Path,
+        _read_roots: &[PathBuf],
+    ) -> SandboxOutcome {
+        self.run(argv, cwd, env, timeout_sec)
+    }
     fn name(&self) -> &'static str;
 }
 
@@ -73,8 +84,13 @@ impl HardSandbox for ArgvListSandbox {
     }
 }
 
-/// SBPL profile: deny network; deny file-write outside `cwd` (and the temp dir).
+/// Candidate and prepared inputs are read-only; only owned scratch is writable.
+/// Metadata reads remain available for tool discovery; file data is allowlisted.
 pub fn seatbelt_profile(cwd: &Path, tmpdir: Option<&Path>) -> String {
+    seatbelt_profile_with_inputs(cwd, tmpdir, &[])
+}
+
+fn seatbelt_profile_with_inputs(cwd: &Path, tmpdir: Option<&Path>, read_roots: &[PathBuf]) -> String {
     let esc = |p: &Path| {
         dunce::canonicalize(p)
             .unwrap_or(p.to_path_buf())
@@ -83,15 +99,37 @@ pub fn seatbelt_profile(cwd: &Path, tmpdir: Option<&Path>) -> String {
             .replace('\\', "\\\\")
             .replace('"', "\\\"")
     };
-    let mut allowed = vec![esc(cwd)];
-    if let Some(t) = tmpdir {
-        allowed.push(esc(t));
+    let mut roots = vec![cwd.to_path_buf()];
+    // Operating-system executables, libraries, SDKs and device streams. No
+    // general home, /private, /Library, or Homebrew prefix is exposed.
+    for root in [
+        "/System",
+        "/usr/bin",
+        "/usr/lib",
+        "/usr/libexec",
+        "/usr/share",
+        "/bin",
+        "/sbin",
+        "/dev",
+        "/Library/Developer/CommandLineTools",
+        "/Applications/Xcode.app/Contents/Developer",
+        "/private/var/db/dyld",
+    ] {
+        roots.push(PathBuf::from(root));
     }
-    let except: Vec<String> = allowed.iter().map(|p| format!("(subpath \"{p}\")")).collect();
-    format!(
-        "(version 1)\n(allow default)\n(deny network*)\n(deny file-write* (require-not (require-any {})))\n",
-        except.join(" ")
-    )
+    if let Some(tmp) = tmpdir {
+        roots.push(tmp.to_path_buf());
+    }
+    roots.extend_from_slice(read_roots);
+    let reads = roots
+        .iter()
+        .map(|p| format!("(subpath \"{}\")", esc(p)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let writes = tmpdir
+        .map(|p| format!("(deny file-write* (require-not (subpath \"{}\")))", esc(p)))
+        .unwrap_or_else(|| "(deny file-write*)".into());
+    format!("(version 1)\n(allow default)\n(deny network*)\n(deny file-read-data (require-not (require-any (literal \"/\") (literal \"/private/etc/ssl/openssl.cnf\") {reads})))\n{writes}\n")
 }
 
 pub struct DarwinSeatbeltSandbox {
@@ -120,17 +158,29 @@ impl HardSandbox for DarwinSeatbeltSandbox {
             }
         };
         let mut env_with_tmp = env.clone();
-        for k in ["TMPDIR", "TMP", "TEMP"] {
+        for k in ["HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP"] {
             env_with_tmp.insert(k.into(), tmp.path().display().to_string());
         }
+        self.run_prepared(argv, cwd, &env_with_tmp, timeout_sec, tmp.path(), &[])
+    }
+
+    fn run_prepared(
+        &self,
+        argv: &[String],
+        cwd: &Path,
+        env: &BTreeMap<String, String>,
+        timeout_sec: u64,
+        scratch: &Path,
+        read_roots: &[PathBuf],
+    ) -> SandboxOutcome {
         let mut wrapped = vec![
             self.sandbox_exec.display().to_string(),
             "-p".into(),
-            seatbelt_profile(cwd, Some(tmp.path())),
+            seatbelt_profile_with_inputs(cwd, Some(scratch), read_roots),
             "--".into(),
         ];
         wrapped.extend(argv.iter().cloned());
-        ArgvListSandbox.run(&wrapped, cwd, &env_with_tmp, timeout_sec)
+        ArgvListSandbox.run(&wrapped, cwd, env, timeout_sec)
     }
 
     fn name(&self) -> &'static str {

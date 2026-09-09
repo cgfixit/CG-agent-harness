@@ -82,6 +82,9 @@ jobs:
           git config --global user.name "CI"
       - name: Build (all targets)
         run: cargo build --all-targets --locked
+      - name: Prepare dependency inventory for required native Cargo fixture
+        if: runner.os == 'macOS'
+        run: cargo fetch --locked --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml
       - name: Test
         run: cargo test --all-targets --locked -- --nocapture
         env:
@@ -123,8 +126,20 @@ jobs:
       - run: |
           git config --global user.email "ci@example.invalid"
           git config --global user.name "CI"
-      # Prints a SKIP line (and passes) on a host with no hard sandbox; the
-      # macOS leg always has sandbox-exec, so at least one leg is a real proof.
+      - name: Prepare native Cargo fixture (network allowed only here)
+        if: runner.os == 'macOS'
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml
+      - name: Required native Cargo sandbox acceptance (no skip)
+        if: runner.os == 'macOS'
+        run: cargo test --test macos_cargo --locked --offline -- --nocapture
+        env:
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
+      # Legacy text smoke prints a SKIP line on a host with no hard sandbox; the
+      # required macOS Cargo gate above fails if sandbox execution is unavailable.
       - run: cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture
         env:
           GROK_API_KEY: ""

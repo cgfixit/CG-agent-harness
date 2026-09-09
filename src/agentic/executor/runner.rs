@@ -99,6 +99,7 @@ pub fn run_verification(
     checks: &[Check],
     audit: &Audit,
     sandbox: Option<&dyn HardSandbox>,
+    prepared_root: Option<&Path>,
 ) -> Result<VerificationReport> {
     if checks.is_empty() {
         return Ok(VerificationReport {
@@ -115,13 +116,61 @@ pub fn run_verification(
         Some(s) => s,
         None => owned.as_deref().expect("production sandbox"),
     };
+    let cargo = if checks.iter().any(|c| c.argv.first().is_some_and(|v| v == "cargo")) {
+        Some(super::prepared::CargoInputs::load(worktree, prepared_root)?)
+    } else {
+        None
+    };
     let mut env = scrubbed_env();
     let home = tempfile::Builder::new().prefix("cgah-exec-home-").tempdir()?;
     env.insert("HOME".into(), home.path().display().to_string());
     env.insert("USERPROFILE".into(), home.path().display().to_string());
+    for (key, sub) in [
+        ("CARGO_HOME", "cargo-home"),
+        ("CARGO_TARGET_DIR", "target"),
+        ("CARGO_BUILD_BUILD_DIR", "build"),
+        ("TMPDIR", "tmp"),
+        ("TMP", "tmp"),
+        ("TEMP", "tmp"),
+    ] {
+        let path = home.path().join(sub);
+        std::fs::create_dir_all(&path)?;
+        env.insert(key.into(), path.display().to_string());
+    }
+    if let Some(cargo) = &cargo {
+        cargo.configure(&mut env);
+    }
+    let reads = cargo.as_ref().map(|c| c.read_roots.as_slice()).unwrap_or(&[]);
     let mut results = Vec::new();
     for check in checks {
-        let outcome: SandboxOutcome = backend.run(&check.argv, worktree, &env, check.timeout_sec);
+        let argv = if check.argv.first().is_some_and(|v| v == "cargo") {
+            cargo.as_ref().expect("prepared Cargo inputs").argv(&check.argv)?
+        } else {
+            check.argv.clone()
+        };
+        let outcome: SandboxOutcome =
+            backend.run_prepared(&argv, worktree, &env, check.timeout_sec, home.path(), reads);
+        if outcome.timed_out && check.argv.first().is_some_and(|v| v == "cargo") {
+            return Err(HarnessError::config(format!("verification check '{}' timed out after {}s; inspect resource usage or adjust its budget before retrying", check.name, check.timeout_sec)));
+        }
+        if outcome.exit_code != 0 && check.argv.first().is_some_and(|v| v == "cargo") {
+            let message = outcome.stderr.to_lowercase();
+            if [
+                "no matching package",
+                "failed to load source",
+                "failed to get",
+                "checksum",
+                "could not execute process",
+                "operation not permitted",
+                "permission denied",
+                "lock file needs to be updated",
+            ]
+            .iter()
+            .any(|s| message.contains(s))
+            {
+                return Err(super::prepared::missing("check could not use locked sources, toolchain, or permitted output paths; review preparation and sandbox-compatible test paths"));
+            }
+        }
         let ok = outcome.exit_code == 0 && !outcome.timed_out;
         audit.log(json!({
             "event": "agentic_executor_check_result", "check": check.name, "exit_code": outcome.exit_code,
