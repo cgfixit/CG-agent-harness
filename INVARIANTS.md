@@ -93,12 +93,19 @@ with `O_NOFOLLOW` (unix). 256 KB cap, UTF-8 required.
 
 Every proposed file is injection-scanned and code-shape-scanned, scope-checked
 against `protected_write_paths` (name-equivalence folded), and budget-checked
-BEFORE any byte is written; a quarantined iteration writes nothing. A file that
-exists, was not shown in full via `--read-file`, and was not written by an earlier
-iteration is refused rather than blindly replaced. Verification runs only inside a
+BEFORE candidate content is changed. Whole-proposal preflight precedes staging;
+application failures roll back installed replacements, and failed rollback is
+fatal/quarantined with recovery backups retained. This is not crash-atomic or
+an atomic compare-and-swap against a concurrent external writer. A file that
+exists and was not shown in full via `--read-file` is refused for whole-file
+replacement rather than blindly replaced. Exact
+edits require a fresh full-file hash and unique original text in the displayed
+excerpt. Every attempt takes new snapshots; earlier writes grant no exemption.
+Verification runs only inside a
 hard sandbox (Seatbelt / `unshare --net` / Job Object); no backend means exit 3.
 
-- Locked by: `tests/real_repo_loop.rs`, `tests/agentic_foundations.rs::sandbox_*`.
+- Locked by: `tests/real_repo_loop.rs`, `tests/exact_edits.rs`, workspace transaction tests,
+  `tests/agentic_foundations.rs::sandbox_*`.
 
 ### Native macOS Cargo boundary
 

@@ -93,7 +93,9 @@ Approval commits locally only; combined `decide --push/--publish` is refused.
 Before a Cargo check, prepare the selected repository's unchanged `Cargo.lock`
 outside verification using [the offline Cargo preparation flow](docs/OFFLINE_CARGO.md).
 Checks get read-only sources/toolchain and a fresh writable build directory;
-missing preparation refuses before asking the planner. Tests must write temporary
+missing preparation refuses before asking the planner. [Bounded exact edits](docs/BOUNDED_EDITS.md)
+allow small changes in larger files using declared line windows and original hashes.
+Tests must write temporary
 state under their supplied temporary directory, not into the candidate repository.
 
 `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` disables repository and PR mutations
