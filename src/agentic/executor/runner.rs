@@ -150,6 +150,12 @@ pub fn run_verification(
         };
         let outcome: SandboxOutcome =
             backend.run_prepared(&argv, worktree, &env, check.timeout_sec, home.path(), reads);
+        if outcome.exit_code == -3 {
+            return Err(HarnessError::config(format!(
+                "verification capture failed for '{}': {}; inspect the check before retrying",
+                check.name, outcome.stderr
+            )));
+        }
         if outcome.timed_out && check.argv.first().is_some_and(|v| v == "cargo") {
             return Err(HarnessError::config(format!("verification check '{}' timed out after {}s; inspect resource usage or adjust its budget before retrying", check.name, check.timeout_sec)));
         }
