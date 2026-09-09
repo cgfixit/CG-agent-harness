@@ -2,9 +2,8 @@
 //! (`pr_create`, always `--draft`) behind the master switch plus four gates:
 //! `agentic.enabled` -> `mode == write` -> `writes_enabled` -> non-empty reason
 //! -> `confirm == true`. `EXECUTION_ENABLED` ships true; the env kill switch is
-//! AND-ed in (disable-only), read once per process.
+//! AND-ed in (disable-only), checked at each mutation boundary.
 
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -24,17 +23,7 @@ const WRITE_OPS: [&str; 3] = ["pr_comment", "issue_comment", "pr_create"];
 const EXECUTABLE_WRITE_OPS: [&str; 1] = ["pr_create"];
 
 pub fn disabled_by_env() -> bool {
-    static CELL: OnceLock<bool> = OnceLock::new();
-    *CELL.get_or_init(|| {
-        matches!(
-            std::env::var(WRITE_DISABLE_ENV)
-                .unwrap_or_default()
-                .trim()
-                .to_lowercase()
-                .as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    })
+    env_value_disables(&std::env::var(WRITE_DISABLE_ENV).unwrap_or_default())
 }
 
 /// Parse table for the kill switch's accepted values (exposed for tests).
@@ -139,6 +128,14 @@ pub fn require_gates(cfg: &AgenticConfig, audit: &Audit, op: &str, reason: &str,
             .detail("op", op)
             .detail("allowed", json!(WRITE_OPS)));
     }
+    require_write_policy(cfg, audit, op, reason, confirm)
+}
+
+/// Common administrative and human-intent gates for every repository mutation.
+pub fn require_write_policy(cfg: &AgenticConfig, audit: &Audit, op: &str, reason: &str, confirm: bool) -> Result<()> {
+    if !cfg.enabled {
+        return Err(refuse(audit, "agentic.enabled is False", op, "enabled", reason));
+    }
     if !cfg.is_write_mode() {
         return Err(refuse(audit, "agentic.mode is not 'write'", op, "mode", reason));
     }
@@ -172,6 +169,69 @@ pub fn require_gates(cfg: &AgenticConfig, audit: &Audit, op: &str, reason: &str,
     Ok(())
 }
 
+/// Reload policy at each boundary, including after a model call or verification.
+/// A changed repository/root requires a new invocation; it must not retarget an
+/// already attached workspace. Missing or invalid configuration fails closed.
+pub fn current_repository_policy(
+    ctx: &super::ctx::AgenticCtx,
+    op: &str,
+    reason: &str,
+    confirm: bool,
+) -> Result<AgenticConfig> {
+    let cfg = crate::common::config::AppConfig::load(&ctx.config_path)?;
+    let current = super::config::load_agentic_config(&cfg, &ctx.home_root)?;
+    require_write_policy(&current, &ctx.audit, op, reason, confirm)?;
+    if !execution_enabled() {
+        return Err(refuse(
+            &ctx.audit,
+            "Agentic write execution is disabled",
+            op,
+            "execution_enabled",
+            reason,
+        ));
+    }
+    if !current.deepagent.enabled {
+        return Err(refuse(
+            &ctx.audit,
+            "deepagent_github.enabled is False",
+            op,
+            "deepagent_enabled",
+            reason,
+        ));
+    }
+    if !current.deepagent.allow_git_write_tools {
+        return Err(refuse(
+            &ctx.audit,
+            "deepagent_github.allow_git_write_tools is False",
+            op,
+            "allow_git_write_tools",
+            reason,
+        ));
+    }
+    if current.repo != ctx.acfg.repo || current.deepagent.workspace_root != ctx.acfg.deepagent.workspace_root {
+        return Err(refuse(
+            &ctx.audit,
+            "repository or workspace root changed; start a new invocation",
+            op,
+            "policy_target",
+            reason,
+        ));
+    }
+    if current.deepagent.protected_write_paths != ctx.acfg.deepagent.protected_write_paths
+        || current.deepagent.max_write_budget_bytes != ctx.acfg.deepagent.max_write_budget_bytes
+        || current.deepagent.scan_code_shape != ctx.acfg.deepagent.scan_code_shape
+    {
+        return Err(refuse(
+            &ctx.audit,
+            "write scope or budget changed; start a new invocation",
+            op,
+            "policy_scope",
+            reason,
+        ));
+    }
+    Ok(current)
+}
+
 /// Validate the gate and return a DRY-RUN plan. Never executes.
 pub fn plan_write(
     cfg: &AgenticConfig,
@@ -193,13 +253,8 @@ pub fn plan_write(
 
 /// Perform one gate-satisfied write (`pr_create` only). Re-runs every gate with a
 /// FRESH `confirm`; rebuilds the argv from the plan's params and refuses drift.
-pub fn execute_write(
-    cfg: &AgenticConfig,
-    audit: &Audit,
-    plan: &Value,
-    confirm: bool,
-    timeout_sec: u64,
-) -> Result<Value> {
+pub fn execute_write(ctx: &super::ctx::AgenticCtx, plan: &Value, confirm: bool, timeout_sec: u64) -> Result<Value> {
+    let audit = &ctx.audit;
     let op = plan.get("op").and_then(|o| o.as_str()).unwrap_or("").to_string();
     if !execution_enabled() {
         let why = if disabled_by_env() {
@@ -220,6 +275,8 @@ pub fn execute_write(
         ));
     }
     let reason = plan.get("reason").and_then(|r| r.as_str()).unwrap_or("").to_string();
+    let current = current_repository_policy(ctx, &op, &reason, confirm)?;
+    let cfg = &current;
     require_gates(cfg, audit, &op, &reason, confirm)?;
     if !EXECUTABLE_WRITE_OPS.contains(&op.as_str()) {
         audit.log(json!({"event": "agentic_write_execution_blocked", "op": op, "gate": "executable_op"}));

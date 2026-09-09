@@ -84,11 +84,16 @@ agentic:
 
 Restart `serve`. In the console a typical loop is `/agent run …` (stage),
 `/agent confirm <why>` (clone → plan → sandbox verify; no commit yet),
-`/agent status`, then `/agent approve` → `/agent push` →
-`/agent publish <why>`. Publish needs a fresh `reason` and `confirm: true`
-on that call; `confirm` is never defaulted on.
+`/agent status <run-id>`, then `/agent approve <run-id> <why>` →
+`/agent push <run-id> <why>` → `/agent publish <run-id> <why>`. Each mutation
+requires fresh explicit intent. CLI approval, push and publication each require
+`--reason=<why> --confirm`; API calls require `reason` and `confirm: true`.
+Approval commits locally only; combined `decide --push/--publish` is refused.
 
-`CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` is the disable-only kill switch.
+`CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` disables repository and PR mutations
+when inherited by the process. Exporting it in another shell does not stop an
+existing process. Revoking YAML write policy blocks later mutation boundaries;
+it does not cancel work already executing.
 Depth of the gates, clone jail, and digest-bound approval:
 [INVARIANTS.md](INVARIANTS.md). Operator rules: [AGENTS.md](AGENTS.md).
 Full arming walkthrough: [setup-guide.md](setup-guide.md) §9.

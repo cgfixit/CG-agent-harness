@@ -301,6 +301,8 @@ fn loop_iterates_on_feedback_then_accepts_and_finalizes() {
     macro_rules! f {
         ($protected:expr, $digest:expr) => {
             FinalizeParams {
+                reason: "reviewed fixture",
+                confirm: true,
                 branch_name: "claude/loop-test",
                 commit_message: "feat: goodbye",
                 changed_files: &files,
@@ -323,6 +325,20 @@ fn loop_iterates_on_feedback_then_accepts_and_finalizes() {
         .message
         .contains("mismatch"));
     std::fs::write(clone.join("target.txt"), "goodbye").unwrap();
+    let original_policy = std::fs::read_to_string(&ctx.config_path).unwrap();
+    std::fs::write(
+        &ctx.config_path,
+        original_policy.replace("writes_enabled: true", "writes_enabled: false"),
+    )
+    .unwrap();
+    assert_eq!(
+        finalize_real_repo_change(&ctx, &ws, &f!(empty, &digest))
+            .unwrap_err()
+            .details["failed_gate"],
+        "writes_enabled"
+    );
+    assert_eq!(git(&["rev-parse", "HEAD"], &clone), head);
+    std::fs::write(&ctx.config_path, original_policy).unwrap();
     let ok = finalize_real_repo_change(&ctx, &ws, &f!(empty, &digest)).unwrap();
     assert_eq!(ok["status"], "approved");
     assert_eq!(git(&["log", "-1", "--format=%s"], &clone), "feat: goodbye");
@@ -384,7 +400,11 @@ fn loop_refuses_blind_overwrites_critical_content_and_budget() {
     );
     assert!(result.changed_files().is_empty());
     // Gates before any model call.
-    let unarmed = RepoWorkspace::open_existing(&ctx.audit, &clone, false).unwrap();
+    let locked_home = dir.path().join("locked");
+    std::fs::create_dir(&locked_home).unwrap();
+    let locked_cfg = config_with(&locked_home, &[]);
+    let locked_ctx = AgenticCtx::new(locked_cfg, &locked_home.join("config.yaml")).unwrap();
+    let unarmed = RepoWorkspace::open_existing(&locked_ctx, &clone).unwrap();
     assert_eq!(
         run_real_repo_loop(&ctx, &unarmed, &proposer, &params(&checks, &protected, &no_reads))
             .unwrap_err()
@@ -485,20 +505,30 @@ fn writer_gates_in_order_and_plan_integrity() {
     assert_eq!(plan["executed"], false);
     assert_eq!(plan["would_run"][2], "create");
     assert!(plan["would_run"].as_array().unwrap().iter().any(|v| v == "--draft"));
+    let execution_cfg = config_with(
+        dir.path(),
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+        ],
+    );
+    let execution_ctx =
+        cgagentharness::agentic::ctx::AgenticCtx::new(execution_cfg, &dir.path().join("config.yaml")).unwrap();
     assert_eq!(
-        execute_write(&armed, &audit, &plan, false, 5).unwrap_err().details["failed_gate"],
+        execute_write(&execution_ctx, &plan, false, 5).unwrap_err().details["failed_gate"],
         "confirm"
     );
     let mut tampered = plan.clone();
     tampered["would_run"][1] = json!("repo");
     assert_eq!(
-        execute_write(&armed, &audit, &tampered, true, 5).unwrap_err().details["failed_gate"],
+        execute_write(&execution_ctx, &tampered, true, 5).unwrap_err().details["failed_gate"],
         "plan_integrity"
     );
     let mut other = plan.clone();
     other["repo"] = json!("someone/else");
     assert_eq!(
-        execute_write(&armed, &audit, &other, true, 5).unwrap_err().details["failed_gate"],
+        execute_write(&execution_ctx, &other, true, 5).unwrap_err().details["failed_gate"],
         "repo_match"
     );
     let comment = plan_write(
@@ -511,7 +541,7 @@ fn writer_gates_in_order_and_plan_integrity() {
     )
     .unwrap();
     assert_eq!(
-        execute_write(&armed, &audit, &comment, true, 5).unwrap_err().details["failed_gate"],
+        execute_write(&execution_ctx, &comment, true, 5).unwrap_err().details["failed_gate"],
         "executable_op"
     );
     assert!(build_write_argv("pr_comment", "o/r", &json!({"number": "x"}), "gh").is_err());
@@ -828,6 +858,8 @@ async fn real_repo_run_smoke_end_to_end() {
             &format!("--run-id={run_id}"),
             "--decision",
             "approve",
+            "--reason=reviewed fixture",
+            "--confirm",
         ],
         &env,
         &home,
@@ -844,6 +876,8 @@ async fn real_repo_run_smoke_end_to_end() {
             &format!("--run-id={run_id}"),
             "--decision",
             "approve",
+            "--reason=reviewed fixture",
+            "--confirm",
         ],
         &env,
         &home,
@@ -852,7 +886,12 @@ async fn real_repo_run_smoke_end_to_end() {
     // Push reaches the bare origin; publish opens a draft PR through the fake gh.
     let (code, out, err) = ra(
         &config,
-        &["real-repo-run-push", &format!("--run-id={run_id}")],
+        &[
+            "real-repo-run-push",
+            &format!("--run-id={run_id}"),
+            "--reason=publish fixture branch",
+            "--confirm",
+        ],
         &env,
         &home,
     );
@@ -860,7 +899,12 @@ async fn real_repo_run_smoke_end_to_end() {
     assert!(git(&["branch", "--list", "claude/smoke"], &bare).contains("claude/smoke"));
     let (code, _, _) = ra(
         &config,
-        &["real-repo-run-push", &format!("--run-id={run_id}")],
+        &[
+            "real-repo-run-push",
+            &format!("--run-id={run_id}"),
+            "--reason=publish fixture branch",
+            "--confirm",
+        ],
         &env,
         &home,
     );

@@ -356,15 +356,19 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
                 argv.push("--confirm".into());
             }
         }
-        "real-repo-run-status" | "real-repo-run-push" | "real-repo-run-discard" => {
+        "real-repo-run-status" | "real-repo-run-discard" => {
             argv.push(format!("--run-id={}", req.run_id.clone().unwrap_or_default()));
         }
         "real-repo-run-decide" => {
             argv.push(format!("--run-id={}", req.run_id.clone().unwrap_or_default()));
             argv.push("--decision".into());
             argv.push(req.decision.clone().unwrap_or_default());
+            argv.push(format!("--reason={}", req.reason.clone().unwrap_or_default()));
+            if req.confirm {
+                argv.push("--confirm".into());
+            }
         }
-        "real-repo-run-publish" => {
+        "real-repo-run-push" | "real-repo-run-publish" => {
             argv.push(format!("--run-id={}", req.run_id.clone().unwrap_or_default()));
             argv.push(format!("--reason={}", req.reason.clone().unwrap_or_default()));
             if req.confirm {

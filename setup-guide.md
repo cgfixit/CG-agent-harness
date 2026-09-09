@@ -212,7 +212,7 @@ You'll land on a dark, terminal-styled page with a text input at the bottom and 
 field. Paste the same value you exported into `CGAGENTHARNESS_API_KEY` into that key field —
 you'll need to do this once per browser tab/session, since the console never stores it anywhere
 on disk or in cookies; it's held only in that input field. Once the key is in, type a message and
-send it. You should get a reply from the model streaming back within a few seconds (the first
+send it. The current client waits for a complete non-streaming response; latency depends on the model (the first
 reply after starting Ollama can be slower, since it has to load the model into memory).
 
 If the browser page hangs and never responds, double-check that Ollama (section 4) is still
@@ -343,12 +343,15 @@ Back in the browser, a typical session looks like:
    branch name, a commit message, and a reason. This step clones the target repository, has the
    model propose a patch, and verifies it inside a sandbox — it does **not** commit anything yet.
 3. `/agent status` — check on a run's progress or see its final proposed diff once it's done.
-4. `/agent approve` — after you've reviewed the diff, this is the one command that actually
+4. `/agent approve <run-id> <reason>` — after you've reviewed the diff, this is the one command that actually
    commits inside the local clone.
-5. `/agent push` — pushes the approved branch to GitHub.
-6. `/agent publish` — opens a draft pull request (this is the command that needs its own fresh
-   `reason` and `confirm`, as noted above).
-7. `/agent discard` — abandon a run at any point instead of proceeding.
+5. `/agent push <run-id> <reason>` — separately authorizes and pushes the approved branch to GitHub.
+6. `/agent publish <run-id> <reason>` — separately authorizes a draft pull request.
+   Approval, push, and publication each need fresh `reason` and explicit confirmation.
+   Direct CLI calls require `--reason=<why> --confirm`; API calls require `reason` and
+   `confirm: true`. Combined CLI approval/push/publication is refused.
+7. `/agent reject <run-id>` rejects a pending candidate; `/agent discard <run-id>`
+   cleans up a run that has already reached a terminal state.
 
 ### 9.4 The kill switch
 
@@ -362,6 +365,10 @@ export CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1
 
 This is a disable-only switch: setting it to any of `1`, `true`, `yes`, or `on` blocks the write
 path regardless of what `config.yaml` says. It cannot be used to turn writes *on* — only off.
+An export in another shell does not update a running server or child. Restart with the
+switch set for new processes, or revoke `agentic.writes_enabled` in YAML to block later
+mutation boundaries in an active child. Neither action cancels an already executing
+Git command or check. Scope/budget changes also refuse later writes until a fresh invocation.
 
 ## 10. (Optional) Turn on per-user login
 
