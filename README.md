@@ -45,8 +45,7 @@ and only after a human reviews a digest-bound diff.
 | `gh` ≥ 2.40.0, logged in | Real-repo pipeline only |
 | `openssl` (or any CSPRNG) | Generate `CGAGENTHARNESS_API_KEY` |
 
-Default model tag in config is `qwen3.8:27b-mlx`. Change
-`models.local_llm.model` if that is not what you run.
+The shipped config references `qwen3.8:27b-mlx`, but do not assume that tag is installed. Run `ollama list` and select the exact installed tag you intend to use, then set both `models.local_llm.model` and `agentic.deepagent_github.model` to that tag. An `-mlx` suffix alone does not prove the execution backend.
 
 Mutable state lives under `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`
 overrides), seeded from `assets/config.default.yaml`.
