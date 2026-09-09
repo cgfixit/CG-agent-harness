@@ -378,19 +378,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         err("agentic.deepagent_github.model must be configured before real-repo-run");
         return Ok(EXIT_ENV);
     }
-    // Cheap early refusals before any network I/O (the loop re-checks all three).
-    if !ctx.acfg.deepagent.allow_git_write_tools {
-        err("agentic.deepagent_github.allow_git_write_tools is False; real-repo-run cannot write to a clone");
-        return Ok(EXIT_REFUSED);
-    }
-    if reason.trim().is_empty() {
-        err("a non-empty --reason is required");
-        return Ok(EXIT_REFUSED);
-    }
-    if !opts.flag("confirm") {
-        err("--confirm is required to actually run");
-        return Ok(EXIT_REFUSED);
-    }
+    super::writer::current_repository_policy(ctx, "run", &reason, opts.flag("confirm"))?;
     if let Some(code) = refuse_if_injected(ctx, &instruction, "instruction", "run") {
         return Ok(code);
     }
@@ -590,12 +578,18 @@ fn cmd_real_repo_run_status(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     Ok(EXIT_OK)
 }
 
-fn push_record(tools: &RepoWorkspace<'_>, record: &mut RealRepoRunRecord, runs_dir: &Path) -> Result<u8> {
+fn push_record(
+    tools: &RepoWorkspace<'_>,
+    record: &mut RealRepoRunRecord,
+    runs_dir: &Path,
+    reason: &str,
+    confirm: bool,
+) -> Result<u8> {
     let branch = record
         .branch_name
         .clone()
         .ok_or_else(|| HarnessError::agentic("run record has no branch_name to push"))?;
-    match tools.push_branch(&branch) {
+    match tools.push_branch(&branch, reason, confirm) {
         Ok(_) => {
             record.pushed = true;
             Ok(EXIT_OK)
@@ -628,8 +622,9 @@ fn publish_record(
         "head": record.branch_name, "title": record.commit_message,
         "body": format!("Automated real-repo-run candidate (run_id={}).", record.run_id),
     });
-    let outcome = plan_write(&ctx.acfg, &ctx.audit, "pr_create", reason, confirm, params)
-        .and_then(|plan| execute_write(&ctx.acfg, &ctx.audit, &plan, confirm, DEFAULT_WRITE_TIMEOUT_SEC));
+    let current = super::writer::current_repository_policy(ctx, "pr_create", reason, confirm)?;
+    let outcome = plan_write(&current, &ctx.audit, "pr_create", reason, confirm, params)
+        .and_then(|plan| execute_write(ctx, &plan, confirm, DEFAULT_WRITE_TIMEOUT_SEC));
     match outcome {
         Ok(result) => {
             record.pr_url = result
@@ -667,17 +662,8 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     let push = opts.flag("push");
     let publish = opts.flag("publish");
     let decision = opts.require("decision").map_err(HarnessError::agentic)?;
-    if publish && !push {
-        err("--publish requires --push (a PR needs the branch on origin first)");
-        return Ok(EXIT_REFUSED);
-    }
-    if publish && !(opts.get("reason").map(|r| !r.trim().is_empty()).unwrap_or(false) && opts.flag("confirm-publish")) {
-        err("--publish requires --reason and --confirm-publish");
-        return Ok(EXIT_REFUSED);
-    }
-    if (push || publish) && decision != "approve" {
-        err("--push/--publish only apply to --decision approve");
-        return Ok(EXIT_REFUSED);
+    if push || publish {
+        return Err(HarnessError::write_refused("approve only commits locally; use separate real-repo-run-push and real-repo-run-publish actions with --reason and --confirm"));
     }
     if !ctx.acfg.enabled {
         return Ok(disabled_noop());
@@ -703,6 +689,8 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         ctx,
         &tools,
         &FinalizeParams {
+            reason: opts.get("reason").unwrap_or(""),
+            confirm: opts.flag("confirm"),
             branch_name: &branch,
             commit_message: &message,
             changed_files: &record.changed_files,
@@ -724,26 +712,7 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         }
     };
     record.status = outcome["status"].as_str().unwrap_or("").to_string();
-    // Persisted HERE, before the escalations: the commit has already landed.
-    save_run(&runs_dir, &mut record)?;
-    if record.status == "approved" && push {
-        let code = push_record(&tools, &mut record, &runs_dir)?;
-        if code != EXIT_OK {
-            return Ok(code);
-        }
-        if publish {
-            let code = publish_record(
-                ctx,
-                &mut record,
-                &runs_dir,
-                opts.get("reason").unwrap_or(""),
-                opts.flag("confirm-publish"),
-            )?;
-            if code != EXIT_OK {
-                return Ok(code);
-            }
-        }
-    }
+    // Record the local decision; push and publication are separate calls.
     save_run(&runs_dir, &mut record)?;
     print_json(&record.to_json());
     Ok(EXIT_OK)
@@ -777,7 +746,13 @@ fn cmd_real_repo_run_push(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         Err(code) => return Ok(code),
     };
     let tools = RepoWorkspace::attach(ctx, Path::new(&record.dest))?;
-    let code = push_record(&tools, &mut record, &runs_dir)?;
+    let code = push_record(
+        &tools,
+        &mut record,
+        &runs_dir,
+        opts.get("reason").unwrap_or(""),
+        opts.flag("confirm"),
+    )?;
     if code != EXIT_OK {
         return Ok(code);
     }

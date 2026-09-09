@@ -298,25 +298,7 @@ impl RealRepoLoopResult {
 }
 
 fn require_run_gates(tools: &RepoWorkspace<'_>, reason: &str, confirm: bool) -> Result<()> {
-    if !tools.allow_git_write_tools {
-        return Err(HarnessError::write_refused(
-            "real-repo coding run refused: deepagent_github.allow_git_write_tools is False",
-        )
-        .detail("failed_gate", "allow_git_write_tools"));
-    }
-    if reason.trim().is_empty() {
-        return Err(
-            HarnessError::write_refused("real-repo coding run refused: a non-empty human reason is required")
-                .detail("failed_gate", "reason"),
-        );
-    }
-    if !confirm {
-        return Err(
-            HarnessError::write_refused("real-repo coding run refused: explicit confirm=True is required")
-                .detail("failed_gate", "confirm"),
-        );
-    }
-    Ok(())
+    tools.require_write("run", reason, confirm)
 }
 
 /// Ask a proposer for an implementation plan. One call, no loop, no clone.
@@ -473,7 +455,7 @@ pub fn run_real_repo_loop(
                     ));
                     continue;
                 }
-                match tools.write_file(path, content) {
+                match tools.write_file(path, content, p.reason, p.confirm) {
                     Ok(_) => written.push(path.clone()),
                     Err(e) => {
                         write_failed = true;
@@ -561,6 +543,8 @@ pub fn run_real_repo_loop(
 }
 
 pub struct FinalizeParams<'a> {
+    pub reason: &'a str,
+    pub confirm: bool,
     pub branch_name: &'a str,
     pub commit_message: &'a str,
     pub changed_files: &'a [String],
@@ -585,6 +569,7 @@ pub fn finalize_real_repo_change(
     if f.decision == "reject" {
         return Ok(json!({"status": "rejected", "branch": f.branch_name}));
     }
+    tools.require_write("approve", f.reason, f.confirm)?;
     let digest = f.acceptance_digest.unwrap_or("");
     let base = f.acceptance_base_head.unwrap_or("");
     super::executor::manifest::verify_manifest(tools.worktree(), f.changed_files, f.run_id, base, digest)?;
@@ -607,9 +592,9 @@ pub fn finalize_real_repo_change(
         .detail("branch", f.branch_name)
         .detail("protected_paths", json!(out_of_scope)));
     }
-    tools.checkout_branch(f.branch_name)?;
-    tools.add(f.changed_files)?;
-    tools.commit(f.commit_message)?;
+    tools.checkout_branch(f.branch_name, f.reason, f.confirm)?;
+    tools.add(f.changed_files, f.reason, f.confirm)?;
+    tools.commit(f.commit_message, f.reason, f.confirm)?;
     ctx.audit
         .log(json!({"event": "agentic_real_repo_change_approved", "branch": f.branch_name}));
     Ok(json!({"status": "approved", "branch": f.branch_name}))

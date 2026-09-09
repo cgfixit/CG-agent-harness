@@ -1,0 +1,118 @@
+# Port parity and hardening evidence — 2026-09-09
+
+Acceptance is **incomplete**. This ledger distinguishes source comparison,
+fixture verification, and real-model acceptance. No whole-port equivalence claim.
+
+## Pinned baseline
+
+- Rust remote: `https://github.com/cgfixit/CG-agent-harness.git`, default `main`,
+  clean baseline `7a29186f0726c2e630fd69c94cf0e7576f1218c6`; no open PRs at start.
+  Existing operator checkout was clean at `a16eba2e24618a0b94ff461e096df3d1c4800cac`
+  and was not changed. Work uses an isolated fresh clone, `codex/consistent-write-policy`.
+- Extraction commit: `b698d648032fe52e17277f1fcfcb14d6a87fb32f` (September 7).
+  It names Python modules but records no exact Python source SHA.
+- Python comparison: `5cfd882d723f20fbf011b46f73ca1a0cbb5cbaf0`, latest ancestor
+  dated before the extraction timestamp; **inferred comparison point, not proven
+  extraction provenance**. Current remote reference also pinned:
+  `d9b0ad9660cc4697bbe66f4afea17f084a37e6d2`. Never compare moving branches.
+  Existing operator CyClaw tree has unrelated changes and was not modified.
+- Native target: macOS 26.6.2 (25G83), arm64, Apple M5 Pro, 48 GiB physical memory.
+  Initial available disk about 161 GiB; swap used about 1.64 GiB. These are one-time
+  observations, not available model memory or performance guarantees.
+- PATH resolves Rust/Cargo to Homebrew 1.98.0 under `/opt/homebrew/bin`;
+  rustup absent on PATH. `rust-toolchain.toml` requests 1.88 but Homebrew binaries
+  do not enforce it. Local results do not establish MSRV 1.88; CI has that gate.
+  Git 2.55.0 and authenticated `gh` available after outer sandbox access granted.
+- Ollama at `http://127.0.0.1:11434`; exact requested tag `qwen3.8:27b`,
+  inventory ID `22130167c4c2`, about 17 GB. Reported architecture `qwen35`,
+  27.3B parameters, Q4_K_M, maximum model context 262144, thinking/tools/vision.
+  Maximum context is metadata, not a recommended runtime setting.
+  Distinct installed `qwen3.8:27b-mlx` ID `5642e97495e1` is not interchangeable.
+  No backend conclusion follows from either tag. No models changed or pulled.
+- Existing default application home contains config/settings, no `.env`,
+  `auth.json`, or `soul.md` at inspection. No private contents copied into this PR;
+  all tests use disposable homes, repositories, identities, and local mocks.
+
+## Baseline commands and limits
+
+| Command | Exit / evidence | What it does not establish |
+|---|---|---|
+| `SKIP_LIVE=1 CLIPPY=/opt/homebrew/bin/cargo-clippy scripts/verify-local.sh` inside outer tool sandbox | 101 at Seatbelt test: `sandbox_apply: Operation not permitted`; fmt/clippy passed | Nested sandbox failure is not an application success |
+| Same command outside outer sandbox with `CARGO_NET_OFFLINE=true` | 0; fmt/clippy, 122 tests, release build | Live smoke deliberately omitted; some loop units use unconstrained test backend; real smoke uses a text check and mocked planner |
+| `cargo-deny check` (private installation of cargo-deny 0.20.2) | 0: advisories, bans, licenses, sources OK; advisory network access only | Not a complete security audit; no production dependency additions |
+| Real CLI approved-record push to disposable bare remote under read mode, writes false, emergency disable 1 | Baseline exit 0, remote branch created, record pushed true | Demonstrates policy defect without touching GitHub |
+| Baseline GitHub CI associated with exact baseline SHA | CI, Bundle, CodeQL, DevSkim, gitleaks succeeded | Does not establish local Cargo sandbox readiness or model usability |
+
+The native baseline reported no ignored tests. Hard-sandbox detection can return
+success from merely locating `sandbox-exec`; the CI smoke contains an early
+return when capability is absent. That must become a required real Cargo gate.
+
+## Ledger
+
+Python paths below refer to the pinned comparison SHA. Rust paths refer to the
+baseline plus this PR where explicitly stated. “Verified” applies only to the
+listed evidence; “unverified” means not yet executed at the required realism.
+
+| Python reference | Rust implementation | Intended behavior | Evidence | Status |
+|---|---|---|---|---|
+| `harness/config.py`, `server.py` | `common/home.rs`, `main.rs` | Loopback startup, isolated home, embedded assets | common-layer and bind-refusal tests; release build | verified (fixtures) |
+| `harness/config.py` | `common/config.rs`, `agentic/config.rs` | Validate configuration, closed enablement | common/foundation tests; quoted booleans rejected by typed agentic config | verified (fixtures) |
+| Existing-home config/settings migration | `common/home.rs` | Upgrade existing homes without losing state | Seeds only missing files; full upgrade/recovery matrix absent | unverified |
+| `harness/sessions.py` | `server/sessions.rs` | Persist sessions and recover corrupt state | chat/session tests; broader corruption scenarios pending | incomplete |
+| `harness/server.py`, `schemas.py` | `server/routes/*`, `schemas.rs` | Compatible schemas, errors and timeouts | route tests; write intent deliberately extended in this PR | changed deliberately |
+| `harness/agent_policy.py` | `server/agent_policy.rs`, console asset | Authoritative supported checks/defaults | Server cargo-test; browser explicitly pytest | incomplete |
+| `harness/chat_client.py`, `chat_cancel.py` | `llm/openai_chat.rs` | Local chat, complete output, cancel | mocked response/cancel tests; client requests stream=false | incomplete |
+| `harness/server.py`, model settings | `llm/backend.rs`, `agentic/proposer.rs` | Consistent chat/planner model selection | Separate config paths; local tag inventoried only | incomplete |
+| Chat usage/reasoning plumbing | `llm/openai_chat.rs`, `agentic/proposer.rs` | Correct usage and supported reasoning parameters | mocked usage; real Ollama parameter behavior not established | unverified |
+| `harness/prompts.py`, `skills_view.py` | `server/prompts.rs`, `views.rs`, bundled skills | Skills/persona/context in prompt | panel/prompt fixture tests; real-model influence unverified | incomplete |
+| `harness/memory_notes.py` | `server/memory_notes.rs` | Local note CRUD and prompt wiring | panel tests | verified (fixtures) |
+| `harness/web_search.py` | `server/web_search.rs` | Explicit optional web with SSRF checks; offline semantics | local mock web tests; offline-mode audit pending | incomplete |
+| `agentic/gh_client.py`, `context.py` | matching Rust modules | Read-only GitHub access and selected repo | fake-gh tests; live auth verified, selection workflow pending | incomplete |
+| `agentic/real_repo_loop.py` | `agentic/real_repo_loop.rs` | Bounded useful context and planning | 4000 chars/file, 12000 total; full-file-only overwrite constraints | incomplete |
+| Loop file blocks and workspace writes | `real_repo_loop.rs`, `workspace.rs` | Safe ordinary edits, stale preconditions, atomic proposals | parser/jail tests; partial context prohibits large-file replacement | incomplete |
+| `agentic/executor/runner.py`, `hard_sandbox.py` | `executor/runner.rs`, `sandbox.rs` | Actual offline Cargo checks | Native minimal Cargo passes; locked serde fixture fails offline under fresh HOME | incomplete |
+| `agentic/writer.py`, `deepagent_github/repo_workspace.py` | `writer.rs`, `workspace.rs` | Consistent actual-boundary write controls | Baseline bypass reproduced; new native local-Git matrix covers revocation | changed deliberately |
+| Loop finalize, writer | `commands.rs`, `real_repo_loop.rs`, `writer.rs` | Review → approve/commit → separate push → draft publication | Existing smoke + new CLI/API matrix; all three require reason/confirm | changed deliberately |
+| Diff rendering | `commands.rs`, console asset | Complete human-readable diff before approval | 20000-character cap remains; browser refuses truncated diff | incomplete |
+| Path jail / protected scope | `workspace.rs`, loop policy | Containment and protected landed destinations | jail/name-equivalence tests; write TOCTOU and loop landed-path audit pending | incomplete |
+| Hard sandbox | `executor/sandbox.rs` | Read/write/network/process confinement | Synthetic probes: outside read and .git/hooks write succeed; outside write denied | incomplete |
+| Git execution/finalization | `workspace.rs`, `executor/apply.rs` | No hooks/filters/index contamination | Disposable proof disables hooks; actual later Git operations need further audit | incomplete |
+| Child process runner / ops runner | `common/process.rs`, `shim/mod.rs` | Bounded output, time, descendants, resources | timeout tests; nested groups, hung pipes, memory/disk limits unresolved | incomplete |
+| `harness/server.py`, auth routes | `server/guards.rs`, common auth | Rate → origin → key → CSRF; loopback Host, optional local auth | auth/security-header tests | verified (fixtures) |
+| Logger/error/telemetry controls | `common/audit.rs`, env scrubber, cloud proposer | Redaction, opt-outs, no cloud inference by default | common/chat/panel tests; exhaustive leak audit pending | incomplete |
+| Optional cloud proposer | `agentic/cloud_proposer.rs` | Gated provider wire formats without real cloud tests | local Grok/Claude mocks; no actual cloud credentials used | verified (mocks only) |
+| Python synchronous run routes | `server/agent_jobs.rs`, `routes/agent.rs` | Detached jobs, refresh recovery, stop | API job tests; browser remains synchronous; startup reconciliation absent | incomplete |
+| Run store / cleanup | `agentic/run_store.rs`, `commands.rs` | Durable lifecycle and controlled cleanup | fixture record guards; crash/restart recovery not established | incomplete |
+| Python CLI/ops coverage | `agentic/cli.rs`, `shim/mod.rs`, views | Honest exposed capabilities | whitelist/invariant/surface scans | verified (structural) |
+| Python install scripts | packaging scripts and GitHub workflows | Apple Silicon package with assets/self-location | baseline Bundle green; native packaged acceptance pending; ad-hoc signing only | unverified |
+| RAG, terminal execution, fs/sql/netconnect, native desktop | no implementation | Excluded extraction scope | extraction commit explicitly omits RAG/terminal/connectors | intentionally omitted |
+
+## Ordered next work
+
+1. Phase 1: close consistent write policy, keep reason/confirmation explicit,
+   regression-test actual operations and revoked policy, draft PR with this ledger.
+2. Phase 2: reproduce real Cargo inside Seatbelt, prepare dependencies separately,
+   isolate writable build/cache state; then test read/write/.git/child/resource boundaries.
+3. Phase 3: bounded exact edits with hash/context preconditions and atomicity;
+   protect canonical and landed destinations. Never unprotect tests wholesale.
+4. Phase 4: server defaults, jobs/recovery/diff controls and browser tests;
+   process-tree cancellation separately. Correct streaming claims.
+5. Phase 5: independent chat/planner, then disposable end-to-end Qwen acceptance,
+   measured cold/warm/cleanup/interruption behavior with explicit network isolation.
+6. Phase 6: reconcile every row, existing-home doctor, retained features, package QA.
+
+Each dependent concern gets a documented stacked draft PR. No merge, release,
+cloud inference, CyClaw edits, model changes, or global configuration changes.
+
+## Phase 1 verification
+
+Final `CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh`: exit 0,
+fmt + exact all-target/all-feature clippy + 126 tests + release build. Dependency
+audit passed separately against unchanged Cargo.lock. No ignored tests reported;
+live Qwen acceptance and actual browser automation remain unverified.
+`tests/write_policy.rs` contains four real-Git/CLI/API tests without a sandbox skip,
+including direct PR-writer revocation, scope/budget revocation, missing policy,
+separate push and read-only diff without executable Git extensions.
+The original bypass now exits 4 and creates no remote ref. Existing local mocked
+planner → real sandbox text check → approval → push → mock draft publication
+smoke still passes. This is not real-model end-to-end acceptance.

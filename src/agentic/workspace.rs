@@ -7,7 +7,7 @@
 //! canonical path -> per-segment `.git` name-equivalence refusal -> resolve
 //! (strict for `add`; dangling-leaf-aware for `write_file`) -> containment ->
 //! landed-path vs the real `.git` dir -> return the LANDED relative path.
-//! Every write is gated on `deepagent_github.allow_git_write_tools`.
+//! Every mutation reloads the write policy and requires explicit human intent.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -84,10 +84,12 @@ pub fn fs_equiv_path(path: &str) -> String {
 }
 
 fn git_env() -> BTreeMap<String, String> {
-    GIT_ENV_ALLOWLIST
+    let mut env: BTreeMap<String, String> = GIT_ENV_ALLOWLIST
         .iter()
         .filter_map(|n| std::env::var(n).ok().map(|v| (n.to_string(), v)))
-        .collect()
+        .collect();
+    env.insert("GIT_OPTIONAL_LOCKS".into(), "0".into());
+    env
 }
 
 fn resolve_git() -> Result<PathBuf> {
@@ -126,7 +128,7 @@ pub struct RepoWorkspace<'a> {
     /// open directory, component by component, and cannot leave it.
     dir: cap_std::fs::Dir,
     audit: &'a Audit,
-    pub allow_git_write_tools: bool,
+    ctx: &'a AgenticCtx,
     pub max_read_bytes: u64,
     pub max_write_bytes: usize,
 }
@@ -172,7 +174,7 @@ impl<'a> RepoWorkspace<'a> {
             dest,
             dir,
             audit: &ctx.audit,
-            allow_git_write_tools: ctx.acfg.deepagent.allow_git_write_tools,
+            ctx,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
             max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
         })
@@ -208,21 +210,21 @@ impl<'a> RepoWorkspace<'a> {
             dest: dest_resolved,
             dir,
             audit: &ctx.audit,
-            allow_git_write_tools: ctx.acfg.deepagent.allow_git_write_tools,
+            ctx,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
             max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
         })
     }
 
     /// Test/constructor for an already-populated directory (no clone).
-    pub fn open_existing(audit: &'a Audit, dest: &Path, allow_git_write_tools: bool) -> Result<Self> {
+    pub fn open_existing(ctx: &'a AgenticCtx, dest: &Path) -> Result<Self> {
         let dest = dunce::canonicalize(dest)?;
         let dir = open_jail_dir(&dest)?;
         Ok(Self {
             dest,
             dir,
-            audit,
-            allow_git_write_tools,
+            audit: &ctx.audit,
+            ctx,
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
             max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
         })
@@ -242,16 +244,8 @@ impl<'a> RepoWorkspace<'a> {
         e
     }
 
-    fn require_git_writes(&self, tool: &str) -> Result<()> {
-        if !self.allow_git_write_tools {
-            self.audit.log(
-                json!({"event": "agentic_repo_workspace_denied", "op": tool, "reason": "git write tools disabled"}),
-            );
-            return Err(HarnessError::write_refused(
-                "git write operations are disabled (deepagent_github.allow_git_write_tools is False)",
-            )
-            .detail("tool", tool));
-        }
+    pub fn require_write(&self, tool: &str, reason: &str, confirm: bool) -> Result<()> {
+        super::writer::current_repository_policy(self.ctx, tool, reason, confirm)?;
         Ok(())
     }
 
@@ -341,7 +335,7 @@ impl<'a> RepoWorkspace<'a> {
 
     fn run_git(&self, tool: &str, args: &[&str], timeout_sec: u64, extra_env: &[(&str, &str)]) -> Result<String> {
         let binary = resolve_git()?;
-        let mut argv = vec![binary.display().to_string()];
+        let mut argv = vec![binary.display().to_string(), "-c".into(), "core.fsmonitor=false".into()];
         argv.extend(args.iter().map(|a| a.to_string()));
         let mut env = git_env();
         for (k, v) in extra_env {
@@ -449,9 +443,9 @@ impl<'a> RepoWorkspace<'a> {
 
     // ------------------------------------------------------------ writes
 
-    pub fn checkout_branch(&self, name: &str) -> Result<Value> {
+    pub fn checkout_branch(&self, name: &str, reason: &str, confirm: bool) -> Result<Value> {
         let tool = "checkout_branch";
-        self.require_git_writes(tool)?;
+        self.require_write(tool, reason, confirm)?;
         let id = identity::identity()?;
         if !id.branch_is_valid(name) {
             return Err(self.deny(
@@ -470,9 +464,9 @@ impl<'a> RepoWorkspace<'a> {
     }
 
     /// Write one text file (create or overwrite) inside the clone.
-    pub fn write_file(&self, target: &str, content: &str) -> Result<Value> {
+    pub fn write_file(&self, target: &str, content: &str, reason: &str, confirm: bool) -> Result<Value> {
         let tool = "write_file";
-        self.require_git_writes(tool)?;
+        self.require_write(tool, reason, confirm)?;
         let encoded = content.as_bytes();
         if encoded.len() > self.max_write_bytes {
             return Err(self
@@ -496,9 +490,9 @@ impl<'a> RepoWorkspace<'a> {
         Ok(json!({"target": relative, "bytes": encoded.len()}))
     }
 
-    pub fn add(&self, paths: &[String]) -> Result<Value> {
+    pub fn add(&self, paths: &[String], reason: &str, confirm: bool) -> Result<Value> {
         let tool = "add";
-        self.require_git_writes(tool)?;
+        self.require_write(tool, reason, confirm)?;
         if paths.is_empty() {
             return Err(self.deny(tool, "git add requires at least one path", None));
         }
@@ -515,9 +509,9 @@ impl<'a> RepoWorkspace<'a> {
     }
 
     /// Commit staged changes with the configured committer identity, `--no-verify`.
-    pub fn commit(&self, message: &str) -> Result<Value> {
+    pub fn commit(&self, message: &str, reason: &str, confirm: bool) -> Result<Value> {
         let tool = "commit";
-        self.require_git_writes(tool)?;
+        self.require_write(tool, reason, confirm)?;
         if message.trim().is_empty() {
             return Err(self.deny(tool, "commit message must be a non-empty string", None));
         }
@@ -535,9 +529,9 @@ impl<'a> RepoWorkspace<'a> {
     }
 
     /// Push one agent branch to origin. The only network write here; no credential of its own.
-    pub fn push_branch(&self, name: &str) -> Result<Value> {
+    pub fn push_branch(&self, name: &str, reason: &str, confirm: bool) -> Result<Value> {
         let tool = "push_branch";
-        self.require_git_writes(tool)?;
+        self.require_write(tool, reason, confirm)?;
         let id = identity::identity()?;
         if !id.branch_is_valid(name) {
             return Err(self.deny(
@@ -562,8 +556,11 @@ impl<'a> RepoWorkspace<'a> {
 
     pub fn diff(&self, cached: bool) -> Result<String> {
         let tool = "diff";
-        self.require_git_writes(tool)?;
-        let args: &[&str] = if cached { &["diff", "--cached"] } else { &["diff"] };
+        let args: &[&str] = if cached {
+            &["diff", "--no-ext-diff", "--no-textconv", "--cached"]
+        } else {
+            &["diff", "--no-ext-diff", "--no-textconv"]
+        };
         let out = self.run_git(tool, args, DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[])?;
         self.audit
             .log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "cached": cached, "bytes": out.len()}));
@@ -572,7 +569,6 @@ impl<'a> RepoWorkspace<'a> {
 
     pub fn untracked_files(&self) -> Result<Vec<String>> {
         let tool = "status";
-        self.require_git_writes(tool)?;
         let out = self.run_git(
             tool,
             &["status", "--porcelain=v1", "-z", "--untracked-files=all"],

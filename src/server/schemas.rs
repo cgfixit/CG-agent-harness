@@ -338,10 +338,17 @@ impl Decision {
 #[serde(deny_unknown_fields)]
 pub struct AgentDecisionRequest {
     pub decision: Decision,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub confirm: bool,
 }
 
 impl Validate for AgentDecisionRequest {
     fn validate(&self) -> Vec<String> {
+        if self.decision.as_str() == "approve" && !len_ok(self.reason.trim(), 1, MAX_REASON_LEN) {
+            return vec!["reason".into()];
+        }
         vec![]
     }
 }

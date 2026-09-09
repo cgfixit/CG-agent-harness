@@ -267,6 +267,9 @@ async fn run_reaches_the_child_and_disabled_layer_is_409() {
     ] {
         let (status, resp) = if path.ends_with(HEX32) {
             s.get_json(&path).await
+        } else if path.ends_with("/push") {
+            s.post_json(&path, json!({"reason": "reviewed fixture", "confirm": true}))
+                .await
         } else {
             s.post_json(&path, json!({})).await
         };
@@ -290,7 +293,7 @@ async fn run_reaches_the_child_and_disabled_layer_is_409() {
     let (status, resp) = s
         .post_json(
             &format!("/api/agent/runs/{HEX32}/decision"),
-            json!({"decision": "approve"}),
+            json!({"decision": "approve", "reason": "reviewed fixture", "confirm": true}),
         )
         .await;
     assert_eq!(status, 409, "{resp}");

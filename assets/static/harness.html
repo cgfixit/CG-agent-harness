@@ -843,7 +843,7 @@ function showAgentRecord(rec) {
     sys('candidate diff\n' + rec.diff);
     if (isReviewableAgentDiff(rec)) {
       shownAgentDiffs.set(rec.run_id, rec.diff);
-      sys('diff shown above — /agent approve ' + rec.run_id + '   or   /agent reject ' + rec.run_id);
+      sys('diff shown above — /agent approve ' + rec.run_id + ' <reason>   or   /agent reject ' + rec.run_id);
     } else {
       sys('approval withheld — the diff is unavailable or truncated');
     }
@@ -1280,6 +1280,7 @@ async function runSlash(line) {
           sendBtn.disabled = true;
           try {
             if (sub === 'approve') {
+              if (!rest.slice(2).join(' ').trim()) { sys('usage: /agent approve <run id> <reason for commit>'); break; }
               const current = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_CLI_TIMEOUT_MS));
               if (!current || current.run_id !== id) {
                 shownAgentDiffs.delete(id);
@@ -1293,7 +1294,7 @@ async function runSlash(line) {
                 break;
               }
               if (!alreadyShown) {
-                sys('review the diff above, then repeat /agent approve ' + id + ' to commit');
+                sys('review the diff above, then repeat /agent approve ' + id + ' <reason> to commit');
                 break;
               }
             }
@@ -1301,7 +1302,7 @@ async function runSlash(line) {
             if (sub === 'status') {
               r = await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_CLI_TIMEOUT_MS);
             } else {
-              r = await api('/api/agent/runs/' + encodeURIComponent(id) + '/decision', 'POST', { decision: sub }, AGENT_CLI_TIMEOUT_MS);
+              r = await api('/api/agent/runs/' + encodeURIComponent(id) + '/decision', 'POST', { decision: sub, reason: rest.slice(2).join(' ').trim(), confirm: sub === 'approve' }, AGENT_CLI_TIMEOUT_MS);
             }
             const rec = agentRecord(r);
             if (rec) showAgentRecord(rec);
@@ -1310,8 +1311,9 @@ async function runSlash(line) {
           }
         } else if (sub === 'push') {
           const id = (rest[1] || '').trim();
-          if (!id) { sys('usage: /agent push <run id>'); break; }
-          const rec = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id) + '/push', 'POST', {}, AGENT_CLI_TIMEOUT_MS));
+          const why = rest.slice(2).join(' ').trim();
+          if (!id || !why) { sys('usage: /agent push <run id> <reason for push>'); break; }
+          const rec = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id) + '/push', 'POST', { reason: why, confirm: true }, AGENT_CLI_TIMEOUT_MS));
           if (rec) showAgentRecord(rec);
         } else if (sub === 'discard') {
           const id = (rest[1] || '').trim();
@@ -1340,9 +1342,9 @@ async function runSlash(line) {
             ['/agent confirm <reason>', 'authorize and start the staged run'],
             ['/agent cancel', 'discard the staged run'],
             ['/agent status <run id>', 'read a run record'],
-            ['/agent approve <run id>', 'review an unseen or changed diff; repeat to commit'],
+            ['/agent approve <run id> <reason>', 'review an unseen or changed diff; repeat to commit'],
             ['/agent reject <run id>', 'discard the pending change'],
-            ['/agent push <run id>', 'push an approved branch to origin (disarmed by default)'],
+            ['/agent push <run id> <reason>', 'push an approved branch to origin (disarmed by default)'],
             ['/agent publish <run id> <why>', 'open a draft PR for a pushed run (disarmed by default)'],
             ['/agent discard <run id>', 'reclaim the clone of a decided run from disk'],
           ], ['command', 'action']));

@@ -191,14 +191,24 @@ fn canonical_and_dotgit_helpers() {
 fn write_jail_refuses_escapes_and_reports_landed_paths() {
     let dir = tempfile::tempdir().unwrap();
     let clone = seeded_clone(dir.path());
-    let cfg = config_with(dir.path(), &[]);
-    let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
-    let ws = RepoWorkspace::open_existing(&audit, &clone, true).unwrap();
+    let cfg = config_with(
+        dir.path(),
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+        ],
+    );
+    let ctx = AgenticCtx::new(cfg, &dir.path().join("config.yaml")).unwrap();
+    let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
     // Plain writes and creates.
-    let out = ws.write_file("src/new.rs", "fn x() {}\n").unwrap();
+    let out = ws
+        .write_file("src/new.rs", "fn x() {}\n", "fixture mutation", true)
+        .unwrap();
     assert_eq!(out["target"], "src/new.rs");
     assert!(clone.join("src/new.rs").exists());
-    ws.write_file("./target.txt", "changed\n").unwrap();
+    ws.write_file("./target.txt", "changed\n", "fixture mutation", true)
+        .unwrap();
     // Escapes and .git.
     for bad in [
         "../outside.txt",
@@ -211,37 +221,43 @@ fn write_jail_refuses_escapes_and_reports_landed_paths() {
         ".git./x",
         "a/../../x",
     ] {
-        let err = ws.write_file(bad, "x").unwrap_err();
+        let err = ws.write_file(bad, "x", "fixture mutation", true).unwrap_err();
         assert_eq!(err.code, "AGENTIC_ERROR", "{bad}");
         assert!(!dir.path().join("outside.txt").exists());
     }
     // Symlink out of the clone: refused. Symlink to an in-repo dir: allowed, landed path reported.
     std::os::unix::fs::symlink(dir.path(), clone.join("escape")).unwrap();
     assert!(ws
-        .write_file("escape/evil.txt", "x")
+        .write_file("escape/evil.txt", "x", "fixture mutation", true)
         .unwrap_err()
         .message
         .contains("escaped"));
     std::os::unix::fs::symlink("src", clone.join("alias")).unwrap();
-    let landed = ws.write_file("alias/via_alias.rs", "x\n").unwrap();
+    let landed = ws
+        .write_file("alias/via_alias.rs", "x\n", "fixture mutation", true)
+        .unwrap();
     assert_eq!(landed["target"], "src/via_alias.rs");
     // Dangling leaf symlink pointing outside: refused (write must not follow it out).
     std::os::unix::fs::symlink(dir.path().join("absent-file"), clone.join("dangling")).unwrap();
-    assert!(ws.write_file("dangling", "x").unwrap_err().message.contains("escaped"));
+    assert!(ws
+        .write_file("dangling", "x", "fixture mutation", true)
+        .unwrap_err()
+        .message
+        .contains("escaped"));
     assert!(!dir.path().join("absent-file").exists());
     // Symlink named anything pointing AT .git: refused by the landed-path check.
     std::os::unix::fs::symlink(".git", clone.join("docs")).unwrap();
     assert!(ws
-        .write_file("docs/config", "[core]\n")
+        .write_file("docs/config", "[core]\n", "fixture mutation", true)
         .unwrap_err()
         .message
         .contains(".git"));
     // Parent is a file: a refusal, not a crash.
-    assert!(ws.write_file("README.md/x.txt", "x").is_err());
+    assert!(ws.write_file("README.md/x.txt", "x", "fixture mutation", true).is_err());
     // Size cap.
     let big = "x".repeat(256_001);
     assert!(ws
-        .write_file("big.txt", &big)
+        .write_file("big.txt", &big, "fixture mutation", true)
         .unwrap_err()
         .message
         .contains("max_write_bytes"));
@@ -254,38 +270,54 @@ fn write_jail_refuses_escapes_and_reports_landed_paths() {
     assert!(ws.stat_file("missing.rs").is_err());
     // Git plumbing: branch namespace, add, commit (identity forced), diff, untracked.
     assert!(ws
-        .checkout_branch("main2")
+        .checkout_branch("main2", "fixture mutation", true)
         .unwrap_err()
         .message
         .contains("branch name must start"));
-    ws.checkout_branch("claude/jail-test").unwrap();
+    ws.checkout_branch("claude/jail-test", "fixture mutation", true)
+        .unwrap();
     assert!(ws.untracked_files().unwrap().contains(&"src/new.rs".to_string()));
     assert!(ws.diff(false).unwrap().contains("changed"));
-    assert!(ws.add(&["../outside".to_string()]).is_err());
-    ws.add(&["src/new.rs".to_string(), "target.txt".to_string()]).unwrap();
-    assert!(ws.commit("   ").is_err());
-    ws.commit("test: jail").unwrap();
+    assert!(ws.add(&["../outside".to_string()], "fixture mutation", true).is_err());
+    ws.add(
+        &["src/new.rs".to_string(), "target.txt".to_string()],
+        "fixture mutation",
+        true,
+    )
+    .unwrap();
+    assert!(ws.commit("   ", "fixture mutation", true).is_err());
+    ws.commit("test: jail", "fixture mutation", true).unwrap();
     let log = git(&["log", "-1", "--format=%an <%ae> %s"], &clone);
     assert_eq!(
         log,
         "CGagentHarness Agent <cgagentharness-agent@users.noreply.github.com> test: jail"
     );
     // Writes are refused wholesale when the gate is off.
-    let locked = RepoWorkspace::open_existing(&audit, &clone, false).unwrap();
+    let locked_home = dir.path().join("locked");
+    std::fs::create_dir(&locked_home).unwrap();
+    let cfg = config_with(&locked_home, &[]);
+    let locked_ctx = AgenticCtx::new(cfg, &locked_home.join("config.yaml")).unwrap();
+    let locked = RepoWorkspace::open_existing(&locked_ctx, &clone).unwrap();
     assert_eq!(
-        locked.write_file("z.txt", "x").unwrap_err().code,
+        locked
+            .write_file("z.txt", "x", "fixture mutation", true)
+            .unwrap_err()
+            .code,
         "AGENTIC_WRITE_REFUSED"
     );
     assert_eq!(
-        locked.push_branch("claude/jail-test").unwrap_err().code,
+        locked
+            .push_branch("claude/jail-test", "fixture mutation", true)
+            .unwrap_err()
+            .code,
         "AGENTIC_WRITE_REFUSED"
     );
     assert!(locked.read_file("target.txt").is_ok(), "reads are not gated");
     // Push to the bare origin works when armed.
-    ws.push_branch("claude/jail-test").unwrap();
+    ws.push_branch("claude/jail-test", "fixture mutation", true).unwrap();
     let bare = dir.path().join("origin.git");
     assert!(git(&["branch", "--list", "claude/jail-test"], &bare).contains("claude/jail-test"));
-    assert!(ws.push_branch("main").is_err());
+    assert!(ws.push_branch("main", "fixture mutation", true).is_err());
 }
 
 #[cfg(unix)]
@@ -293,9 +325,16 @@ fn write_jail_refuses_escapes_and_reports_landed_paths() {
 fn read_jail_refuses_symlink_escapes_without_following_the_leaf() {
     let dir = tempfile::tempdir().unwrap();
     let clone = seeded_clone(dir.path());
-    let cfg = config_with(dir.path(), &[]);
-    let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
-    let ws = RepoWorkspace::open_existing(&audit, &clone, true).unwrap();
+    let cfg = config_with(
+        dir.path(),
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+        ],
+    );
+    let ctx = AgenticCtx::new(cfg, &dir.path().join("config.yaml")).unwrap();
+    let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
 
     let outside = dir.path().join("secret.txt");
     std::fs::write(&outside, "exfiltrated\n").unwrap();

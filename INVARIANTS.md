@@ -42,14 +42,34 @@ single elements or temp files, never as separate argv tokens.
 
 ## Every write to a repository is gated
 
-`deepagent_github.allow_git_write_tools` (ships false) gates `write_file`,
-`add`, `commit`, `push_branch`. `agentic.enabled` (ships false) plus mode,
-`writes_enabled`, a human reason and a per-call `confirm` gate the `gh pr create`
-path (`src/agentic/writer.rs`); `EXECUTION_ENABLED` is true and only the env
-kill switch `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` can turn it off (AND-ed,
-never OR-ed).
+Repository mutation boundaries (checkout, file write, add, commit, push) and
+PR execution reload `config.yaml` and require `agentic.enabled`, write mode,
+`writes_enabled`, `deepagent_github.enabled`, `allow_git_write_tools`, a nonblank
+human reason, and explicit confirmation. The emergency disable switch is AND-ed
+with `EXECUTION_ENABLED`; it cannot arm writes. Missing/invalid config refuses.
+A changed repository, workspace root, protected scope, scanner setting, or budget
+requires a new invocation instead of continuing under a stale snapshot.
 
-- Locked by: `tests/real_repo_loop.rs::writer_gates_in_order_and_plan_integrity`,
+Run confirmation authorizes isolated candidate edits only. Approval verifies the
+manifest and commits locally with fresh reason/confirmation. Push and draft PR
+publication each require separate actions and fresh intent; combined
+`decide --push/--publish` is refused. Default master, deepagent, and clone-write
+flags remain false (mode/write-enabled defaults alone cannot arm writes).
+The established master-disabled CLI banner/no-op exit 0 remains; actual mutation
+boundary denials use exit 4. Invalid/missing config uses exit 3.
+
+Read-only diff/status do not require write enablement. Git optional index refresh,
+fsmonitor, external diff and textconv are disabled for inspection. Reject/discard
+remain available with writes disabled while the master layer is enabled.
+
+Environment is inherited at process creation. Exporting the disable variable in
+another shell does **not** alter an existing server/child. Restart with the switch
+set to affect new children, or revoke YAML write policy to block later mutation
+boundaries in an active child. Neither mechanism interrupts an already-running
+Git command/check; process-tree cancellation limitations remain separately tracked.
+No atomic transaction between an external policy edit and a syscall is claimed.
+
+- Locked by: `tests/write_policy.rs`, `tests/real_repo_loop.rs`, and
   `tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed`.
 
 ## The clone jail
