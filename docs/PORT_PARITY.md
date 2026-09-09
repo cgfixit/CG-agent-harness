@@ -68,13 +68,13 @@ listed evidence; “unverified” means not yet executed at the required realism
 | `harness/memory_notes.py` | `server/memory_notes.rs` | Local note CRUD and prompt wiring | panel tests | verified (fixtures) |
 | `harness/web_search.py` | `server/web_search.rs` | Explicit optional web with SSRF checks; offline semantics | local mock web tests; offline-mode audit pending | incomplete |
 | `agentic/gh_client.py`, `context.py` | matching Rust modules | Read-only GitHub access and selected repo | fake-gh tests; live auth verified, selection workflow pending | incomplete |
-| `agentic/real_repo_loop.py` | `agentic/real_repo_loop.rs` | Bounded useful context and planning | 4000 chars/file, 12000 total; full-file-only overwrite constraints | incomplete |
-| Loop file blocks and workspace writes | `real_repo_loop.rs`, `workspace.rs` | Safe ordinary edits, stale preconditions, atomic proposals | parser/jail tests; partial context prohibits large-file replacement | incomplete |
+| `agentic/real_repo_loop.py` | `agentic/real_repo_loop.rs` | Bounded useful context and planning | Same bounded character ceilings; explicit line windows and hash-bound exact edits; tree/search still pending | incomplete |
+| Loop file blocks and workspace writes | `real_repo_loop.rs`, `workspace.rs` | Safe ordinary edits, stale preconditions, atomic proposals | strict parser + snapshot/excerpt tests; >12 KB exact edit and real Cargo correction pass; concurrency/crash limits documented | incomplete |
 | `agentic/executor/runner.py`, `hard_sandbox.py` | `executor/runner.rs`, `sandbox.rs` | Actual offline Cargo checks | Baseline serde fails under fresh HOME; prepared locked serde/build-script/unit/doctest now pass native Seatbelt | incomplete |
 | `agentic/writer.py`, `deepagent_github/repo_workspace.py` | `writer.rs`, `workspace.rs` | Consistent actual-boundary write controls | Baseline bypass reproduced; new native local-Git matrix covers revocation | changed deliberately |
 | Loop finalize, writer | `commands.rs`, `real_repo_loop.rs`, `writer.rs` | Review → approve/commit → separate push → draft publication | Existing smoke + new CLI/API matrix; all three require reason/confirm | changed deliberately |
 | Diff rendering | `commands.rs`, console asset | Complete human-readable diff before approval | 20000-character cap remains; browser refuses truncated diff | incomplete |
-| Path jail / protected scope | `workspace.rs`, loop policy | Containment and protected landed destinations | jail/name-equivalence tests; write TOCTOU and loop landed-path audit pending | incomplete |
+| Path jail / protected scope | `workspace.rs`, loop policy | Containment and protected landed destinations | proposal scope checks raw/landed paths, denies symlinks; retained parent handles; concurrent rename/leaf-CAS residual remains | incomplete |
 | Hard sandbox | `executor/sandbox.rs` | Read/write/network/process confinement | Baseline outside read/.git write reproduced; this PR denies both plus network, cache and candidate writes; process/resource limits remain | incomplete |
 | Git execution/finalization | `workspace.rs`, `executor/apply.rs` | No hooks/filters/index contamination | Disposable proof disables hooks; actual later Git operations need further audit | incomplete |
 | Child process runner / ops runner | `common/process.rs`, `shim/mod.rs` | Bounded output, time, descendants, resources | timeout tests; nested groups, hung pipes, memory/disk limits unresolved | incomplete |
@@ -146,3 +146,22 @@ linker setting did not reach rustdoc, which invoked cc/xcrun outside permitted
 cache/SDK paths. Pass the prepared linker via encoded rustdoc flags as well.
 The corrected native full quality run again passed 128 tests and release build;
 no read/write grants or test assertions were weakened. Exact CI rerun pending.
+
+## Phase 3: exact edits and complete proposal application
+
+Baseline `f777df6579ceafa3ea5ef237da898d9ea9935248`: 43/65 Rust files exceed
+4,000 characters. Disposable probes reproduced large-file refusal, accepted
+complete prefixes of truncated output, partial writes after a late refusal, and
+protected writes through a directory alias. This change adds explicit line
+windows, hash/excerpt-bound exact edits, strict complete-response parsing,
+whole-proposal preflight and staged application with rollback. See
+`docs/BOUNDED_EDITS.md` for the protocol, tests and concurrency/crash limits.
+
+Still incomplete: tree/search interfaces, exact model-token budgeting, crash
+recovery and adversarial concurrent rename containment. Protected tests/build
+configuration were not unprotected. No new dependencies.
+
+Phase 3 final `CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh`: exit 0,
+fmt, exact clippy, 133 tests and release build. `cargo-deny check`: exit 0 with
+pre-existing warnings. Native Cargo fixtures run without a skip; live model
+acceptance is recorded separately, not counted as a mocked regression success.

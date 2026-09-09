@@ -8,6 +8,7 @@ pub mod commands;
 pub mod config;
 pub mod context;
 pub mod ctx;
+pub mod edits;
 pub mod executor;
 pub mod gh_client;
 pub mod governance;

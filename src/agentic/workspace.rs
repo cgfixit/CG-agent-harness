@@ -474,6 +474,11 @@ impl<'a> RepoWorkspace<'a> {
                 .detail("bytes", encoded.len() as u64));
         }
         let relative = self.validate_write_path(tool, target, false)?;
+        for path in [target, &relative] {
+            if super::real_repo_loop::matches_protected_path(path, &self.ctx.acfg.deepagent.protected_write_paths) {
+                return Err(self.deny(tool, "protected write destination", Some(path)));
+            }
+        }
         let path = self.dest.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
         let written = (|| {
             if let Some(parent) = path.parent() {
@@ -488,6 +493,126 @@ impl<'a> RepoWorkspace<'a> {
         }
         self.audit.log(json!({"event": "agentic_repo_workspace_write", "target": relative, "bytes": encoded.len(), "sha256": crate::common::sha256_bytes_hex(encoded)}));
         Ok(json!({"target": relative, "bytes": encoded.len()}))
+    }
+
+    /// Validate the whole proposal, stage replacements through retained parent
+    /// capabilities, then rename. Ordinary failures roll back installed files.
+    /// This is not a crash-atomic multi-file filesystem transaction.
+    pub fn apply_proposal(
+        &self,
+        proposal: &super::edits::Proposal,
+        protected: &[String],
+        reason: &str,
+        confirm: bool,
+    ) -> Result<Vec<String>> {
+        let tool = "apply_proposal";
+        self.require_write(tool, reason, confirm)?;
+        let mut targets = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for (raw, content) in &proposal.files {
+            let landed = self.validate_write_path(tool, raw, false)?;
+            for path in [raw, &landed] {
+                if super::real_repo_loop::matches_protected_path(path, protected)
+                    || super::real_repo_loop::matches_protected_path(
+                        path,
+                        &self.ctx.acfg.deepagent.protected_write_paths,
+                    )
+                {
+                    return Err(self.deny(tool, "protected write destination", Some(path)));
+                }
+            }
+            if !seen.insert(fs_equiv_path(&landed)) {
+                return Err(self.deny(tool, "duplicate landed destination", Some(raw)));
+            }
+            if content.len() > self.max_write_bytes {
+                return Err(self.deny(tool, "write content exceeds max_write_bytes", Some(raw)));
+            }
+            let expected = proposal
+                .originals
+                .get(raw)
+                .ok_or_else(|| self.deny(tool, "missing original precondition", Some(raw)))?;
+            // Even in-jail symlink aliases are refused for proposal writes.
+            // Checked before the stale/unseen gate so a leaf symlink is denied
+            // as a symlink, not as an unseen regular file.
+            let canonical = canonical_repo_path(raw).ok_or_else(|| self.deny(tool, "unsafe destination", Some(raw)))?;
+            let mut prefix = PathBuf::new();
+            for part in Path::new(&canonical).components() {
+                prefix.push(part);
+                if self
+                    .dir
+                    .symlink_metadata(&prefix)
+                    .is_ok_and(|m| m.file_type().is_symlink())
+                {
+                    return Err(self.deny(tool, "symlink proposal destinations are refused", Some(raw)));
+                }
+            }
+            let actual = self.read_file(raw).ok();
+            if &actual != expected || (expected.is_none() && self.dir.symlink_metadata(raw).is_ok()) {
+                return Err(self.deny(tool, "stale or unseen existing file; select current context", Some(raw)));
+            }
+            targets.push((landed, expected.clone(), content.clone()));
+        }
+        let total: usize = targets.iter().map(|(_, _, content)| content.len()).sum();
+        if total as u64 > self.ctx.acfg.deepagent.max_write_budget_bytes {
+            return Err(self.deny(tool, "aggregate write budget exceeded", None));
+        }
+        let mut staged = Vec::new();
+        for (path, original, content) in &targets {
+            let (parent, leaf) = self.proposal_parent(path)?;
+            staged.push(StagedReplacement::prepare(parent, leaf, original.as_deref(), content)?);
+        }
+        let apply = (|| -> Result<()> {
+            for file in &mut staged {
+                self.require_write(tool, reason, confirm)?;
+                file.install()?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = apply {
+            for file in staged.iter_mut().rev() {
+                file.rollback().map_err(|_| rollback_quarantine_error())?;
+            }
+            return Err(error);
+        }
+        for file in &mut staged {
+            // Successful batch: backups may now be removed. On failed rollback
+            // installed remains true, preserving the recovery preimage.
+            file.installed = false;
+        }
+        let paths: Vec<_> = targets.into_iter().map(|(path, _, _)| path).collect();
+        self.audit
+            .log(json!({"event":"agentic_proposal_applied", "paths": paths, "bytes": total}));
+        Ok(paths)
+    }
+
+    fn proposal_parent(&self, path: &str) -> Result<(cap_std::fs::Dir, String)> {
+        let mut parts: Vec<_> = path.split('/').collect();
+        let leaf = parts
+            .pop()
+            .ok_or_else(|| self.deny("apply_proposal", "empty destination", Some(path)))?;
+        let mut parent = self.dir.try_clone()?;
+        for part in parts {
+            match parent.create_dir(part) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e.into()),
+            }
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt;
+                let mut options = cap_std::fs::OpenOptions::new();
+                options.read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+                parent = cap_std::fs::Dir::from_std_file(parent.open_with(part, &options)?.into_std());
+            }
+            #[cfg(not(unix))]
+            {
+                if parent.symlink_metadata(part)?.file_type().is_symlink() {
+                    return Err(self.deny("apply_proposal", "symlink parent refused", Some(path)));
+                }
+                parent = parent.open_dir(part)?;
+            }
+        }
+        Ok((parent, leaf.to_string()))
     }
 
     pub fn add(&self, paths: &[String], reason: &str, confirm: bool) -> Result<Value> {
@@ -593,9 +718,121 @@ impl<'a> RepoWorkspace<'a> {
             rmtree_best_effort(parent);
         }
     }
+
+    /// Production dispose after `run_real_repo_loop`. A failed rollback keeps
+    /// the clone and `.cgah-backup-*` preimages for later discard.
+    pub fn close_after_loop(&self, error: Option<&HarnessError>) {
+        if error.is_some_and(is_proposal_rollback_quarantine) {
+            self.release();
+            return;
+        }
+        self.close();
+    }
 }
 
-/// Hold the clone open as a capability so reads cannot leave it.
+/// True when proposal application aborted because rollback itself failed.
+pub fn is_proposal_rollback_quarantine(error: &HarnessError) -> bool {
+    error.message.contains("rollback failed")
+        || error
+            .details
+            .get("quarantine")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
+fn rollback_quarantine_error() -> HarnessError {
+    HarnessError::agentic("proposal rollback failed; candidate is quarantined and must be discarded")
+        .detail("quarantine", true)
+}
+
+/// One staged replacement and its recovery preimage.
+struct StagedReplacement {
+    parent: cap_std::fs::Dir,
+    leaf: String,
+    staged: String,
+    backup: String,
+    original: Option<Vec<u8>>,
+    replacement: Vec<u8>,
+    installed: bool,
+}
+
+impl StagedReplacement {
+    fn prepare(parent: cap_std::fs::Dir, leaf: String, original: Option<&str>, content: &str) -> Result<Self> {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let result = Self {
+            parent,
+            leaf,
+            staged: format!(".cgah-stage-{id}"),
+            backup: format!(".cgah-backup-{id}"),
+            original: original.map(|s| s.as_bytes().to_vec()),
+            replacement: content.as_bytes().to_vec(),
+            installed: false,
+        };
+        for (name, data) in [
+            (&result.staged, Some(result.replacement.as_slice())),
+            (&result.backup, result.original.as_deref()),
+        ] {
+            if let Some(data) = data {
+                use std::io::Write;
+                let mut opts = cap_std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                let mut file = result.parent.open_with(name, &opts)?;
+                file.write_all(data)?;
+                if result.original.is_some() {
+                    file.set_permissions(result.parent.metadata(&result.leaf)?.permissions())?;
+                }
+                file.sync_all()?;
+            }
+        }
+        Ok(result)
+    }
+
+    fn current(&self) -> std::io::Result<Option<Vec<u8>>> {
+        match open_nofollow(&self.parent, &self.leaf) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn install(&mut self) -> Result<()> {
+        if self.current()? != self.original {
+            return Err(HarnessError::agentic(
+                "stale file at application boundary; rolling back proposal",
+            ));
+        }
+        self.parent.rename(&self.staged, &self.parent, &self.leaf)?;
+        self.installed = true;
+        #[cfg(test)]
+        after_install_hook(&self.leaf);
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<()> {
+        if self.installed {
+            if self.current()?.as_deref() != Some(self.replacement.as_slice()) {
+                return Err(HarnessError::agentic("concurrent change prevents safe rollback"));
+            }
+            if self.original.is_some() {
+                self.parent.rename(&self.backup, &self.parent, &self.leaf)?;
+            } else {
+                self.parent.remove_file(&self.leaf)?;
+            }
+            self.installed = false;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for StagedReplacement {
+    fn drop(&mut self) {
+        let _ = self.parent.remove_file(&self.staged);
+        if !self.installed {
+            let _ = self.parent.remove_file(&self.backup);
+        }
+    }
+}
+
 fn open_jail_dir(dest: &Path) -> Result<cap_std::fs::Dir> {
     cap_std::fs::Dir::open_ambient_dir(dest, cap_std::ambient_authority()).map_err(|e| {
         HarnessError::agentic(format!("cannot open clone directory: {e}")).detail("dest", dest.display().to_string())
@@ -617,4 +854,160 @@ fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str) -> std::io::Result<Vec<u8>> 
 #[cfg(not(unix))]
 fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str) -> std::io::Result<Vec<u8>> {
     dir.read(rel)
+}
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_INSTALL: std::cell::Cell<Option<fn(&str)>> = const { std::cell::Cell::new(None) };
+    static TAMPER: std::cell::RefCell<Option<(std::path::PathBuf, String, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn after_install_hook(leaf: &str) {
+    AFTER_INSTALL.with(|h| {
+        if let Some(hook) = h.get() {
+            hook(leaf);
+        }
+    });
+}
+
+#[cfg(test)]
+fn tamper_after_first_install(leaf: &str) {
+    TAMPER.with(|t| {
+        let state = t.borrow();
+        let Some((root, first, second)) = state.as_ref() else {
+            return;
+        };
+        if leaf == first {
+            let _ = std::fs::write(root.join(first), "tampered-first\n");
+            let _ = std::fs::write(root.join(second), "tampered-second\n");
+        }
+    });
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::*;
+    use crate::agentic::ctx::AgenticCtx;
+    use crate::agentic::edits::Proposal;
+    use crate::common::config::AppConfig;
+    use std::collections::BTreeMap;
+
+    fn write_enabled_ctx(dir: &Path) -> AgenticCtx {
+        let text = AppConfig::embedded_default()
+            .replacen(
+                "enabled: false                 # master switch",
+                "enabled: true                  # master switch",
+                1,
+            )
+            .replacen(
+                "    enabled: false\n    provider:",
+                "    enabled: true\n    provider:",
+                1,
+            )
+            .replacen("allow_git_write_tools: false", "allow_git_write_tools: true", 1);
+        let path = dir.join("config.yaml");
+        std::fs::write(&path, &text).unwrap();
+        AgenticCtx::new(AppConfig::from_str(&text, &path).unwrap(), &path).unwrap()
+    }
+
+    #[test]
+    fn failed_second_install_rolls_back_first_without_overwriting_concurrent_change() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a"), "original a").unwrap();
+        std::fs::write(root.path().join("b"), "original b").unwrap();
+        let parent = open_jail_dir(root.path()).unwrap();
+        let mut first =
+            StagedReplacement::prepare(parent.try_clone().unwrap(), "a".into(), Some("original a"), "new a").unwrap();
+        let mut second = StagedReplacement::prepare(parent, "b".into(), Some("original b"), "new b").unwrap();
+        first.install().unwrap();
+        assert_eq!(std::fs::read_to_string(root.path().join("a")).unwrap(), "new a");
+        std::fs::write(root.path().join("b"), "concurrent b").unwrap();
+        assert!(second.install().unwrap_err().message.contains("stale"));
+        second.rollback().unwrap();
+        first.rollback().unwrap();
+        drop((first, second));
+        assert_eq!(std::fs::read_to_string(root.path().join("a")).unwrap(), "original a");
+        assert_eq!(std::fs::read_to_string(root.path().join("b")).unwrap(), "concurrent b");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn failed_rollback_keeps_recovery_backup() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a"), "original a").unwrap();
+        let parent = open_jail_dir(root.path()).unwrap();
+        let mut first = StagedReplacement::prepare(parent, "a".into(), Some("original a"), "new a").unwrap();
+        first.install().unwrap();
+        std::fs::write(root.path().join("a"), "tampered a").unwrap();
+        assert!(first.rollback().unwrap_err().message.contains("concurrent change"));
+        drop(first);
+        assert_eq!(std::fs::read_to_string(root.path().join("a")).unwrap(), "tampered a");
+        assert!(
+            std::fs::read_dir(root.path())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().starts_with(".cgah-backup-")),
+            "failed rollback must retain the recovery backup"
+        );
+    }
+
+    #[test]
+    fn production_error_path_retains_clone_and_backup_on_rollback_failure() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = write_enabled_ctx(home.path());
+        let holder = home.path().join("holder");
+        let clone = holder.join("repo");
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::write(clone.join("a.rs"), "old a\n").unwrap();
+        std::fs::write(clone.join("b.rs"), "old b\n").unwrap();
+        let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+        TAMPER.with(|t| {
+            *t.borrow_mut() = Some((clone.clone(), "a.rs".into(), "b.rs".into()));
+        });
+        AFTER_INSTALL.with(|h| h.set(Some(tamper_after_first_install)));
+        let mut files = BTreeMap::new();
+        files.insert("a.rs".into(), "new a\n".into());
+        files.insert("b.rs".into(), "new b\n".into());
+        let mut originals = BTreeMap::new();
+        originals.insert("a.rs".into(), Some("old a\n".into()));
+        originals.insert("b.rs".into(), Some("old b\n".into()));
+        let err = ws
+            .apply_proposal(&Proposal { files, originals }, &[], "test", true)
+            .unwrap_err();
+        AFTER_INSTALL.with(|h| h.set(None));
+        TAMPER.with(|t| *t.borrow_mut() = None);
+        assert!(is_proposal_rollback_quarantine(&err), "{}", err.message);
+        assert!(
+            walkdir::WalkDir::new(&clone)
+                .into_iter()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with(".cgah-backup-")),
+            "recovery backup must remain after rollback failure"
+        );
+        ws.close_after_loop(Some(&err));
+        assert!(clone.is_dir(), "production dispose must not rmtree a quarantined clone");
+        assert!(
+            walkdir::WalkDir::new(&clone)
+                .into_iter()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with(".cgah-backup-")),
+            "close_after_loop must leave .cgah-backup-* in place"
+        );
+    }
+
+    #[test]
+    fn ordinary_loop_error_still_deletes_the_clone() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = write_enabled_ctx(home.path());
+        let holder = home.path().join("holder");
+        let clone = holder.join("repo");
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::write(clone.join("keep.txt"), "x").unwrap();
+        let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+        ws.close_after_loop(Some(&HarnessError::agentic("verification failed")));
+        assert!(!clone.exists());
+        assert!(!holder.exists());
+    }
 }
