@@ -100,6 +100,25 @@ hard sandbox (Seatbelt / `unshare --net` / Job Object); no backend means exit 3.
 
 - Locked by: `tests/real_repo_loop.rs`, `tests/agentic_foundations.rs::sandbox_*`.
 
+### Native macOS Cargo boundary
+
+Cargo sources are prepared explicitly against a Cargo.lock digest before model
+execution. Verification uses the selected installed toolchain, vendored sources,
+`--frozen`, an empty Cargo home, and fresh build/temp directories. Seatbelt denies
+all network operations and file data reads outside candidate, prepared inputs,
+specific OS/SDK/runtime roots, and scratch. Candidate source and `.git` are
+read-only to checks; only owned scratch is writable. Shared compiler/source
+caches are never writable by checks. This is a deliberate restriction on tests
+that formerly wrote into the candidate; use the provided temporary directory.
+
+Metadata discovery remains allowed. Seatbelt is not a memory/disk quota, and the
+current process group implementation does not contain every escaped descendant.
+Linux namespace and Windows Job Object backends do not establish equivalent
+filesystem or network confinement. See `docs/OFFLINE_CARGO.md` for preparation,
+required native tests, and remaining process/resource limitations.
+
+- Locked by: `tests/macos_cargo.rs` (no sandbox capability skip).
+
 ## Approval is bound to what was reviewed
 
 `pending_decision` records carry an acceptance digest (`run_id + base HEAD +

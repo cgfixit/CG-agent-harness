@@ -365,6 +365,16 @@ pub fn run_real_repo_loop(
     p: &LoopParams<'_>,
 ) -> Result<RealRepoLoopResult> {
     require_run_gates(tools, p.reason, p.confirm)?;
+    // Fail deterministic setup problems before the first model request.
+    if p.checks.iter().any(|c| c.argv.first().is_some_and(|v| v == "cargo")) {
+        let inputs = super::executor::prepared::CargoInputs::load(
+            tools.worktree(),
+            Some(&ctx.home_root.join("data/agentic/cargo-prepared")),
+        )?;
+        for check in p.checks.iter().filter(|c| c.argv.first().is_some_and(|v| v == "cargo")) {
+            inputs.argv(&check.argv)?;
+        }
+    }
     if p.instruction.trim().is_empty() {
         return Err(HarnessError::agentic("loop instruction must be a non-empty string"));
     }
@@ -472,7 +482,13 @@ pub fn run_real_repo_loop(
             && out_of_scope.is_empty()
             && !write_budget_exceeded
         {
-            Some(run_verification(tools.worktree(), p.checks, &ctx.audit, p.sandbox)?)
+            Some(run_verification(
+                tools.worktree(),
+                p.checks,
+                &ctx.audit,
+                p.sandbox,
+                Some(&ctx.home_root.join("data/agentic/cargo-prepared")),
+            )?)
         } else {
             None
         };

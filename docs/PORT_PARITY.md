@@ -70,12 +70,12 @@ listed evidence; “unverified” means not yet executed at the required realism
 | `agentic/gh_client.py`, `context.py` | matching Rust modules | Read-only GitHub access and selected repo | fake-gh tests; live auth verified, selection workflow pending | incomplete |
 | `agentic/real_repo_loop.py` | `agentic/real_repo_loop.rs` | Bounded useful context and planning | 4000 chars/file, 12000 total; full-file-only overwrite constraints | incomplete |
 | Loop file blocks and workspace writes | `real_repo_loop.rs`, `workspace.rs` | Safe ordinary edits, stale preconditions, atomic proposals | parser/jail tests; partial context prohibits large-file replacement | incomplete |
-| `agentic/executor/runner.py`, `hard_sandbox.py` | `executor/runner.rs`, `sandbox.rs` | Actual offline Cargo checks | Native minimal Cargo passes; locked serde fixture fails offline under fresh HOME | incomplete |
+| `agentic/executor/runner.py`, `hard_sandbox.py` | `executor/runner.rs`, `sandbox.rs` | Actual offline Cargo checks | Baseline serde fails under fresh HOME; prepared locked serde/build-script/unit/doctest now pass native Seatbelt | incomplete |
 | `agentic/writer.py`, `deepagent_github/repo_workspace.py` | `writer.rs`, `workspace.rs` | Consistent actual-boundary write controls | Baseline bypass reproduced; new native local-Git matrix covers revocation | changed deliberately |
 | Loop finalize, writer | `commands.rs`, `real_repo_loop.rs`, `writer.rs` | Review → approve/commit → separate push → draft publication | Existing smoke + new CLI/API matrix; all three require reason/confirm | changed deliberately |
 | Diff rendering | `commands.rs`, console asset | Complete human-readable diff before approval | 20000-character cap remains; browser refuses truncated diff | incomplete |
 | Path jail / protected scope | `workspace.rs`, loop policy | Containment and protected landed destinations | jail/name-equivalence tests; write TOCTOU and loop landed-path audit pending | incomplete |
-| Hard sandbox | `executor/sandbox.rs` | Read/write/network/process confinement | Synthetic probes: outside read and .git/hooks write succeed; outside write denied | incomplete |
+| Hard sandbox | `executor/sandbox.rs` | Read/write/network/process confinement | Baseline outside read/.git write reproduced; this PR denies both plus network, cache and candidate writes; process/resource limits remain | incomplete |
 | Git execution/finalization | `workspace.rs`, `executor/apply.rs` | No hooks/filters/index contamination | Disposable proof disables hooks; actual later Git operations need further audit | incomplete |
 | Child process runner / ops runner | `common/process.rs`, `shim/mod.rs` | Bounded output, time, descendants, resources | timeout tests; nested groups, hung pipes, memory/disk limits unresolved | incomplete |
 | `harness/server.py`, auth routes | `server/guards.rs`, common auth | Rate → origin → key → CSRF; loopback Host, optional local auth | auth/security-header tests | verified (fixtures) |
@@ -116,3 +116,27 @@ separate push and read-only diff without executable Git extensions.
 The original bypass now exits 4 and creates no remote ref. Existing local mocked
 planner → real sandbox text check → approval → push → mock draft publication
 smoke still passes. This is not real-model end-to-end acceptance.
+
+## Phase 2: prepared Cargo and native filesystem boundary
+
+Depends on Phase 1 commit `ad5d9f224c7c060af00d0c2801a63389e9a48761` (PR #16).
+The same M5/macOS/Homebrew installation now runs minimal and serde-bearing
+Cargo fixtures inside actual Seatbelt. Build scripts, unit tests and doctests
+execute; repeated runs use fresh scratch. Spaces, apostrophes and Unicode in
+preparation paths are covered. Missing snapshots/toolchains/vendor sources and
+stale locks return setup errors; the loop checks readiness before model work.
+
+Read-only prepared sources replace reliance on the operator's shared Cargo home.
+No Rust dependency added; the preparation helper uses Python 3's standard library.
+Native tests have no capability skip. CI explicitly fetches locked fixture sources
+before its offline Cargo gate. Runtime network remains denied by Seatbelt.
+
+Phase 2 is **partial**: escaped process groups, hung output readers, output
+allocation, memory/disk quotas, and later Git extension/index behavior still need
+audit/corrections. No equivalent Linux/Windows confinement claim. Real-model and
+browser acceptance are not established by these Cargo tests.
+
+Final Phase 2 `CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh`: exit 0,
+fmt, all-target/all-feature clippy, 128 tests, release build. No ignored tests;
+live smoke explicitly omitted. `cargo-deny check`: exit 0, existing duplicate
+crate/unused-license warnings remain; no new root lockfile dependencies.

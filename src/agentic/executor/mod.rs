@@ -3,6 +3,7 @@
 
 pub mod apply;
 pub mod manifest;
+pub mod prepared;
 pub mod runner;
 pub mod sandbox;
 

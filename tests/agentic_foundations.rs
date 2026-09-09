@@ -386,8 +386,12 @@ fn seatbelt_profile_is_byte_exact() {
     let tmp = tempfile::tempdir().unwrap();
     let c = dunce::canonicalize(cwd.path()).unwrap().display().to_string();
     let t = dunce::canonicalize(tmp.path()).unwrap().display().to_string();
-    let expected = format!("(version 1)\n(allow default)\n(deny network*)\n(deny file-write* (require-not (require-any (subpath \"{c}\") (subpath \"{t}\"))))\n");
-    assert_eq!(seatbelt_profile(cwd.path(), Some(tmp.path())), expected);
+    let profile = seatbelt_profile(cwd.path(), Some(tmp.path()));
+    let expected = format!("(deny file-write* (require-not (subpath \"{t}\")))");
+    assert_eq!(profile.lines().last().unwrap(), expected);
+    assert!(profile.contains("(deny file-read-data"));
+    assert!(profile.contains(&format!("(subpath \"{c}\")")));
+    assert!(profile.contains("(deny network*)"));
 }
 
 #[cfg(unix)]
@@ -412,7 +416,7 @@ fn sandbox_runs_checks_kills_on_timeout_and_scrubs_env() {
         Check::with_timeout("slow", vec!["sh".into(), "-c".into(), "sleep 30".into()], 1).unwrap(),
     ];
     let started = std::time::Instant::now();
-    let report = run_verification(&work, &checks, &audit, Some(&ArgvListSandbox)).unwrap();
+    let report = run_verification(&work, &checks, &audit, Some(&ArgvListSandbox), None).unwrap();
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     assert!(!report.ok);
     assert_eq!(report.failed_names(), vec!["fail", "slow"]);
@@ -421,7 +425,7 @@ fn sandbox_runs_checks_kills_on_timeout_and_scrubs_env() {
     assert!(report.results[1].stderr.contains("boom"));
     assert!(report.results[2].timed_out);
     assert!(
-        run_verification(&work, &[], &audit, None).unwrap().ok,
+        run_verification(&work, &[], &audit, None, None).unwrap().ok,
         "empty checks are vacuously ok without a backend"
     );
     // The production backend on this host.
