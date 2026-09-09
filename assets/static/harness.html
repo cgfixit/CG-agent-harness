@@ -232,6 +232,7 @@
       </div>
     </div>
   </div>
+  <input id="agentPRBodyFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
   <input id="agentPlanFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
 
 <script src="/static/auth_admin.js"></script>
@@ -846,6 +847,23 @@ agentPlanInput.addEventListener('change', () => {
   reader.readAsText(file);
 });
 
+const reviewedPRBodies = new Map();
+const prBodyInput = document.getElementById('agentPRBodyFile');
+let prBodyTarget = '';
+prBodyInput.addEventListener('change', async () => {
+  const file = prBodyInput.files && prBodyInput.files[0];
+  const id = prBodyTarget;
+  prBodyInput.value = '';
+  if (!file || !id) return;
+  if (file.size > 65536) { sys('PR body exceeds 65536 bytes'); return; }
+  try {
+    const body = await file.text();
+    if (!body.trim() || new TextEncoder().encode(body).length > 65536) { sys('PR body must contain 1..65536 bytes'); return; }
+    reviewedPRBodies.set(id, body);
+    sys('PR body loaded for ' + id + '. Review the complete text below before /agent publish. Reselect after editing the file.\n' + body);
+  } catch (err) { sys('could not read PR body: ' + err.message); }
+});
+
 function isReviewableAgentDiff(rec) {
   // agentic.cli._render_pending_diff also returns diagnostic/truncation text.
   // Displaying that text cannot authorize a candidate the operator cannot see.
@@ -1361,12 +1379,19 @@ async function runSlash(line) {
           if (!id) { sys('usage: /agent discard <run id>'); break; }
           const rec = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id) + '/discard', 'POST', {}, AGENT_CLI_TIMEOUT_MS));
           if (rec) showAgentRecord(rec);
+        } else if (sub === 'pr-body') {
+          const id = (rest[1] || '').trim();
+          if (!/^[0-9a-f]{32}$/.test(id)) { sys('usage: /agent pr-body <run id>'); break; }
+          prBodyTarget = id;
+          prBodyInput.click();
         } else if (sub === 'publish') {
           const id = (rest[1] || '').trim();
           const why = rest.slice(2).join(' ').trim();
           if (!id || !why) { sys('usage: /agent publish <run id> <why you are opening this PR>'); break; }
+          const body = reviewedPRBodies.get(id);
+          if (!body) { sys('load and review the repository PR template with /agent pr-body ' + id + ' first'); break; }
           const rec = agentRecord(await api(
-            '/api/agent/runs/' + encodeURIComponent(id) + '/publish', 'POST', { reason: why, confirm: true },
+            '/api/agent/runs/' + encodeURIComponent(id) + '/publish', 'POST', { reason: why, confirm: true, body },
             AGENT_CLI_TIMEOUT_MS,
           ));
           if (rec) showAgentRecord(rec);
@@ -1389,7 +1414,8 @@ async function runSlash(line) {
             ['/agent approve <run id> <reason>', 'review an unseen or changed diff; repeat to commit'],
             ['/agent reject <run id>', 'discard the pending change'],
             ['/agent push <run id> <reason>', 'push an approved branch to origin (disarmed by default)'],
-            ['/agent publish <run id> <why>', 'open a draft PR for a pushed run (disarmed by default)'],
+            ['/agent pr-body <run id>', 'load and preview a completed PR template file'],
+            ['/agent publish <run id> <why>', 'publish the reviewed body as a draft for a pushed run'],
             ['/agent discard <run id>', 'reclaim the clone of a decided run from disk'],
           ], ['command', 'action']));
         }

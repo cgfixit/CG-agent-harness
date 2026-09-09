@@ -89,7 +89,25 @@ ID, notarization or release publication is claimed. The Cargo preparation helper
 is still a checkout script and is absent from the binary-only archive.
 
 Still incomplete: verification-time descendant cancellation, server restart reconciliation,
-resource peak/cleanup stress, and a legitimate real-GitHub harness publication.
+resource peak/cleanup stress, and broader configuration/setup parity.
 Automated correction regressions and the separate real Qwen exercise are
 distinct evidence. No broad usability,
 security, parity or release-readiness claim follows from these samples.
+
+
+## Legitimate real-GitHub acceptance
+
+The installed local model generated a README-only setup correction from an
+explicit line window against pinned main `7a29186f0726c2e630fd69c94cf0e7576f1218c6`.
+One iteration took 28.630 seconds. The harness ran actual offline sandboxed
+`cargo fmt --check`; the complete candidate then passed the repository's native
+full quality gates (122 baseline tests, fmt, clippy, release build).
+
+After the complete one-paragraph diff and clean staged index were reviewed,
+local approval created a commit with pushed=false. A separate explicit push
+created `codex/installed-model-selection`; a separate publication used the actual
+completed PR template through `--body-file`. Readback is recorded in draft
+[PR #22](https://github.com/cgfixit/CG-agent-harness/pull/22).
+This standalone README correction has no runtime dependency on the hardening
+stack, although the acceptance used that stack's binary. No main push, merge,
+release, force-push or cloud inference occurred.

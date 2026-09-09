@@ -306,6 +306,20 @@ pub fn execute_write(ctx: &super::ctx::AgenticCtx, plan: &Value, confirm: bool, 
             .detail("op", op));
         }
     }
+    let body = params.get("body").and_then(Value::as_str).unwrap_or("");
+    if body.trim().is_empty() || body.len() > crate::common::MAX_PR_BODY_BYTES {
+        return Err(HarnessError::agentic(
+            "publication requires a reviewed body of 1..65536 bytes",
+        ));
+    }
+    use std::io::Write;
+    let mut body_file = tempfile::NamedTempFile::new()?;
+    body_file.write_all(body.as_bytes())?;
+    body_file.flush()?;
+    if let Some(index) = argv.iter().position(|arg| arg == "--body") {
+        argv[index] = "--body-file".into();
+        argv[index + 1] = body_file.path().display().to_string();
+    }
     let binary =
         resolve_gh().map_err(|_| HarnessError::agentic("gh binary not found on PATH").detail("op", op.clone()))?;
     argv[0] = binary.display().to_string();

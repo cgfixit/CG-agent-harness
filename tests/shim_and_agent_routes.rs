@@ -300,7 +300,7 @@ async fn run_reaches_the_child_and_disabled_layer_is_409() {
     let (status, resp) = s
         .post_json(
             &format!("/api/agent/runs/{HEX32}/publish"),
-            json!({"reason": "r", "confirm": true}),
+            json!({"reason": "r", "confirm": true, "body": "Reviewed fixture description"}),
         )
         .await;
     assert_eq!(status, 409, "{resp}");
@@ -587,4 +587,54 @@ async fn jobs_refuse_hostile_argv_and_unknown_profiles_like_the_sync_route() {
     let (status, resp) = d.post_json("/api/agent/jobs", run_body()).await;
     assert_eq!(status, 403, "{resp}");
     assert_eq!(code(&resp), "TOOL_DENIED");
+}
+
+#[test]
+fn publication_body_crosses_the_shim_as_an_exact_temporary_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(dir.path());
+    let mut request = OpsRequest::new("real-repo-run-publish");
+    request.run_id = Some(HEX32.into());
+    request.reason = Some("reviewed template".into());
+    request.confirm = true;
+    request.body = Some("## Proposed changes\nLiteral `code` and $HOME.\n\n## Evidence\nVerified.\n".into());
+    let (argv, temps) = shim::build_argv(&c, &request).unwrap();
+    assert_eq!(temps.len(), 1);
+    let index = argv
+        .iter()
+        .position(|a| a == "--body-file")
+        .expect("body file argument");
+    let path = std::path::PathBuf::from(&argv[index + 1]);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), request.body.unwrap());
+    assert!(!argv.iter().any(|a| a.contains("$HOME")));
+    drop(temps);
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn publication_requires_bounded_reviewed_text_without_defaulting_approval() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, _) = s
+        .post_json(
+            &format!("/api/agent/runs/{HEX32}/push"),
+            json!({"reason":"r", "confirm":true, "body":"unrelated publication text"}),
+        )
+        .await;
+    assert_eq!(status, 422, "push keeps its original strict schema");
+    let path = format!("/api/agent/runs/{HEX32}/publish");
+    let (status, _) = s.post_json(&path, json!({"reason":"r", "confirm":true})).await;
+    assert_eq!(status, 400);
+    for body in [
+        " ".to_string(),
+        "x".repeat(cgagentharness::common::MAX_PR_BODY_BYTES + 1),
+    ] {
+        let (status, _) = s
+            .post_json(&path, json!({"reason":"r", "confirm":true,"body":body}))
+            .await;
+        assert_eq!(status, 422);
+    }
+    let (status, result) = s.post_json(&path, json!({"reason":"r", "body":"Reviewed body"})).await;
+    assert_eq!(status, 200);
+    assert_eq!(result["exit_code"], 4, "body never supplies approval");
 }

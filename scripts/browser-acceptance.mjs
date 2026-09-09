@@ -2,7 +2,7 @@
 // fixture server. No npm packages, real user profile, or stored API credentials.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {readFile, mkdtemp, rm} from 'node:fs/promises';
+import {readFile, writeFile, mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve, join} from 'node:path';
 const base=process.env.CGAH_TEST_BASE_URL;
@@ -61,13 +61,25 @@ try {
  let decided=await evaluate('(async()=>agentRecord(await api("/api/agent/runs/'+run.run_id+'")))()');assert.equal(decided.status,'approved');assert.equal(decided.pushed,false);
  await send('/agent push '+run.run_id+' Separately authorize disposable local bare push');
  decided=await evaluate('(async()=>agentRecord(await api("/api/agent/runs/'+run.run_id+'")))()');assert.equal(decided.pushed,true);
+ await send('/agent publish '+run.run_id+' Publish only the reviewed fixture template');
+ assert.ok(!requests.some(r=>r.url.endsWith('/publish')&&r.method==='POST'),'no publication before loading a reviewed body');
+ const body='## Proposed changes\nCorrect fixture addition.\n\n## Further comments\nReal Cargo passed; complete diff reviewed.\n';
+ const bodyFile=join(profile,'reviewed-pr.md');await writeFile(bodyFile,body);
+ await send('/agent pr-body '+run.run_id);
+ const document=await call('DOM.getDocument');const input=await call('DOM.querySelector',{nodeId:document.root.nodeId,selector:'#agentPRBodyFile'});
+ await call('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[bodyFile]});
+ await until('reviewedPRBodies.has('+JSON.stringify(run.run_id)+')');
+ assert.equal(await evaluate('reviewedPRBodies.get('+JSON.stringify(run.run_id)+')'),body);
+ await send('/agent publish '+run.run_id+' Separately authorize mock draft publication with reviewed body');
+ decided=await evaluate('(async()=>agentRecord(await api("/api/agent/runs/'+run.run_id+'")))()');assert.equal(decided.pr_url,'https://example.invalid/pull/1');
+ assert.equal(await readFile(resolve(home,'../published-body'),'utf8'),body);
  await send('/agent run codex/cancel-'+Date.now()+' Fix add to return a plus b in src/lib.rs with an exact edit.');await send('/agent read src/lib.rs#L599-L604');await send('/agent confirm Exercise cancellation of disposable job');
  const cancelled=await until('rememberedAgentJob()!=='+JSON.stringify(job)+'?rememberedAgentJob():null');
  await send('/agent run codex/staged-only No execution');await send('/agent cancel');assert.equal(await evaluate('pendingAgentRun'),null);
  await send('/agent stop '+cancelled);await pause(500);
  assert.equal((await evaluate('api("/api/agent/jobs/'+cancelled+'")')).status,'cancelled');
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("may still survive")'));
- console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','authentication','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','staged cancel','active request cancel']}));
+ console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','authentication','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','reviewed PR body','mock draft publication','staged cancel','active request cancel']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});await rm(profile,{recursive:true,force:true});
 }
