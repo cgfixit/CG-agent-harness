@@ -1,28 +1,38 @@
 # Setup guide (macOS, Apple Silicon)
 
-This is a full, step-by-step walkthrough for getting CGagentHarness running on a Mac with an
-Apple Silicon chip (including M5), written for someone comfortable in a terminal but new to
-this particular project. If you just want the two-minute pitch, read `README.md` first — this
-document is the thing you actually follow, top to bottom, on a fresh machine.
+CG Agent Harness runs either as an Apple Silicon macOS app or as a standalone
+Rust server with a browser console. This guide covers both paths, optional
+credentials, local model selection, persistent work and the governed coding
+pipeline. See [README.md](README.md) for the overview and
+[desktop details](docs/DESKTOP.md) for the app's architecture and limits.
 
-A few terms used throughout: **loopback-only** means the program only ever listens on
-a loopback address such as `127.0.0.1`. It refuses a non-loopback bind. This does
-not by itself prevent outbound traffic or protect a deliberately configured proxy. The **console** is the browser page you'll chat through.
-The **coding pipeline** is a separate, optional feature that can clone a real GitHub repository
-and propose patches to it; it ships completely switched off, and arming it is its own section
-near the end.
+**Loopback-only** means the server listens on a local address such as
+`127.0.0.1`; it does not prove that every subprocess or external model service
+has no outbound network access. The **console** is the same interface in the
+app's native WKWebView and in a browser. The **coding pipeline** runs in a
+separate child process and ships disarmed.
 
-## 1. What you'll end up with
+## 1. Choose how to run it
 
-By the end of section 6 you'll have a single Rust program running on your Mac, serving a chat
-console at `http://127.0.0.1:8790/` that talks to a language model also running locally on your
-Mac (via Ollama). No account, no cloud service, and no data leaving your machine is required for
-this part. Everything past section 6 is optional: turning on the real-repo coding pipeline, and
-turning on per-user login.
+| Path | What you need | Where the console opens |
+|---|---|---|
+| Existing macOS app bundle | Apple Silicon Mac and a working local model service for chat | Native app; owned loopback port chosen at launch |
+| Build the macOS app | Git, Xcode Command Line Tools, rustup with Rust 1.88 and 1.90 | Native app after packaging in section 5.2 |
+| Standalone server | Git, Xcode Command Line Tools and Rust 1.88 | Browser at `http://127.0.0.1:8790/` by default |
+
+An already-built app needs no Terminal, external browser, Rust or Python merely
+to launch. Coding checks still need their own tools and prepared dependencies.
+For that path, use section 4 to check the model and section 5.2 to obtain/install
+the app, then follow sections 6–8. Build prerequisites and cloning are only needed
+if you build from source or choose the standalone server.
+
+Local harness use requires neither an API key nor account login. No cloud model
+or account is required for local chat. Account administration and external services retain their own credentials;
+repository writes still require their independent approvals.
 
 ## 2. Prerequisites
 
-Work through this checklist in order — each step depends on the one before it.
+Install only what your selected path needs. Preserve existing working tools and models.
 
 ### 2.1 Confirm you're on Apple Silicon
 
@@ -30,12 +40,15 @@ Work through this checklist in order — each step depends on the one before it.
 uname -m
 ```
 
-This should print `arm64`. If it prints `x86_64`, you're on an Intel Mac; the rest of this guide
-still mostly applies, but skip anything that specifically says "Apple Silicon."
+This should print `arm64`. An `x86_64` result may mean an Intel Mac or a shell
+running through Rosetta. Confirm the hardware and use a native arm64 shell for
+app builds. The current desktop package supports Apple Silicon only; Intel app
+packaging is outside this guide. The app targets macOS 12+, with older target
+versions still awaiting validation.
 
 ### 2.2 Xcode Command Line Tools
 
-Rust's build tooling needs a C compiler and linker, which come from Apple's Command Line Tools,
+Source builds and native Cargo checks need a C compiler and linker, which come from Apple's Command Line Tools,
 not the full Xcode app. Install them with:
 
 ```bash
@@ -74,23 +87,33 @@ cargo --version
 rustc --print sysroot
 ```
 
-Preserve a working existing toolchain. The acceptance machine used Homebrew
-Rust/Cargo 1.98.0 without rustup on PATH and passed the native gates. Homebrew
-executables do not enforce `rust-toolchain.toml`; Rust 1.88 compatibility is
-checked separately in CI.
+Preserve a working existing installation. This repository pins **Rust 1.88 for
+the backend** in `rust-toolchain.toml` and **Rust 1.90 for the desktop shell** in
+`desktop/rust-toolchain.toml`. Use rustup's Cargo on PATH so those files take
+effect; a Homebrew Cargo executable does not enforce them. An unrelated newer
+Clippy version can report different lints.
 
-If you already use rustup, explicitly prepare the repository's pinned toolchain
-and components while engineering network access is available:
+For backend builds, prepare the pinned components while network access is available:
 
 ```bash
-rustup toolchain install 1.88 --component clippy --component rustfmt
+rustup toolchain install 1.88 --profile minimal --component clippy --component rustfmt
 ```
 
-On a fresh machine without Rust, install a toolchain using the official
+For desktop builds, also prepare:
+
+```bash
+rustup toolchain install 1.90 --profile minimal --component clippy --component rustfmt
+```
+
+On a fresh machine without Rust, follow the official
 [Rust installation instructions](https://www.rust-lang.org/tools/install).
-Toolchain installation and dependency downloads belong to preparation. Offline
-verification must not attempt a rustup download or depend on credentials from
-the operator's real home. See [Offline Cargo verification](docs/OFFLINE_CARGO.md).
+From the repository root, `rustup show active-toolchain` should resolve to 1.88;
+inside `desktop/`, it should resolve to 1.90. The packaging script disables
+implicit toolchain installation, so install both before running it.
+
+Toolchain/dependency downloads belong to preparation. Generated-code verification
+must not attempt a rustup download or use credentials from your real home.
+See [Offline Cargo verification](docs/OFFLINE_CARGO.md).
 
 ### 2.5 Ollama
 
@@ -105,7 +128,7 @@ brew install --cask ollama
 
 This installs both the Ollama app and its command-line tool (`ollama`). You can launch it once
 from Spotlight (search "Ollama") to let it finish its own first-run setup, or just proceed —
-section 4 below starts it from the terminal either way.
+section 4 checks its endpoint and starts a daemon only if needed.
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
@@ -124,7 +147,17 @@ git clone https://github.com/cgfixit/CG-agent-harness.git
 cd CG-agent-harness
 ```
 
-Every command in the rest of this guide assumes your terminal's current directory is this
+For an existing checkout, inspect it before updating:
+
+```bash
+git status --short
+git fetch origin
+git log -1 --oneline origin/main
+```
+
+Preserve uncommitted work. A clean checkout already on `main` can use
+`git merge --ff-only origin/main`; stop and inspect any divergence rather than
+resetting it. Source-build commands below assume your terminal's current directory is this
 `CG-agent-harness` folder.
 
 ## 4. Select an installed model and check Ollama
@@ -156,13 +189,16 @@ Configure both `models.local_llm.model` (chat) and
 `/model use <tag>` changes chat selection only. Existing persisted chat selection
 can override the chat config, so inspect `/status` after restart.
 
-The measured M5 Pro/48 GiB run used GGUF Q4_K_M through Metal, context 8192 and
-one request at a time. It did not maximize context or modify the operator's
-normal daemon. See [Native acceptance](docs/MAC_ACCEPTANCE.md) for measurements,
-network isolation and limitations. A loopback URL alone does not establish
-Ollama's outbound-network policy.
+Keep historical model measurements separate from current settings. The native
+CLI and desktop runs used different recorded contexts; neither is a recommended
+context value for every machine. Refer to [native CLI acceptance](docs/MAC_ACCEPTANCE.md)
+and [desktop acceptance](docs/DESKTOP_ACCEPTANCE.md) for each run's exact evidence.
+Do not infer an execution backend from a tag suffix or change the running model
+service just to match a historical measurement.
 
-## 5. Build the binary
+## 5. Build or install
+
+### 5.1 Standalone backend
 
 From inside the `CG-agent-harness` folder:
 
@@ -170,8 +206,8 @@ From inside the `CG-agent-harness` folder:
 cargo build --release --locked
 ```
 
-The first build compiles every dependency from scratch and will take a few minutes (longer if
-`rustup` is also downloading the pinned toolchain from section 2.4 at the same time). Subsequent
+The first build compiles dependencies and can take several minutes. Prepare the
+pinned toolchain first as described in section 2.4. Subsequent
 builds are much faster because Cargo caches the compiled dependencies. When it finishes, the
 binary is at:
 
@@ -179,9 +215,49 @@ binary is at:
 target/release/cgagentharness
 ```
 
+### 5.2 macOS app
+
+To use an existing CI build, open the repository's
+[macOS desktop workflow](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml),
+select a successful run on `main`, and check its source commit. Download the
+`cg-agent-harness-macos-arm64-<commit>` artifact. GitHub's artifact archive contains
+the app ZIP and `SHA256SUMS`; extract that outer archive first, then check the
+inner ZIP from its extracted directory:
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
+
+Artifacts have a 14-day retention period and are not a notarized release. If the
+artifact has expired or no successful build exists for the desired commit,
+build from a clean checkout instead:
+
+```bash
+scripts/package-desktop.sh --dmg
+```
+
+This requires both pinned toolchains and builds/signs the backend before the
+shell embeds its hash. Outputs in `dist/` are `CG Agent Harness.app`,
+`CG-Agent-Harness-macos-arm64.zip`, an optional DMG, and `SHA256SUMS`.
+The app's `Contents/Resources/COMMIT` identifies its source revision. A dirty
+checkout is refused unless `CGAH_ALLOW_DIRTY=1` explicitly marks a development
+build; keep that exception out of ordinary installation instructions.
+
+Quit any existing copy with **Cmd-Q**, then unzip the app and move the complete
+bundle to Applications or a directory you own. Open it from Finder or the Dock.
+The app owns its backend on a dynamically selected loopback port; it does not
+adopt a server already running on port 8790. No login service is installed.
+
+The current app is **ad-hoc signed and not notarized**. Gatekeeper may require
+per-app approval under macOS Privacy & Security, or a managed policy may refuse
+it. Do not disable global Gatekeeper settings. Signature verification and a
+successful build do not prove native interaction acceptance; see
+[the acceptance checklist](docs/DESKTOP_ACCEPTANCE.md).
+
 ## 6. First run
 
-Local harness use does not require an API key or account login. Start the server:
+Local harness use does not require an API key or account login. For the app,
+open it from Finder. For the standalone path, start the server:
 
 ```bash
 ./target/release/cgagentharness serve
@@ -193,14 +269,15 @@ is still available: set that flag false, export a generated
 `CGAGENTHARNESS_API_KEY` before `serve`, and enter the matching key in the console.
 Desktop Setup can initialize a missing key in the private home `.env`.
 
-You should see one log line confirming the console is up, something like:
+The standalone server prints its address, for example:
 
 ```
 CGagentHarness console on http://127.0.0.1:8790/ (home /Users/you/.CGagentHarness)
 ```
 
-On first run the binary seeds its application home. Before the first chat, stop
-it with Ctrl-C, open that home's `config.yaml`, and merge your exact installed
+On first run either path seeds the application home. Before the first chat,
+quit the app with Cmd-Q or stop `serve` with Ctrl-C. Open that home's `config.yaml`
+and merge your exact installed
 model into these existing fields (do not duplicate the YAML mappings):
 
 ```yaml
@@ -212,12 +289,14 @@ agentic:
     model: "qwen3.8:27b"       # same selected tag; writes remain disarmed
 ```
 
-Restart the same `serve` command. Existing homes are not overwritten with new
+Relaunch the app or restart the same `serve` command. Existing homes are not overwritten with new
 configuration defaults; review new fields when upgrading. Do not create a
 `soul.md` file just to satisfy a setup check.
 
-This terminal is now occupied by the running server (leave it be — `Ctrl+C` stops it). Open a
-web browser and go to:
+In the app, the console opens automatically. **Harness → Setup and recovery**
+(Cmd-,) shows its owned endpoint and model/tool diagnostics. Use **Check installed
+chat and planner models** to check configured tag availability without downloading.
+For the standalone server, leave its terminal open and visit:
 
 ```
 http://127.0.0.1:8790/
@@ -226,20 +305,20 @@ http://127.0.0.1:8790/
 You'll land on a dark, terminal-styled page with a text input at the bottom and a small key
 field. Leave it empty for default local use. If you explicitly enabled key enforcement, enter the matching `CGAGENTHARNESS_API_KEY` —
 you'll need to do this once per browser tab/session, since the console never stores it anywhere
-on disk or in cookies; it's held only in that input field. Once the key is in, type a message and
-send it. The current client waits for a complete non-streaming response; latency depends on the model (the first
+on disk or in cookies; it's held only in that input field. Type a message and
+send it, leaving the field empty for normal local use. The current client waits for a complete non-streaming response; latency depends on the model (the first
 reply after starting Ollama can be slower, since it has to load the model into memory).
 
 If the browser page hangs and never responds, double-check that Ollama (section 4) is still
-running in its own terminal window.
+available at its configured local endpoint.
 
 ## 7. Take the console for a spin
 
 The console understands a set of slash commands typed directly into the same chat input. A few
 worth trying right away:
 
-- `/status` — shows the running configuration: which model is selected, the backend URL, and
-  whether the coding pipeline is armed (it won't be yet).
+- `/status` — shows the selected model/provider, session settings and token counts.
+  Use `/github` for agentic status and inspect the saved config for write gates.
 - `/model use <name>` — selects an exact installed chat model; the planner stays separately configured.
 - `/skills` — lists the bundled skill files under `assets/skills/` (small prompt snippets the
   console can inject into context).
@@ -254,32 +333,64 @@ worth trying right away:
 None of these commands touch a real code repository — that's a separate, optional layer covered
 in section 9.
 
-## 8. Make it survive a terminal close or a reboot
+## 8. Persistence, optional keys and recovery
 
-As set up so far, closing the terminal window running `serve` stops the console, and the API key
-only exists in that one shell's environment. Two things to fix, in order of how much you probably
-want them:
+### Home and optional credentials
 
-For manual starts, generate a fresh API key in the launching shell as shown in
-section 6 and paste it into the browser. To check presence without printing it:
+Both launch paths use `~/.CGagentHarness` by default. An explicit
+`CGAGENTHARNESS_HOME` selects another home; set it in the launching process's
+environment. The desktop requires an absolute override, and a shell export does
+not automatically configure a separately Finder-launched app. Setup shows the
+actual home. Config, credentials, sessions, notes, model selection and run evidence
+live outside the bundle, so replacing or uninstalling the app preserves them.
 
-```bash
-# No harness API key is required with security.api_key_optional: true.
-```
+New homes ship `security.api_key_optional: true`. In an existing home's
+`config.yaml`, set that literal boolean and restart for credential-free local
+use. Existing settings are never overwritten merely by upgrading the app.
+Origin/CSRF checks, rate limits and repository write controls still apply.
+Forwarded requests do not qualify for the local key bypass; use key enforcement
+behind a proxy, including a proxy that strips forwarding headers.
 
-The application does not install a login service or configure secure credential
-storage for you. Keep deployment-specific credential handling separate from
-this manual setup; do not put a key in command output or shared logs.
+To opt into API-key enforcement, set `security.api_key_optional: false` and
+configure `CGAGENTHARNESS_API_KEY`. Standalone `serve` reads its process
+environment. Desktop startup also reads the home's private `.env` as data;
+it never sources a shell, and explicit inherited values take precedence.
+The file must be current-user-owned, regular, not a symlink, mode 0600 and no
+larger than 64 KiB. Setup can save a missing key but will not replace an existing
+one. Enter the matching value in the console after restart; it stays only in
+page memory. Do not put credentials in command output, screenshots or shared logs.
+Per-user login is independently optional (section 10).
 
-Everything the console persists to disk — sessions, the config file, logs — lives under a home
-directory of its own, `~/.CGagentHarness` by default (override it by setting
-`CGAGENTHARNESS_HOME` before you first run `serve`). You never need to create this folder
-yourself; the binary creates and populates it on first run.
+### Close, quit and reopen
 
-Automatic login startup is not configured or verified by this guide. Job handles
-currently live in the server process: restarting loses them, and interrupted
-work may survive. Session files and run records persist, but they are not a
-complete restart-recovery mechanism. See [Console jobs](docs/CONSOLE_JOBS.md).
+Closing the desktop window hides it and keeps its backend running. Dock reopen
+or a second launch focuses the same home instance. Cmd-Q offers **Keep running**
+or **Cancel work and quit** if work is active. A standalone server stops with
+Ctrl-C; the app needs no open Terminal. Neither path installs automatic login
+startup, and neither resumes model requests or approvals after a reboot.
+
+One server owns a home at a time. Quit its owner before switching between app
+and standalone use; do not delete a live lock file. Different homes can run
+independently. This lock does not cover manually invoked agentic CLI writers.
+
+### Retained jobs and runs
+
+Console jobs are saved in `data/agentic/console-jobs.json`, retaining up to 32
+terminal jobs plus an active one within 16 MiB. After restart, a formerly running
+console job becomes interrupted; it is not reattached or resumed. `/agent jobs`
+shows retained handles and `/agent job <id>` inspects one.
+
+`/agent runs` inspects separate durable run records. On Unix, a released worker
+lease permits reconciliation to interrupted; a live lease stays running.
+Legacy records without ownership evidence remain unknown. Inspect with
+`/agent status <id>` before deciding or discarding. No commit, push, publication
+or approval is replayed automatically. Cancellation is best-effort; escaped
+descendants can survive and need inspection before further writes.
+
+Audit/spend/optional metrics JSONL logs retain a current file and one previous
+`.1` generation, default 8 MiB each. Logging remains best-effort. See
+[console jobs](docs/CONSOLE_JOBS.md), [desktop recovery](docs/DESKTOP.md) and
+[process lifecycle](docs/PROCESS_LIFECYCLE.md) for precise limits.
 
 ## 9. (Optional, advanced) Arm the coding pipeline
 
@@ -344,8 +455,7 @@ writes. Local approval, push and publication each also require their own explici
 reason and confirmation; an earlier approval does not override later policy.
 Keep cloud-provider child flags false when their parent allow flag is false.
 
-Restart the server (`Ctrl+C` in its terminal, then re-run the `serve` command from section 6) so
-it picks up the config change.
+Quit/relaunch the app, or stop/restart `serve`, to load the changed configuration.
 
 ### 9.3 Run it from the console
 
@@ -357,19 +467,26 @@ repository path and configured home:
 python3 scripts/prepare-cargo.py /path/to/selected/repository "$HOME/.CGagentHarness"
 ```
 
+In the app, **Harness → Setup and recovery → Choose repository and prepare
+offline** uses the bundled helper and a native folder chooser. Python 3, Cargo,
+the selected repository's Rust toolchain, SDK, Cargo.lock and cached dependencies
+are still prerequisites. No source checkout of the harness is needed for that
+bundled action. Setup discovers standard tool locations; custom paths use the
+private `desktop-tools.json` described in [desktop setup](docs/DESKTOP.md).
+
 Preparation defaults to offline. If locked dependencies are missing, review the
 repository and rerun with `--online` only while explicitly allowing engineering
 dependency access. Actual checks remain offline, with fresh bounded writable
 locations and read-only prepared sources. See [Offline Cargo](docs/OFFLINE_CARGO.md).
 
-Back in the browser:
+Back in the app or browser console:
 
 1. `/agent run codex/fix-topic Describe the intended change` stages an instruction.
 2. `/agent checks` lists supported profiles. The server default is `cargo-test`;
    `/agent checks cargo-fmt` is an example explicit selection.
 3. `/agent read src/lib.rs#L40-L80` declares a bounded existing-file window.
 4. `/agent confirm <reason>` submits a job and returns its ID immediately.
-5. `/agent job <job-id>` resumes monitoring, including after refresh/key re-entry.
+5. `/agent job <job-id>` resumes monitoring, including after refresh without key entry in default local mode.
 6. `/agent status <run-id>` displays the candidate and complete diff. A truncated
    diff cannot satisfy console approval.
 7. `/agent approve <run-id> <reason>` commits after explicit diff review.
@@ -391,9 +508,8 @@ to get a proposal accepted. See [Bounded edits](docs/BOUNDED_EDITS.md).
 
 ### 9.4 The kill switch
 
-If you ever want to shut the write path off immediately without editing the config file — for
-example while debugging, or if you're not sure what state it's in — set this environment
-variable before starting `serve`:
+To disable writes for a newly launched backend without editing its config, set
+this environment variable before launch (shown here for `serve`):
 
 ```bash
 export CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1
@@ -411,7 +527,7 @@ Git command or check. Scope/budget changes also refuse later writes until a fres
 Direct local harness use does not require account login. To retain named accounts,
 sessions and roles for account management, you can enable the optional auth feature:
 
-1. In `~/.CGagentHarness/config.yaml`, set `auth.enabled: true` and restart `serve`.
+1. In `~/.CGagentHarness/config.yaml`, set `auth.enabled: true` and restart the app or server.
 2. Visit the console; it will detect that no accounts exist yet and walk you through creating a
    bootstrap `admin` account with a password you choose, over your own loopback connection.
 3. From then on, `/api/auth/login` (surfaced in the console's login UI, not a slash command) is
@@ -422,7 +538,8 @@ management with sessions and roles; it does not gate chat or the agent pipeline.
 
 ## 11. Verify your setup
 
-Start with read-only inventory and configuration checks:
+For source builds/pipeline use, start with read-only inventory checks. Skip tools
+you do not use; `gh auth status` is relevant only to GitHub operations:
 
 ```bash
 sw_vers
@@ -443,10 +560,12 @@ prepared dependencies or the end-to-end workflow.
 Run the repository gates with application inference omitted:
 
 ```bash
-CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh
+test_home="$(mktemp -d)"
+CGAGENTHARNESS_HOME="$test_home" CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
-This runs formatting, clippy, tests and release build. It runs cargo-deny only
+The disposable home avoids colliding with a running app's home lock. This runs
+formatting, Clippy, tests and release build. It runs cargo-deny only
 when installed; record a skipped audit and run the dependency policy separately
 when needed. Tests include required native Cargo sandbox and process tests.
 An outer tool sandbox can prevent nested Seatbelt; run native acceptance from
@@ -465,19 +584,35 @@ Chrome/model/edit/verification/approval/publication acceptance is documented in
 [Console jobs](docs/CONSOLE_JOBS.md). Measured native results and remaining gaps
 are in [Native acceptance](docs/MAC_ACCEPTANCE.md) and [Port parity](docs/PORT_PARITY.md).
 
-The native package was verified as arm64 with checksums, embedded assets and
-child self-location. It is ad-hoc signed, with no Developer ID or notarization.
-The current binary-only archive does not include `scripts/prepare-cargo.py`;
-retain the matching checkout for Cargo preparation. No release was published.
+For a source-built app, also verify the separate desktop crate and packaged backend:
+
+```bash
+(cd desktop && cargo fmt --all -- --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
+(cd desktop && cargo deny check)
+CGAH_TEST_BINARY='dist/CG Agent Harness.app/Contents/MacOS/cgagentharness' python3 scripts/test-desktop-backend.py
+scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app'
+(cd dist && shasum -a 256 -c SHA256SUMS)
+```
+
+Run these after packaging in section 5.2. The shell embeds its signed sidecar's
+hash, so do not replace or re-sign just the backend afterward. The app bundle
+contains the offline preparation helper and desktop documentation; the separate
+binary-only CLI archive does not. Build and HTTP/process evidence are distinct
+from actual native window, file chooser, clipboard and quit-choice acceptance.
+Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 
 ## 12. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `401 Unauthorized` on harness requests | Key enforcement is enabled, or forwarding headers prevent the local bypass | For direct local use set `security.api_key_optional: true` and restart; for enforced access configure and enter the matching key |
+| App reports a home ownership conflict | Another app/server owns the same home | Quit that owner normally before retrying; do not delete its lock |
+| App waits at startup | File-access mediation, unavailable backend or damaged/moved bundle | Check macOS prompts; quit, move the complete app to Applications and retry; inspect Setup without deleting the home |
+| Changing config appears to do nothing | The running backend retains startup settings; closing its window only hides it | Quit with Cmd-Q and relaunch, or restart standalone `serve` |
+| Offline preparation fails in the app | Missing toolchain, Python/SDK, Cargo.lock, cached sources or an existing snapshot | Inspect Setup and the offline Cargo guide; the app does not download dependencies |
 | Chat hangs forever with no reply | Ollama isn't running, or hasn't finished loading the model into memory | Run the `curl` check from section 4; give the first request extra time after a fresh `ollama serve` |
 | `cgagentharness: harness binds loopback only` and the server refuses to start | You passed `--host` with something other than a loopback address (e.g. `0.0.0.0`) | This is intentional — the console will never bind to a non-loopback address. Omit `--host` or use `127.0.0.1` |
-| `Address already in use` when starting `serve` | Another process (maybe a previous `serve` you forgot about) is already on port 8790 | Find and stop it (`lsof -i :8790`), or start this one on a different port with `--port` |
+| `Address already in use` when starting `serve` | Another process occupies the standalone port | Identify it with `lsof -i :8790`; stop only its known owner or select another `--port`. A second server still needs a different home if the first owns it |
 | First `cargo build`/`cargo clippy` is very slow or seems stuck on "downloading components" | `rustup` is fetching the pinned 1.88 toolchain declared in `rust-toolchain.toml` | Expected on first use; let it finish. If it seems to genuinely hang, check your network connection |
 | `gh: command not found` when trying `/agent` commands | The GitHub CLI isn't installed (only needed for the optional pipeline in section 9) | `brew install gh && gh auth login` |
 | `/agent` commands report "Agentic layer disabled" | `agentic.enabled` is still `false` in `config.yaml` | Follow section 9.2, and make sure you restarted `serve` after editing the file |
