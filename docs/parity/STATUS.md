@@ -46,7 +46,7 @@ See [execution state](WORK.md) for baseline evidence and native acceptance block
 | L2 | 6 | needs-extension | pending | unavailable | Non-RAG conversational provider selection and explicitly consented external fallback. |
 | L3 | 6 | needs-extension | pending | unavailable | External provider pre-action hook with bounded structured input, allow/deny/error handling, timeout and audit. |
 | L4 | 6 | needs-extension | pending | unavailable | Explicitly trusted local-model hosts for an operator-owned container/LAN server. |
-| L5 | 1 | needs-extension | pending | unavailable | Broader health/readiness reporting with exact configured-model inventory checks, backend failures and safe optional provider probes. |
+| L5 | 1 | needs-extension | fixture-verified | unavailable | Broader health/readiness reporting with exact configured-model inventory checks, backend failures and safe optional provider probes. |
 | L6 | 6 | needs-extension | pending | unavailable | Full optional UNSLOP advisory scanner behavior: richer phrase/structure findings, surface-aware checks and comparable redacted metrics/feedback. |
 | L7 | 6 | needs-extension | pending | unavailable | Audit active non-RAG verification-skill coverage and port relevant checks, without copying Python-specific commands verbatim. |
 | O1 | 6 | needs-extension | pending | unavailable | Equivalent optional non-RAG input/output guardrails beyond the existing injection scanner: soul-mutation intent, applicable soul-leak checks and brokered checks around generation. |

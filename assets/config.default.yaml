@@ -24,6 +24,10 @@ models:
     max_tokens: 4096
     temperature: 0.2
     timeout_sec: 720
+    # Explicit local inventory only; no inference, cloud probes or model downloads.
+    inventory:
+      timeout_sec: 2.0 # finite 0.1–30 seconds
+      max_response_bytes: 262144 # integer 1024–1048576
     # Optional loopback failover (LM Studio or any OpenAI-compatible server).
     fallback:
       enabled: false

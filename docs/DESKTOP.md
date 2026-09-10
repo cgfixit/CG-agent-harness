@@ -127,6 +127,18 @@ planner settings remain in `agentic.deepagent_github`. Do not infer MLX or any
 other backend merely from a tag suffix. Start the already-installed Ollama app
 if its endpoint is unavailable; no runtime is automatically switched.
 
+When local fallback is explicitly enabled, its resolver uses the same inventory
+contract: HTTP success alone is insufficient; the selected exact model must be
+listed. A missing primary tag permits the configured fallback, while two missing
+tags leave the primary marked degraded. Disabled fallback makes no inventory
+request. No other installed tag is substituted. `models.local_llm.inventory`
+sets a default 2-second timeout and 262144-byte response cap; supported bounds
+are 0.1–30 seconds and 1024–1048576 bytes. Fallback retains its separate
+`probe_timeout_sec` (default 1.5, now validated to 0.1–30 finite seconds).
+Malformed values are refused when the inventory operation is used. Existing
+homes without the new block retain the old desktop limits without rewriting
+their configuration.
+
 **Choose repository and prepare offline** runs the bundled `prepare-cargo.py`
 with fixed arguments and an actual native folder choice. Python 3, Cargo, the
 selected Rust toolchain, SDK, Cargo.lock and cached sources are prerequisites.
