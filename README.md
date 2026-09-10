@@ -1,4 +1,4 @@
-# CGagentHarness
+# CG-Agent-Harness
 
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 
