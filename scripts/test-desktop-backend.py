@@ -30,6 +30,17 @@ class ModelFixture:
             def log_message(self, *_args):
                 pass
 
+            def do_GET(self):
+                if self.path != '/v1/models':
+                    self.send_error(404)
+                    return
+                body = json.dumps({'data': [{'id': 'fixture-chat'}]}).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_POST(self):
                 if self.path != '/v1/chat/completions':
                     self.send_error(404)
@@ -132,6 +143,31 @@ class DesktopBoundary(unittest.TestCase):
         child = Sidecar(self.home, **kwargs)
         self.children.append(child)
         return child
+
+    def test_private_models_command_distinguishes_chat_and_planner_tags(self):
+        self.start().close()
+        fixture = ModelFixture()
+        try:
+            config = self.home / 'config.yaml'
+            config.write_text(config.read_text()
+                .replace('http://127.0.0.1:11434/v1', fixture.base)
+                .replace('qwen3.8:27b-mlx', 'fixture-chat'))
+            child = self.start()
+            child.send({'command': 'models'})
+            result = child.read()
+            self.assertEqual(result['chat']['state'], 'installed')
+            self.assertEqual(result['planner']['state'], 'installed')
+            html = child.request('/')[1]
+            csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
+            self.assertEqual(child.request('/api/model',
+                {'X-CyClaw-CSRF': csrf, 'Origin': child.base}, {'model': 'fixture-chat-mlx'})[0], 200)
+            child.send({'command': 'models'})
+            result = child.read()
+            self.assertEqual(result['chat']['state'], 'tag_missing')
+            self.assertEqual(result['planner']['state'], 'installed')
+            self.assertEqual(fixture.requests, [], 'inventory must not request inference')
+        finally:
+            fixture.close()
 
     @unittest.skipUnless(os.name == 'posix', 'private dotenv descriptor contract is Unix-only')
     def test_headless_loads_private_dotenv_with_explicit_environment_precedence(self):
