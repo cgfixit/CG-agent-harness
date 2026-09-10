@@ -1786,7 +1786,7 @@ async function onSend() {
 /* ── wiring ── */
 sendBtn.addEventListener('click', onSend);
 const recoverJob = rememberedAgentJob();
-if (recoverJob) sys('retained job: ' + recoverJob + '. Enter your API key, then /agent job ' + recoverJob + ' to resume monitoring.');
+if (recoverJob) sys('retained job: ' + recoverJob + '. Use /agent job ' + recoverJob + ' to resume monitoring.');
 input.addEventListener('keydown', e => {
   // Ignore Enter while an IME composition is in progress; sending on the
   // commit keystroke submits a half-typed query.

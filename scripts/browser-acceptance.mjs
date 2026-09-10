@@ -26,7 +26,7 @@ try {
  const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});
  const evaluate=async expression=>{const v=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(v.exceptionDetails)throw Error(JSON.stringify(v.exceptionDetails));return v.result.value;};
  const until=async (expression,timeout=15000)=>{const start=Date.now();while(Date.now()-start<timeout){const value=await evaluate(expression);if(value)return value;await pause(100);}throw Error('Browser expectation timed out: '+expression);};
- const send=async command=>{await until('!document.getElementById("send").disabled');await evaluate('document.getElementById("input").value='+JSON.stringify(command)+';document.getElementById("send").click()');await pause(100);await until('!document.getElementById("send").disabled');};
+ const send=async command=>{await until('!document.getElementById("send").disabled');await evaluate('document.getElementById("input").value='+JSON.stringify(command)+';onSend()');await until('!document.getElementById("send").disabled');};
  await call('Page.enable');await call('Network.enable');await call('Page.navigate',{url:base+'/'});await until('!!document.getElementById("apiKey")');
  assert.equal(await evaluate('fetch("/api/agent/jobs").then(r=>r.status)'),403);
  await evaluate('document.getElementById("apiKey").value='+JSON.stringify(key));
@@ -79,7 +79,7 @@ try {
  await send('/agent stop '+cancelled);await pause(500);
  assert.equal((await evaluate('api("/api/agent/jobs/'+cancelled+'")')).status,'cancelled');
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("may still survive")'));
- console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','authentication','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','reviewed PR body','mock draft publication','staged cancel','active request cancel']}));
+ console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','no key or login','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','reviewed PR body','mock draft publication','staged cancel','active request cancel']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});await rm(profile,{recursive:true,force:true});
 }
