@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 
+![CG Agent Harness running on macOS](assets/app-ss.png)
+
 Loopback-only agentic coding harness. One Rust binary: crate and CLI `cgagentharness`.
 
 This is **not** CyClaw. CyClaw is the offline-first RAG soul agent
