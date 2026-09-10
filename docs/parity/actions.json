@@ -3969,14 +3969,16 @@
         "paths": [
           "src/server/desktop.rs",
           "src/llm/backend.rs",
-          "src/server/routes/core.rs"
+          "src/server/routes/core.rs",
+          "src/llm/inventory.rs",
+          "tests/model_readiness.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "resolve_local_backend -> inventory::model_readiness; desktop private models command -> same helper, separately for chat/planner. No probes from passive status."
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "Desktop models command checks exact chat/planner tags without external probes. Fallback resolver only checks HTTP success.",
-        "remaining": "Broader health/readiness reporting with exact configured-model inventory checks, backend failures and safe optional provider probes.",
+        "existing": "Existing desktop exact-tag inventory is now shared by fallback resolution; configured models must actually be listed. Disabled fallback makes zero requests.",
+        "remaining": "Optional explicitly selected provider diagnostics and full native desktop acceptance remain pending.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [],
@@ -3988,23 +3990,38 @@
       "credentials_network_side_effects": "No cloud health probe from passive status; no downloads or model substitution.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
-        "integration_environment": "pending",
+        "fixtures": "fixture-verified",
+        "integration_environment": "integration-verified",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          {
+            "command": "cargo test --test model_readiness --locked",
+            "exit_code": 0,
+            "outcome": "6 tests pass; predecessor reproduced 2 failing exact-model regressions."
+          },
+          {
+            "command": "CGAH_TEST_BINARY=../readiness-target/debug/cgagentharness python3 scripts/test-desktop-backend.py",
+            "exit_code": 0,
+            "outcome": "11 public process tests pass, including independent chat/planner inventory and no inference during readiness."
+          }
+        ],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only.",
+        "native_backend": "native-verified",
+        "native_desktop_interaction": "unavailable"
       },
       "delivery": {
-        "branch": null,
+        "branch": "codex/model-readiness",
         "pr": null,
         "implementation_commit": null,
-        "artifact": null
+        "artifact": null,
+        "base_branch": "codex/parity-foundations",
+        "merge_predecessor": "https://github.com/cgfixit/CG-agent-harness/pull/29"
       },
       "limitations": [
-        "This inventory does not close this action.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "L5 remains needs-extension; provider diagnostics are not implemented.",
+        "Native backend processes verified on macOS; WKWebView interaction unverified."
       ]
     },
     {

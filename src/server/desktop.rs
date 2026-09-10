@@ -12,6 +12,7 @@ use subtle::ConstantTimeEq;
 
 use crate::common::home::Home;
 use crate::common::home_lock::HomeLock;
+use crate::llm::inventory::{local_endpoint, model_readiness, InventoryLimits};
 
 pub const PROTOCOL: u32 = 1;
 const MAX_FRAME: u64 = 8192;
@@ -43,58 +44,6 @@ fn send(value: Value) -> anyhow::Result<()> {
     stdout.write_all(b"\n")?;
     stdout.flush()?;
     Ok(())
-}
-
-fn local_endpoint(raw: &str) -> bool {
-    url::Url::parse(raw).is_ok_and(|url| {
-        matches!(url.scheme(), "http" | "https")
-            && crate::llm::backend::is_loopback_url(raw)
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none()
-    })
-}
-
-async fn model_readiness(endpoint: &str, model: &str, key: &str) -> Value {
-    if !local_endpoint(endpoint) {
-        return json!({"model":model,"state":"not_probed","detail":"Only a configured loopback model endpoint can be checked here."});
-    }
-    let result = async {
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(2))
-            .build()?;
-        let mut request = client.get(format!("{}/models", endpoint.trim_end_matches('/')));
-        if !key.is_empty() {
-            request = request.bearer_auth(key);
-        }
-        let mut response = request.send().await?.error_for_status()?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if bytes.len() + chunk.len() > 262144 {
-                return Ok::<_, reqwest::Error>(None);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(serde_json::from_slice::<Value>(&bytes).ok())
-    }
-    .await;
-    match result {
-        Ok(Some(value)) if value["data"].is_array() => {
-            let found = value["data"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|row| row["id"].as_str() == Some(model));
-            json!({"endpoint":endpoint,"model":model,"state":if found {"installed"} else {"tag_missing"},
-                "detail":"Inventory only; use an explicit console chat to test inference. No model was downloaded."})
-        }
-        _ => {
-            json!({"endpoint":endpoint,"model":model,"state":"unavailable","detail":"Start the configured local model service and retry. No runtime was switched."})
-        }
-    }
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -212,11 +161,18 @@ fn start() -> anyhow::Result<()> {
                 Some("status") => send(json!({"active":state.jobs.running_count(),
                     "chat_active":state.generation_gate.is_held(),"run_active":state.agent_run_gate.is_held() || crate::shim::active_operations() > 0}))?,
                 Some("models") => {
-                    let chat = model_readiness(&state.backend.base_url, &state.current_model(), &state.backend.api_key).await;
+                    let limits = match InventoryLimits::from_config(&state.cfg) {
+                        Ok(limits) => limits,
+                        Err(_) => {
+                            send(json!({"error":"inventory_configuration", "message":"Check models.local_llm.inventory limits in config.yaml."}))?;
+                            continue;
+                        }
+                    };
+                    let chat = model_readiness(&state.backend.base_url, &state.current_model(), &state.backend.api_key, limits).await;
                     let planner = if matches!(state.cfg.str_or("agentic.deepagent_github.provider", "ollama").as_str(), "ollama" | "local") {
                         model_readiness(&state.cfg.str_or("agentic.deepagent_github.base_url", "http://127.0.0.1:11434/v1"),
                             &state.cfg.str_or("agentic.deepagent_github.model", ""),
-                            &std::env::var("DEEPAGENT_API_KEY").unwrap_or_default()).await
+                            &std::env::var("DEEPAGENT_API_KEY").unwrap_or_default(), limits).await
                     } else { json!({"state":"not_probed","detail":"Configured cloud planner is never probed by desktop readiness."}) };
                     send(json!({"chat":chat,"planner":planner}))?;
                 }
