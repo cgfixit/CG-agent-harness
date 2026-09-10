@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Public desktop sidecar tests. Disposable homes, no cloud/model requests."""
+"""Public desktop sidecar tests. Disposable homes and a loopback model fixture; no external inference."""
 import contextlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import select
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -17,6 +19,44 @@ import urllib.request
 
 BIN = Path(os.environ.get("CGAH_TEST_BINARY", "target/release/cgagentharness")).resolve()
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+class ModelFixture:
+    """Exercise the real HTTP client without model downloads or cloud credentials."""
+    def __init__(self):
+        self.requests = []
+        requests = self.requests
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+
+            def do_POST(self):
+                if self.path != '/v1/chat/completions':
+                    self.send_error(404)
+                    return
+                request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                requests.append(request)
+                body = json.dumps({
+                    "model": request["model"],
+                    "choices": [{"finish_reason": "stop", "message": {
+                        "role": "assistant", "content": "fixture reply"}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 2}
+                }).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.base = f'http://127.0.0.1:{self.server.server_port}/v1'
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
 
 class Sidecar:
     def __init__(self, home, key=None, protocol=1):
@@ -135,6 +175,76 @@ class DesktopBoundary(unittest.TestCase):
         self.assertEqual(child.request('/api/keys', {**headers, "Origin":"https://unapproved.invalid"})[0], 403)
         self.assertEqual(child.request('/api/keys', {**headers, "X-Forwarded-For":"127.0.0.1"})[0], 401)
         self.assertEqual(child.request('/api/agent/run', headers, {"instruction":"x", "branch":"codex/test", "commit_message":"test", "reason":"fixture"})[0], 409)
+
+    def test_chat_goal_memory_and_model_survive_backend_restart_without_credentials(self):
+        model = ModelFixture()
+        self.addCleanup(model.close)
+        seed = self.start()
+        seed.close()
+        config = self.home / 'config.yaml'
+        original = config.read_text()
+        endpoint = 'base_url: "http://127.0.0.1:11434/v1"'
+        self.assertIn(endpoint, original)
+        config.write_text(original.replace(endpoint, f'base_url: "{model.base}"'))
+
+        def headers_for(child):
+            self.assertTrue(child.hello['api_key_optional'])
+            self.assertFalse(child.hello['key_configured'])
+            status, html, _ = child.request('/')
+            self.assertEqual(status, 200)
+            csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
+            return {"X-CyClaw-CSRF": csrf, "Origin": child.base}
+
+        def call(child, headers, path, body=None, expected=200):
+            status, payload, _ = child.request(path, headers, body)
+            self.assertEqual(status, expected, payload)
+            return json.loads(payload)
+
+        child = self.start()
+        headers = headers_for(child)
+        session = call(child, headers, '/api/sessions', {"title": "restart fixture"}, expected=201)
+        sid = session['session_id']
+        path = '/api/sessions/' + sid
+        goal = 'Explain the repository checks'
+        note = 'Prefer small patches'
+        call(child, headers, path + '/goal', {"goal": goal})
+        call(child, headers, '/api/memory/add', {"text": note})
+        call(child, headers, '/api/memory', {"enabled": True})
+        call(child, headers, '/api/model', {"model": "fixture-model"})
+        reply = call(child, headers, '/api/chat', {"session_id": sid, "message": "first turn"})
+        self.assertEqual(reply['reply'], 'fixture reply')
+        self.assertEqual(reply['tally']['total'], 12)
+        self.assertEqual(len(model.requests), 1)
+        self.assertEqual(model.requests[0]['model'], 'fixture-model')
+        self.assertIn(goal, model.requests[0]['messages'][0]['content'])
+        self.assertIn(note, model.requests[0]['messages'][0]['content'])
+        child.close()  # real parent EOF, then a fresh process against the same home
+
+        restarted = self.start()
+        fresh = headers_for(restarted)
+        self.assertNotEqual(fresh['X-CyClaw-CSRF'], headers['X-CyClaw-CSRF'])
+        stale = {**fresh, 'X-CyClaw-CSRF': headers['X-CyClaw-CSRF']}
+        self.assertEqual(restarted.request(path, stale)[0], 403)
+        restored = call(restarted, fresh, path)
+        self.assertEqual(restored['title'], 'restart fixture')
+        self.assertEqual(restored['goal'], goal)
+        self.assertEqual(restored['tokens']['exchanges'], 1)
+        self.assertEqual([m['content'] for m in restored['messages']], ['first turn', 'fixture reply'])
+        self.assertTrue(call(restarted, fresh, '/api/memory')['enabled'])
+        self.assertEqual(call(restarted, fresh, '/api/status')['model'], 'fixture-model')
+        self.assertEqual(len(model.requests), 1, 'startup must not replay inference')
+        reply = call(restarted, fresh, '/api/chat', {
+            "session_id": sid, "message": "continue the goal", "loop": True})
+        self.assertEqual(reply['tally']['exchanges'], 2)
+        self.assertEqual(reply['tally']['total'], 24)
+        self.assertEqual(len(model.requests), 2)
+        request = model.requests[1]
+        self.assertEqual(request['model'], 'fixture-model')
+        self.assertIn(goal, request['messages'][0]['content'])
+        self.assertIn(note, request['messages'][0]['content'])
+        self.assertEqual([m['content'] for m in request['messages'][1:]],
+            ['first turn', 'fixture reply', 'continue the goal'])
+        self.assertEqual(call(restarted, fresh, path)['message_count'], 4)
 
     def test_home_lock_prevents_second_writer_and_releases_after_eof(self):
         first = self.start()

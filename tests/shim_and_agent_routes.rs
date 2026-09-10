@@ -444,9 +444,11 @@ fn cli_surface_hides_agentic_and_refuses_unknown_subcommands() {
 
 #[test]
 fn serve_refuses_a_non_loopback_bind() {
+    let home = tempfile::tempdir().unwrap();
     for host in ["0.0.0.0", "1.2.3.4", "example.com"] {
         let out = std::process::Command::new(BIN)
             .args(["serve", "--host", host, "--port", "18791"])
+            .env("CGAGENTHARNESS_HOME", home.path())
             .output()
             .unwrap();
         assert!(!out.status.success(), "serve --host {host} must be refused");

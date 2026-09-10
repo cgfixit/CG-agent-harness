@@ -250,3 +250,86 @@ async fn validation_errors_use_the_envelope_and_never_echo_values() {
         .await;
     assert_eq!(status, 422, "{body}");
 }
+
+#[tokio::test]
+async fn loop_budget_refuses_extra_model_calls_without_blocking_ordinary_chat() {
+    let model = start_mock_model().await;
+    let opts = ServerOptions::default()
+        .with("api.harness_loop_rate_limit.max_requests", "1")
+        .with("api.harness_loop_rate_limit.max_tokens", "37");
+    let s = spawn_server(&model.base_url(), opts).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal":"Explain a patch"}))
+        .await;
+    let turn = json!({"message":"Next step", "session_id":sid, "loop":true});
+    assert_eq!(s.post_json("/api/chat", turn.clone()).await.0, 200);
+    assert_eq!(model.last_request().unwrap()["max_tokens"], 37);
+    let response = s.req(Method::POST, "/api/chat").json(&turn).send().await.unwrap();
+    assert_eq!(response.status().as_u16(), 429);
+    assert!(
+        response.headers()["retry-after"]
+            .to_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(code(&response.json().await.unwrap()), "LOOP_RATE_LIMIT");
+    assert_eq!(
+        model.requests.lock().unwrap().len(),
+        1,
+        "refused turn never reaches model"
+    );
+    assert!(s.state.loop_inflight.lock().unwrap().is_empty());
+    assert_eq!(
+        s.post_json("/api/chat", json!({"message":"Normal chat", "session_id":sid}))
+            .await
+            .0,
+        200
+    );
+    assert_eq!(model.requests.lock().unwrap().len(), 2);
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    assert_eq!(session["tokens"]["exchanges"], 2, "refused loop adds no history/tokens");
+}
+
+#[tokio::test]
+async fn failed_and_cancelled_loop_turns_release_claims_for_a_later_turn() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal":"Review changes"}))
+        .await;
+    let turn = json!({"message":"Continue", "session_id":sid, "loop":true});
+    model.set_reply(json!({"__status":500}));
+    assert_eq!(s.post_json("/api/chat", turn.clone()).await.0, 502);
+    assert!(s.state.loop_inflight.lock().unwrap().is_empty());
+    assert!(!s.state.generation_gate.is_held());
+
+    model.set_reply(ok_reply("next", 10, 2));
+    model.set_delay_ms(30_000);
+    let chat = s.post_json("/api/chat", turn.clone());
+    let cancel = async {
+        // Synchronize with the actual model request, not a guessed sleep.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while model.requests.lock().unwrap().len() < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("loop request reached mock model");
+        let (status, body) = s.post_json("/api/chat", turn.clone()).await;
+        assert_eq!(status, 409);
+        assert_eq!(code(&body), "LOOP_IN_FLIGHT");
+        assert_eq!(s.post_json("/api/chat/cancel", json!({})).await.0, 200);
+    };
+    let ((status, body), ()) = tokio::join!(chat, cancel);
+    assert_eq!(status, 502, "{body}");
+    assert!(s.state.loop_inflight.lock().unwrap().is_empty());
+    assert!(!s.state.generation_gate.is_held());
+    model.set_delay_ms(0);
+    assert_eq!(s.post_json("/api/chat", turn).await.0, 200);
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    assert_eq!(session["tokens"]["exchanges"], 1, "only the successful turn persists");
+}

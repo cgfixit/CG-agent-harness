@@ -1,166 +1,241 @@
 # CG-Agent-Harness
 
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
+[![macOS desktop](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml)
 
 ![CG Agent Harness running on macOS](assets/app-ss.png)
 
-Loopback-only agentic coding harness. One Rust binary: crate and CLI `cgagentharness`.
+A local agentic harness for **coding, chat, and controlled tool use**. Work with a
+local model, keep session goals and context, and take repository changes through
+a bounded plan → edit → check → feedback loop before reviewing and publishing them.
 
-This is **not** CyClaw. CyClaw is the offline-first RAG soul agent
-([cgfixit/CyClaw](https://github.com/cgfixit/CyClaw)). This repo is the
-`harness/` console plus the `agentic/` real-repo pipeline, ported from that
-Python stack: same security posture, no RAG, no corpus, no terminal, no
-fsconnect / sqlconnect / netconnect.
+Use the Apple Silicon macOS app or run the Rust backend in a browser.
+**Local use needs no harness API key or account login.** Repository mutations
+remain disabled until explicitly configured, and commit, push, and draft PR
+publication each require a separate operator decision.
 
-Status: `0.1.0`. MSRV Rust 1.88. [MIT](LICENSE). Bind is loopback-only. Every
-write gate ships **closed**.
+Version `0.1.0` · [MIT](LICENSE) · Backend Rust 1.88 · Desktop build Rust 1.90
 
-- macOS app: [desktop setup, packaging and limitations](docs/DESKTOP.md) (Apple Silicon; native interaction acceptance pending)
-- Console: `http://127.0.0.1:8790/` (`assets/static/harness.html`, served verbatim)
-- Chat: local OpenAI-compatible model (Ollama on `127.0.0.1:11434` by default)
-- Pipeline: clone → plan → patch → hard-sandbox verify → human decide → commit → push → draft PR
-- Isolation: the HTTP process never calls the pipeline in-process. It only
-  spawns `cgagentharness agentic …` as a child (`src/shim`). Exit codes
-  `0 / 2 / 3 / 4` are the whole interface.
+## What you can do
 
-## Why it exists
-
-CyClaw's Python `harness/` + `agentic/` layer is the part worth extracting:
-the console, the child-process I6 boundary, the clone jail, and the write
-gates. Everything else (RAG, soul, Telegram, fsconnect) stays in CyClaw.
-
-If you want an offline knowledge agent, use CyClaw. If you want a local
-coding harness that cannot reach the pipeline except through `src/shim`,
-use this.
-
-Shipped defaults do nothing to a repository. You chat with a local model
-in the browser; only after you arm the gates can the same binary clone a
-repo, propose a patch, verify it in a hard sandbox, and open a draft PR —
-and only after a human reviews a digest-bound diff.
-
-## Prerequisites
-
-| Need | Why |
+| Capability | How it works |
 |---|---|
-| Rust 1.88+ (`rust-toolchain.toml`) | Build |
-| Python 3 (standard library only) | Explicit Cargo dependency preparation |
-| Ollama on `127.0.0.1:11434` with a chat model | Console chat and local planner |
-| `gh` ≥ 2.40.0, logged in | Real-repo pipeline only |
+| Chat and context | Select a local model; create, rename, and revisit sessions with saved history and token counts. Set a session goal, toggle `soul.md` persona context, and manage optional operator memory notes. |
+| Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
+| Tool visibility and use | `/skills` and `/tools` show the wired capabilities. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
+| Web context | Explicitly enable allowlisted web fetch/search, inspect fetched text, and inject selected context into chat. Web access ships off. |
+| Coding loop | Stage a repository task and inspect files or a plan; confirm an isolated run that proposes bounded edits, runs fixed check profiles in a hard sandbox, and feeds check results back into later attempts. |
+| Review and publication | Inspect retained run status and diffs, approve the reviewed tree for a local commit, then separately push and publish a draft PR with a reviewed repository template. |
+| Recovery | Rediscover retained jobs and runs after reopening. Worker leases distinguish active work from interrupted runs; reopening does not automatically resume work or replay a publication. |
 
-The shipped config references `qwen3.8:27b-mlx`, but do not assume that tag is installed. Run `ollama list` and select the exact installed tag you intend to use, then set both `models.local_llm.model` and `agentic.deepagent_github.model` to that tag. An `-mlx` suffix alone does not prove the execution backend.
+**There are two different loops:** `/loop` continues chat toward a session goal;
+it does not execute repository edits or checks. `/agent` drives the coding
+pipeline with its own iteration budget, write policy, and review steps.
 
-Mutable state lives under `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`
-overrides), seeded from `assets/config.default.yaml`.
+## Start the app or server
 
-## Quick start (chat only)
+### macOS desktop (Apple Silicon)
+
+Download the artifact from a successful `main` run of
+[macOS desktop](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml).
+Extract its ZIP and open **CG Agent Harness.app** from Finder, Applications, or
+the Dock. The app owns a bundled backend on an ephemeral loopback port; ordinary
+launch needs no Terminal, external browser, Rust, or Python.
+
+To build the app from source on macOS:
 
 ```bash
 git clone https://github.com/cgfixit/CG-agent-harness.git
 cd CG-agent-harness
-cargo build --release
-
-./target/release/cgagentharness serve
-# http://127.0.0.1:8790/
+scripts/package-desktop.sh
+# dist/CG Agent Harness.app
+# dist/CG-Agent-Harness-macos-arm64.zip and dist/SHA256SUMS
 ```
 
-Ollama must be running. No API key or account login is needed for local use.
-Send a line, then try `/status`, `/skills`,
-`/tools`. None of those touch a GitHub repository.
+The build requires the toolchains and macOS developer tools described in
+[desktop setup](docs/DESKTOP.md). The app is **ad-hoc signed, arm64 only, and not
+notarized**. Automated bundle checks do not establish complete native interaction
+acceptance; see [the acceptance record](docs/DESKTOP_ACCEPTANCE.md).
 
-Step-by-step macOS walkthrough: [setup-guide.md](setup-guide.md).
+### Standalone server
 
-## Optional credentials
+With Rust 1.88 installed:
 
-For an existing home, set `security.api_key_optional: true` in its `config.yaml`
-and restart the server/app. Saved homes are not overwritten on upgrade.
-This permits all harness operations without a key or account login on a direct
-loopback connection. Repository write gates, reason/confirmation, diff review,
-and separate approval/push/publication actions still apply.
+```bash
+git clone https://github.com/cgfixit/CG-agent-harness.git
+cd CG-agent-harness
+cargo build --release --locked
+./target/release/cgagentharness serve
+# Open http://127.0.0.1:8790/
+```
 
-To enforce a key, set `security.api_key_optional: false`, configure
-`CGAGENTHARNESS_API_KEY` in the server environment (or the desktop home's private
-`.env`), restart, and enter the matching key in the console. The key field remains
-available and keeps its value only in page memory. Forwarded requests never use
-the local bypass. Set the flag false behind any proxy, including one stripping
-forwarding headers.
+The standalone CLI/server is one self-reexecuting Rust binary, `cgagentharness`.
+Non-loopback binds are refused. The desktop shell is a separate package that
+bundles this same backend.
 
-`auth.enabled` retains optional account login, sessions and role-based account
-management. It does not require login for chat or the agent pipeline; managing
-accounts still requires the appropriate logged-in role. Credentials required by
-external services, such as GitHub publication, remain those services' requirements.
+### Connect a local model
 
-## Optional: arm the pipeline
+Chat and the local planner require a running OpenAI-compatible local inference
+server. The default is Ollama at `http://127.0.0.1:11434/v1`.
 
-The shipped config keeps every write gate closed. After `gh auth login`,
-edit `~/.CGagentHarness/config.yaml` and set all four:
+```bash
+ollama list
+```
+
+Select the **exact installed model tag** you intend to use. The shipped config
+references `qwen3.8:27b-mlx`; that is not proof it is installed, and the suffix
+does not establish the execution backend. Set `models.local_llm.model` and
+`agentic.deepagent_github.model` in your home's `config.yaml` for chat and planner
+respectively. `/model use <name>` changes the console's selected chat model.
+A configurable loopback fallback supports another OpenAI-compatible server.
+
+Existing homes keep their settings on upgrade. Mutable config, sessions, notes,
+persona, and run evidence live under `~/.CGagentHarness`; an absolute
+`CGAGENTHARNESS_HOME` overrides that directory. Replacing the app preserves this
+data. Use one server/app per home.
+
+Complete install, configuration, and troubleshooting:
+[macOS setup guide](setup-guide.md).
+
+## Work in the console
+
+Start with `/help`, `/status`, `/skills`, and `/tools`. For a chat session:
+
+```text
+/session new
+/goal Explain this project's test strategy
+/model use <installed-model-tag>
+```
+
+Send your question, then use `/loop 3` for a bounded sequence of continuation
+turns. The console normally pauses for the operator between turns;
+`/loop auto` toggles auto-continue and `/loop stop` cancels it. Server-side
+budgets still apply. `/memory` manages optional notes and `/soul` controls persona
+context; neither gives the model permission to mutate a repository.
+
+`/web` exposes the explicit enable/allow/fetch/search/inject controls.
+`/connectors` is a catalog, not a claim that every listed connector is executable;
+use `/tools` to inspect wiring. This harness does not include CyClaw's RAG corpus,
+terminal, or fsconnect/sqlconnect/netconnect services.
+
+## Run a coding task
+
+Coding runs require Git, a logged-in `gh` (version 2.40.0 or newer), the chosen
+planner, and the tools for the selected check profiles. Cargo dependency
+preparation additionally requires Python 3's standard library. A packaged app
+does not supply repository build dependencies or replace the execution sandbox.
+
+The shipped master, deepagent, and Git-write flags are false. To intentionally
+arm the pipeline, edit these fields in your existing `config.yaml` and restart:
 
 ```yaml
 agentic:
   enabled: true
+  mode: write
+  writes_enabled: true
   repo: "owner/name"
   deepagent_github:
     enabled: true
     allow_git_write_tools: true
 ```
 
-Restart `serve`. In the console a typical loop is `/agent run …` (stage),
-`/agent confirm <why>` (clone → plan → sandbox verify; no commit yet),
-`/agent status <run-id>`, then `/agent approve <run-id> <why>` →
-`/agent push <run-id> <why>` → `/agent publish <run-id> <why>`. Each mutation
-requires fresh explicit intent. CLI approval, push and publication each require
-`--reason=<why> --confirm`; API calls require `reason` and `confirm: true`.
-Approval commits locally only; combined `decide --push/--publish` is refused.
+Merge those fields into the existing configuration rather than replacing the
+whole file. A typical console sequence is:
 
-Before a Cargo check, prepare the selected repository's unchanged `Cargo.lock`
-outside verification using [the offline Cargo preparation flow](docs/OFFLINE_CARGO.md).
-Checks get read-only sources/toolchain and a fresh writable build directory;
-missing preparation refuses before asking the planner. [Bounded exact edits](docs/BOUNDED_EDITS.md)
-allow small changes in larger files using declared line windows and original hashes.
-Tests must write temporary
-state under their supplied temporary directory, not into the candidate repository.
+1. `/agent run codex/<topic> <instruction>` stages a task; `/agent read` and `/agent checks`
+   select context and fixed check profiles. `/agent iterations` sets the attempt
+   budget. Use `/help` for each command's arguments.
+2. `/agent confirm <why>` starts clone → plan → bounded edit → sandboxed check →
+   feedback. This authorizes candidate work in a harness-owned clone, with no
+   commit yet. The console polls a detached job; `/agent jobs` and `/agent runs`
+   rediscover retained work.
+3. Inspect `/agent status <run-id>` and `/agent diff <run-id>`. Approval is bound
+   to the reviewed files, modes, and base commit.
+4. `/agent approve <run-id> <why>` commits locally. `/agent push <run-id> <why>`
+   separately pushes the approved commit.
+5. `/agent pr-body <run-id>` loads and previews a completed repository PR template;
+   `/agent publish <run-id> <why>` separately creates the draft PR.
 
-`CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` disables repository and PR mutations
-when inherited by the process. Exporting it in another shell does not stop an
-existing process. Revoking YAML write policy blocks later mutation boundaries;
-it does not cancel work already executing.
-Depth of the gates, clone jail, and digest-bound approval:
-[INVARIANTS.md](INVARIANTS.md). Operator rules: [AGENTS.md](AGENTS.md).
-Full arming walkthrough: [setup-guide.md](setup-guide.md) §9.
+CLI mutations require `--reason=<why> --confirm`; API mutations require a reason
+and `confirm: true`. Combined approval/push/publication is refused.
 
-## Security defaults
+Prepare the selected unchanged `Cargo.lock` before Cargo verification using
+[offline Cargo preparation](docs/OFFLINE_CARGO.md), available through desktop
+Setup or the preparation helper. Missing preparation refuses before invoking
+the planner. On macOS, checks receive read-only candidate/source/toolchain inputs
+and fresh writable scratch, with network access denied. Tests must write temporary
+state under the supplied temporary directory. See [bounded edits](docs/BOUNDED_EDITS.md)
+and [Git approval](docs/GIT_APPROVAL.md) for scope, reviewed-tree checks, and limits.
 
-| Default | Behavior |
-|---|---|
-| Unset `CGAGENTHARNESS_API_KEY` | Direct local use works; origin and CSRF checks still apply |
-| Non-loopback bind (`--host 0.0.0.0`, …) | Refused at startup |
-| Host header not a loopback name | Refused (DNS-rebinding defense) |
-| `agentic.enabled`, `deepagent_github.enabled`, `allow_git_write_tools` | All ship **false** |
-| `security.api_key_optional` | Ships **true**; set false to require a configured Bearer key |
-| `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` (`1` / `true` / `yes` / `on`) | Disable-only write kill switch (cannot arm writes) |
-| `GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY` in CI | Blanked; tests must not assert a developer key is present |
+## Optional credentials and enforced boundaries
 
-Quoted YAML `"true"` is **off** for every gate (`flag_is_true`). A reason
-is never optional on a write.
+Fresh homes set `security.api_key_optional: true`: direct loopback harness
+operations work without a key or account login. For an older home, set that flag
+explicitly and restart. Origin, CSRF, request budgets, repository policy, and
+approval checks still apply.
 
-## Verify
+To require a key, set `security.api_key_optional: false`, configure
+`CGAGENTHARNESS_API_KEY` in the server environment or desktop home's private
+`.env`, and restart. Enter the key in the console; it stays in page memory.
+Forwarded requests never use the local bypass. Explicitly enforce the key behind
+any proxy, including one stripping forwarding headers.
+
+`auth.enabled` retains optional accounts, login sessions, and role-based account
+management. It does not gate chat or the coding pipeline. External services
+still require their own credentials, including GitHub publication.
+
+The HTTP server reaches agentic execution only by spawning a whitelisted worker
+through `src/shim`; it never imports the pipeline implementation. Model output
+passes scope, injection, edit-budget, and exact-content checks before candidate
+writes. Quoted YAML `"true"` does not enable a gate.
+
+`CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` disables repository and PR mutations when
+inherited by the process. Setting it in another shell does not affect an existing
+process. Revoking YAML policy blocks later mutation boundaries; it does not cancel
+a command already executing. Native sandbox and descendant-cleanup limits are
+recorded in [INVARIANTS.md](INVARIANTS.md) and
+[process lifecycle](docs/PROCESS_LIFECYCLE.md).
+
+## Tests and CI/CD
 
 ```bash
-scripts/verify-local.sh              # fmt, clippy -D warnings, deny, tests, release build, live smoke
-SKIP_LIVE=1 scripts/verify-local.sh  # static + tests + build only
+SKIP_LIVE=1 scripts/verify-local.sh  # fmt, clippy, optional installed deny, tests, release build
+python3 scripts/test-desktop-backend.py  # built release backend; disposable homes
+# Optional, with your configured local inference service running:
+scripts/smoke-ollama.sh
 ```
 
-CI blanks planner keys the same way. The live smoke
-(`scripts/smoke-ollama.sh`) needs Ollama; skip it with `SKIP_LIVE=1`.
-Quality bar and traps: [AGENTS.md](AGENTS.md).
+Set `CGAH_TEST_BINARY` to test another built backend, including the copy inside a
+macOS bundle. The Python suite uses only the standard library and a temporary
+loopback HTTP model fixture; it downloads no models and makes no cloud inference
+requests. Its chat/restart test verifies history, goal, notes, model selection,
+token counts, fresh CSRF, and no replay with neither a key nor a login.
 
-## Docs
-
-| Doc | What it is |
+| Gate | Evidence and scope |
 |---|---|
-| [INVARIANTS.md](INVARIANTS.md) | What the code enforces and where (I6, gates, clone jail) |
-| [AGENTS.md](AGENTS.md) | Operator / agent rules; do not "deduplicate" across the shim |
-| [setup-guide.md](setup-guide.md) | Fresh-machine walkthrough (macOS) |
-| [assets/config.default.yaml](assets/config.default.yaml) | Every tunable; no hardcoded tunables elsewhere |
-| [LICENSE](LICENSE) | MIT |
+| [Backend CI](.github/workflows/ci.yml) | PRs, `main`, and reusable release verification: formatting, Clippy with warnings denied, dependency policy, Rust 1.88 compatibility, release builds and verified CLI packaging, and Rust/public-backend tests on Linux and macOS. |
+| Coding and chat regression tests | Write-policy revocation, exact edits, clone jail, reviewed Git trees, detached-job cancellation, session/goal gates, loop budgets, and release of failed/cancelled chat claims. See [`tests/`](tests/). |
+| Native Cargo acceptance | Required macOS tests prepare locked dependencies, then exercise real Seatbelt restrictions and fixed Cargo checks. Linux/Windows backends do not establish equivalent confinement. |
+| [Desktop CI](.github/workflows/desktop.yml) | PRs, `main`, and manual runs build the app, run desktop policy and packaged-backend tests, verify signatures/checksums and the extracted bundle, then retain the arm64 ZIP and checksums as artifacts. |
+| Workflow and source checks | Existing actionlint/zizmor, CodeQL, secret scanning, and PR-template workflows remain separate checks. |
+| [Tag release](.github/workflows/release.yml) | `v*` tags must pass reusable backend CI before clean CLI packaging. Publication downloads only release packages and verifies their checksums. Tagged CLI releases and desktop workflow artifacts are separate outputs. |
 
-For asynchronous console runs and native browser acceptance, see [Console jobs](docs/CONSOLE_JOBS.md).
+CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
+does not prove real-model quality, complete native GUI behavior, or notarized
+distribution. Live Ollama smoke and [native acceptance](docs/DESKTOP_ACCEPTANCE.md)
+cover different evidence. Windows CI/release legs remain parked.
+
+## Development and reference
+
+| Document | Purpose |
+|---|---|
+| [setup-guide.md](setup-guide.md) | Step-by-step macOS setup, configuration, operations, and troubleshooting |
+| [docs/DESKTOP.md](docs/DESKTOP.md) | App ownership, setup/recovery, packaging, and distribution limits |
+| [docs/CONSOLE_JOBS.md](docs/CONSOLE_JOBS.md) | Asynchronous console runs and browser acceptance |
+| [INVARIANTS.md](INVARIANTS.md) | Process isolation, guard chain, write policy, clone jail, and sandbox guarantees |
+| [AGENTS.md](AGENTS.md) | Contributor rules and required verification |
+| [assets/config.default.yaml](assets/config.default.yaml) | Shipped settings and configurable budgets |
+
+The harness originated as a Rust port of the console and agentic pipeline from
+[CyClaw](https://github.com/cgfixit/CyClaw). Its focus here is local coding,
+chat context, controlled tools, and explicit operator review.
