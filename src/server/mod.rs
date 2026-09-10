@@ -202,6 +202,14 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
         println!("\nCGagentHarness may already be running on {host}:{port}.\nClose the other instance, or wait for the port to release, then try again.");
         return Ok(());
     }
+    #[cfg(unix)]
+    for (name, value) in env_keys::read_startup_keys(&home.env_path())? {
+        // The serve entrypoint is still single-threaded. Match desktop startup:
+        // private dotenv is data, and explicit environment values take precedence.
+        if std::env::var_os(&name).is_none() {
+            std::env::set_var(name, value);
+        }
+    }
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
         let (app, state) = build_app(AppOptions::new(home)).await?;

@@ -20,7 +20,7 @@ const QUOTE_ESCAPE: &str = r"'\''";
 const HEADER_LINES: [&str; 3] = [
     "# CGagentHarness secrets - chmod 600. Managed by the harness console's /api panel.",
     "# Do not commit. Do not copy into config.yaml. Do not paste into chat logs.",
-    "# Source this file in your shell before launching the harness.",
+    "# Unix desktop/serve loads this file as data at startup; other launchers need environment values.",
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -149,7 +149,7 @@ fn parse_env_text(text: &str) -> BTreeMap<String, String> {
     found
 }
 
-/// Desktop startup reads credentials as data through one validated descriptor.
+/// Unix desktop/headless startup reads credentials as data through one validated descriptor.
 /// Missing is distinct from unreadable/unsafe; no shell expansion is performed.
 #[cfg(unix)]
 pub fn read_startup_keys(path: &Path) -> anyhow::Result<BTreeMap<String, String>> {
