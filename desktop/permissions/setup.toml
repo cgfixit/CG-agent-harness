@@ -1,0 +1,19 @@
+[[permission]]
+identifier = "allow-desktop-status"
+description = "Read redacted desktop setup status."
+commands.allow = ["desktop_status"]
+
+[[permission]]
+identifier = "allow-retry-backend"
+description = "Retry the fixed bundled sidecar; optionally initialize a missing API key."
+commands.allow = ["retry_backend"]
+
+[[permission]]
+identifier = "allow-prepare-cargo"
+description = "Prepare a repository chosen using a native folder picker, offline only."
+commands.allow = ["prepare_cargo"]
+
+[[permission]]
+identifier = "allow-check-models"
+description = "Inspect configured local model inventories without generating or downloading."
+commands.allow = ["check_models"]

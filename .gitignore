@@ -6,3 +6,6 @@ debug
 .DS_Store
 *.log
 /upstream/
+/desktop/target/
+/desktop/gen/
+/dist/

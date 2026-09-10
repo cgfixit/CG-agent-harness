@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "setup",
+  "description": "Only the bundled setup window can retry startup or request native setup actions.",
+  "local": true,
+  "windows": ["setup"],
+  "permissions": ["allow-desktop-status", "allow-retry-backend", "allow-prepare-cargo", "allow-check-models"]
+}

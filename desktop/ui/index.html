@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CG Agent Harness — Setup</title><link rel="stylesheet" href="style.css"></head>
+<body><main><p class="eyebrow">CG AGENT HARNESS</p><h1>Local work. Governed execution.</h1>
+<p id="status" role="status" aria-live="polite">Starting the owned local backend…</p>
+<pre id="details"></pre>
+<button id="retry">Retry / Open console</button>
+<button id="models">Check installed chat and planner models</button>
+<section><h2>API authentication</h2><p>Enter your existing API key in the console after it opens. It stays in that page's memory. Desktop startup loads the server's matching key from your private home .env file without sourcing a shell.</p>
+<p>If this is a new home with no key, set one below, then enter the same key in the console. Existing keys will never be overwritten here.</p>
+<label for="key">New API key</label><input id="key" type="password" autocomplete="new-password" maxlength="4096">
+<button id="initialize">Save missing key and restart</button></section>
+<section><h2>Coding prerequisites</h2><p>Ordinary app startup needs no Rust or Xcode installation. Coding checks require the selected toolchain and prepared Cargo sources. Select a repository to prepare it using the bundled Python 3 helper. This action is offline and never downloads dependencies.</p>
+<button id="prepare">Choose repository and prepare offline</button></section>
+<section><h2>Recovery and local models</h2><p>If Ollama is unavailable, start your installed Ollama app and retry. Select an exact installed model in the console with /model list and /model use. Chat and planner settings are separate; this app does not install or switch model runtimes.</p>
+<p>Close hides the window; Dock reopens it. Cmd-Q quits with a cancellation choice when work is active. A crash may leave interrupted work: inspect retained jobs and run diffs before starting another run. No approvals, commits, pushes or publications are replayed.</p></section>
+</main><script src="setup.js"></script></body></html>

@@ -13,6 +13,7 @@ parser.add_argument('directory', type=Path, help='new directory; must not exist'
 parser.add_argument('--model', required=True, help='exact installed Ollama tag')
 parser.add_argument('--endpoint', default='http://127.0.0.1:11434/v1')
 parser.add_argument('--port', type=int, default=8792)
+parser.add_argument('--prepare-only', action='store_true', help='prepare the fixture without launching a server (desktop acceptance)')
 args = parser.parse_args()
 assert urlparse(args.endpoint).hostname == '127.0.0.1', 'local inference only'
 repo = Path(__file__).resolve().parent.parent
@@ -96,7 +97,13 @@ keyfile.write_text(key)
 env.update(CGAGENTHARNESS_HOME=str(home), CGAGENTHARNESS_API_KEY=key,
            PATH=str(fakebin) + os.pathsep + env['PATH'])
 print(json.dumps({'base_url': f'http://127.0.0.1:{args.port}', 'home': str(home), 'key_file': str(keyfile), 'fixture': 'disposable-arithmetic'}), flush=True)
-try:
-    subprocess.run([str(binary), 'serve', '--port', str(args.port)], env=env, check=True)
-except KeyboardInterrupt:
-    pass
+if args.prepare_only:
+    (home / '.env').touch(mode=0o600)
+    (home / '.env').write_text("export CGAGENTHARNESS_API_KEY='" + key + "'\n")
+    (home / 'desktop-tools.json').touch(mode=0o600)
+    (home / 'desktop-tools.json').write_text(json.dumps({'directories': [str(fakebin)]}) + '\n')
+else:
+    try:
+        subprocess.run([str(binary), 'serve', '--port', str(args.port)], env=env, check=True)
+    except KeyboardInterrupt:
+        pass

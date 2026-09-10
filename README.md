@@ -13,6 +13,7 @@ fsconnect / sqlconnect / netconnect.
 Status: `0.1.0`. MSRV Rust 1.88. [MIT](LICENSE). Bind is loopback-only. Every
 write gate ships **closed**.
 
+- macOS app: [desktop setup, packaging and limitations](docs/DESKTOP.md) (Apple Silicon; native interaction acceptance pending)
 - Console: `http://127.0.0.1:8790/` (`assets/static/harness.html`, served verbatim)
 - Chat: local OpenAI-compatible model (Ollama on `127.0.0.1:11434` by default)
 - Pipeline: clone → plan → patch → hard-sandbox verify → human decide → commit → push → draft PR

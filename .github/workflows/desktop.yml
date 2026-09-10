@@ -1,0 +1,76 @@
+name: macOS desktop
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.90"
+          components: rustfmt, clippy
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
+          components: rustfmt, clippy
+      - name: Backend and desktop formatting
+        run: |
+          cargo fmt --all -- --check
+          (cd desktop && cargo fmt -- --check)
+      - name: Build and verify the complete bundle
+        run: scripts/package-desktop.sh
+      - name: Desktop Clippy and policy tests
+        run: |
+          cd desktop
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+      - name: Packaged backend public boundary tests
+        run: python3 scripts/test-desktop-backend.py
+        env:
+          CGAH_TEST_BINARY: dist/CG Agent Harness.app/Contents/MacOS/cgagentharness
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
+      - name: Verify archive checksum and extracted app
+        run: |
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+          ditto -x -k dist/CG-Agent-Harness-macos-arm64.zip "$RUNNER_TEMP/Desktop verification"
+          scripts/verify-desktop-bundle.sh "$RUNNER_TEMP/Desktop verification/CG Agent Harness.app"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cg-agent-harness-macos-arm64-${{ github.sha }}
+          path: |
+            dist/CG-Agent-Harness-macos-arm64.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop-dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          manifest-path: desktop/Cargo.toml
+          arguments: --all-features --config desktop/deny.toml
