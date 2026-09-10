@@ -12,7 +12,7 @@ MODEL_URL="${MODEL_URL:-http://127.0.0.1:11434}"
 [ -x "$BIN" ] || { echo "build first: cargo build --release"; exit 1; }
 
 export CGAGENTHARNESS_HOME="$(mktemp -d)"
-export CGAGENTHARNESS_API_KEY="$(openssl rand -hex 16)"
+export CGAGENTHARNESS_API_KEY=""
 export CGAGENTHARNESS_HARNESS_PORT="$PORT"
 echo "== home $CGAGENTHARNESS_HOME"
 
@@ -33,13 +33,12 @@ CSRF=$(curl -fsS "$BASE/" | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/
 curl -fsS "$BASE/" | grep -q '__CYCLAW_CSP_NONCE__' && { echo "nonce placeholder leaked"; exit 1; }
 
 echo "== negative controls"
-test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/chat" -H 'Content-Type: application/json' -d '{"message":"x"}')" = 401
-test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/chat" -H "Authorization: Bearer $CGAGENTHARNESS_API_KEY" -H 'Content-Type: application/json' -d '{"message":"x"}')" = 403
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/chat" -H 'Content-Type: application/json' -d '{"message":"x"}')" = 403
 test "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/status" -H 'Host: evil.example')" = 400
-test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/soul" -H "Authorization: Bearer $CGAGENTHARNESS_API_KEY" -H "X-CyClaw-CSRF: $CSRF" -H 'Origin: http://evil.example' -H 'Content-Type: application/json' -d '{"enabled":true}')" = 403
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/soul" -H "X-CyClaw-CSRF: $CSRF" -H 'Origin: http://evil.example' -H 'Content-Type: application/json' -d '{"enabled":true}')" = 403
 
 echo "== subprocess contract (real child)"
-curl -fsS "$BASE/api/github/status" -H "Authorization: Bearer $CGAGENTHARNESS_API_KEY" -H "X-CyClaw-CSRF: $CSRF" | tee /dev/stderr | grep -q '"label":"ok"'; echo
+curl -fsS "$BASE/api/github/status" -H "X-CyClaw-CSRF: $CSRF" | tee /dev/stderr | grep -q '"label":"ok"'; echo
 set +e
 "$BIN" agentic --config /nonexistent.yaml status >/dev/null 2>&1; code=$?
 set -e
@@ -58,8 +57,8 @@ if ! curl -fsS -m 3 "$MODEL_URL/v1/models" >/dev/null 2>&1; then
 fi
 MODEL="${SMOKE_MODEL:-$(curl -fsS "$MODEL_URL/v1/models" | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])')}"
 echo "== model $MODEL"
-curl -fsS -X POST "$BASE/api/model" -H "Authorization: Bearer $CGAGENTHARNESS_API_KEY" -H "X-CyClaw-CSRF: $CSRF" -H 'Content-Type: application/json' -d "{\"model\":\"$MODEL\"}" >/dev/null
-REPLY=$(curl -fsS -m 600 -X POST "$BASE/api/chat" -H "Authorization: Bearer $CGAGENTHARNESS_API_KEY" -H "X-CyClaw-CSRF: $CSRF" -H 'Content-Type: application/json' -d '{"message":"Reply with the single word pong."}')
+curl -fsS -X POST "$BASE/api/model" -H "X-CyClaw-CSRF: $CSRF" -H 'Content-Type: application/json' -d "{\"model\":\"$MODEL\"}" >/dev/null
+REPLY=$(curl -fsS -m 600 -X POST "$BASE/api/chat" -H "X-CyClaw-CSRF: $CSRF" -H 'Content-Type: application/json' -d '{"message":"Reply with the single word pong."}')
 echo "$REPLY" | tee /dev/stderr | grep -q '"reply"'; echo
 echo "$REPLY" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["usage"]["completion_tokens"]>=0;print("model:",d["model"],"tokens:",d["tally"]["total"])'
 echo "== OK"

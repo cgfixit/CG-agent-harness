@@ -61,7 +61,11 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
 #[tokio::test]
 async fn guarded_routes_refuse_missing_and_wrong_keys() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("security.api_key_optional", "false"),
+    )
+    .await;
     for (method, path, body) in guarded_routes() {
         // No key at all.
         let mut r = s
@@ -110,7 +114,11 @@ async fn guarded_routes_refuse_missing_and_wrong_keys() {
 #[tokio::test]
 async fn open_routes_need_nothing_and_leak_no_message_content() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("security.api_key_optional", "false"),
+    )
+    .await;
     for path in [
         "/api/status",
         "/api/registry",
@@ -138,11 +146,11 @@ async fn open_routes_need_nothing_and_leak_no_message_content() {
 }
 
 #[tokio::test]
-async fn unset_api_key_fails_closed() {
+async fn enforced_unset_api_key_fails_closed() {
     let model = start_mock_model().await;
     let opts = ServerOptions {
         api_key: Some(String::new()),
-        ..Default::default()
+        ..ServerOptions::default().with("security.api_key_optional", "false")
     };
     let s = spawn_server(&model.base_url(), opts).await;
     let resp = s
@@ -163,7 +171,7 @@ async fn unset_api_key_fails_closed() {
 #[tokio::test]
 async fn api_key_optional_bypass_requires_loopback_peer_and_no_proxy_headers() {
     let model = start_mock_model().await;
-    let opts = ServerOptions::default().with("security.api_key_optional", "true");
+    let opts = ServerOptions::default();
     let s = spawn_server(&model.base_url(), opts).await;
     // Loopback peer, no key: allowed (CSRF still required).
     let resp = s
@@ -208,7 +216,11 @@ async fn api_key_optional_bypass_requires_loopback_peer_and_no_proxy_headers() {
 #[tokio::test]
 async fn cross_site_and_cross_origin_are_rejected_even_with_a_key() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("security.api_key_optional", "false"),
+    )
+    .await;
     let port = s.addr.port();
     let cases: Vec<(&str, &str, u16, &str)> = vec![
         ("sec-fetch-site", "cross-site", 403, "CROSS_SITE_BLOCKED"),
@@ -256,7 +268,11 @@ async fn cross_site_and_cross_origin_are_rejected_even_with_a_key() {
 #[tokio::test]
 async fn csrf_runs_after_the_key_check_and_is_required_unconditionally() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("security.api_key_optional", "false"),
+    )
+    .await;
     // Right key, no CSRF -> 403.
     let resp = s
         .client
@@ -292,14 +308,20 @@ async fn csrf_runs_after_the_key_check_and_is_required_unconditionally() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 401);
     // Token differs per instance.
-    let s2 = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s2 = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("security.api_key_optional", "false"),
+    )
+    .await;
     assert_ne!(s.csrf, s2.csrf);
 }
 
 #[tokio::test]
 async fn rate_limit_runs_before_auth_and_reports_retry_after() {
     let model = start_mock_model().await;
-    let opts = ServerOptions::default().with("api.rate_limit.max_requests", "3");
+    let opts = ServerOptions::default()
+        .with("security.api_key_optional", "false")
+        .with("api.rate_limit.max_requests", "3");
     let s = spawn_server(&model.base_url(), opts).await;
     for _ in 0..3 {
         assert_eq!(
@@ -337,7 +359,11 @@ async fn rate_limit_runs_before_auth_and_reports_retry_after() {
 #[tokio::test]
 async fn host_header_must_be_loopback() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("security.api_key_optional", "false"),
+    )
+    .await;
     for host in ["evil.example", "127.0.0.1.evil.example", "localhost.evil"] {
         let resp = s
             .client
@@ -358,4 +384,87 @@ async fn host_header_must_be_loopback() {
             .unwrap();
         assert_eq!(resp.status().as_u16(), 200, "{host}");
     }
+}
+
+#[tokio::test]
+async fn default_local_access_needs_neither_key_nor_login_for_harness_routes() {
+    let model = start_mock_model().await;
+    for auth_enabled in ["false", "true"] {
+        for configured_key in ["", "optional-existing-key"] {
+            let opts = ServerOptions {
+                api_key: Some(configured_key.to_string()),
+                ..Default::default()
+            }
+            .with("auth.enabled", auth_enabled)
+            .with("api.rate_limit.max_requests", "200");
+            let s = spawn_server(&model.base_url(), opts).await;
+            assert!(s.state.api_key_optional);
+            assert_eq!(s.open_get("/api/status").await.1["api_key_optional"], true);
+            // No Bearer header and no session cookie. Each handler is reached;
+            // its own validation, feature gates and explicit intent still apply.
+            for (method, path, body) in guarded_routes() {
+                let mut r = s
+                    .client
+                    .request(method.clone(), s.url(path))
+                    .header(CSRF_HEADER, &s.csrf);
+                if !body.is_null() {
+                    r = r.json(&body);
+                }
+                let resp = r.send().await.unwrap();
+                let status = resp.status().as_u16();
+                let result: serde_json::Value = resp.json().await.unwrap();
+                assert!(![401, 403].contains(&status), "{method} {path}: {status} {result}");
+                if path == "/api/chat" {
+                    assert_eq!(status, 200, "{result}");
+                }
+                if path == "/api/agent/run" {
+                    assert_eq!(status, 409, "write gates must still refuse: {result}");
+                }
+                if path == "/api/agent/jobs" && method == Method::POST {
+                    assert_eq!(status, 202, "{result}");
+                    let job_id = result["job_id"].as_str().unwrap();
+                    let mut outcome = serde_json::Value::Null;
+                    for _ in 0..100 {
+                        outcome = s
+                            .client
+                            .get(s.url(&format!("/api/agent/jobs/{job_id}")))
+                            .header(CSRF_HEADER, &s.csrf)
+                            .send()
+                            .await
+                            .unwrap()
+                            .json()
+                            .await
+                            .unwrap();
+                        if outcome["status"] != "running" {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                    assert_eq!(outcome["error"]["http_status"], 409, "worker gate: {outcome}");
+                }
+            }
+            // Account management keeps its own sessions/RBAC even though core
+            // harness use above succeeds with auth enabled and no login.
+            let status = s.open_get("/api/auth/users").await.0;
+            assert_eq!(status, if auth_enabled == "true" { 401 } else { 503 });
+        }
+    }
+}
+
+#[tokio::test]
+async fn quoted_optional_flag_never_opens_the_key_gate() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("security.api_key_optional", "\"true\""),
+    )
+    .await;
+    let resp = s
+        .client
+        .get(s.url("/api/keys"))
+        .header(CSRF_HEADER, &s.csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 401);
 }

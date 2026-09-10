@@ -181,18 +181,17 @@ target/release/cgagentharness
 
 ## 6. First run
 
-The console's write-guarded routes (chat, sessions, and everything else that isn't purely
-read-only) require an API key — a secret you generate yourself and hand to the console through a
-header on every request. Nothing in this project ever picks a default key for you; if you don't
-set one, those routes simply refuse every request with `401 Unauthorized`, which is the intended
-fail-closed behavior, not a bug.
-
-Generate a random key and start the server:
+Local harness use does not require an API key or account login. Start the server:
 
 ```bash
-export CGAGENTHARNESS_API_KEY="$(openssl rand -hex 20)"
 ./target/release/cgagentharness serve
 ```
+
+For an existing home, set `security.api_key_optional: true` in its `config.yaml`
+and restart. Saved settings are preserved on upgrade. Optional key enforcement
+is still available: set that flag false, export a generated
+`CGAGENTHARNESS_API_KEY` before `serve`, and enter the matching key in the console.
+Desktop Setup can initialize a missing key in the private home `.env`.
 
 You should see one log line confirming the console is up, something like:
 
@@ -225,7 +224,7 @@ http://127.0.0.1:8790/
 ```
 
 You'll land on a dark, terminal-styled page with a text input at the bottom and a small key
-field. Paste the same value you exported into `CGAGENTHARNESS_API_KEY` into that key field —
+field. Leave it empty for default local use. If you explicitly enabled key enforcement, enter the matching `CGAGENTHARNESS_API_KEY` —
 you'll need to do this once per browser tab/session, since the console never stores it anywhere
 on disk or in cookies; it's held only in that input field. Once the key is in, type a message and
 send it. The current client waits for a complete non-streaming response; latency depends on the model (the first
@@ -265,7 +264,7 @@ For manual starts, generate a fresh API key in the launching shell as shown in
 section 6 and paste it into the browser. To check presence without printing it:
 
 ```bash
-test -n "${CGAGENTHARNESS_API_KEY:-}" && printf 'API key is set\n'
+# No harness API key is required with security.api_key_optional: true.
 ```
 
 The application does not install a login service or configure secure credential
@@ -409,11 +408,8 @@ Git command or check. Scope/budget changes also refuse later writes until a fres
 
 ## 10. (Optional) Turn on per-user login
 
-By default, anyone who can reach `http://127.0.0.1:8790/` on your Mac and knows (or reads out of
-your shell history) the `CGAGENTHARNESS_API_KEY` can use the console — there's no concept of
-separate user accounts. That's normally fine for a single-operator machine that only you use. If
-this Mac is shared, or you want named accounts and roles instead of one shared key, turn on
-per-user auth:
+Direct local harness use does not require account login. To retain named accounts,
+sessions and roles for account management, you can enable the optional auth feature:
 
 1. In `~/.CGagentHarness/config.yaml`, set `auth.enabled: true` and restart `serve`.
 2. Visit the console; it will detect that no accounts exist yet and walk you through creating a
@@ -421,8 +417,8 @@ per-user auth:
 3. From then on, `/api/auth/login` (surfaced in the console's login UI, not a slash command) is
    how you and any additional users you create sign in.
 
-If you're the only person who will ever touch this installation, the API key from section 6 is
-simpler and this section can stay off.
+Account authentication can stay off for local use. Enabling it protects account
+management with sessions and roles; it does not gate chat or the agent pipeline.
 
 ## 11. Verify your setup
 
@@ -478,7 +474,7 @@ retain the matching checkout for Cargo preparation. No release was published.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `401 Unauthorized` on every request | `CGAGENTHARNESS_API_KEY` isn't set in the terminal that ran `serve`, or you haven't pasted it into the console's key field | Re-check section 6; check `test -n "${CGAGENTHARNESS_API_KEY:-}"` in that same terminal without printing the key |
+| `401 Unauthorized` on harness requests | Key enforcement is enabled, or forwarding headers prevent the local bypass | For direct local use set `security.api_key_optional: true` and restart; for enforced access configure and enter the matching key |
 | Chat hangs forever with no reply | Ollama isn't running, or hasn't finished loading the model into memory | Run the `curl` check from section 4; give the first request extra time after a fresh `ollama serve` |
 | `cgagentharness: harness binds loopback only` and the server refuses to start | You passed `--host` with something other than a loopback address (e.g. `0.0.0.0`) | This is intentional — the console will never bind to a non-loopback address. Omit `--host` or use `127.0.0.1` |
 | `Address already in use` when starting `serve` | Another process (maybe a previous `serve` you forgot about) is already on port 8790 | Find and stop it (`lsof -i :8790`), or start this one on a different port with `--port` |

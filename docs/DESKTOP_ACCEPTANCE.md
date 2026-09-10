@@ -83,7 +83,7 @@ home. This helper prepares a local bare remote and mock gh transport; it does
 not authorize real GitHub fixture publication. Do not paste its API key into
 logs, screenshots, process arguments or reports.
 
-With the operator, verify: actual console display and key entry; chat and stop;
+With the operator, verify: actual console display and use with empty key/no login; optional key entry; chat and stop;
 sessions/goals/model selection/notes/persona; keys/auth/skills/tools; staged agent
 run, complete diff and separately authorized fixture decisions; plan/PR file
 inputs; external-link confirmation, invalid schemes and hostile rendered text;

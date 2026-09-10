@@ -6,15 +6,18 @@ external browser, frontend server, Rust or Python. Coding checks still need thei
 configured tools. **Native interaction acceptance is pending**; see
 [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md) for verified results and gaps.
 
-## Install, launch and authenticate
+## Install and launch
 
 1. Unzip the arm64 archive and move **CG Agent Harness.app** to Applications
    (or a directory you own). Quit an existing copy before replacing it.
 2. Open it from Finder or the Dock. No login item or service is installed.
-3. Enter your existing harness API key in the console. The field is kept only
-   in page memory. Use **Harness → Setup and recovery** (Cmd-,) for diagnostics.
-   For a new home without a key, Setup can save a new key; enter that same key
-   in the console. It refuses to replace an existing key.
+3. Start using the harness without entering an API key or logging in. For an
+   existing home, set `security.api_key_optional: true` in its `config.yaml` and
+   restart once; saved settings are preserved on upgrade. Use **Harness → Setup
+   and recovery** (Cmd-,) for diagnostics.
+4. Optional key enforcement remains available: set `security.api_key_optional: false`, configure a key in the private home `.env`, restart, then enter the
+   matching key in the console. Setup can save a missing key and refuses to
+   replace an existing one. Account login is needed only for account management.
 
 This build is **ad-hoc signed, arm64 only, and not notarized**. Its signature
 checks integrity; it does not establish a publisher identity or satisfy normal
@@ -42,7 +45,7 @@ an actionable setup error without quoting values. Existing per-user auth and
 roles remain enabled only when configured; no desktop session elevation exists.
 
 Webview storage is private to that window, avoiding cookie collisions between
-independent homes on ephemeral ports. Re-enter credentials after reopening.
+independent homes on ephemeral ports. If you opt into credential use, re-enter them after reopening.
 Sessions, notes, settings and retained jobs persist through the backend, not
 browser storage. `/agent jobs` and `/agent runs` rediscover retained work.
 
@@ -62,7 +65,7 @@ path from `/`, and verifies protocol, child PID and a fresh challenge through
 inherited stdin/stdout plus authenticated HTTP readiness. The backend binds port
 zero before reporting its address; there is no port-probe/rebind race and no
 adoption of an existing listener. The retained local HTTP endpoint still exists
-and applies the existing API-key, origin, CSRF, rate and role checks. A readiness
+and applies optional local API-key access plus origin, CSRF, rate and account-role checks. A readiness
 challenge provides no operator API authority. `serve --port …` and worker CLI
 behavior remain available independently.
 

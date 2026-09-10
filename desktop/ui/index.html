@@ -6,8 +6,8 @@
 <pre id="details"></pre>
 <button id="retry">Retry / Open console</button>
 <button id="models">Check installed chat and planner models</button>
-<section><h2>API authentication</h2><p>Enter your existing API key in the console after it opens. It stays in that page's memory. Desktop startup loads the server's matching key from your private home .env file without sourcing a shell.</p>
-<p>If this is a new home with no key, set one below, then enter the same key in the console. Existing keys will never be overwritten here.</p>
+<section><h2>Optional API authentication</h2><p>Local harness use needs no API key or account login by default. If you explicitly require a key in configuration, enter your existing API key in the console after it opens. It stays in that page's memory. Desktop startup loads the server's matching key from your private home .env file without sourcing a shell.</p>
+<p>To use key enforcement, set security.api_key_optional to false in your home config.yaml. If no key is configured, you can save one below and then enter the same key in the console. Existing keys will never be overwritten here.</p>
 <label for="key">New API key</label><input id="key" type="password" autocomplete="new-password" maxlength="4096">
 <button id="initialize">Save missing key and restart</button></section>
 <section><h2>Coding prerequisites</h2><p>Ordinary app startup needs no Rust or Xcode installation. Coding checks require the selected toolchain and prepared Cargo sources. Select a repository to prepare it using the bundled Python 3 helper. This action is offline and never downloads dependencies.</p>

@@ -158,7 +158,9 @@ fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), 
             .zoom_hotkeys_enabled(true)
             .build()
             .map_err(|_| "Cannot create native harness webview.")?;
-            let key_state = if backend.hello["key_configured"] == true {
+            let key_state = if backend.hello["api_key_optional"] == true {
+                "Ready to use. API key entry and account login are optional."
+            } else if backend.hello["key_configured"] == true {
                 "Enter your existing API key in the console."
             } else {
                 "No API key configured. Use Setup to save a new key, then enter it in the console."

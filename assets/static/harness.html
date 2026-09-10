@@ -176,7 +176,7 @@
         <span id="hAuthLoginBox" hidden>
           <input class="apikey" id="hAuthUser" placeholder="user" autocomplete="username">
           <input class="apikey" id="hAuthPass" type="password" placeholder="pass" autocomplete="current-password">
-          <button class="toggle" id="hAuthLogin" type="button">login</button>
+          <button class="toggle" id="hAuthLogin" type="button" title="Optional account login for user management">login</button>
         </span>
         <span id="hAuthWho"></span>
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
@@ -227,7 +227,7 @@
         <span title="human-gated /loop"><span class="k">loop </span><span class="v" id="sLoop">off</span></span>
         <span class="spacer"></span>
         <span><span class="k">key </span><input class="apikey" id="apiKey" type="password" autocomplete="off"
-          spellcheck="false" placeholder="CYCLAW_API_KEY" title="operator API key; held in memory only"></span>
+          spellcheck="false" placeholder="optional API key" title="optional operator API key; held in memory only"></span>
         <span class="k" id="sHome" title="harness home"></span>
       </div>
     </div>
@@ -552,12 +552,12 @@ async function api(path, method, body, timeoutMs) {
           ? 'HTTP ' + resp.status + ': ' + d
           : 'HTTP ' + resp.status;
     /* The console's key input sends a Bearer to the server, but the server
-       compares it against CYCLAW_API_KEY in its own process environment. When
+       compares it against CGAGENTHARNESS_API_KEY in its own process environment. When
        that env var is unset, typing a key here cannot help until the server is
        restarted with the key sourced from the shell. Make that explicit so the
        operator does not think the input field is broken. */
     if (typed && typed.code === 'UNAUTHORIZED' && typed.details && typed.details.reason === 'key_not_configured') {
-      msg += '\nThe harness server was started without CYCLAW_API_KEY in its environment. Set it in the shell that launches the harness and restart; typing it here only works when the server already has the same key configured.';
+      msg += '\nThe harness server was started without CGAGENTHARNESS_API_KEY in its environment. For credential-free local use, set security.api_key_optional: true in your home config.yaml and restart. For key enforcement, configure the server key and enter the same key here.';
     }
     if (code === 'CHAT_BUSY') {
       msg += typed && typed.details && typed.details.cancel
@@ -602,6 +602,12 @@ async function refreshStatus() {
     $('hModel').textContent = s.model || '(unset)';
     $('hTokens').textContent = s.total_tokens.toLocaleString();
     $('sProvider').textContent = s.provider;
+    if (apiKeyInput) {
+      apiKeyInput.placeholder = s.api_key_optional ? 'optional API key' : 'CGAGENTHARNESS_API_KEY';
+      apiKeyInput.title = s.api_key_optional
+        ? 'Optional for direct local use; held in page memory only'
+        : 'Required by this home configuration; held in page memory only';
+    }
     $('sHome').textContent = s.home;
     $('sHome').title = 'harness home: ' + s.home + '  ·  repo: ' + s.repo_root;
     soulEnabled = s.soul_enabled;
@@ -1817,7 +1823,7 @@ async function refreshHarnessAuth() {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(false);
-      if (who) who.textContent = '';
+      if (who) who.textContent = 'local use · login optional';
       return;
     }
     if (me.ok) {
@@ -1842,7 +1848,7 @@ async function refreshHarnessAuth() {
     if (hAuthSetup) hAuthSetup.hidden = true;
     if (hAuthLoginBox) hAuthLoginBox.hidden = false;
     window.__cyclawRole = null;
-    if (who) who.textContent = '';
+    if (who) who.textContent = 'local use · login optional';
     setHarnessLogoutVisible(false);
   } catch (e) { /* keep last UI */ }
 }

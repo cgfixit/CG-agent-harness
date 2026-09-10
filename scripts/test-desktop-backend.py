@@ -95,7 +95,12 @@ class DesktopBoundary(unittest.TestCase):
 
     def test_owned_readiness_is_not_operator_authorization(self):
         key = secrets.token_hex(32)
-        child = self.start(key=key)
+        seed = self.start(key=key)
+        seed.close()
+        config = self.home / 'config.yaml'
+        config.write_text(config.read_text().replace('api_key_optional: true', 'api_key_optional: false'))
+        child = self.start()
+        self.assertFalse(child.hello["api_key_optional"])
         self.assertEqual(child.hello["challenge"], child.challenge)
         self.assertEqual(child.hello["pid"], child.process.pid)
         self.assertEqual(child.request('/_desktop/ready')[0], 401)
@@ -116,6 +121,20 @@ class DesktopBoundary(unittest.TestCase):
         child.send({"command": "status"})
         self.assertEqual(child.read()["active"], 0)
         self.assertEqual((self.home / '.env').stat().st_mode & 0o777, 0o600)
+
+    def test_fresh_home_needs_no_key_or_login(self):
+        child = self.start()
+        self.assertTrue(child.hello["api_key_optional"])
+        self.assertFalse(child.hello["key_configured"])
+        html = child.request('/')[1]
+        csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
+        headers = {"X-CyClaw-CSRF": csrf, "Origin": child.base}
+        self.assertEqual(child.request('/api/keys', headers)[0], 200)
+        self.assertEqual(child.request('/api/memory/add', headers, {"text":"no credentials needed"})[0], 200)
+        self.assertEqual(child.request('/api/keys')[0], 403)
+        self.assertEqual(child.request('/api/keys', {**headers, "Origin":"https://unapproved.invalid"})[0], 403)
+        self.assertEqual(child.request('/api/keys', {**headers, "X-Forwarded-For":"127.0.0.1"})[0], 401)
+        self.assertEqual(child.request('/api/agent/run', headers, {"instruction":"x", "branch":"codex/test", "commit_message":"test", "reason":"fixture"})[0], 409)
 
     def test_home_lock_prevents_second_writer_and_releases_after_eof(self):
         first = self.start()
@@ -181,7 +200,7 @@ class DesktopBoundary(unittest.TestCase):
             html = child.request('/')[1]
             csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
             auth = {"Authorization":"Bearer " + key,"X-CyClaw-CSRF":csrf,"Origin":child.base}
-            self.assertEqual(child.request('/api/agent/runs')[0], 401)
+            self.assertEqual(child.request('/api/agent/runs')[0], 403)  # CSRF still required
             def listing():
                 status, body, _ = child.request('/api/agent/runs', auth)
                 self.assertEqual(status, 200)
