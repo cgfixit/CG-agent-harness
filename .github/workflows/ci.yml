@@ -1,6 +1,7 @@
 name: CGagentHarness CI
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
@@ -89,6 +90,13 @@ jobs:
         run: cargo test --all-targets --locked -- --nocapture
         env:
           # The operator's real keys must never reach a CI test process.
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
+      - name: Public backend lifecycle and chat contracts (no model downloads)
+        run: python3 scripts/test-desktop-backend.py
+        env:
+          CGAH_TEST_BINARY: target/debug/cgagentharness
           GROK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""
@@ -223,6 +231,9 @@ jobs:
           else
             echo "BIN=target/release/cgagentharness" >> "$GITHUB_ENV"
           fi
+      - name: Verify CLI packaging, checksums, and extracted payload
+        shell: bash
+        run: scripts/package-release.sh "$BIN" "cgagentharness-${RUNNER_OS}-${RUNNER_ARCH}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cgagentharness-${{ matrix.os }}
