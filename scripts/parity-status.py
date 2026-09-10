@@ -29,8 +29,8 @@ def main():
              "`python3 scripts/parity-status.py`. Do not edit this view directly.", "",
              "Implementation and validation are independent. This is a fixed action inventory, "
              "not a percentage of CyClaw ported. Missing actions remain requested work.", "",
-             f"Rust baseline: `{ledger['source_pins']['rust']}`. "
-             f"CyClaw reference: `{ledger['source_pins']['python']}`.", "",
+             f"Rust baseline: [pinned commit]({ledger['source_pins']['rust']}). "
+             f"CyClaw reference: [pinned commit]({ledger['source_pins']['python']}).", "",
              "See [execution state](WORK.md) for baseline evidence and native acceptance blockers, "
              "and [non-RAG contracts](CONTRACTS.md) for deliberate adaptations.", "",
              "| ID | Phase | Implementation | Fixtures | Native | Capability |",

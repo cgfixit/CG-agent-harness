@@ -4,7 +4,7 @@ Generated from [actions.json](actions.json) with `python3 scripts/parity-status.
 
 Implementation and validation are independent. This is a fixed action inventory, not a percentage of CyClaw ported. Missing actions remain requested work.
 
-Rust baseline: `8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1`. CyClaw reference: `a414ba86ebf5f3c8bb901466c16b4f015bbc79c9`.
+Rust baseline: [pinned commit](https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1). CyClaw reference: [pinned commit](https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9).
 
 See [execution state](WORK.md) for baseline evidence and native acceptance blockers, and [non-RAG contracts](CONTRACTS.md) for deliberate adaptations.
 

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_pins": {
-    "rust": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
-    "python": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9"
+    "rust": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+    "python": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9"
   },
   "open_prs_at_fetch": {
     "rust": [],
@@ -16,7 +16,7 @@
       "original_classification": "missing",
       "phase": 2,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "memory/models.py",
@@ -80,7 +80,7 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/memory_notes.rs",
           "src/server/routes/panels.rs"
@@ -130,7 +130,7 @@
       "original_classification": "missing",
       "phase": 2,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "memory/models.py",
@@ -196,7 +196,7 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/memory_notes.rs",
           "src/server/routes/panels.rs"
@@ -247,7 +247,7 @@
       "original_classification": "adapt",
       "phase": 2,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "memory/models.py",
@@ -310,7 +310,7 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/memory_notes.rs",
           "src/server/routes/panels.rs"
@@ -361,7 +361,7 @@
       "original_classification": "missing",
       "phase": 2,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "memory/models.py",
@@ -429,7 +429,7 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/memory_notes.rs",
           "src/server/routes/panels.rs"
@@ -480,7 +480,7 @@
       "original_classification": "missing",
       "phase": 2,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "memory/models.py",
@@ -543,7 +543,7 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/memory_notes.rs",
           "src/server/routes/panels.rs"
@@ -594,7 +594,7 @@
       "original_classification": "missing",
       "phase": 4,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/fsconnect/cli.py",
@@ -668,7 +668,7 @@
         "test_inventory_count": 21
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/agentic/workspace.rs",
           "src/agentic/writer.rs",
@@ -719,7 +719,7 @@
       "original_classification": "missing",
       "phase": 4,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/fsconnect/cli.py",
@@ -793,7 +793,7 @@
         "test_inventory_count": 21
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/agentic/workspace.rs",
           "src/agentic/writer.rs",
@@ -844,7 +844,7 @@
       "original_classification": "missing",
       "phase": 4,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/fsconnect/cli.py",
@@ -918,7 +918,7 @@
         "test_inventory_count": 21
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/agentic/workspace.rs",
           "src/agentic/writer.rs",
@@ -969,7 +969,7 @@
       "original_classification": "missing",
       "phase": 4,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/fsconnect/cli.py",
@@ -1043,7 +1043,7 @@
         "test_inventory_count": 21
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/agentic/workspace.rs",
           "src/agentic/writer.rs",
@@ -1094,7 +1094,7 @@
       "original_classification": "missing",
       "phase": 5,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/sqlconnect/cli.py",
@@ -1150,7 +1150,7 @@
         "test_inventory_count": 5
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/routes/panels.rs"
@@ -1200,7 +1200,7 @@
       "original_classification": "missing",
       "phase": 5,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/sqlconnect/cli.py",
@@ -1256,7 +1256,7 @@
         "test_inventory_count": 5
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/routes/panels.rs"
@@ -1306,7 +1306,7 @@
       "original_classification": "missing",
       "phase": 5,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/sqlconnect/cli.py",
@@ -1362,7 +1362,7 @@
         "test_inventory_count": 5
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/routes/panels.rs"
@@ -1412,7 +1412,7 @@
       "original_classification": "missing",
       "phase": 5,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/netconnect/cli.py",
@@ -1458,7 +1458,7 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs"
         ],
@@ -1507,7 +1507,7 @@
       "original_classification": "missing",
       "phase": 5,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/netconnect/cli.py",
@@ -1553,7 +1553,7 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs"
         ],
@@ -1602,7 +1602,7 @@
       "original_classification": "missing",
       "phase": 1,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "harness/registry_view.py",
@@ -1640,7 +1640,7 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/views.rs",
@@ -1688,7 +1688,7 @@
       "original_classification": "adapt",
       "phase": 8,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "sync/runner.py",
@@ -1755,7 +1755,7 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/agent_jobs.rs"
@@ -1809,7 +1809,7 @@
       "original_classification": "adapt",
       "phase": 8,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "sync/runner.py",
@@ -1876,7 +1876,7 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/agent_jobs.rs"
@@ -1930,7 +1930,7 @@
       "original_classification": "missing",
       "phase": 9,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "telegram/cli.py",
@@ -1988,7 +1988,7 @@
         "test_inventory_count": 9
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/agent_jobs.rs"
@@ -2039,7 +2039,7 @@
       "original_classification": "adapt",
       "phase": 9,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "telegram/cli.py",
@@ -2097,7 +2097,7 @@
         "test_inventory_count": 9
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/agent_jobs.rs"
@@ -2148,7 +2148,7 @@
       "original_classification": "missing",
       "phase": 9,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "telegram/cli.py",
@@ -2206,7 +2206,7 @@
         "test_inventory_count": 9
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/agent_jobs.rs"
@@ -2260,7 +2260,7 @@
       "original_classification": "missing",
       "phase": 9,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "telegram/cli.py",
@@ -2318,7 +2318,7 @@
         "test_inventory_count": 9
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/server/agent_jobs.rs"
@@ -2369,7 +2369,7 @@
       "original_classification": "adapt",
       "phase": 10,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "opentweet/cli.py",
@@ -2425,7 +2425,7 @@
         "test_inventory_count": 6
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/llm/openai_chat.rs"
@@ -2476,7 +2476,7 @@
       "original_classification": "missing",
       "phase": 10,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "opentweet/cli.py",
@@ -2532,7 +2532,7 @@
         "test_inventory_count": 6
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/shim/mod.rs",
           "src/llm/openai_chat.rs"
@@ -2583,7 +2583,7 @@
       "original_classification": "partial",
       "phase": 1,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "harness/env_keys.py",
@@ -2618,7 +2618,7 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/env_keys.rs",
           "src/server/desktop.rs",
@@ -2667,7 +2667,7 @@
       "original_classification": "missing",
       "phase": 1,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "harness/env_keys.py",
@@ -2702,7 +2702,7 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/env_keys.rs",
           "src/server/desktop.rs",
@@ -2751,7 +2751,7 @@
       "original_classification": "partial",
       "phase": 1,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "harness/env_keys.py",
@@ -2786,7 +2786,7 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/env_keys.rs",
           "src/server/desktop.rs",
@@ -2818,7 +2818,7 @@
         "commands": [
           {
             "command": "CGAH_TEST_BINARY=target/release/cgagentharness python3 scripts/test-desktop-backend.py DesktopBoundary.test_headless_loads_private_dotenv_with_explicit_environment_precedence",
-            "commit": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+            "commit": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
             "exit_code": 1,
             "outcome": "Baseline reproduces 401 instead of 200 with only private dotenv key; explicit env override succeeds."
           },
@@ -2826,6 +2826,11 @@
             "command": "CGAH_TEST_BINARY=target/debug/cgagentharness python3 scripts/test-desktop-backend.py",
             "exit_code": 0,
             "outcome": "10 tests passed, including minimal-environment headless startup and 7 invalid credential file types. Tested working tree; final commit/package evidence follows."
+          },
+          {
+            "command": "CGAH_TEST_BINARY='dist/CG Agent Harness.app/Contents/MacOS/cgagentharness' python3 scripts/test-desktop-backend.py",
+            "exit_code": 0,
+            "outcome": "All 10 tests passed against signed bundle built from implementation commit."
           }
         ],
         "baseline_evidence": "WORK.md; clean baseline checks validate existing code only.",
@@ -2834,8 +2839,8 @@
       },
       "delivery": {
         "branch": "codex/parity-foundations",
-        "pr": null,
-        "implementation_commit": null,
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/29",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/62e287ecb536360378cb74c450ec359030e4e02f",
         "artifact": null
       },
       "limitations": [
@@ -2849,7 +2854,7 @@
       "original_classification": "missing",
       "phase": 3,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "gate_auth.py",
@@ -2934,7 +2939,7 @@
         "test_inventory_count": 12
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/auth_store.rs",
           "src/common/authn.rs",
@@ -2987,7 +2992,7 @@
       "original_classification": "partial",
       "phase": 3,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "gate_auth.py",
@@ -3072,7 +3077,7 @@
         "test_inventory_count": 12
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/auth_store.rs",
           "src/common/authn.rs",
@@ -3125,7 +3130,7 @@
       "original_classification": "adapt",
       "phase": 3,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "gate_auth.py",
@@ -3210,7 +3215,7 @@
         "test_inventory_count": 12
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/auth_store.rs",
           "src/common/authn.rs",
@@ -3263,7 +3268,7 @@
       "original_classification": "missing",
       "phase": 3,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "gate_auth.py",
@@ -3348,7 +3353,7 @@
         "test_inventory_count": 12
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/auth_store.rs",
           "src/common/authn.rs",
@@ -3401,7 +3406,7 @@
       "original_classification": "partial",
       "phase": 3,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "utils/personality.py",
@@ -3440,7 +3445,7 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/prompts.rs",
           "src/server/routes/core.rs"
@@ -3490,7 +3495,7 @@
       "original_classification": "missing",
       "phase": 3,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "utils/personality.py",
@@ -3529,7 +3534,7 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/prompts.rs",
           "src/server/routes/core.rs"
@@ -3579,7 +3584,7 @@
       "original_classification": "partial",
       "phase": 6,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/cli.py",
@@ -3607,7 +3612,7 @@
         "test_inventory_count": 1
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/agentic/commands.rs",
           "src/agentic/cloud_proposer.rs",
@@ -3659,7 +3664,7 @@
       "original_classification": "adapt",
       "phase": 6,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "graph.py",
@@ -3701,7 +3706,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/llm/backend.rs",
           "src/llm/openai_chat.rs",
@@ -3752,7 +3757,7 @@
       "original_classification": "missing",
       "phase": 6,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "graph.py",
@@ -3792,7 +3797,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/llm/backend.rs",
           "src/llm/openai_chat.rs",
@@ -3843,7 +3848,7 @@
       "original_classification": "partial",
       "phase": 6,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "graph.py",
@@ -3885,7 +3890,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/llm/backend.rs",
           "src/llm/openai_chat.rs",
@@ -3936,7 +3941,7 @@
       "original_classification": "partial",
       "phase": 1,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "utils/health.py",
@@ -3960,7 +3965,7 @@
         "test_inventory_count": 1
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/server/desktop.rs",
           "src/llm/backend.rs",
@@ -4008,7 +4013,7 @@
       "original_classification": "partial",
       "phase": 6,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/unslop_bridge.py",
@@ -4026,7 +4031,7 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/agentic/unslop.rs"
         ],
@@ -4075,7 +4080,7 @@
       "original_classification": "partial",
       "phase": 6,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "agentic/executor/runner.py",
@@ -4101,7 +4106,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/agentic/registry.rs",
           "src/agentic/executor/runner.rs",
@@ -4152,7 +4157,7 @@
       "original_classification": "partial",
       "phase": 6,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "utils/guardrail_bridge.py",
@@ -4208,7 +4213,7 @@
         "test_inventory_count": 14
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/injection.rs",
           "src/common/tool_broker.rs",
@@ -4259,7 +4264,7 @@
       "original_classification": "missing",
       "phase": 6,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "utils/guardrail_bridge.py",
@@ -4315,7 +4320,7 @@
         "test_inventory_count": 14
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/injection.rs",
           "src/common/tool_broker.rs",
@@ -4366,7 +4371,7 @@
       "original_classification": "partial",
       "phase": 7,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "metrics.py",
@@ -4397,7 +4402,7 @@
         "test_inventory_count": 4
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/audit.rs",
           "src/common/bounded_log.rs",
@@ -4448,7 +4453,7 @@
       "original_classification": "missing",
       "phase": 7,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "utils/numbat_emitter.py",
@@ -4504,7 +4509,7 @@
         "test_inventory_count": 4
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/audit.rs",
           "src/common/bounded_log.rs"
@@ -4554,7 +4559,7 @@
       "original_classification": "adapt",
       "phase": 7,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "utils/numbat_emitter.py",
@@ -4610,7 +4615,7 @@
         "test_inventory_count": 4
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/audit.rs",
           "src/common/bounded_log.rs"
@@ -4660,7 +4665,7 @@
       "original_classification": "partial",
       "phase": 1,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "utils/telemetry_kill.py",
@@ -4690,7 +4695,7 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/process.rs",
           "src/agentic/executor/runner.rs",
@@ -4739,7 +4744,7 @@
       "original_classification": "missing",
       "phase": 1,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "macos/generate_service_plist.py",
@@ -4787,7 +4792,7 @@
         "test_inventory_count": 7
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "desktop/src/backend.rs",
           "desktop/src/instance.rs",
@@ -4836,7 +4841,7 @@
       "original_classification": "missing",
       "phase": 11,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "Dockerfile",
@@ -4879,7 +4884,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/process.rs",
           "src/agentic/executor/sandbox.rs",
@@ -4931,7 +4936,7 @@
       "original_classification": "partial",
       "phase": 11,
       "python": {
-        "commit": "a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
         "sources": [
           {
             "path": "Dockerfile",
@@ -4974,7 +4979,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
         "paths": [
           "src/common/process.rs",
           "src/agentic/executor/sandbox.rs",

@@ -55,6 +55,15 @@ refusal, secret-free output and unchanged desktop boundary tests. Full backend
 gates and exact-commit packaging are recorded before publication.
 This does not claim Keychain (A2), Windows loading (O9), or service lifecycle (O7).
 
+A3 implementation commit: `62e287ecb536360378cb74c450ec359030e4e02f`,
+[draft PR 29](https://github.com/cgfixit/CG-agent-harness/pull/29).
+The signed arm64 app/ZIP build passed resources, system linkage, nested ad-hoc
+signatures and worker dispatch; all ten public tests pass against its actual
+bundled sidecar. No notarization or GUI interaction pass is claimed.
+DevSkim flagged all 99 bare 40-character commit hash strings in the JSON ledger
+as possible tokens. The ledger now stores directly inspectable immutable commit
+URLs, preserving the exact identities. No scan rules, tests or policy were disabled.
+
 Next smallest action: finish A3 publication/package verification, then extend
 L5's fallback resolver to require an exact installed tag and bounded inventory
 response, sharing the current desktop readiness contract. Keep no-probe default
