@@ -523,7 +523,7 @@ async function api(path, method, body, timeoutMs) {
     const target = new URL(path, window.location.href).href;
     const err = new Error(
       'NETWORK: cannot reach the harness API at ' + target +
-      '. Open http://127.0.0.1:8790/ unless CYCLAW_HARNESS_PORT overrides the default.'
+      '. In the desktop app, use Harness > Setup and recovery. For the standalone server, reopen its configured local address.'
     );
     /* Preserve AbortError so an intentional /loop stop remains silent in
        sendChat(), while every visible abort gets the actionable message. */
@@ -710,6 +710,7 @@ const COMMANDS = [
   ['/github', 'agentic GitHub status'],
   ['/agent run|plan|read|checks|confirm|cancel', 'stage and start a real-repo coding run'],
   ['/agent iterations|pr|issue <n>|clear', 'set or clear staged numeric options'],
+  ['/agent runs', 'list retained runs and reconcile interrupted ownership'],
   ['/agent status|approve|reject <id>', 'inspect or decide a pending run'],
   ['/harness', 'harness optimizer runs'],
   ['/tokens', 'token tally'],
@@ -795,6 +796,7 @@ async function watchAgentJob(id) {
           sys('job failed: ' + JSON.stringify(job.error.detail));
         }
         if (job.status === 'cancelled') sys('Request cancelled. Descendant work may survive; inspect the run before further writes.');
+        if (job.status === 'interrupted') sys('The previous backend stopped during this job. No work or approvals were resumed. Inspect retained run records and the complete diff before deciding or starting another run.');
         return;
       }
       await new Promise(resolve => setTimeout(resolve, settings.poll_interval_ms));
@@ -1319,6 +1321,11 @@ async function runSlash(line) {
           } finally {
             sendBtn.disabled = false;
           }
+        } else if (sub === 'runs') {
+          const result = agentRecord(await api('/api/agent/runs'));
+          sys(table(result.runs.map(r => [r.run_id, r.status, r.error || '']), ['run', 'status', 'recovery']));
+          if (result.truncated) sys('Showing a bounded set of retained runs. Older records remain on disk.');
+          sys('Use /agent status <id> to inspect, and /agent discard <id> for interrupted or decided work. Unknown running ownership cannot be discarded.');
         } else if (sub === 'jobs') {
           const result = await api('/api/agent/jobs');
           sys(table(result.jobs.map(j => [j.job_id, j.status]), ['job', 'status']));

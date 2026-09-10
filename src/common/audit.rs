@@ -4,8 +4,6 @@
 //! never raises: a disk-full or serialization failure degrades to a tracing
 //! warning so an already-computed response is never turned into a 500.
 
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -70,6 +68,7 @@ pub struct Audit {
     path: PathBuf,
     redactors: Redactors,
     include_query_hash: bool,
+    max_file_bytes: u64,
     lock: Mutex<()>,
 }
 
@@ -80,6 +79,7 @@ impl Audit {
             path,
             redactors: Redactors::from_config(cfg),
             include_query_hash,
+            max_file_bytes: super::bounded_log::limit(cfg),
             lock: Mutex::new(()),
         }
     }
@@ -141,16 +141,14 @@ impl Audit {
             }
         };
         let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(parent) = self.path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        if super::bounded_log::append(&self.path, &line, self.max_file_bytes).is_err() {
+            tracing::warn!("audit sink unavailable, busy, or record exceeds retention bound");
         }
-        match OpenOptions::new().create(true).append(true).open(&self.path) {
-            Ok(mut f) => {
-                if let Err(e) = f.write_all(line.as_bytes()).and_then(|_| f.write_all(b"\n")) {
-                    tracing::warn!("audit_log write failed for {}: {e}", self.path.display());
-                }
-            }
-            Err(e) => tracing::warn!("audit_log cannot open {}: {e}", self.path.display()),
+    }
+
+    pub fn append_spend(&self, path: &Path, record: &Value) {
+        if super::bounded_log::append(path, &record.to_string(), self.max_file_bytes).is_err() {
+            tracing::warn!("spend sink unavailable, busy, or record exceeds retention bound");
         }
     }
 }

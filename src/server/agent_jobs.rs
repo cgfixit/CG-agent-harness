@@ -12,6 +12,7 @@
 //! task, which drops the child with `kill_on_drop`.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -23,6 +24,7 @@ pub const RUNNING: &str = "running";
 pub const FINISHED: &str = "finished";
 pub const FAILED: &str = "failed";
 pub const CANCELLED: &str = "cancelled";
+pub const INTERRUPTED: &str = "interrupted";
 
 /// Terminal jobs retained per process (oldest evicted first).
 pub const MAX_RETAINED_JOBS: usize = 32;
@@ -62,6 +64,7 @@ impl Job {
 #[derive(Default)]
 pub struct JobStore {
     inner: Mutex<BTreeMap<String, Job>>,
+    path: Option<PathBuf>,
 }
 
 impl JobStore {
@@ -69,8 +72,96 @@ impl JobStore {
         Self::default()
     }
 
+    /// Open private durable job evidence. A previous process's running handle
+    /// cannot be reattached or replayed; retain it explicitly as interrupted.
+    pub fn open(path: &Path) -> crate::common::errors::Result<Self> {
+        use crate::common::errors::HarnessError;
+        use std::io::Read;
+        let mut jobs = BTreeMap::new();
+        if path.exists() {
+            let mut text = String::new();
+            std::fs::File::open(path)?
+                .take(16 * 1024 * 1024 + 1)
+                .read_to_string(&mut text)?;
+            if text.len() > 16 * 1024 * 1024 {
+                return Err(HarnessError::harness_config("job recovery file exceeds its bound"));
+            }
+            let rows: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
+                HarnessError::harness_config("job recovery file is invalid; preserve it for inspection")
+            })?;
+            if rows.len() > MAX_RETAINED_JOBS + 1 {
+                return Err(HarnessError::harness_config("job recovery inventory exceeds its bound"));
+            }
+            for row in rows {
+                let id = row["job_id"]
+                    .as_str()
+                    .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                    .ok_or_else(|| HarnessError::harness_config("invalid recovered job identifier"))?;
+                let status = match row["status"].as_str() {
+                    Some(RUNNING | INTERRUPTED) => INTERRUPTED,
+                    Some(FINISHED) => FINISHED,
+                    Some(FAILED) => FAILED,
+                    Some(CANCELLED) => CANCELLED,
+                    _ => return Err(HarnessError::harness_config("invalid recovered job status")),
+                };
+                let error = row
+                    .get("error")
+                    .and_then(|e| Some((e["http_status"].as_u64()? as u16, json!({"detail": e["detail"]}))));
+                jobs.insert(
+                    id.to_string(),
+                    Job {
+                        job_id: id.to_string(),
+                        action: row["action"].as_str().unwrap_or("real-repo-run").to_string(),
+                        created_at: row["created_at"].as_f64().unwrap_or(0.0),
+                        finished_at: if status == INTERRUPTED {
+                            Some(crate::common::now_ts())
+                        } else {
+                            row["finished_at"].as_f64()
+                        },
+                        status,
+                        result: row.get("result").cloned(),
+                        error,
+                        handle: None,
+                    },
+                );
+            }
+        }
+        let store = Self {
+            inner: Mutex::new(jobs),
+            path: Some(path.to_path_buf()),
+        };
+        store.persist(&store.inner.lock().unwrap_or_else(|p| p.into_inner()))?;
+        Ok(store)
+    }
+
+    fn persist(&self, jobs: &BTreeMap<String, Job>) -> crate::common::errors::Result<()> {
+        if let Some(path) = &self.path {
+            let rows: Vec<_> = jobs.values().map(Job::to_json).collect();
+            let bytes = serde_json::to_vec(&rows)?;
+            if bytes.len() > 16 * 1024 * 1024 {
+                return Err(crate::common::errors::HarnessError::harness_config(
+                    "job evidence exceeds its durable bound; inspect retained runs",
+                ));
+            }
+            crate::common::atomic::write_atomic(path, &bytes, Some(0o600))?;
+        }
+        Ok(())
+    }
+
     /// Register a running job. Evicts the oldest terminal jobs beyond the cap.
     pub fn insert_running(&self, job_id: &str, action: &str, handle: JoinHandle<()>) {
+        // Compatibility for in-memory fixture users; runtime routes use the
+        // fallible entrypoint and never launch work before durable registration.
+        self.try_insert_running(job_id, action, handle)
+            .expect("in-memory job registration");
+    }
+
+    pub fn try_insert_running(
+        &self,
+        job_id: &str,
+        action: &str,
+        handle: JoinHandle<()>,
+    ) -> crate::common::errors::Result<()> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let terminal: Vec<(f64, String)> = g
             .values()
@@ -97,6 +188,15 @@ impl JobStore {
                 handle: Some(handle),
             },
         );
+        if let Err(error) = self.persist(&g) {
+            if let Some(mut job) = g.remove(job_id) {
+                if let Some(handle) = job.handle.take() {
+                    handle.abort();
+                }
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn finish(&self, job_id: &str, outcome: Result<Value, ApiError>) {
@@ -120,6 +220,17 @@ impl JobStore {
                     j.status = FAILED;
                     j.error = Some((e.status.as_u16(), e.body()));
                 }
+            }
+        }
+        if self.persist(&g).is_err() {
+            // An interrupted disk record remains conservative. Retain the actual
+            // result in memory and make the durability failure visible.
+            if let Some(job) = g.get_mut(job_id) {
+                job.status = FAILED;
+                job.error = Some((
+                    500,
+                    json!({"detail":{"code":"JOB_PERSIST_FAILED","message":"Outcome could not be saved. Inspect the persistent run record before any retry."}}),
+                ));
             }
         }
     }
@@ -153,7 +264,11 @@ impl JobStore {
             j.status = CANCELLED;
             j.finished_at = Some(crate::common::now_ts());
         }
-        Some(j.to_json())
+        let value = j.to_json();
+        if self.persist(&g).is_err() {
+            tracing::error!("job cancellation could not be persisted; restart will report interrupted work");
+        }
+        Some(value)
     }
 
     pub fn running_count(&self) -> usize {
@@ -168,6 +283,55 @@ mod tests {
 
     fn idle_handle() -> JoinHandle<()> {
         tokio::spawn(async {})
+    }
+
+    #[tokio::test]
+    async fn restart_retains_results_but_never_reattaches_running_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        let store = JobStore::open(&path).unwrap();
+        let running = "a".repeat(32);
+        let finished = "b".repeat(32);
+        store
+            .try_insert_running(&running, "real-repo-run", idle_handle())
+            .unwrap();
+        store
+            .try_insert_running(&finished, "real-repo-run", idle_handle())
+            .unwrap();
+        store.finish(&finished, Ok(json!({"ok":true,"run_id":"fixture"})));
+        drop(store);
+        let recovered = JobStore::open(&path).unwrap();
+        assert_eq!(recovered.running_count(), 0);
+        assert_eq!(recovered.get(&running).unwrap()["status"], INTERRUPTED);
+        assert_eq!(recovered.get(&finished).unwrap()["result"]["run_id"], "fixture");
+        recovered.finish(&running, Ok(json!({"ok":true})));
+        assert_eq!(recovered.get(&running).unwrap()["status"], INTERRUPTED);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_durable_registration_aborts_before_a_worker_can_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(&dir.path().join("jobs.json")).unwrap();
+        std::fs::remove_file(dir.path().join("jobs.json")).unwrap();
+        std::fs::create_dir(dir.path().join("jobs.json")).unwrap();
+        let id = "c".repeat(32);
+        let (_registered, ready) = tokio::sync::oneshot::channel::<()>();
+        let marker = dir.path().join("worker-ran");
+        let marker_in_task = marker.clone();
+        let handle = tokio::spawn(async move {
+            if ready.await.is_ok() {
+                std::fs::write(marker_in_task, "unsafe").unwrap();
+            }
+        });
+        assert!(store.try_insert_running(&id, "real-repo-run", handle).is_err());
+        tokio::task::yield_now().await;
+        assert!(!marker.exists());
+        assert!(store.get(&id).is_none());
     }
 
     #[tokio::test]

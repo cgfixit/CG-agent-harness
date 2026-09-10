@@ -9,14 +9,16 @@ selects chat only and reports the separately configured planner model.
 `/agent confirm <reason>` submits to `/api/agent/jobs` and immediately retains
 its job ID in the URL fragment. `/agent job <id>` resumes monitoring after a
 refresh; re-enter the API key, which is never persisted in browser storage.
-`/agent jobs` lists this server process's retained jobs. Failed CLI results are
+`/agent jobs` lists durable retained jobs, including interrupted entries after restart. Failed CLI results are
 failed jobs, with their error output retained. Completed results display the
 run record and verification output.
 
 `/agent cancel` discards only a staged request. `/agent stop <id>` cancels the
-active request; **descendant processes may survive**. Job state is currently
-in memory: server restart loses job handles, and startup reconciliation and
-live per-check progress are not implemented. Inspect persistent run records
+active request; **descendant processes may survive**. Job state is persisted in a bounded private JSON file; server restart marks
+previously running jobs interrupted and never resumes execution. Live per-check
+progress is not implemented. `/agent runs` lists retained run records and
+reconciles released Unix worker leases to interrupted. Legacy running records
+without ownership proof remain unknown. Inspect persistent run records
 and surviving processes before additional writes. A stop response is not proof
 of process-tree termination. Chat output remains non-streaming.
 

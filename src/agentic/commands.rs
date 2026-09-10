@@ -57,6 +57,7 @@ pub fn dispatch(action: &str, cfg: &AppConfig, config_path: &Path, opts: &Opts) 
         "propose-skill" => cmd_propose_skill(&ctx, opts),
         "apply-skill" => cmd_apply_skill(&ctx, opts),
         "real-repo-run" => cmd_real_repo_run(&ctx, opts),
+        "real-repo-runs" => cmd_real_repo_runs(&ctx),
         "real-repo-run-status" => cmd_real_repo_run_status(&ctx, opts),
         "real-repo-run-decide" => cmd_real_repo_run_decide(&ctx, opts),
         "real-repo-run-push" => cmd_real_repo_run_push(&ctx, opts),
@@ -438,6 +439,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         }
     };
     let dest = tools.worktree().display().to_string();
+    let _run_lease = super::run_store::acquire_run_lease(&runs_dir, &run_id, true)?;
     // Persisted BEFORE the loop runs so a killed process still leaves a record.
     let mut record = RealRepoRunRecord::new(&run_id, &ctx.acfg.repo, &dest, "running");
     record.origin_url = Some(tools.origin_url()?);
@@ -565,14 +567,58 @@ fn render_pending_diff(ctx: &AgenticCtx, dest: &str, changed_files: &[String]) -
     text
 }
 
+fn cmd_real_repo_runs(ctx: &AgenticCtx) -> Result<u8> {
+    if !ctx.acfg.enabled {
+        return Ok(disabled_noop());
+    }
+    let directory = ctx.runs_dir();
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            print_json(&json!({"runs":[],"truncated":false}));
+            return Ok(EXIT_OK);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let mut paths = Vec::new();
+    let mut scanned = 0;
+    for entry in entries.take(4097) {
+        scanned += 1;
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|v| v.to_str()) != Some("json") {
+            continue;
+        }
+        let id = path.file_stem().and_then(|v| v.to_str()).unwrap_or("");
+        if super::run_store::run_id_re().is_match(id) {
+            paths.push((entry.metadata()?.modified()?, id.to_string()));
+        }
+    }
+    paths.sort_by(|a, b| b.0.cmp(&a.0));
+    let truncated = scanned > 4096 || paths.len() > 128;
+    let mut records = Vec::new();
+    for (_, id) in paths.into_iter().take(128) {
+        match load_run(&directory, &id) {
+            Ok(mut record) => {
+                super::run_store::reconcile_run(&directory, &mut record)?;
+                records.push(json!({"run_id":id,"status":record.status,"updated_at":record.updated_at,"error":record.error}));
+            }
+            Err(_) => records.push(json!({"run_id":id,"status":"unreadable","error":"Retained record is unreadable; no action was taken."})),
+        }
+    }
+    print_json(&json!({"runs":records,"truncated":truncated}));
+    Ok(EXIT_OK)
+}
+
 fn cmd_real_repo_run_status(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     if !ctx.acfg.enabled {
         return Ok(disabled_noop());
     }
     let run_id = opts.require("run-id").map_err(HarnessError::agentic)?;
-    let record = load_run(&ctx.runs_dir(), &run_id)?;
+    let mut record = load_run(&ctx.runs_dir(), &run_id)?;
+    super::run_store::reconcile_run(&ctx.runs_dir(), &mut record)?;
     let mut payload = record.to_json();
-    if record.status == PENDING_DECISION {
+    if record.status == PENDING_DECISION || record.status == "interrupted" {
         payload["diff"] = json!(render_pending_diff(ctx, &record.dest, &record.changed_files));
     }
     print_json(&payload);
@@ -824,6 +870,14 @@ fn cmd_real_repo_run_discard(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     let run_id = opts.require("run-id").map_err(HarnessError::agentic)?;
     let runs_dir = ctx.runs_dir();
     let mut record = load_run(&runs_dir, &run_id)?;
+    super::run_store::reconcile_run(&runs_dir, &mut record)?;
+    // A running legacy record has no reliable ownership evidence. A current
+    // worker holds its lease, so neither can be discarded as stale by a guess.
+    if record.status == "running" {
+        return Err(HarnessError::agentic(
+            "run is live or ownership is unknown; discard refused",
+        ));
+    }
     if record.status == PENDING_DECISION {
         err(&format!(
             "run {run_id} is still pending a decision -- run real-repo-run-decide first"

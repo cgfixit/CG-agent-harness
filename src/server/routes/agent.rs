@@ -80,7 +80,7 @@ pub async fn agent_checks(State(state): State<Arc<AppState>>) -> Json<Value> {
         "default_profile": crate::server::agent_policy::DEFAULT_CHECK_PROFILE,
         "poll_interval_ms": state.cfg.u64_or("app.agent_job_poll_ms", 1500).clamp(1000, 30000),
         "planner_model": state.cfg.str_or("agentic.deepagent_github.model", ""),
-        "capabilities": {"jobs": true, "streaming": false, "job_recovery": "server_process_lifetime", "descendant_stop_guaranteed": false},
+        "capabilities": {"jobs": true, "streaming": false, "job_recovery": "durable_interrupted", "descendant_stop_guaranteed": false},
     }))
 }
 
@@ -253,7 +253,11 @@ pub async fn agent_job_create(
     let action = prepared.ops.action.clone();
     let task_state = state.clone();
     let task_job = job_id.clone();
+    let (registered, ready) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move {
+        if ready.await.is_err() {
+            return;
+        }
         // `prepared` (and both gate guards) live exactly as long as this task.
         let PreparedRun {
             ops,
@@ -263,7 +267,14 @@ pub async fn agent_job_create(
         let outcome = agentic_call(&task_state, ops).await.map(|Json(v)| v);
         task_state.jobs.finish(&task_job, outcome);
     });
-    state.jobs.insert_running(&job_id, &action, handle);
+    state.jobs.try_insert_running(&job_id, &action, handle).map_err(|_| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "JOB_PERSIST_FAILED",
+            "Cannot durably register work; no worker was started",
+        )
+    })?;
+    let _ = registered.send(());
     state
         .audit
         .log(json!({"event": "agent_job_started", "job_id": job_id, "action": action}));
@@ -297,6 +308,10 @@ pub async fn agent_job_cancel(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", "no such job"))?;
     state.audit.log(json!({"event": "agent_job_cancelled", "job_id": id}));
     Ok(Json(v))
+}
+
+pub async fn agent_runs(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    agentic_call(&state, OpsRequest::new("real-repo-runs")).await
 }
 
 pub async fn agent_run_status(

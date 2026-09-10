@@ -30,6 +30,7 @@ const BANNED_PHRASES: [&str; 16] = [
 
 pub struct UnslopProbe {
     metrics_path: std::path::PathBuf,
+    max_file_bytes: u64,
 }
 
 impl UnslopProbe {
@@ -41,6 +42,7 @@ impl UnslopProbe {
         let raw = cfg.str_or("unslop.metrics_path", "logs/unslop.jsonl");
         let p = std::path::PathBuf::from(&raw);
         Some(Self {
+            max_file_bytes: crate::common::bounded_log::limit(cfg),
             metrics_path: if p.is_absolute() { p } else { home_root.join(p) },
         })
     }
@@ -54,16 +56,8 @@ impl UnslopProbe {
         let lowered = prose.to_lowercase();
         let hits: Vec<&str> = BANNED_PHRASES.iter().copied().filter(|p| lowered.contains(p)).collect();
         let record = json!({"step": step, "hits": hits.len(), "response_sha256": crate::common::sha256_hex(response), "ts": crate::common::iso_now()});
-        if let Some(parent) = self.metrics_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.metrics_path)
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "{record}");
+        if crate::common::bounded_log::append(&self.metrics_path, &record.to_string(), self.max_file_bytes).is_err() {
+            tracing::warn!("metrics sink unavailable, busy, or record exceeds retention bound");
         }
         if hits.is_empty() {
             json!({})

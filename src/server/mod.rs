@@ -8,6 +8,8 @@
 pub mod agent_jobs;
 pub mod agent_policy;
 pub mod console;
+#[cfg(unix)]
+pub mod desktop;
 pub mod env_keys;
 pub mod errors;
 pub mod generation_gate;
@@ -136,6 +138,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     if let Some(exe) = opts.shim_exe {
         shim.exe = exe;
     }
+    let jobs = agent_jobs::JobStore::open(&home.data_dir().join("agentic/console-jobs.json"))?;
     let state = Arc::new(AppState {
         notes: MemoryNotes::new(&home.memory_dir()),
         web,
@@ -159,7 +162,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         auth,
         tool_allowlist_override: opts.tool_allowlist_override,
         shim,
-        jobs: agent_jobs::JobStore::new(),
+        jobs,
         request_log: cfg.flag_is_true("logging.request_log"),
     });
     Ok((routes::build_router(state.clone()), state))
@@ -179,6 +182,7 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let home = Home::resolve(None);
+    let _ownership = crate::common::home_lock::HomeLock::acquire(&home.root)?;
     home.ensure_layout()?;
     let settings = HarnessSettings::load(&home)?;
     let host = host

@@ -111,6 +111,7 @@ fn duplicated_constants_still_agree() {
             "{action} missing from the CLI dispatch"
         );
     }
+    assert!(cgagentharness::shim::ACTIONS.contains(&"real-repo-runs"));
     assert!(!cgagentharness::shim::ACTIONS.contains(&"deepagent-plan"));
     assert!(!cgagentharness::shim::ACTIONS.contains(&"__sleep"));
 }
