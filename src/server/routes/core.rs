@@ -32,6 +32,7 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<Value> {
         "version": crate::VERSION,
         "model": state.current_model(),
         "provider": state.backend.provider,
+        "api_key_optional": state.api_key_optional,
         "base_url": state.backend.base_url,
         "soul_enabled": settings.soul_enabled,
         "memory_enabled": settings.memory_enabled,

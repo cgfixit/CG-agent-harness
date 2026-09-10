@@ -54,3 +54,15 @@ now continues draining ready data while retaining per-chunk budget/cancellation
 checks; it sleeps only when neither stream advances. The early-exit fixture
 uses one second for process startup and a five-second descendant, preserving
 its termination assertion; the separate 100 ms deadline regressions remain.
+
+## Desktop ownership and recovery
+
+The desktop parent owns a private inherited control pipe; EOF requests backend
+shutdown and cancellation through the same owners described above. A server home
+lease excludes a second Unix server. New coding workers hold a per-run lease;
+`/agent runs` or status reconciliation marks a running record interrupted only
+after that lease is demonstrably released. There is no PID-file kill authority,
+automatic resume or approval replay. Legacy running state stays unknown. A
+released worker lease proves the worker ended, not that every escaped descendant
+ended. Native window semantics and remaining acceptance are documented in
+[DESKTOP.md](DESKTOP.md) and [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).

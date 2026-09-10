@@ -13,7 +13,7 @@ async fn server_advertises_default_checks_and_honest_job_capabilities() {
     assert_eq!(value["capabilities"]["jobs"], true);
     assert_eq!(value["capabilities"]["streaming"], false);
     assert_eq!(value["capabilities"]["descendant_stop_guaranteed"], false);
-    assert_eq!(value["capabilities"]["job_recovery"], "server_process_lifetime");
+    assert_eq!(value["capabilities"]["job_recovery"], "durable_interrupted");
     assert!(value["poll_interval_ms"].as_u64().unwrap() >= 1000);
 }
 

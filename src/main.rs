@@ -19,6 +19,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Private desktop sidecar protocol over inherited pipes.
+    #[cfg(unix)]
+    #[command(hide = true)]
+    Desktop,
     /// Serve the harness console on 127.0.0.1 (default port 8790).
     Serve {
         /// Bind host; anything but a loopback address is refused.
@@ -39,6 +43,16 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        #[cfg(unix)]
+        Command::Desktop => match cgagentharness::server::desktop::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => {
+                // Startup diagnostics are structured and secret-free on the
+                // private pipe; never print an arbitrary config/error chain.
+                eprintln!("desktop backend stopped; inspect the setup window");
+                ExitCode::from(3)
+            }
+        },
         Command::Serve { host, port } => match cgagentharness::server::serve_blocking(host, port) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {

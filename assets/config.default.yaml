@@ -43,14 +43,15 @@ api:
     max_tokens: 2048
 
 security:
-  # Operator opt-out from the CGAGENTHARNESS_API_KEY Bearer gate. When true the
-  # bypass is granted ONLY to a loopback socket peer carrying no reverse-proxy
-  # forwarding header. Ships false.
-  api_key_optional: false
+  # Local harness use needs no API key by default. The bypass applies ONLY
+  # to a loopback socket peer with no reverse-proxy forwarding headers.
+  # Set false to require CGAGENTHARNESS_API_KEY on every operator request.
+  api_key_optional: true
 
 # Per-user authentication. Ships false. When the literal boolean true, the
-# /api/auth/* routes come alive; a bootstrap "admin" account with an unusable
-# placeholder password is created and the first password is set over loopback.
+# /api/auth/* account-management routes come alive. A bootstrap "admin" account
+# has an unusable placeholder until its first password is set over loopback.
+# Account login is never a prerequisite for chat or agent pipeline operations.
 auth:
   enabled: false
   session:
@@ -64,6 +65,8 @@ logging:
   request_log: true
   audit_file: "logs/audit.jsonl"
   spend_file: "logs/spend.jsonl"
+  # Each JSONL sink retains a current file and one .1 generation.
+  max_file_bytes: 8388608 # clamped to 64 KiB–64 MiB; oversized events are dropped
   audit_fields:
     include_query_hash: true
 

@@ -24,10 +24,14 @@ the server or the shim.
 API key (constant-time; bypass only if security.api_key_optional AND loopback
 peer AND no forwarding headers) -> CSRF (per-process token, absent header rejects)`.
 Order is load-bearing: a wrong key against a spent budget is 429, and a missing
-key is 401 even when CSRF is also missing.
+key is 401 even when CSRF is also missing in key-enforced mode.
 
 - Locked by: `tests/auth_guards.rs`, `tests/security_headers.rs`.
-- Fail-closed: an unset `CGAGENTHARNESS_API_KEY` refuses every guarded route.
+- Direct local access ships with `security.api_key_optional: true`: no API key
+  or account login is needed for harness operations. When explicitly set false,
+  an unset `CGAGENTHARNESS_API_KEY` refuses every guarded route.
+- Per-user sessions and roles protect account management only; enabling
+  `auth.enabled` does not add a login requirement to harness operations.
 - The Host header must be a loopback name (DNS-rebinding defense); the bind is
   refused for a non-loopback host in `serve`.
 
@@ -184,7 +188,7 @@ already killed.
   model-feeding commands refuse on them (selected by CODE, not severity).
 - The Windows sandbox is a process-tree kill boundary, not a network namespace.
 - `security.api_key_optional` on a host fronted by a header-stripping proxy is
-  indistinguishable from no proxy: do not enable it there.
+  indistinguishable from no proxy: explicitly set it false there.
 
 Unix subprocess I/O shares an operation deadline and a fixed aggregate capture
 ceiling. The direct child stays unreaped through process-group cleanup. macOS

@@ -13,6 +13,7 @@ fsconnect / sqlconnect / netconnect.
 Status: `0.1.0`. MSRV Rust 1.88. [MIT](LICENSE). Bind is loopback-only. Every
 write gate ships **closed**.
 
+- macOS app: [desktop setup, packaging and limitations](docs/DESKTOP.md) (Apple Silicon; native interaction acceptance pending)
 - Console: `http://127.0.0.1:8790/` (`assets/static/harness.html`, served verbatim)
 - Chat: local OpenAI-compatible model (Ollama on `127.0.0.1:11434` by default)
 - Pipeline: clone → plan → patch → hard-sandbox verify → human decide → commit → push → draft PR
@@ -43,7 +44,6 @@ and only after a human reviews a digest-bound diff.
 | Python 3 (standard library only) | Explicit Cargo dependency preparation |
 | Ollama on `127.0.0.1:11434` with a chat model | Console chat and local planner |
 | `gh` ≥ 2.40.0, logged in | Real-repo pipeline only |
-| `openssl` (or any CSPRNG) | Generate `CGAGENTHARNESS_API_KEY` |
 
 The shipped config references `qwen3.8:27b-mlx`, but do not assume that tag is installed. Run `ollama list` and select the exact installed tag you intend to use, then set both `models.local_llm.model` and `agentic.deepagent_github.model` to that tag. An `-mlx` suffix alone does not prove the execution backend.
 
@@ -57,16 +57,35 @@ git clone https://github.com/cgfixit/CG-agent-harness.git
 cd CG-agent-harness
 cargo build --release
 
-export CGAGENTHARNESS_API_KEY="$(openssl rand -hex 20)"
 ./target/release/cgagentharness serve
 # http://127.0.0.1:8790/
 ```
 
-Ollama must be running. Paste the same key into the console's key field
-(held in that tab only), send a line, then try `/status`, `/skills`,
+Ollama must be running. No API key or account login is needed for local use.
+Send a line, then try `/status`, `/skills`,
 `/tools`. None of those touch a GitHub repository.
 
 Step-by-step macOS walkthrough: [setup-guide.md](setup-guide.md).
+
+## Optional credentials
+
+For an existing home, set `security.api_key_optional: true` in its `config.yaml`
+and restart the server/app. Saved homes are not overwritten on upgrade.
+This permits all harness operations without a key or account login on a direct
+loopback connection. Repository write gates, reason/confirmation, diff review,
+and separate approval/push/publication actions still apply.
+
+To enforce a key, set `security.api_key_optional: false`, configure
+`CGAGENTHARNESS_API_KEY` in the server environment (or the desktop home's private
+`.env`), restart, and enter the matching key in the console. The key field remains
+available and keeps its value only in page memory. Forwarded requests never use
+the local bypass. Set the flag false behind any proxy, including one stripping
+forwarding headers.
+
+`auth.enabled` retains optional account login, sessions and role-based account
+management. It does not require login for chat or the agent pipeline; managing
+accounts still requires the appropriate logged-in role. Credentials required by
+external services, such as GitHub publication, remain those services' requirements.
 
 ## Optional: arm the pipeline
 
@@ -110,11 +129,11 @@ Full arming walkthrough: [setup-guide.md](setup-guide.md) §9.
 
 | Default | Behavior |
 |---|---|
-| Unset `CGAGENTHARNESS_API_KEY` | Every guarded route **401** (fail-closed) |
+| Unset `CGAGENTHARNESS_API_KEY` | Direct local use works; origin and CSRF checks still apply |
 | Non-loopback bind (`--host 0.0.0.0`, …) | Refused at startup |
 | Host header not a loopback name | Refused (DNS-rebinding defense) |
 | `agentic.enabled`, `deepagent_github.enabled`, `allow_git_write_tools` | All ship **false** |
-| `security.api_key_optional` | Ships **false** |
+| `security.api_key_optional` | Ships **true**; set false to require a configured Bearer key |
 | `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` (`1` / `true` / `yes` / `on`) | Disable-only write kill switch (cannot arm writes) |
 | `GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY` in CI | Blanked; tests must not assert a developer key is present |
 

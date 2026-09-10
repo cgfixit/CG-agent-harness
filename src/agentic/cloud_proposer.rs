@@ -162,17 +162,7 @@ impl<'a> CloudProposerClient<'a> {
             "ts": crate::common::iso_now(), "provider": self.settings.provider, "model": self.settings.model,
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "source": "agentic", "outcome": outcome,
         });
-        if let Some(parent) = self.spend_file.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.spend_file)
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "{record}");
-        }
+        self.audit.append_spend(&self.spend_file, &record);
     }
 
     fn build_request(

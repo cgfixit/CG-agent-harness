@@ -176,7 +176,7 @@
         <span id="hAuthLoginBox" hidden>
           <input class="apikey" id="hAuthUser" placeholder="user" autocomplete="username">
           <input class="apikey" id="hAuthPass" type="password" placeholder="pass" autocomplete="current-password">
-          <button class="toggle" id="hAuthLogin" type="button">login</button>
+          <button class="toggle" id="hAuthLogin" type="button" title="Optional account login for user management">login</button>
         </span>
         <span id="hAuthWho"></span>
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
@@ -227,7 +227,7 @@
         <span title="human-gated /loop"><span class="k">loop </span><span class="v" id="sLoop">off</span></span>
         <span class="spacer"></span>
         <span><span class="k">key </span><input class="apikey" id="apiKey" type="password" autocomplete="off"
-          spellcheck="false" placeholder="CYCLAW_API_KEY" title="operator API key; held in memory only"></span>
+          spellcheck="false" placeholder="optional API key" title="optional operator API key; held in memory only"></span>
         <span class="k" id="sHome" title="harness home"></span>
       </div>
     </div>
@@ -523,7 +523,7 @@ async function api(path, method, body, timeoutMs) {
     const target = new URL(path, window.location.href).href;
     const err = new Error(
       'NETWORK: cannot reach the harness API at ' + target +
-      '. Open http://127.0.0.1:8790/ unless CYCLAW_HARNESS_PORT overrides the default.'
+      '. In the desktop app, use Harness > Setup and recovery. For the standalone server, reopen its configured local address.'
     );
     /* Preserve AbortError so an intentional /loop stop remains silent in
        sendChat(), while every visible abort gets the actionable message. */
@@ -552,12 +552,12 @@ async function api(path, method, body, timeoutMs) {
           ? 'HTTP ' + resp.status + ': ' + d
           : 'HTTP ' + resp.status;
     /* The console's key input sends a Bearer to the server, but the server
-       compares it against CYCLAW_API_KEY in its own process environment. When
+       compares it against CGAGENTHARNESS_API_KEY in its own process environment. When
        that env var is unset, typing a key here cannot help until the server is
        restarted with the key sourced from the shell. Make that explicit so the
        operator does not think the input field is broken. */
     if (typed && typed.code === 'UNAUTHORIZED' && typed.details && typed.details.reason === 'key_not_configured') {
-      msg += '\nThe harness server was started without CYCLAW_API_KEY in its environment. Set it in the shell that launches the harness and restart; typing it here only works when the server already has the same key configured.';
+      msg += '\nThe harness server was started without CGAGENTHARNESS_API_KEY in its environment. For credential-free local use, set security.api_key_optional: true in your home config.yaml and restart. For key enforcement, configure the server key and enter the same key here.';
     }
     if (code === 'CHAT_BUSY') {
       msg += typed && typed.details && typed.details.cancel
@@ -602,6 +602,12 @@ async function refreshStatus() {
     $('hModel').textContent = s.model || '(unset)';
     $('hTokens').textContent = s.total_tokens.toLocaleString();
     $('sProvider').textContent = s.provider;
+    if (apiKeyInput) {
+      apiKeyInput.placeholder = s.api_key_optional ? 'optional API key' : 'CGAGENTHARNESS_API_KEY';
+      apiKeyInput.title = s.api_key_optional
+        ? 'Optional for direct local use; held in page memory only'
+        : 'Required by this home configuration; held in page memory only';
+    }
     $('sHome').textContent = s.home;
     $('sHome').title = 'harness home: ' + s.home + '  ·  repo: ' + s.repo_root;
     soulEnabled = s.soul_enabled;
@@ -710,6 +716,7 @@ const COMMANDS = [
   ['/github', 'agentic GitHub status'],
   ['/agent run|plan|read|checks|confirm|cancel', 'stage and start a real-repo coding run'],
   ['/agent iterations|pr|issue <n>|clear', 'set or clear staged numeric options'],
+  ['/agent runs', 'list retained runs and reconcile interrupted ownership'],
   ['/agent status|approve|reject <id>', 'inspect or decide a pending run'],
   ['/harness', 'harness optimizer runs'],
   ['/tokens', 'token tally'],
@@ -795,6 +802,7 @@ async function watchAgentJob(id) {
           sys('job failed: ' + JSON.stringify(job.error.detail));
         }
         if (job.status === 'cancelled') sys('Request cancelled. Descendant work may survive; inspect the run before further writes.');
+        if (job.status === 'interrupted') sys('The previous backend stopped during this job. No work or approvals were resumed. Inspect retained run records and the complete diff before deciding or starting another run.');
         return;
       }
       await new Promise(resolve => setTimeout(resolve, settings.poll_interval_ms));
@@ -1319,6 +1327,11 @@ async function runSlash(line) {
           } finally {
             sendBtn.disabled = false;
           }
+        } else if (sub === 'runs') {
+          const result = agentRecord(await api('/api/agent/runs'));
+          sys(table(result.runs.map(r => [r.run_id, r.status, r.error || '']), ['run', 'status', 'recovery']));
+          if (result.truncated) sys('Showing a bounded set of retained runs. Older records remain on disk.');
+          sys('Use /agent status <id> to inspect, and /agent discard <id> for interrupted or decided work. Unknown running ownership cannot be discarded.');
         } else if (sub === 'jobs') {
           const result = await api('/api/agent/jobs');
           sys(table(result.jobs.map(j => [j.job_id, j.status]), ['job', 'status']));
@@ -1773,7 +1786,7 @@ async function onSend() {
 /* ── wiring ── */
 sendBtn.addEventListener('click', onSend);
 const recoverJob = rememberedAgentJob();
-if (recoverJob) sys('retained job: ' + recoverJob + '. Enter your API key, then /agent job ' + recoverJob + ' to resume monitoring.');
+if (recoverJob) sys('retained job: ' + recoverJob + '. Use /agent job ' + recoverJob + ' to resume monitoring.');
 input.addEventListener('keydown', e => {
   // Ignore Enter while an IME composition is in progress; sending on the
   // commit keystroke submits a half-typed query.
@@ -1810,7 +1823,7 @@ async function refreshHarnessAuth() {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(false);
-      if (who) who.textContent = '';
+      if (who) who.textContent = 'local use · login optional';
       return;
     }
     if (me.ok) {
@@ -1835,7 +1848,7 @@ async function refreshHarnessAuth() {
     if (hAuthSetup) hAuthSetup.hidden = true;
     if (hAuthLoginBox) hAuthLoginBox.hidden = false;
     window.__cyclawRole = null;
-    if (who) who.textContent = '';
+    if (who) who.textContent = 'local use · login optional';
     setHarnessLogoutVisible(false);
   } catch (e) { /* keep last UI */ }
 }

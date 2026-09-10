@@ -1,7 +1,7 @@
 //! The ONLY server -> agentic edge. Port of `utils/ops_runner.py`.
 //!
 //! Builds an argv list beginning `[current_exe, "agentic", "--config", <cfg>, <action>]`
-//! from an 11-action whitelist and spawns it as a CHILD PROCESS with a hard
+//! from a 12-action whitelist and spawns it as a CHILD PROCESS with a hard
 //! timeout. Nothing in this module (or anywhere under `server/`) links the
 //! `agentic` module; the process boundary IS the isolation (Invariant 6).
 //!
@@ -28,7 +28,7 @@ pub const REAL_REPO_RUN_OVERHEAD_SEC: u64 = 300;
 /// this is its own failure mode.
 pub const REAL_REPO_RUN_MAX_TIMEOUT_SEC: u64 = 3600;
 
-pub const ACTIONS: [&str; 11] = [
+pub const ACTIONS: [&str; 12] = [
     "status",
     "test",
     "context",
@@ -36,17 +36,19 @@ pub const ACTIONS: [&str; 11] = [
     "apply-skill",
     "real-repo-run",
     "real-repo-run-status",
+    "real-repo-runs",
     "real-repo-run-decide",
     "real-repo-run-push",
     "real-repo-run-publish",
     "real-repo-run-discard",
 ];
-pub const JSON_ACTIONS: [&str; 9] = [
+pub const JSON_ACTIONS: [&str; 10] = [
     "context",
     "propose-skill",
     "apply-skill",
     "real-repo-run",
     "real-repo-run-status",
+    "real-repo-runs",
     "real-repo-run-decide",
     "real-repo-run-push",
     "real-repo-run-publish",
@@ -520,6 +522,7 @@ pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<
 /// The shim entry point: validate, build argv, spawn, label. Temp files are
 /// removed on every path (the `TempPath` values drop at the end of this scope).
 pub async fn run_agentic_op(ctx: &ShimContext, req: &OpsRequest) -> Result<OpsResult, ShimError> {
+    let _active = ActiveOperation::new();
     let (argv, _temps) = build_argv(ctx, req)?;
     let timeout = timeout_for(ctx, req);
     let (code, stdout, stderr) = run_argv(&argv, &ctx.cwd, timeout).await.map_err(|e| match e {
@@ -545,4 +548,24 @@ pub async fn run_agentic_op(ctx: &ShimContext, req: &OpsRequest) -> Result<OpsRe
         stderr,
         parsed,
     })
+}
+
+static ACTIVE_OPERATIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Includes inspection, approval, push and publication, not just coding jobs.
+pub fn active_operations() -> usize {
+    ACTIVE_OPERATIONS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+struct ActiveOperation;
+impl ActiveOperation {
+    fn new() -> Self {
+        ACTIVE_OPERATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self
+    }
+}
+impl Drop for ActiveOperation {
+    fn drop(&mut self) {
+        ACTIVE_OPERATIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }

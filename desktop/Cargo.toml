@@ -1,0 +1,40 @@
+[package]
+name = "cg-agent-harness-desktop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+description = "macOS desktop owner for the CG Agent Harness sidecar"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+sha2 = "0.10"
+hex = "0.4"
+
+[dependencies]
+tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+
+# Upstream replaces unmaintained rust-unic with ICU through urlpattern 0.6.
+# Exact upstream revision; no advisory exceptions and no backend dependency change.
+[patch.crates-io]
+tauri-utils = { git = "https://github.com/tauri-apps/tauri", rev = "dd725f4b13c30a86b398ccc59eb498f151f461c5" }

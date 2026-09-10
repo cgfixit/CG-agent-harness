@@ -111,6 +111,7 @@ fn duplicated_constants_still_agree() {
             "{action} missing from the CLI dispatch"
         );
     }
+    assert!(cgagentharness::shim::ACTIONS.contains(&"real-repo-runs"));
     assert!(!cgagentharness::shim::ACTIONS.contains(&"deepagent-plan"));
     assert!(!cgagentharness::shim::ACTIONS.contains(&"__sleep"));
 }
@@ -127,7 +128,6 @@ fn shipped_config_keeps_every_gate_closed() {
         "agentic.deepagent_github.enabled",
         "agentic.deepagent_github.allow_git_write_tools",
         "auth.enabled",
-        "security.api_key_optional",
         "unslop.enabled",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
@@ -139,10 +139,10 @@ fn shipped_config_keeps_every_gate_closed() {
         assert!(cgagentharness::agentic::writer::execution_enabled());
     }
 
-    // Source of truth: the shipped YAML uses the literal boolean false (quoted
+    // Source of truth: the shipped YAML uses literal booleans (quoted
     // "true" / "false" would be strings and flag_is_true would hide a mistake).
     let yaml = cgagentharness::common::config::AppConfig::embedded_default();
-    for needle in ["api_key_optional: false", "allow_git_write_tools: false"] {
+    for needle in ["api_key_optional: true", "allow_git_write_tools: false"] {
         assert!(yaml.contains(needle), "shipped config lost {needle}");
     }
     assert!(
@@ -150,8 +150,8 @@ fn shipped_config_keeps_every_gate_closed() {
         "allow_git_write_tools must ship false"
     );
     assert!(
-        !yaml.contains("api_key_optional: true") && !yaml.contains("api_key_optional: \"true\""),
-        "api_key_optional must ship the literal boolean false"
+        cfg.flag_is_true("security.api_key_optional"),
+        "direct local use must ship without a key requirement"
     );
 }
 

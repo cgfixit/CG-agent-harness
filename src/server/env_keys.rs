@@ -131,10 +131,14 @@ fn split_assignment(line: &str) -> Option<(String, String)> {
 
 /// `{name: value}` for allowlisted keys only; missing file reads as empty.
 pub fn read_env_file(path: &Path) -> BTreeMap<String, String> {
-    let mut found = BTreeMap::new();
     let Ok(text) = std::fs::read_to_string(path) else {
-        return found;
+        return BTreeMap::new();
     };
+    parse_env_text(&text)
+}
+
+fn parse_env_text(text: &str) -> BTreeMap<String, String> {
+    let mut found = BTreeMap::new();
     for line in text.lines() {
         if let Some((name, raw)) = split_assignment(line) {
             if MANAGED_KEYS.iter().any(|s| s.name == name) {
@@ -143,6 +147,41 @@ pub fn read_env_file(path: &Path) -> BTreeMap<String, String> {
         }
     }
     found
+}
+
+/// Desktop startup reads credentials as data through one validated descriptor.
+/// Missing is distinct from unreadable/unsafe; no shell expansion is performed.
+#[cfg(unix)]
+pub fn read_startup_keys(path: &Path) -> anyhow::Result<BTreeMap<String, String>> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(_) => anyhow::bail!("credential file unreadable; check its owner, access and symlink status"),
+    };
+    let metadata = file.metadata()?;
+    // SAFETY: getuid has no arguments or memory effects.
+    if !metadata.is_file() || metadata.uid() != unsafe { libc::getuid() } || metadata.mode() & 0o077 != 0 {
+        anyhow::bail!("credential file must be a private regular file owned by this user (0600)");
+    }
+    let mut text = String::new();
+    file.take(65537)
+        .read_to_string(&mut text)
+        .map_err(|_| anyhow::anyhow!("credential file unreadable or not UTF-8"))?;
+    if text.len() > 65536 {
+        anyhow::bail!("credential file exceeds 64 KiB");
+    }
+    let keys = parse_env_text(&text);
+    for (name, value) in &keys {
+        validate_value(name, value)
+            .map_err(|_| anyhow::anyhow!("credential file contains an invalid managed value"))?;
+    }
+    Ok(keys)
 }
 
 /// Presence + masked tail for every managed key. Never returns a value.

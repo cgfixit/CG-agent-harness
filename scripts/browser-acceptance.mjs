@@ -10,7 +10,7 @@ const home=resolve(process.env.CGAH_TEST_HOME);
 assert.equal(process.env.CGAH_TEST_FIXTURE,'disposable-arithmetic');
 assert.equal(new URL(base).hostname,'127.0.0.1');
 assert.equal((await (await fetch(base+'/api/status')).json()).home,home);
-const key=(await readFile(process.env.CGAH_TEST_API_KEY_FILE,'utf8')).trim();
+const key=''; // Exercise default local access without a key or login.
 const profile=await mkdtemp(join(tmpdir(),'cgah-browser-'));
 const binary=process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const chrome=spawn(binary,['--headless=new','--no-first-run','--disable-background-networking','--disable-sync','--disable-extensions','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:'ignore'});
@@ -26,9 +26,9 @@ try {
  const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});
  const evaluate=async expression=>{const v=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(v.exceptionDetails)throw Error(JSON.stringify(v.exceptionDetails));return v.result.value;};
  const until=async (expression,timeout=15000)=>{const start=Date.now();while(Date.now()-start<timeout){const value=await evaluate(expression);if(value)return value;await pause(100);}throw Error('Browser expectation timed out: '+expression);};
- const send=async command=>{await until('!document.getElementById("send").disabled');await evaluate('document.getElementById("input").value='+JSON.stringify(command)+';document.getElementById("send").click()');await pause(100);await until('!document.getElementById("send").disabled');};
+ const send=async command=>{await until('!document.getElementById("send").disabled');await evaluate('document.getElementById("input").value='+JSON.stringify(command)+';onSend()');await until('!document.getElementById("send").disabled');};
  await call('Page.enable');await call('Network.enable');await call('Page.navigate',{url:base+'/'});await until('!!document.getElementById("apiKey")');
- assert.equal(await evaluate('fetch("/api/agent/jobs").then(r=>r.status)'),401);
+ assert.equal(await evaluate('fetch("/api/agent/jobs").then(r=>r.status)'),403);
  await evaluate('document.getElementById("apiKey").value='+JSON.stringify(key));
  assert.equal(await evaluate('fetch("/api/agent/jobs",{method:"POST",headers:{"Authorization":"Bearer "+document.getElementById("apiKey").value,"Content-Type":"application/json"},body:"{}"}).then(r=>r.status)'),403);
  await send('/agent run codex/browser-'+Date.now()+' Fix add to return a plus b in src/lib.rs using one exact edit; preserve all other bytes and tests.');
@@ -79,7 +79,7 @@ try {
  await send('/agent stop '+cancelled);await pause(500);
  assert.equal((await evaluate('api("/api/agent/jobs/'+cancelled+'")')).status,'cancelled');
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("may still survive")'));
- console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','authentication','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','reviewed PR body','mock draft publication','staged cancel','active request cancel']}));
+ console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','no key or login','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','reviewed PR body','mock draft publication','staged cancel','active request cancel']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});await rm(profile,{recursive:true,force:true});
 }

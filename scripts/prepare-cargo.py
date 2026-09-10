@@ -13,6 +13,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import signal
+import sys
+import threading
 
 
 def main():
@@ -20,7 +23,17 @@ def main():
     parser.add_argument("repository", type=Path)
     parser.add_argument("harness_home", type=Path)
     parser.add_argument("--online", action="store_true")
+    parser.add_argument("--desktop-parent", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.desktop_parent:
+        # The native owner creates this process group and holds the only stdin
+        # writer. EOF closes the helper's owned group after parent death.
+        if os.name != "posix" or os.getpgrp() != os.getpid():
+            raise SystemExit("desktop preparation requires its own process group")
+        def parent_watch():
+            sys.stdin.buffer.read(1)
+            os.killpg(os.getpgrp(), signal.SIGTERM)
+        threading.Thread(target=parent_watch, daemon=True).start()
     repo = args.repository.resolve(strict=True)
     lock = (repo / "Cargo.lock").read_bytes()
     digest = hashlib.sha256(lock).hexdigest()
