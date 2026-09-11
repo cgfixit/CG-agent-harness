@@ -34,7 +34,9 @@ reproduction steps. Coordinate disclosure through the advisory.
 What the code guarantees lives in [INVARIANTS.md](INVARIANTS.md). In short:
 
 - Bind is loopback-only; a non-loopback host is refused at startup.
-- An unset `CGAGENTHARNESS_API_KEY` fails closed (guarded routes 401).
+- Direct local access ships with `security.api_key_optional: true` (loopback
+  bypass only when there are no forwarding headers). When that flag is
+  false, an unset `CGAGENTHARNESS_API_KEY` refuses guarded routes (401).
 - I6: the HTTP process never calls the agentic pipeline in-process; it
   only spawns `cgagentharness agentic …` as a child.
 - Every write gate ships closed.

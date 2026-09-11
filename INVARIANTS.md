@@ -7,7 +7,7 @@ lives. When code and this file disagree, code wins; fix this file.
 
 The HTTP console (`src/server`, `src/shim`, `src/llm`, `src/common`) never links
 or calls the agentic pipeline (`src/agentic`). The only edge is
-`src/shim/mod.rs`, which builds an argv list from an 11-action whitelist and
+`src/shim/mod.rs`, which builds an argv list from a 12-action whitelist and
 spawns `current_exe() agentic <action>` as a CHILD PROCESS with a hard timeout
 (shared bounded Unix runner with cancellation cleanup; `kill_on_drop` elsewhere). The agentic side never references
 the server or the shim.
