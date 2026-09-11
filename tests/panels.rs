@@ -381,7 +381,7 @@ async fn tools_and_skills_views_report_wiring() {
     let (status, tools) = s.open_get("/api/tools").await;
     assert_eq!(status, 200);
     assert_eq!(tools["wired"], tools["total"], "every catalog surface is registered");
-    assert_eq!(tools["total"], 33);
+    assert_eq!(tools["total"], 35);
     assert!(tools["diagram"].as_str().unwrap().starts_with("HARNESS TOOLS"));
     let (status, skills) = s.open_get("/api/skills").await;
     assert_eq!(status, 200);

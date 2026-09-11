@@ -402,7 +402,7 @@ function renderToolsDiagram(tools, wired, total) {
     const body = inner.map(line => '│' + line.padEnd(width, ' ') + ' │');
     return [head].concat(body).concat(['└' + edge + '┘']).join('\n');
   }
-  const lines = ['HARNESS TOOLS — ' + wired + ' registered / ' + total + ' listed', ''];
+  const lines = ['HARNESS TOOLS — ' + wired + ' adapters / ' + total + ' listed', ''];
   const harness = tools.filter(t => t.kind === 'harness');
   const mcp = tools.filter(t => t.kind === 'mcp');
   const treeLines = (row, last, indent) => {
@@ -439,6 +439,8 @@ function renderSkillsDiagram(skills, wired, total) {
     const wiredMark = row.wired ? 'yes' : 'no';
     const inner = [
       ' name        ' + row.name,
+      ' id          ' + (row.id || '(catalog)'),
+      ' type        ' + (row.type || 'catalog_only'),
       ' role        ' + row.role,
       ' ready       ' + row.ready,
       ' reason      ' + (row.unavailable_reason || 'none'),
@@ -459,11 +461,11 @@ function renderSkillsDiagram(skills, wired, total) {
     const body = inner.map(line => '│' + line.padEnd(width, ' ') + ' │');
     return [head].concat(body).concat(['└' + edge + '┘']).join('\n');
   }
-  const lines = ['HARNESS SKILLS — ' + wired + ' registered / ' + total + ' listed', ''];
+  const lines = ['HARNESS SKILLS — ' + wired + ' adapters / ' + total + ' listed', ''];
   const groups = [
     ['prompt', 'prompt (injected into every chat turn)'],
     ['check', 'agent-check (named /agent checks profiles)'],
-    ['repo', 'repo catalog (present; this console does not invoke these)'],
+    ['repo', 'optional prompt context (/skill use <id>; no script execution)'],
     ['governed', 'governed registry (read-only; mutations stay behind agentic CLI)'],
   ];
   groups.forEach(pair => {
@@ -730,6 +732,7 @@ const COMMANDS = [
   ['/goal [text]|clear', 'set, show, or clear the session goal'],
   ['/loop [n]|stop|auto', 'chat continuation only; aggregate completion budget; per-turn budget set by server'],
   ['/model [use <name>]', 'show or select the model'],
+  ['/skill use <id...>|clear|status|check:<profile>', 'select bounded prompt context or stage a fixed coding check'],
   ['/skills [all|<name>]', 'registered runtime skills as a diagram'],
   ['/tools [all|<name>]', 'registered runtime tools as a diagram'],
   ['/web [on|off|allow|deny|fetch|search|inject|forget]', 'allowlist-only web fetch (off by default)'],
@@ -1121,6 +1124,23 @@ async function runSlash(line) {
         break;
       }
 
+      case 'skill': {
+        const action = rest[0] || 'status';
+        if (action.startsWith('check:')) {
+          if (!pendingAgentRun) { sys('Stage a coding request with /agent run before selecting a fixed check.'); break; }
+          const r = await api('/api/skills/check', 'POST', {id:action});
+          pendingAgentRun.checks = [r.profile]; showPendingAgentRun();
+          sys('Fixed check selected; nothing executed. /agent confirm <reason> uses existing authorization and sandbox limits.'); break;
+        }
+        if (!['use','clear','status'].includes(action)) { sys('usage: /skill use <id...> | clear | status | check:<profile>'); break; }
+        if (!currentSession) {
+          const created = await api('/api/sessions', 'POST', {}); currentSession = created.session_id;
+          $('sSession').textContent = currentSession;
+        }
+        const path = '/api/sessions/' + encodeURIComponent(currentSession) + '/skills';
+        const r = action === 'status' ? await api(path) : await api(path, 'POST', {ids:action === 'clear' ? [] : rest.slice(1)});
+        sys(JSON.stringify(r,null,2)); break;
+      }
       case 'skills': {
         if (arg === 'help') {
           sys(table([

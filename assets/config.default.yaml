@@ -131,6 +131,8 @@ policy:
 
 personality:
   soul_max_chars: 8000
+  prompt_skill_max_chars: 6000
+  prompt_skills_total_chars: 16000
 
 agentic:
   enabled: false                 # master switch; CLI no-ops (exit 0) while false

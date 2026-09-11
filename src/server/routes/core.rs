@@ -205,6 +205,7 @@ pub async fn chat(
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
     };
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let selected_skills = super::skills::resolve(&state, &session.selected_skills)?;
 
     let mut loop_claimed = false;
     if req.loop_turn {
@@ -267,6 +268,7 @@ pub async fn chat(
     };
     let system_prompt = compose_system_prompt(&PromptInputs {
         skills_dir: &state.home.skills_dir(),
+        selected_skills: &selected_skills,
         soul_enabled: settings.soul_enabled,
         soul_override: None,
         soul_path: &state.home.soul_path(),
@@ -329,6 +331,10 @@ pub async fn chat(
                 completion_tokens: reply.completion_tokens,
                 exchanges: 0,
             },
+            &selected_skills.iter().map(|(id,body)| {
+                use sha2::{Digest, Sha256};
+                json!({"id":id,"outcome":"included_in_successful_chat","chars":body.chars().count(),"sha256":hex::encode(Sha256::digest(body.as_bytes()))})
+            }).collect::<Vec<_>>(),
         )
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     Ok(Json(json!({
