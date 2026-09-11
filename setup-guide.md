@@ -404,8 +404,17 @@ coding/persona reviews. Saved sessions remain intact; switching restores their
 retained messages. A new session has no prior messages, goal, or selected prompt
 skills. Persona, enabled notes, and enabled web context remain shared within the
 home. `/clear` only clears the display; it does not reset the model's session
-history. Use `/session new` for a separate conversation. There is currently no
-in-app command to delete saved sessions.
+history. Use `/session new` for a separate conversation. In the **Sessions** sidebar, **Clear all session history** below **+ new session**
+opens a confirmation dialog. Confirming stops active chat and permanently removes
+saved session files, goals, skill selections and their token totals, then clears
+the visible conversation. It preserves memory notes, persona, web context and coding
+runs. Cancel leaves history intact. This is file deletion, not secure disk erasure;
+backups and separately stored coding/audit records are outside its scope.
+
+Runtime `sessions/` directories and `.CGagentHarness/` homes are Git-ignored even
+inside the checkout. Keep custom homes outside the repository when possible, avoid
+`git add -f` for private files, and check `git ls-files` before publishing: ignore
+rules do not remove files already tracked by Git.
 
 ```text
 /loop 3

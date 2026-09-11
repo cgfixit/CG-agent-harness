@@ -131,6 +131,12 @@ persona and enabled memory/web context remain; `/prompt` shows them. Chat knows
 the operator commands, but cannot execute them. `/memory` lists real saved notes;
 `/memory add <note>` saves literal text, not an instruction to archive every session.
 
+The **Sessions** sidebar has **Clear all session history** below **+ new session**.
+Confirmation permanently deletes saved chats, goals, skill selections and token totals;
+shared memory/persona/web context and coding runs remain. Session directories and
+`.CGagentHarness` homes are Git-ignored, including when created inside this repo.
+Do not force-add private runtime files; ignore rules do not untrack already committed files.
+
 To deliberately turn the current goal into coding work, use
 `/goal stage codex/<topic>`, inspect the staged request and checks, then
 `/agent confirm <reason>`. `/goal task` restores a staged request or shows its
