@@ -19,7 +19,10 @@ goal, and skill selection. `/session use <id>` restores only that session's
 retained messages, without appending duplicate copies. Switching cancels the
 browser's current generation wait and ignores late replies from older selections.
 Hidden coding/proposal reviews are cleared, so an unseen review cannot remain
-armed. Existing saved sessions are not deleted. `/clear` clears the display only.
+armed. New/switch actions preserve saved sessions. `/clear` clears the display only.
+To delete saved chats, choose **Clear all session history** below **+ new session**
+in the Sessions sidebar and confirm. This stops chat and removes session files,
+goals, skill selections and token totals; shared notes/persona/web and coding runs remain.
 
 Shared persona and enabled memory/web context survive new sessions. The header
 token count covers all saved sessions; `/tokens` reports the selected session.

@@ -570,3 +570,52 @@ async fn upstream_error_headers_release_chat_without_waiting_for_the_body() {
     assert!(message(&body).contains("HTTP 503"));
     assert!(!s.state.generation_gate.is_held());
 }
+
+#[tokio::test]
+async fn clear_session_history_requires_intent_and_cannot_be_resurrected() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, chat) = s.post_json("/api/chat", json!({"message":"private fixture"})).await;
+    let id = chat["session_id"].as_str().unwrap();
+    let sessions = s.home.join("sessions");
+    std::fs::write(sessions.join("ffffffffffff.json"), "corrupt private fixture").unwrap();
+    std::fs::write(sessions.join(".staged.fixture.tmp"), "interrupted private write").unwrap();
+    std::fs::write(sessions.join("keep.txt"), "unrelated").unwrap();
+    s.post_json("/api/memory/add", json!({"text":"keep note"})).await;
+    let intent = json!({"confirm":true,"reason":"Clear disposable test history"});
+    let unguarded = s
+        .client
+        .post(s.url("/api/sessions/clear"))
+        .json(&intent)
+        .send()
+        .await
+        .unwrap();
+    assert!(matches!(unguarded.status().as_u16(), 401 | 403));
+    for body in [
+        json!({}),
+        json!({"reason":"test"}),
+        json!({"confirm":false,"reason":"test"}),
+        json!({"confirm":true,"reason":" "}),
+        json!({"confirm":"true","reason":"test"}),
+    ] {
+        assert_eq!(s.post_json("/api/sessions/clear", body).await.0, 422);
+        assert!(s.state.store.get(id).is_ok());
+    }
+    assert_eq!(s.post_json("/api/sessions/clear", intent.clone()).await.0, 200);
+    assert!(s.state.store.list().is_empty());
+    assert!(!sessions.join(format!("{id}.json")).exists());
+    assert!(!sessions.join("ffffffffffff.json").exists());
+    assert!(!sessions.join(".staged.fixture.tmp").exists());
+    assert_eq!(std::fs::read_to_string(sessions.join("keep.txt")).unwrap(), "unrelated");
+    assert_eq!(s.get_json("/api/memory").await.1["count"], 1);
+    assert_eq!(s.open_get("/api/status").await.1["total_tokens"], 0);
+    assert!(s
+        .state
+        .store
+        .record_exchange(id, "late", "late", "fixture", &Default::default(), &[])
+        .is_err());
+    assert!(s.state.store.rename(id, Some("late"), None).is_err());
+    assert!(s.state.store.list().is_empty());
+    assert_eq!(s.post_json("/api/sessions/clear", intent).await.0, 200);
+    assert_eq!(s.post_json("/api/sessions", json!({})).await.0, 201);
+}

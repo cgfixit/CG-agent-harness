@@ -161,7 +161,10 @@
     font: inherit; color: var(--text-primary); background: none; width: 130px;
     border: none; border-bottom: 1px solid var(--text-muted); padding: 0 2px; outline: none;
   }
-#soulEditor { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
+#soulEditor, #sessionClearDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
+#sessionClearDialog { max-width:520px; }
+#sessionClearDialog button { padding:8px 12px; margin-right:8px; }
+#sessionClearConfirm { color:var(--accent-red); }
 #soulContent { width:100%;height:200px; }
 #soulFeedback { white-space:pre-wrap;max-height:250px;overflow:auto; }
 </style>
@@ -238,6 +241,15 @@
   <input id="agentPRBodyFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
   <input id="agentPlanFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
 
+<dialog id="sessionClearDialog" aria-labelledby="sessionClearTitle" aria-describedby="sessionClearDescription">
+  <h2 id="sessionClearTitle">Clear all session history?</h2>
+  <p id="sessionClearDescription">Permanently delete every saved chat session, including messages, titles, goals, selected skills and token totals. This cannot be undone.</p>
+  <p>Memory notes, persona, web context and coding runs are kept. Active chat will stop.</p>
+  <button id="sessionClearCancel" autofocus>Cancel</button>
+  <button id="sessionClearConfirm">Delete all session history</button>
+  <p id="sessionClearFeedback" role="status"></p>
+</dialog>
+
 <dialog id="soulEditor">
   <h2>Chat persona</h2>
   <p>Changes affect chat only. Fixed execution contracts and the coding planner remain separate.</p>
@@ -292,6 +304,7 @@ function canonicalRepoRelativePath(raw) {
 const csrfMeta = document.querySelector('meta[name="csrf-token"]');
 const CSRF_TOKEN = csrfMeta ? csrfMeta.content : '';
 
+let sessionClearing = false;
 let sessionRevision = 0; // Discard replies and navigation responses from an older selection.
 let currentSession = null;   // session_id string or null
 let soulEnabled = true;
@@ -676,6 +689,7 @@ function paintMemory() {
 
 /* ── sessions pane ── */
 async function refreshSessions() {
+  const revision = sessionRevision;
   const pane = $('pane-sessions');
   pane.textContent = '';
   const add = document.createElement('button');
@@ -684,7 +698,16 @@ async function refreshSessions() {
   add.appendChild(plus);
   add.addEventListener('click', () => runSlash('/session new'));
   pane.appendChild(add);
+  const clear = document.createElement('button');
+  clear.id = 'clearSessionHistory'; clear.className = 'cmd-item';
+  clear.textContent = 'Clear all session history';
+  clear.addEventListener('click', () => {
+    $('sessionClearFeedback').textContent = '';
+    $('sessionClearDialog').showModal();
+  });
+  pane.appendChild(clear);
   const data = await api('/api/sessions');
+  if (revision !== sessionRevision) return;
   data.sessions.forEach(s => {
     const el = document.createElement('div');
     el.className = 'sess-item' + (s.session_id === currentSession ? ' current' : '');
@@ -955,8 +978,40 @@ function clearTranscript() {
   reviewedSoulProposal = null;
 }
 
+$('sessionClearCancel').addEventListener('click', () => $('sessionClearDialog').close());
+$('sessionClearDialog').addEventListener('cancel', e => { if (sessionClearing) e.preventDefault(); });
+$('sessionClearConfirm').addEventListener('click', async () => {
+  if (sessionClearing) return;
+  sessionClearing = true;
+  ++sessionRevision;
+  sendBtn.disabled = true;
+  $('sessionClearConfirm').disabled = true;
+  $('sessionClearCancel').disabled = true;
+  try {
+    if (inflightChat) await requestLoopStop(); else stopLoop();
+    await api('/api/sessions/clear', 'POST', {confirm:true, reason:'Operator confirmed Clear all session history'});
+    clearTranscript();
+    currentSession = null; sessionGoal = ''; loopAuto = false;
+    input.value = '';
+    $('sSession').textContent = 'none';
+    $('hTokens').textContent = '0';
+    paintGoalLoop();
+    $('sessionClearDialog').close();
+    sys('All saved session history deleted. Memory notes, persona, web context and coding runs are kept.');
+  } catch (e) {
+    $('sessionClearFeedback').textContent = e.message || String(e);
+  } finally {
+    sessionClearing = false;
+    sendBtn.disabled = false;
+    $('sessionClearConfirm').disabled = false;
+    $('sessionClearCancel').disabled = false;
+    await refreshSessions().catch(e => sys(e.message || String(e)));
+  }
+});
+
 /* ── slash commands ── */
 async function runSlash(line) {
+  if (sessionClearing) return;
   const parts = line.slice(1).split(/\s+/).filter(Boolean);
   if (!parts.length) {
     sys('unknown command: / — try /help');

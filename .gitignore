@@ -9,3 +9,10 @@ debug
 /desktop/target/
 /desktop/gen/
 /dist/
+
+# Private runtime homes and chat history, including repo-local test homes.
+.CGagentHarness/
+sessions/
+.env
+.env.*
+!.env.example
