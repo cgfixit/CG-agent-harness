@@ -28,6 +28,11 @@ const server=createServer(async(req,res)=>{
  }
  const match=path.match(/^\/api\/sessions\/([^/]+)(\/goal)?$/);
  if(match){const s=sessions.get(match[1]);if(match[2])s.goal=body.goal;reply(s);return;}
+ if(path.match(/^\/api\/sessions\/[^/]+\/goal-stage$/)){
+  const session=sessions.get(path.split('/')[3]);
+  if(req.method==='POST')session.stage={stage_id:'a'.repeat(32),goal:session.goal,request:{instruction:session.goal,branch:body.branch,commit_message:'Fixture goal',checks:null,read_files:[],max_iterations:1,goal_stage:{session_id:session.session_id,stage_id:'a'.repeat(32)}}};
+  reply({stage:session.stage,request:session.stage.request,status:'staged',executed:false,next:'Review and explicitly confirm'});return;
+ }
  if(path.match(/^\/api\/sessions\/[^/]+\/skills$/)){
   const session=sessions.get(path.split('/')[3]);
   if(req.method==='POST')session.selected=body.ids;
@@ -92,8 +97,13 @@ try {
  await send('/skill clear');assert.deepEqual([...sessions.values()].at(-1).selected,[]);
  await send('/agent run codex/fixture Review only');await send('/skill check:cargo-fmt');assert.deepEqual(await evaluate('pendingAgentRun.checks'),['cargo-fmt']);
  await send('/skill check:unknown');assert.deepEqual(await evaluate('pendingAgentRun.checks'),['cargo-fmt']);await send('/agent cancel');
+ await send('/goal Implement the fixture');await send('/goal stage codex/goal-fixture');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture');
+ const goalSession=await evaluate('currentSession');assert.equal(await evaluate('pendingAgentRun.max_iterations'),1);
+ await call('Page.reload',{ignoreCache:true});await until('typeof onSend === "function"');
+ await send('/session use '+goalSession);await send('/goal task');assert.equal(await evaluate('pendingAgentRun.goal_stage.session_id'),goalSession);
+ await send('/agent confirm');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture','missing reason keeps request staged');
  assert.ok(!requests.some(r=>r[0]==='POST' && ['/api/agent/jobs','/api/agent/run'].includes(r[1])),'chat and skill staging never execute coding work');
- console.log(JSON.stringify({passed:true,coverage:['prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
+ console.log(JSON.stringify({passed:true,coverage:['goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

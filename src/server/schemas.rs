@@ -227,7 +227,16 @@ impl Validate for ModelSelectRequest {
 /// commands; `confirm` is NOT defaulted on.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct GoalBinding {
+    pub session_id: String,
+    pub stage_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentRunRequest {
+    #[serde(default)]
+    pub goal_stage: Option<GoalBinding>,
     pub instruction: String,
     pub branch: String,
     pub commit_message: String,
@@ -271,6 +280,17 @@ impl AgentRunRequest {
 impl Validate for AgentRunRequest {
     fn validate(&self) -> Vec<String> {
         let mut bad = Vec::new();
+        if self.goal_stage.as_ref().is_some_and(|g| {
+            g.session_id.len() != 12
+                || g.stage_id.len() != 32
+                || !g
+                    .session_id
+                    .bytes()
+                    .chain(g.stage_id.bytes())
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
+            bad.push("goal_stage".into());
+        }
         if !len_ok(&self.instruction, 1, MAX_INSTRUCTION_LEN) {
             bad.push("instruction".into());
         }
