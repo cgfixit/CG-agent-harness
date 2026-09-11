@@ -83,6 +83,7 @@ pub fn load_text(root: &Path, relative: &Path, enabled: bool, max_chars: usize) 
 pub struct PromptInputs<'a> {
     pub skills_dir: &'a Path,
     pub soul_enabled: bool,
+    pub soul_override: Option<&'a str>,
     pub soul_path: &'a Path,
     pub soul_max_chars: usize,
     pub goal: Option<&'a str>,
@@ -110,8 +111,12 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
         inputs.soul_enabled,
         inputs.soul_max_chars,
     );
-    if soul.loaded {
-        parts.push(format!("\n## Operator persona (soul, read-only)\n\n{}", soul.text));
+    let persona = inputs.soul_override.map(str::to_string).unwrap_or(soul.text);
+    if inputs.soul_enabled && !persona.trim().is_empty() {
+        parts.push(format!(
+            "\n## Operator persona (soul, read-only)\n\n{}",
+            crate::common::clip_chars(&persona, inputs.soul_max_chars)
+        ));
     }
     let goal = clipped(inputs.goal, MAX_GOAL_CHARS);
     if !goal.is_empty() {

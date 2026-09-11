@@ -161,6 +161,9 @@
     font: inherit; color: var(--text-primary); background: none; width: 130px;
     border: none; border-bottom: 1px solid var(--text-muted); padding: 0 2px; outline: none;
   }
+#soulEditor { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
+#soulContent { width:100%;height:200px; }
+#soulFeedback { white-space:pre-wrap;max-height:250px;overflow:auto; }
 </style>
 </head>
 <body>
@@ -235,6 +238,16 @@
   <input id="agentPRBodyFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
   <input id="agentPlanFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
 
+<dialog id="soulEditor">
+  <h2>Chat persona</h2>
+  <p>Changes affect chat only. Fixed execution contracts and the coding planner remain separate.</p>
+  <textarea id="soulContent" aria-label="Persona content"></textarea>
+  <p><label>Reason <input id="soulReason" aria-label="Reason for persona change" maxlength="1000"></label></p>
+  <p><label><input type="checkbox" id="soulConfirm"> I reviewed this content and authorize saving it.</label></p>
+  <button id="soulPreview">Preview prompt</button> <button id="soulSave">Save persona</button>
+  <button id="soulPropose">Create proposal only</button> <button id="soulClose">Close</button>
+  <pre id="soulFeedback"></pre>
+</dialog>
 <script src="/static/auth_admin.js"></script>
 <script nonce="__CYCLAW_CSP_NONCE__">
 'use strict';
@@ -710,6 +723,8 @@ async function refreshRegistry() {
 const COMMANDS = [
   ['/help', 'list commands'],
   ['/session new|list|use|rename', 'manage chat sessions'],
+  ['/prompt', 'preview the next chat system prompt (private)'],
+  ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
   ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (off by default)'],
   ['/goal [text]|clear', 'set, show, or clear the session goal'],
@@ -982,7 +997,24 @@ async function runSlash(line) {
         break;
       }
 
+      case 'prompt': {
+        const r = await api('/api/prompt/preview', 'POST', { session_id: currentSession || null });
+        sys(r.scope + '\n\n' + r.prompt); break;
+      }
       case 'soul': {
+        const sub = rest[0];
+        if (sub === 'edit' || sub === 'propose') { await openSoulEditor(sub === 'propose'); break; }
+        if (sub === 'history') { const r = await api('/api/soul/document'); sys(table(r.versions.map(v => [v]), ['backup revision'])); break; }
+        if (sub === 'review') {
+          const r = await api('/api/soul/proposals/' + encodeURIComponent(rest[1] || ''));
+          reviewedSoulProposal = r; sys(JSON.stringify(r, null, 2)); break;
+        }
+        if (sub === 'apply' || sub === 'reject') {
+          const id = rest[1] || '', reason = rest.slice(2).join(' ').trim();
+          if (!reviewedSoulProposal || reviewedSoulProposal.id !== id || !reason) { sys('First /soul review <id>, then /soul ' + sub + ' <id> <reason>'); break; }
+          const r = await api('/api/soul/proposals/' + encodeURIComponent(id), 'POST', {revision:reviewedSoulProposal.revision,reason:reason,confirm:true,apply:sub === 'apply'});
+          reviewedSoulProposal = null; sys('proposal ' + r.status); await refreshStatus(); break;
+        }
         if (arg === 'on' || arg === 'off') {
           const r = await api('/api/soul', 'POST', { enabled: arg === 'on' });
           soulEnabled = r.enabled; soulStatus = r; paintSoul();
@@ -1939,6 +1971,33 @@ if (hAuthSetupBtn) {
   });
 }
 refreshHarnessAuth();
+let soulDocument = null, reviewedSoulProposal = null;
+async function openSoulEditor(proposalOnly) {
+  soulDocument = await api('/api/soul/document');
+  $('soulContent').value = soulDocument.content;
+  $('soulContent').maxLength = soulDocument.max_chars;
+  $('soulReason').value = ''; $('soulConfirm').checked = false;
+  $('soulSave').hidden = proposalOnly;
+  $('soulFeedback').textContent = 'revision: ' + soulDocument.revision + '\nMaximum ' + soulDocument.max_chars + ' characters. Preview before saving.';
+  $('soulEditor').showModal(); $('soulContent').focus();
+}
+$('soulClose').addEventListener('click', () => { $('soulEditor').close(); $('soulContent').value = ''; $('soulFeedback').textContent = ''; });
+$('soulPreview').addEventListener('click', async () => {
+  try { const r = await api('/api/prompt/preview', 'POST', {session_id:currentSession || null,soul_content:$('soulContent').value}); $('soulFeedback').textContent = r.scope + '\n' + r.prompt; }
+  catch(e) { $('soulFeedback').textContent = e.message; }
+});
+async function submitSoul(propose) {
+  if (!soulDocument) return;
+  try {
+    const r = await api(propose ? '/api/soul/proposals' : '/api/soul/document', 'POST', {content:$('soulContent').value,base_revision:soulDocument.revision,reason:$('soulReason').value,confirm:$('soulConfirm').checked});
+    if (propose) { $('soulFeedback').textContent = 'Proposal ' + r.id + ' saved without applying. Close this editor, then /soul review ' + r.id; }
+    else { soulDocument.revision = r.revision; $('soulFeedback').textContent = 'Saved. The next chat uses this persona when soul is enabled.'; $('soulConfirm').checked = false; }
+    await refreshStatus();
+  } catch(e) { $('soulFeedback').textContent = e.message; }
+}
+$('soulSave').addEventListener('click', () => submitSoul(false));
+$('soulPropose').addEventListener('click', () => submitSoul(true));
+
 $('sSoul').addEventListener('click', () => runSlash('/soul ' + (soulEnabled ? 'off' : 'on')));
 $('sMemory').addEventListener('click', () => runSlash('/memory ' + (memoryEnabled ? 'off' : 'on')));
 
