@@ -1,5 +1,6 @@
 //! Guarded operator persona editing. No model output is applied automatically.
-use std::io::Read;
+use cap_std::fs::{Dir, OpenOptions};
+use std::io::{Read, Write};
 use std::path::Path as FsPath;
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +11,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::common::atomic::write_atomic;
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::prompts::{compose_system_prompt, load_text, PromptInputs, DISCIPLINE_SKILLS};
 use crate::server::schemas::{ValidJson, Validate};
@@ -39,8 +39,8 @@ fn revision(text: &str) -> String {
 fn valid_id(id: &str) -> bool {
     id.len() == 64 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
-fn read(path: &FsPath) -> ApiResult<Option<String>> {
-    match std::fs::symlink_metadata(path) {
+fn read(dir: &Dir, name: &str) -> ApiResult<Option<String>> {
+    match dir.symlink_metadata(name) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Ok(m) if m.is_file() && !m.file_type().is_symlink() => (),
         _ => {
@@ -51,7 +51,7 @@ fn read(path: &FsPath) -> ApiResult<Option<String>> {
         }
     }
     let mut text = String::new();
-    std::fs::File::open(path)
+    dir.open(name)
         .map_err(|_| io_error())?
         .take(MAX_BYTES as u64 + 1)
         .read_to_string(&mut text)
@@ -61,19 +61,46 @@ fn read(path: &FsPath) -> ApiResult<Option<String>> {
     }
     Ok(Some(text))
 }
-fn records(state: &AppState) -> ApiResult<std::path::PathBuf> {
-    let dir = state.home.root.join("soul-history");
-    if !dir.exists() {
-        std::fs::create_dir(&dir).map_err(|_| io_error())?;
+fn home_dir(state: &AppState) -> ApiResult<Dir> {
+    Dir::open_ambient_dir(&state.home.root, cap_std::ambient_authority()).map_err(|_| io_error())
+}
+fn records(state: &AppState) -> ApiResult<Dir> {
+    let home = home_dir(state)?;
+    match home.create_dir("soul-history") {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(_) => return Err(io_error()),
     }
-    if !std::fs::symlink_metadata(&dir)
+    if !home
+        .symlink_metadata("soul-history")
         .map_err(|_| io_error())?
         .file_type()
         .is_dir()
     {
         return Err(error("SOUL_PATH", "History must be a real directory"));
     }
-    Ok(dir)
+    home.open_dir("soul-history").map_err(|_| io_error())
+}
+fn write(dir: &Dir, name: &str, content: &[u8]) -> ApiResult<()> {
+    let temporary = format!(".soul-staged-{}", crate::common::random_hex(16));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| {
+        let mut file = dir.open_with(&temporary, &options)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        dir.rename(&temporary, dir, name)
+    })();
+    if result.is_err() {
+        let _ = dir.remove_file(&temporary);
+    }
+    result.map_err(|_| io_error())
 }
 fn max_chars(state: &AppState) -> usize {
     state.cfg.u64_or("personality.soul_max_chars", 8000).min(65536) as usize
@@ -94,7 +121,7 @@ fn validate_content(state: &AppState, text: &str) -> ApiResult<()> {
     Ok(())
 }
 fn current(state: &AppState) -> ApiResult<(String, String)> {
-    let content = read(&state.home.soul_path())?;
+    let content = read(&home_dir(state)?, "soul.md")?;
     let rev = content.as_deref().map(revision).unwrap_or_else(|| "missing".into());
     Ok((content.unwrap_or_default(), rev))
 }
@@ -110,22 +137,22 @@ fn save(state: &AppState, content: &str, expected: &str) -> ApiResult<String> {
     }
     if actual != "missing" {
         let dir = records(state)?;
-        let backup = dir.join(format!("{actual}.md"));
-        if let Some(existing) = read(&backup)? {
+        let backup = format!("{actual}.md");
+        if let Some(existing) = read(&dir, &backup)? {
             if existing != old {
                 return Err(error("SOUL_BACKUP", "Existing backup does not match its revision"));
             }
         } else {
-            if std::fs::read_dir(&dir).map_err(|_| io_error())?.count() >= MAX_RECORDS {
+            if dir.entries().map_err(|_| io_error())?.count() >= MAX_RECORDS {
                 return Err(error(
                     "SOUL_HISTORY_FULL",
                     "History limit reached; archive old records before saving",
                 ));
             }
-            write_atomic(&backup, old.as_bytes(), Some(0o600)).map_err(|_| io_error())?;
+            write(&dir, &backup, old.as_bytes())?;
         }
     }
-    write_atomic(&state.home.soul_path(), content.as_bytes(), Some(0o600)).map_err(|_| io_error())?;
+    write(&home_dir(state)?, "soul.md", content.as_bytes())?;
     Ok(revision(content))
 }
 
@@ -143,15 +170,15 @@ pub async fn document(
         if !valid_id(&id) {
             return Err(error("SOUL_VERSION", "Invalid version"));
         }
-        let text = read(&records(&state)?.join(format!("{id}.md")))?
-            .ok_or_else(|| error("SOUL_VERSION", "No such version"))?;
+        let text =
+            read(&records(&state)?, &format!("{id}.md"))?.ok_or_else(|| error("SOUL_VERSION", "No such version"))?;
         (text, id)
     } else {
         current(&state)?
     };
-    let dir = state.home.root.join("soul-history");
-    let versions: Vec<String> = if dir.exists() {
-        std::fs::read_dir(records(&state)?)
+    let versions: Vec<String> = if home_dir(&state)?.symlink_metadata("soul-history").is_ok() {
+        records(&state)?
+            .entries()
             .map_err(|_| io_error())?
             .flatten()
             .filter_map(|entry| {
@@ -278,15 +305,15 @@ pub async fn propose(
         return Err(error("SOUL_CHANGED", "Reload current persona before proposing"));
     }
     let dir = records(&state)?;
-    if std::fs::read_dir(&dir).map_err(|_| io_error())?.count() >= MAX_RECORDS {
+    if dir.entries().map_err(|_| io_error())?.count() >= MAX_RECORDS {
         return Err(error("SOUL_HISTORY_FULL", "History limit reached"));
     }
     let id = crate::common::random_hex(32);
     let proposal = json!({"id":id,"content":req.content,"base_revision":req.base_revision,"revision":revision(&req.content),"status":"pending","origin":"operator-submitted proposal; may contain model-authored text"});
-    write_atomic(
-        &dir.join(format!("{id}.json")),
+    write(
+        &dir,
+        &format!("{id}.json"),
         serde_json::to_string_pretty(&proposal).unwrap().as_bytes(),
-        Some(0o600),
     )
     .map_err(|_| io_error())?;
     Ok(private(proposal))
@@ -296,8 +323,7 @@ fn proposal(state: &AppState, id: &str) -> ApiResult<Value> {
         return Err(error("SOUL_PROPOSAL", "Invalid proposal identifier"));
     }
     serde_json::from_str(
-        &read(&records(state)?.join(format!("{id}.json")))?
-            .ok_or_else(|| error("SOUL_PROPOSAL", "No such proposal"))?,
+        &read(&records(state)?, &format!("{id}.json"))?.ok_or_else(|| error("SOUL_PROPOSAL", "No such proposal"))?,
     )
     .map_err(|_| io_error())
 }
@@ -343,10 +369,10 @@ pub async fn decide(
         save(&state, content, record["base_revision"].as_str().ok_or_else(io_error)?)?;
     }
     record["status"] = json!(if req.apply { "applied" } else { "rejected" });
-    write_atomic(
-        &records(&state)?.join(format!("{id}.json")),
+    write(
+        &records(&state)?,
+        &format!("{id}.json"),
         serde_json::to_string_pretty(&record).unwrap().as_bytes(),
-        Some(0o600),
     )
     .map_err(|_| io_error())?;
     state

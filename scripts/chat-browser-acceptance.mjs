@@ -40,11 +40,13 @@ const server=createServer(async(req,res)=>{
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const base='http://127.0.0.1:'+server.address().port;
 const profile=await mkdtemp(join(tmpdir(),'cgah-chat-browser-'));
-const chrome=spawn(process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--no-first-run','--disable-background-networking','--disable-extensions','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:'ignore'});
+const chrome=spawn(process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--no-first-run','--disable-background-networking','--disable-extensions','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});
+let chromeErrors=''; chrome.stderr.on('data',chunk=>{chromeErrors=(chromeErrors+chunk.toString()).slice(-4000);});
+chrome.on('error',error=>{chromeErrors=error.message;});
 const pause=ms=>new Promise(r=>setTimeout(r,ms));let ws;
 try {
- let port;for(let i=0;i<100;i++){try{port=(await readFile(profile+'/DevToolsActivePort','utf8')).split('\n')[0];break;}catch{await pause(100);}}
- assert.ok(port,'Chrome must start');
+ let port;for(let i=0;i<300;i++){try{port=(await readFile(profile+'/DevToolsActivePort','utf8')).split('\n')[0];break;}catch{await pause(100);}}
+ assert.ok(port,'Chrome must start: '+chromeErrors);
  const targets=await(await fetch('http://127.0.0.1:'+port+'/json')).json();
  ws=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j;});
  let seq=0;const pending=new Map();
@@ -79,5 +81,5 @@ try {
  assert.ok(!requests.some(r=>r[1].startsWith('/api/agent/')),'ordinary chat continuation never executes coding work');
  console.log(JSON.stringify({passed:true,coverage:['persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
 } finally {
- if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true});
+ if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

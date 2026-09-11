@@ -34,8 +34,12 @@ pub fn strip_frontmatter(text: &str) -> String {
 }
 
 pub fn read_skill_body(skills_dir: &Path, name: &str) -> Option<String> {
-    let path = skills_dir.join(name).join("SKILL.md");
-    std::fs::read_to_string(path).ok().map(|t| strip_frontmatter(&t))
+    let loaded = load_text(skills_dir, &Path::new(name).join("SKILL.md"), true, 32768);
+    if loaded.loaded {
+        Some(strip_frontmatter(&loaded.text))
+    } else {
+        None
+    }
 }
 
 /// Safe diagnostics share the exact loader used by prompt composition.
