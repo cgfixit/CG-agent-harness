@@ -1,5 +1,28 @@
 # Desktop acceptance
 
+## Issue #32 candidate — September 2026
+
+PRs #35–#38 implement status/verification, prompt/persona controls, runtime skill
+selection and explicit goal-to-coding staging. The documentation PR follows them.
+The following older records are historical; they do not establish acceptance of
+the new controls. Exact candidate SHA, universal ZIP checksum, CI results and
+local native evidence are attached to the stack's handoff and issue #32 comment.
+
+The deterministic `scripts/chat-browser-acceptance.mjs` test now covers the
+actual console in Chrome with its CSP and local mock HTTP APIs: persona editor,
+preview/save confirmation, goal/session commands, continuation/cancellation and
+budgets, skill selection/check staging, and goal staging/refresh recovery.
+Rust tests independently exercise the real guarded APIs and mock model requests.
+These tests do not count as native WKWebView interaction.
+
+For native acceptance of this candidate, use an isolated home and exercise:
+`/soul status`, `/soul edit` and preview/confirmed save; `/prompt`; `/skill use`
+and clear; `/goal` and chat continuation/stop; `/goal stage`, request review and
+`/goal task` recovery. Execute coding only in a deliberately prepared disposable
+fixture with explicit reason/confirmation. Preserve all unrelated app instances
+and operator homes. Keep any unavailable native interaction evidence explicit.
+
+
 ## Universal release verification — 2026-09-10
 
 Tested implementation: [432c11d](https://github.com/cgfixit/CG-agent-harness/commit/432c11d163f0b5416de0bcbf0c121a3371f28413),
@@ -118,7 +141,7 @@ keyboard shortcuts, scrolling, selection, Markdown/code, scaling and accessibili
 Mark each outcome only after interaction. Existing unsupported streaming and
 unprovable escaped-descendant cleanup remain limitations, not passing features.
 
-One draft PR against main carries the coherent desktop delivery; no stacked
-predecessor or merge order. Exact pushed-head CI and final artifact checksums are
+For the historical desktop delivery below, one draft PR against main carried
+the change; that statement does not apply to the later issue #32 stack. Exact pushed-head CI and final artifact checksums are
 reported in the handoff. Do not mark the PR ready or merge while native acceptance
 is pending.
