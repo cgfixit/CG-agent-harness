@@ -50,8 +50,18 @@ pub struct TextLoad {
     pub text: String,
 }
 
-pub fn load_text(path: &Path, enabled: bool, max_chars: usize) -> TextLoad {
-    let read = std::fs::read_to_string(path);
+pub fn load_text(root: &Path, relative: &Path, enabled: bool, max_chars: usize) -> TextLoad {
+    use std::io::Read;
+    // The capability confines reads, including symlinks, to the operator's home.
+    let read = (|| {
+        let dir = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+        let mut text = String::new();
+        dir.open(relative)?.take(256 * 1024 + 1).read_to_string(&mut text)?;
+        if text.len() > 256 * 1024 {
+            return Err(std::io::Error::other("text exceeds input bound"));
+        }
+        Ok::<_, std::io::Error>(text)
+    })();
     let present = !matches!(&read, Err(e) if e.kind() == std::io::ErrorKind::NotFound);
     let (text, reason) = match read {
         Ok(t) if t.trim().is_empty() => (String::new(), Some("empty")),
@@ -94,7 +104,12 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
             }
         }
     }
-    let soul = load_text(inputs.soul_path, inputs.soul_enabled, inputs.soul_max_chars);
+    let soul = load_text(
+        inputs.soul_path.parent().unwrap_or(Path::new("")),
+        Path::new("soul.md"),
+        inputs.soul_enabled,
+        inputs.soul_max_chars,
+    );
     if soul.loaded {
         parts.push(format!("\n## Operator persona (soul, read-only)\n\n{}", soul.text));
     }

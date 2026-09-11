@@ -373,3 +373,22 @@ async fn skill_identity_and_soul_status_match_the_actual_prompt() {
     std::fs::create_dir(s.home.join("soul.md")).unwrap();
     assert_eq!(s.open_get("/api/soul").await.1["unavailable_reason"], "unreadable");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn soul_prompt_read_cannot_escape_the_home_through_a_symlink() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("outside.md");
+    std::fs::write(&secret, "OUTSIDE_HOME_MARKER").unwrap();
+    std::os::unix::fs::symlink(&secret, s.home.join("soul.md")).unwrap();
+    let (_, status) = s.open_get("/api/soul").await;
+    assert_eq!(status["loaded"], false);
+    assert_eq!(status["unavailable_reason"], "unreadable");
+    s.post_json("/api/chat", json!({"message":"Check containment"})).await;
+    assert!(!model.last_request().unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("OUTSIDE_HOME_MARKER"));
+}

@@ -109,7 +109,8 @@ pub async fn session_goal(
 
 fn soul_status(state: &AppState, enabled: bool) -> Value {
     json!(crate::server::prompts::load_text(
-        &state.home.soul_path(),
+        &state.home.root,
+        std::path::Path::new("soul.md"),
         enabled,
         state.cfg.u64_or("personality.soul_max_chars", 8000) as usize
     ))
