@@ -4,6 +4,140 @@ use reqwest::Method;
 use serde_json::json;
 
 #[tokio::test]
+async fn failed_persona_apply_retains_intent_and_recovery_failures_block_later_writes() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let original = "ORIGINAL";
+    std::fs::write(s.home.join("soul.md"), original).unwrap();
+    let (_, doc) = s.get_json("/api/soul/document").await;
+    let (_, proposal) = s
+        .post_json(
+            "/api/soul/proposals",
+            json!({
+                "content":"CANDIDATE", "base_revision":doc["revision"], "reason":"Review"
+            }),
+        )
+        .await;
+    let id = proposal["id"].as_str().unwrap();
+    let path = format!("/api/soul/proposals/{id}");
+    let marker = s.home.join("soul-pending-apply.json");
+    let backup = s
+        .home
+        .join("soul-history")
+        .join(format!("{}.md", doc["revision"].as_str().unwrap()));
+    std::fs::create_dir(&backup).unwrap(); // Real failure after intent, before document replacement.
+    let decision = json!({"revision":proposal["revision"],"reason":"Reviewed","confirm":true,"apply":true});
+    assert_eq!(s.post_json(&path, decision.clone()).await.0, 400);
+    assert!(marker.is_file());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&marker).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    assert_eq!(std::fs::read_to_string(s.home.join("soul.md")).unwrap(), original);
+    let record_path = s.home.join("soul-history").join(format!("{id}.json"));
+    std::fs::remove_file(&record_path).unwrap();
+    std::fs::create_dir(&record_path).unwrap(); // Recovery cannot read its proposal.
+    assert_eq!(s.get_json(&path).await.0, 400);
+    let (_, refused) = s
+        .post_json(
+            "/api/soul/document",
+            json!({
+                "content":"LATER", "base_revision":doc["revision"], "reason":"Later edit", "confirm":true
+            }),
+        )
+        .await;
+    assert_eq!(code(&refused), "SOUL_PATH");
+    assert!(marker.is_file());
+    assert_eq!(std::fs::read_to_string(s.home.join("soul.md")).unwrap(), original);
+    let restart = cgagentharness::server::build_app(cgagentharness::server::AppOptions::new(
+        cgagentharness::common::home::Home::at(s.home.clone()),
+    ))
+    .await;
+    assert!(restart.is_err());
+    std::fs::remove_dir(&record_path).unwrap();
+    std::fs::write(&record_path, serde_json::to_vec(&proposal).unwrap()).unwrap();
+    assert_eq!(s.get_json(&path).await.1["status"], "pending");
+    assert!(!marker.exists());
+    std::fs::remove_dir(&backup).unwrap();
+    assert_eq!(s.post_json(&path, decision).await.0, 200);
+    assert!(!marker.exists());
+    assert_eq!(std::fs::read_to_string(s.home.join("soul.md")).unwrap(), "CANDIDATE");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), original);
+}
+
+#[tokio::test]
+async fn interrupted_persona_apply_reconciles_without_replaying_writes() {
+    let model = start_mock_model().await;
+    for startup in [false, true] {
+        for (active, expected, status_saved) in [
+            (None, "pending", false),
+            (Some("CANDIDATE"), "applied", false),
+            (Some("CANDIDATE"), "applied", true),
+            (Some("EXTERNAL"), "interrupted", false),
+        ] {
+            let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+            let (_, proposal) = s
+                .post_json(
+                    "/api/soul/proposals",
+                    json!({
+                        "content":"CANDIDATE", "base_revision":"missing", "reason":"Review"
+                    }),
+                )
+                .await;
+            let id = proposal["id"].as_str().unwrap();
+            let marker = s.home.join("soul-pending-apply.json");
+            std::fs::write(
+                &marker,
+                serde_json::to_vec(&json!({
+                    "id":id, "base_revision":"missing", "revision":proposal["revision"]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            if let Some(text) = active {
+                std::fs::write(s.home.join("soul.md"), text).unwrap();
+            }
+            if status_saved {
+                let mut saved = proposal.clone();
+                saved["status"] = json!("applied");
+                std::fs::write(
+                    s.home.join("soul-history").join(format!("{id}.json")),
+                    serde_json::to_vec(&saved).unwrap(),
+                )
+                .unwrap();
+            }
+            if startup {
+                let (_router, _state) = cgagentharness::server::build_app(cgagentharness::server::AppOptions::new(
+                    cgagentharness::common::home::Home::at(s.home.clone()),
+                ))
+                .await
+                .unwrap();
+                assert!(!marker.exists(), "startup must reconcile before accepting requests");
+            }
+            let path = format!("/api/soul/proposals/{id}");
+            let (status, recovered) = s.get_json(&path).await;
+            assert_eq!(status, 200, "{recovered}");
+            assert_eq!(recovered["status"], expected);
+            assert!(!marker.exists());
+            assert_eq!(std::fs::read_to_string(s.home.join("soul.md")).ok().as_deref(), active);
+            // Recovery is idempotent; only a fresh explicit decision can apply a pending proposal.
+            assert_eq!(s.get_json(&path).await.1["status"], expected);
+            let decision =
+                json!({"revision":proposal["revision"],"reason":"Reviewed again","confirm":true,"apply":true});
+            assert_eq!(
+                s.post_json(&path, decision).await.0,
+                if expected == "pending" { 200 } else { 400 }
+            );
+            assert_eq!(
+                std::fs::read_to_string(s.home.join("soul.md")).unwrap(),
+                active.unwrap_or("CANDIDATE")
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn prompt_preview_is_guarded_private_and_matches_the_model() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
@@ -112,6 +246,19 @@ async fn proposals_need_reviewed_revision_and_explicit_apply_and_rejection_prese
         )
         .await;
     let path = format!("/api/soul/proposals/{}", next["id"].as_str().unwrap());
+    std::fs::write(s.home.join("soul.md"), "EXTERNAL").unwrap();
+    assert_eq!(
+        s.post_json(
+            &path,
+            json!({"revision":next["revision"],"reason":"Stale review","confirm":true,"apply":true})
+        )
+        .await
+        .0,
+        409
+    );
+    assert!(!s.home.join("soul-pending-apply.json").exists());
+    assert_eq!(s.get_json(&path).await.1["status"], "pending");
+    std::fs::remove_file(s.home.join("soul.md")).unwrap();
     assert_eq!(
         s.post_json(
             &path,

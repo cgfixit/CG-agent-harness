@@ -165,6 +165,8 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         jobs,
         request_log: cfg.flag_is_true("logging.request_log"),
     });
+    routes::persona::recover_on_startup(&state)
+        .map_err(|e| HarnessError::harness_config(format!("{}: {}", e.code, e.message)))?;
     Ok((routes::build_router(state.clone()), state))
 }
 
