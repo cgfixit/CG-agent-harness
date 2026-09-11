@@ -220,7 +220,7 @@ token counts, fresh CSRF, and no replay with neither a key nor a login.
 | Native Cargo acceptance | Required macOS tests prepare locked dependencies, then exercise real Seatbelt restrictions and fixed Cargo checks. Linux/Windows backends do not establish equivalent confinement. |
 | [Desktop CI](.github/workflows/desktop.yml) | Bundle PRs/`main`, tag releases, and manual runs reuse this job to build the universal app, run desktop policy and packaged-backend tests, verify signatures/checksums and the extracted bundle, then retain the universal ZIP and checksums as artifacts. |
 | Workflow and source checks | Existing actionlint/zizmor, CodeQL, secret scanning, and PR-template workflows remain separate checks. |
-| [Tag release](.github/workflows/release.yml) | `v*` tags must pass reusable backend CI before clean CLI packaging. Publication downloads only release packages and verifies their checksums. The reusable desktop job also gates publication and supplies the universal app ZIP and checksums. |
+| [Release](.github/workflows/release.yml) | Daily at 08:17 UTC, publish the next patch version only if `main` differs from the latest release. Backend CI, CLI packaging, universal desktop checks, and downloaded checksums gate publication. Stable tags and manual preview/publish are also supported. See [release controls](docs/RELEASING.md). |
 
 CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
 does not prove real-model quality, complete native GUI behavior, or notarized
