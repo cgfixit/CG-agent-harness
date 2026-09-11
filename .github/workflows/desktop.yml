@@ -42,7 +42,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             . -> target
-            desktop -> desktop/target
+            desktop -> target
       - name: Backend and desktop formatting
         run: |
           cargo fmt --all -- --check
