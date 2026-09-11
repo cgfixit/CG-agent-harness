@@ -390,6 +390,14 @@ async fn skill_identity_and_soul_status_match_the_actual_prompt() {
     .await;
     let selected = model.last_request().unwrap();
     assert_eq!(selected["messages"][0]["content"], preview["prompt"]);
+    assert_eq!(
+        preview["selected_skill_sections"][0]["chars"],
+        "ACTUAL_DISCIPLINE_MARKER".len()
+    );
+    assert_eq!(
+        preview["selected_skill_sections"][0]["sha256"],
+        cgagentharness::common::sha256_hex("ACTUAL_DISCIPLINE_MARKER")
+    );
     assert!(preview["prompt"].as_str().unwrap().contains("ACTUAL_DISCIPLINE_MARKER"));
     assert!(!preview["prompt"].as_str().unwrap().contains("NOT_LOADED_MARKER"));
     s.post_json(&format!("/api/sessions/{sid}/skills"), json!({"ids":[]}))
