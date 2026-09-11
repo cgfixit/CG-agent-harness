@@ -20,6 +20,10 @@ Rules for agents:
 
 Also allowed (non-feature): `main`, `dependabot/*`, `renovate/*`, `release/*`, `hotfix/*`.
 
+**Base branch: `main`.** Never open a PR against another feature branch (no stacking).
+#36–#41 were squash-merged into their predecessors and never reached `main`; the
+`base branch is main` check now fails such PRs. Fix with `gh pr edit <n> --base main`.
+
 ## Title
 **Use this format:**  
 `[prefix] - Short descriptive sentence of the change`

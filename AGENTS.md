@@ -58,9 +58,10 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   matcher (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`'
   same-origin check) — they run in milliseconds and don't need a server.
 - PRs are draft, one concern, on a driver-prefixed branch (`claude/`, `codex/`,
-  `grok/`, `kimi/`, `agent/`), with the body from `.github/PULL_REQUEST_TEMPLATE.md`
-  (run `scripts/check-pr-template.sh` first). Touching a core path requires an
-  explicit invariant statement in the body.
+  `grok/`, `kimi/`, `agent/`), **based on `main`** (never stacked on another
+  feature branch; the `base branch is main` check fails otherwise), with the body
+  from `.github/PULL_REQUEST_TEMPLATE.md` (run `scripts/check-pr-template.sh`
+  first). Touching a core path requires an explicit invariant statement in the body.
 
 ## Project Codex skills
 
