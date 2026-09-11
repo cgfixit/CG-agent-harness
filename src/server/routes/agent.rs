@@ -129,6 +129,7 @@ struct PreparedRun {
 }
 
 fn prepare_run(state: &AppState, req: &AgentRunRequest) -> ApiResult<PreparedRun> {
+    super::goals::validate_binding(state, req)?;
     let requested: Vec<String> = req
         .checks
         .clone()
@@ -226,6 +227,12 @@ pub async fn agent_run(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<AgentRunRequest>,
 ) -> ApiResult<Json<Value>> {
+    if req.goal_stage.is_some() {
+        return Err(ApiError::bad_request(
+            "GOAL_REQUIRES_JOB",
+            "Goal-linked work uses the durable /api/agent/jobs workflow",
+        ));
+    }
     let prepared = prepare_run(&state, &req)?;
     agentic_call(&state, prepared.ops).await
 }
@@ -274,6 +281,15 @@ pub async fn agent_job_create(
             "Cannot durably register work; no worker was started",
         )
     })?;
+    if let Some(binding) = &req.goal_stage {
+        if let Err(error) = state
+            .store
+            .claim_goal_stage(&binding.session_id, &binding.stage_id, &req, &job_id)
+        {
+            state.jobs.cancel(&job_id);
+            return Err(ApiError::from_err(StatusCode::CONFLICT, &error));
+        }
+    }
     let _ = registered.send(());
     state
         .audit

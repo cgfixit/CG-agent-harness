@@ -729,6 +729,7 @@ const COMMANDS = [
   ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
   ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (off by default)'],
+  ['/goal stage <branch>|task', 'explicitly stage the goal as a coding request; inspect durable progress'],
   ['/goal [text]|clear', 'set, show, or clear the session goal'],
   ['/loop [n]|stop|auto', 'chat continuation only; aggregate completion budget; per-turn budget set by server'],
   ['/model [use <name>]', 'show or select the model'],
@@ -1501,6 +1502,18 @@ async function runSlash(line) {
       }
 
       case 'goal': {
+        if (rest[0] === 'stage') {
+          if (!currentSession || !sessionGoal) { sys('Set /goal <text> first.'); break; }
+          const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage', 'POST', {branch:rest[1] || ''});
+          pendingAgentRun = r.request; showPendingAgentRun(); sys(r.next); break;
+        }
+        if (arg === 'task') {
+          if (!currentSession) { sys('No active session.'); break; }
+          const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage');
+          sys(JSON.stringify(r,null,2));
+          if (r.status === 'staged' && r.stage) { pendingAgentRun = r.stage.request; showPendingAgentRun(); sys('Recovered staged request; review and explicitly confirm to run.'); }
+          break;
+        }
         if (!arg) {
           if (!currentSession) { sys('no active session — no goal'); break; }
           const shown = await api('/api/sessions/' + encodeURIComponent(currentSession));

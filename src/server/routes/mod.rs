@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod auth;
 pub mod core;
+pub mod goals;
 pub mod panels;
 pub mod persona;
 pub mod skills;
@@ -19,7 +20,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 49] = [
+pub const REGISTERED_PATHS: [&str; 50] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -43,6 +44,7 @@ pub const REGISTERED_PATHS: [&str; 49] = [
     "/api/sessions/{session_id}",
     "/api/sessions/{session_id}/rename",
     "/api/sessions/{session_id}/goal",
+    "/api/sessions/{session_id}/goal-stage",
     "/api/prompt/preview",
     "/api/soul/document",
     "/api/soul/proposals",
@@ -102,6 +104,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     // Guarded: rate limit -> same-origin -> API key -> CSRF.
     let guarded = Router::new()
+        .route(
+            "/api/sessions/{session_id}/goal-stage",
+            get(goals::status).post(goals::stage),
+        )
         .route("/api/skills/check", post(skills::check))
         .route(
             "/api/sessions/{session_id}/skills",
@@ -219,7 +225,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 49);
+        assert_eq!(REGISTERED_PATHS.len(), 50);
 
         let all = registered_paths();
         assert!(
