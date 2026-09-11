@@ -61,7 +61,7 @@ src/agentic                                   <- pipeline side; NEVER references
   Add server behavior in `src/server`; cross the boundary only via the shim and CLI whitelist.
 - Exit codes are the interface: `0` ok, `2` failed, `3` env/config, `4` write refused. A non-zero child
   exit is HTTP 200 with `ok=false`; only shim failures map to 400/502/504, disabled-layer banner to 409.
-- New shim action = extend `shim::ACTIONS`, the CLI dispatch in `src/agentic/cli.rs`, and the
+- New shim action = extend `shim::ACTIONS`, the action match in `src/agentic/commands.rs::dispatch`, and the
   invariant guard's whitelist assertion, together.
 - Constants duplicated on purpose across the boundary and kept in sync by tests (do not "dedupe"):
   `RUN_ID_PATTERN` (server `agent_policy` vs agentic `run_store`), planner/check timeouts (shim vs
