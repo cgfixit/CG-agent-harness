@@ -100,7 +100,12 @@ async function client(base) {
 
 // ---- modes ----------------------------------------------------------------
 async function up() {
-  if (process.env.CGAH_BASE) { log('attaching to', process.env.CGAH_BASE); return {base: process.env.CGAH_BASE, stop: async () => {}}; }
+  if (process.env.CGAH_BASE) {
+    // Paths are concatenated onto base and it doubles as the Origin header, so
+    // a browser-copied trailing slash would yield `//api/...` and a 404.
+    const base = process.env.CGAH_BASE.replace(/\/+$/, '');
+    log('attaching to', base); return {base, stop: async () => {}};
+  }
   const model = await startModel();
   const home = makeHome();
   const srv = await startServer(home);
