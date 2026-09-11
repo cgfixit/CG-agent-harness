@@ -22,7 +22,7 @@ Version `0.1.0` · [MIT](LICENSE) · Backend Rust 1.88 · Desktop build Rust 1.9
 |---|---|
 | Chat and context | Select a local model; create, rename, and revisit sessions with saved history and token counts. Set a session goal, toggle `soul.md` persona context, and manage optional operator memory notes. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
-| Tool visibility and use | `/skills` and `/tools` show the wired capabilities. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
+| Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
 | Web context | Explicitly enable allowlisted web fetch/search, inspect fetched text, and inject selected context into chat. Web access ships off. |
 | Coding loop | Stage a repository task and inspect files or a plan; confirm an isolated run that proposes bounded edits, runs fixed check profiles in a hard sandbox, and feeds check results back into later attempts. |
 | Review and publication | Inspect retained run status and diffs, approve the reviewed tree for a local commit, then separately push and publish a draft PR with a reviewed repository template. |
@@ -113,11 +113,26 @@ Send your question, then use `/loop 3` for a bounded sequence of continuation
 turns. The console normally pauses for the operator between turns;
 `/loop auto` toggles auto-continue and `/loop stop` cancels it. Server-side
 budgets still apply. `/memory` manages optional notes and `/soul` controls persona
-context; neither gives the model permission to mutate a repository.
+context; neither gives the model permission to mutate a repository. A missing
+`soul.md` is reported as missing rather than loaded. `GOAL_DONE` is an unverified
+model report, not evidence that coding work is complete.
+
+Use `/prompt` to inspect the next chat's system prompt, `/soul edit` for the
+confirmed persona editor, and `/skill use <directory-id>` to select optional
+bounded prompt context. `/skill status` shows selection and the last successful
+inclusion hashes; `/skill clear` clears it. Repository `.codex/skills` guide
+Codex development and are separate from these runtime skills.
+
+To deliberately turn the current goal into coding work, use
+`/goal stage codex/<topic>`, inspect the staged request and checks, then
+`/agent confirm <reason>`. `/goal task` restores a staged request or shows its
+retained job evidence. No coding work starts from ordinary `/loop`.
+See [chat, persona, skills and goal controls](docs/CHAT_WORKFLOWS.md) for bounds,
+proposal review, recovery and completion semantics.
 
 `/web` exposes the explicit enable/allow/fetch/search/inject controls.
 `/connectors` is a catalog, not a claim that every listed connector is executable;
-use `/tools` to inspect wiring. This harness does not include CyClaw's RAG corpus,
+use `/tools <name>` to inspect registration and known prerequisites. This harness does not include CyClaw's RAG corpus,
 terminal, or fsconnect/sqlconnect/netconnect services.
 
 ## Run a coding task
