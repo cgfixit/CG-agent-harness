@@ -400,8 +400,9 @@ async fn tools_and_skills_views_report_wiring() {
         .iter()
         .find(|r| r["name"] == "ponytail")
         .unwrap();
-    assert_eq!(ponytail["role"], "prompt");
-    assert_eq!(ponytail["wired"], true);
+    assert_eq!(ponytail["role"], "repo");
+    assert_eq!(ponytail["selectable"], true);
+    assert_eq!(ponytail["wired"], false);
     let (status, reg) = s.open_get("/api/registry").await;
     assert_eq!(status, 200);
     assert!(reg["connectors"]

@@ -1069,6 +1069,7 @@ mod transaction_tests {
 
     fn write_enabled_ctx(dir: &Path) -> AgenticCtx {
         let text = AppConfig::embedded_default()
+            .replacen("repo: \"\"", "repo: \"fixture/repository\"", 1)
             .replacen(
                 "enabled: false                 # master switch",
                 "enabled: true                  # master switch",

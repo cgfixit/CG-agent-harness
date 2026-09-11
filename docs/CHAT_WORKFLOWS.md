@@ -4,6 +4,14 @@ Chat continuation and executable coding jobs are separate operations. A goal,
 skill, persona, or model reply never grants permission to execute commands,
 commit, push, or publish.
 
+Chat starts without an assigned repository and has no model tool dispatcher.
+`/skill use ponytail karpathy-guidelines` deliberately adds coding context for a
+coding discussion; it does not connect a repository or execute a review. A fresh
+home leaves `agentic.repo` empty and refuses coding enablement until an explicit
+`owner/name` is supplied. Existing home files/settings are preserved. Start a new
+session and inspect enabled persona/notes when comparing behavior with an older
+conversation; prior assistant messages can still bias subsequent model replies.
+
 ## See what is available
 
 `/tools <name>` reports route registration separately from known enablement and
@@ -17,7 +25,7 @@ set to true merely because a route exists.
 
 | Type | What happens |
 |---|---|
-| Mandatory prompt | The two discipline contracts load from their fixed directory IDs. Changing frontmatter names changes display text, not identity. |
+| Seeded coding context | `ponytail` and `karpathy-guidelines` are optional selections, like other prompt skills. Frontmatter changes display text, not directory identity. |
 | Optional prompt context | `/skill use <id...>` explicitly selects local skill bodies for subsequent chat turns in this session. No script executes. |
 | Fixed check | `/skill check:cargo-test` selects a reviewed, named check for an already staged coding request. It executes only through the existing authorized coding job. |
 | Governed catalog | Listed without an execution adapter; skill prose cannot invent one. |
@@ -29,13 +37,13 @@ runtime skill directory.
 ## Inspect and edit the chat prompt
 
 `/prompt` opens a private snapshot of the next chat system prompt. It includes
-fixed discipline text, selected prompt skills, enabled persona, the current
+the general-chat header, selected prompt skills, enabled persona, the current
 session goal, explicitly injected web context and enabled memory notes. It is
 not a transcript or the coding planner's prompt. The API also reports source
 load state and limits. No credentials file is included. Private preview/editor
 responses require the existing API guards and use `Cache-Control: no-store`.
 
-The compiled execution contract remains fixed. Edit the persona with:
+The compiled chat scope and execution boundaries remain fixed. Edit the persona with:
 
 1. `/soul status` to see enabled, present, loaded, truncated, and a safe reason.
 2. `/soul edit` to open the current document or explicitly create a missing one.
@@ -90,8 +98,8 @@ a display label. Files and links cannot escape the skills-directory capability.
 Up to four optional IDs are retained per session. Default per-skill clipping is
 6,000 characters; the aggregate limit is 16,000, configured by
 `personality.prompt_skill_max_chars` and `personality.prompt_skills_total_chars`.
-Frontmatter is stripped. Mandatory contracts remain separate and cannot be
-removed through selection. Missing, empty, unreadable or invalid selected skills
+Frontmatter is stripped. No coding skill is injected automatically; clearing
+selection also removes selected seeded coding skills from subsequent prompts. Missing, empty, unreadable or invalid selected skills
 refuse the turn until restored or cleared, instead of silently dropping context.
 
 After a successful chat, `/skill status` records the included IDs, character

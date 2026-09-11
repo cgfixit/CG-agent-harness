@@ -7,7 +7,6 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use super::agent_policy;
-use super::prompts::DISCIPLINE_SKILLS;
 use crate::common::home::Home;
 
 const DESC_CAP: usize = 72;
@@ -552,18 +551,10 @@ pub fn list_wired_skills(home: &Home) -> Value {
         let path = entry["path"].as_str().unwrap_or("").to_string();
         let desc = clip_desc(entry["description"].as_str().unwrap_or(""));
         let id = entry["id"].as_str().unwrap_or("");
-        if DISCIPLINE_SKILLS.contains(&id) {
-            let readable = super::prompts::read_skill_body(&home.skills_dir(), id).is_some_and(|body| !body.is_empty());
-            rows.push(
-                json!({"name": name, "role": "prompt", "path": path, "description": desc, "source": "repo",
-                             "id": id, "type": "mandatory_prompt", "invoked": false, "wired": readable, "loaded": readable}),
-            );
-        } else {
-            rows.push(
-                json!({"name": name, "role": "repo", "path": path, "description": desc, "source": "repo",
-                             "id": id, "type": "prompt_context", "selectable": true, "invoked": false, "wired": false}),
-            );
-        }
+        rows.push(
+            json!({"name": name, "role": "repo", "path": path, "description": desc, "source": "repo",
+                         "id": id, "type": "prompt_context", "selectable": true, "invoked": false, "wired": false}),
+        );
     }
     // Check profiles are fixed commands (not skill scripts) in this port, so they
     // are listed as wired agent-checks with no path.

@@ -356,7 +356,7 @@ function addMsg(kind, who, body, meta) {
 }
 const sys   = (t, m) => addMsg('sys',   'harness', t, m);
 const user  = t      => addMsg('user',  'you', t);
-const agent = (t, m) => addMsg('agent', 'cyclaw', t, m);
+const agent = (t, m) => addMsg('agent', 'CG Agent Harness', t, m);
 
 function table(rows, headers) {
   const t = document.createElement('table');
@@ -630,7 +630,7 @@ async function refreshStatus() {
         : 'Required by this home configuration; held in page memory only';
     }
     $('sHome').textContent = s.home;
-    $('sHome').title = 'harness home: ' + s.home + '  ·  repo: ' + s.repo_root;
+    $('sHome').title = 'harness home: ' + s.home + ' · chat has no assigned repository';
     soulEnabled = s.soul_enabled; soulStatus = s.soul || {};
     if (typeof s.memory_enabled === 'boolean') memoryEnabled = s.memory_enabled;
     paintSoul();
@@ -2038,9 +2038,9 @@ buildCommands();
 refreshStatus();
 refreshSessions().catch(() => {});
 refreshRegistry().catch(() => {});
-sys('CGagentHarness — local coding console (CLI: cgagentharness).');
-sys('System prompt: ponytail + karpathy-guidelines discipline contracts for agentic GitHub coding.');
-sys('Type /help for commands. /skills and /tools list registered surfaces. /web is allowlist-only and off by default. /goal + /loop are chat-only (rate-limited for local 27b).');
+sys('CG Agent Harness — local chat with optional governed coding.');
+sys('Chat starts without an assigned repository or automatic coding skills. /prompt previews context; /skill use selects optional skills.');
+sys('Type /help for commands. /skills and /tools list registered surfaces. /web is allowlist-only and off by default. /goal + /loop are chat-only (bounded chat continuation).');
 input.focus();
 paintGoalLoop();
 </script>

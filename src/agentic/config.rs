@@ -13,7 +13,7 @@ use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::llm::backend::is_loopback_url;
 
-pub const DEFAULT_REPO: &str = "cgfixit/CG-agent-harness";
+pub const DEFAULT_REPO: &str = "";
 pub const DEFAULT_ALLOWED_READ_OPS: [&str; 6] =
     ["pr_view", "pr_list", "pr_diff", "issue_view", "issue_list", "repo_view"];
 pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 19] = [
@@ -198,7 +198,10 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
     }
     let enabled = bool_field(cfg, "agentic.enabled", false)?;
     let repo = cfg.str_or("agentic.repo", DEFAULT_REPO);
-    if !repo_re().is_match(&repo) {
+    if repo.is_empty() && enabled {
+        return Err(cfg_err("Select agentic.repo as owner/name before enabling coding"));
+    }
+    if !repo.is_empty() && !repo_re().is_match(&repo) {
         return Err(cfg_err("agentic.repo must match 'owner/name'").detail("received", repo.clone()));
     }
     no_shell_metachars(&repo, "agentic.repo")?;

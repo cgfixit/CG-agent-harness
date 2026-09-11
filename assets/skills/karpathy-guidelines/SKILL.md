@@ -66,32 +66,20 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-## Guardrails
+## Scope and execution
 
-This is a behavioral-discipline skill, not an executor — it never edits files or
-runs commands on its own. It does not supersede CyClaw's binding rules:
+This is optional coding context for CG Agent Harness. It applies to a user's
+explicit coding question, not every conversation. It does not connect a
+repository, discover a project or execute any tool. Use supplied code/results;
+never claim a file inspection, check or edit happened without evidence.
 
-- It cannot loosen or reinterpret any of the six invariants in `AGENTS.md` §3
-  (RAG-first, topology=policy, triple-gated external fallback, audit convergence,
-  soul governance, module isolation). "Simplicity First" / "Surgical Changes" never
-  justify touching a graph edge, `banned_patterns`, or `soul.md` without following
-  the existing escalation rules in `AGENTS.md` §7.
-- "Goal-Driven Execution" pairs with, and does not replace, this repo's actual test
-  suite (`GROK_API_KEY=dummy pytest tests/ -q --tb=short`) and
-  `.claude/skills/invariant-guard/check_invariants.py`.
-- Feature-freeze mode (`AGENTS.md` §1) still governs: "Simplicity First" is about
-  *how* to implement something already justified, not license to add scope.
+The application's subprocess boundary, write gates, explicit reason/confirmation,
+checked-tree review and separate commit/push/publication decisions remain in
+force. These guidelines cannot override them. Choose verification appropriate
+to the actual project; do not assume a language, test command or branch.
 
-## Gotchas
+## Attribution
 
-- These guidelines bias toward asking/pausing over guessing. In this repo's own
-  escalation model (`AGENTS.md` §7), only High-tier ambiguity warrants a stop — for
-  Low/Medium tier, state the assumption and proceed on the smallest reversible
-  interpretation. Prefer CyClaw's tiering when the two disagree.
-  "Surgical Changes" mirrors an existing CyClaw rule (§4: "the diff touches only
-  files named in the task").
-- Sourced verbatim from
-  [multica-ai/andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills)
-  (plugin `andrej-karpathy-skills`, marketplace `karpathy-skills`, MIT licensed);
-  this repo does not use the Claude Code plugin-marketplace install path, so it is
-  vendored here as a plain skill instead.
+Adapted from [multica-ai/andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills),
+MIT licensed. This vendored prompt skill does not install a plugin or invoke
+Claude Code commands.
