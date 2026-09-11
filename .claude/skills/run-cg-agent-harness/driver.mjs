@@ -10,7 +10,8 @@
 //
 // Env: CGAH_BIN (target/debug/cgagentharness), CGAH_PORT (8790),
 //      CGAH_MODEL_PORT (18434), CGAH_HOME (mkdtemp), CGAH_BASE (attach to an
-//      already-running server; skips launch), CHROME_BIN, PLAYWRIGHT_MODULE.
+//      already-running server; skips launch; CGAGENTHARNESS_API_KEY is sent as
+//      a bearer token if set), CHROME_BIN, PLAYWRIGHT_MODULE.
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync} from 'node:fs';
@@ -40,9 +41,13 @@ function startModel() {
 }
 
 // ---- home + server --------------------------------------------------------
+const MARKER = '# written by .claude/skills/run-cg-agent-harness/driver.mjs (fixture home; safe to overwrite)\n';
 function makeHome() {
   const home = process.env.CGAH_HOME || mkdtempSync(join(tmpdir(), 'cgah-home-'));
-  const cfg = readFileSync(join(REPO, 'assets/config.default.yaml'), 'utf8')
+  const existing = join(home, 'config.yaml');
+  if (existsSync(existing) && !readFileSync(existing, 'utf8').startsWith(MARKER))
+    throw new Error(`${existing} exists and was not written by this driver; refusing to overwrite an operator's config. Use a different CGAH_HOME or attach with CGAH_BASE.`);
+  const cfg = MARKER + readFileSync(join(REPO, 'assets/config.default.yaml'), 'utf8')
     .replaceAll('base_url: "http://127.0.0.1:11434/v1"', `base_url: "http://127.0.0.1:${MODEL_PORT}/v1"`)
     .replaceAll('model: "qwen3.8:27b-mlx"', 'model: "fixture-model"');
   if (!cfg.includes(`127.0.0.1:${MODEL_PORT}`)) throw new Error('config.default.yaml no longer matches the sed pattern; update driver.mjs');
@@ -54,12 +59,21 @@ async function startServer(home) {
   if (!existsSync(BIN)) throw new Error(`binary missing: ${BIN}  (run: cargo build --locked)`);
   const env = {...process.env, CGAGENTHARNESS_HOME: home};
   for (const k of ['GROK_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPAGENT_API_KEY', 'CGAGENTHARNESS_API_KEY']) delete env[k];
+  const base = `http://127.0.0.1:${PORT}`;
+  if (await fetch(base + '/').then(() => true, () => false))
+    throw new Error(`something already answers on ${base}; refusing to launch. Set CGAH_PORT, or attach to it with CGAH_BASE=${base}.`);
   const child = spawn(BIN, ['serve', '--port', String(PORT)], {env, stdio: ['ignore', 'pipe', 'pipe']});
   let out = ''; child.stdout.on('data', d => out += d); child.stderr.on('data', d => out += d);
-  const base = `http://127.0.0.1:${PORT}`;
   for (let i = 0; i < 150; i++) {
     if (child.exitCode !== null) throw new Error(`serve exited ${child.exitCode}:\n${out}`);
-    try { if ((await fetch(base + '/')).ok) return {child, base, logs: () => out}; } catch {}
+    try {
+      if ((await fetch(base + '/')).ok) {
+        const {api} = await client(base);
+        const st = await api('/api/status');
+        if (st.status !== 200 || st.json.home !== home) { child.kill('SIGKILL'); throw new Error(`server on ${base} reports home ${st.json?.home}, not ${home}; not the process we spawned`); }
+        return {child, base, logs: () => out};
+      }
+    } catch (e) { if (/not the process we spawned/.test(String(e))) throw e; }
     await sleep(100);
   }
   child.kill('SIGKILL'); throw new Error('serve never answered GET / within 15s:\n' + out);
@@ -70,13 +84,14 @@ async function client(base) {
   const html = await (await fetch(base + '/')).text();
   const csrf = html.match(/name="csrf-token" content="([^"]+)"/)?.[1];
   if (!csrf) throw new Error('no csrf-token meta in GET /');
-  const headers = {'X-CyClaw-CSRF': csrf, 'Origin': base, 'Content-Type': 'application/json'};
+  const auth = process.env.CGAH_BASE && process.env.CGAGENTHARNESS_API_KEY ? {Authorization: 'Bearer ' + process.env.CGAGENTHARNESS_API_KEY} : {};
+  const headers = {...auth, 'X-CyClaw-CSRF': csrf, 'Origin': base, 'Content-Type': 'application/json'};
   const api = async (path, body, extra = {}) => {
     const r = await fetch(base + path, {method: body === undefined ? 'GET' : 'POST', headers: {...headers, ...extra}, body: body === undefined ? undefined : JSON.stringify(body)});
     const text = await r.text(); let json; try { json = JSON.parse(text); } catch { json = text; }
     return {status: r.status, json};
   };
-  return {csrf, api};
+  return {csrf, api, headers};
 }
 
 // ---- modes ----------------------------------------------------------------
@@ -98,10 +113,11 @@ async function up() {
 // unknown, so fixture-specific assertions relax and the /api/agent/run probe
 // is skipped (it would start a real run if the operator armed the gates).
 async function smoke(base, attached) {
-  const {api} = await client(base);
+  const {api, headers} = await client(base);
   const checks = [];
   const expect = (name, cond, detail) => { checks.push({name, ok: !!cond, detail}); if (!cond) log('FAIL', name, JSON.stringify(detail)); };
-  let r = await fetch(base + '/api/sessions', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  const {'X-CyClaw-CSRF': _drop, ...noCsrf} = headers;
+  let r = await fetch(base + '/api/sessions', {method: 'POST', headers: noCsrf, body: '{}'});
   expect('missing CSRF is 403', r.status === 403, r.status);
   r = await api('/api/sessions', {}, {Origin: 'https://evil.invalid'});
   expect('foreign Origin is 403', r.status === 403, r.status);

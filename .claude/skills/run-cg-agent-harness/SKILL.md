@@ -42,12 +42,14 @@ node $D smoke                                   # up -> 9 API checks through the
 node $D shot out.png /status /tools 'hello'     # up -> real browser runs each console command -> full-page screenshot -> down
 node $D serve                                   # up and stay up; prints base, home, CSRF token, a ready-made curl; Ctrl-C tears down
 CGAH_BASE=http://127.0.0.1:8790 node $D smoke   # drive an already-running server: model-agnostic checks, no /api/agent/run probe (8 checks)
+CGAH_BASE=... CGAGENTHARNESS_API_KEY=... node $D smoke   # same, against a server with security.api_key_optional: false
 ```
 
-What `up` does: starts a fake OpenAI-compatible model on `127.0.0.1:18434`
-(`CGAH_MODEL_PORT`), writes a disposable home (`CGAH_HOME` to keep one) whose
-`config.yaml` is the shipped default with `base_url`/`model` rewritten to the
-fake, blanks the cloud key env vars, runs `serve --port 8790` (`CGAH_PORT`), and
+What `up` does: refuses if anything already answers on the port, starts a fake
+OpenAI-compatible model on `127.0.0.1:18434` (`CGAH_MODEL_PORT`), writes a
+disposable home (`CGAH_HOME` to keep one; an existing `config.yaml` the driver
+did not write is never overwritten) whose `config.yaml` is the shipped default
+with `base_url`/`model` rewritten to the fake, blanks the cloud key env vars, runs `serve --port 8790` (`CGAH_PORT`), and
 polls `GET /` until ready. `shot` prints the last 1200 chars of the console
 stream to stdout so you can assert on it without opening the PNG.
 
@@ -138,8 +140,11 @@ cargo test --test real_repo_loop real_repo_run_smoke_end_to_end -- --nocapture  
 - `403 CSRF_TOKEN_INVALID` -> token is per-process; re-fetch `GET /` after any
   restart. `403 CROSS_ORIGIN_BLOCKED` -> `Origin` must be exactly `http://127.0.0.1:<port>`.
 - `binary missing` -> `cargo build --locked`.
-- Port 8790 busy -> `CGAH_PORT=8791 node $D ...`, and `pgrep -fl target/debug/cgagentharness`
-  to find a leaked server; the driver SIGTERMs then SIGKILLs its own child on exit.
+- `something already answers on http://127.0.0.1:8790; refusing to launch` ->
+  `CGAH_PORT=8791 node $D ...`, or `pgrep -fl target/debug/cgagentharness` to find
+  a leaked server; the driver SIGTERMs then SIGKILLs its own child on exit.
+- `config.yaml exists and was not written by this driver` -> that `CGAH_HOME` is
+  an operator home; pick another path or attach with `CGAH_BASE`.
 - `cd desktop && cargo check` -> `The system library gdk-3.0 required by crate
   gdk-sys was not found`. Tried `apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
   libayatana-appindicator3-dev librsvg2-dev`: the container's apt index is stale
