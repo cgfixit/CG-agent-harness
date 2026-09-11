@@ -14,8 +14,6 @@ Use the Apple Silicon macOS app or run the Rust backend in a browser.
 remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
 
-Version `0.1.0` · [MIT](LICENSE) · Backend Rust 1.88 · Desktop build Rust 1.90
-
 ## What you can do
 
 | Capability | How it works |
