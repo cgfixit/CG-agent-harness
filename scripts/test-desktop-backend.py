@@ -399,7 +399,8 @@ class DesktopBoundary(unittest.TestCase):
         child = self.start(key=key)
         child.close()
         config = self.home / 'config.yaml'
-        config.write_text(config.read_text().replace('agentic:\n  enabled: false', 'agentic:\n  enabled: true'))
+        config.write_text(config.read_text().replace('agentic:\n  enabled: false', 'agentic:\n  enabled: true')
+                          .replace('repo: ""', 'repo: "fixture/repository"'))
         runs = self.home / 'data/agentic/workspaces/runs'
         runs.mkdir(parents=True, exist_ok=True)
         run_id = 'a' * 32
