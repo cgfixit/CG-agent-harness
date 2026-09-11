@@ -60,7 +60,7 @@ def override(text, dotted, value):
     assert found, dotted
     return '\n'.join(output) + '\n'
 for key, value in {
-    'agentic.enabled': True, 'agentic.deepagent_github.enabled': True,
+    'agentic.repo': 'fixture/repository', 'agentic.enabled': True, 'agentic.deepagent_github.enabled': True,
     'agentic.deepagent_github.allow_git_write_tools': True,
     'agentic.deepagent_github.base_url': args.endpoint,
     'agentic.deepagent_github.model': args.model,

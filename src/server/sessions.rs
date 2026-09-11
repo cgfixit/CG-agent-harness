@@ -70,6 +70,12 @@ pub struct Session {
     /// Operator /goal. Never in `summary()` because GET /api/sessions is open.
     #[serde(default)]
     pub goal: String,
+    #[serde(default)]
+    pub selected_skills: Vec<String>,
+    #[serde(default)]
+    pub last_prompt_skills: Vec<Value>,
+    #[serde(default)]
+    pub goal_stage: Option<Value>,
 }
 
 impl Session {
@@ -134,6 +140,9 @@ impl SessionStore {
             messages: Vec::new(),
             tally: TokenTally::default(),
             goal: String::new(),
+            selected_skills: Vec::new(),
+            last_prompt_skills: Vec::new(),
+            goal_stage: None,
         };
         self.write(&session)?;
         Ok(session)
@@ -195,6 +204,7 @@ impl SessionStore {
         assistant_text: &str,
         model: &str,
         usage: &TokenTally,
+        prompt_skills: &[Value],
     ) -> Result<Session> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
@@ -214,6 +224,7 @@ impl SessionStore {
             session.messages.drain(0..drop);
         }
         session.model = model.to_string();
+        session.last_prompt_skills = prompt_skills.to_vec();
         session.tally.prompt_tokens += usage.prompt_tokens;
         session.tally.completion_tokens += usage.completion_tokens;
         session.tally.exchanges += 1;
@@ -235,6 +246,69 @@ impl SessionStore {
         }
         self.write(&session)?;
         Ok(session)
+    }
+
+    pub fn select_skills(&self, session_id: &str, ids: &[String]) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        session.selected_skills = ids.to_vec();
+        self.write(&session)
+    }
+
+    pub fn stage_goal(
+        &self,
+        id: &str,
+        expected_goal: &str,
+        expected_stage: Option<&Value>,
+        stage: &Value,
+    ) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(id)?;
+        if session.goal != expected_goal || session.goal_stage.as_ref() != expected_stage {
+            return Err(session_error("Goal changed during staging", id));
+        }
+        session.goal_stage = Some(stage.clone());
+        self.write(&session)
+    }
+
+    fn check_goal_binding(session: &Session, stage_id: &str, instruction: &str, branch: &str) -> Result<()> {
+        let Some(stage) = &session.goal_stage else {
+            return Err(session_error("No staged goal", &session.session_id));
+        };
+        if stage["stage_id"] != stage_id
+            || stage["goal"] != session.goal
+            || session.goal != instruction
+            || stage["request"]["branch"] != branch
+            || !stage["job_id"].is_null()
+        {
+            return Err(session_error(
+                "Goal stage changed, is stale, or was already submitted; inspect and stage again",
+                &session.session_id,
+            ));
+        }
+        Ok(())
+    }
+    pub fn validate_goal_binding(&self, id: &str, stage_id: &str, instruction: &str, branch: &str) -> Result<()> {
+        Self::check_goal_binding(&self.get(id)?, stage_id, instruction, branch)
+    }
+    pub fn claim_goal_stage(
+        &self,
+        id: &str,
+        stage_id: &str,
+        request: &crate::server::schemas::AgentRunRequest,
+        job_id: &str,
+    ) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(id)?;
+        Self::check_goal_binding(&session, stage_id, &request.instruction, &request.branch)?;
+        let stage = session.goal_stage.as_mut().unwrap();
+        stage["job_id"] = json!(job_id);
+        stage["declared_checks"] = json!(request
+            .checks
+            .clone()
+            .unwrap_or_else(|| vec![crate::server::agent_policy::DEFAULT_CHECK_PROFILE.to_string()]));
+        stage["max_iterations"] = json!(request.max_iterations);
+        self.write(&session)
     }
 
     fn write(&self, session: &Session) -> Result<()> {

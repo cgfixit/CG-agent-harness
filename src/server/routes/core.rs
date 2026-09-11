@@ -38,7 +38,9 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<Value> {
         "soul": soul_status(&state, settings.soul_enabled),
         "memory_enabled": settings.memory_enabled,
         "home": state.home.root.display().to_string(),
-        "repo_root": state.home.root.display().to_string(),
+        "repo_root": Value::Null,
+        "chat_mode": "conversation",
+        "chat_tools_available": false,
         "sessions": sessions.len(),
         "total_tokens": total_tokens,
         "layout": {
@@ -112,7 +114,7 @@ fn soul_status(state: &AppState, enabled: bool) -> Value {
         &state.home.root,
         std::path::Path::new("soul.md"),
         enabled,
-        state.cfg.u64_or("personality.soul_max_chars", 8000) as usize
+        crate::server::prompts::effective_soul_max_chars(state.cfg.u64_or("personality.soul_max_chars", 8000))
     ))
 }
 
@@ -205,6 +207,7 @@ pub async fn chat(
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
     };
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let selected_skills = super::skills::resolve(&state, &session.selected_skills)?;
 
     let mut loop_claimed = false;
     if req.loop_turn {
@@ -266,10 +269,13 @@ pub async fn chat(
         None
     };
     let system_prompt = compose_system_prompt(&PromptInputs {
-        skills_dir: &state.home.skills_dir(),
+        selected_skills: &selected_skills,
         soul_enabled: settings.soul_enabled,
+        soul_override: None,
         soul_path: &state.home.soul_path(),
-        soul_max_chars: state.cfg.u64_or("personality.soul_max_chars", 8000) as usize,
+        soul_max_chars: crate::server::prompts::effective_soul_max_chars(
+            state.cfg.u64_or("personality.soul_max_chars", 8000),
+        ),
         goal: Some(&session.goal),
         web_context: Some(&web_context),
         memory_context: memory_context.as_deref(),
@@ -328,6 +334,10 @@ pub async fn chat(
                 completion_tokens: reply.completion_tokens,
                 exchanges: 0,
             },
+            &selected_skills.iter().map(|(id,body)| {
+                use sha2::{Digest, Sha256};
+                json!({"id":id,"outcome":"included_in_successful_chat","chars":body.chars().count(),"sha256":hex::encode(Sha256::digest(body.as_bytes()))})
+            }).collect::<Vec<_>>(),
         )
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     Ok(Json(json!({

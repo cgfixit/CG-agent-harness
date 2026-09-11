@@ -7,7 +7,6 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use super::agent_policy;
-use super::prompts::DISCIPLINE_SKILLS;
 use crate::common::home::Home;
 
 const DESC_CAP: usize = 72;
@@ -30,10 +29,16 @@ pub fn list_repo_skills(skills_dir: &Path) -> Vec<Value> {
     dirs.sort_by_key(|e| e.file_name());
     let mut out = Vec::new();
     for entry in dirs {
-        let path = entry.path().join("SKILL.md");
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let load = super::prompts::load_text(
+            skills_dir,
+            &Path::new(&entry.file_name()).join("SKILL.md"),
+            true,
+            256 * 1024,
+        );
+        if !load.loaded {
             continue;
-        };
+        }
+        let text = load.text;
         let dir_name = entry.file_name().to_string_lossy().to_string();
         let name = frontmatter_field(&text, "name");
         out.push(json!({
@@ -99,7 +104,56 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 29] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 36] = [
+    (
+        "goal-stage",
+        "/goal stage|task",
+        "POST",
+        "/api/sessions/{session_id}/goal-stage",
+        "stage reviewed coding intent; no execution until explicit confirmation",
+    ),
+    (
+        "skill-selection",
+        "/skill use",
+        "POST",
+        "/api/sessions/{session_id}/skills",
+        "explicit bounded chat context; never executes skill prose",
+    ),
+    (
+        "skill-check",
+        "/skill check:<profile>",
+        "POST",
+        "/api/skills/check",
+        "stage a fixed check for an explicitly authorized coding job",
+    ),
+    (
+        "prompt-preview",
+        "/prompt",
+        "POST",
+        "/api/prompt/preview",
+        "guarded next-chat prompt snapshot",
+    ),
+    (
+        "soul-document",
+        "/soul edit",
+        "GET",
+        "/api/soul/document",
+        "guarded persona editor and version history",
+    ),
+    (
+        "soul-proposal",
+        "/soul propose",
+        "POST",
+        "/api/soul/proposals",
+        "stage text for separate operator review; does not apply",
+    ),
+    (
+        "soul-review",
+        "/soul review",
+        "GET",
+        "/api/soul/proposals/{id}",
+        "review a retained proposal before apply or reject",
+    ),
     ("chat", "(plain text)", "POST", "/api/chat", "local model chat turn"),
     (
         "goal",
@@ -356,7 +410,7 @@ fn render_tools_diagram(tools: &[Value], wired: usize, total: usize) -> String {
         return box_render(r["name"].as_str().unwrap_or(""), &inner);
     }
     let mut lines = vec![
-        format!("HARNESS TOOLS — {wired} registered / {total} listed"),
+        format!("HARNESS TOOLS — {wired} available adapters / {total} listed"),
         String::new(),
     ];
     if tools.is_empty() {
@@ -449,7 +503,7 @@ fn render_skills_diagram(rows: &[Value], wired: usize, total: usize) -> String {
         return box_render(r["name"].as_str().unwrap_or(""), &inner);
     }
     let mut lines = vec![
-        format!("HARNESS SKILLS — {wired} registered / {total} listed"),
+        format!("HARNESS SKILLS — {wired} available adapters / {total} listed"),
         String::new(),
     ];
     let groups = [
@@ -497,25 +551,17 @@ pub fn list_wired_skills(home: &Home) -> Value {
         let path = entry["path"].as_str().unwrap_or("").to_string();
         let desc = clip_desc(entry["description"].as_str().unwrap_or(""));
         let id = entry["id"].as_str().unwrap_or("");
-        if DISCIPLINE_SKILLS.contains(&id) {
-            let readable = super::prompts::read_skill_body(&home.skills_dir(), id).is_some_and(|body| !body.is_empty());
-            rows.push(
-                json!({"name": name, "role": "prompt", "path": path, "description": desc, "source": "repo",
-                             "id": id, "invoked": false, "wired": readable, "loaded": readable}),
-            );
-        } else {
-            rows.push(
-                json!({"name": name, "role": "repo", "path": path, "description": desc, "source": "repo",
-                             "id": id, "invoked": false, "wired": false}),
-            );
-        }
+        rows.push(
+            json!({"name": name, "role": "repo", "path": path, "description": desc, "source": "repo",
+                         "id": id, "type": "prompt_context", "selectable": true, "invoked": false, "wired": false}),
+        );
     }
     // Check profiles are fixed commands (not skill scripts) in this port, so they
     // are listed as wired agent-checks with no path.
     for (name, desc) in agent_policy::available_profiles() {
         rows.push(
             json!({"name": name, "role": "check", "path": "", "description": clip_desc(&desc),
-                         "source": "agent-check", "id": format!("check:{name}"), "invoked": false, "wired": true}),
+                         "source": "agent-check", "type": "fixed_check", "id": format!("check:{name}"), "invoked": false, "wired": true}),
         );
     }
     for entry in list_governed_skills(&home.registry_path()) {
@@ -525,6 +571,9 @@ pub fn list_wired_skills(home: &Home) -> Value {
     }
     for row in &mut rows {
         row["registered"] = json!(true);
+        if row["role"] == "governed" {
+            row["type"] = json!("catalog_only");
+        }
         row["last_result"] = Value::Null;
         row["enabled"] = if row["role"] == "prompt" {
             row["wired"].clone()
@@ -541,7 +590,7 @@ pub fn list_wired_skills(home: &Home) -> Value {
         } else if row["role"] == "check" {
             json!("requires a staged coding request and execution-time checks")
         } else {
-            json!("catalog only; no invocation adapter")
+            json!("prompt_context requires explicit /skill use; governed catalog has no execution adapter")
         };
     }
     let wired: Vec<Value> = rows
@@ -570,10 +619,10 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 29);
+        assert_eq!(HARNESS_SURFACES.len(), 36);
         let report = list_wired_tools(&registered);
-        assert_eq!(report["total"], 29);
-        assert_eq!(report["wired"], 29, "a catalog surface is unwired");
+        assert_eq!(report["total"], 36);
+        assert_eq!(report["wired"], 36, "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }

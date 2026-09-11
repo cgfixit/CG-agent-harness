@@ -138,7 +138,7 @@ async function smoke(base, attached) {
   r = await api('/api/chat', {session_id: sid, message: 'hello harness'});
   if (attached) expect('chat round-trips through the configured model', r.status === 200 && typeof r.json.reply === 'string' && r.json.reply.length > 0, r.json);
   else expect('chat round-trips through model', r.status === 200 && /fixture reply to: hello harness/.test(r.json.reply), r.json);
-  r = await api('/api/tools'); expect('tools wired', r.status === 200 && /registered/.test(r.json.diagram || ''), r.status);
+  r = await api('/api/tools'); expect('tools all wired', r.status === 200 && r.json.total > 0 && r.json.wired === r.json.total, {status: r.status, total: r.json.total, wired: r.json.wired});
   r = await api('/api/agent/checks'); expect('agent check profiles listed', r.status === 200 && Array.isArray(r.json.profiles), r.status);
   if (attached) log('skipping /api/agent/run probe in attach mode (could start a real run on an armed server)');
   else {

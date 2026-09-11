@@ -8,14 +8,20 @@ import {access, readFile, mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
+let persona='';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
  const body=data?JSON.parse(data):{}; const path=req.url; requests.push([req.method,path,body]);
  const reply=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
- if(path==='/'){res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
+ if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/static/')){res.end('');return;}
  if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:0});return;}
+ if(path==='/api/soul/document'){
+  if(req.method==='POST'){if(!body.confirm){reply({detail:{code:'SOUL_CONFIRM',message:'Confirmation required'}},400);return;}persona=body.content;reply({saved:true,revision:'1'.repeat(64)});return;}
+  reply({content:persona,revision:persona?'1'.repeat(64):'missing',max_chars:8000,versions:[]});return;
+ }
+ if(path==='/api/prompt/preview'){reply({scope:'Chat preview',prompt:'Discipline contract\n'+(body.soul_content??persona)});return;}
  if(path==='/api/registry'){reply({skills:[],tools:[],connectors:[]});return;}
  if(path==='/api/sessions'){
   if(req.method==='GET'){reply({sessions:[...sessions.values()]});return;}
@@ -23,6 +29,21 @@ const server=createServer(async(req,res)=>{
  }
  const match=path.match(/^\/api\/sessions\/([^/]+)(\/goal)?$/);
  if(match){const s=sessions.get(match[1]);if(match[2])s.goal=body.goal;reply(s);return;}
+ if(path.match(/^\/api\/sessions\/[^/]+\/goal-stage$/)){
+  const session=sessions.get(path.split('/')[3]);
+  if(req.method==='POST')session.stage={stage_id:'a'.repeat(32),goal:session.goal,request:{instruction:session.goal,branch:body.branch,commit_message:'Fixture goal',checks:null,read_files:[],max_iterations:1,goal_stage:{session_id:session.session_id,stage_id:'a'.repeat(32)}}};
+  reply({stage:session.stage,request:session.stage.request,status:'staged',executed:false,next:'Review and explicitly confirm'});return;
+ }
+ if(path.match(/^\/api\/sessions\/[^/]+\/skills$/)){
+  const session=sessions.get(path.split('/')[3]);
+  if(req.method==='POST')session.selected=body.ids;
+  reply({selected:session.selected||[],last_result:[],ready:true});return;
+ }
+ if(path==='/api/agent/checks'){reply({profiles:[{name:'cargo-fmt'}],default_profile:'cargo-test',capabilities:{jobs:true},planner_model:'mock'});return;}
+ if(path==='/api/skills/check'){
+  if(body.id!=='check:cargo-fmt'){reply({detail:{code:'SKILL_ID',message:'Unknown fixed check'}},400);return;}
+  reply({id:body.id,profile:'cargo-fmt',executed:false});return;
+ }
  if(path==='/api/chat/cancel'){reply({cancelled:true});return;}
  if(path==='/api/chat'){
   if(mode==='delay'){setTimeout(()=>reply({reply:'late'}),2500).unref();return;}
@@ -94,6 +115,19 @@ try {
  const chatCount=()=>requests.filter(r=>r[1]==='/api/chat').length;
  await call('Page.navigate',{url:base});await until('typeof onSend === "function"');
  await until('document.getElementById("sSoulV").textContent === "missing"');
+ assert.ok(await evaluate('document.body.innerText.includes("Chat starts without an assigned repository")'));
+ assert.equal(await evaluate('document.body.innerText.includes("agentic GitHub coding")'),false);
+ await evaluate('agent("Branding fixture")');
+ assert.ok(await evaluate('document.body.innerText.includes("CG Agent Harness")'));
+ assert.equal(await evaluate('document.body.innerText.toLowerCase().includes("cyclaw")'),false);
+
+ await send('/soul edit');assert.equal(await evaluate('document.getElementById("soulEditor").open'),true);
+ await evaluate('document.getElementById("soulContent").value="BROWSER_PERSONA";document.getElementById("soulReason").value="Reviewed UI edit";document.getElementById("soulPreview").click()');
+ await until('document.getElementById("soulFeedback").textContent.includes("BROWSER_PERSONA")');assert.equal(persona,'');
+ await evaluate('document.getElementById("soulSave").click()');await until('document.getElementById("soulFeedback").textContent.includes("Confirmation required")');assert.equal(persona,'');
+ await evaluate('document.getElementById("soulConfirm").checked=true;document.getElementById("soulSave").click()');await until('document.getElementById("soulFeedback").textContent.startsWith("Saved.")');assert.equal(persona,'BROWSER_PERSONA');
+ await evaluate('document.getElementById("soulClose").click()');assert.equal(await evaluate('document.getElementById("soulContent").value'),'');
+ await send('/prompt');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("BROWSER_PERSONA")'));
  await send('/goal Review a patch');assert.equal(sessions.size,1);assert.equal(await evaluate('sessionGoal'),'Review a patch');
  await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal:")'));
  let before=chatCount();await send('/loop 2');assert.equal(chatCount(),before+1);assert.equal(await evaluate('loopState.remaining'),1);
@@ -107,8 +141,19 @@ try {
  mode='normal';await send('/loop auto');before=chatCount();const auto=send('/loop 3');await until('loopState && loopState.remaining === 2');await send('/loop stop');await auto;assert.equal(chatCount(),before+1,'stop during cooldown prevents another turn');
  await send('/loop auto');await send('/loop 2');await send('/goal clear');assert.equal(await evaluate('loopState'),null);assert.equal(await evaluate('sessionGoal'),'');
  await send('/goal Another goal');await send('/loop 2');await send('/session new');assert.equal(await evaluate('loopState'),null);
- assert.ok(!requests.some(r=>r[1].startsWith('/api/agent/')),'ordinary chat continuation never executes coding work');
- console.log(JSON.stringify({passed:true,coverage:['fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
+ await send('/skill use custom');assert.deepEqual([...sessions.values()].at(-1).selected,['custom']);
+ await send('/skill clear');assert.deepEqual([...sessions.values()].at(-1).selected,[]);
+ await send('/agent run codex/fixture Review only');await send('/skill check:cargo-fmt');assert.deepEqual(await evaluate('pendingAgentRun.checks'),['cargo-fmt']);
+ await send('/skill check:unknown');assert.deepEqual(await evaluate('pendingAgentRun.checks'),['cargo-fmt']);await send('/agent cancel');
+ await send('/goal Implement the fixture');await send('/goal stage codex/goal-fixture');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture');
+ const goalSession=await evaluate('currentSession');assert.equal(await evaluate('pendingAgentRun.max_iterations'),1);
+ await evaluate('window.__cgahLoaded=1');
+ await call('Page.reload',{ignoreCache:true});
+ await until('typeof onSend === "function" && window.__cgahLoaded!==1');
+ await send('/session use '+goalSession);await send('/goal task');assert.equal(await evaluate('pendingAgentRun.goal_stage.session_id'),goalSession);
+ await send('/agent confirm');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture','missing reason keeps request staged');
+ assert.ok(!requests.some(r=>r[0]==='POST' && ['/api/agent/jobs','/api/agent/run'].includes(r[1])),'chat and skill staging never execute coding work');
+ console.log(JSON.stringify({passed:true,coverage:['goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

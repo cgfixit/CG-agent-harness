@@ -4,7 +4,10 @@
 pub mod agent;
 pub mod auth;
 pub mod core;
+pub mod goals;
 pub mod panels;
+pub mod persona;
+pub mod skills;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -17,13 +20,15 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 43] = [
+pub const REGISTERED_PATHS: [&str; 50] = [
     "/",
     "/static/{name}",
     "/api/status",
     "/api/registry",
     "/api/tools",
     "/api/skills",
+    "/api/skills/check",
+    "/api/sessions/{session_id}/skills",
     "/api/web",
     "/api/web/allow",
     "/api/web/deny",
@@ -39,6 +44,11 @@ pub const REGISTERED_PATHS: [&str; 43] = [
     "/api/sessions/{session_id}",
     "/api/sessions/{session_id}/rename",
     "/api/sessions/{session_id}/goal",
+    "/api/sessions/{session_id}/goal-stage",
+    "/api/prompt/preview",
+    "/api/soul/document",
+    "/api/soul/proposals",
+    "/api/soul/proposals/{id}",
     "/api/soul",
     "/api/model",
     "/api/keys",
@@ -94,6 +104,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     // Guarded: rate limit -> same-origin -> API key -> CSRF.
     let guarded = Router::new()
+        .route(
+            "/api/sessions/{session_id}/goal-stage",
+            get(goals::status).post(goals::stage),
+        )
+        .route("/api/skills/check", post(skills::check))
+        .route(
+            "/api/sessions/{session_id}/skills",
+            get(skills::selection).post(skills::select),
+        )
+        .route("/api/prompt/preview", post(persona::preview))
+        .route("/api/soul/document", get(persona::document).post(persona::edit))
+        .route("/api/soul/proposals", post(persona::propose))
+        .route("/api/soul/proposals/{id}", get(persona::review).post(persona::decide))
         .route("/api/web", post(panels::web_toggle))
         .route("/api/web/allow", post(panels::web_allow))
         .route("/api/web/deny", post(panels::web_deny))
@@ -202,7 +225,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 43);
+        assert_eq!(REGISTERED_PATHS.len(), 50);
 
         let all = registered_paths();
         assert!(
