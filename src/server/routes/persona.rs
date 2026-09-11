@@ -268,7 +268,6 @@ pub async fn preview(
     } else {
         String::new()
     };
-    let skill_dir = state.home.skills_dir();
     let soul_path = state.home.soul_path();
     let selected = super::skills::resolve(
         &state,
@@ -286,9 +285,9 @@ pub async fn preview(
     };
     let sections: Vec<Value> = selected
         .iter()
-        .map(|(id, _)| {
-            let load = crate::server::prompts::load_skill(&skill_dir, id, 32768);
-            json!({"origin":format!("skills/{id}/SKILL.md"), "state":load})
+        .map(|(id, body)| {
+            json!({"id":id,"origin":format!("skills/{id}/SKILL.md"),
+                "chars":body.chars().count(),"sha256":crate::common::sha256_hex(body)})
         })
         .collect();
     Ok(private(
