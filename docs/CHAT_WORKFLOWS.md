@@ -38,8 +38,8 @@ runtime skill directory.
 
 `/prompt` opens a private snapshot of the next chat system prompt. It includes
 the general-chat header, selected prompt skills, enabled persona, the current
-session goal, explicitly injected web context and enabled memory notes. It is
-not a transcript or the coding planner's prompt. The API also reports source
+session goal, explicitly injected web context while web is enabled, and enabled
+memory notes. It is not a transcript or the coding planner's prompt. The API also reports source
 load state and limits. No credentials file is included. Private preview/editor
 responses require the existing API guards and use `Cache-Control: no-store`.
 

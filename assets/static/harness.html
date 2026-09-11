@@ -489,7 +489,8 @@ function renderWebStatus(data) {
     ['enabled', data.enabled ? 'yes' : 'no (fail-closed)'],
     ['allowlist', (data.allowlist && data.allowlist.length) ? data.allowlist.join('\n') : '(empty — /web allow <url>)'],
     ['injected', data.injected ? 'yes' : 'no'],
-    ['last extract', data.has_last ? 'yes — /web inject to put it in chat' : 'none'],
+    ['context stored', data.context_stored ? 'yes' : 'no'],
+    ['last extract', data.has_last ? (data.enabled ? 'yes — /web inject to put it in chat' : 'yes — /web on before injecting') : 'none'],
   ];
   return table(rows, ['field', 'value']);
 }
@@ -1202,7 +1203,7 @@ async function runSlash(line) {
         if (sub === 'help') {
           sys(table([
             ['/web', 'status: enabled + allowlist (no page text)'],
-            ['/web on|off', 'enable or disable fetches (persisted)'],
+            ['/web on|off', 'enable or disable fetches and saved prompt context (persisted)'],
             ['/web allow <url>', 'add a host or URL-prefix (no wildcards)'],
             ['/web deny <url>', 'remove one allowlist entry'],
             ['/web fetch <url>', 'GET one allowlisted URL (text only)'],
@@ -1242,7 +1243,7 @@ async function runSlash(line) {
           const rows = (found.hits || []).flatMap(h =>
             (h.snippets || []).map(s => [h.url, s]));
           if (!rows.length) {
-            sys('no hits on allowlisted pages for: ' + q);
+            sys('no hits on allowlisted pages for: ' + q + '; cleared last extract and injected context');
           } else {
             sys(table(rows, ['url', 'snippet']));
           }

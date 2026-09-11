@@ -262,7 +262,7 @@ pub async fn preview(
         validate_content(&state, content)?;
     }
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    let web = state.web.context_text();
+    let web = state.web.context_text(settings.web_enabled);
     let memory = if settings.memory_enabled {
         state.notes.context_text()
     } else {

@@ -211,6 +211,47 @@ async fn start_page_server(body: &'static str, ctype: &'static str) -> std::net:
 }
 
 #[tokio::test]
+async fn web_disable_suppresses_saved_context_in_chat_and_preview() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let tools = s.home.join("tools");
+    std::fs::write(
+        tools.join("web_last.json"),
+        r#"{"url":"https://docs.example/","text":"WEB_CONTEXT_MARKER"}"#,
+    )
+    .unwrap();
+    std::fs::write(tools.join("web_context.txt"), "WEB_CONTEXT_MARKER").unwrap();
+    for enabled in [false, true, false, true] {
+        let (status, web) = s.post_json("/api/web", json!({"enabled":enabled})).await;
+        assert_eq!(status, 200, "{web}");
+        assert_eq!(web["injected"], enabled);
+        assert_eq!(web["has_last"], true);
+        assert_eq!(web["context_stored"], true);
+        let (status, preview) = s.post_json("/api/prompt/preview", json!({})).await;
+        assert_eq!(status, 200, "{preview}");
+        assert_eq!(
+            preview["prompt"].as_str().unwrap().contains("WEB_CONTEXT_MARKER"),
+            enabled
+        );
+        let (status, body) = s.post_json("/api/chat", json!({"message":"hello"})).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            preview["prompt"],
+            model.last_request().unwrap()["messages"][0]["content"]
+        );
+        if !enabled {
+            let (status, body) = s.post_json("/api/web/inject", json!({})).await;
+            assert_eq!(status, 409, "{body}");
+            assert_eq!(code(&body), "WEB_DISABLED");
+        }
+        assert_eq!(
+            std::fs::read_to_string(tools.join("web_context.txt")).unwrap(),
+            "WEB_CONTEXT_MARKER"
+        );
+    }
+}
+
+#[tokio::test]
 async fn web_search_fetches_each_overlapping_allowlist_entry() {
     let model = start_mock_model().await;
     let page = start_page_server("Searchable page", "text/plain").await;
@@ -238,10 +279,35 @@ async fn web_search_fetches_each_overlapping_allowlist_entry() {
         .map(|hit| hit["url"].clone())
         .collect();
     assert_eq!(urls, vec![json!(root), json!(child)]);
+    assert_eq!(s.post_json("/api/web/inject", json!({})).await.0, 200);
+    // Rejected queries preserve the previous deliberate selection.
+    assert_eq!(s.post_json("/api/web/search", json!({"query":" "})).await.0, 400);
+    assert_eq!(s.open_get("/api/web").await.1["injected"], true);
     // User text remains literal, even though matching uses the regex engine.
     let (status, body) = s.post_json("/api/web/search", json!({"query": ".*"})).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["hits"], json!([]));
+    let (_, web) = s.open_get("/api/web").await;
+    assert_eq!(web["has_last"], false);
+    assert_eq!(web["injected"], false);
+    assert_eq!(web["allowlist"].as_array().unwrap().len(), 2);
+    let (status, body) = s.post_json("/api/web/inject", json!({})).await;
+    assert_eq!(status, 400);
+    assert_eq!(code(&body), "WEB_NO_LAST");
+    let (_, preview) = s.post_json("/api/prompt/preview", json!({})).await;
+    assert!(!preview["prompt"].as_str().unwrap().contains("Searchable page"));
+    // Filesystem failures must not masquerade as successful cleanup.
+    std::fs::create_dir(s.home.join("tools/web_context.txt")).unwrap();
+    for (path, request) in [
+        ("/api/web/forget", json!({})),
+        ("/api/web/search", json!({"query":"no-match"})),
+    ] {
+        let (status, body) = s.post_json(path, request).await;
+        assert_eq!(status, 502, "{body}");
+        assert_eq!(code(&body), "WEB_CLEAR_FAILED");
+        assert_eq!(message(&body), "WEB_CLEAR_FAILED");
+        assert!(!body.to_string().contains(s.home.to_str().unwrap()));
+    }
 }
 
 #[tokio::test]
