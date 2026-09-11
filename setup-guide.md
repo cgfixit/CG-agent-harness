@@ -1,6 +1,6 @@
-# Setup guide (macOS, Apple Silicon)
+# Setup guide (macOS: Apple Silicon and Intel)
 
-CG Agent Harness runs either as an Apple Silicon macOS app or as a standalone
+CG Agent Harness runs either as a universal macOS app or as a standalone
 Rust server with a browser console. This guide covers both paths, optional
 credentials, local model selection, persistent work and the governed coding
 pipeline. See [README.md](README.md) for the overview and
@@ -12,12 +12,29 @@ has no outbound network access. The **console** is the same interface in the
 app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
+**Version scope:** this guide describes the source branch containing issue #32
+phases 0–4. `/prompt`, `/soul edit` and proposals, `/skill use`, and `/goal stage`
+require those changes. A release or older installed app may predate them. Check
+its `Contents/Resources/COMMIT`, release notes and `/help`; an unknown command is
+not fixed by changing your persona or arming a gate. See the
+[PR stack and candidate evidence](https://github.com/cgfixit/CG-agent-harness/issues/32#issuecomment-5628682279).
+
+## Quick route through this guide
+
+- **Run a downloaded app:** sections 4, 5.2 and 6; then section 7 for controls.
+- **Build from source:** sections 2–5; section 11 for verification.
+- **Understand missing soul or customize chat:** section 7.2.
+- **Use runtime skills:** section 7.3. Codex development skills are separate.
+- **Execute a coding goal:** section 9, after local chat works.
+- **Upgrade, preserve data or change release cadence:** section 8.
+- **Recover a failed setup:** section 12.
+
 ## 1. Choose how to run it
 
 | Path | What you need | Where the console opens |
 |---|---|---|
-| Existing macOS app bundle | Apple Silicon Mac and a working local model service for chat | Native app; owned loopback port chosen at launch |
-| Build the macOS app | Git, Xcode Command Line Tools, rustup with Rust 1.88 and 1.90 | Native app after packaging in section 5.2 |
+| Existing macOS app bundle | Apple Silicon or Intel Mac; working local model service for chat | Native app; owned loopback port chosen at launch |
+| Build the macOS app | Apple Silicon build host, Git, Xcode Command Line Tools, rustup with Rust 1.88 and 1.90 | Native app after packaging in section 5.2 |
 | Standalone server | Git, Xcode Command Line Tools and Rust 1.88 | Browser at `http://127.0.0.1:8790/` by default |
 
 An already-built app needs no Terminal, external browser, Rust or Python merely
@@ -34,17 +51,29 @@ repository writes still require their independent approvals.
 
 Install only what your selected path needs. Preserve existing working tools and models.
 
-### 2.1 Confirm you're on Apple Silicon
+### 2.1 Hardware and macOS
 
 ```bash
+sw_vers
 uname -m
 ```
 
-This should print `arm64`. An `x86_64` result may mean an Intel Mac or a shell
-running through Rosetta. Confirm the hardware and use a native arm64 shell for
-app builds. The current desktop package supports Apple Silicon only; Intel app
-packaging is outside this guide. The app targets macOS 12+, with older target
-versions still awaiting validation.
+The universal app includes `arm64` and `x86_64` executables. `uname -m` reports
+`arm64` in a native Apple Silicon shell; `x86_64` can mean Intel hardware or a
+translated shell. Check **About This Mac** to distinguish them. The supported
+packaging recipe below runs on Apple Silicon and cross-builds Intel.
+
+The bundle targets macOS 12+, but a deployment target is not proof of acceptance
+on every older OS or Intel machine. Consult [desktop acceptance](docs/DESKTOP_ACCEPTANCE.md)
+for the exact tested hardware and source revision.
+
+In Finder, select the installed app and press Cmd-I: **Kind** should identify a
+Universal application. If **Open using Rosetta** is offered, leave it unchecked
+for normal Apple Silicon use. This bundle's app and backend have native slices;
+installing Rosetta is not a prerequisite. If an Intel-support warning persists,
+verify that Finder/Dock is opening the new copy and identify any separately
+installed Intel-only tools. Apple's [Rosetta guidance](https://support.apple.com/en-us/102527)
+explains how to identify the application type.
 
 ### 2.2 Xcode Command Line Tools
 
@@ -59,22 +88,13 @@ A dialog box will pop up — click "Install" and wait for it to finish (a few mi
 connection). If you already have them installed, this command will tell you so and do nothing
 further, which is fine.
 
-### 2.3 Homebrew
+### 2.3 Optional package installation
 
-[Homebrew](https://brew.sh) is the package manager we'll use to install Ollama. If you don't
-already have it:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-Follow the prompts at the end of the installer — on Apple Silicon it will ask you to run two
-`echo`/`eval` lines to add Homebrew to your shell's `PATH`. Do that, then close and reopen your
-terminal (or run `source ~/.zprofile`) so the `brew` command is available. Confirm with:
-
-```bash
-brew --version
-```
+Preserve an existing working installation. Homebrew is optional for running the
+app; it is convenient for installing development tools such as `gh`. If needed,
+follow the [official Homebrew installation instructions](https://brew.sh), then
+confirm `brew --version` in a new terminal. The model runtime can also be
+installed directly from its vendor.
 
 ### 2.4 Rust
 
@@ -126,9 +146,10 @@ can install the app with Homebrew:
 brew install --cask ollama
 ```
 
-This installs both the Ollama app and its command-line tool (`ollama`). You can launch it once
-from Spotlight (search "Ollama") to let it finish its own first-run setup, or just proceed —
-section 4 checks its endpoint and starts a daemon only if needed.
+Launch Ollama once to complete its own setup, then verify `ollama list` and the
+endpoint in section 4. If the CLI is unavailable, follow the official
+[Ollama quickstart](https://docs.ollama.com/quickstart). The harness does not
+install Ollama or download a model automatically.
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
@@ -176,9 +197,11 @@ running in its terminal while you use another terminal for the harness.
 
 Choose the **exact installed identifier**. On the acceptance Mac it was
 `qwen3.8:27b`; the separately installed `qwen3.8:27b-mlx` had a different digest.
-Neither is assumed to exist on another machine. This guide does not ask you to
-pull, replace or rename a model. An `-mlx` suffix alone proves no execution
-backend. Inspect the chosen model, using its actual inventory spelling:
+Neither is assumed to exist on another machine. On a fresh machine with an empty
+inventory, deliberately choose and download a model appropriate to your hardware
+using Ollama before continuing; that is a separate network download and disk
+allocation. Preserve working installed models. An `-mlx` suffix alone proves no
+execution backend. Inspect the chosen model, using its actual inventory spelling:
 
 ```bash
 ollama show qwen3.8:27b
@@ -188,6 +211,14 @@ Configure both `models.local_llm.model` (chat) and
 `agentic.deepagent_github.model` (planner) with your chosen tag in section 6.
 `/model use <tag>` changes chat selection only. Existing persisted chat selection
 can override the chat config, so inspect `/status` after restart.
+
+The shipped tag is `qwen3.8:27b-mlx`; it is a default string, not an installation
+check. A 27B model is not required just to use the app. Do not copy an example tag
+unless your inventory contains it. Chat uses `models.local_llm.base_url`; the
+planner uses `agentic.deepagent_github.base_url`. Both local paths require a
+loopback OpenAI-compatible service. An optional chat fallback is configured under
+`models.local_llm.fallback` and ships disabled. It does not configure the planner
+or certify the separate shared-readiness work tracked in issue #32.
 
 Keep historical model measurements separate from current settings. The native
 CLI and desktop runs used different recorded contexts; neither is a recommended
@@ -217,31 +248,49 @@ target/release/cgagentharness
 
 ### 5.2 macOS app
 
-To use an existing CI build, open the repository's
-[macOS desktop workflow](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml),
-select a successful run on `main`, and check its source commit. Download the
-`cg-agent-harness-macos-arm64-<commit>` artifact. GitHub's artifact archive contains
-the app ZIP and `SHA256SUMS`; extract that outer archive first, then check the
-inner ZIP from its extracted directory:
+Choose a **published release** for ordinary installation, or an exact **candidate
+artifact** when testing an unmerged PR:
+
+| Source | What to download | What it establishes |
+|---|---|---|
+| [Latest release](https://github.com/cgfixit/CG-agent-harness/releases/latest) | `CG-Agent-Harness-macos-universal.zip` and `SHA256SUMS` | Published release source identified in its notes |
+| Successful [Bundle run](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml) | `cg-agent-harness-macos-universal` Actions artifact | The selected run's branch and commit; may be unmerged |
+| Successful [desktop workflow](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml) | `cg-agent-harness-macos-universal` for a standalone dispatch | Desktop build checks for its selected source |
+
+The macOS `cgagentharness-macos-arm64` CLI archive is a different deliverable;
+it does not contain the native desktop app. Actions downloads may require GitHub
+login and expire after 14 days. Release assets are separate from that retention.
+Always inspect the source SHA and workflow conclusion, not only the run's date.
+
+For an Actions artifact, extract the outer download first. In the directory
+containing the **inner** app ZIP and checksum file, run:
 
 ```bash
 shasum -a 256 -c SHA256SUMS
+ditto -x -k CG-Agent-Harness-macos-universal.zip .
+cat 'CG Agent Harness.app/Contents/Resources/COMMIT'
 ```
 
-Artifacts have a 14-day retention period and are not a notarized release. If the
-artifact has expired or no successful build exists for the desired commit,
-build from a clean checkout instead:
+If the checksum fails, stop and obtain the matching archive/checksum pair again.
+Do not install a modified archive. The embedded commit should match the selected
+release or workflow source.
+
+To build your own universal app from a clean committed checkout, install both
+pinned toolchains (section 2.4), then both target standard libraries:
 
 ```bash
-scripts/package-desktop.sh --dmg
+rustup target add --toolchain 1.88 aarch64-apple-darwin x86_64-apple-darwin
+rustup target add --toolchain 1.90 aarch64-apple-darwin x86_64-apple-darwin
+scripts/package-desktop.sh --universal --dmg
 ```
 
-This requires both pinned toolchains and builds/signs the backend before the
-shell embeds its hash. Outputs in `dist/` are `CG Agent Harness.app`,
-`CG-Agent-Harness-macos-arm64.zip`, an optional DMG, and `SHA256SUMS`.
-The app's `Contents/Resources/COMMIT` identifies its source revision. A dirty
-checkout is refused unless `CGAH_ALLOW_DIRTY=1` explicitly marks a development
-build; keep that exception out of ordinary installation instructions.
+`--dmg` is optional. Outputs in `dist/` are `CG Agent Harness.app`,
+`CG-Agent-Harness-macos-universal.zip`, an optional DMG, and `SHA256SUMS`.
+Omitting `--universal` creates an arm64 development bundle. Packaging refuses a
+dirty checkout by default; commit reviewed source first so `Resources/COMMIT`
+identifies it. Do not use a dirty-build override for an ordinary release.
+The script signs the combined backend before the shell embeds its hash; replacing
+or re-signing only the backend afterward breaks the ownership check.
 
 Quit any existing copy with **Cmd-Q**, then unzip the app and move the complete
 bundle to Applications or a directory you own. Open it from Finder or the Dock.
@@ -250,7 +299,10 @@ adopt a server already running on port 8790. No login service is installed.
 
 The current app is **ad-hoc signed and not notarized**. Gatekeeper may require
 per-app approval under macOS Privacy & Security, or a managed policy may refuse
-it. Do not disable global Gatekeeper settings. Signature verification and a
+it. After verifying the source and attempting to open it, follow Apple's
+[per-app Open Anyway procedure](https://support.apple.com/en-us/102445) if offered.
+Do not disable global Gatekeeper settings or strip quarantine as a blanket fix.
+A damaged-bundle warning calls for re-download and integrity checks. Signature verification and a
 successful build do not prove native interaction acceptance; see
 [the acceptance checklist](docs/DESKTOP_ACCEPTANCE.md).
 
@@ -290,8 +342,8 @@ agentic:
 ```
 
 Relaunch the app or restart the same `serve` command. Existing homes are not overwritten with new
-configuration defaults; review new fields when upgrading. Do not create a
-`soul.md` file just to satisfy a setup check.
+configuration defaults; review new fields when upgrading. A missing `soul.md` is a valid starting state; section 7.2 explains optional
+explicit creation.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
 (Cmd-,) shows its owned endpoint and model/tool diagnostics. Use **Check installed
@@ -312,26 +364,159 @@ reply after starting Ollama can be slower, since it has to load the model into m
 If the browser page hangs and never responds, double-check that Ollama (section 4) is still
 available at its configured local endpoint.
 
-## 7. Take the console for a spin
+## 7. Chat, soul, skills and goals
 
-The console understands a set of slash commands typed directly into the same chat input. A few
-worth trying right away:
+Enter slash commands in the chat input, not Terminal. `/help` lists commands
+available in the installed version. Begin with `/status`, `/model`, `/skills all`
+and `/tools`. Registration is not readiness: an unknown prerequisite or empty
+last-result field is not evidence that an operation ran successfully.
 
-- `/status` — shows the selected model/provider, session settings and token counts.
-  Use `/github` for agentic status and inspect the saved config for write gates.
-- `/model use <name>` — selects an exact installed chat model; the planner stays separately configured.
-- `/skills` — lists the bundled skill files under `assets/skills/` (small prompt snippets the
-  console can inject into context).
-- `/tools` — lists every API surface the console exposes and whether it's actually wired up; a
-  wired entry means a registered surface, not complete behavioral acceptance.
-- `/session` — lists your chat sessions (each browser conversation is saved to disk under the
-  home directory described in section 8).
-- `/soul` — shows whether the "soul" personality file is active.
-- `/web` — shows the status of the outbound web-fetch allowlist (off by default; nothing reaches
-  the internet on your behalf without you explicitly allowing a domain first).
+### 7.1 Sessions and bounded chat continuation
 
-None of these commands touch a real code repository — that's a separate, optional layer covered
-in section 9.
+```text
+/session new Setup check
+/goal Explain this project's test strategy
+/goal
+```
+
+Send a short question and confirm a real reply. `/session list` lists saved
+sessions; `/session use <id>` reopens one and `/session rename <title>` renames
+the current one. `/tokens` shows its token usage.
+
+```text
+/loop 3
+/loop
+/loop stop
+/goal clear
+```
+
+`/loop 3` starts up to three follow-up chat turns toward the current goal. The
+default is three, hard maximum five. Manual mode pauses after each turn; another
+`/loop` continues. `/loop auto` toggles automatic continuation; enable it before
+starting, or follow it with `/loop` to resume a paused sequence. `/loop stop`
+requests cancellation during generation or cooldown. Goal clear and session
+switching stop continuation. Rate limits, failures, repeated output and token
+budgets can stop it earlier; the displayed `GOAL_DONE` marker is only model advice.
+
+This loop does not edit files, run skills as programs, or perform coding checks.
+The goal persists, while continuation counters and auto state are page state.
+Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
+an explicit separate workflow in section 9.4.
+
+### 7.2 Missing soul, effective prompt and persona editing
+
+**Missing soul means no persona file loaded, not a broken installation.** Fresh
+homes enable the soul toggle but do not create `soul.md`. The base chat prompt and
+the two seeded discipline skills still operate. A missing persona is not fetched
+from CyClaw or Codex automatically.
+
+```text
+/soul status
+/prompt
+/soul edit
+```
+
+`/soul status` distinguishes enabled, present, loaded, truncated and a safe failure
+reason. `/prompt` previews the next chat system prompt: fixed header and discipline
+contracts, selected optional prompt skills, enabled persona, session goal, injected
+web context and enabled memory notes. Preview is private context; review it before
+sharing. It is not the coding planner's prompt.
+
+To create or change persona in the editor:
+
+1. Enter bounded persona text, for example: “Use concise explanations. State
+   assumptions and list the evidence needed to verify a proposed fix.”
+2. Supply a reason for the edit and select **Preview prompt**.
+3. Review the preview, select the confirmation checkbox and **Save persona**.
+4. Close the editor, use `/soul on` if needed, then `/soul status` and `/prompt`
+   to verify the next chat sees the text.
+
+Edits save to `<harness home>/soul.md`; default maximum is 8,000 characters
+(`personality.soul_max_chars`). Empty, oversized, invalid and critical instruction-
+override content is refused. A stale revision cannot overwrite newer content:
+reload the editor and review again. The fixed contract is not editable through
+this dialog, and persona text never authorizes code execution.
+
+`/soul off` disables inclusion without deleting the file. Older versions without
+the editor allow deliberate manual editing of the active home's `soul.md`; use
+`/soul on` to enable it. New editor/proposal guarantees require the candidate
+implementation described at the top of this guide.
+
+**History and proposals:** replacement is atomic and saves the previous content
+as a private content-addressed backup. `/soul history` lists backup revisions.
+`/soul propose` stores proposed text without applying it and returns an ID. This
+accepts text you supply, including model-authored text; it does not automatically
+generate a new personality.
+
+```text
+/soul review <proposal-id>
+/soul apply <proposal-id> <reason>
+```
+
+Review first; issuing the apply command with a reason sends explicit confirmation
+for that exact reviewed revision. There is no additional proposal-apply dialog. To refuse it, use `/soul reject <proposal-id> <reason>` after review.
+Rejection preserves the active persona. Changed base content or already-decided
+proposals are refused. Backup/proposal storage is limited to 32 records and does
+not automatically delete old history. A storage failure after successful persona
+replacement can leave proposal status needing reconciliation; inspect both before
+retrying. [Chat workflow details](docs/CHAT_WORKFLOWS.md) explain history retrieval
+and restoration through the guarded edit flow.
+
+### 7.3 Runtime skills and Codex development skills
+
+| Kind | Location / selection | What it does |
+|---|---|---|
+| Seeded discipline | `<home>/skills/ponytail` and `karpathy-guidelines` | Automatically included chat contracts when their files load |
+| Optional runtime prompt skill | `<home>/skills/<id>/SKILL.md`; `/skill use <id>` | Adds bounded context to this session's chat |
+| Fixed check | `/skill check:cargo-test` | Selects a known check for an already staged coding request; no immediate execution |
+| Governed catalog entry | `/skills all` | Inventory only unless an implemented adapter says otherwise |
+| Codex development skill | Repository `.codex/skills` or Codex personal skill directory | Guides Codex maintaining the repository; not automatically an app runtime skill |
+
+To add optional context, create a local file in the **actual active home**, e.g.
+`skills/review-notes/SKILL.md`. Use a normal directory and file within the home;
+links cannot escape the skills-directory boundary. Example content:
+
+```markdown
+---
+name: Review notes
+---
+When explaining a change, identify its observable behavior and a targeted check.
+```
+
+Then select its **directory ID**, not its display name:
+
+```text
+/skills all
+/skill use review-notes
+/skill status
+/prompt
+```
+
+IDs allow lowercase ASCII letters, digits, hyphens and underscores, up to 80
+characters. Selection replaces the session's optional list; supply all wanted IDs
+in one `/skill use <id...>`. Up to four are retained, with defaults of 6,000
+characters per body and 16,000 total. Frontmatter is stripped. These limits live
+under `personality.prompt_skill_max_chars` and `personality.prompt_skills_total_chars`.
+
+After a successful chat, `/skill status` reports included IDs, lengths and hashes.
+That is the last successful snapshot, which can differ from current files or
+selection. It does not prove script execution. Missing/unreadable selected files
+refuse subsequent chat; restore them or `/skill clear`. Clearing optional context
+does not remove the seeded discipline contracts.
+
+### 7.4 Memory and web context
+
+`/memory` displays operator notes; `/memory add <note>` stores one, `/memory on`
+enables inclusion, and `/memory off` retains notes without including them.
+`/memory forget <id>` removes one; `/memory clear` removes all notes. These are
+separate from soul and do not establish full CyClaw structured-memory parity.
+
+`/web` displays the explicit web-fetch state. To use it, enable `/web on`, add a
+specific URL with `/web allow <https://host/path>`, then `/web fetch <url>` and
+inspect the result. `/web inject` supplies the last extract as chat context;
+`/web forget` clears injected context. `/web search <query>` scans allowlisted
+pages, not a general search engine. Web fetch ships off. This says nothing about
+separate configured GitHub/cloud operations or the model service's own networking.
 
 ## 8. Persistence, optional keys and recovery
 
@@ -344,6 +529,19 @@ not automatically configure a separately Finder-launched app. Setup shows the
 actual home. Config, credentials, sessions, notes, model selection and run evidence
 live outside the bundle, so replacing or uninstalling the app preserves them.
 
+| Home content | Purpose |
+|---|---|
+| `config.yaml` | Seeded configuration; edit existing mappings and restart |
+| `harness.json` | Persisted chat model selection, soul/memory/web toggles and other console settings |
+| `soul.md`, `soul-history/` | Optional persona and bounded editor backup/proposal records |
+| `skills/<id>/SKILL.md` | Runtime skill bodies; existing files are preserved |
+| `sessions/` | Chat history, goals, selected skills and current goal-stage linkage |
+| `memory/`, `tools/` | Operator notes and web context/allowlist state |
+| `.env`, optional `auth.json` | Managed credentials and configured account records; keep private |
+| `data/agentic/` | Registry, retained console jobs, workspaces and run evidence |
+| `logs/` | Bounded audit/spend/optional metrics logs |
+
+
 New homes ship `security.api_key_optional: true`. In an existing home's
 `config.yaml`, set that literal boolean and restart for credential-free local
 use. Existing settings are never overwritten merely by upgrading the app.
@@ -352,9 +550,9 @@ Forwarded requests do not qualify for the local key bypass; use key enforcement
 behind a proxy, including a proxy that strips forwarding headers.
 
 To opt into API-key enforcement, set `security.api_key_optional: false` and
-configure `CGAGENTHARNESS_API_KEY`. Standalone `serve` reads its process
-environment. Desktop startup also reads the home's private `.env` as data;
-it never sources a shell, and explicit inherited values take precedence.
+configure `CGAGENTHARNESS_API_KEY`. Desktop and Unix standalone `serve` read
+supported managed keys from the home's private `.env` as data, in addition to the
+process environment. Neither sources a shell; explicit inherited values take precedence.
 The file must be current-user-owned, regular, not a symlink, mode 0600 and no
 larger than 64 KiB. Setup can save a missing key but will not replace an existing
 one. Enter the matching value in the console after restart; it stays only in
@@ -392,15 +590,65 @@ Audit/spend/optional metrics JSONL logs retain a current file and one previous
 [console jobs](docs/CONSOLE_JOBS.md), [desktop recovery](docs/DESKTOP.md) and
 [process lifecycle](docs/PROCESS_LIFECYCLE.md) for precise limits.
 
+### Update, backup, rollback and uninstall
+
+Quit with Cmd-Q (closing the window only hides it), wait for work to stop, and
+back up the active home to a private location before upgrading a home you care
+about. It contains credentials and private conversation/run data. Keep the prior
+app archive and its source SHA if you need to compare versions.
+
+Verify and replace the complete app bundle. Configuration and existing skills
+are seeded only when absent; upgrading does not rewrite your existing defaults,
+model selection or persona. Merge new config fields deliberately instead of
+replacing your file with `assets/config.default.yaml`. An older binary may not
+understand newer state; inspect compatibility and use a preserved matching backup
+rather than blindly rolling back a live home. Never delete a lock to defeat a
+running owner. Uninstalling means quitting and removing only the app; deleting
+the home is a separate destructive choice.
+
+To test a candidate without using your normal home, launch it explicitly with a
+new absolute temporary home (adjust the app path):
+
+```bash
+candidate_home="$(mktemp -d /private/tmp/cgah-candidate.XXXXXX)"
+open -n --env "CGAGENTHARNESS_HOME=$candidate_home" '/Applications/CG Agent Harness.app'
+```
+
+Use Setup to confirm this home, then configure its exact model and keep write
+gates disarmed unless performing a deliberate disposable coding test. It will
+start without your normal sessions, optional skills, credentials or soul. An
+ordinary Finder launch later uses its normal environment/home. Do not change
+`HOME` to point at a test directory.
+
+### Release cadence and finding updates
+
+The app has no built-in updater. Download and replace it deliberately. The
+repository's [release workflow](.github/workflows/release.yml) checks changed main
+daily at **08:17 UTC** (04:17 New York during daylight time, 03:17 during standard
+time). Scheduled GitHub runs can be delayed. It skips unchanged source, verifies
+backend and universal desktop builds, then publishes a regular Latest release.
+Opening a PR does not publish a release; after a merge, the next scheduled check
+can include that new main source.
+
+Maintainers change the schedule in `.github/workflows/release.yml` through a PR.
+The manual workflow's `publish: false` default previews the plan; setting it true
+requests publication after verification. A pushed `v*` tag is another release
+trigger. See [release planning](scripts/release-plan.py) for source/version checks.
+A green Bundle run only creates artifacts; it does not itself publish a release.
+Changing cadence is a repository workflow change, not an app preference.
+
 ## 9. (Optional, advanced) Arm the coding pipeline
 
-Everything past this point is off by default and stays off until you deliberately turn it on. If
-you only wanted a local chat console, you can stop reading here.
+Coding execution is optional and disarmed by default. Complete this section only
+when you intend to authorize work in a selected repository.
 
 The coding pipeline can clone a GitHub repository, have the local model (or, optionally, a cloud
 model) propose a patch, verify that patch in a locked-down sandbox, and — only after you
-personally review and approve it — commit, push, and open a draft pull request. Every one of
-those steps is behind its own switch, and the shipped defaults keep all of them closed.
+personally review and approve it — commit, push, and open a draft pull request.
+The combined write policy ships closed: `agentic.enabled`,
+`agentic.deepagent_github.enabled` and `allow_git_write_tools` are false. Individual
+settings such as `mode: write`, `writes_enabled: true` and cloud-provider flags
+are not all false. Inspect the complete policy before enabling its master gates.
 
 ### 9.1 Install and authenticate the GitHub CLI
 
@@ -506,7 +754,40 @@ publication also requires `body`. Combined approval/push/publication is refused.
 Protected tests/build configuration remain protected; do not weaken that policy
 to get a proposal accepted. See [Bounded edits](docs/BOUNDED_EDITS.md).
 
-### 9.4 The kill switch
+### 9.4 Stage a session goal as a coding task
+
+After preparing the repository, tools and deliberate write configuration above:
+
+```text
+/goal Fix the arithmetic bug and pass the declared Cargo test
+/goal stage codex/arithmetic-fix
+/agent read src/lib.rs#L40-L80
+/skill check:cargo-test
+/agent iterations 1
+```
+
+Replace the sample file window with real relevant lines in your selected
+repository. Staging stores a reviewable goal/branch request; it creates no worker.
+Review the request before `/agent confirm <reason>`. One iteration is the default;
+retries remain bounded by the coding pipeline's configured/requested limits.
+
+Use `/goal task` to inspect progress or restore an unsubmitted stage after page
+refresh. The server binds submission to the current goal and stage and saves the
+job association before releasing the worker. A changed goal or duplicate submission
+is refused; inspect the existing job before deliberately staging another request.
+
+A checked candidate reports **awaiting_review**. `/agent status <run-id>` presents
+the complete diff; `/agent approve <run-id> <reason>` is a separate decision.
+**completed_local** requires checked-tree evidence and an approved commit. It does
+not mean pushed, published, or that every subjective goal has been independently
+proved. Continue with the separate push and PR-body/publication steps in 9.3.
+
+Each session retains one current stage; jobs/runs retain their own evidence within
+their documented limits. Reopening never replays execution or approval. Changing
+or clearing the chat goal does not cancel an already authorized coding job:
+`/agent stop <job-id>` is the explicit cancellation request.
+
+### 9.5 The kill switch
 
 To disable writes for a newly launched backend without editing its config, set
 this environment variable before launch (shown here for `serve`):
@@ -590,9 +871,21 @@ For a source-built app, also verify the separate desktop crate and packaged back
 (cd desktop && cargo fmt --all -- --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 (cd desktop && cargo deny check)
 CGAH_TEST_BINARY='dist/CG Agent Harness.app/Contents/MacOS/cgagentharness' python3 scripts/test-desktop-backend.py
-scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app'
+scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app' universal
 (cd dist && shasum -a 256 -c SHA256SUMS)
 ```
+
+For console interaction checks with installed Chrome and a Node runtime providing
+WebSocket (the recorded local run used Node 24):
+
+```bash
+node scripts/chat-browser-acceptance.mjs
+```
+
+The script uses an isolated browser profile and local mock APIs. On a different
+Chrome installation, set `CHROME_BIN` to its executable. It checks the real console
+and CSP but does not establish actual-model behavior or native WKWebView interaction.
+No new app build or model download is needed for this browser fixture.
 
 Run these after packaging in section 5.2. The shell embeds its signed sidecar's
 hash, so do not replace or re-sign just the backend afterward. The app bundle
@@ -605,18 +898,26 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown | Installed build predates the phase 0–4 controls | Inspect `/help` and bundle `Resources/COMMIT`; use the matching candidate or a release that includes those changes |
+| Soul says missing | No `soul.md` exists in this active home | Valid fresh-home state; use explicit `/soul edit` if you want persona, then `/soul on` and `/prompt` |
+| Soul saved but is not in chat | Toggle off, wrong home or rejected/stale save | Confirm Setup home, `/soul status`, editor result and `/prompt`; reload a stale editor before saving again |
+| Persona/proposal save conflicts or history is full | Base revision changed or 32-record store reached | Review current content/history; preserve and deliberately archive records if needed; do not retry blindly or delete the active persona |
+| Selected skill prevents chat | Missing, empty, unreadable or unsafe file; wrong directory ID | Check `<home>/skills/<id>/SKILL.md`; restore it or `/skill clear`, then inspect `/prompt` |
+| `/loop` does not edit the repository | It is chat continuation | Use the explicitly configured goal-to-coding workflow in section 9.4 |
+| Goal task is stale/interrupted/unavailable | Goal changed, job already submitted, restart interrupted work or retention removed job evidence | Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval or replay work from `GOAL_DONE` |
+| App asks for Rosetta or shows Intel-only kind | Old app copy, forced translation or separate Intel-only component | Verify the installed universal copy and both executable slices; see section 2.1 before changing the OS |
 | `401 Unauthorized` on harness requests | Key enforcement is enabled, or forwarding headers prevent the local bypass | For direct local use set `security.api_key_optional: true` and restart; for enforced access configure and enter the matching key |
 | App reports a home ownership conflict | Another app/server owns the same home | Quit that owner normally before retrying; do not delete its lock |
 | App waits at startup | File-access mediation, unavailable backend or damaged/moved bundle | Check macOS prompts; quit, move the complete app to Applications and retry; inspect Setup without deleting the home |
 | Changing config appears to do nothing | The running backend retains startup settings; closing its window only hides it | Quit with Cmd-Q and relaunch, or restart standalone `serve` |
 | Offline preparation fails in the app | Missing toolchain, Python/SDK, Cargo.lock, cached sources or an existing snapshot | Inspect Setup and the offline Cargo guide; the app does not download dependencies |
-| Chat hangs forever with no reply | Ollama isn't running, or hasn't finished loading the model into memory | Run the `curl` check from section 4; give the first request extra time after a fresh `ollama serve` |
+| Chat takes too long or times out | Wrong exact model/endpoint, unavailable service, slow loading or inference timeout | Check section 4 inventory, `/model` selection and Setup diagnostics; use `/loop stop` to cancel. Do not repeatedly submit the same request |
 | `cgagentharness: harness binds loopback only` and the server refuses to start | You passed `--host` with something other than a loopback address (e.g. `0.0.0.0`) | This is intentional — the console will never bind to a non-loopback address. Omit `--host` or use `127.0.0.1` |
 | `Address already in use` when starting `serve` | Another process occupies the standalone port | Identify it with `lsof -i :8790`; stop only its known owner or select another `--port`. A second server still needs a different home if the first owns it |
 | First `cargo build`/`cargo clippy` is very slow or seems stuck on "downloading components" | `rustup` is fetching the pinned 1.88 toolchain declared in `rust-toolchain.toml` | Expected on first use; let it finish. If it seems to genuinely hang, check your network connection |
 | `gh: command not found` when trying `/agent` commands | The GitHub CLI isn't installed (only needed for the optional pipeline in section 9) | `brew install gh && gh auth login` |
 | `/agent` commands report "Agentic layer disabled" | `agentic.enabled` is still `false` in `config.yaml` | Follow section 9.2, and make sure you restarted `serve` after editing the file |
-| A write action is refused | A current policy gate is closed, reason/confirm is absent, publication has no reviewed body, or the emergency switch is set | Re-read section 9.3/9.4; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` |
+| A write action is refused | A current policy gate is closed, reason/confirm is absent, publication has no reviewed body, or the emergency switch is set | Re-read section 9.3/9.5; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` |
 
 ## 13. Where to go next
 
@@ -628,11 +929,9 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 - **`AGENTS.md`** — the operating rules for anyone (human or AI agent) contributing code to this
   repository, including the quality bar every change is held to.
 
-## Cargo verification preparation
-
-Before running the coding pipeline with Cargo checks, follow
-[Offline Cargo verification](docs/OFFLINE_CARGO.md). The dependency preparation
-step may use authorized engineering network access; actual checks run offline.
-Select the repository first and prepare its committed Cargo.lock into the same
-application home used by the harness. A fresh home does not inherit the operator's
-Cargo cache. Tests must put generated state in their supplied temporary directory.
+- [Chat workflow reference](docs/CHAT_WORKFLOWS.md) — persona proposals, skill
+  bounds, goal completion evidence and remaining scope.
+- [Offline Cargo verification](docs/OFFLINE_CARGO.md) — dependency preparation
+  versus sandboxed execution.
+- [Canonical parity ledger](docs/parity/STATUS.md) — remaining connectors,
+  readiness, integration and governance work; inventory labels do not complete it.
