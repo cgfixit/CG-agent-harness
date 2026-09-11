@@ -187,9 +187,8 @@ impl ChatClient {
             })?;
             let status = resp.status();
             if !status.is_success() {
-                // Body stays out of the browser: a proxy 401 can echo credentials.
-                let preview: String = resp.text().await.unwrap_or_default().chars().take(200).collect();
-                tracing::debug!("harness chat upstream HTTP {status}: {preview}");
+                // Error bodies can echo credentials or never finish; drop them unread.
+                tracing::debug!("harness chat upstream HTTP {status}");
                 return Err(llm_err(format!("model server returned HTTP {}", status.as_u16())));
             }
             let parsed: Value = resp

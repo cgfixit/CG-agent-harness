@@ -208,6 +208,11 @@ through `src/shim`; it never imports the pipeline implementation. Model output
 passes scope, injection, edit-budget, and exact-content checks before candidate
 writes. Quoted YAML `"true"` does not enable a gate.
 
+Chat reports upstream HTTP failures as `502 HARNESS_LLM_ERROR` with the model
+server's status code. It drops error bodies without reading or logging them,
+including at debug level, so a stalled error body does not hold the chat gate.
+See [troubleshooting](setup-guide.md#12-troubleshooting) for diagnosis.
+
 `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` disables repository and PR mutations when
 inherited by the process. Setting it in another shell does not affect an existing
 process. Revoking YAML policy blocks later mutation boundaries; it does not cancel

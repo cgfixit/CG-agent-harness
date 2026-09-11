@@ -439,3 +439,62 @@ async fn soul_prompt_read_cannot_escape_the_home_through_a_symlink() {
         .unwrap()
         .contains("OUTSIDE_HOME_MARKER"));
 }
+
+#[tokio::test]
+async fn upstream_error_body_never_reaches_debug_logs() {
+    let log = tempfile::NamedTempFile::new().unwrap();
+    let writer = log.reopen().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.try_clone().unwrap())
+        .finish();
+    // Capture spawned HTTP tasks as well as the calling test thread.
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+    tracing::debug!("DEBUG_CAPTURE_ACTIVE");
+    let model = start_mock_model().await;
+    model.set_reply(json!({"__status": 401}));
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, body) = s.post_json("/api/chat", json!({"message": "x"})).await;
+    assert_eq!(status, 502);
+    assert!(message(&body).contains("HTTP 401"));
+    let logged = std::fs::read_to_string(log.path()).unwrap();
+    assert!(logged.contains("DEBUG_CAPTURE_ACTIVE"), "debug capture must be active");
+    assert!(logged.contains("harness chat upstream HTTP 401"));
+    assert!(
+        !logged.contains(r#"{"error":"x"}"#),
+        "upstream error body leaked into debug logs"
+    );
+}
+
+#[tokio::test]
+async fn upstream_error_headers_release_chat_without_waiting_for_the_body() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let upstream = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 8192];
+        assert!(stream.read(&mut request).await.unwrap() > 0);
+        stream
+            .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 1000000\r\n\r\n")
+            .await
+            .unwrap();
+        // Deliberately never send the advertised body or close the connection.
+        std::future::pending::<()>().await;
+    });
+    let s = spawn_server(&base, ServerOptions::default()).await;
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        s.post_json("/api/chat", json!({"message": "x"})),
+    )
+    .await;
+    upstream.abort();
+    s.state.chat.abort_in_flight();
+    let (status, body) = response.expect("known HTTP error must not wait for its body");
+    assert_eq!(status, 502);
+    assert_eq!(code(&body), "HARNESS_LLM_ERROR");
+    assert!(message(&body).contains("HTTP 503"));
+    assert!(!s.state.generation_gate.is_held());
+}
