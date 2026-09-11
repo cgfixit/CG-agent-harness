@@ -70,6 +70,10 @@ pub struct Session {
     /// Operator /goal. Never in `summary()` because GET /api/sessions is open.
     #[serde(default)]
     pub goal: String,
+    #[serde(default)]
+    pub selected_skills: Vec<String>,
+    #[serde(default)]
+    pub last_prompt_skills: Vec<Value>,
 }
 
 impl Session {
@@ -134,6 +138,8 @@ impl SessionStore {
             messages: Vec::new(),
             tally: TokenTally::default(),
             goal: String::new(),
+            selected_skills: Vec::new(),
+            last_prompt_skills: Vec::new(),
         };
         self.write(&session)?;
         Ok(session)
@@ -195,6 +201,7 @@ impl SessionStore {
         assistant_text: &str,
         model: &str,
         usage: &TokenTally,
+        prompt_skills: &[Value],
     ) -> Result<Session> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
@@ -214,6 +221,7 @@ impl SessionStore {
             session.messages.drain(0..drop);
         }
         session.model = model.to_string();
+        session.last_prompt_skills = prompt_skills.to_vec();
         session.tally.prompt_tokens += usage.prompt_tokens;
         session.tally.completion_tokens += usage.completion_tokens;
         session.tally.exchanges += 1;
@@ -235,6 +243,13 @@ impl SessionStore {
         }
         self.write(&session)?;
         Ok(session)
+    }
+
+    pub fn select_skills(&self, session_id: &str, ids: &[String]) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        session.selected_skills = ids.to_vec();
+        self.write(&session)
     }
 
     fn write(&self, session: &Session) -> Result<()> {

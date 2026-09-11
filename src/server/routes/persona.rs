@@ -270,8 +270,13 @@ pub async fn preview(
     };
     let skill_dir = state.home.skills_dir();
     let soul_path = state.home.soul_path();
+    let selected = super::skills::resolve(
+        &state,
+        session.as_ref().map(|s| s.selected_skills.as_slice()).unwrap_or(&[]),
+    )?;
     let inputs = PromptInputs {
         skills_dir: &skill_dir,
+        selected_skills: &selected,
         soul_enabled: settings.soul_enabled,
         soul_path: &soul_path,
         soul_max_chars: max_chars(&state),
@@ -283,7 +288,7 @@ pub async fn preview(
     let sections: Vec<Value> = DISCIPLINE_SKILLS
         .iter()
         .map(|id| {
-            let load = load_text(&skill_dir, &FsPath::new(id).join("SKILL.md"), true, usize::MAX);
+            let load = crate::server::prompts::load_skill(&skill_dir, id, 32768);
             json!({"origin":format!("skills/{id}/SKILL.md"), "state":load})
         })
         .collect();

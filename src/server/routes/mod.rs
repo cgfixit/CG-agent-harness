@@ -6,6 +6,7 @@ pub mod auth;
 pub mod core;
 pub mod panels;
 pub mod persona;
+pub mod skills;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -18,13 +19,15 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 47] = [
+pub const REGISTERED_PATHS: [&str; 49] = [
     "/",
     "/static/{name}",
     "/api/status",
     "/api/registry",
     "/api/tools",
     "/api/skills",
+    "/api/skills/check",
+    "/api/sessions/{session_id}/skills",
     "/api/web",
     "/api/web/allow",
     "/api/web/deny",
@@ -99,6 +102,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     // Guarded: rate limit -> same-origin -> API key -> CSRF.
     let guarded = Router::new()
+        .route("/api/skills/check", post(skills::check))
+        .route(
+            "/api/sessions/{session_id}/skills",
+            get(skills::selection).post(skills::select),
+        )
         .route("/api/prompt/preview", post(persona::preview))
         .route("/api/soul/document", get(persona::document).post(persona::edit))
         .route("/api/soul/proposals", post(persona::propose))
@@ -211,7 +219,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 47);
+        assert_eq!(REGISTERED_PATHS.len(), 49);
 
         let all = registered_paths();
         assert!(

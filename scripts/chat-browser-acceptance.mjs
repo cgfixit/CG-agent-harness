@@ -28,6 +28,16 @@ const server=createServer(async(req,res)=>{
  }
  const match=path.match(/^\/api\/sessions\/([^/]+)(\/goal)?$/);
  if(match){const s=sessions.get(match[1]);if(match[2])s.goal=body.goal;reply(s);return;}
+ if(path.match(/^\/api\/sessions\/[^/]+\/skills$/)){
+  const session=sessions.get(path.split('/')[3]);
+  if(req.method==='POST')session.selected=body.ids;
+  reply({selected:session.selected||[],last_result:[],ready:true});return;
+ }
+ if(path==='/api/agent/checks'){reply({profiles:[{name:'cargo-fmt'}],default_profile:'cargo-test',capabilities:{jobs:true},planner_model:'mock'});return;}
+ if(path==='/api/skills/check'){
+  if(body.id!=='check:cargo-fmt'){reply({detail:{code:'SKILL_ID',message:'Unknown fixed check'}},400);return;}
+  reply({id:body.id,profile:'cargo-fmt',executed:false});return;
+ }
  if(path==='/api/chat/cancel'){reply({cancelled:true});return;}
  if(path==='/api/chat'){
   if(mode==='delay'){setTimeout(()=>reply({reply:'late'}),2500).unref();return;}
@@ -78,8 +88,12 @@ try {
  mode='normal';await send('/loop auto');before=chatCount();const auto=send('/loop 3');await until('loopState && loopState.remaining === 2');await send('/loop stop');await auto;assert.equal(chatCount(),before+1,'stop during cooldown prevents another turn');
  await send('/loop auto');await send('/loop 2');await send('/goal clear');assert.equal(await evaluate('loopState'),null);assert.equal(await evaluate('sessionGoal'),'');
  await send('/goal Another goal');await send('/loop 2');await send('/session new');assert.equal(await evaluate('loopState'),null);
- assert.ok(!requests.some(r=>r[1].startsWith('/api/agent/')),'ordinary chat continuation never executes coding work');
- console.log(JSON.stringify({passed:true,coverage:['persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
+ await send('/skill use custom');assert.deepEqual([...sessions.values()].at(-1).selected,['custom']);
+ await send('/skill clear');assert.deepEqual([...sessions.values()].at(-1).selected,[]);
+ await send('/agent run codex/fixture Review only');await send('/skill check:cargo-fmt');assert.deepEqual(await evaluate('pendingAgentRun.checks'),['cargo-fmt']);
+ await send('/skill check:unknown');assert.deepEqual(await evaluate('pendingAgentRun.checks'),['cargo-fmt']);await send('/agent cancel');
+ assert.ok(!requests.some(r=>r[0]==='POST' && ['/api/agent/jobs','/api/agent/run'].includes(r[1])),'chat and skill staging never execute coding work');
+ console.log(JSON.stringify({passed:true,coverage:['prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

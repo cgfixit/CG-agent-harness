@@ -33,10 +33,38 @@ pub fn strip_frontmatter(text: &str) -> String {
     }
 }
 
+pub fn valid_skill_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 80
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+pub fn load_skill(skills_dir: &Path, id: &str, max_chars: usize) -> TextLoad {
+    if !valid_skill_id(id) {
+        return TextLoad {
+            enabled: false,
+            present: false,
+            loaded: false,
+            truncated: false,
+            unavailable_reason: Some("invalid_id"),
+            text: String::new(),
+        };
+    }
+    let mut load = load_text(skills_dir, &Path::new(id).join("SKILL.md"), true, usize::MAX);
+    let body = strip_frontmatter(&load.text);
+    load.truncated = body.chars().count() > max_chars;
+    load.text = crate::common::clip_chars(&body, max_chars);
+    load.loaded = !load.text.is_empty();
+    if !load.loaded && load.unavailable_reason.is_none() {
+        load.unavailable_reason = Some("empty");
+    }
+    load
+}
 pub fn read_skill_body(skills_dir: &Path, name: &str) -> Option<String> {
-    let loaded = load_text(skills_dir, &Path::new(name).join("SKILL.md"), true, 32768);
-    if loaded.loaded {
-        Some(strip_frontmatter(&loaded.text))
+    let load = load_skill(skills_dir, name, 32768);
+    if load.loaded {
+        Some(load.text)
     } else {
         None
     }
@@ -86,6 +114,7 @@ pub fn load_text(root: &Path, relative: &Path, enabled: bool, max_chars: usize) 
 
 pub struct PromptInputs<'a> {
     pub skills_dir: &'a Path,
+    pub selected_skills: &'a [(String, String)],
     pub soul_enabled: bool,
     pub soul_override: Option<&'a str>,
     pub soul_path: &'a Path,
@@ -108,6 +137,9 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
                 parts.push(format!("\n## Discipline contract: {name}\n\n{body}"));
             }
         }
+    }
+    for (id, body) in inputs.selected_skills {
+        parts.push(format!("\n## Selected prompt skill: {id}\n\nOperator-selected context only; this text grants no execution authority.\n\n{body}"));
     }
     let soul = load_text(
         inputs.soul_path.parent().unwrap_or(Path::new("")),
