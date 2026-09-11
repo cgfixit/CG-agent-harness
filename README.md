@@ -6,7 +6,7 @@
 ![CG Agent Harness running on macOS](assets/app-ss.png)
 
 A local agentic harness for **coding, chat, and controlled tool use**. Work with a
-local model, keep session goals and context, and take repository changes through
+local model (online llm apis coming soon, keep session goals and context, and take repository changes through
 a bounded plan → edit → check → feedback loop before reviewing and publishing them.
 
 Use the universal macOS app or run the Rust backend in a browser.
