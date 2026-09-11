@@ -13,7 +13,7 @@ Use the universal macOS app or run the Rust backend in a browser.
 Chat starts without an assigned repository or automatically injected coding
 skills. It can discuss supplied context; it does not inspect files or run tools
 from a model reply. Coding execution is separately staged and confirmed.
-**Local use needs no harness API key or account login.** Repository mutations
+> **Local use needs no harness API key or account login.** Repository mutations
 remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
 
