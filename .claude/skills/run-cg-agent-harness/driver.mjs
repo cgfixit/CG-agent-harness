@@ -151,15 +151,25 @@ async function shot(base, out, cmds) {
     page.on('pageerror', e => log('pageerror', e.message));
     await page.goto(base, {waitUntil: 'networkidle'});
     await page.waitForFunction(() => typeof onSend === 'function');
+    // The console keeps the operator key in #apiKey (page memory only) and
+    // attaches it as a bearer on every request; mirror client()'s attach-mode rule.
+    if (process.env.CGAH_BASE && process.env.CGAGENTHARNESS_API_KEY) await page.fill('#apiKey', process.env.CGAGENTHARNESS_API_KEY);
+    const errors = [];
     for (const cmd of cmds.length ? cmds : ['/status', 'hello from the driver']) {
       const before = await page.evaluate(() => document.getElementById('stream').innerText.length);
       await page.fill('#input', cmd); await page.evaluate(() => onSend());
       await page.waitForFunction(b => document.getElementById('stream').innerText.length > b, before, {timeout: 15000});
       await page.waitForFunction(() => !window.inflightChat, null, {timeout: 15000}).catch(() => {});
       await page.waitForTimeout(300);
+      // The console renders failures as `error: ...` system lines; a rendered
+      // error still grows #stream, so check the delta rather than trusting growth.
+      const delta = await page.evaluate(b => document.getElementById('stream').innerText.slice(b), before);
+      const err = delta.match(/^\s*error:.*$/mi);
+      if (err) { errors.push(`${cmd} -> ${err[0].trim()}`); log('command failed:', cmd, '->', err[0].trim()); }
     }
     console.log(await page.evaluate(() => document.getElementById('stream').innerText.slice(-1200)));
     await page.screenshot({path: out, fullPage: true}); log('screenshot', out);
+    if (errors.length) throw new Error(`${errors.length} console command(s) rendered an error (screenshot still written):\n  ${errors.join('\n  ')}`);
   } finally { await browser.close(); }
 }
 
