@@ -8,7 +8,7 @@ configured tools. **Native interaction acceptance is pending**; see
 
 ## Install and launch
 
-1. Unzip the arm64 archive and move **CG Agent Harness.app** to Applications
+1. Unzip the universal archive and move **CG Agent Harness.app** to Applications
    (or a directory you own). Quit an existing copy before replacing it.
 2. Open it from Finder or the Dock. No login item or service is installed.
 3. Start using the harness without entering an API key or logging in. For an
@@ -19,7 +19,7 @@ configured tools. **Native interaction acceptance is pending**; see
    matching key in the console. Setup can save a missing key and refuses to
    replace an existing one. Account login is needed only for account management.
 
-This build is **ad-hoc signed, arm64 only, and not notarized**. Its signature
+This build is **ad-hoc signed, universal (Apple Silicon + Intel), and not notarized**. Its signature
 checks integrity; it does not establish a publisher identity or satisfy normal
 Developer ID distribution. Gatekeeper may require an explicit per-app approval
 through macOS Privacy & Security, or reject it under managed policy. Do not
@@ -197,23 +197,30 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --locked
 cargo deny check
-scripts/package-desktop.sh --dmg
+rustup target add --toolchain 1.88 aarch64-apple-darwin x86_64-apple-darwin
+rustup target add --toolchain 1.90 aarch64-apple-darwin x86_64-apple-darwin
+scripts/package-desktop.sh --universal --dmg
 (cd desktop && cargo fmt -- --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 cargo deny --manifest-path desktop/Cargo.toml --config desktop/deny.toml check
 CGAH_TEST_BINARY='dist/CG Agent Harness.app/Contents/MacOS/cgagentharness' python3 scripts/test-desktop-backend.py
-scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app'
+scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app' universal
 (cd dist && shasum -a 256 -c SHA256SUMS)
 ```
 
 Use rustup's Cargo on PATH so each package's toolchain file applies. Build/sign
-the sidecar before compiling the shell's embedded hash. Packaging refuses a
+the universal sidecar before compiling either shell slice's embedded hash.
+The packager combines both backends with `lipo`, signs that file, then builds
+both shells against its SHA256. Do not re-sign the sidecar afterward. Packaging refuses a
 dirty tree unless `CGAH_ALLOW_DIRTY=1`, which marks the bundle as development.
 It produces `.app`, ZIP, optional DMG and SHA256SUMS in `dist/`; the bundle's
 `Contents/Resources/COMMIT` identifies the source commit. Build outputs are not
-committed. Dependency lockfiles and packaging steps are repeatable; byte-identical
+committed. Universal archives are named `CG-Agent-Harness-macos-universal.zip`;
+omitting `--universal` retains an arm64 development build. Tagged releases wait for
+both backend CI and this desktop job before attaching CLI and app packages.
+Cross-building Intel is not native Intel acceptance. Dependency lockfiles and packaging steps are repeatable; byte-identical
 rebuilds across SDK/signing/compiler environments are not claimed.
 
-Desktop CI checks arm64 architecture, system linkage, nested signatures, resources,
+Bundle calls reusable Desktop CI, which checks both arm64 and x86_64 architectures, system linkage, nested signatures, resources,
 CLI/worker dispatch, policy tests, extracted ZIP and dependencies. Artifacts retain
 the exact SHA for 14 days. Backend CI remains separate. A successful build is not
 GUI acceptance.
@@ -222,7 +229,7 @@ Tauri is pinned to 2.11.5. Its `tauri-utils` uses upstream commit
 `dd725f4b13c30a86b398ccc59eb498f151f461c5` to replace the unmaintained rust-unic
 chain with ICU through urlpattern 0.6. This requires desktop Rust 1.90; backend
 Rust 1.88 and its lockfile are unchanged. Desktop dependency policy uses the same
-advisory/license/source rules, scoped to the sole shipped Apple Silicon target,
+advisory/license/source rules, scoped to both shipped macOS targets,
 with only that upstream Git repository permitted and no advisory exceptions.
 This unreleased upstream pin needs review when moving to a published replacement.
 

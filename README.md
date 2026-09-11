@@ -1,7 +1,7 @@
 # CG-Agent-Harness
 
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
-[![macOS desktop](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml)
+[![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
 ![CG Agent Harness running on macOS](assets/app-ss.png)
 
@@ -34,10 +34,10 @@ pipeline with its own iteration budget, write policy, and review steps.
 
 ## Start the app or server
 
-### macOS desktop (Apple Silicon)
+### macOS desktop (Apple Silicon and Intel)
 
-Download the artifact from a successful `main` run of
-[macOS desktop](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml).
+Download `cg-agent-harness-macos-universal` from a successful `main` run of
+[Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml).
 Extract its ZIP and open **CG Agent Harness.app** from Finder, Applications, or
 the Dock. The app owns a bundled backend on an ephemeral loopback port; ordinary
 launch needs no Terminal, external browser, Rust, or Python.
@@ -47,13 +47,15 @@ To build the app from source on macOS:
 ```bash
 git clone https://github.com/cgfixit/CG-agent-harness.git
 cd CG-agent-harness
-scripts/package-desktop.sh
+rustup target add --toolchain 1.88 aarch64-apple-darwin x86_64-apple-darwin
+rustup target add --toolchain 1.90 aarch64-apple-darwin x86_64-apple-darwin
+scripts/package-desktop.sh --universal
 # dist/CG Agent Harness.app
-# dist/CG-Agent-Harness-macos-arm64.zip and dist/SHA256SUMS
+# dist/CG-Agent-Harness-macos-universal.zip and dist/SHA256SUMS
 ```
 
 The build requires the toolchains and macOS developer tools described in
-[desktop setup](docs/DESKTOP.md). The app is **ad-hoc signed, arm64 only, and not
+[desktop setup](docs/DESKTOP.md). The app is **ad-hoc signed, universal (Apple Silicon + Intel), and not
 notarized**. Automated bundle checks do not establish complete native interaction
 acceptance; see [the acceptance record](docs/DESKTOP_ACCEPTANCE.md).
 
@@ -216,9 +218,9 @@ token counts, fresh CSRF, and no replay with neither a key nor a login.
 | [Backend CI](.github/workflows/ci.yml) | PRs, `main`, and reusable release verification: formatting, Clippy with warnings denied, dependency policy, Rust 1.88 compatibility, release builds and verified CLI packaging, and Rust/public-backend tests on Linux and macOS. |
 | Coding and chat regression tests | Write-policy revocation, exact edits, clone jail, reviewed Git trees, detached-job cancellation, session/goal gates, loop budgets, and release of failed/cancelled chat claims. See [`tests/`](tests/). |
 | Native Cargo acceptance | Required macOS tests prepare locked dependencies, then exercise real Seatbelt restrictions and fixed Cargo checks. Linux/Windows backends do not establish equivalent confinement. |
-| [Desktop CI](.github/workflows/desktop.yml) | PRs, `main`, and manual runs build the app, run desktop policy and packaged-backend tests, verify signatures/checksums and the extracted bundle, then retain the arm64 ZIP and checksums as artifacts. |
+| [Desktop CI](.github/workflows/desktop.yml) | Bundle PRs/`main`, tag releases, and manual runs reuse this job to build the universal app, run desktop policy and packaged-backend tests, verify signatures/checksums and the extracted bundle, then retain the universal ZIP and checksums as artifacts. |
 | Workflow and source checks | Existing actionlint/zizmor, CodeQL, secret scanning, and PR-template workflows remain separate checks. |
-| [Tag release](.github/workflows/release.yml) | `v*` tags must pass reusable backend CI before clean CLI packaging. Publication downloads only release packages and verifies their checksums. Tagged CLI releases and desktop workflow artifacts are separate outputs. |
+| [Tag release](.github/workflows/release.yml) | `v*` tags must pass reusable backend CI before clean CLI packaging. Publication downloads only release packages and verifies their checksums. The reusable desktop job also gates publication and supplies the universal app ZIP and checksums. |
 
 CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
 does not prove real-model quality, complete native GUI behavior, or notarized
