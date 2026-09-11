@@ -1,4 +1,30 @@
-# Desktop acceptance — 2026-09-10
+# Desktop acceptance
+
+## Universal release verification — 2026-09-10
+
+Tested implementation: [432c11d](https://github.com/cgfixit/CG-agent-harness/commit/432c11d163f0b5416de0bcbf0c121a3371f28413),
+based on main [010d361](https://github.com/cgfixit/CG-agent-harness/commit/010d361db6960e57e77b4e0d3ac7746ac0e0e31f).
+The extracted universal ZIP launched through Launch Services from a path with spaces
+on the Apple M5 Pro / macOS 26.6.2 Mac below, with disposable homes and shipped
+write gates closed. No operator home or cloud provider was used.
+
+| Check | Result |
+|---|---|
+| arm64 app and owned backend | OS sampling identified ARM64 for both; owned loopback listener and local `qwen3.8:27b` chat returned `UNIVERSAL_READY` |
+| Intel app and owned backend | OS sampling identified X86-64 (translated) for both under existing Rosetta; same local chat succeeded |
+| Owner termination | SIGTERM of each test app was followed by app and owned-backend exit; native Cmd-Q interaction was not tested |
+| Package | Both architecture slices, system-only linkage, resources, strict nested ad-hoc signatures, ZIP extraction and worker dispatch passed |
+| Automated checks | Clean-main 167 backend tests; root fmt/Clippy; two desktop policy tests and desktop fmt/Clippy; 10 packaged-backend tests on each architecture; backend and both-architecture desktop dependency policies; actionlint and zizmor passed |
+| Project guidance | Three `.codex/skills` entrypoints passed the Codex skill validator |
+
+This establishes local launch and backend operation for both slices. It does not
+establish native Intel hardware compatibility, older macOS acceptance, WKWebView
+content/focus/dialog interaction, Developer ID signing or notarization. Those
+remain separate from the historical native interaction gate below. The initial
+smoke script missed a live listener because lsof resolved its address to a hostname;
+rerunning with numeric addresses fixed the test without an application change.
+
+## Earlier arm64 acceptance record — 2026-09-10
 
 **The native interaction gate is unmet.** The app launches on the actual Mac
 and its owned packaged backend completes local inference and sandboxed coding.
