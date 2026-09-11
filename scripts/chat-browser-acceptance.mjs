@@ -46,7 +46,7 @@ const server=createServer(async(req,res)=>{
  }
  if(path==='/api/chat/cancel'){reply({cancelled:true});return;}
  if(path==='/api/chat'){
-  if(mode==='delay'){setTimeout(()=>reply({reply:'late'}),2500).unref();return;}
+  if(mode==='delay'){setTimeout(()=>reply({reply:'LATE_OLD_REPLY',session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:2},tally:{total:3}}),500).unref();return;}
   if(mode==='rate'){reply({detail:{code:'LOOP_RATE_LIMIT',message:'rate fixture'}},429);return;}
   if(mode==='failure'){reply({detail:{code:'HARNESS_LLM_ERROR',message:'failure fixture'}},502);return;}
   reply({reply:mode==='done'?'GOAL_DONE':mode==='repeat'?'same':'reply '+requests.length,session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:tokens},tally:{total:tokens}});return;
@@ -141,6 +141,31 @@ try {
  mode='normal';await send('/loop auto');before=chatCount();const auto=send('/loop 3');await until('loopState && loopState.remaining === 2');await send('/loop stop');await auto;assert.equal(chatCount(),before+1,'stop during cooldown prevents another turn');
  await send('/loop auto');await send('/loop 2');await send('/goal clear');assert.equal(await evaluate('loopState'),null);assert.equal(await evaluate('sessionGoal'),'');
  await send('/goal Another goal');await send('/loop 2');await send('/session new');assert.equal(await evaluate('loopState'),null);
+ const firstSession=[...sessions.values()][0];
+ firstSession.messages=Array.from({length:12},(_,i)=>({role:i%2?'assistant':'user',content:'OLD_MESSAGE_'+i}));
+ await send('/session use '+firstSession.session_id);
+ assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'switch renders the selected session, including its older messages');
+ await send('/session use '+firstSession.session_id);
+ assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'reselecting a session must not duplicate its transcript');
+ await send('/agent run codex/old Old staged work');
+ await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}');
+ await evaluate('document.querySelector("#pane-sessions .cmd-item").click()');
+ await until('currentSession !== '+JSON.stringify(firstSession.session_id));
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("OLD_MESSAGE_")'),false,'new session clears the old transcript');
+ assert.equal(await evaluate('pendingAgentRun'),null);assert.equal(await evaluate('shownAgentDiffs.size'),0);assert.equal(await evaluate('reviewedSoulProposal'),null);
+ // Model replies can finish despite cancellation; they must not switch the selected session back.
+ await evaluate('window.originalFetch=window.fetch; window.fetch=(url,opts)=>window.originalFetch(url,String(url)==="/api/chat"?{...opts,signal:undefined}:opts)');
+ mode='delay';const oldReply=send('OLD_INFLIGHT_MESSAGE');await until('!!inflightChat');
+ const oldSession=await evaluate('currentSession');
+ await evaluate('document.querySelector("#pane-sessions .cmd-item").click()');
+ await until('currentSession !== '+JSON.stringify(oldSession));
+ const newSession=await evaluate('currentSession');
+ await oldReply;
+ assert.equal(await evaluate('currentSession'),newSession,'late reply must not restore the old session ID');
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("LATE_OLD_REPLY")'),false);
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("OLD_INFLIGHT_MESSAGE")'),false);
+ await evaluate('window.fetch=window.originalFetch');mode='normal';
+ await send('NEW_SESSION_MESSAGE');assert.equal(requests.filter(r=>r[1]==='/api/chat').at(-1)[2].session_id,newSession);
  await send('/skill use custom');assert.deepEqual([...sessions.values()].at(-1).selected,['custom']);
  await send('/skill clear');assert.deepEqual([...sessions.values()].at(-1).selected,[]);
  await send('/agent run codex/fixture Review only');await send('/skill check:cargo-fmt');assert.deepEqual(await evaluate('pendingAgentRun.checks'),['cargo-fmt']);
@@ -153,7 +178,7 @@ try {
  await send('/session use '+goalSession);await send('/goal task');assert.equal(await evaluate('pendingAgentRun.goal_stage.session_id'),goalSession);
  await send('/agent confirm');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture','missing reason keeps request staged');
  assert.ok(!requests.some(r=>r[0]==='POST' && ['/api/agent/jobs','/api/agent/run'].includes(r[1])),'chat and skill staging never execute coding work');
- console.log(JSON.stringify({passed:true,coverage:['goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
+ console.log(JSON.stringify({passed:true,coverage:['fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

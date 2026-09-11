@@ -279,6 +279,8 @@ pub async fn chat(
         goal: Some(&session.goal),
         web_context: Some(&web_context),
         memory_context: memory_context.as_deref(),
+        memory_enabled: settings.memory_enabled,
+        web_enabled: settings.web_enabled,
     });
     let (turns, chars) = if req.loop_turn {
         (LOOP_HISTORY_TURNS, LOOP_HISTORY_CHARS)

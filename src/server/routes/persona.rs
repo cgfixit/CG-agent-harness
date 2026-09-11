@@ -282,6 +282,8 @@ pub async fn preview(
         goal: session.as_ref().map(|s| s.goal.as_str()),
         web_context: Some(&web),
         memory_context: Some(&memory),
+        memory_enabled: settings.memory_enabled,
+        web_enabled: settings.web_enabled,
     };
     let sections: Vec<Value> = selected
         .iter()

@@ -12,6 +12,20 @@ home leaves `agentic.repo` empty and refuses coding enablement until an explicit
 session and inspect enabled persona/notes when comparing behavior with an older
 conversation; prior assistant messages can still bias subsequent model replies.
 
+## Session boundaries
+
+`/session new` replaces the transcript and starts a separate message history,
+goal, and skill selection. `/session use <id>` restores only that session's
+retained messages, without appending duplicate copies. Switching cancels the
+browser's current generation wait and ignores late replies from older selections.
+Hidden coding/proposal reviews are cleared, so an unseen review cannot remain
+armed. Existing saved sessions are not deleted. `/clear` clears the display only.
+
+Shared persona and enabled memory/web context survive new sessions. The header
+token count covers all saved sessions; `/tokens` reports the selected session.
+`/prompt` exposes shared context; use its explicit toggles when you want to exclude
+it. Do not confuse a new conversation with deleting all shared notes/persona.
+
 ## See what is available
 
 `/tools <name>` reports route registration separately from known enablement and
@@ -34,10 +48,18 @@ The repository's `.codex/skills` and Codex's personal skills are development
 instructions for Codex. They are not automatically installed into the app's
 runtime skill directory.
 
+Chat is told which application features exist and how the operator invokes them.
+It still has no callable tools, including `gh`. A prose request to save or delete
+memory does not execute a command. `/memory` lists persistent notes and
+`/memory add <note>` saves literal text; it does not archive or summarize sessions.
+Included notes are real stored content, not placeholders. Model answers can still
+be wrong; only actual command results establish successful execution.
+
 ## Inspect and edit the chat prompt
 
 `/prompt` opens a private snapshot of the next chat system prompt. It includes
-the general-chat header, selected prompt skills, enabled persona, the current
+the general-chat header, an operator-command guide and current inclusion settings,
+selected prompt skills, enabled persona, the current
 session goal, explicitly injected web context while web is enabled, and enabled
 memory notes. It is not a transcript or the coding planner's prompt. The API also reports source
 load state and limits. No credentials file is included. Private preview/editor
@@ -146,12 +168,10 @@ independently understood. Push and PR publication remain separate actions.
 
 ## Delivery and remaining scope
 
-Implementation order: #35 (phases 0–1), #36 (phase 2), #37 (phase 3), #38 (phase 4),
-then the documentation PR. Each PR targets its predecessor. Keep predecessor
-branches while dependent PRs remain open. After squash-merging a predecessor,
-rebase its child onto refreshed main using the child's old base as the boundary,
-then update with an exact force-with-lease; do not blindly merge stale copies of
-all predecessor commits. The stack handoff records exact heads and CI state.
+The historical #35–#41 stack did not deliver all predecessor changes to `main`.
+Check current code and the parity ledger before claiming a feature is delivered.
+Current repository policy requires every new PR to target `main`; verify its
+exact source and checks independently from native application acceptance.
 
 Automatic arbitrary model tool calls, unattended restart/replay, new executable
 skill discovery and general soul-evolution scheduling are not implemented.

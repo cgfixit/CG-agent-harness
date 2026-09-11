@@ -1,8 +1,10 @@
 # Security policy
 
 CGagentHarness is early software (`0.1.x` / `main`). This repo is a
-loopback-only Rust coding harness. It is **not** CyClaw: there is no RAG,
-corpus, soul, or Telegram surface here.
+loopback-only Rust chat and coding harness. Persistent sessions, operator memory
+notes and an explicitly edited chat persona are local application surfaces.
+There is no RAG, corpus or Telegram integration. New sessions retain shared
+persona and enabled notes/web context; they do not erase that stored data.
 
 ## Supported versions
 

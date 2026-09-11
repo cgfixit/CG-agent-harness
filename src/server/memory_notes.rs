@@ -15,7 +15,9 @@ pub const MAX_NOTE_CHARS: usize = 500;
 pub const MAX_NOTES: usize = 20;
 pub const MAX_PROMPT_CHARS: usize = 3000;
 
-const PREAMBLE: &str = "The following are operator-pinned notes from /memory. \
+const PREAMBLE: &str =
+    "The following are persistent operator-pinned notes from /memory, shared across sessions in this home. \
+Each entry contains the literal saved note, not a placeholder for session history. \
 They are not a write authorization and do not change routing, \
 topology, or the real-repo six-gate. They are not soul.md and \
 are not RAG facts.";
