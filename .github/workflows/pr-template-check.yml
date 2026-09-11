@@ -14,6 +14,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Stacked-base guard. PRs #36-#41 were squash-merged into their predecessor
+  # feature branches instead of main, so GitHub showed them "merged" while the
+  # work never reached main (recovered by #45). Fail any PR whose base is not
+  # main. Make this check required on ALL branches (a ruleset
+  # targeting every branch, not just main) so a merge into a feature branch is
+  # blocked, not merely flagged.
+  base-branch:
+    name: base branch is main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const base = pr.base.ref;
+            const ok = base === "main";
+            const marker = "<!-- pr-base-check -->";
+            const text = ok
+              ? `${marker}\n✅ Base branch \`${base}\` is an integration branch.`
+              : `${marker}\n❌ This PR targets \`${base}\`, not \`main\`. Stacking PRs on another feature branch is how #36-#41 were "merged" without reaching main.\n\nRetarget it: **Edit** (next to the title) → base: \`main\`, or \`gh pr edit ${pr.number} --base main\`. \`main\` is the only allowed base.`;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number });
+            const mine = comments.find(c => c.body && c.body.startsWith(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: mine.id, body: text });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number, body: text });
+            }
+            if (!ok) core.setFailed(`PR base is '${base}'; must be main.`);
+
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 10

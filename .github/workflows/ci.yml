@@ -82,6 +82,11 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          # Only main writes the cache: PR runs restore main's entry instead of
+          # each branch saving its own and evicting the others (10 GB repo cap).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
@@ -110,6 +115,11 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          # Only main writes the cache: PR runs restore main's entry instead of
+          # each branch saving its own and evicting the others (10 GB repo cap).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The workspace jail + smoke tests drive a real git; a bare identity keeps
       # them independent of the runner's global config.
       - name: Git identity for the test fixtures
@@ -148,6 +158,11 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          # Only main writes the cache: PR runs restore main's entry instead of
+          # each branch saving its own and evicting the others (10 GB repo cap).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --test invariant_guard --locked
 
   smoke-real-repo-run:
@@ -166,6 +181,11 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          # Only main writes the cache: PR runs restore main's entry instead of
+          # each branch saving its own and evicting the others (10 GB repo cap).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: |
           git config --global user.email "ci@example.invalid"
           git config --global user.name "CI"
@@ -217,6 +237,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: "1.88"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: msrv
+          # Only main writes the cache: PR runs restore main's entry instead of
+          # each branch saving its own and evicting the others (10 GB repo cap).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --all-targets --locked
 
   release-build:
@@ -245,6 +271,11 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release-${{ runner.os }}
+          # Only main writes the cache: PR runs restore main's entry instead of
+          # each branch saving its own and evicting the others (10 GB repo cap).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --release --locked
       - name: Smoke the built binary (loopback-only bind guard, exit-code contract)
         shell: bash
