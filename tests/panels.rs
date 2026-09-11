@@ -211,6 +211,36 @@ async fn start_page_server(body: &'static str, ctype: &'static str) -> std::net:
 }
 
 #[tokio::test]
+async fn web_search_fetches_each_overlapping_allowlist_entry() {
+    let model = start_mock_model().await;
+    let page = start_page_server("Searchable page", "text/plain").await;
+    let opts = ServerOptions {
+        web_resolve: Some(("docs.example".to_string(), page)),
+        ..ServerOptions::default()
+    };
+    let s = spawn_server(&model.base_url(), opts).await;
+    let root = format!("http://docs.example:{}/", page.port());
+    let child = format!("{root}docs/page");
+    for url in [&root, &child] {
+        let (status, body) = s.post_json("/api/web/allow", json!({"url": url})).await;
+        assert_eq!(status, 200, "{body}");
+    }
+    let (status, body) = s.post_json("/api/web", json!({"enabled": true})).await;
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = s.post_json("/api/web/search", json!({"query": "Searchable"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["scanned"], 2);
+    assert_eq!(body["errors"], json!([]));
+    let urls: Vec<_> = body["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["url"].clone())
+        .collect();
+    assert_eq!(urls, vec![json!(root), json!(child)]);
+}
+
+#[tokio::test]
 async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
     let model = start_mock_model().await;
     let page = start_page_server("<html><head><style>x{}</style><script>evil()</script></head><body><h1>Title</h1><p>Hello &amp; welcome to the docs page</p></body></html>", "text/html; charset=utf-8").await;
