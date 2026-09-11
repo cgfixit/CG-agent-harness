@@ -395,7 +395,17 @@ last-result field is not evidence that an operation ran successfully.
 
 Send a short question and confirm a real reply. `/session list` lists saved
 sessions; `/session use <id>` reopens one and `/session rename <title>` renames
-the current one. `/tokens` shows its token usage.
+the current one. `/tokens` shows its token usage; the header's **all sessions**
+count is cumulative across saved sessions.
+
+New/session-switch actions replace the visible transcript, stop chat continuation,
+discard delayed replies from the previous selection, and clear hidden staged
+coding/persona reviews. Saved sessions remain intact; switching restores their
+retained messages. A new session has no prior messages, goal, or selected prompt
+skills. Persona, enabled notes, and enabled web context remain shared within the
+home. `/clear` only clears the display; it does not reset the model's session
+history. Use `/session new` for a separate conversation. There is currently no
+in-app command to delete saved sessions.
 
 ```text
 /loop 3
@@ -601,6 +611,14 @@ extract facts, index documents or provide structured RAG retrieval.
 /memory on
 /prompt
 ```
+
+Chat receives a guide to these controls plus current inclusion settings. It has
+no callable tools, including `gh`; it can explain commands and list the notes
+actually included in its prompt, but cannot perform saves or deletes itself.
+Plain-language requests go to the model; slash commands execute in the console.
+`/memory add save all session history` stores those exact words, not a summary
+or a reference that loads other sessions. Store concrete facts or a reviewed
+summary instead. The app saves bounded conversation histories separately.
 
 Adding a note stores it but does **not** enable inclusion. `/memory` displays the
 state and note IDs. `/memory forget <id>` deletes one note; `/memory clear`

@@ -185,7 +185,7 @@
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
       </span>
       <div class="pill model">model <b id="hModel">…</b></div>
-      <div class="pill">tokens <b id="hTokens">0</b></div>
+      <div class="pill" title="Total tokens across all saved sessions">all sessions · tokens <b id="hTokens">0</b></div>
       <div class="dot" id="hDot" title="server status"></div>
     </div>
   </div>
@@ -292,6 +292,7 @@ function canonicalRepoRelativePath(raw) {
 const csrfMeta = document.querySelector('meta[name="csrf-token"]');
 const CSRF_TOKEN = csrfMeta ? csrfMeta.content : '';
 
+let sessionRevision = 0; // Discard replies and navigation responses from an older selection.
 let currentSession = null;   // session_id string or null
 let soulEnabled = true;
 let soulStatus = {};
@@ -946,6 +947,14 @@ function showAgentRecord(rec) {
     sys('done with this run? reclaim its clone with:  /agent discard ' + rec.run_id);
 }
 
+function clearTranscript() {
+  stream.textContent = '';
+  shownAgentDiffs.clear();
+  // Hidden reviews must not remain armed after their display is cleared.
+  pendingAgentRun = null;
+  reviewedSoulProposal = null;
+}
+
 /* ── slash commands ── */
 async function runSlash(line) {
   const parts = line.slice(1).split(/\s+/).filter(Boolean);
@@ -964,24 +973,30 @@ async function runSlash(line) {
 
       case 'session': {
         const sub = rest[0] || 'list';
-        if (sub === 'new') {
-          const s = await api('/api/sessions', 'POST', { title: rest.slice(1).join(' ') });
-          currentSession = s.session_id;
-          sessionGoal = '';
-          loopState = null;
-          paintGoalLoop();
-          sys('session created: ' + s.session_id + ' — ' + s.title);
-        } else if (sub === 'use') {
-          const s = await api('/api/sessions/' + encodeURIComponent(rest[1] || ''));
-          currentSession = s.session_id;
-          sys('switched to session ' + s.session_id + ' — ' + s.title +
-              ' (' + s.message_count + ' messages, ' + s.tokens.total + ' tokens)');
-          sessionGoal = typeof s.goal === 'string' ? s.goal : '';
-          loopState = null;
-          paintGoalLoop();
-          s.messages.slice(-10).forEach(m => {
-            if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
-          });
+        if (sub === 'new' || sub === 'use') {
+          const revision = ++sessionRevision;
+          sendBtn.disabled = true;
+          if (inflightChat) await requestLoopStop(); else stopLoop();
+          try {
+            const s = sub === 'new'
+              ? await api('/api/sessions', 'POST', { title: rest.slice(1).join(' ') })
+              : await api('/api/sessions/' + encodeURIComponent(rest[1] || ''));
+            if (revision !== sessionRevision) break;
+            clearTranscript();
+            currentSession = s.session_id;
+            sessionGoal = typeof s.goal === 'string' ? s.goal : '';
+            loopAuto = false;
+            paintGoalLoop();
+            sys((sub === 'new' ? 'session created: ' : 'switched to session ') + s.session_id + ' — ' + s.title);
+            if (sub === 'new') sys('Fresh conversation. Shared persona, enabled memory notes and web context remain; /prompt shows what is included.');
+            (s.messages || []).forEach(m => {
+              if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
+            });
+          } catch (e) {
+            if (revision === sessionRevision) throw e;
+          } finally {
+            if (revision === sessionRevision) sendBtn.disabled = false;
+          }
         } else if (sub === 'rename') {
           if (!currentSession) { sys('no active session'); break; }
           const s = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/rename', 'POST', { title: rest.slice(1).join(' ') });
@@ -1660,12 +1675,7 @@ async function runSlash(line) {
         break;
       }
       case 'clear':
-        stream.textContent = '';
-        shownAgentDiffs.clear();
-        /* the staged proposal was only ever visible in the stream it just
-           wiped, so leaving it armed would let a later /agent confirm
-           authorize a run the operator can no longer see */
-        pendingAgentRun = null;
+        clearTranscript();
         loopState = null;
         paintGoalLoop();
         break;
@@ -1757,8 +1767,9 @@ function requestLoopStop(reason) {
   if (inflightChat) {
     try { inflightChat.abort(); } catch (e) { /* already finished */ }
   }
-  api('/api/chat/cancel', 'POST').catch(function () { /* best-effort Metal release */ });
+  const cancelled = api('/api/chat/cancel', 'POST').catch(function () { /* best-effort Metal release */ });
   stopLoop(reason);
+  return cancelled;
 }
 
 window.addEventListener('beforeunload', function () {
@@ -1771,13 +1782,16 @@ window.addEventListener('beforeunload', function () {
 });
 
 async function sendChat(text, asLoop) {
+  const revision = sessionRevision;
   user(text);
   sendBtn.disabled = true;
-  inflightChat = new AbortController();
+  const controller = new AbortController();
+  inflightChat = controller;
   const body = { message: text, session_id: currentSession };
   if (asLoop) body.loop = true;
   try {
     const r = await api('/api/chat', 'POST', body);
+    if (revision !== sessionRevision) return null;
     currentSession = r.session_id;
     $('sSession').textContent = currentSession;
     if (loopState && r.usage) {
@@ -1789,15 +1803,17 @@ async function sendChat(text, asLoop) {
     await refreshSessions();
     return r.reply;
   } catch (e) {
+    if (revision !== sessionRevision) return null;
     if (e && e.name === 'AbortError') return null;
     const code = e && e.code ? e.code : '';
     const wait = e && e.retryAfter ? e.retryAfter : 0;
     if (asLoop && loopState && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT') && wait > 0 && wait <= LOOP_RETRY_CAP_SEC && loopState.auto && !loopState.stop) {
       sys('rate limited (' + code + ') — waiting ' + wait + 's then retrying this turn');
       await sleepMs(wait * 1000);
-      if (!loopState || loopState.stop) return null;
+      if (revision !== sessionRevision || !loopState || loopState.stop) return null;
       try {
         const retry = await api('/api/chat', 'POST', body);
+        if (revision !== sessionRevision) return null;
         currentSession = retry.session_id;
         $('sSession').textContent = currentSession;
         if (loopState && retry.usage) {
@@ -1809,6 +1825,7 @@ async function sendChat(text, asLoop) {
         await refreshSessions();
         return retry.reply;
       } catch (e2) {
+        if (revision !== sessionRevision) return null;
         if (e2 && e2.name === 'AbortError') return null;
         sys('error: ' + e2.message);
         stopLoop('loop stopped — ' + ((e2 && e2.code) || code));
@@ -1823,9 +1840,8 @@ async function sendChat(text, asLoop) {
     sys('error: ' + e.message);
     return null;
   } finally {
-    inflightChat = null;
-    sendBtn.disabled = false;
-    input.focus();
+    if (inflightChat === controller) inflightChat = null;
+    if (revision === sessionRevision) { sendBtn.disabled = false; input.focus(); }
   }
 }
 

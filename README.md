@@ -125,6 +125,12 @@ bounded prompt context, including the optional seeded `ponytail` and
 inclusion hashes; `/skill clear` clears it. Repository `.codex/skills` guide
 Codex development and are separate from these runtime skills.
 
+`/session new` clears the visible conversation and starts separate message/goal/skill
+context. Switching sessions restores only that session’s saved messages. Shared
+persona and enabled memory/web context remain; `/prompt` shows them. Chat knows
+the operator commands, but cannot execute them. `/memory` lists real saved notes;
+`/memory add <note>` saves literal text, not an instruction to archive every session.
+
 To deliberately turn the current goal into coding work, use
 `/goal stage codex/<topic>`, inspect the staged request and checks, then
 `/agent confirm <reason>`. `/goal task` restores a staged request or shows its

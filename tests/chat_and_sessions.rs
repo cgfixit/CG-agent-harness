@@ -3,6 +3,78 @@
 
 mod common;
 
+#[tokio::test]
+async fn new_session_isolates_history_goal_and_skills_but_keeps_explicit_shared_notes() {
+    let model = common::start_mock_model().await;
+    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let (_, first) = s.post_json("/api/sessions", serde_json::json!({})).await;
+    let id = first["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{id}/goal"),
+        serde_json::json!({"goal":"OLD_SESSION_GOAL"}),
+    )
+    .await;
+    s.post_json(
+        "/api/chat",
+        serde_json::json!({"session_id":id,"message":"OLD_SESSION_MESSAGE"}),
+    )
+    .await;
+    s.post_json(
+        "/api/memory/add",
+        serde_json::json!({"text":"SHARED_NOTE_2_PLUS_2_EQUALS_4"}),
+    )
+    .await;
+    let (_, second) = s.post_json("/api/sessions", serde_json::json!({})).await;
+    let fresh = second["session_id"].as_str().unwrap();
+    assert_ne!(fresh, id);
+    assert_eq!(second["message_count"], 0);
+    assert_eq!(second["tokens"]["total"], 0);
+    assert!(s.state.store.get(fresh).unwrap().selected_skills.is_empty());
+    for enabled in [true, false] {
+        s.post_json("/api/memory", serde_json::json!({"enabled":enabled})).await;
+        let (_, preview) = s
+            .post_json("/api/prompt/preview", serde_json::json!({"session_id":fresh}))
+            .await;
+        let (status, reply) = s
+            .post_json(
+                "/api/chat",
+                serde_json::json!({"session_id":fresh,"message":"List memories"}),
+            )
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        let request = model.last_request().unwrap();
+        let prompt = request["messages"][0]["content"].as_str().unwrap();
+        assert_eq!(preview["prompt"], prompt);
+        assert!(!request.to_string().contains("OLD_SESSION_MESSAGE"));
+        assert!(!request.to_string().contains("OLD_SESSION_GOAL"));
+        assert_eq!(prompt.contains("SHARED_NOTE_2_PLUS_2_EQUALS_4"), enabled);
+        assert!(prompt.contains(&format!("memory={enabled}")));
+        assert!(prompt.contains("You have no callable tools in this chat, including gh"));
+        for command in [
+            "/memory add",
+            "/memory forget",
+            "/session new",
+            "/prompt",
+            "/goal stage",
+            "/skill use",
+            "/web",
+        ] {
+            assert!(prompt.contains(command), "missing operator guidance for {command}");
+        }
+        assert!(prompt.contains("not a placeholder"));
+    }
+    assert_eq!(
+        s.get_json("/api/memory").await.1["count"],
+        1,
+        "disabling inclusion preserves notes"
+    );
+    assert_eq!(
+        s.state.store.get(id).unwrap().messages.len(),
+        2,
+        "old sessions are preserved"
+    );
+}
+
 use common::*;
 use reqwest::Method;
 use serde_json::json;
