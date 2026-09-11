@@ -72,6 +72,34 @@ Read the relevant entrypoint under `.codex/skills` when its task applies:
 - `cgagentharness-release/SKILL.md`: universal macOS packaging, native acceptance,
   workflow provenance and release preparation.
 - `cgagentharness-verify/SKILL.md`: isolated backend, desktop and local-model checks.
+- `fable-protocol/SKILL.md`: evidence-first reasoning and verification discipline;
+  load before costly code/security/CI/GitHub claims.
+- `cgagentharness-invariant-guard/SKILL.md`: "do the invariants still hold?" gate;
+  load before merging core-path security diffs.
+- `cgagentharness-gotchas/SKILL.md`: session-tested traps (Chrome CI flake, YAML
+  `"true"`, CSRF names, Seatbelt noise); load before install/verify/packaging.
+- `cgagentharness-project-guidance/SKILL.md`: read order + skill routing; load at
+  the start of substantive repository work.
+- `cgagentharness-write-policy-redteam/SKILL.md`: adversarially exercise write
+  gates, confirm+reason, clone jail, and shim argv boundaries.
+- `verification-specialist/SKILL.md`: independently verify a *supplied* change by
+  trying to break it, without modifying the tree.
+- `cgagentharness-config-guard/SKILL.md`: statically assert `assets/config.default.yaml`
+  still honors fail-closed contracts.
+- `cgagentharness-parity/SKILL.md`: maintain CyClaw↔harness parity docs without
+  weakening harness invariants.
+
+## Project Claude skills
+
+The same nine skills above (`fable-protocol`, `cgagentharness-invariant-guard`,
+`cgagentharness-gotchas`, `cgagentharness-project-guidance`,
+`cgagentharness-write-policy-redteam`, `verification-specialist`,
+`cgagentharness-config-guard`, `cgagentharness-parity`) are mirrored verbatim
+under `.claude/skills/<slug>/SKILL.md` for Claude Code's own discovery, plus a
+Claude-depth `cgagentharness-optimize/SKILL.md` playbook (the `.codex` twin
+stays the short runtime). Each is also registered as a `.claude/commands/<slug>.md`
+slash command (`/fable-protocol`, `/cgagentharness-invariant-guard`, etc.) that
+loads the matching `SKILL.md`.
 
 These are repository guidance, not application `/api/skills` runtime plugins.
 Existing user authorization governs publication; selecting a skill adds none.

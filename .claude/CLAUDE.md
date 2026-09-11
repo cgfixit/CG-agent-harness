@@ -12,6 +12,29 @@ root-level `CLAUDE.md` exists (the root file was renamed to `AGENTS.md`). Do not
 `assets/config.default.yaml`. Truth precedence: code > `assets/config.default.yaml` >
 `INVARIANTS.md` > `AGENTS.md` > `README.md`.
 
+## Harness agent skills
+
+Before substantive work, load `.claude/skills/cgagentharness-project-guidance/SKILL.md`
+(`/cgagentharness-project-guidance`). For evidence-first / security-sensitive claims, load
+`fable-protocol` (`/fable-protocol`). Before merging core-path security diffs, load
+`cgagentharness-invariant-guard` (`/cgagentharness-invariant-guard`). For session traps (Chrome CI,
+CSRF names, YAML `"true"`, Seatbelt), load `cgagentharness-gotchas` (`/cgagentharness-gotchas`).
+
+### Additional skills (security / parity / optimize)
+
+- `cgagentharness-write-policy-redteam` (`/cgagentharness-write-policy-redteam`) — writer / confirm+reason / clone jail / hostile argv
+- `verification-specialist` (`/verification-specialist`) — try to break a supplied change (no tree mutation)
+- `cgagentharness-config-guard` (`/cgagentharness-config-guard`) — `assets/config.default.yaml` fail-closed contracts
+- `cgagentharness-parity` (`/cgagentharness-parity`) — `docs/parity/*` + `scripts/parity-status.py` (CyClaw↔harness)
+- `cgagentharness-optimize` (`/cgagentharness-optimize`, Claude deep) — deep optimize playbook; Codex twin for short runs
+
+Authoritative contracts: `INVARIANTS.md`, `AGENTS.md`, `assets/config.default.yaml`.
+Existing: `.codex/skills/cgagentharness-{optimize,release,verify}/`.
+
+These are repository guidance skills for agents editing this tree, not runtime `/api/skills`
+plugins served by the console. Selecting or loading a skill does not authorize push, merge, or
+release — existing user authorization governs publication.
+
 ## Commands
 
 Rust 1.88 (pinned in `rust-toolchain.toml`), edition 2021, single crate `cgagentharness`.
