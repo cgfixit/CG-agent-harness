@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 app="${1:?Pass the absolute or relative .app path}"
+architecture="${2:-arm64}"
+case "$architecture" in
+  arm64) expected=arm64 ;;
+  universal) expected='arm64 x86_64' ;;
+  *) echo 'Expected architecture: arm64 or universal' >&2; exit 2 ;;
+esac
 codesign --verify --deep --strict "$app"
 plutil -lint "$app/Contents/Info.plist"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Contents/Info.plist")" == com.cgfixit.agent-harness ]]
 for binary in cgagentharness cg-agent-harness-desktop; do
   path="$app/Contents/MacOS/$binary"
   [[ -x "$path" ]]
-  [[ "$(lipo -archs "$path")" == arm64 ]]
+  actual="$(lipo -archs "$path" | tr ' ' '\n' | LC_ALL=C sort | paste -sd ' ' -)"
+  [[ "$actual" == "$expected" ]] || { echo "Unexpected architectures: $actual (expected $expected)" >&2; exit 1; }
   codesign --verify --strict "$path"
   # Only system libraries are acceptable runtime linkage. Rust/SDK are build
   # prerequisites, never a runtime dylib dependency from the checkout/Homebrew.
-  if otool -L "$path" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)'; then
+  if otool -arch all -L "$path" | awk '/^[[:space:]]/ {print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)'; then
     echo 'Unexpected non-system dynamic dependency.' >&2; exit 1
   fi
 done
@@ -24,4 +31,4 @@ set +e
 code=$?
 set -e
 [[ "$code" == 3 ]] || { echo "Packaged worker dispatch returned $code; expected 3." >&2; exit 1; }
-echo 'Bundle resources, arm64 architecture, system linkage, signatures and worker dispatch passed.'
+echo "Bundle resources, $architecture architecture, system linkage, signatures and native worker dispatch passed."

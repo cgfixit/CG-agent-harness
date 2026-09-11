@@ -61,3 +61,16 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   `grok/`, `kimi/`, `agent/`), with the body from `.github/PULL_REQUEST_TEMPLATE.md`
   (run `scripts/check-pr-template.sh` first). Touching a core path requires an
   explicit invariant statement in the body.
+
+## Project Codex skills
+
+Read the relevant entrypoint under `.codex/skills` when its task applies:
+
+- `cgagentharness-optimize/SKILL.md`: evidence-backed Rust/runtime/CI improvements;
+  adapted from CyClaw's Claude workflow with this repository's contracts.
+- `cgagentharness-release/SKILL.md`: universal macOS packaging, native acceptance,
+  workflow provenance and release preparation.
+- `cgagentharness-verify/SKILL.md`: isolated backend, desktop and local-model checks.
+
+These are repository guidance, not application `/api/skills` runtime plugins.
+Existing user authorization governs publication; selecting a skill adds none.

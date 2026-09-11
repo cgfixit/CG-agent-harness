@@ -1,4 +1,4 @@
-# Package the loopback CLI/server binary (not a macOS .app / egui GUI).
+# Package the loopback CLI/server and universal macOS desktop application.
 # Hygiene mirrors CyClaw-Net-Viewer's Bundle job: release build -> stage a
 # named artifact -> sha256 -> verify after extract -> upload. Ad-hoc
 # codesign on macOS only. DRY via scripts/package-release.sh (shared with
@@ -25,6 +25,11 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  desktop:
+    uses: ./.github/workflows/desktop.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+
   package:
     name: package (${{ matrix.artifact }})
     runs-on: ${{ matrix.os }}

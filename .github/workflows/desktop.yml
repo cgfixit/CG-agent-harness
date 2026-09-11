@@ -1,21 +1,23 @@
 name: macOS desktop
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_call:
+    inputs:
+      artifact-name:
+        type: string
+        default: cg-agent-harness-macos-universal
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   desktop:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -26,16 +28,18 @@ jobs:
         with:
           toolchain: "1.90"
           components: rustfmt, clippy
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: "1.88"
           components: rustfmt, clippy
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - name: Backend and desktop formatting
         run: |
           cargo fmt --all -- --check
           (cd desktop && cargo fmt -- --check)
       - name: Build and verify the complete bundle
-        run: scripts/package-desktop.sh
+        run: scripts/package-desktop.sh --universal
       - name: Desktop Clippy and policy tests
         run: |
           cd desktop
@@ -51,13 +55,13 @@ jobs:
       - name: Verify archive checksum and extracted app
         run: |
           (cd dist && shasum -a 256 -c SHA256SUMS)
-          ditto -x -k dist/CG-Agent-Harness-macos-arm64.zip "$RUNNER_TEMP/Desktop verification"
-          scripts/verify-desktop-bundle.sh "$RUNNER_TEMP/Desktop verification/CG Agent Harness.app"
+          ditto -x -k dist/CG-Agent-Harness-macos-universal.zip "$RUNNER_TEMP/Desktop verification"
+          scripts/verify-desktop-bundle.sh "$RUNNER_TEMP/Desktop verification/CG Agent Harness.app" universal
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cg-agent-harness-macos-arm64-${{ github.sha }}
+          name: ${{ inputs.artifact-name || 'cg-agent-harness-macos-universal' }}
           path: |
-            dist/CG-Agent-Harness-macos-arm64.zip
+            dist/CG-Agent-Harness-macos-universal.zip
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

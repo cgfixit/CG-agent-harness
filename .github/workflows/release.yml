@@ -58,8 +58,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  desktop:
+    needs: verify
+    permissions:
+      contents: read
+    uses: ./.github/workflows/desktop.yml # zizmor: ignore[self-repository]
+    with:
+      artifact-name: release-cgagentharness-macos-universal-app
+
   publish:
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -78,6 +86,7 @@ jobs:
           for checksum in *.sha256; do
             sha256sum --check --strict "$checksum"
           done
+          sha256sum --check --strict SHA256SUMS
       - name: Attach binaries to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
