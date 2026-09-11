@@ -23,8 +23,21 @@ pub async fn registry(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(views::full_registry(&state.home))
 }
 
-pub async fn tools() -> Json<Value> {
-    Json(views::list_wired_tools(&super::registered_paths()))
+pub async fn tools(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let mut report = views::list_wired_tools(&super::registered_paths());
+    let config = crate::common::config::AppConfig::load(&state.home.config_path());
+    for row in report["tools"].as_array_mut().unwrap() {
+        let path = row["path"].as_str().unwrap_or("");
+        if path.starts_with("/api/agent/") && path != "/api/agent/checks" {
+            let enabled = config.as_ref().is_ok_and(|cfg| cfg.flag_is_true("agentic.enabled"));
+            row["enabled"] = json!(enabled);
+            if !enabled {
+                row["ready"] = json!(false);
+                row["unavailable_reason"] = json!("agentic layer disabled or config unreadable");
+            }
+        }
+    }
+    Json(report)
 }
 
 pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {

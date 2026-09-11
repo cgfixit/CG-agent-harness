@@ -695,3 +695,39 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 401);
 }
+
+#[tokio::test]
+async fn advertised_methods_resolve_and_disabled_status_has_no_side_effects() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    for (_, _, method, path, _) in cgagentharness::server::views::HARNESS_SURFACES {
+        let path = path
+            .replace("{session_id}", sid)
+            .replace("{run_id}", &"0".repeat(32))
+            .replace("{job_id}", &"0".repeat(32));
+        let response = s
+            .req(method.parse().unwrap(), &path)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_ne!(response.status().as_u16(), 405, "{method} {path}");
+        assert!(
+            response.json::<serde_json::Value>().await.is_ok(),
+            "{method} {path} must resolve to an API handler"
+        );
+    }
+    let (_, tools) = s.open_get("/api/tools").await;
+    for tool in tools["tools"].as_array().unwrap() {
+        assert_eq!(tool["registered"], true);
+        assert_eq!(tool["invoked"], false);
+        assert!(tool["last_result"].is_null());
+        if tool["path"].as_str().unwrap().starts_with("/api/agent/") && tool["path"] != "/api/agent/checks" {
+            assert_eq!(tool["enabled"], false);
+            assert_eq!(tool["ready"], false);
+        }
+    }
+    assert!(model.requests.lock().unwrap().is_empty());
+}

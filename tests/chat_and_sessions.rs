@@ -333,3 +333,62 @@ async fn failed_and_cancelled_loop_turns_release_claims_for_a_later_turn() {
     let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
     assert_eq!(session["tokens"]["exchanges"], 1, "only the successful turn persists");
 }
+
+#[tokio::test]
+async fn skill_identity_and_soul_status_match_the_actual_prompt() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, fresh) = s.open_get("/api/soul").await;
+    assert_eq!(fresh["enabled"], true);
+    assert_eq!(fresh["loaded"], false);
+    assert_eq!(fresh["unavailable_reason"], "missing");
+    let skills = s.home.join("skills");
+    std::fs::create_dir_all(skills.join("custom")).unwrap();
+    std::fs::write(
+        skills.join("custom/SKILL.md"),
+        "---\nname: ponytail\n---\nNOT_LOADED_MARKER",
+    )
+    .unwrap();
+    std::fs::write(
+        skills.join("ponytail/SKILL.md"),
+        "---\nname: renamed\n---\nACTUAL_DISCIPLINE_MARKER",
+    )
+    .unwrap();
+    std::fs::write(s.home.join("soul.md"), "PERSONA_MARKER").unwrap();
+    let (_, inventory) = s.open_get("/api/skills").await;
+    let rows = inventory["skills"].as_array().unwrap();
+    assert_eq!(rows.iter().find(|r| r["id"] == "custom").unwrap()["role"], "repo");
+    assert_eq!(rows.iter().find(|r| r["id"] == "ponytail").unwrap()["role"], "prompt");
+    assert!(rows.iter().all(|r| r["invoked"] == false));
+    s.post_json("/api/chat", json!({"message":"test"})).await;
+    let req = model.last_request().unwrap();
+    let prompt = req["messages"][0]["content"].as_str().unwrap();
+    assert!(prompt.contains("ACTUAL_DISCIPLINE_MARKER"));
+    assert!(prompt.contains("PERSONA_MARKER"));
+    assert!(!prompt.contains("NOT_LOADED_MARKER"));
+    assert!(!prompt.contains("name: renamed"));
+    std::fs::write(s.home.join("soul.md"), "   ").unwrap();
+    assert_eq!(s.open_get("/api/soul").await.1["unavailable_reason"], "empty");
+    std::fs::remove_file(s.home.join("soul.md")).unwrap();
+    std::fs::create_dir(s.home.join("soul.md")).unwrap();
+    assert_eq!(s.open_get("/api/soul").await.1["unavailable_reason"], "unreadable");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn soul_prompt_read_cannot_escape_the_home_through_a_symlink() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("outside.md");
+    std::fs::write(&secret, "OUTSIDE_HOME_MARKER").unwrap();
+    std::os::unix::fs::symlink(&secret, s.home.join("soul.md")).unwrap();
+    let (_, status) = s.open_get("/api/soul").await;
+    assert_eq!(status["loaded"], false);
+    assert_eq!(status["unavailable_reason"], "unreadable");
+    s.post_json("/api/chat", json!({"message":"Check containment"})).await;
+    assert!(!model.last_request().unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("OUTSIDE_HOME_MARKER"));
+}
