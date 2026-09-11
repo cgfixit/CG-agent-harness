@@ -12,12 +12,18 @@ has no outbound network access. The **console** is the same interface in the
 app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
-**Version scope:** this guide describes the source branch containing issue #32
-phases 0–4. `/prompt`, `/soul edit` and proposals, `/skill use`, and `/goal stage`
-require those changes. A release or older installed app may predate them. Check
-its `Contents/Resources/COMMIT`, release notes and `/help`; an unknown command is
-not fixed by changing your persona or arming a gate. See the
-[PR stack and candidate evidence](https://github.com/cgfixit/CG-agent-harness/issues/32#issuecomment-5628682279).
+**Version scope:** verified against `origin/main` at
+[`8644b91`](https://github.com/cgfixit/CG-agent-harness/commit/8644b91)
+on September 11, 2026. Prompt/persona editing, runtime skills, goal staging, exact
+model-inventory checks, session isolation and confirmed history deletion are
+present on main. Earlier issue #32 comments about unmerged feature branches are
+historical; use the code and the latest evidence when checking remaining work.
+
+The published [v0.1.1 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.1)
+was built from `ceea4e5`, before these additions. To use everything in this guide,
+choose a successful main Bundle run containing `8644b91` or build current main.
+Check `Contents/Resources/COMMIT`, release notes and `/help` for the installed app;
+an unknown command is not fixed by changing persona or arming a write gate.
 
 ## Quick route through this guide
 
@@ -27,6 +33,7 @@ not fixed by changing your persona or arming a gate. See the
 - **Use runtime skills:** section 7.3. Codex development skills are separate.
 - **Configure memory, web or connectors:** sections 7.5–7.7; command reference in 7.8.
 - **Execute a coding goal:** section 9, after local chat works.
+- **Start fresh or delete saved chats:** section 7.1; memory is separate in 7.5.
 - **Upgrade, preserve data or change release cadence:** section 8.
 - **Recover a failed setup:** section 12.
 
@@ -177,10 +184,18 @@ git fetch origin
 git log -1 --oneline origin/main
 ```
 
-Preserve uncommitted work. A clean checkout already on `main` can use
-`git merge --ff-only origin/main`; stop and inspect any divergence rather than
-resetting it. Source-build commands below assume your terminal's current directory is this
-`CG-agent-harness` folder.
+Preserve uncommitted work. To update an existing clean local `main`:
+
+```bash
+git switch main
+git merge --ff-only origin/main
+git log -1 --oneline HEAD
+```
+
+Stop and inspect any divergence rather than resetting it. For contributions,
+create a separate `codex/<topic>` or other driver-prefixed branch from the updated
+main; PRs must target `main`, not another feature branch. Source-build commands
+below assume your terminal's current directory is this `CG-agent-harness` folder.
 
 ## 4. Select an installed model and check Ollama
 
@@ -217,9 +232,52 @@ The shipped tag is `qwen3.8:27b-mlx`; it is a default string, not an installatio
 check. A 27B model is not required just to use the app. Do not copy an example tag
 unless your inventory contains it. Chat uses `models.local_llm.base_url`; the
 planner uses `agentic.deepagent_github.base_url`. Both local paths require a
-loopback OpenAI-compatible service. An optional chat fallback is configured under
-`models.local_llm.fallback` and ships disabled. It does not configure the planner
-or certify the separate shared-readiness work tracked in issue #32.
+loopback OpenAI-compatible service.
+
+### Exact-model diagnostics and optional fallback
+
+In the app, open **Harness → Setup and recovery** (Cmd-,), then **Check installed
+chat and planner models**. Both checks use bounded `/models` inventories, with
+these results:
+
+| State | Meaning / next step |
+|---|---|
+| `installed` | The exact requested ID is listed. Send a short chat to test inference; inventory alone does not run it. |
+| `tag_missing` | Inventory responded but omitted that exact tag. Correct the selection or deliberately install the intended model. |
+| `unavailable` | Inventory failed, timed out, was oversized or malformed. Check the service and endpoint. |
+| `not_probed` | The endpoint is not an eligible loopback URL, or the planner is a cloud provider. Setup does not probe cloud planners. |
+
+`/model` reports selection; `/model use <tag>` persists a name without checking or
+downloading it. The selection is shared across sessions and can override the tag
+chosen from configuration, including the fallback tag. Check the selected name
+against the endpoint actually in use.
+
+Optional chat fallback ships disabled. If you already run another compatible
+local server, merge its real endpoint and exact inventory ID into these existing
+fields, then restart:
+
+```yaml
+models:
+  local_llm:
+    fallback:
+      enabled: true
+      provider: "lmstudio"
+      base_url: "http://127.0.0.1:1234/v1"
+      model: "replace-with-exact-installed-id"
+      probe_timeout_sec: 1.5
+```
+
+At backend startup, the resolver keeps the primary only when its configured model
+appears in inventory; otherwise it tries the configured fallback model. If neither
+is ready, startup keeps a degraded primary so the console remains available.
+With fallback off, startup selects the primary without this probe. There is no
+per-message retry or automatic model download, and the coding planner retains its
+separate configuration. Restart to reevaluate fallback after changing services.
+
+Desktop inventory defaults to two seconds and 262,144 response bytes, configured
+under `models.local_llm.inventory`; fallback uses `probe_timeout_sec` with the same
+byte limit. Probes use no proxies or redirects. See the
+[resolver](src/llm/backend.rs) and [inventory checks](src/llm/inventory.rs).
 
 Keep historical model measurements separate from current settings. The native
 CLI and desktop runs used different recorded contexts; neither is a recommended
@@ -249,13 +307,15 @@ target/release/cgagentharness
 
 ### 5.2 macOS app
 
-Choose a **published release** for ordinary installation, or an exact **candidate
-artifact** when testing an unmerged PR:
+Choose a **published release** for its documented source version, a successful
+**main artifact** for newer merged features, or a **PR artifact** to test an
+unmerged change:
 
 | Source | What to download | What it establishes |
 |---|---|---|
 | [Latest release](https://github.com/cgfixit/CG-agent-harness/releases/latest) | `CG-Agent-Harness-macos-universal.zip` and `SHA256SUMS` | Published release source identified in its notes |
-| Successful [Bundle run](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml) | `cg-agent-harness-macos-universal` Actions artifact | The selected run's branch and commit; may be unmerged |
+| Successful [Bundle run](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml) on `main` | `cg-agent-harness-macos-universal` Actions artifact | Merged source at that run's commit; may be newer than the published release |
+| Successful Bundle run for a PR | Same artifact name | Candidate source only; not evidence it is on main or released |
 | Successful [desktop workflow](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml) | `cg-agent-harness-macos-universal` for a standalone dispatch | Desktop build checks for its selected source |
 
 The macOS `cgagentharness-macos-arm64` CLI archive is a different deliverable;
@@ -403,18 +463,42 @@ discard delayed replies from the previous selection, and clear hidden staged
 coding/persona reviews. Saved sessions remain intact; switching restores their
 retained messages. A new session has no prior messages, goal, or selected prompt
 skills. Persona, enabled notes, and enabled web context remain shared within the
-home. `/clear` only clears the display; it does not reset the model's session
-history. Use `/session new` for a separate conversation. In the **Sessions** sidebar, **Clear all session history** below **+ new session**
-opens a confirmation dialog. Confirming stops active chat and permanently removes
-saved session files, goals, skill selections and their token totals, then clears
-the visible conversation. It preserves memory notes, persona, web context and coding
-runs. Cancel leaves history intact. This is file deletion, not secure disk erasure;
-backups and separately stored coding/audit records are outside its scope.
+home. The reset controls have different scopes:
 
-Runtime `sessions/` directories and `.CGagentHarness/` homes are Git-ignored even
-inside the checkout. Keep custom homes outside the repository when possible, avoid
-`git add -f` for private files, and check `git ls-files` before publishing: ignore
-rules do not remove files already tracked by Git.
+| Intent | Control | Retained data |
+|---|---|---|
+| Clear the visible output | `/clear` | Saved messages, session ID and goal remain; later chat still receives recent history. Hidden staged reviews and loop state clear. |
+| Start a separate conversation | **+ new session** or `/session new <title>` | Old sessions remain available; shared persona, enabled notes/web and model selection remain. |
+| Delete all saved conversations | **Clear all session history**, immediately below **+ new session** | Shared notes/persona/web, model configuration, coding runs and audit records remain. |
+
+For deletion, read the dialog, then choose **Delete all session history** to confirm
+or **Cancel** to keep the sessions. Confirmation stops active chat, deletes saved
+session files/goals/skill selections/token totals and clears the visible conversation.
+A late response cannot recreate a deleted session. Send a new message or use
+`/session new` afterward. A storage failure is reported and may leave a partial
+deletion; resolve the reported storage problem before retrying.
+
+This is file deletion, not secure disk erasure. Backups, copies retained by your
+model service, and transcript content already loaded in other open clients are
+outside its scope. Close or refresh those clients separately.
+
+The session store retains at most 500 messages per conversation. Normal chat sends
+at most the latest 20 prior messages within 8,000 characters; loop turns use eight
+within 4,000 characters. These are message counts, not user/assistant pairs.
+Stored history and lifetime token totals can therefore exceed what the model sees.
+
+Runtime `sessions/` directories, named `.CGagentHarness/` homes and dotenv files
+are Git-ignored in this repository. Avoid `git add -f` for private files: ignore
+rules do not remove files already tracked by Git and are not global Git policy.
+An arbitrarily named custom home can still expose notes, web extracts or coding
+records outside its ignored `sessions/` directory. Keep the entire home outside
+the checkout. Before publishing from a source checkout, these checks should show
+matching ignore rules and no tracked runtime files respectively:
+
+```bash
+git check-ignore .CGagentHarness/config.yaml example-home/sessions/example.json .env
+git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.env.*' ':!.env.example'
+```
 
 ```text
 /loop 3
@@ -471,8 +555,8 @@ this dialog, and persona text never authorizes code execution.
 
 `/soul off` disables inclusion without deleting the file. Older versions without
 the editor allow deliberate manual editing of the active home's `soul.md`; use
-`/soul on` to enable it. New editor/proposal guarantees require the candidate
-implementation described at the top of this guide.
+`/soul on` to enable it. Upgrade to a build containing the current main controls
+to use the guarded editor and proposal recovery.
 
 **History and proposals:** replacement is atomic and saves the previous content
 as a private content-addressed backup. `/soul history` lists backup revisions.
@@ -513,6 +597,7 @@ restoration through the guarded edit flow.
 | Fixed check | `/skill check:cargo-test` | Selects a known check for an already staged coding request; no immediate execution |
 | Governed catalog entry | `/skills all` | Inventory only unless an implemented adapter says otherwise |
 | Codex development skill | Repository `.codex/skills` or Codex personal skill directory | Guides Codex maintaining the repository; not automatically an app runtime skill |
+| Claude Code development skill | Repository `.claude/skills`; registered shortcuts in `.claude/commands` | Guides Claude Code maintaining the repository; not an app command |
 
 To add optional context, create a local file in the **actual active home**, e.g.
 `skills/review-notes/SKILL.md`. Use a normal directory and file within the home;
@@ -545,6 +630,14 @@ That is the last successful snapshot, which can differ from current files or
 selection. It does not prove script execution. Missing/unreadable selected files
 refuse subsequent chat; restore them or `/skill clear`. Clearing selection removes all optional skill bodies from subsequent prompts,
 including selected seeded skills; it does not delete their files.
+
+When working on this repository in Codex, invoke a discovered development skill
+such as `$cgagentharness-optimize` or `$fable-protocol`; the entrypoints are listed
+in [AGENTS.md](AGENTS.md). Claude Code has corresponding commands such as
+`/cgagentharness-optimize` and `/fable-protocol`. If the coding agent does not list
+one, explicitly reference its `SKILL.md` in that checkout. Copying a skill file
+does not prove it has been loaded. These development instructions are not sent
+to app chat automatically and do not authorize publication.
 
 ### 7.4 Customize response style
 
@@ -908,7 +1001,7 @@ and contain no newline, carriage return or NUL. There is no generic key-deletion
 slash command. Preserve other entries when deliberately maintaining the private
 file, and restart after changing credentials.
 
-Some console versions print a stale “your shell sources it” hint after saving.
+The current console prints a stale “your shell sources it” hint after saving.
 For this Unix desktop/`serve` implementation, the startup loader reads the managed
 file as data; follow the loading and permissions rules above. Do not source it as
 a shell script. Never put key values in soul, memory, skill files or shared prompts.
@@ -1253,7 +1346,11 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown | Installed build predates the phase 0–4 controls | Inspect `/help` and bundle `Resources/COMMIT`; use the matching candidate or a release that includes those changes |
+| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes, including v0.1.1 | Inspect `/help` and bundle `Resources/COMMIT`; obtain a successful main Bundle artifact or a later release containing the required source |
+| New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona/web are still included | Verify the running bundle includes `71eef11` or later; inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
+| Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify the app includes the capability-guide fix at `71eef11` or later |
+| Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
+| Model inventory says `tag_missing`, or fallback is selected unexpectedly | Exact configured ID is absent from a responding inventory | Compare section 4 inventories and config; verify persisted `/model` selection against the resolved endpoint, then restart to reevaluate fallback |
 | Soul says missing | No `soul.md` exists in this active home | Valid fresh-home state; use explicit `/soul edit` if you want persona, then `/soul on` and `/prompt` |
 | Soul saved but is not in chat | Toggle off, wrong home or rejected/stale save | Confirm Setup home, `/soul status`, editor result and `/prompt`; reload a stale editor before saving again |
 | Persona/proposal save conflicts or history is full | Base revision changed or 32-record store reached | Review current content/history; preserve and deliberately archive records if needed; do not retry blindly or delete the active persona |

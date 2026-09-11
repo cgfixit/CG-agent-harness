@@ -17,11 +17,21 @@ from a model reply. Coding execution is separately staged and confirmed.
 remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
 
+**Source scope:** checked against `origin/main` at
+[`8644b91`](https://github.com/cgfixit/CG-agent-harness/commit/8644b91)
+on September 11, 2026. The features below are on main. The published
+[`v0.1.1`](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.1) build
+predates the recovered prompt/persona/skill/goal controls and recent session
+fixes. For those features, use a successful main Bundle artifact containing this
+revision or build current main; check the app's `Contents/Resources/COMMIT`.
+
 ## What you can do
 
 | Capability | How it works |
 |---|---|
-| Chat and context | Select a local model; create, rename, and revisit sessions with saved history and token counts. Set a session goal, toggle `soul.md` persona context, and manage optional operator memory notes. |
+| Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. |
+| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. Chat explains these controls; the operator executes them. |
+| Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
 | Web context | Explicitly enable allowlisted web fetch/search, inspect fetched text, and inject selected context into chat. Web access ships off. |
@@ -37,11 +47,14 @@ pipeline with its own iteration budget, write policy, and review steps.
 
 ### macOS desktop (Apple Silicon and Intel)
 
-Download `cg-agent-harness-macos-universal` from a successful `main` run of
-[Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml).
-Extract its ZIP and open **CG Agent Harness.app** from Finder, Applications, or
-the Dock. The app owns a bundled backend on an ephemeral loopback port; ordinary
-launch needs no Terminal, external browser, Rust, or Python.
+For a published build, download `CG-Agent-Harness-macos-universal.zip` and
+`SHA256SUMS` from [Releases](https://github.com/cgfixit/CG-agent-harness/releases/latest).
+For newer main features, download `cg-agent-harness-macos-universal` from a
+successful [Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
+run on `main`; extract the outer Actions archive first. Verify the inner ZIP with
+`shasum -a 256 -c SHA256SUMS`, extract it, then open **CG Agent Harness.app** from
+Finder, Applications, or the Dock. The app owns a bundled backend on an ephemeral
+loopback port; ordinary launch needs no Terminal, external browser, Rust, or Python.
 
 To build the app from source on macOS:
 
@@ -91,6 +104,11 @@ does not establish the execution backend. Set `models.local_llm.model` and
 `agentic.deepagent_github.model` in your home's `config.yaml` for chat and planner
 respectively. `/model use <name>` changes the console's selected chat model.
 A configurable loopback fallback supports another OpenAI-compatible server.
+Fallback is selected at backend startup, not retried after a failed chat turn.
+Desktop **Harness → Setup and recovery → Check installed chat and planner models**
+distinguishes an installed tag, missing tag, unavailable inventory, and an endpoint
+that was not probed. Inventory is not an inference test; send a short chat after
+selection. See [model setup and fallback](setup-guide.md#4-select-an-installed-model-and-check-ollama).
 
 Existing homes keep their settings on upgrade. Mutable config, sessions, notes,
 persona, and run evidence live under `~/.CGagentHarness`; an absolute
@@ -131,11 +149,19 @@ persona and enabled memory/web context remain; `/prompt` shows them. Chat knows
 the operator commands, but cannot execute them. `/memory` lists real saved notes;
 `/memory add <note>` saves literal text, not an instruction to archive every session.
 
-The **Sessions** sidebar has **Clear all session history** below **+ new session**.
-Confirmation permanently deletes saved chats, goals, skill selections and token totals;
-shared memory/persona/web context and coding runs remain. Session directories and
-`.CGagentHarness` homes are Git-ignored, including when created inside this repo.
-Do not force-add private runtime files; ignore rules do not untrack already committed files.
+Choose the reset that matches your intent:
+
+| Action | Effect |
+|---|---|
+| `/clear` | Clear visible output and pending reviews; saved messages remain in this session's model context. |
+| **+ new session** or `/session new` | Start a separate conversation; retain old sessions and shared context. |
+| **Clear all session history** below **+ new session** | Open a confirmation dialog; confirming deletes saved chats, goals, skill selections and token totals. Shared memory/persona/web context and coding runs remain. |
+
+Session directories, named `.CGagentHarness` homes and dotenv files are Git-ignored
+in this repository. Other files in an arbitrarily named custom home are not
+automatically protected; keep runtime homes outside source checkouts. Do not
+force-add private files: ignore rules do not untrack existing commits, and clearing
+history does not erase backups or other applications' retained copies.
 
 To deliberately turn the current goal into coding work, use
 `/goal stage codex/<topic>`, inspect the staged request and checks, then
@@ -242,8 +268,11 @@ See [web setup and controls](setup-guide.md#76-web-fetch-search-and-injected-con
 ## Tests and CI/CD
 
 ```bash
-SKIP_LIVE=1 scripts/verify-local.sh  # fmt, clippy, optional installed deny, tests, release build
+test_home="$(mktemp -d)"
+CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
+# fmt, clippy, optional installed deny, tests, release build
 python3 scripts/test-desktop-backend.py  # built release backend; disposable homes
+node scripts/chat-browser-acceptance.mjs # installed Chrome + Node with WebSocket; mock APIs
 # Optional, with your configured local inference service running:
 scripts/smoke-ollama.sh
 ```
@@ -260,7 +289,7 @@ token counts, fresh CSRF, and no replay with neither a key nor a login.
 | Coding and chat regression tests | Write-policy revocation, exact edits, clone jail, reviewed Git trees, detached-job cancellation, session/goal gates, loop budgets, and release of failed/cancelled chat claims. See [`tests/`](tests/). |
 | Native Cargo acceptance | Required macOS tests prepare locked dependencies, then exercise real Seatbelt restrictions and fixed Cargo checks. Linux/Windows backends do not establish equivalent confinement. |
 | [Desktop CI](.github/workflows/desktop.yml) | Bundle PRs/`main`, tag releases, and manual runs reuse this job to build the universal app, run desktop policy and packaged-backend tests, verify signatures/checksums and the extracted bundle, then retain the universal ZIP and checksums as artifacts. |
-| Workflow and source checks | Existing actionlint/zizmor, CodeQL, secret scanning, and PR-template workflows remain separate checks. |
+| Workflow and source checks | CodeQL, DevSkim, Gitleaks secret scanning, and PR-template/base-branch checks are separate workflows. Workflow changes additionally trigger actionlint/zizmor. |
 | [Release](.github/workflows/release.yml) | Daily at 08:17 UTC, publish the next patch version only if `main` differs from the latest release. Backend CI, CLI packaging, universal desktop checks, and downloaded checksums gate publication. Stable tags and manual preview/publish are also supported. See [release controls](docs/RELEASING.md). |
 
 CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
@@ -269,6 +298,14 @@ distribution. Live Ollama smoke and [native acceptance](docs/DESKTOP_ACCEPTANCE.
 cover different evidence. Windows CI/release legs remain parked.
 
 ## Development and reference
+
+Repository guidance lives in [`.codex/skills`](.codex/skills) for Codex and
+[`.claude/skills`](.claude/skills) / [`.claude/commands`](.claude/commands) for
+Claude Code. Start with `cgagentharness-project-guidance` and `fable-protocol`;
+use the task-specific verify, optimize, release or guard skill listed in
+[AGENTS.md](AGENTS.md). These are development instructions, separate from app
+runtime `/skill` context. Contributor PRs use a driver-prefixed branch and target
+`main`; verify the actual PR template before opening a draft.
 
 | Document | Purpose |
 |---|---|
