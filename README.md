@@ -250,7 +250,7 @@ cover different evidence. Windows CI/release legs remain parked.
 
 | Document | Purpose |
 |---|---|
-| [setup-guide.md](setup-guide.md) | Step-by-step macOS setup, configuration, operations, and troubleshooting |
+| [setup-guide.md](setup-guide.md) | macOS setup, output style, slash commands, skills, memory/web configuration, connector limits and troubleshooting |
 | [docs/DESKTOP.md](docs/DESKTOP.md) | App ownership, setup/recovery, packaging, and distribution limits |
 | [docs/CONSOLE_JOBS.md](docs/CONSOLE_JOBS.md) | Asynchronous console runs and browser acceptance |
 | [INVARIANTS.md](INVARIANTS.md) | Process isolation, guard chain, write policy, clone jail, and sandbox guarantees |
