@@ -415,7 +415,7 @@ async fn tools_and_skills_views_report_wiring() {
     let (status, tools) = s.open_get("/api/tools").await;
     assert_eq!(status, 200);
     assert_eq!(tools["wired"], tools["total"], "every catalog surface is registered");
-    assert_eq!(tools["total"], 29);
+    assert_eq!(tools["total"], 36);
     assert!(tools["diagram"].as_str().unwrap().starts_with("HARNESS TOOLS"));
     let (status, skills) = s.open_get("/api/skills").await;
     assert_eq!(status, 200);
@@ -434,8 +434,9 @@ async fn tools_and_skills_views_report_wiring() {
         .iter()
         .find(|r| r["name"] == "ponytail")
         .unwrap();
-    assert_eq!(ponytail["role"], "prompt");
-    assert_eq!(ponytail["wired"], true);
+    assert_eq!(ponytail["role"], "repo");
+    assert_eq!(ponytail["selectable"], true);
+    assert_eq!(ponytail["wired"], false);
     let (status, reg) = s.open_get("/api/registry").await;
     assert_eq!(status, 200);
     assert!(reg["connectors"]
@@ -740,7 +741,8 @@ async fn advertised_methods_resolve_and_disabled_status_has_no_side_effects() {
         let path = path
             .replace("{session_id}", sid)
             .replace("{run_id}", &"0".repeat(32))
-            .replace("{job_id}", &"0".repeat(32));
+            .replace("{job_id}", &"0".repeat(32))
+            .replace("{id}", &"0".repeat(64));
         let response = s
             .req(method.parse().unwrap(), &path)
             .json(&json!({}))

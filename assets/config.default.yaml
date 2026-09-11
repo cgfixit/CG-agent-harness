@@ -1,11 +1,9 @@
 # CGagentHarness runtime configuration. Seeded into $CGAGENTHARNESS_HOME/config.yaml
 # on first run; the copy in the home directory is the one that is read.
 #
-# Every tunable lives here (single source of truth). The blocks below are the
-# subset of CyClaw's config.yaml that the coding harness and the agentic
-# real-repo pipeline actually read. Shipped gates keep CyClaw's defaults:
-# agentic.enabled, deepagent_github.enabled and allow_git_write_tools all ship
-# false, so nothing writes to a repository until an operator arms it.
+# Runtime settings used by the standalone chat and governed coding pipeline.
+# Chat starts without an assigned repository. Select agentic.repo explicitly
+# before enabling coding; master, deepagent and clone-write gates ship closed.
 
 app:
   name: "cgagentharness"
@@ -73,7 +71,7 @@ logging:
 policy:
   prompt_filter:
     enabled: true
-    # Regex patterns compiled case-insensitively. Same 40 patterns CyClaw ships.
+    # Regex patterns compiled case-insensitively. Shared input filtering policy.
     banned_patterns:
       - 'ignore\s+(previous|all|prior)\s+instructions'
       - 'ignore\s+all\s+previous'
@@ -131,10 +129,12 @@ policy:
 
 personality:
   soul_max_chars: 8000
+  prompt_skill_max_chars: 6000
+  prompt_skills_total_chars: 16000
 
 agentic:
   enabled: false                 # master switch; CLI no-ops (exit 0) while false
-  repo: "cgfixit/CG-agent-harness" # owner/name, no shell metacharacters
+  repo: "" # set owner/name explicitly before enabling coding
   mode: "write"                  # "read" | "write"
   writes_enabled: true           # writes need mode=write AND this AND reason AND confirm
   gh_min_version: "2.40.0"

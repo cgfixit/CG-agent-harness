@@ -437,7 +437,7 @@ fn loop_refuses_blind_overwrites_critical_content_and_budget() {
 #[test]
 fn writer_gates_in_order_and_plan_integrity() {
     let dir = tempfile::tempdir().unwrap();
-    let cfg = config_with(dir.path(), &[]);
+    let cfg = config_with(dir.path(), &[("agentic.repo", "\"fixture/repository\"")]);
     let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
     let acfg = load_agentic_config(&cfg, dir.path()).unwrap();
     // Shipped: enabled false -> gate "enabled" refuses first, even with reason + confirm.
