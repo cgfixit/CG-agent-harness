@@ -51,7 +51,10 @@ disposable home (`CGAH_HOME` to keep one; an existing `config.yaml` the driver
 did not write is never overwritten) whose `config.yaml` is the shipped default
 with `base_url`/`model` rewritten to the fake, blanks the cloud key env vars, runs `serve --port 8790` (`CGAH_PORT`), and
 polls `GET /` until ready. `shot` prints the last 1200 chars of the console
-stream to stdout so you can assert on it without opening the PNG.
+stream to stdout so you can assert on it without opening the PNG, and exits 1
+if any command rendered an `error:` line (the PNG is still written). In attach
+mode with `CGAGENTHARNESS_API_KEY` set, the key is typed into the console's key
+field so guarded routes work from the browser too.
 
 Talking to the API by hand (every `/api/*` operator route needs both headers):
 
