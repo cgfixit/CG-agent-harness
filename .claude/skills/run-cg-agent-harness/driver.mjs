@@ -14,7 +14,7 @@
 //      a bearer token if set), CHROME_BIN, PLAYWRIGHT_MODULE.
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
-import {mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 
@@ -44,6 +44,7 @@ function startModel() {
 const MARKER = '# written by .claude/skills/run-cg-agent-harness/driver.mjs (fixture home; safe to overwrite)\n';
 function makeHome() {
   const home = process.env.CGAH_HOME || mkdtempSync(join(tmpdir(), 'cgah-home-'));
+  mkdirSync(home, {recursive: true});
   const existing = join(home, 'config.yaml');
   if (existsSync(existing) && !readFileSync(existing, 'utf8').startsWith(MARKER))
     throw new Error(`${existing} exists and was not written by this driver; refusing to overwrite an operator's config. Use a different CGAH_HOME or attach with CGAH_BASE.`);
@@ -52,6 +53,9 @@ function makeHome() {
     .replaceAll('model: "qwen3.8:27b-mlx"', 'model: "fixture-model"');
   if (!cfg.includes(`127.0.0.1:${MODEL_PORT}`)) throw new Error('config.default.yaml no longer matches the sed pattern; update driver.mjs');
   writeFileSync(join(home, 'config.yaml'), cfg);
+  // harness.json persists UI state (`/model use`, toggles) that outranks config.yaml
+  // in AppState::current_model; a reused fixture home must not carry it over.
+  rmSync(join(home, 'harness.json'), {force: true});
   return home;
 }
 
@@ -156,14 +160,18 @@ async function shot(base, out, cmds) {
     if (process.env.CGAH_BASE && process.env.CGAGENTHARNESS_API_KEY) await page.fill('#apiKey', process.env.CGAGENTHARNESS_API_KEY);
     const errors = [];
     for (const cmd of cmds.length ? cmds : ['/status', 'hello from the driver']) {
-      const before = await page.evaluate(() => document.getElementById('stream').innerText.length);
+      const before = await page.evaluate(() => document.getElementById('stream').innerText);
       await page.fill('#input', cmd); await page.evaluate(() => onSend());
-      await page.waitForFunction(b => document.getElementById('stream').innerText.length > b, before, {timeout: 15000});
+      // Wait for any change, not growth: `/clear` empties #stream. A command that
+      // changes nothing (e.g. /clear on an empty console) just falls through.
+      await page.waitForFunction(b => document.getElementById('stream').innerText !== b, before, {timeout: 15000})
+        .catch(() => log('no stream change after', cmd));
       await page.waitForFunction(() => !window.inflightChat, null, {timeout: 15000}).catch(() => {});
       await page.waitForTimeout(300);
       // The console renders failures as `error: ...` system lines; a rendered
-      // error still grows #stream, so check the delta rather than trusting growth.
-      const delta = await page.evaluate(b => document.getElementById('stream').innerText.slice(b), before);
+      // error still changes #stream, so inspect what this command appended.
+      const after = await page.evaluate(() => document.getElementById('stream').innerText);
+      const delta = after.startsWith(before) ? after.slice(before.length) : after;
       const err = delta.match(/^\s*error:.*$/mi);
       if (err) { errors.push(`${cmd} -> ${err[0].trim()}`); log('command failed:', cmd, '->', err[0].trim()); }
     }
