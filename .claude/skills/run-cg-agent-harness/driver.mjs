@@ -94,7 +94,10 @@ async function up() {
   return {base: srv.base, home, stop, srv};
 }
 
-async function smoke(base) {
+// attached: driving a server we did not launch. Its model and config are
+// unknown, so fixture-specific assertions relax and the /api/agent/run probe
+// is skipped (it would start a real run if the operator armed the gates).
+async function smoke(base, attached) {
   const {api} = await client(base);
   const checks = [];
   const expect = (name, cond, detail) => { checks.push({name, ok: !!cond, detail}); if (!cond) log('FAIL', name, JSON.stringify(detail)); };
@@ -102,15 +105,21 @@ async function smoke(base) {
   expect('missing CSRF is 403', r.status === 403, r.status);
   r = await api('/api/sessions', {}, {Origin: 'https://evil.invalid'});
   expect('foreign Origin is 403', r.status === 403, r.status);
-  r = await api('/api/status'); expect('status 200 + fixture model', r.status === 200 && r.json.model === 'fixture-model', r.json);
+  r = await api('/api/status');
+  if (attached) expect('status 200 + a model configured', r.status === 200 && typeof r.json.model === 'string' && r.json.model, r.json);
+  else expect('status 200 + fixture model', r.status === 200 && r.json.model === 'fixture-model', r.json);
   r = await api('/api/sessions', {}); expect('session create 201', r.status === 201 && r.json.session_id, r.status);
   const sid = r.json.session_id;
   r = await api('/api/chat', {session_id: sid, message: 'hello harness'});
-  expect('chat round-trips through model', r.status === 200 && /fixture reply to: hello harness/.test(r.json.reply), r.json);
+  if (attached) expect('chat round-trips through the configured model', r.status === 200 && typeof r.json.reply === 'string' && r.json.reply.length > 0, r.json);
+  else expect('chat round-trips through model', r.status === 200 && /fixture reply to: hello harness/.test(r.json.reply), r.json);
   r = await api('/api/tools'); expect('tools wired', r.status === 200 && /registered/.test(r.json.diagram || ''), r.status);
   r = await api('/api/agent/checks'); expect('agent check profiles listed', r.status === 200 && Array.isArray(r.json.profiles), r.status);
-  r = await api('/api/agent/run', {branch: 'claude/probe', instruction: 'probe', commit_message: 'probe', confirm: true, reason: 'probe'});
-  expect('agent run refused: gates ship closed (409 AGENTIC_DISABLED)', r.status === 409 && r.json.detail?.code === 'AGENTIC_DISABLED', r.json);
+  if (attached) log('skipping /api/agent/run probe in attach mode (could start a real run on an armed server)');
+  else {
+    r = await api('/api/agent/run', {branch: 'claude/probe', instruction: 'probe', commit_message: 'probe', confirm: true, reason: 'probe'});
+    expect('agent run refused: gates ship closed (409 AGENTIC_DISABLED)', r.status === 409 && r.json.detail?.code === 'AGENTIC_DISABLED', r.json);
+  }
   r = await api('/api/github/status'); expect('shim spawns agentic child (status action exit 0)', r.status === 200 && r.json.ok === true && r.json.exit_code === 0, r.json);
   const failed = checks.filter(c => !c.ok).length;
   console.log(JSON.stringify({base, passed: checks.length - failed, failed, checks: checks.map(c => (c.ok ? 'ok   ' : 'FAIL ') + c.name)}, null, 1));
@@ -141,7 +150,7 @@ async function shot(base, out, cmds) {
 const ctx = await up();
 let ok = true;
 try {
-  if (mode === 'smoke') ok = await smoke(ctx.base);
+  if (mode === 'smoke') ok = await smoke(ctx.base, !!process.env.CGAH_BASE);
   else if (mode === 'shot') { if (!rest[0]) throw new Error('shot needs an output path'); await shot(ctx.base, rest[0], rest.slice(1)); }
   else if (mode === 'serve') {
     const {csrf} = await client(ctx.base);

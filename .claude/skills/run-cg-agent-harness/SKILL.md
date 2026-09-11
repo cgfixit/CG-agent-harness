@@ -41,7 +41,7 @@ D=.claude/skills/run-cg-agent-harness/driver.mjs
 node $D smoke                                   # up -> 9 API checks through the guard chain -> down; JSON summary, exit 1 on any FAIL
 node $D shot out.png /status /tools 'hello'     # up -> real browser runs each console command -> full-page screenshot -> down
 node $D serve                                   # up and stay up; prints base, home, CSRF token, a ready-made curl; Ctrl-C tears down
-CGAH_BASE=http://127.0.0.1:8790 node $D smoke   # drive an already-running server instead of launching one
+CGAH_BASE=http://127.0.0.1:8790 node $D smoke   # drive an already-running server: model-agnostic checks, no /api/agent/run probe (8 checks)
 ```
 
 What `up` does: starts a fake OpenAI-compatible model on `127.0.0.1:18434`
