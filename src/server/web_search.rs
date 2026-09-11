@@ -372,20 +372,11 @@ fn unescape_entities(text: &str) -> String {
     out
 }
 
-fn snippets(text: &str, query: &str) -> Vec<String> {
-    let needle = query.to_lowercase();
-    let folded = text.to_lowercase();
+fn snippets(text: &str, query: &regex::Regex) -> Vec<String> {
     let mut found = Vec::new();
-    let mut start = 0usize;
-    while found.len() < MAX_HITS_PER_URL {
-        let Some(rel) = folded[start..].find(&needle) else {
-            break;
-        };
-        let idx = start + rel;
-        let lo = idx.saturating_sub(SNIP_BEFORE);
-        let hi = (idx + query.len() + SNIP_AFTER).min(text.len());
-        let lo = floor_char(text, lo);
-        let hi = floor_char(text, hi);
+    for matched in query.find_iter(text).take(MAX_HITS_PER_URL) {
+        let lo = floor_char(text, matched.start().saturating_sub(SNIP_BEFORE));
+        let hi = floor_char(text, (matched.end() + SNIP_AFTER).min(text.len()));
         let mut chunk = text[lo..hi].trim().to_string();
         if lo > 0 {
             chunk = format!("…{chunk}");
@@ -394,7 +385,6 @@ fn snippets(text: &str, query: &str) -> Vec<String> {
             chunk = format!("{chunk}…");
         }
         found.push(crate::common::clip_chars(&chunk, MAX_SNIPPET));
-        start = idx + needle.len().max(1);
     }
     found
 }
@@ -657,6 +647,11 @@ impl WebTool {
             .take(MAX_SEARCH_URLS)
             .collect();
         self.gate_tool("web_search", std::slice::from_ref(&needle), enabled, audit)?;
+        // Match original-text offsets; Unicode case conversion can change byte lengths.
+        let query_pattern = regex::RegexBuilder::new(&regex::escape(&needle))
+            .case_insensitive(true)
+            .build()
+            .map_err(|_| werr("WEB_BAD_QUERY", "search query could not be compiled"))?;
         let mut hits = Vec::new();
         let mut errors = Vec::new();
         let mut recorded_last = false;
@@ -665,7 +660,7 @@ impl WebTool {
             match self.get(&url, std::slice::from_ref(entry)).await {
                 Ok(page) => {
                     let text = page.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                    let snips = snippets(text, &needle);
+                    let snips = snippets(text, &query_pattern);
                     if !snips.is_empty() {
                         hits.push(json!({"url": page["url"], "snippets": snips}));
                         if !recorded_last {
@@ -681,5 +676,26 @@ impl WebTool {
             }
         }
         Ok(json!({"query": needle, "hits": hits, "errors": errors, "scanned": entries.len()}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_snippets_preserve_matches_after_unicode_case_changes() {
+        let query = regex::RegexBuilder::new("target")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+        for prefix in ["K", "İ"] {
+            let text = format!("{} Target", prefix.repeat(200));
+            let hits = snippets(&text, &query);
+            assert_eq!(hits.len(), 1);
+            assert!(hits[0].contains("Target"), "match missing after {prefix}: {hits:?}");
+            assert!(hits[0].chars().count() <= MAX_SNIPPET);
+        }
+        assert_eq!(snippets("Target TARGET target target", &query).len(), MAX_HITS_PER_URL);
     }
 }

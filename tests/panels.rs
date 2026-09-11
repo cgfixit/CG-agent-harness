@@ -238,6 +238,10 @@ async fn web_search_fetches_each_overlapping_allowlist_entry() {
         .map(|hit| hit["url"].clone())
         .collect();
     assert_eq!(urls, vec![json!(root), json!(child)]);
+    // User text remains literal, even though matching uses the regex engine.
+    let (status, body) = s.post_json("/api/web/search", json!({"query": ".*"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["hits"], json!([]));
 }
 
 #[tokio::test]
