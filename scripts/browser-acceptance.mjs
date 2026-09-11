@@ -81,5 +81,5 @@ try {
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("may still survive")'));
  console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','no key or login','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','reviewed PR body','mock draft publication','staged cancel','active request cancel']}));
 } finally {
- if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});await rm(profile,{recursive:true,force:true});
+ if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }
