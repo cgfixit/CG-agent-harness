@@ -662,7 +662,7 @@ impl WebTool {
         let mut recorded_last = false;
         for entry in &entries {
             let url = entry.rendered();
-            match self.get(&url, &entries).await {
+            match self.get(&url, std::slice::from_ref(entry)).await {
                 Ok(page) => {
                     let text = page.get("text").and_then(|v| v.as_str()).unwrap_or("");
                     let snips = snippets(text, &needle);
