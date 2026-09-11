@@ -34,6 +34,15 @@ jobs:
           toolchain: "1.88"
           components: rustfmt, clippy
           targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: desktop-universal
+          # Only main writes the cache: PR runs restore main's entry instead of
+          # each branch saving its own and evicting the others (10 GB repo cap).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            . -> target
+            desktop -> desktop/target
       - name: Backend and desktop formatting
         run: |
           cargo fmt --all -- --check
