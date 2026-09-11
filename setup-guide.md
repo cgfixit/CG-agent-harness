@@ -23,8 +23,9 @@ not fixed by changing your persona or arming a gate. See the
 
 - **Run a downloaded app:** sections 4, 5.2 and 6; then section 7 for controls.
 - **Build from source:** sections 2–5; section 11 for verification.
-- **Understand missing soul or customize chat:** section 7.2.
+- **Understand missing soul:** section 7.2; **customize output style / unslop:** section 7.4.
 - **Use runtime skills:** section 7.3. Codex development skills are separate.
+- **Configure memory, web or connectors:** sections 7.5–7.7; command reference in 7.8.
 - **Execute a coding goal:** section 9, after local chat works.
 - **Upgrade, preserve data or change release cadence:** section 8.
 - **Recover a failed setup:** section 12.
@@ -516,19 +517,260 @@ selection. It does not prove script execution. Missing/unreadable selected files
 refuse subsequent chat; restore them or `/skill clear`. Clearing selection removes all optional skill bodies from subsequent prompts,
 including selected seeded skills; it does not delete their files.
 
-### 7.4 Memory and web context
+### 7.4 Customize response style
 
-`/memory` displays operator notes; `/memory add <note>` stores one, `/memory on`
-enables inclusion, and `/memory off` retains notes without including them.
-`/memory forget <id>` removes one; `/memory clear` removes all notes. These are
-separate from soul and do not establish full CyClaw structured-memory parity.
+Use soul for your usual voice across sessions; use an optional runtime skill for
+an explicitly selected task style. Neither changes the app's permissions or gives
+chat access to a repository. Start with `/soul edit` and adapt this example:
 
-`/web` displays the explicit web-fetch state. To use it, enable `/web on`, add a
-specific URL with `/web allow <https://host/path>`, then `/web fetch <url>` and
-inspect the result. `/web inject` supplies the last extract as chat context;
-`/web forget` clears injected context. `/web search <query>` scans allowlisted
-pages, not a general search engine. Web fetch ships off. This says nothing about
-separate configured GitHub/cloud operations or the model service's own networking.
+```text
+Lead with the answer. Use plain, direct language.
+Default to 1–3 short paragraphs; expand when requested.
+Use bullets for steps or comparisons, not every response.
+Avoid praise, filler introductions and repeated summaries.
+Distinguish verified results from assumptions and proposed actions.
+Never sacrifice accuracy or necessary uncertainty for brevity.
+```
+
+Save through the review flow in section 7.2, enable `/soul on`, and inspect
+`/prompt`. Test with `/session new Style check` so earlier conversation does not
+confound the comparison. Try a short factual question, a troubleshooting question
+and a request for a detailed explanation. Style instructions guide the model;
+they do not guarantee a word count or factual correctness.
+
+For a session-specific alternative, create `<home>/skills/concise/SKILL.md` using
+the file format in section 7.3 and put the desired writing rules in its body.
+Select `/skill use concise`, then inspect `/prompt`. To combine it with another
+skill, supply both IDs in the same command. Avoid contradictory rules in soul,
+selected skills and memory: a “give full detail” instruction can conflict with a
+“one sentence only” instruction. `/skill clear` removes the session selection;
+`/soul off` disables the home-wide persona without deleting it.
+
+The most useful customization input is three actual responses you dislike,
+your preferred rewrite of each, and a sentence explaining the difference. Keep
+those as manual comparison examples. Describe observable preferences such as
+“answer before explanation” or “no repeated closing summary,” rather than only
+“sound human.” There is no built-in style-preset selector, `/style` command,
+automated style evaluation or rewrite button in this version.
+
+**What `unslop` currently does:** it is an optional local coding-planner prose
+probe, not a chat output filter. It scans for 16 fixed, case-insensitive phrases
+such as “delve,” “game-changer” and “I hope this helps.” It attempts to exclude
+proposed file bodies, records hit counts and a response hash, and supplies a
+nudge if the ordinary coding loop needs another iteration. A passing candidate
+can finish immediately despite phrase hits. It neither rewrites the current
+answer nor forces an extra iteration, and it is not used for cloud-provider
+planner overrides. Phrase matching is a heuristic, not a quality score.
+
+If you already use the governed local coding workflow and want that probe,
+merge this into the existing active home's `config.yaml`, then restart:
+
+```yaml
+unslop:
+  enabled: true
+  metrics_path: "logs/unslop.jsonl"
+```
+
+It ships disabled. Metrics use the bounded JSONL logging policy; there is no
+user-configurable phrase list or `/unslop` slash command. Do not enable repository
+writes just to customize chat prose. For chat, use the persona/skill method above.
+A future chat-specific check or explicit rewrite action would need a separate
+implementation and tests; enabling this YAML field does not provide either.
+See [the current probe](src/agentic/unslop.rs) and
+[its loop integration](src/agentic/real_repo_loop.rs).
+
+### 7.5 Operator memory notes
+
+Memory here means explicit, home-wide operator notes. It is separate from soul,
+session history and web extracts. It does not automatically learn from chats,
+extract facts, index documents or provide structured RAG retrieval.
+
+```text
+/memory
+/memory add Prefer metric units in examples.
+/memory on
+/prompt
+```
+
+Adding a note stores it but does **not** enable inclusion. `/memory` displays the
+state and note IDs. `/memory forget <id>` deletes one note; `/memory clear`
+deletes all notes. `/memory off` retains the notes but excludes them from future
+chat prompts. These changes take effect on subsequent chat requests without a
+server restart; they affect other sessions using the same home too.
+
+Notes are stored in `<home>/memory/notes.json`. Current code limits are 20 notes,
+500 characters per note and 3,000 characters of assembled prompt context; a full
+store is not a promise every note fits in the prompt. Empty, oversized and
+blocked instruction-override content is rejected. These note limits are code
+constants, not documented YAML settings. If memory is on but absent from
+`/prompt`, inspect `/memory` for an unreadable store rather than assuming it
+loaded. Back up before manual repair.
+
+The structured-memory capability flags remain disabled. Adding a speculative
+`memory.enabled` setting will not install facts, episodes, retrieval fusion or
+automatic learning. Use notes for stable preferences and small pieces of supplied
+context, and use actual command results to establish runtime facts.
+
+### 7.6 Web fetch, search and injected context
+
+Web ships off and requires an explicit public URL allowlist. It is a bounded
+text fetcher, not an autonomous browser or a general search-engine connector.
+The following illustrates a single public page; substitute the page you need:
+
+```text
+/web
+/web allow https://example.com/
+/web on
+/web fetch https://example.com/
+/web inject
+/prompt
+```
+
+Inspect the fetch result before injection. Fetch stores the last extract;
+`/web inject` copies that stored extract into context for subsequent chat. Neither
+command asks the model a question by itself. `/web search <query>` searches text
+from up to the first eight allowlisted pages, returning bounded snippets. It does
+not search the wider internet. A search with no hits leaves the previous stored
+page intact; check the result before injecting so you do not reuse an old page.
+
+**Allow the exact page you intend to fetch.** The current matcher accepts a path
+prefix, but the network target is rebuilt from the matched allowlist entry.
+Allowing a site's root and then requesting a deeper path can therefore fetch the
+root. An earlier broad entry can also win over a later specific entry. Remove
+that broad entry with `/web deny <url>`, allow the exact page, and inspect the
+returned source URL. Do not assume a domain entry enables arbitrary page browsing.
+
+Current network restrictions and bounds:
+
+- Only HTTP/HTTPS public destinations; private, loopback, local and metadata
+  destinations are refused. `/web` cannot reach the local Ollama endpoint or a
+  private LAN service.
+- No credentials in URLs, query strings or fragments for fetch requests; no
+  redirects or proxy use. There is no authenticated browser session, JavaScript
+  execution or cookie-based login.
+- Text-like responses only, with HTML text extraction. Maximum response size is
+  262,144 bytes and timeout is eight seconds. This is not PDF/document ingestion.
+- Up to 32 allowlist entries; search queries up to 200 characters, at most three
+  hits per page and 160 characters per snippet. Injected context is capped at
+  4,000 characters. These are current code bounds, not YAML knobs.
+
+**Turning web off does not remove previously injected text.** `/web off` prevents
+new fetch/search requests; `/web deny <url>` removes an allowlist entry. Neither
+removes existing prompt context. To stop including it and stop new fetches:
+
+```text
+/web forget
+/web off
+/web
+/prompt
+```
+
+`forget` clears both the last extract and injected context, preserving the
+allowlist. Stored context can be injected even while web is off. The allowlist,
+last extract and context live at `<home>/tools/web_allowlist.json`,
+`web_last.json` and `web_context.txt`; they are shared across sessions and survive
+restart. A new session alone does not clear them. Treat fetched text as untrusted
+source material, not permission to execute instructions found on a page.
+See [web implementation](src/server/web_search.rs) for exact restrictions.
+
+### 7.7 Tools and connectors: available versus catalog-only
+
+`/tools` reports registered operations and capability information. `/tools all`
+includes entries that are not wired; `/tools <name>` filters the inventory.
+`/skills` defaults to wired entries, while `/skills all` also shows optional
+prompt files and other catalog entries. `/skills <name>` filters the display
+name, which can differ from the directory ID required by `/skill use`.
+`/connectors` displays connector inventory; `/registry` is another inventory
+view. None of these commands installs a connector or proves its prerequisites
+are ready. The registry's tools array is not a replacement for `/tools`.
+
+| Capability | Current configuration / action | Actual boundary |
+|---|---|---|
+| Local model | `models.local_llm` in `config.yaml`; `/model` and `/model use <name>` | Chat uses a configured loopback service; selecting a tag does not download it |
+| Public web text | `/web` controls in section 7.6 | Explicit allowlisted fetch/search and manual context injection |
+| GitHub coding | Explicit `agentic.repo`, gates and prerequisites in section 9; `/github` reports status | Separate governed child-process workflow; a chat reply does not execute Git commands |
+| Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
+| `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
+| `netconnect` | Not implemented in this app | No arbitrary network connector; `/web` restrictions still apply |
+| `sqlconnect` | Not implemented in this app | No database connection configuration, query tool or ingestion workflow |
+| `github-public` catalog entry | Inventory only | Does not provide an independent public-repository connector |
+| `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |
+| Runtime prompt skill | Home skill file plus `/skill use` | Prompt context, not an executable plugin or permission grant |
+
+Names from the upstream project do not establish support in this standalone
+harness. There are no `/fsconnect`, `/netconnect` or `/sqlconnect` commands to turn
+on, and copying upstream connector settings does not implement them. The native
+Setup folder chooser prepares offline Cargo inputs; it is not chat filesystem
+access. See [port scope](docs/PORT_PARITY.md) and the
+[capability ledger](docs/parity/STATUS.md) for remaining work, checked against
+[current connector inventory](src/server/views.rs).
+
+### 7.8 Slash-command quick reference
+
+Angle brackets below mean “replace with your value”; do not type the brackets.
+These are console commands, not shell commands. Inspect results after each
+state-changing command. The detailed sections above and section 9 describe
+confirmation and persistence semantics.
+
+| Command family | Supported use |
+|---|---|
+| `/help`, `/status`, `/tokens` | Command help, runtime status and current session usage |
+| `/session new <title>`, `list`, `use <id>`, `rename <title>` | Create, list, reopen or rename saved conversations |
+| `/prompt` | Private preview of the next chat system prompt |
+| `/soul status`, `on`, `off`, `edit`, `propose`, `history` | Inspect, toggle or open persona editing/proposal flows |
+| `/soul review <id>`, `apply <id> <reason>`, `reject <id> <reason>` | Review and explicitly decide a persona proposal |
+| `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; section 7.5 |
+| `/model`, `/model use <name>` | Inspect/select an available chat model |
+| `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |
+| `/skill use <id...>`, `clear`, `status` | Replace, clear or inspect session prompt-skill selection |
+| `/skill check:<profile>` | Replace the check selection for an already staged coding request |
+| `/web`, `on`, `off`, `allow <url>`, `deny <url>` | Inspect/toggle fetching or edit its allowlist |
+| `/web fetch <url>`, `search <query>`, `inject`, `forget` | Fetch/search text, include the last extract, or clear stored context |
+| `/goal`, `/goal <text>`, `/goal clear` | Inspect, set or clear the saved session goal |
+| `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; section 7.1 |
+| `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
+| `/connectors`, `/registry`, `/github`, `/harness` | Inventory, GitHub status, or retained harness-run listing; not connector activation or optimizer execution |
+| `/api`, `/api set <KEY> <value>` | Inspect managed-key presence or save a supported key; section 8 |
+| `/users` | Open optional account administration; section 10 |
+| `/clear` | Clear visible console output, staged coding request, displayed diff tracking and loop state; does not delete saved chats, notes, persona or web context |
+
+The `/agent` family operates the separate coding workflow:
+
+| Command | Effect |
+|---|---|
+| `/agent run <branch> <instruction>` | Stage a request for inspection; does not start it |
+| `/agent checks [profiles]` | List fixed profiles, or select space/comma-separated profiles |
+| `/agent iterations <n>` or `clear` | Set a staged iteration cap from 1–10, or restore the configured default |
+| `/agent pr <number>` or `/agent issue <number>`; `clear` | Select one context source; choosing one clears the other |
+| `/agent plan` or `/agent plan clear` | Open a file chooser for a supplied plan, or clear it; does not generate a plan |
+| `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage bounded file-context declarations, or clear them |
+| `/agent cancel` | Clear the staged request; does not stop an already submitted job |
+| `/agent confirm <reason>` | Explicitly submit the staged request through the execution gates |
+| `/agent jobs`, `/agent job <id>`, `/agent stop <id>` | List, inspect or request cancellation of retained jobs |
+| `/agent runs`, `/agent status <run-id>` | List runs or inspect a run and its diff |
+| `/agent approve <run-id> <reason>` | Review then approve the exact candidate; repeat only after reading a newly displayed diff |
+| `/agent reject <run-id>` | Reject a candidate |
+| `/agent push <run-id> <reason>` | Separately authorize pushing the approved commit |
+| `/agent pr-body <run-id>` | Choose a reviewed PR body file |
+| `/agent publish <run-id> <reason>` | Separately authorize PR publication with the selected body |
+| `/agent discard <run-id>` | Clean up a terminal run's owned clone |
+
+Fixed check profiles map to these commands; selection does not install their
+prerequisites or run them immediately. Native Cargo verification additionally
+uses the prepared offline sandbox described in section 9.
+
+| Profile | Fixed command |
+|---|---|
+| `cargo-test` (default) | `cargo test --quiet` |
+| `cargo-clippy` | `cargo clippy --all-targets -- -D warnings` |
+| `cargo-fmt` | `cargo fmt --check` |
+| `pytest` | `python3 -m pytest -q --tb=short` (`python` on Windows) |
+| `ruff` | `python3 -m ruff check --select E,F,I,B,C4,UP,S .` (`python` on Windows) |
+
+Arbitrary shell check commands are not accepted. Python profiles need their own
+prepared tools/dependencies; the Cargo preparation helper does not install them.
+The command implementation is in [the console](assets/static/harness.html), and
+fixed profiles are in [agent policy](src/server/agent_policy.rs).
 
 ## 8. Persistence, optional keys and recovery
 
@@ -570,6 +812,62 @@ larger than 64 KiB. Setup can save a missing key but will not replace an existin
 one. Enter the matching value in the console after restart; it stays only in
 page memory. Do not put credentials in command output, screenshots or shared logs.
 Per-user login is independently optional (section 10).
+
+### Which settings take effect where?
+
+Edit the **active home's** `config.yaml`, not the copy inside the app bundle or
+repository. Merge into existing mappings instead of appending duplicate YAML
+keys. Use literal `true`/`false` booleans: quoted `"true"` does not enable a gate.
+After file-based configuration changes, fully quit/relaunch the app or restart
+`serve`; closing the app window only hides it.
+
+| Setting | Scope / persistence | How to verify |
+|---|---|---|
+| Model endpoint, provider, timeout, temperature and token ceiling | `config.yaml`, home-wide; restart after edits | `/model`, Setup diagnostics and an actual reply |
+| `/model use <name>` | Persisted console model selection; subsequent requests | `/model`; it can differ from the seeded YAML tag |
+| Persona and soul toggle | `soul.md` plus `harness.json`, shared across sessions; next request | `/soul status`, `/prompt` |
+| Runtime skill file | `<home>/skills/<id>/SKILL.md`; selection is per session | `/skill status` and next `/prompt`; last successful snapshot may be older |
+| Goal and chat history | Saved session; goal maximum 2,000 characters | `/goal`, `/session list`, `/goal task` for coding linkage |
+| Loop counters and automatic continuation | Current page only; not an unattended scheduler | Visible loop state; restart does not resume it |
+| Memory notes and inclusion | Home-wide saved notes/toggle; next request | `/memory`, `/prompt` |
+| Web allowlist, last extract and injected text | Home-wide saved files; fetch enablement is a separate toggle | `/web`, `/prompt`; use `forget` to remove context |
+| Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
+| Managed credentials | Home `.env`, loaded at process startup on Unix; inherited values win | `/api` reports presence/masked tail, not proof of provider authentication |
+| Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |
+
+For output style, use section 7.4 before tuning generation parameters.
+`models.local_llm.max_tokens` is an output ceiling and can truncate a reply;
+`temperature` changes sampling, not a deterministic filler filter. Loop requests
+also have the separate `api.harness_loop_rate_limit` budget. Keep persona and
+selected skills concise enough to leave useful room for the question and context.
+
+### Supported managed keys
+
+`/api` displays configured-key presence. `/api set <KEY> <value>` saves one of
+these exact keys; substitute a real value only in your private console. This is
+not a general environment-variable editor or connector credential vault.
+
+| Key | Purpose |
+|---|---|
+| `CGAGENTHARNESS_API_KEY` | Optional authentication for the harness's own guarded routes |
+| `GROK_API_KEY` | Optional explicitly governed cloud coding planner |
+| `ANTHROPIC_API_KEY` | Optional explicitly governed cloud coding planner |
+| `DEEPAGENT_API_KEY` | Bearer credential for a configured non-Ollama compatible local planner |
+
+Saving a key does not enable a provider, select it for chat, open coding gates or
+install a connector. Provider and per-run online approvals are separate from key
+storage. The slash-command workflow does not expose arbitrary cloud-provider
+selection flags; review the separate provider controls in
+[the configuration reference](assets/config.default.yaml) before considering
+a cloud coding run. Values must be nonempty, no more than 4,096 characters
+and contain no newline, carriage return or NUL. There is no generic key-deletion
+slash command. Preserve other entries when deliberately maintaining the private
+file, and restart after changing credentials.
+
+Some console versions print a stale “your shell sources it” hint after saving.
+For this Unix desktop/`serve` implementation, the startup loader reads the managed
+file as data; follow the loading and permissions rules above. Do not source it as
+a shell script. Never put key values in soul, memory, skill files or shared prompts.
 
 ### Close, quit and reopen
 
