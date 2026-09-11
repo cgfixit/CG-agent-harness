@@ -1,0 +1,5037 @@
+{
+  "schema_version": 1,
+  "source_pins": {
+    "rust": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+    "python": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9"
+  },
+  "open_prs_at_fetch": {
+    "rust": [],
+    "python": []
+  },
+  "phase": 0,
+  "actions": [
+    {
+      "id": "M1",
+      "scope": "Structured facts store: stable IDs, content, categories, tags, confidence, provenance, active/inactive state and timestamps.",
+      "original_classification": "missing",
+      "phase": 2,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "memory/models.py",
+            "exists": true,
+            "representative_symbols": [
+              "Fact:13"
+            ]
+          },
+          {
+            "path": "memory/store.py",
+            "exists": true,
+            "representative_symbols": [
+              "insert_fact:356",
+              "update_fact:436",
+              "deactivate_fact:491"
+            ]
+          },
+          {
+            "path": "memory/policy.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_reason:19",
+              "scan_content:44",
+              "enforce_content:57"
+            ]
+          },
+          {
+            "path": "memory/mirror.py",
+            "exists": true,
+            "representative_symbols": [
+              "status_dict:13",
+              "export_html:46"
+            ]
+          },
+          {
+            "path": "gate_memory.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_memory_routes:59",
+              "memory_status:83",
+              "memory_facts:92"
+            ]
+          },
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_harness_memory.py",
+          "tests/test_memory_fusion.py",
+          "tests/test_memory_isolation.py",
+          "tests/test_memory_metadata_prompt_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 8
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/memory_notes.rs",
+          "src/server/routes/panels.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Operator notes exist; no structured fact, proposal, episode or HTML-export store.",
+        "remaining": "Structured facts store: stable IDs, content, categories, tags, confidence, provenance, active/inactive state and timestamps.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; review requires operator reason and content/version binding. No retrieval fusion.",
+      "credentials_network_side_effects": "No external credentials; private local storage; bounded exports only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "M2",
+      "scope": "Governed add/update/deactivate proposals, pending/applied/rejected states, explicit reasons, injection validation and audit.",
+      "original_classification": "missing",
+      "phase": 2,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "memory/models.py",
+            "exists": true,
+            "representative_symbols": [
+              "Fact:13",
+              "Episode:28",
+              "MemoryProposal:42"
+            ]
+          },
+          {
+            "path": "memory/store.py",
+            "exists": true,
+            "representative_symbols": [
+              "create_proposal:505",
+              "apply_proposal:577",
+              "reject_proposal:679"
+            ]
+          },
+          {
+            "path": "memory/policy.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_reason:19",
+              "scan_content:44",
+              "enforce_content:57"
+            ]
+          },
+          {
+            "path": "memory/mirror.py",
+            "exists": true,
+            "representative_symbols": [
+              "status_dict:13",
+              "export_html:46"
+            ]
+          },
+          {
+            "path": "gate_memory.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_memory_routes:59",
+              "memory_status:83",
+              "memory_facts:92"
+            ]
+          },
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_harness_memory.py",
+          "tests/test_memory_fusion.py",
+          "tests/test_memory_isolation.py",
+          "tests/test_memory_metadata_prompt_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 8
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/memory_notes.rs",
+          "src/server/routes/panels.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Operator notes exist; no structured fact, proposal, episode or HTML-export store.",
+        "remaining": "Governed add/update/deactivate proposals, pending/applied/rejected states, explicit reasons, injection validation and audit.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "M1"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; review requires operator reason and content/version binding. No retrieval fusion.",
+      "credentials_network_side_effects": "No external credentials; private local storage; bounded exports only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "M3",
+      "scope": "Episode records and retention: query hash, bounded answer summary, model, time and optional raw-query storage.",
+      "original_classification": "adapt",
+      "phase": 2,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "memory/models.py",
+            "exists": true,
+            "representative_symbols": [
+              "Episode:28"
+            ]
+          },
+          {
+            "path": "memory/store.py",
+            "exists": true,
+            "representative_symbols": [
+              "stage_episode:774",
+              "prune_episodes:834"
+            ]
+          },
+          {
+            "path": "memory/policy.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_reason:19",
+              "scan_content:44",
+              "enforce_content:57"
+            ]
+          },
+          {
+            "path": "memory/mirror.py",
+            "exists": true,
+            "representative_symbols": [
+              "status_dict:13",
+              "export_html:46"
+            ]
+          },
+          {
+            "path": "gate_memory.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_memory_routes:59",
+              "memory_status:83",
+              "memory_facts:92"
+            ]
+          },
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_harness_memory.py",
+          "tests/test_memory_fusion.py",
+          "tests/test_memory_isolation.py",
+          "tests/test_memory_metadata_prompt_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 8
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/memory_notes.rs",
+          "src/server/routes/panels.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Operator notes exist; no structured fact, proposal, episode or HTML-export store.",
+        "remaining": "Episode records and retention: query hash, bounded answer summary, model, time and optional raw-query storage.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "M1"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; review requires operator reason and content/version binding. No retrieval fusion.",
+      "credentials_network_side_effects": "No external credentials; private local storage; bounded exports only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "M4",
+      "scope": "Memory status/counts and fact/episode/proposal administration APIs or equivalent console controls.",
+      "original_classification": "missing",
+      "phase": 2,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "memory/models.py",
+            "exists": true,
+            "representative_symbols": [
+              "Fact:13",
+              "Episode:28",
+              "MemoryProposal:42"
+            ]
+          },
+          {
+            "path": "memory/store.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:82",
+              "get_connection:104",
+              "list_facts:273"
+            ]
+          },
+          {
+            "path": "memory/policy.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_reason:19",
+              "scan_content:44",
+              "enforce_content:57"
+            ]
+          },
+          {
+            "path": "memory/mirror.py",
+            "exists": true,
+            "representative_symbols": [
+              "status_dict:13",
+              "export_html:46"
+            ]
+          },
+          {
+            "path": "gate_memory.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_memory_routes:59",
+              "memory_status:83",
+              "memory_facts:92",
+              "memory_episodes:103",
+              "memory_proposals:114"
+            ]
+          },
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_harness_memory.py",
+          "tests/test_memory_fusion.py",
+          "tests/test_memory_isolation.py",
+          "tests/test_memory_metadata_prompt_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 8
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/memory_notes.rs",
+          "src/server/routes/panels.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Operator notes exist; no structured fact, proposal, episode or HTML-export store.",
+        "remaining": "Memory status/counts and fact/episode/proposal administration APIs or equivalent console controls.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "M1"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; review requires operator reason and content/version binding. No retrieval fusion.",
+      "credentials_network_side_effects": "No external credentials; private local storage; bounded exports only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "M5",
+      "scope": "Bounded, escaped, offline HTML export of facts and recent episodes.",
+      "original_classification": "missing",
+      "phase": 2,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "memory/models.py",
+            "exists": true,
+            "representative_symbols": [
+              "Fact:13",
+              "Episode:28",
+              "MemoryProposal:42"
+            ]
+          },
+          {
+            "path": "memory/store.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:82",
+              "get_connection:104",
+              "list_facts:273"
+            ]
+          },
+          {
+            "path": "memory/policy.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_reason:19",
+              "scan_content:44",
+              "enforce_content:57"
+            ]
+          },
+          {
+            "path": "memory/mirror.py",
+            "exists": true,
+            "representative_symbols": [
+              "export_html:46"
+            ]
+          },
+          {
+            "path": "gate_memory.py",
+            "exists": true,
+            "representative_symbols": [
+              "query_export_html:204"
+            ]
+          },
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_harness_memory.py",
+          "tests/test_memory_fusion.py",
+          "tests/test_memory_isolation.py",
+          "tests/test_memory_metadata_prompt_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 8
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/memory_notes.rs",
+          "src/server/routes/panels.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Operator notes exist; no structured fact, proposal, episode or HTML-export store.",
+        "remaining": "Bounded, escaped, offline HTML export of facts and recent episodes.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "M1"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; review requires operator reason and content/version binding. No retrieval fusion.",
+      "credentials_network_side_effects": "No external credentials; private local storage; bounded exports only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C1",
+      "scope": "Filesystem read connector: status/list/read/stat/grep/glob/largest and bounded context extraction against operator-approved roots.",
+      "original_classification": "missing",
+      "phase": 4,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/fsconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:119",
+              "cmd_list:165",
+              "cmd_read:169"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "build_injection_patterns:52",
+              "FsClient:68",
+              "close:92"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/writer.py",
+            "exists": true,
+            "representative_symbols": [
+              "FsWriter:78",
+              "close:125",
+              "fs_write:462"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/pathsafe.py",
+            "exists": true,
+            "representative_symbols": [
+              "split_components:614",
+              "SafeRoot:648",
+              "ScopedRoots:661"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/trash.py",
+            "exists": true,
+            "representative_symbols": [
+              "iso:65",
+              "entry_name:70",
+              "TrashEntry:86"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/quota.py",
+            "exists": true,
+            "representative_symbols": [
+              "QuotaLedger:41",
+              "load:51",
+              "save:69"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/osutil.py",
+            "exists": true,
+            "representative_symbols": [
+              "reveal:68"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_fsconnect_cli.py",
+          "tests/test_fsconnect_client.py",
+          "tests/test_fsconnect_config.py",
+          "tests/test_fsconnect_fail_closed_unit.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 21
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/agentic/workspace.rs",
+          "src/agentic/writer.rs",
+          "src/shim/mod.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Existing clone jail does not implement operator-approved general filesystem roots.",
+        "remaining": "Filesystem read connector: status/list/read/stat/grep/glob/largest and bounded context extraction against operator-approved roots.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; distinct read/write roots; fresh reason/confirmation; reserved soul/secret paths denied.",
+      "credentials_network_side_effects": "Local scoped filesystem side effects only; optional mounts require explicit roots.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C2",
+      "scope": "Filesystem writes: write/append/mkdir/move/delete with separate writable roots, reason/confirmation, dry run, protected destinations and audit.",
+      "original_classification": "missing",
+      "phase": 4,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/fsconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:119",
+              "cmd_list:165",
+              "cmd_read:169"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "build_injection_patterns:52",
+              "FsClient:68",
+              "close:92"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/writer.py",
+            "exists": true,
+            "representative_symbols": [
+              "FsWriter:78",
+              "close:125",
+              "fs_write:462"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/pathsafe.py",
+            "exists": true,
+            "representative_symbols": [
+              "split_components:614",
+              "SafeRoot:648",
+              "ScopedRoots:661"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/trash.py",
+            "exists": true,
+            "representative_symbols": [
+              "iso:65",
+              "entry_name:70",
+              "TrashEntry:86"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/quota.py",
+            "exists": true,
+            "representative_symbols": [
+              "QuotaLedger:41",
+              "load:51",
+              "save:69"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/osutil.py",
+            "exists": true,
+            "representative_symbols": [
+              "reveal:68"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_fsconnect_cli.py",
+          "tests/test_fsconnect_client.py",
+          "tests/test_fsconnect_config.py",
+          "tests/test_fsconnect_fail_closed_unit.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 21
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/agentic/workspace.rs",
+          "src/agentic/writer.rs",
+          "src/shim/mod.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Existing clone jail does not implement operator-approved general filesystem roots.",
+        "remaining": "Filesystem writes: write/append/mkdir/move/delete with separate writable roots, reason/confirmation, dry run, protected destinations and audit.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; distinct read/write roots; fresh reason/confirmation; reserved soul/secret paths denied.",
+      "credentials_network_side_effects": "Local scoped filesystem side effects only; optional mounts require explicit roots.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C3",
+      "scope": "Soft-delete trash, restore, explicit purge, retention, quota/rate controls and quota-status.",
+      "original_classification": "missing",
+      "phase": 4,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/fsconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:119",
+              "cmd_list:165",
+              "cmd_read:169"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "build_injection_patterns:52",
+              "FsClient:68",
+              "close:92"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/writer.py",
+            "exists": true,
+            "representative_symbols": [
+              "FsWriter:78",
+              "close:125",
+              "fs_write:462"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/pathsafe.py",
+            "exists": true,
+            "representative_symbols": [
+              "split_components:614",
+              "SafeRoot:648",
+              "ScopedRoots:661"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/trash.py",
+            "exists": true,
+            "representative_symbols": [
+              "iso:65",
+              "entry_name:70",
+              "TrashEntry:86"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/quota.py",
+            "exists": true,
+            "representative_symbols": [
+              "QuotaLedger:41",
+              "load:51",
+              "save:69"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/osutil.py",
+            "exists": true,
+            "representative_symbols": [
+              "reveal:68"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_fsconnect_cli.py",
+          "tests/test_fsconnect_client.py",
+          "tests/test_fsconnect_config.py",
+          "tests/test_fsconnect_fail_closed_unit.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 21
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/agentic/workspace.rs",
+          "src/agentic/writer.rs",
+          "src/shim/mod.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Existing clone jail does not implement operator-approved general filesystem roots.",
+        "remaining": "Soft-delete trash, restore, explicit purge, retention, quota/rate controls and quota-status.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; distinct read/write roots; fresh reason/confirmation; reserved soul/secret paths denied.",
+      "credentials_network_side_effects": "Local scoped filesystem side effects only; optional mounts require explicit roots.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C4",
+      "scope": "Filesystem connector self-test, Finder reveal, trash-cleanup scheduling and macOS setup helpers.",
+      "original_classification": "missing",
+      "phase": 4,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/fsconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:119",
+              "cmd_list:165",
+              "cmd_read:169"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "build_injection_patterns:52",
+              "FsClient:68",
+              "close:92"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/writer.py",
+            "exists": true,
+            "representative_symbols": [
+              "FsWriter:78",
+              "close:125",
+              "fs_write:462"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/pathsafe.py",
+            "exists": true,
+            "representative_symbols": [
+              "split_components:614",
+              "SafeRoot:648",
+              "ScopedRoots:661"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/trash.py",
+            "exists": true,
+            "representative_symbols": [
+              "iso:65",
+              "entry_name:70",
+              "TrashEntry:86"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/quota.py",
+            "exists": true,
+            "representative_symbols": [
+              "QuotaLedger:41",
+              "load:51",
+              "save:69"
+            ]
+          },
+          {
+            "path": "agentic/fsconnect/osutil.py",
+            "exists": true,
+            "representative_symbols": [
+              "reveal:68"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_fsconnect_cli.py",
+          "tests/test_fsconnect_client.py",
+          "tests/test_fsconnect_config.py",
+          "tests/test_fsconnect_fail_closed_unit.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 21
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/agentic/workspace.rs",
+          "src/agentic/writer.rs",
+          "src/shim/mod.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Existing clone jail does not implement operator-approved general filesystem roots.",
+        "remaining": "Filesystem connector self-test, Finder reveal, trash-cleanup scheduling and macOS setup helpers.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; distinct read/write roots; fresh reason/confirmation; reserved soul/secret paths denied.",
+      "credentials_network_side_effects": "Local scoped filesystem side effects only; optional mounts require explicit roots.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C5",
+      "scope": "PostgreSQL and SQL Server read-only connectors using configured credential sources.",
+      "original_classification": "missing",
+      "phase": 5,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/sqlconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:69",
+              "cmd_schema:108",
+              "cmd_query:112"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "assert_read_only_sql:355",
+              "validate_identifier:434",
+              "quote_identifier:440"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "SqlConnectConfig:26",
+              "load_sqlconnect_config:68",
+              "to_dict:64"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/context.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_op:12"
+            ]
+          },
+          {
+            "path": "gate_ops.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_ops_routes:71",
+              "ops_sync:176",
+              "ops_agentic:184"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_sqlconnect_cli.py",
+          "tests/test_sqlconnect_client.py",
+          "tests/test_sqlconnect_config.py",
+          "tests/test_sqlconnect_context.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 5
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/routes/panels.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No PostgreSQL or SQL Server connector exists in Rust dispatch.",
+        "remaining": "PostgreSQL and SQL Server read-only connectors using configured credential sources.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; read-only subset and engine enforcement; bounded execution through shim.",
+      "credentials_network_side_effects": "Private credential abstraction; no DSN in config, prompts, logs or argv; selected DB only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C6",
+      "scope": "SQL schema enumeration, table preview, bounded SELECT/WITH query, EXPLAIN and row count; JSON/CSV output.",
+      "original_classification": "missing",
+      "phase": 5,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/sqlconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:69",
+              "cmd_schema:108",
+              "cmd_query:112"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "assert_read_only_sql:355",
+              "validate_identifier:434",
+              "quote_identifier:440"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "SqlConnectConfig:26",
+              "load_sqlconnect_config:68",
+              "to_dict:64"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/context.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_op:12"
+            ]
+          },
+          {
+            "path": "gate_ops.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_ops_routes:71",
+              "ops_sync:176",
+              "ops_agentic:184"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_sqlconnect_cli.py",
+          "tests/test_sqlconnect_client.py",
+          "tests/test_sqlconnect_config.py",
+          "tests/test_sqlconnect_context.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 5
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/routes/panels.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No PostgreSQL or SQL Server connector exists in Rust dispatch.",
+        "remaining": "SQL schema enumeration, table preview, bounded SELECT/WITH query, EXPLAIN and row count; JSON/CSV output.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; read-only subset and engine enforcement; bounded execution through shim.",
+      "credentials_network_side_effects": "Private credential abstraction; no DSN in config, prompts, logs or argv; selected DB only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C7",
+      "scope": "SQL status/self-test, safe context generation and bounded operations API.",
+      "original_classification": "missing",
+      "phase": 5,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/sqlconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:69",
+              "cmd_schema:108",
+              "cmd_query:112"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "assert_read_only_sql:355",
+              "validate_identifier:434",
+              "quote_identifier:440"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "SqlConnectConfig:26",
+              "load_sqlconnect_config:68",
+              "to_dict:64"
+            ]
+          },
+          {
+            "path": "agentic/sqlconnect/context.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_op:12"
+            ]
+          },
+          {
+            "path": "gate_ops.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_ops_routes:71",
+              "ops_sync:176",
+              "ops_agentic:184"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_sqlconnect_cli.py",
+          "tests/test_sqlconnect_client.py",
+          "tests/test_sqlconnect_config.py",
+          "tests/test_sqlconnect_context.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 5
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/routes/panels.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No PostgreSQL or SQL Server connector exists in Rust dispatch.",
+        "remaining": "SQL status/self-test, safe context generation and bounded operations API.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; read-only subset and engine enforcement; bounded execution through shim.",
+      "credentials_network_side_effects": "Private credential abstraction; no DSN in config, prompts, logs or argv; selected DB only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C8",
+      "scope": "Network self-inventory and existing ARP/neighbor-cache inspection.",
+      "original_classification": "missing",
+      "phase": 5,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/netconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:51",
+              "cmd_self:95",
+              "cmd_arp:99"
+            ]
+          },
+          {
+            "path": "agentic/netconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "parse_neighbor_cache:62",
+              "NetClient:153",
+              "self_inventory:182"
+            ]
+          },
+          {
+            "path": "agentic/netconnect/scope.py",
+            "exists": true,
+            "representative_symbols": [
+              "normalize_allowed_cidrs:19",
+              "ScopePolicy:57",
+              "from_cidrs:63"
+            ]
+          },
+          {
+            "path": "agentic/netconnect/context.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_op:10"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_netconnect_cli.py",
+          "tests/test_netconnect_config.py",
+          "tests/test_netconnect_scope.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 3
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No passive network inventory worker or desktop view exists.",
+        "remaining": "Network self-inventory and existing ARP/neighbor-cache inspection.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; explicit CIDR/interface scope; fixed native commands; no active probes.",
+      "credentials_network_side_effects": "No service credential; existing neighbor cache only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C9",
+      "scope": "Network status/self-test, structured scoped results and redacted context output.",
+      "original_classification": "missing",
+      "phase": 5,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/netconnect/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:51",
+              "cmd_self:95",
+              "cmd_arp:99"
+            ]
+          },
+          {
+            "path": "agentic/netconnect/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "parse_neighbor_cache:62",
+              "NetClient:153",
+              "self_inventory:182"
+            ]
+          },
+          {
+            "path": "agentic/netconnect/scope.py",
+            "exists": true,
+            "representative_symbols": [
+              "normalize_allowed_cidrs:19",
+              "ScopePolicy:57",
+              "from_cidrs:63"
+            ]
+          },
+          {
+            "path": "agentic/netconnect/context.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_op:10"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_netconnect_cli.py",
+          "tests/test_netconnect_config.py",
+          "tests/test_netconnect_scope.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 3
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No passive network inventory worker or desktop view exists.",
+        "remaining": "Network status/self-test, structured scoped results and redacted context output.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; explicit CIDR/interface scope; fixed native commands; no active probes.",
+      "credentials_network_side_effects": "No service credential; existing neighbor cache only.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "C10",
+      "scope": "Connector configuration, capability reporting and bounded dispatch through the out-of-band shim.",
+      "original_classification": "missing",
+      "phase": 1,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "harness/registry_view.py",
+            "exists": true,
+            "representative_symbols": [
+              "Connector:41",
+              "list_repo_skills:112",
+              "list_governed_skills:134"
+            ]
+          },
+          {
+            "path": "utils/ops_runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "real_repo_run_budget_sec:108",
+              "OpsError:194",
+              "OpsResult:199"
+            ]
+          },
+          {
+            "path": "gate_ops.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_ops_routes:71",
+              "ops_sync:176",
+              "ops_agentic:184"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_gate_ops.py",
+          "tests/test_ops_runner.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 2
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/views.rs",
+          "src/server/agent_jobs.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Agentic bounded jobs and registry exist; connector dispatch is absent.",
+        "remaining": "Connector configuration, capability reporting and bounded dispatch through the out-of-band shim.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Allowlisted typed actions; fresh execution-boundary policy and cancellation; disabled status inert.",
+      "credentials_network_side_effects": "Only consumer-specific credentials; capability reporting must not open connections.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "I1",
+      "scope": "Dropbox/rclone sync transport: pull/copy, opt-in bisync, allowed remote, filters, lock, retries/deadline, transfer/delete fuses and conflict handling.",
+      "original_classification": "adapt",
+      "phase": 8,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "sync/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "check_rclone_version:62",
+              "FileEvent:175",
+              "CheckResult:194"
+            ]
+          },
+          {
+            "path": "sync/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "RcloneConfig:116",
+              "load_sync_config:418",
+              "remote:397"
+            ]
+          },
+          {
+            "path": "sync/filters.py",
+            "exists": true,
+            "representative_symbols": [
+              "generate_filters:112",
+              "write_filter_file:155",
+              "filter_summary:172"
+            ]
+          },
+          {
+            "path": "sync/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "get_scheduler:61",
+              "cmd_setup:116",
+              "cmd_sync:234"
+            ]
+          },
+          {
+            "path": "sync/scheduler.py",
+            "exists": true,
+            "representative_symbols": [
+              "ScheduleEntry:72",
+              "CronScheduler:317",
+              "LaunchdScheduler:510"
+            ]
+          },
+          {
+            "path": "gate_ops.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_ops_routes:71",
+              "ops_sync:176",
+              "ops_agentic:184"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_sync_cli.py",
+          "tests/test_sync_config.py",
+          "tests/test_sync_filters.py",
+          "tests/test_sync_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 8
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/agent_jobs.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No Rust sync transport or scheduler; reuse jobs after shared dispatch extension.",
+        "remaining": "Dropbox/rclone sync transport: pull/copy, opt-in bisync, allowed remote, filters, lock, retries/deadline, transfer/delete fuses and conflict handling.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "C1",
+        "C2",
+        "C3",
+        "O7"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; approved non-RAG roots and remote; no active-workspace overlap; separate bisync intent.",
+      "credentials_network_side_effects": "Private rclone configuration; fixture local remotes only until concrete external authorization.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "I2",
+      "scope": "Sync status/check/setup/self-test, schedule/unschedule and operations API.",
+      "original_classification": "adapt",
+      "phase": 8,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "sync/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "check_rclone_version:62",
+              "FileEvent:175",
+              "CheckResult:194"
+            ]
+          },
+          {
+            "path": "sync/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "RcloneConfig:116",
+              "load_sync_config:418",
+              "remote:397"
+            ]
+          },
+          {
+            "path": "sync/filters.py",
+            "exists": true,
+            "representative_symbols": [
+              "generate_filters:112",
+              "write_filter_file:155",
+              "filter_summary:172"
+            ]
+          },
+          {
+            "path": "sync/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "get_scheduler:61",
+              "cmd_setup:116",
+              "cmd_sync:234"
+            ]
+          },
+          {
+            "path": "sync/scheduler.py",
+            "exists": true,
+            "representative_symbols": [
+              "ScheduleEntry:72",
+              "CronScheduler:317",
+              "LaunchdScheduler:510"
+            ]
+          },
+          {
+            "path": "gate_ops.py",
+            "exists": true,
+            "representative_symbols": [
+              "register_ops_routes:71",
+              "ops_sync:176",
+              "ops_agentic:184"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_sync_cli.py",
+          "tests/test_sync_config.py",
+          "tests/test_sync_filters.py",
+          "tests/test_sync_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 8
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/agent_jobs.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No Rust sync transport or scheduler; reuse jobs after shared dispatch extension.",
+        "remaining": "Sync status/check/setup/self-test, schedule/unschedule and operations API.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "C1",
+        "C2",
+        "C3",
+        "O7"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; approved non-RAG roots and remote; no active-workspace overlap; separate bisync intent.",
+      "credentials_network_side_effects": "Private rclone configuration; fixture local remotes only until concrete external authorization.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "I3",
+      "scope": "Telegram outbound notifications and allowlisted private-chat identity.",
+      "original_classification": "missing",
+      "phase": 9,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "telegram/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:115",
+              "cmd_test:148",
+              "cmd_send:164"
+            ]
+          },
+          {
+            "path": "telegram/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "send_notify:45",
+              "handle_inbound_text:169",
+              "handle_inbound_media:298"
+            ]
+          },
+          {
+            "path": "telegram/state.py",
+            "exists": true,
+            "representative_symbols": [
+              "default_offset_path:31",
+              "default_hybrid_session_path:35",
+              "grant_hybrid_confirm:136"
+            ]
+          },
+          {
+            "path": "telegram/media.py",
+            "exists": true,
+            "representative_symbols": [
+              "MediaAttachment:32",
+              "save_confirmation:40",
+              "attachment_from_message:59"
+            ]
+          },
+          {
+            "path": "telegram/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "TelegramRateLimitConfig:139",
+              "TelegramQueryConfig:153",
+              "TelegramMediaConfig:167"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_telegram_cli.py",
+          "tests/test_telegram_client.py",
+          "tests/test_telegram_config.py",
+          "tests/test_telegram_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 9
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/agent_jobs.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No Telegram adapter; durable job infrastructure is shared groundwork only.",
+        "remaining": "Telegram outbound notifications and allowlisted private-chat identity.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "O7"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; allowlisted private chats; payload/destination/principal/expiry-bound single-use consent.",
+      "credentials_network_side_effects": "Private bot token; mock Bot API only; real sends and persistent polling separately authorized.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "I4",
+      "scope": "Telegram inbound long polling, cursor/dedup state and local chat bridge.",
+      "original_classification": "adapt",
+      "phase": 9,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "telegram/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:115",
+              "cmd_test:148",
+              "cmd_send:164"
+            ]
+          },
+          {
+            "path": "telegram/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "send_notify:45",
+              "handle_inbound_text:169",
+              "handle_inbound_media:298"
+            ]
+          },
+          {
+            "path": "telegram/state.py",
+            "exists": true,
+            "representative_symbols": [
+              "default_offset_path:31",
+              "default_hybrid_session_path:35",
+              "grant_hybrid_confirm:136"
+            ]
+          },
+          {
+            "path": "telegram/media.py",
+            "exists": true,
+            "representative_symbols": [
+              "MediaAttachment:32",
+              "save_confirmation:40",
+              "attachment_from_message:59"
+            ]
+          },
+          {
+            "path": "telegram/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "TelegramRateLimitConfig:139",
+              "TelegramQueryConfig:153",
+              "TelegramMediaConfig:167"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_telegram_cli.py",
+          "tests/test_telegram_client.py",
+          "tests/test_telegram_config.py",
+          "tests/test_telegram_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 9
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/agent_jobs.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No Telegram adapter; durable job infrastructure is shared groundwork only.",
+        "remaining": "Telegram inbound long polling, cursor/dedup state and local chat bridge.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "O7"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; allowlisted private chats; payload/destination/principal/expiry-bound single-use consent.",
+      "credentials_network_side_effects": "Private bot token; mock Bot API only; real sends and persistent polling separately authorized.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "I5",
+      "scope": "Telegram consent workflow with single-use, expiring approvals; attachment staging and explicitly confirmed save through fsconnect.",
+      "original_classification": "missing",
+      "phase": 9,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "telegram/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:115",
+              "cmd_test:148",
+              "cmd_send:164"
+            ]
+          },
+          {
+            "path": "telegram/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "send_notify:45",
+              "handle_inbound_text:169",
+              "handle_inbound_media:298"
+            ]
+          },
+          {
+            "path": "telegram/state.py",
+            "exists": true,
+            "representative_symbols": [
+              "default_offset_path:31",
+              "default_hybrid_session_path:35",
+              "grant_hybrid_confirm:136"
+            ]
+          },
+          {
+            "path": "telegram/media.py",
+            "exists": true,
+            "representative_symbols": [
+              "MediaAttachment:32",
+              "save_confirmation:40",
+              "attachment_from_message:59"
+            ]
+          },
+          {
+            "path": "telegram/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "TelegramRateLimitConfig:139",
+              "TelegramQueryConfig:153",
+              "TelegramMediaConfig:167"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_telegram_cli.py",
+          "tests/test_telegram_client.py",
+          "tests/test_telegram_config.py",
+          "tests/test_telegram_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 9
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/agent_jobs.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No Telegram adapter; durable job infrastructure is shared groundwork only.",
+        "remaining": "Telegram consent workflow with single-use, expiring approvals; attachment staging and explicitly confirmed save through fsconnect.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "C1",
+        "C2",
+        "C3",
+        "O7"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; allowlisted private chats; payload/destination/principal/expiry-bound single-use consent.",
+      "credentials_network_side_effects": "Private bot token; mock Bot API only; real sends and persistent polling separately authorized.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "I6",
+      "scope": "Telegram polling and health scheduling helpers.",
+      "original_classification": "missing",
+      "phase": 9,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "telegram/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:115",
+              "cmd_test:148",
+              "cmd_send:164"
+            ]
+          },
+          {
+            "path": "telegram/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "send_notify:45",
+              "handle_inbound_text:169",
+              "handle_inbound_media:298"
+            ]
+          },
+          {
+            "path": "telegram/state.py",
+            "exists": true,
+            "representative_symbols": [
+              "default_offset_path:31",
+              "default_hybrid_session_path:35",
+              "grant_hybrid_confirm:136"
+            ]
+          },
+          {
+            "path": "telegram/media.py",
+            "exists": true,
+            "representative_symbols": [
+              "MediaAttachment:32",
+              "save_confirmation:40",
+              "attachment_from_message:59"
+            ]
+          },
+          {
+            "path": "telegram/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "TelegramRateLimitConfig:139",
+              "TelegramQueryConfig:153",
+              "TelegramMediaConfig:167"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_telegram_cli.py",
+          "tests/test_telegram_client.py",
+          "tests/test_telegram_config.py",
+          "tests/test_telegram_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 9
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/server/agent_jobs.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No Telegram adapter; durable job infrastructure is shared groundwork only.",
+        "remaining": "Telegram polling and health scheduling helpers.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "O7"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; allowlisted private chats; payload/destination/principal/expiry-bound single-use consent.",
+      "credentials_network_side_effects": "Private bot token; mock Bot API only; real sends and persistent polling separately authorized.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "I7",
+      "scope": "OpenTweet topic \u2192 local generation \u2192 validation \u2192 remote draft, with separately selected scheduling.",
+      "original_classification": "adapt",
+      "phase": 10,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "opentweet/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:103",
+              "cmd_test:135",
+              "cmd_post:148"
+            ]
+          },
+          {
+            "path": "opentweet/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "parse_schedule_slot:159",
+              "OpenTweetQueryConfig:170",
+              "OpenTweetConfig:184"
+            ]
+          },
+          {
+            "path": "opentweet/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "next_schedule_datetime:27",
+              "read_topic:53",
+              "post_once:144"
+            ]
+          },
+          {
+            "path": "opentweet/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "reset_http_client_for_tests:50",
+              "post_query:65",
+              "get_me:131"
+            ]
+          },
+          {
+            "path": "opentweet/selftest.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_self_test:21"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_opentweet_cli.py",
+          "tests/test_opentweet_client.py",
+          "tests/test_opentweet_config.py",
+          "tests/test_opentweet_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 6
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/llm/openai_chat.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No OpenTweet workflow; existing model client is not a remote draft adapter.",
+        "remaining": "OpenTweet topic \u2192 local generation \u2192 validation \u2192 remote draft, with separately selected scheduling.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "O7"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; local preview; exact external creation intent; unknown outcomes require reconciliation.",
+      "credentials_network_side_effects": "Private provider token; local mock only; no real draft/post/schedule authorization.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "I8",
+      "scope": "OpenTweet credential/config status, self-test and schedule-plist/task generation.",
+      "original_classification": "missing",
+      "phase": 10,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "opentweet/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:103",
+              "cmd_test:135",
+              "cmd_post:148"
+            ]
+          },
+          {
+            "path": "opentweet/config.py",
+            "exists": true,
+            "representative_symbols": [
+              "parse_schedule_slot:159",
+              "OpenTweetQueryConfig:170",
+              "OpenTweetConfig:184"
+            ]
+          },
+          {
+            "path": "opentweet/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "next_schedule_datetime:27",
+              "read_topic:53",
+              "post_once:144"
+            ]
+          },
+          {
+            "path": "opentweet/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "reset_http_client_for_tests:50",
+              "post_query:65",
+              "get_me:131"
+            ]
+          },
+          {
+            "path": "opentweet/selftest.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_self_test:21"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_opentweet_cli.py",
+          "tests/test_opentweet_client.py",
+          "tests/test_opentweet_config.py",
+          "tests/test_opentweet_isolation.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 6
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/shim/mod.rs",
+          "src/llm/openai_chat.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No OpenTweet workflow; existing model client is not a remote draft adapter.",
+        "remaining": "OpenTweet credential/config status, self-test and schedule-plist/task generation.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10",
+        "O7"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Default off; local preview; exact external creation intent; unknown outcomes require reconciliation.",
+      "credentials_network_side_effects": "Private provider token; local mock only; no real draft/post/schedule authorization.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "A1",
+      "scope": "Extend credential management only for implemented subsystems.",
+      "original_classification": "partial",
+      "phase": 1,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "harness/env_keys.py",
+            "exists": true,
+            "representative_symbols": [
+              "KeySpec:90",
+              "EnvKeyError:156",
+              "home_dir:160"
+            ]
+          },
+          {
+            "path": "macos/cyclaw-keychain-env.sh",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "macos/cyclaw-keychain-set.sh",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "macos/setup-cyclaw-keys.sh",
+            "exists": true,
+            "representative_symbols": []
+          }
+        ],
+        "tests": [
+          "tests/test_harness_api_keys.py",
+          "tests/test_setup_cyclaw_keys.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 2
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/env_keys.rs",
+          "src/server/desktop.rs",
+          "src/server/mod.rs",
+          "desktop/src/backend.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Four consumed keys and private literal dotenv loading exist for desktop. No Keychain backend; serve does not load managed dotenv.",
+        "remaining": "Extend credential management only for implemented subsystems.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Preserve credential-free local default, environment precedence, private file validation, no shell sourcing.",
+      "credentials_network_side_effects": "Existing four consumed key names only; no decorative connector fields.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "A2",
+      "scope": "macOS Keychain secret setup and launch-time environment injection.",
+      "original_classification": "missing",
+      "phase": 1,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "harness/env_keys.py",
+            "exists": true,
+            "representative_symbols": [
+              "KeySpec:90",
+              "EnvKeyError:156",
+              "home_dir:160"
+            ]
+          },
+          {
+            "path": "macos/cyclaw-keychain-env.sh",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "macos/cyclaw-keychain-set.sh",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "macos/setup-cyclaw-keys.sh",
+            "exists": true,
+            "representative_symbols": []
+          }
+        ],
+        "tests": [
+          "tests/test_harness_api_keys.py",
+          "tests/test_setup_cyclaw_keys.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 2
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/env_keys.rs",
+          "src/server/desktop.rs",
+          "src/server/mod.rs",
+          "desktop/src/backend.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Four consumed keys and private literal dotenv loading exist for desktop. No Keychain backend; serve does not load managed dotenv.",
+        "remaining": "macOS Keychain secret setup and launch-time environment injection.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Preserve credential-free local default, environment precedence, private file validation, no shell sourcing.",
+      "credentials_network_side_effects": "Existing four consumed key names only; no decorative connector fields.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "A3",
+      "scope": "Managed key-loading/startup flow, rather than requiring the user to manually source the console-written dotenv.",
+      "original_classification": "partial",
+      "phase": 1,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "harness/env_keys.py",
+            "exists": true,
+            "representative_symbols": [
+              "KeySpec:90",
+              "EnvKeyError:156",
+              "home_dir:160"
+            ]
+          },
+          {
+            "path": "macos/cyclaw-keychain-env.sh",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "macos/cyclaw-keychain-set.sh",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "macos/setup-cyclaw-keys.sh",
+            "exists": true,
+            "representative_symbols": []
+          }
+        ],
+        "tests": [
+          "tests/test_harness_api_keys.py",
+          "tests/test_setup_cyclaw_keys.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 2
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/env_keys.rs",
+          "src/server/desktop.rs",
+          "src/server/mod.rs",
+          "desktop/src/backend.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "implemented",
+        "existing": "Desktop private dotenv loading retained; Unix serve now loads the same allowlisted private file before runtime creation. Explicit environment values win.",
+        "remaining": "Consumer additions tracked under A1; Keychain is A2; Windows native loading tracked under O9.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Preserve credential-free local default, environment precedence, private file validation, no shell sourcing.",
+      "credentials_network_side_effects": "Existing four consumed key names only; no decorative connector fields.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "fixture-verified",
+        "integration_environment": "integration-verified",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [
+          {
+            "command": "CGAH_TEST_BINARY=target/release/cgagentharness python3 scripts/test-desktop-backend.py DesktopBoundary.test_headless_loads_private_dotenv_with_explicit_environment_precedence",
+            "commit": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+            "exit_code": 1,
+            "outcome": "Baseline reproduces 401 instead of 200 with only private dotenv key; explicit env override succeeds."
+          },
+          {
+            "command": "CGAH_TEST_BINARY=target/debug/cgagentharness python3 scripts/test-desktop-backend.py",
+            "exit_code": 0,
+            "outcome": "10 tests passed, including minimal-environment headless startup and 7 invalid credential file types. Tested working tree; final commit/package evidence follows."
+          },
+          {
+            "command": "CGAH_TEST_BINARY='dist/CG Agent Harness.app/Contents/MacOS/cgagentharness' python3 scripts/test-desktop-backend.py",
+            "exit_code": 0,
+            "outcome": "All 10 tests passed against signed bundle built from implementation commit."
+          }
+        ],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only.",
+        "native_backend": "native-verified",
+        "native_desktop_interaction": "unavailable"
+      },
+      "delivery": {
+        "branch": "codex/parity-foundations",
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/29",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/62e287ecb536360378cb74c450ec359030e4e02f",
+        "artifact": null
+      },
+      "limitations": [
+        "Unix credential loading verified with real processes on macOS. Native WKWebView acceptance remains unavailable.",
+        "No Keychain integration or Windows managed file loading is claimed."
+      ]
+    },
+    {
+      "id": "A4",
+      "scope": "Named device bearer tokens: create/list/revoke, hashed storage, role association as implemented upstream, and authenticated identity resolution.",
+      "original_classification": "missing",
+      "phase": 3,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "gate_auth.py",
+            "exists": true,
+            "representative_symbols": [
+              "attach_identity_to_query:87",
+              "register_auth_routes:111",
+              "require_session_or_token:337"
+            ]
+          },
+          {
+            "path": "utils/authn.py",
+            "exists": true,
+            "representative_symbols": [
+              "PasswordPolicyError:87",
+              "validate_role:98",
+              "validate_username:110"
+            ]
+          },
+          {
+            "path": "utils/authn_manager.py",
+            "exists": true,
+            "representative_symbols": [
+              "create_device_token:845",
+              "verify_device_token:887",
+              "revoke_device_token:915"
+            ]
+          },
+          {
+            "path": "utils/authn_store.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:36",
+              "ddl_users:87",
+              "ddl_sessions:102"
+            ]
+          },
+          {
+            "path": "utils/authn_cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "load_config:67",
+              "cmd_add:91",
+              "cmd_list:98"
+            ]
+          },
+          {
+            "path": "utils/ratelimit.py",
+            "exists": true,
+            "representative_symbols": [
+              "RateLimiter:53",
+              "allow:529",
+              "retry_after_sec:568"
+            ]
+          },
+          {
+            "path": "utils/personality_db.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:62",
+              "ddl_soul_versions:112",
+              "ddl_interactions:134"
+            ]
+          },
+          {
+            "path": "gate.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_api_key:98",
+              "check_rate_limit:164",
+              "lifespan:382"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_auth_admin_contract.py",
+          "tests/test_authn.py",
+          "tests/test_authn_cli.py",
+          "tests/test_authn_manager.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 12
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/auth_store.rs",
+          "src/common/authn.rs",
+          "src/common/ratelimit.rs",
+          "src/server/routes/auth.rs",
+          "src/server/guards.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "JSON user/session auth and role management exist. Device-token, persistent optional DB, self-service and conversation identity extensions remain.",
+        "remaining": "Named device bearer tokens: create/list/revoke, hashed storage, role association as implemented upstream, and authenticated identity resolution.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Auth stays optional; do not repurpose API key as identity or weaken origin/CSRF; last-admin preserved.",
+      "credentials_network_side_effects": "Private local records; optional PostgreSQL credentials only when implemented; no production database.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "A5",
+      "scope": "Self-service password change; expose user enable/disable; identity CLI; role-restricted audit summary.",
+      "original_classification": "partial",
+      "phase": 3,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "gate_auth.py",
+            "exists": true,
+            "representative_symbols": [
+              "attach_identity_to_query:87",
+              "register_auth_routes:111",
+              "require_session_or_token:337"
+            ]
+          },
+          {
+            "path": "utils/authn.py",
+            "exists": true,
+            "representative_symbols": [
+              "PasswordPolicyError:87",
+              "validate_role:98",
+              "validate_username:110"
+            ]
+          },
+          {
+            "path": "utils/authn_manager.py",
+            "exists": true,
+            "representative_symbols": [
+              "disable_user:552",
+              "enable_user:557",
+              "set_password:560"
+            ]
+          },
+          {
+            "path": "utils/authn_store.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:36",
+              "ddl_users:87",
+              "ddl_sessions:102"
+            ]
+          },
+          {
+            "path": "utils/authn_cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "load_config:67",
+              "cmd_add:91",
+              "cmd_list:98"
+            ]
+          },
+          {
+            "path": "utils/ratelimit.py",
+            "exists": true,
+            "representative_symbols": [
+              "RateLimiter:53",
+              "allow:529",
+              "retry_after_sec:568"
+            ]
+          },
+          {
+            "path": "utils/personality_db.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:62",
+              "ddl_soul_versions:112",
+              "ddl_interactions:134"
+            ]
+          },
+          {
+            "path": "gate.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_api_key:98",
+              "check_rate_limit:164",
+              "lifespan:382"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_auth_admin_contract.py",
+          "tests/test_authn.py",
+          "tests/test_authn_cli.py",
+          "tests/test_authn_manager.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 12
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/auth_store.rs",
+          "src/common/authn.rs",
+          "src/common/ratelimit.rs",
+          "src/server/routes/auth.rs",
+          "src/server/guards.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "JSON user/session auth and role management exist. Device-token, persistent optional DB, self-service and conversation identity extensions remain.",
+        "remaining": "Self-service password change; expose user enable/disable; identity CLI; role-restricted audit summary.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Auth stays optional; do not repurpose API key as identity or weaken origin/CSRF; last-admin preserved.",
+      "credentials_network_side_effects": "Private local records; optional PostgreSQL credentials only when implemented; no production database.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "A6",
+      "scope": "Consistent session/device-token identity on the non-RAG conversation surface when authentication is enabled.",
+      "original_classification": "adapt",
+      "phase": 3,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "gate_auth.py",
+            "exists": true,
+            "representative_symbols": [
+              "attach_identity_to_query:87",
+              "register_auth_routes:111",
+              "require_session_or_token:337"
+            ]
+          },
+          {
+            "path": "utils/authn.py",
+            "exists": true,
+            "representative_symbols": [
+              "PasswordPolicyError:87",
+              "validate_role:98",
+              "validate_username:110"
+            ]
+          },
+          {
+            "path": "utils/authn_manager.py",
+            "exists": true,
+            "representative_symbols": [
+              "LoginResult:61",
+              "SessionInfo:69",
+              "UserSummary:85"
+            ]
+          },
+          {
+            "path": "utils/authn_store.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:36",
+              "ddl_users:87",
+              "ddl_sessions:102"
+            ]
+          },
+          {
+            "path": "utils/authn_cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "load_config:67",
+              "cmd_add:91",
+              "cmd_list:98"
+            ]
+          },
+          {
+            "path": "utils/ratelimit.py",
+            "exists": true,
+            "representative_symbols": [
+              "RateLimiter:53",
+              "allow:529",
+              "retry_after_sec:568"
+            ]
+          },
+          {
+            "path": "utils/personality_db.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:62",
+              "ddl_soul_versions:112",
+              "ddl_interactions:134"
+            ]
+          },
+          {
+            "path": "gate.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_api_key:98",
+              "check_rate_limit:164",
+              "lifespan:382"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_auth_admin_contract.py",
+          "tests/test_authn.py",
+          "tests/test_authn_cli.py",
+          "tests/test_authn_manager.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 12
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/auth_store.rs",
+          "src/common/authn.rs",
+          "src/common/ratelimit.rs",
+          "src/server/routes/auth.rs",
+          "src/server/guards.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "JSON user/session auth and role management exist. Device-token, persistent optional DB, self-service and conversation identity extensions remain.",
+        "remaining": "Consistent session/device-token identity on the non-RAG conversation surface when authentication is enabled.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Auth stays optional; do not repurpose API key as identity or weaken origin/CSRF; last-admin preserved.",
+      "credentials_network_side_effects": "Private local records; optional PostgreSQL credentials only when implemented; no production database.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "A7",
+      "scope": "Optional SQLite/PostgreSQL auth and personality persistence and persistent rate-limit storage.",
+      "original_classification": "missing",
+      "phase": 3,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "gate_auth.py",
+            "exists": true,
+            "representative_symbols": [
+              "attach_identity_to_query:87",
+              "register_auth_routes:111",
+              "require_session_or_token:337"
+            ]
+          },
+          {
+            "path": "utils/authn.py",
+            "exists": true,
+            "representative_symbols": [
+              "PasswordPolicyError:87",
+              "validate_role:98",
+              "validate_username:110"
+            ]
+          },
+          {
+            "path": "utils/authn_manager.py",
+            "exists": true,
+            "representative_symbols": [
+              "LoginResult:61",
+              "SessionInfo:69",
+              "UserSummary:85"
+            ]
+          },
+          {
+            "path": "utils/authn_store.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:36",
+              "ddl_users:87",
+              "ddl_sessions:102"
+            ]
+          },
+          {
+            "path": "utils/authn_cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "load_config:67",
+              "cmd_add:91",
+              "cmd_list:98"
+            ]
+          },
+          {
+            "path": "utils/ratelimit.py",
+            "exists": true,
+            "representative_symbols": [
+              "RateLimiter:53",
+              "allow:529",
+              "retry_after_sec:568"
+            ]
+          },
+          {
+            "path": "utils/personality_db.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:62",
+              "ddl_soul_versions:112",
+              "ddl_interactions:134"
+            ]
+          },
+          {
+            "path": "gate.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_api_key:98",
+              "check_rate_limit:164",
+              "lifespan:382"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_auth_admin_contract.py",
+          "tests/test_authn.py",
+          "tests/test_authn_cli.py",
+          "tests/test_authn_manager.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 12
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/auth_store.rs",
+          "src/common/authn.rs",
+          "src/common/ratelimit.rs",
+          "src/server/routes/auth.rs",
+          "src/server/guards.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "JSON user/session auth and role management exist. Device-token, persistent optional DB, self-service and conversation identity extensions remain.",
+        "remaining": "Optional SQLite/PostgreSQL auth and personality persistence and persistent rate-limit storage.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Auth stays optional; do not repurpose API key as identity or weaken origin/CSRF; last-admin preserved.",
+      "credentials_network_side_effects": "Private local records; optional PostgreSQL credentials only when implemented; no production database.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "A8",
+      "scope": "Soul/personality versioning, file/DB shadow consistency and drift/hash checks, history/interaction maintenance, backups, reload and restore.",
+      "original_classification": "partial",
+      "phase": 3,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "utils/personality.py",
+            "exists": true,
+            "representative_symbols": [
+              "PersonalityManager:115",
+              "get_system_prompt_additive:263",
+              "get_version:276"
+            ]
+          },
+          {
+            "path": "utils/personality_db.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:62",
+              "ddl_soul_versions:112",
+              "ddl_interactions:134"
+            ]
+          },
+          {
+            "path": "gate.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_api_key:98",
+              "check_rate_limit:164",
+              "lifespan:382"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_personality.py",
+          "tests/test_personality_db.py",
+          "tests/test_personality_postgres.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 3
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/prompts.rs",
+          "src/server/routes/core.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Bounded persona file read/toggle exists; no versioned governed operator apply/recovery workflow.",
+        "remaining": "Soul/personality versioning, file/DB shadow consistency and drift/hash checks, history/interaction maintenance, backups, reload and restore.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Explicit authenticated operator authority; protected file remains inaccessible to ordinary agents/tools.",
+      "credentials_network_side_effects": "Fixture soul only during development; hash/drift checks and recoverable cross-resource updates.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "A9",
+      "scope": "Soul propose/apply service with reason, scans, atomic update and recovery on partial failure.",
+      "original_classification": "missing",
+      "phase": 3,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "utils/personality.py",
+            "exists": true,
+            "representative_symbols": [
+              "PersonalityManager:115",
+              "get_system_prompt_additive:263",
+              "get_version:276"
+            ]
+          },
+          {
+            "path": "utils/personality_db.py",
+            "exists": true,
+            "representative_symbols": [
+              "connect:62",
+              "ddl_soul_versions:112",
+              "ddl_interactions:134"
+            ]
+          },
+          {
+            "path": "gate.py",
+            "exists": true,
+            "representative_symbols": [
+              "require_api_key:98",
+              "check_rate_limit:164",
+              "lifespan:382"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_personality.py",
+          "tests/test_personality_db.py",
+          "tests/test_personality_postgres.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 3
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/prompts.rs",
+          "src/server/routes/core.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Bounded persona file read/toggle exists; no versioned governed operator apply/recovery workflow.",
+        "remaining": "Soul propose/apply service with reason, scans, atomic update and recovery on partial failure.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Explicit authenticated operator authority; protected file remains inaccessible to ordinary agents/tools.",
+      "credentials_network_side_effects": "Fixture soul only during development; hash/drift checks and recoverable cross-resource updates.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "L1",
+      "scope": "Expose standalone `real-repo-run-plan` equivalent: bounded repo/issue/PR context \u2192 local or explicitly approved cloud model \u2192 reviewable plan text/file.",
+      "original_classification": "partial",
+      "phase": 6,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:115",
+              "cmd_context:146",
+              "cmd_deepagent_plan:205"
+            ]
+          },
+          {
+            "path": "agentic/deepagent_github/chat_client.py",
+            "exists": true,
+            "representative_symbols": [
+              "ChatModelProposerResponse:158",
+              "ChatModelProposerClient:328",
+              "close:338"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_agentic_plan_handoff.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 1
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/agentic/commands.rs",
+          "src/agentic/cloud_proposer.rs",
+          "src/agentic/proposer.rs",
+          "src/server/agent_policy.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Internal plan helper and uploaded plan exist; standalone operator reviewable generation workflow is absent.",
+        "remaining": "Expose standalone `real-repo-run-plan` equivalent: bounded repo/issue/PR context \u2192 local or explicitly approved cloud model \u2192 reviewable plan text/file.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Bounded context; local default; cloud gates independent; generated plan cannot approve/edit/publish.",
+      "credentials_network_side_effects": "Installed exact Qwen tag; optional existing provider credential for explicitly consented calls.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "L2",
+      "scope": "Non-RAG conversational provider selection and explicitly consented external fallback.",
+      "original_classification": "adapt",
+      "phase": 6,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          },
+          {
+            "path": "utils/external_pre_hook.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_pre_action_hook:145"
+            ]
+          },
+          {
+            "path": "utils/endpoint_trust.py",
+            "exists": true,
+            "representative_symbols": [
+              "EndpointTrustError:18",
+              "hostname_of:22",
+              "assert_loopback:34"
+            ]
+          },
+          {
+            "path": "llm/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "set_graph_deadline:69",
+              "reset_graph_deadline:74",
+              "ResolvedLocalBackend:423"
+            ]
+          }
+        ],
+        "tests": [],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 0
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/llm/backend.rs",
+          "src/llm/openai_chat.rs",
+          "src/agentic/cloud_proposer.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Local chat and gated cloud coding exist; no conversation fallback, pre-hook or trusted LAN host contract.",
+        "remaining": "Non-RAG conversational provider selection and explicitly consented external fallback.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Local-only default; exact endpoint trust independent of cloud consent; deny-capable hook.",
+      "credentials_network_side_effects": "Explicit provider-specific credentials; denial must produce zero provider requests.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "L3",
+      "scope": "External provider pre-action hook with bounded structured input, allow/deny/error handling, timeout and audit.",
+      "original_classification": "missing",
+      "phase": 6,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "pre_action_hook_node:951"
+            ]
+          },
+          {
+            "path": "utils/external_pre_hook.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_pre_action_hook:145"
+            ]
+          },
+          {
+            "path": "utils/endpoint_trust.py",
+            "exists": true,
+            "representative_symbols": [
+              "EndpointTrustError:18",
+              "hostname_of:22",
+              "assert_loopback:34"
+            ]
+          },
+          {
+            "path": "llm/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "set_graph_deadline:69",
+              "reset_graph_deadline:74",
+              "ResolvedLocalBackend:423"
+            ]
+          }
+        ],
+        "tests": [],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 0
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/llm/backend.rs",
+          "src/llm/openai_chat.rs",
+          "src/agentic/cloud_proposer.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Local chat and gated cloud coding exist; no conversation fallback, pre-hook or trusted LAN host contract.",
+        "remaining": "External provider pre-action hook with bounded structured input, allow/deny/error handling, timeout and audit.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Local-only default; exact endpoint trust independent of cloud consent; deny-capable hook.",
+      "credentials_network_side_effects": "Explicit provider-specific credentials; denial must produce zero provider requests.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "L4",
+      "scope": "Explicitly trusted local-model hosts for an operator-owned container/LAN server.",
+      "original_classification": "partial",
+      "phase": 6,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          },
+          {
+            "path": "utils/external_pre_hook.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_pre_action_hook:145"
+            ]
+          },
+          {
+            "path": "utils/endpoint_trust.py",
+            "exists": true,
+            "representative_symbols": [
+              "EndpointTrustError:18",
+              "hostname_of:22",
+              "assert_loopback:34"
+            ]
+          },
+          {
+            "path": "llm/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "set_graph_deadline:69",
+              "reset_graph_deadline:74",
+              "ResolvedLocalBackend:423"
+            ]
+          }
+        ],
+        "tests": [],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 0
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/llm/backend.rs",
+          "src/llm/openai_chat.rs",
+          "src/agentic/cloud_proposer.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Local chat and gated cloud coding exist; no conversation fallback, pre-hook or trusted LAN host contract.",
+        "remaining": "Explicitly trusted local-model hosts for an operator-owned container/LAN server.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Local-only default; exact endpoint trust independent of cloud consent; deny-capable hook.",
+      "credentials_network_side_effects": "Explicit provider-specific credentials; denial must produce zero provider requests.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "L5",
+      "scope": "Broader health/readiness reporting with exact configured-model inventory checks, backend failures and safe optional provider probes.",
+      "original_classification": "partial",
+      "phase": 1,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "utils/health.py",
+            "exists": true,
+            "representative_symbols": [
+              "check_all:148"
+            ]
+          },
+          {
+            "path": "llm/client.py",
+            "exists": true,
+            "representative_symbols": [
+              "resolve_local_backend:518"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_health.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 1
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/server/desktop.rs",
+          "src/llm/backend.rs",
+          "src/server/routes/core.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Desktop models command checks exact chat/planner tags without external probes. Fallback resolver only checks HTTP success.",
+        "remaining": "Broader health/readiness reporting with exact configured-model inventory checks, backend failures and safe optional provider probes.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Explicit local inventory only; disabled fallback makes no probe; unknown model is not ready.",
+      "credentials_network_side_effects": "No cloud health probe from passive status; no downloads or model substitution.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "L6",
+      "scope": "Full optional UNSLOP advisory scanner behavior: richer phrase/structure findings, surface-aware checks and comparable redacted metrics/feedback.",
+      "original_classification": "partial",
+      "phase": 6,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/unslop_bridge.py",
+            "exists": true,
+            "representative_symbols": [
+              "build_unslop_probe:167"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_unslop_bridge.py",
+          "tests/test_unslop_suggest.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 2
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/agentic/unslop.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Rust has a 16-phrase advisory rationale scanner.",
+        "remaining": "Full optional UNSLOP advisory scanner behavior: richer phrase/structure findings, surface-aware checks and comparable redacted metrics/feedback.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Optional advisory only; bounded phrase/structure/surface checks and redacted feedback.",
+      "credentials_network_side_effects": "No network credentials; never log raw sensitive rationale.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "L7",
+      "scope": "Audit active non-RAG verification-skill coverage and port relevant checks, without copying Python-specific commands verbatim.",
+      "original_classification": "partial",
+      "phase": 6,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "agentic/executor/runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "Check:85",
+              "CheckResult:100",
+              "VerificationReport:112"
+            ]
+          },
+          {
+            "path": "agentic/registry.py",
+            "exists": true,
+            "representative_symbols": [
+              "SkillRegistry:236",
+              "list_skills:383",
+              "get_skill:386"
+            ]
+          }
+        ],
+        "tests": [],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 0
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/agentic/registry.rs",
+          "src/agentic/executor/runner.rs",
+          "src/server/views.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Fixed profiles and two prompt skills exist; remaining applicable upstream coverage requires mapping.",
+        "remaining": "Audit active non-RAG verification-skill coverage and port relevant checks, without copying Python-specific commands verbatim.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Fixed governed profiles only; no arbitrary script forwarding.",
+      "credentials_network_side_effects": "Native sandbox and installed verification tools; no cloud dependency.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O1",
+      "scope": "Equivalent optional non-RAG input/output guardrails beyond the existing injection scanner: soul-mutation intent, applicable soul-leak checks and brokered checks around generation.",
+      "original_classification": "partial",
+      "phase": 6,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "utils/guardrail_bridge.py",
+            "exists": true,
+            "representative_symbols": [
+              "build_input_guard:29",
+              "build_output_guard:52",
+              "build_generate_guard:74"
+            ]
+          },
+          {
+            "path": "guardrails/rails.py",
+            "exists": true,
+            "representative_symbols": [
+              "is_soul_topic:86",
+              "detect_soul_mutation_intent:97",
+              "detect_soul_leak:123"
+            ]
+          },
+          {
+            "path": "guardrails/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:62",
+              "cmd_check:89",
+              "cmd_metrics:100"
+            ]
+          },
+          {
+            "path": "guardrails/selftest.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_self_test:25"
+            ]
+          },
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_guardrail_bridge.py",
+          "tests/test_guardrails_boundary.py",
+          "tests/test_guardrails_broker.py",
+          "tests/test_guardrails_call_inventory.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 14
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/injection.rs",
+          "src/common/tool_broker.rs",
+          "src/server/routes/core.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Injection and broker checks exist; source-reachable soul mutation/leak checks and status inventory need extension.",
+        "remaining": "Equivalent optional non-RAG input/output guardrails beyond the existing injection scanner: soul-mutation intent, applicable soul-leak checks and brokered checks around generation.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Optional rails; actual call-site evidence; no RAG grounding or copied NeMo runtime.",
+      "credentials_network_side_effects": "Bounded local checks; input/output remain untrusted.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O2",
+      "scope": "Guardrail status/self-test, profile reporting, metrics and verified call-site inventory.",
+      "original_classification": "missing",
+      "phase": 6,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "utils/guardrail_bridge.py",
+            "exists": true,
+            "representative_symbols": [
+              "build_input_guard:29",
+              "build_output_guard:52",
+              "build_generate_guard:74"
+            ]
+          },
+          {
+            "path": "guardrails/rails.py",
+            "exists": true,
+            "representative_symbols": [
+              "is_soul_topic:86",
+              "detect_soul_mutation_intent:97",
+              "detect_soul_leak:123"
+            ]
+          },
+          {
+            "path": "guardrails/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:62",
+              "cmd_check:89",
+              "cmd_metrics:100"
+            ]
+          },
+          {
+            "path": "guardrails/selftest.py",
+            "exists": true,
+            "representative_symbols": [
+              "run_self_test:25"
+            ]
+          },
+          {
+            "path": "graph.py",
+            "exists": true,
+            "representative_symbols": [
+              "RetrievedDoc:51",
+              "GraphState:67",
+              "retrieve_node:274"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_guardrail_bridge.py",
+          "tests/test_guardrails_boundary.py",
+          "tests/test_guardrails_broker.py",
+          "tests/test_guardrails_call_inventory.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 14
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/injection.rs",
+          "src/common/tool_broker.rs",
+          "src/server/routes/core.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Injection and broker checks exist; source-reachable soul mutation/leak checks and status inventory need extension.",
+        "remaining": "Guardrail status/self-test, profile reporting, metrics and verified call-site inventory.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Optional rails; actual call-site evidence; no RAG grounding or copied NeMo runtime.",
+      "credentials_network_side_effects": "Bounded local checks; input/output remain untrusted.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O3",
+      "scope": "Audit summary API/CLI, aggregate operational metrics, provider spend estimation and price-freshness/cost comparison.",
+      "original_classification": "partial",
+      "phase": 7,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "metrics.py",
+            "exists": true,
+            "representative_symbols": [
+              "iter_events:52",
+              "load_events:74",
+              "iter_spend:79"
+            ]
+          },
+          {
+            "path": "utils/spend.py",
+            "exists": true,
+            "representative_symbols": [
+              "parse_grok_usage:130",
+              "parse_claude_usage:152",
+              "record_external_usage:241"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_guardrails_metrics.py",
+          "tests/test_metrics.py",
+          "tests/test_metrics_injection_findings.py",
+          "tests/test_metrics_spend.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 4
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/audit.rs",
+          "src/common/bounded_log.rs",
+          "src/server/request_log.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Bounded redacted audit/spend sinks exist; broader role-restricted aggregate/cost reporting absent.",
+        "remaining": "Audit summary API/CLI, aggregate operational metrics, provider spend estimation and price-freshness/cost comparison.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Missing usage is unknown; fresh price provenance; bounded redacted summaries.",
+      "credentials_network_side_effects": "No credentials in summaries; no external pricing probes from passive status.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O4",
+      "scope": "Numbat derived event stream and producers: structured redacted/hash-based events, rotation/dedup and fail-soft projection from authoritative audit.",
+      "original_classification": "missing",
+      "phase": 7,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "utils/numbat_emitter.py",
+            "exists": true,
+            "representative_symbols": [
+              "redact_argv_for_numbat:202",
+              "posix_path:228",
+              "build_endpoint:282"
+            ]
+          },
+          {
+            "path": "utils/logger.py",
+            "exists": true,
+            "representative_symbols": [
+              "close_audit_handles:70",
+              "setup_logging:102",
+              "resolve_config_path:259"
+            ]
+          },
+          {
+            "path": "utils/numbat_cel.py",
+            "exists": true,
+            "representative_symbols": [
+              "evaluate_cel_monitor:65",
+              "monitor_request:125"
+            ]
+          },
+          {
+            "path": "utils/sequence_detect.py",
+            "exists": true,
+            "representative_symbols": [
+              "detect_sequences:119",
+              "format_sequences:301"
+            ]
+          },
+          {
+            "path": "metrics.py",
+            "exists": true,
+            "representative_symbols": [
+              "iter_events:52",
+              "load_events:74",
+              "iter_spend:79"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_numbat_audit_projection.py",
+          "tests/test_numbat_cel.py",
+          "tests/test_numbat_emitter.py",
+          "tests/test_numbat_rules_fixtures.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 4
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/audit.rs",
+          "src/common/bounded_log.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No compatible derived Numbat/CEL/sequence projection exists.",
+        "remaining": "Numbat derived event stream and producers: structured redacted/hash-based events, rotation/dedup and fail-soft projection from authoritative audit.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Optional monitor only; failures cannot change source audit or policy verdict.",
+      "credentials_network_side_effects": "Hash/redact events; bounded local evaluation; no telemetry egress.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O5",
+      "scope": "Optional CEL observation and non-RAG-relevant sequence analysis.",
+      "original_classification": "adapt",
+      "phase": 7,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "utils/numbat_emitter.py",
+            "exists": true,
+            "representative_symbols": [
+              "redact_argv_for_numbat:202",
+              "posix_path:228",
+              "build_endpoint:282"
+            ]
+          },
+          {
+            "path": "utils/logger.py",
+            "exists": true,
+            "representative_symbols": [
+              "close_audit_handles:70",
+              "setup_logging:102",
+              "resolve_config_path:259"
+            ]
+          },
+          {
+            "path": "utils/numbat_cel.py",
+            "exists": true,
+            "representative_symbols": [
+              "evaluate_cel_monitor:65",
+              "monitor_request:125"
+            ]
+          },
+          {
+            "path": "utils/sequence_detect.py",
+            "exists": true,
+            "representative_symbols": [
+              "detect_sequences:119",
+              "format_sequences:301"
+            ]
+          },
+          {
+            "path": "metrics.py",
+            "exists": true,
+            "representative_symbols": [
+              "iter_events:52",
+              "load_events:74",
+              "iter_spend:79"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_numbat_audit_projection.py",
+          "tests/test_numbat_cel.py",
+          "tests/test_numbat_emitter.py",
+          "tests/test_numbat_rules_fixtures.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 4
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/audit.rs",
+          "src/common/bounded_log.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "No compatible derived Numbat/CEL/sequence projection exists.",
+        "remaining": "Optional CEL observation and non-RAG-relevant sequence analysis.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Optional monitor only; failures cannot change source audit or policy verdict.",
+      "credentials_network_side_effects": "Hash/redact events; bounded local evaluation; no telemetry egress.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O6",
+      "scope": "Central telemetry/update-check opt-outs and safe child-environment construction for all relevant entrypoints, launchers and new integrations.",
+      "original_classification": "partial",
+      "phase": 1,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "utils/telemetry_kill.py",
+            "exists": true,
+            "representative_symbols": [
+              "contract_payload:282",
+              "contract_digest:295",
+              "verify_telemetry_contract:345"
+            ]
+          },
+          {
+            "path": "utils/ops_runner.py",
+            "exists": true,
+            "representative_symbols": [
+              "real_repo_run_budget_sec:108",
+              "OpsError:194",
+              "OpsResult:199"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_onnx_telemetry.py",
+          "tests/test_telemetry_env_delivery.py",
+          "tests/test_telemetry_kill.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 3
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/process.rs",
+          "src/agentic/executor/runner.rs",
+          "src/shim/mod.rs",
+          "desktop/src/backend.rs"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Verification children have scrubbed environment/opt-outs; all launchers and new consumers require dependency-specific inventory.",
+        "remaining": "Central telemetry/update-check opt-outs and safe child-environment construction for all relevant entrypoints, launchers and new integrations.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "No analytics/updater; preserve stricter operator settings; real dependency controls only.",
+      "credentials_network_side_effects": "Consumer-specific child environment; no broad credential inheritance.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O7",
+      "scope": "macOS installation/launch/service management and supervised launchd plist generation, plus connector schedules and secrets delivery.",
+      "original_classification": "missing",
+      "phase": 1,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "macos/generate_service_plist.py",
+            "exists": true,
+            "representative_symbols": [
+              "build_parser:104",
+              "main:142"
+            ]
+          },
+          {
+            "path": "sync/scheduler.py",
+            "exists": true,
+            "representative_symbols": [
+              "ScheduleEntry:72",
+              "CronScheduler:317",
+              "LaunchdScheduler:510"
+            ]
+          },
+          {
+            "path": "telegram/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:115",
+              "cmd_test:148",
+              "cmd_send:164"
+            ]
+          },
+          {
+            "path": "opentweet/cli.py",
+            "exists": true,
+            "representative_symbols": [
+              "cmd_status:103",
+              "cmd_test:135",
+              "cmd_post:148"
+            ]
+          }
+        ],
+        "tests": [
+          "tests/test_fsconnect_macos_policy.py",
+          "tests/test_fsconnect_macos_real.py",
+          "tests/test_launchd_scheduler_macos_real.py",
+          "tests/test_macos_fsconnect_setup.py"
+        ],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 7
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "desktop/src/backend.rs",
+          "desktop/src/instance.rs",
+          "src/common/home_lock.rs",
+          "scripts/package-desktop.sh"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "App packaging, owned startup, minimal tool discovery and home lock exist. Persistent service and connector schedule lifecycle absent.",
+        "remaining": "macOS installation/launch/service management and supervised launchd plist generation, plus connector schedules and secrets delivery.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Desktop ownership distinct from opt-in headless service; generate inspectable private plists before explicit activation.",
+      "credentials_network_side_effects": "Never secret-bearing plists; Keychain prerequisite for delivered scheduled consumers.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "not-applicable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O8",
+      "scope": "Equivalent optional container/service deployment and TLS/certificate tooling for a network-facing deployment.",
+      "original_classification": "missing",
+      "phase": 11,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "Dockerfile",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "docker-compose.yml",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "utils/gen_cert.py",
+            "exists": true,
+            "representative_symbols": [
+              "find_openssl:52",
+              "subject_alt_names:83",
+              "main:143"
+            ]
+          },
+          {
+            "path": "sync/scheduler.py",
+            "exists": true,
+            "representative_symbols": [
+              "ScheduleEntry:72",
+              "CronScheduler:317",
+              "LaunchdScheduler:510"
+            ]
+          },
+          {
+            "path": "windows/generate_service_task.py",
+            "exists": true,
+            "representative_symbols": [
+              "main:126"
+            ]
+          }
+        ],
+        "tests": [],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 0
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/process.rs",
+          "src/agentic/executor/sandbox.rs",
+          ".github/workflows/ci.yml",
+          "scripts/package-release.sh"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "missing",
+        "existing": "Loopback CLI packaging and platform process code exist; container/TLS and native Windows scheduling acceptance absent; Windows CI parked.",
+        "remaining": "Equivalent optional container/service deployment and TLS/certificate tooling for a network-facing deployment.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Network deployment must explicitly evolve loopback contract with TLS/auth; local default preserved.",
+      "credentials_network_side_effects": "Optional deployment only; native runner evidence required; no public release.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    },
+    {
+      "id": "O9",
+      "scope": "Cross-platform install/scheduling/acceptance coverage.",
+      "original_classification": "partial",
+      "phase": 11,
+      "python": {
+        "commit": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9",
+        "sources": [
+          {
+            "path": "Dockerfile",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "docker-compose.yml",
+            "exists": true,
+            "representative_symbols": []
+          },
+          {
+            "path": "utils/gen_cert.py",
+            "exists": true,
+            "representative_symbols": [
+              "find_openssl:52",
+              "subject_alt_names:83",
+              "main:143"
+            ]
+          },
+          {
+            "path": "sync/scheduler.py",
+            "exists": true,
+            "representative_symbols": [
+              "ScheduleEntry:72",
+              "CronScheduler:317",
+              "LaunchdScheduler:510"
+            ]
+          },
+          {
+            "path": "windows/generate_service_task.py",
+            "exists": true,
+            "representative_symbols": [
+              "main:126"
+            ]
+          }
+        ],
+        "tests": [],
+        "inspection": "Static source and entrypoint inventory; upstream tests not executed.",
+        "test_inventory_count": 0
+      },
+      "rust": {
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "paths": [
+          "src/common/process.rs",
+          "src/agentic/executor/sandbox.rs",
+          ".github/workflows/ci.yml",
+          "scripts/package-release.sh"
+        ],
+        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+      },
+      "implementation": {
+        "status": "needs-extension",
+        "existing": "Loopback CLI packaging and platform process code exist; container/TLS and native Windows scheduling acceptance absent; Windows CI parked.",
+        "remaining": "Cross-platform install/scheduling/acceptance coverage.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+      },
+      "dependencies": [
+        "A1",
+        "C10"
+      ],
+      "surfaces": {
+        "desktop": "Required; native interaction pending.",
+        "cli_api": "Bounded corresponding administration or worker interface required; see scope."
+      },
+      "configuration_and_authorization": "Network deployment must explicitly evolve loopback contract with TLS/auth; local default preserved.",
+      "credentials_network_side_effects": "Optional deployment only; native runner evidence required; no public release.",
+      "validation": {
+        "implementation_inspection": "static-inventoried",
+        "fixtures": "pending",
+        "integration_environment": "pending",
+        "native_platform": "unavailable",
+        "real_model": "pending",
+        "optional_live_service": "unavailable",
+        "commands": [],
+        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+      },
+      "delivery": {
+        "branch": null,
+        "pr": null,
+        "implementation_commit": null,
+        "artifact": null
+      },
+      "limitations": [
+        "This inventory does not close this action.",
+        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+      ]
+    }
+  ],
+  "phase_zero_gate": {
+    "backend": "native-baseline-verified",
+    "desktop_interaction": "unavailable",
+    "evidence": "AXIsProcessTrusted=false; CGPreflightScreenCaptureAccess=false. No permission prompts or changes performed.",
+    "desktop_ci": "passed",
+    "next": "Finish source reachability details and native desktop baseline; independent Phase 1 backend work may proceed.",
+    "desktop_build_checks": "Rust 1.90 formatting, Clippy and 2 policy tests passed; exact-main packaged CI passed."
+  }
+}

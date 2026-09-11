@@ -133,6 +133,107 @@ class DesktopBoundary(unittest.TestCase):
         self.children.append(child)
         return child
 
+    @unittest.skipUnless(os.name == 'posix', 'private dotenv descriptor contract is Unix-only')
+    def test_headless_loads_private_dotenv_with_explicit_environment_precedence(self):
+        self.start().close()
+        config = self.home / 'config.yaml'
+        config.write_text(config.read_text().replace('api_key_optional: true', 'api_key_optional: false'))
+        file_key = secrets.token_hex(32)
+        override_key = secrets.token_hex(32)
+        marker = self.home / 'must-not-be-created'
+        dotenv = self.home / '.env'
+        dotenv.write_text(f"export CGAGENTHARNESS_API_KEY='{file_key}'\n"
+                          f"export GROK_API_KEY='$(touch {marker})'\n")
+        dotenv.chmod(0o600)
+        for override, file_present in ((None, True), (override_key, True), (override_key, False)):
+            with self.subTest(explicit_environment=override is not None, file_present=file_present):
+                if not file_present:
+                    dotenv.unlink()
+                with socket.socket() as reservation:
+                    reservation.bind(('127.0.0.1', 0))
+                    port = reservation.getsockname()[1]
+                # Model startup probes are disabled in the shipped config.
+                env = {'PATH': '/usr/bin:/bin', 'CGAGENTHARNESS_HOME': str(self.home)}
+                if override is not None:
+                    env['CGAGENTHARNESS_API_KEY'] = override
+                with tempfile.TemporaryFile() as output:
+                    child = subprocess.Popen([str(BIN), 'serve', '--port', str(port)],
+                        env=env, cwd='/', stdout=output, stderr=output)
+                    base = f'http://127.0.0.1:{port}'
+                    try:
+                        deadline = time.monotonic() + 5
+                        while True:
+                            self.assertIsNone(child.poll(), 'headless startup exited')
+                            try:
+                                with HTTP.open(base + '/', timeout=.2) as response:
+                                    html = response.read()
+                                break
+                            except (urllib.error.URLError, TimeoutError):
+                                self.assertLess(time.monotonic(), deadline, 'headless startup deadline')
+                                time.sleep(.02)
+                        csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
+                        def status(key):
+                            request = urllib.request.Request(base + '/api/memory', headers={
+                                'Authorization': 'Bearer ' + key, 'X-CyClaw-CSRF': csrf, 'Origin': base})
+                            try:
+                                with HTTP.open(request, timeout=2) as response:
+                                    return response.status
+                            except urllib.error.HTTPError as error:
+                                error.close()
+                                return error.code
+                        self.assertEqual(status(override or file_key), 200)
+                        self.assertEqual(status(file_key if override else 'wrong-key'), 401)
+                        self.assertFalse(marker.exists(), 'dotenv must never execute a shell')
+                    finally:
+                        child.terminate()
+                        child.wait(timeout=5)
+                        output.seek(0)
+                        diagnostics = output.read()
+                        self.assertNotIn(file_key.encode(), diagnostics)
+                        self.assertNotIn(override_key.encode(), diagnostics)
+
+    @unittest.skipUnless(os.name == 'posix', 'private dotenv descriptor contract is Unix-only')
+    def test_headless_refuses_unsafe_dotenv_without_disclosing_credentials(self):
+        self.start().close()
+        dotenv = self.home / '.env'
+        value = secrets.token_hex(32)
+        safe_file = self.home / 'fixture-secret'
+        safe_file.write_text(f"CGAGENTHARNESS_API_KEY='{value}'\n")
+        safe_file.chmod(0o600)
+        for case in ('public', 'symlink', 'directory', 'fifo', 'oversized', 'invalid', 'non-utf8'):
+            with self.subTest(case=case):
+                if case == 'symlink':
+                    dotenv.symlink_to(safe_file)
+                elif case == 'directory':
+                    dotenv.mkdir()
+                elif case == 'fifo':
+                    os.mkfifo(dotenv, 0o600)
+                else:
+                    payload = safe_file.read_bytes()
+                    if case == 'oversized':
+                        payload += b'#' * 65537
+                    elif case == 'invalid':
+                        payload = b"CGAGENTHARNESS_API_KEY=''\n"
+                    elif case == 'non-utf8':
+                        payload += b'\xff'
+                    dotenv.write_bytes(payload)
+                    dotenv.chmod(0o644 if case == 'public' else 0o600)
+                try:
+                    with socket.socket() as reservation:
+                        reservation.bind(('127.0.0.1', 0))
+                        port = reservation.getsockname()[1]
+                    result = subprocess.run([str(BIN), 'serve', '--port', str(port)],
+                        env={'PATH': '/usr/bin:/bin', 'CGAGENTHARNESS_HOME': str(self.home)},
+                        cwd='/', capture_output=True, timeout=5)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b'credential file', result.stderr)
+                    self.assertNotIn(value.encode(), result.stdout + result.stderr)
+                finally:
+                    if case == 'directory':
+                        dotenv.rmdir()
+                    else:
+                        dotenv.unlink()
+
     def test_owned_readiness_is_not_operator_authorization(self):
         key = secrets.token_hex(32)
         seed = self.start(key=key)
