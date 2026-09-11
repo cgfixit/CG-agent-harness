@@ -268,6 +268,7 @@ pub async fn chat(
     let system_prompt = compose_system_prompt(&PromptInputs {
         skills_dir: &state.home.skills_dir(),
         soul_enabled: settings.soul_enabled,
+        soul_override: None,
         soul_path: &state.home.soul_path(),
         soul_max_chars: state.cfg.u64_or("personality.soul_max_chars", 8000) as usize,
         goal: Some(&session.goal),

@@ -34,8 +34,12 @@ pub fn strip_frontmatter(text: &str) -> String {
 }
 
 pub fn read_skill_body(skills_dir: &Path, name: &str) -> Option<String> {
-    let path = skills_dir.join(name).join("SKILL.md");
-    std::fs::read_to_string(path).ok().map(|t| strip_frontmatter(&t))
+    let loaded = load_text(skills_dir, &Path::new(name).join("SKILL.md"), true, 32768);
+    if loaded.loaded {
+        Some(strip_frontmatter(&loaded.text))
+    } else {
+        None
+    }
 }
 
 /// Safe diagnostics share the exact loader used by prompt composition.
@@ -83,6 +87,7 @@ pub fn load_text(root: &Path, relative: &Path, enabled: bool, max_chars: usize) 
 pub struct PromptInputs<'a> {
     pub skills_dir: &'a Path,
     pub soul_enabled: bool,
+    pub soul_override: Option<&'a str>,
     pub soul_path: &'a Path,
     pub soul_max_chars: usize,
     pub goal: Option<&'a str>,
@@ -110,8 +115,12 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
         inputs.soul_enabled,
         inputs.soul_max_chars,
     );
-    if soul.loaded {
-        parts.push(format!("\n## Operator persona (soul, read-only)\n\n{}", soul.text));
+    let persona = inputs.soul_override.map(str::to_string).unwrap_or(soul.text);
+    if inputs.soul_enabled && !persona.trim().is_empty() {
+        parts.push(format!(
+            "\n## Operator persona (soul, read-only)\n\n{}",
+            crate::common::clip_chars(&persona, inputs.soul_max_chars)
+        ));
     }
     let goal = clipped(inputs.goal, MAX_GOAL_CHARS);
     if !goal.is_empty() {
