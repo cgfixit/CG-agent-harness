@@ -155,22 +155,6 @@ fn shipped_config_keeps_every_gate_closed() {
     );
 }
 
-fn cargo_toml_github_slug() -> String {
-    let cargo = include_str!("../Cargo.toml");
-    for line in cargo.lines() {
-        let line = line.trim();
-        let Some(rest) = line.strip_prefix("repository") else {
-            continue;
-        };
-        let url = rest.trim().trim_start_matches('=').trim().trim_matches('"');
-        let mut parts = url.trim_end_matches(".git").rsplit('/');
-        let name = parts.next().expect("repository URL has a repo name");
-        let owner = parts.next().expect("repository URL has an owner");
-        return format!("{owner}/{name}");
-    }
-    panic!("Cargo.toml missing repository = \"https://github.com/owner/name\"");
-}
-
 #[test]
 fn shipped_defaults_protect_agents_md() {
     let yaml = cgagentharness::common::config::AppConfig::embedded_default();
@@ -185,22 +169,15 @@ fn shipped_defaults_protect_agents_md() {
 }
 
 #[test]
-fn default_repo_matches_cargo_toml_repository() {
-    let expected = cargo_toml_github_slug();
-    assert_eq!(
-        expected, "cgfixit/CG-agent-harness",
-        "Cargo.toml repository owner/name is the source of truth"
-    );
-    assert_eq!(
-        cgagentharness::agentic::config::DEFAULT_REPO,
-        expected,
-        "DEFAULT_REPO must match Cargo.toml repository owner/name"
-    );
-    let yaml = cgagentharness::common::config::AppConfig::embedded_default();
-    assert!(
-        yaml.contains(&format!("repo: \"{expected}\"")),
-        "embedded YAML agentic.repo must equal {expected}"
-    );
+fn fresh_chat_does_not_select_a_repository() {
+    assert_eq!(cgagentharness::agentic::config::DEFAULT_REPO, "");
+    let cfg = cgagentharness::common::config::AppConfig::from_str(
+        cgagentharness::common::config::AppConfig::embedded_default(),
+        Path::new("config.yaml"),
+    )
+    .unwrap();
+    assert_eq!(cfg.str_or("agentic.repo", "unexpected"), "");
+    assert!(!cfg.flag_is_true("agentic.enabled"));
 }
 
 #[test]

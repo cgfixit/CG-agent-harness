@@ -1,6 +1,6 @@
 //! Explicit runtime context selection and fixed-check staging; never execute prose.
 use crate::server::errors::{session_status, ApiError, ApiResult};
-use crate::server::prompts::{load_skill, valid_skill_id, DISCIPLINE_SKILLS};
+use crate::server::prompts::{load_skill, valid_skill_id};
 use crate::server::schemas::{ValidJson, Validate};
 use crate::server::state::AppState;
 use axum::extract::{Path, State};
@@ -44,7 +44,7 @@ pub fn resolve(state: &AppState, ids: &[String]) -> ApiResult<Vec<(String, Strin
         if !valid_skill_id(id) {
             return Err(ApiError::bad_request("SKILL_ID", "Unknown or unsafe runtime skill ID"));
         }
-        if DISCIPLINE_SKILLS.contains(&id.as_str()) || out.iter().any(|(key, _)| key == id) {
+        if out.iter().any(|(key, _)| key == id) {
             continue;
         }
         let load = load_skill(&state.home.skills_dir(), id, per_skill);

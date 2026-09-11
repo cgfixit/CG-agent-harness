@@ -47,7 +47,12 @@ fn agentic_config_validation() {
     let cfg = config_with(dir.path(), &[]);
     let ac = load_agentic_config(&cfg, dir.path()).unwrap();
     assert!(!ac.enabled);
-    assert_eq!(ac.repo, "cgfixit/CG-agent-harness");
+    assert_eq!(ac.repo, "");
+    let unselected = config_with(dir.path(), &[("agentic.enabled", "true"), ("agentic.repo", "\"\"")]);
+    assert!(load_agentic_config(&unselected, dir.path())
+        .unwrap_err()
+        .message
+        .contains("Select agentic.repo"));
     assert_eq!(ac.gh_min_version, (2, 40, 0));
     assert!(ac.registry_path.starts_with(dir.path().join("data")));
     assert!(ac.deepagent.workspace_root.starts_with(dir.path().join("data")));

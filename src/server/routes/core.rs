@@ -38,7 +38,9 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<Value> {
         "soul": soul_status(&state, settings.soul_enabled),
         "memory_enabled": settings.memory_enabled,
         "home": state.home.root.display().to_string(),
-        "repo_root": state.home.root.display().to_string(),
+        "repo_root": Value::Null,
+        "chat_mode": "conversation",
+        "chat_tools_available": false,
         "sessions": sessions.len(),
         "total_tokens": total_tokens,
         "layout": {
@@ -267,7 +269,6 @@ pub async fn chat(
         None
     };
     let system_prompt = compose_system_prompt(&PromptInputs {
-        skills_dir: &state.home.skills_dir(),
         selected_skills: &selected_skills,
         soul_enabled: settings.soul_enabled,
         soul_override: None,

@@ -73,6 +73,12 @@ try {
  const chatCount=()=>requests.filter(r=>r[1]==='/api/chat').length;
  await call('Page.navigate',{url:base});await until('typeof onSend === "function"');
  await until('document.getElementById("sSoulV").textContent === "missing"');
+ assert.ok(await evaluate('document.body.innerText.includes("Chat starts without an assigned repository")'));
+ assert.equal(await evaluate('document.body.innerText.includes("agentic GitHub coding")'),false);
+ await evaluate('agent("Branding fixture")');
+ assert.ok(await evaluate('document.body.innerText.includes("CG Agent Harness")'));
+ assert.equal(await evaluate('document.body.innerText.toLowerCase().includes("cyclaw")'),false);
+
  await send('/soul edit');assert.equal(await evaluate('document.getElementById("soulEditor").open'),true);
  await evaluate('document.getElementById("soulContent").value="BROWSER_PERSONA";document.getElementById("soulReason").value="Reviewed UI edit";document.getElementById("soulPreview").click()');
  await until('document.getElementById("soulFeedback").textContent.includes("BROWSER_PERSONA")');assert.equal(persona,'');

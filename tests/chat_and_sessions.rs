@@ -18,11 +18,18 @@ async fn chat_turn_records_the_exchange_and_tally() {
     assert_eq!(body["tally"]["total"], 12);
     let sid = body["session_id"].as_str().unwrap().to_string();
     assert_eq!(sid.len(), 12);
-    // The model saw the system prompt with both discipline skills.
+    // Fresh chat has no implicit repository or coding-skill assignment.
     let req = model.last_request().unwrap();
     let system = req["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("Discipline contract: ponytail"));
-    assert!(system.contains("Discipline contract: karpathy-guidelines"));
+    assert!(system.contains("general conversation"));
+    assert!(!system.contains("Discipline contract:"));
+    assert!(!system.contains("Begin the review now"));
+    assert!(!system.contains("CyClaw"));
+    assert!(req.get("tools").is_none(), "chat has no model tool dispatcher");
+    let (_, status) = s.open_get("/api/status").await;
+    assert!(status["repo_root"].is_null());
+    assert_eq!(status["chat_mode"], "conversation");
+    assert_eq!(status["chat_tools_available"], false);
     assert_eq!(req["messages"][1]["content"], "ping");
     assert_eq!(req["stream"], false);
     assert_eq!(
@@ -358,12 +365,44 @@ async fn skill_identity_and_soul_status_match_the_actual_prompt() {
     let (_, inventory) = s.open_get("/api/skills").await;
     let rows = inventory["skills"].as_array().unwrap();
     assert_eq!(rows.iter().find(|r| r["id"] == "custom").unwrap()["role"], "repo");
-    assert_eq!(rows.iter().find(|r| r["id"] == "ponytail").unwrap()["role"], "prompt");
+    assert_eq!(rows.iter().find(|r| r["id"] == "ponytail").unwrap()["role"], "repo");
     assert!(rows.iter().all(|r| r["invoked"] == false));
     s.post_json("/api/chat", json!({"message":"test"})).await;
     let req = model.last_request().unwrap();
     let prompt = req["messages"][0]["content"].as_str().unwrap();
-    assert!(prompt.contains("ACTUAL_DISCIPLINE_MARKER"));
+    assert!(
+        !prompt.contains("ACTUAL_DISCIPLINE_MARKER"),
+        "even an existing coding skill is opt-in"
+    );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    assert_eq!(
+        s.post_json(&format!("/api/sessions/{sid}/skills"), json!({"ids":["ponytail"]}))
+            .await
+            .0,
+        200
+    );
+    let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":sid})).await;
+    s.post_json(
+        "/api/chat",
+        json!({"message":"Discuss the supplied context", "session_id":sid}),
+    )
+    .await;
+    let selected = model.last_request().unwrap();
+    assert_eq!(selected["messages"][0]["content"], preview["prompt"]);
+    assert!(preview["prompt"].as_str().unwrap().contains("ACTUAL_DISCIPLINE_MARKER"));
+    assert!(!preview["prompt"].as_str().unwrap().contains("NOT_LOADED_MARKER"));
+    s.post_json(&format!("/api/sessions/{sid}/skills"), json!({"ids":[]}))
+        .await;
+    s.post_json(
+        "/api/chat",
+        json!({"message":"Continue general conversation", "session_id":sid}),
+    )
+    .await;
+    assert!(!model.last_request().unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("ACTUAL_DISCIPLINE_MARKER"));
     assert!(prompt.contains("PERSONA_MARKER"));
     assert!(!prompt.contains("NOT_LOADED_MARKER"));
     assert!(!prompt.contains("name: renamed"));

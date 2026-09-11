@@ -9,7 +9,10 @@ A local agentic harness for **coding, chat, and controlled tool use**. Work with
 local model, keep session goals and context, and take repository changes through
 a bounded plan → edit → check → feedback loop before reviewing and publishing them.
 
-Use the Apple Silicon macOS app or run the Rust backend in a browser.
+Use the universal macOS app or run the Rust backend in a browser.
+Chat starts without an assigned repository or automatically injected coding
+skills. It can discuss supplied context; it does not inspect files or run tools
+from a model reply. Coding execution is separately staged and confirmed.
 **Local use needs no harness API key or account login.** Repository mutations
 remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
@@ -101,7 +104,7 @@ Complete install, configuration, and troubleshooting:
 
 ## Work in the console
 
-Start with `/help`, `/status`, `/skills`, and `/tools`. For a chat session:
+Start with `/help`, `/status`, `/skills all`, and `/tools`. For a chat session:
 
 ```text
 /session new
@@ -119,7 +122,8 @@ model report, not evidence that coding work is complete.
 
 Use `/prompt` to inspect the next chat's system prompt, `/soul edit` for the
 confirmed persona editor, and `/skill use <directory-id>` to select optional
-bounded prompt context. `/skill status` shows selection and the last successful
+bounded prompt context, including the optional seeded `ponytail` and
+`karpathy-guidelines` coding skills. `/skill status` shows selection and the last successful
 inclusion hashes; `/skill clear` clears it. Repository `.codex/skills` guide
 Codex development and are separate from these runtime skills.
 
@@ -150,7 +154,7 @@ agentic:
   enabled: true
   mode: write
   writes_enabled: true
-  repo: "owner/name"
+  repo: "owner/name" # fresh homes leave this empty; explicitly choose a target
   deepagent_github:
     enabled: true
     allow_git_write_tools: true

@@ -23,6 +23,12 @@ pub const CSRF_HEADER: &str = "x-cyclaw-csrf";
 /// dotted `key: value` replacements (simple scalar overrides only).
 pub fn config_with(dir: &Path, overrides: &[(&str, &str)]) -> AppConfig {
     let mut text = AppConfig::embedded_default().to_string();
+    // Armed test fixtures select a disposable target explicitly; production has no default repository.
+    if overrides.iter().any(|(k, v)| *k == "agentic.enabled" && *v == "true")
+        && !overrides.iter().any(|(k, _)| *k == "agentic.repo")
+    {
+        text = override_yaml(&text, "agentic.repo", "\"fixture/repository\"");
+    }
     for (dotted, value) in overrides {
         text = override_yaml(&text, dotted, value);
     }

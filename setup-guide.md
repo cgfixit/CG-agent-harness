@@ -366,6 +366,19 @@ available at its configured local endpoint.
 
 ## 7. Chat, soul, skills and goals
 
+Fresh chat starts without an assigned repository, automatic coding skills or
+model tool access. The assistant can explain supplied context but cannot inspect
+local files or certify live wiring merely because you ask in chat. Use actual
+commands/results for evidence and the separate coding workflow for execution.
+
+Existing homes retain their selected repository and skill files. The new chat
+composer stops automatically loading legacy coding skills without modifying them.
+To avoid old conversation instructions influencing a test, start `/session new`,
+use `/skill clear`, inspect `/memory` and `/soul status`, then `/prompt`. Only
+explicitly change notes/persona you want changed; a new session still uses the
+home's enabled notes and persona.
+
+
 Enter slash commands in the chat input, not Terminal. `/help` lists commands
 available in the installed version. Begin with `/status`, `/model`, `/skills all`
 and `/tools`. Registration is not readiness: an unknown prerequisite or empty
@@ -406,8 +419,8 @@ an explicit separate workflow in section 9.4.
 ### 7.2 Missing soul, effective prompt and persona editing
 
 **Missing soul means no persona file loaded, not a broken installation.** Fresh
-homes enable the soul toggle but do not create `soul.md`. The base chat prompt and
-the two seeded discipline skills still operate. A missing persona is not fetched
+homes enable the soul toggle but do not create `soul.md`. The base general-chat prompt still operates. The two seeded coding skills are
+optional context and are not injected automatically. A missing persona is not fetched
 from CyClaw or Codex automatically.
 
 ```text
@@ -417,8 +430,7 @@ from CyClaw or Codex automatically.
 ```
 
 `/soul status` distinguishes enabled, present, loaded, truncated and a safe failure
-reason. `/prompt` previews the next chat system prompt: fixed header and discipline
-contracts, selected optional prompt skills, enabled persona, session goal, injected
+reason. `/prompt` previews the next chat system prompt: general-chat header, selected optional prompt skills, enabled persona, session goal, injected
 web context and enabled memory notes. Preview is private context; review it before
 sharing. It is not the coding planner's prompt.
 
@@ -466,7 +478,7 @@ and restoration through the guarded edit flow.
 
 | Kind | Location / selection | What it does |
 |---|---|---|
-| Seeded discipline | `<home>/skills/ponytail` and `karpathy-guidelines` | Automatically included chat contracts when their files load |
+| Seeded coding context | `<home>/skills/ponytail` and `karpathy-guidelines` | Available through explicit `/skill use ponytail karpathy-guidelines`; not automatically loaded |
 | Optional runtime prompt skill | `<home>/skills/<id>/SKILL.md`; `/skill use <id>` | Adds bounded context to this session's chat |
 | Fixed check | `/skill check:cargo-test` | Selects a known check for an already staged coding request; no immediate execution |
 | Governed catalog entry | `/skills all` | Inventory only unless an implemented adapter says otherwise |
@@ -501,8 +513,8 @@ under `personality.prompt_skill_max_chars` and `personality.prompt_skills_total_
 After a successful chat, `/skill status` reports included IDs, lengths and hashes.
 That is the last successful snapshot, which can differ from current files or
 selection. It does not prove script execution. Missing/unreadable selected files
-refuse subsequent chat; restore them or `/skill clear`. Clearing optional context
-does not remove the seeded discipline contracts.
+refuse subsequent chat; restore them or `/skill clear`. Clearing selection removes all optional skill bodies from subsequent prompts,
+including selected seeded skills; it does not delete their files.
 
 ### 7.4 Memory and web context
 
@@ -675,8 +687,9 @@ the first time you ran `serve` in section 6 — it's a copy of this repository's
 open -e ~/.CGagentHarness/config.yaml
 ```
 
-Merge the following fields into the existing configuration. The repository is a
-selector string, not a boolean gate. Use the installed model chosen in section 4:
+Merge the following fields into the existing configuration. Fresh homes set `agentic.repo: ""`; select your own `owner/name` before enabling
+the coding layer. Repository package metadata is not a runtime target. The repo
+field is a selector string, not a boolean gate. Use the installed model chosen in section 4:
 
 ```yaml
 agentic:

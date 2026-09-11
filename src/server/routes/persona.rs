@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::server::errors::{session_status, ApiError, ApiResult};
-use crate::server::prompts::{compose_system_prompt, load_text, PromptInputs, DISCIPLINE_SKILLS};
+use crate::server::prompts::{compose_system_prompt, load_text, PromptInputs};
 use crate::server::schemas::{ValidJson, Validate};
 use crate::server::state::AppState;
 
@@ -275,7 +275,6 @@ pub async fn preview(
         session.as_ref().map(|s| s.selected_skills.as_slice()).unwrap_or(&[]),
     )?;
     let inputs = PromptInputs {
-        skills_dir: &skill_dir,
         selected_skills: &selected,
         soul_enabled: settings.soul_enabled,
         soul_path: &soul_path,
@@ -285,15 +284,15 @@ pub async fn preview(
         web_context: Some(&web),
         memory_context: Some(&memory),
     };
-    let sections: Vec<Value> = DISCIPLINE_SKILLS
+    let sections: Vec<Value> = selected
         .iter()
-        .map(|id| {
+        .map(|(id, _)| {
             let load = crate::server::prompts::load_skill(&skill_dir, id, 32768);
             json!({"origin":format!("skills/{id}/SKILL.md"), "state":load})
         })
         .collect();
     Ok(private(
-        json!({"prompt":compose_system_prompt(&inputs),"discipline_sections":sections,
+        json!({"prompt":compose_system_prompt(&inputs),"discipline_sections":[],"selected_skill_sections":sections,
         "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled, max_chars(&state)),"candidate":req.soul_content.is_some(),
         "limits":{"goal":2000,"web":4000,"memory":3000,"soul":max_chars(&state)},
         "scope":"Next chat system prompt snapshot; not the coding planner. Persona and goal never authorize execution."}),
