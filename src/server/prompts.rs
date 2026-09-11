@@ -8,6 +8,13 @@ use std::path::Path;
 pub const MAX_GOAL_CHARS: usize = 2000;
 pub const MAX_WEB_CHARS: usize = 4000;
 pub const MAX_MEMORY_CHARS: usize = 3000;
+/// Hard cap shared by chat, preview, and persona save so those paths cannot diverge.
+pub const SOUL_CHARS_HARD_CAP: u64 = 65_536;
+
+/// One effective persona limit for `/api/chat`, `/api/soul`, and `/api/prompt/preview`.
+pub fn effective_soul_max_chars(configured: u64) -> usize {
+    configured.min(SOUL_CHARS_HARD_CAP) as usize
+}
 
 const HEADER: &str = "You are CG Agent Harness, an assistant for general conversation and optional coding help. \
 Respond to the user's actual message. No repository is connected or assigned by this chat. \
@@ -159,4 +166,16 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
         parts.push(format!("\n## Operator memory (harness, read-only)\n\n{memory}"));
     }
     parts.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_soul_max_chars;
+
+    #[test]
+    fn soul_limit_is_the_configured_value_until_the_shared_hard_cap() {
+        assert_eq!(effective_soul_max_chars(8_000), 8_000);
+        assert_eq!(effective_soul_max_chars(65_536), 65_536);
+        assert_eq!(effective_soul_max_chars(100_000), 65_536);
+    }
 }

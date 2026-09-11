@@ -114,7 +114,7 @@ fn soul_status(state: &AppState, enabled: bool) -> Value {
         &state.home.root,
         std::path::Path::new("soul.md"),
         enabled,
-        state.cfg.u64_or("personality.soul_max_chars", 8000) as usize
+        crate::server::prompts::effective_soul_max_chars(state.cfg.u64_or("personality.soul_max_chars", 8000))
     ))
 }
 
@@ -273,7 +273,9 @@ pub async fn chat(
         soul_enabled: settings.soul_enabled,
         soul_override: None,
         soul_path: &state.home.soul_path(),
-        soul_max_chars: state.cfg.u64_or("personality.soul_max_chars", 8000) as usize,
+        soul_max_chars: crate::server::prompts::effective_soul_max_chars(
+            state.cfg.u64_or("personality.soul_max_chars", 8000),
+        ),
         goal: Some(&session.goal),
         web_context: Some(&web_context),
         memory_context: memory_context.as_deref(),
