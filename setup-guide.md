@@ -630,8 +630,11 @@ Inspect the fetch result before injection. Fetch stores the last extract;
 `/web inject` copies that stored extract into context for subsequent chat. Neither
 command asks the model a question by itself. `/web search <query>` searches text
 from up to the first eight allowlisted pages, returning bounded snippets. It does
-not search the wider internet. A search with no hits leaves the previous stored
-page intact; check the result before injecting so you do not reuse an old page.
+not search the wider internet. A completed search with no hits clears the previous
+last extract and injected context, including when every page fetch failed; inspect
+its `errors` as well as its `hits`. `/web inject` then refuses until a new fetch or
+matching search stores a page. Rejected requests (for example, an empty query or
+disabled web) preserve stored state. Cleanup failures report `WEB_CLEAR_FAILED`.
 
 **Allow the exact page you intend to fetch.** The current matcher accepts a path
 prefix, but the network target is rebuilt from the matched allowlist entry.
@@ -654,9 +657,12 @@ Current network restrictions and bounds:
   hits per page and 160 characters per snippet. Injected context is capped at
   4,000 characters. These are current code bounds, not YAML knobs.
 
-**Turning web off does not remove previously injected text.** `/web off` prevents
-new fetch/search requests; `/web deny <url>` removes an allowlist entry. Neither
-removes existing prompt context. To stop including it and stop new fetches:
+**`/web off` stops new fetch/search/inject requests and excludes saved web context
+from subsequent chat system prompts and `/prompt` previews.** Saved files remain;
+`/web on` resumes inclusion of previously injected context. This does not retract
+an in-flight request or erase earlier conversation messages. `/web deny <url>`
+removes an allowlist entry but does not erase saved context. To delete saved web
+state as well as disable web:
 
 ```text
 /web forget
@@ -666,8 +672,9 @@ removes existing prompt context. To stop including it and stop new fetches:
 ```
 
 `forget` clears both the last extract and injected context, preserving the
-allowlist. Stored context can be injected even while web is off. The allowlist,
-last extract and context live at `<home>/tools/web_allowlist.json`,
+allowlist. `/web` distinguishes `context stored` from `injected`: saved context
+is inactive while web is off. The allowlist, last extract and context live at
+`<home>/tools/web_allowlist.json`,
 `web_last.json` and `web_context.txt`; they are shared across sessions and survive
 restart. A new session alone does not clear them. Treat fetched text as untrusted
 source material, not permission to execute instructions found on a page.
@@ -830,7 +837,7 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 | Goal and chat history | Saved session; goal maximum 2,000 characters | `/goal`, `/session list`, `/goal task` for coding linkage |
 | Loop counters and automatic continuation | Current page only; not an unattended scheduler | Visible loop state; restart does not resume it |
 | Memory notes and inclusion | Home-wide saved notes/toggle; next request | `/memory`, `/prompt` |
-| Web allowlist, last extract and injected text | Home-wide saved files; fetch enablement is a separate toggle | `/web`, `/prompt`; use `forget` to remove context |
+| Web allowlist, last extract and injected text | Home-wide saved files; web enablement gates fetch/search/inject and prompt inclusion | `/web`, `/prompt`; use `forget` to remove context |
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
 | Managed credentials | Home `.env`, loaded at process startup on Unix; inherited values win | `/api` reports presence/masked tail, not proof of provider authentication |
 | Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |

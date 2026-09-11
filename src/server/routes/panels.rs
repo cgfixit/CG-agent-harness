@@ -49,7 +49,7 @@ pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
 fn web_err(e: &HarnessError) -> ApiError {
     let status = match e.code.as_str() {
         "WEB_DISABLED" | "WEB_ALLOWLIST_EMPTY" => StatusCode::CONFLICT,
-        "WEB_FETCH_FAILED" | "WEB_DNS" => StatusCode::BAD_GATEWAY,
+        "WEB_FETCH_FAILED" | "WEB_DNS" | "WEB_CLEAR_FAILED" => StatusCode::BAD_GATEWAY,
         _ => StatusCode::BAD_REQUEST,
     };
     // Code only: never the exception text.

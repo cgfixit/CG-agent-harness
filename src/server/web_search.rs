@@ -457,13 +457,14 @@ impl WebTool {
     pub fn status(&self, enabled: bool) -> Result<Value> {
         let entries = load_entries(&self.allow_path())?;
         let ctx = self.context_path();
-        let injected = std::fs::metadata(&ctx)
+        let context_stored = std::fs::metadata(&ctx)
             .map(|m| m.is_file() && m.len() > 0)
             .unwrap_or(false);
         Ok(json!({
             "enabled": enabled,
             "allowlist": entries.iter().map(|e| e.rendered()).collect::<Vec<_>>(),
-            "injected": injected,
+            "injected": enabled && context_stored,
+            "context_stored": context_stored,
             "has_last": self.last_path().is_file(),
             "max_allow": MAX_ALLOW,
         }))
@@ -495,19 +496,30 @@ impl WebTool {
         self.status(enabled)
     }
 
-    pub fn context_text(&self) -> String {
+    pub fn context_text(&self, enabled: bool) -> String {
+        if !enabled {
+            return String::new();
+        }
         std::fs::read_to_string(self.context_path())
             .map(|t| crate::common::clip_chars(&t, MAX_CONTEXT))
             .unwrap_or_default()
     }
 
     pub fn forget(&self, enabled: bool) -> Result<Value> {
-        let _ = std::fs::remove_file(self.context_path());
-        let _ = std::fs::remove_file(self.last_path());
+        for path in [self.context_path(), self.last_path()] {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(werr("WEB_CLEAR_FAILED", "could not clear stored web context")),
+            }
+        }
         self.status(enabled)
     }
 
     pub fn inject(&self, enabled: bool) -> Result<Value> {
+        if !enabled {
+            return Err(werr("WEB_DISABLED", "web context is off - /web on before injecting"));
+        }
         let payload: Value = std::fs::read_to_string(self.last_path())
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
@@ -674,6 +686,9 @@ impl WebTool {
                     errors.push(json!({"url": url, "code": e.code}));
                 }
             }
+        }
+        if hits.is_empty() {
+            self.forget(enabled)?;
         }
         Ok(json!({"query": needle, "hits": hits, "errors": errors, "scanned": entries.len()}))
     }

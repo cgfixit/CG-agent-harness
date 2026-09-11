@@ -220,6 +220,11 @@ a command already executing. Native sandbox and descendant-cleanup limits are
 recorded in [INVARIANTS.md](INVARIANTS.md) and
 [process lifecycle](docs/PROCESS_LIFECYCLE.md).
 
+`/web off` excludes saved web context from subsequent chat and prompt previews;
+`/web on` can resume it. `/web forget` deletes the saved extract and context.
+A completed search with no hits clears both to prevent reuse of stale results.
+See [web setup and controls](setup-guide.md#76-web-fetch-search-and-injected-context) for bounds.
+
 ## Tests and CI/CD
 
 ```bash

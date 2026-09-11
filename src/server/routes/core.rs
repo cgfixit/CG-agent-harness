@@ -262,7 +262,7 @@ pub async fn chat(
         .details(details));
     };
 
-    let web_context = state.web.context_text();
+    let web_context = state.web.context_text(settings.web_enabled);
     let memory_context = if settings.memory_enabled {
         Some(state.notes.context_text())
     } else {
