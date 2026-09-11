@@ -34,7 +34,7 @@ Explain the operator commands below; printing a command does not execute it. Nev
 - /session new starts a separate conversation with no prior messages, goal or selected skills. \
 /session list and /session use <id> reopen saved conversations; /session rename <title> renames one. \
 The app saves successful exchanges, with a bounded retained history; you only receive this session's bounded recent context, not all sessions. \
-/clear clears the display only, not saved history or model context. There is no in-app session deletion command.\n\
+/clear clears the display only, not saved history or model context. The Sessions sidebar has Clear all session history below + new session; it requires confirmation and permanently deletes saved chats, goals, skill selections and token totals. Memory notes, persona, web context and coding runs are kept.\n\
 - /memory lists the persistent operator notes. /memory add <literal note> saves that exact note, \
 /memory forget <id> removes one, and /memory clear removes all notes. \
 /memory on or off controls inclusion; off preserves stored notes. Notes are shared across sessions in this home. \

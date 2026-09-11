@@ -8,7 +8,7 @@ import {access, readFile, mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
-let persona='';
+let persona=''; let clearFails=false;
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
@@ -23,6 +23,11 @@ const server=createServer(async(req,res)=>{
  }
  if(path==='/api/prompt/preview'){reply({scope:'Chat preview',prompt:'Discipline contract\n'+(body.soul_content??persona)});return;}
  if(path==='/api/registry'){reply({skills:[],tools:[],connectors:[]});return;}
+ if(path==='/api/sessions/clear'){
+  if(clearFails){reply({detail:{code:'HARNESS_SESSION_PERSIST_ERROR',message:'fixture storage failure'}},502);return;}
+  if(!body.confirm || !body.reason?.trim()){reply({},422);return;}
+  sessions.clear();reply({deleted_sessions:1});return;
+ }
  if(path==='/api/sessions'){
   if(req.method==='GET'){reply({sessions:[...sessions.values()]});return;}
   const session={session_id:String(++sequence).padStart(12,'0'),goal:'',messages:[],title:'fixture',tokens:{total:0}};sessions.set(session.session_id,session);reply(session,201);return;
@@ -166,6 +171,31 @@ try {
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("OLD_INFLIGHT_MESSAGE")'),false);
  await evaluate('window.fetch=window.originalFetch');mode='normal';
  await send('NEW_SESSION_MESSAGE');assert.equal(requests.filter(r=>r[1]==='/api/chat').at(-1)[2].session_id,newSession);
+ // The destructive control sits directly below New Session and requires a separate confirmation.
+ assert.equal(await evaluate('document.querySelector("#pane-sessions .cmd-item").nextElementSibling.id'),'clearSessionHistory');
+ const clearCount=()=>requests.filter(r=>r[1]==='/api/sessions/clear').length;
+ const beforeClear=clearCount();const savedCount=sessions.size;
+ await evaluate('document.getElementById("clearSessionHistory").click()');
+ assert.equal(await evaluate('document.getElementById("sessionClearDialog").open'),true);
+ await evaluate('document.getElementById("sessionClearCancel").click()');
+ assert.equal(clearCount(),beforeClear);assert.equal(sessions.size,savedCount);
+ clearFails=true;
+ await evaluate('document.getElementById("clearSessionHistory").click();document.getElementById("sessionClearConfirm").click()');
+ await until('document.getElementById("sessionClearFeedback").textContent.includes("fixture storage failure") && !sessionClearing');
+ assert.equal(sessions.size,savedCount);assert.equal(await evaluate('currentSession'),newSession);
+ await evaluate('document.getElementById("sessionClearCancel").click()');clearFails=false;
+ await evaluate('window.fetch=(url,opts)=>window.originalFetch(url,String(url)==="/api/chat"?{...opts,signal:undefined}:opts)');
+ mode='delay';const erasedReply=send('ERASE_INFLIGHT_MESSAGE');await until('!!inflightChat');
+ await evaluate('document.getElementById("clearSessionHistory").click();document.getElementById("sessionClearConfirm").click()');
+ await until('!sessionClearing && currentSession===null');await erasedReply;
+ assert.equal(sessions.size,0);assert.equal(await evaluate('document.querySelectorAll("#pane-sessions .sess-item").length'),0);
+ assert.equal(await evaluate('sessionGoal'),'');assert.equal(await evaluate('loopState'),null);
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("LATE_OLD_REPLY")'),false);
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("ERASE_INFLIGHT_MESSAGE")'),false);
+ assert.equal(await evaluate('document.getElementById("sessionClearDialog").open'),false);
+ assert.equal(persona,'BROWSER_PERSONA','clearing chats preserves persona');
+ await evaluate('window.fetch=window.originalFetch');mode='normal';
+ await send('/session new');await send('AFTER_ERASE_MESSAGE');assert.equal(sessions.size,1);
  await send('/skill use custom');assert.deepEqual([...sessions.values()].at(-1).selected,['custom']);
  await send('/skill clear');assert.deepEqual([...sessions.values()].at(-1).selected,[]);
  await send('/agent run codex/fixture Review only');await send('/skill check:cargo-fmt');assert.deepEqual(await evaluate('pendingAgentRun.checks'),['cargo-fmt']);

@@ -124,6 +124,7 @@ impl SessionStore {
     }
 
     pub fn create(&self, model: &str, title: &str) -> Result<Session> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let now = time::OffsetDateTime::now_utc();
         let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
         let stamp = now.format(&fmt).unwrap_or_default();
@@ -195,6 +196,44 @@ impl SessionStore {
             out.push(session.summary());
         }
         out
+    }
+
+    /// Serialize deletion with every writer. Late replies re-read the missing
+    /// session and fail instead of restoring its history. Never recurse or follow
+    /// a leaf symlink; remove only session files and our interrupted atomic writes.
+    pub fn clear(&self) -> Result<usize> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let remove = || -> std::io::Result<usize> {
+            if !std::fs::symlink_metadata(&self.dir)?.is_dir() {
+                return Err(std::io::Error::other("session directory is not a directory"));
+            }
+            #[cfg(unix)]
+            let dir = {
+                use std::os::unix::fs::OpenOptionsExt;
+                cap_std::fs::Dir::from_std_file(
+                    std::fs::OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+                        .open(&self.dir)?,
+                )
+            };
+            #[cfg(not(unix))]
+            let dir = cap_std::fs::Dir::open_ambient_dir(&self.dir, cap_std::ambient_authority())?;
+            let mut count = 0;
+            for entry in dir.entries()? {
+                let name = entry?.file_name();
+                let Some(name) = name.to_str() else { continue };
+                let session_file = name.strip_suffix(".json").is_some_and(|id| id_re().is_match(id));
+                let staged_file = name.starts_with(".staged.") && name.ends_with(".tmp");
+                if session_file || staged_file {
+                    dir.remove_file(name)?;
+                    count += usize::from(session_file);
+                }
+            }
+            Ok(count)
+        };
+        remove().map_err(|_| HarnessError::new(PERSIST_ERROR_CODE,
+            "Could not clear all session history; some files may already be deleted. Retry after resolving the storage error."))
     }
 
     pub fn record_exchange(
@@ -316,5 +355,31 @@ impl SessionStore {
         let payload = serde_json::to_value(session)?;
         write_json_atomic(&path, &payload)
             .map_err(|_| HarnessError::new(PERSIST_ERROR_CODE, "could not persist session"))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn clearing_never_follows_links_or_recurses_into_unrelated_data() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let private = outside.path().join("private.json");
+        std::fs::write(&private, "keep").unwrap();
+        let dir = home.path().join("sessions");
+        let store = SessionStore::new(&dir).unwrap();
+        symlink(&private, dir.join("aaaaaaaaaaaa.json")).unwrap();
+        assert_eq!(store.clear().unwrap(), 1);
+        assert_eq!(std::fs::read_to_string(&private).unwrap(), "keep");
+        std::fs::create_dir(dir.join("bbbbbbbbbbbb.json")).unwrap();
+        assert!(store.clear().is_err());
+        assert!(dir.join("bbbbbbbbbbbb.json").is_dir());
+        std::fs::rename(&dir, home.path().join("original")).unwrap();
+        symlink(outside.path(), &dir).unwrap();
+        assert!(store.clear().is_err());
+        assert_eq!(std::fs::read_to_string(private).unwrap(), "keep");
     }
 }

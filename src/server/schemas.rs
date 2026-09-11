@@ -100,6 +100,26 @@ impl Validate for SessionCreateRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SessionClearRequest {
+    pub confirm: bool,
+    pub reason: String,
+}
+
+impl Validate for SessionClearRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if !self.confirm {
+            bad.push("confirm".into());
+        }
+        if !len_ok(self.reason.trim(), 1, MAX_REASON_LEN) {
+            bad.push("reason".into());
+        }
+        bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RenameRequest {
     pub title: String,
 }

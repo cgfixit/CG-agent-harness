@@ -67,6 +67,18 @@ pub async fn create_session(
     Ok((StatusCode::CREATED, Json(session.summary())))
 }
 
+pub async fn clear_sessions(
+    State(state): State<Arc<AppState>>,
+    ValidJson(_req): ValidJson<SessionClearRequest>,
+) -> ApiResult<Json<Value>> {
+    state.chat.abort_in_flight();
+    let deleted = state
+        .store
+        .clear()
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    Ok(Json(json!({"deleted_sessions": deleted})))
+}
+
 pub async fn get_session(State(state): State<Arc<AppState>>, Path(session_id): Path<String>) -> ApiResult<Json<Value>> {
     let session = state
         .store
