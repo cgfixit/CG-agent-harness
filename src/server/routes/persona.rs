@@ -19,6 +19,7 @@ use crate::server::state::AppState;
 static EDIT_LOCK: Mutex<()> = Mutex::new(());
 const MAX_BYTES: usize = 256 * 1024;
 const MAX_RECORDS: usize = 32;
+const APPLY_MARKER: &str = "soul-pending-apply.json";
 type PrivateJson = ([(header::HeaderName, &'static str); 1], Json<Value>);
 fn private(value: Value) -> PrivateJson {
     ([(header::CACHE_CONTROL, crate::server::headers::NO_STORE)], Json(value))
@@ -125,7 +126,53 @@ fn current(state: &AppState) -> ApiResult<(String, String)> {
     let rev = content.as_deref().map(revision).unwrap_or_else(|| "missing".into());
     Ok((content.unwrap_or_default(), rev))
 }
-fn save(state: &AppState, content: &str, expected: &str) -> ApiResult<String> {
+
+// Caller holds EDIT_LOCK. Recovery updates bookkeeping only, never soul.md.
+fn recover_apply(state: &AppState) -> ApiResult<()> {
+    let home = home_dir(state)?;
+    let Some(text) = read(&home, APPLY_MARKER)? else {
+        return Ok(());
+    };
+    let marker: Value = serde_json::from_str(&text).map_err(|_| io_error())?;
+    let id = marker["id"].as_str().filter(|id| valid_id(id)).ok_or_else(io_error)?;
+    let base = marker["base_revision"].as_str().ok_or_else(io_error)?;
+    let target = marker["revision"]
+        .as_str()
+        .filter(|rev| valid_id(rev))
+        .ok_or_else(io_error)?;
+    let mut record = proposal(state, id)?;
+    if !(base == "missing" || valid_id(base))
+        || record["id"] != id
+        || record["base_revision"] != base
+        || record["revision"] != target
+        || revision(record["content"].as_str().ok_or_else(io_error)?) != target
+        || !matches!(record["status"].as_str(), Some("pending" | "applied" | "interrupted"))
+    {
+        return Err(io_error());
+    }
+    let actual = current(state)?.1;
+    record["status"] = json!(if actual == target {
+        "applied"
+    } else if actual == base {
+        "pending"
+    } else {
+        "interrupted"
+    });
+    persist_proposal(state, id, &record)?;
+    // Keep the marker on any failure so startup or the next persona operation retries.
+    home.remove_file(APPLY_MARKER).map_err(|_| io_error())?;
+    state
+        .audit
+        .log(json!({"event":"soul_apply_recovered","id":id,"status":record["status"]}));
+    Ok(())
+}
+
+pub(crate) fn recover_on_startup(state: &AppState) -> ApiResult<()> {
+    let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    recover_apply(state)
+}
+
+fn validate_save(state: &AppState, content: &str, expected: &str) -> ApiResult<(String, String)> {
     validate_content(state, content)?;
     let (old, actual) = current(state)?;
     if expected != actual {
@@ -135,6 +182,10 @@ fn save(state: &AppState, content: &str, expected: &str) -> ApiResult<String> {
             "Persona changed since preview; reload and review it",
         ));
     }
+    Ok((old, actual))
+}
+fn save(state: &AppState, content: &str, expected: &str) -> ApiResult<String> {
+    let (old, actual) = validate_save(state, content, expected)?;
     if actual != "missing" {
         let dir = records(state)?;
         let backup = format!("{actual}.md");
@@ -166,6 +217,7 @@ pub async fn document(
     Query(query): Query<DocumentQuery>,
 ) -> ApiResult<PrivateJson> {
     let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    recover_apply(&state)?;
     let (content, rev) = if let Some(id) = query.version {
         if !valid_id(&id) {
             return Err(error("SOUL_VERSION", "Invalid version"));
@@ -228,6 +280,7 @@ pub async fn edit(
         return Err(error("SOUL_CONFIRM", "Explicit confirmation is required"));
     }
     let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    recover_apply(&state)?;
     let rev = save(&state, &req.content, &req.base_revision)?;
     state.audit.log(json!({"event":"soul_human_edit","revision":rev}));
     Ok(private(json!({"revision":rev,"saved":true})))
@@ -303,6 +356,7 @@ pub async fn propose(
     ValidJson(req): ValidJson<EditRequest>,
 ) -> ApiResult<PrivateJson> {
     let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    recover_apply(&state)?;
     validate_content(&state, &req.content)?;
     if current(&state)?.1 != req.base_revision {
         return Err(error("SOUL_CHANGED", "Reload current persona before proposing"));
@@ -331,7 +385,16 @@ fn proposal(state: &AppState, id: &str) -> ApiResult<Value> {
     .map_err(|_| io_error())
 }
 pub async fn review(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> ApiResult<PrivateJson> {
+    let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    recover_apply(&state)?;
     Ok(private(proposal(&state, &id)?))
+}
+fn persist_proposal(state: &AppState, id: &str, record: &Value) -> ApiResult<()> {
+    write(
+        &records(state)?,
+        &format!("{id}.json"),
+        serde_json::to_string_pretty(record).unwrap().as_bytes(),
+    )
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -360,24 +423,35 @@ pub async fn decide(
         return Err(error("SOUL_CONFIRM", "Explicit confirmation is required"));
     }
     let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    recover_apply(&state)?;
     let mut record = proposal(&state, &id)?;
     let content = record["content"].as_str().ok_or_else(io_error)?;
-    if record["status"] != "pending" || revision(content) != req.revision {
+    if record["status"] != "pending"
+        || record["id"] != id
+        || record["revision"] != req.revision
+        || revision(content) != req.revision
+    {
         return Err(error(
             "SOUL_PROPOSAL_CHANGED",
             "Proposal is no longer the reviewed pending revision",
         ));
     }
     if req.apply {
+        validate_save(&state, content, record["base_revision"].as_str().ok_or_else(io_error)?)?;
+        // Persist intent before replacing the document. No recovery path applies text.
+        let marker = json!({"id":id,"base_revision":record["base_revision"],"revision":req.revision});
+        write(
+            &home_dir(&state)?,
+            APPLY_MARKER,
+            serde_json::to_string(&marker).unwrap().as_bytes(),
+        )?;
         save(&state, content, record["base_revision"].as_str().ok_or_else(io_error)?)?;
     }
     record["status"] = json!(if req.apply { "applied" } else { "rejected" });
-    write(
-        &records(&state)?,
-        &format!("{id}.json"),
-        serde_json::to_string_pretty(&record).unwrap().as_bytes(),
-    )
-    .map_err(|_| io_error())?;
+    persist_proposal(&state, &id, &record)?;
+    if req.apply {
+        home_dir(&state)?.remove_file(APPLY_MARKER).map_err(|_| io_error())?;
+    }
     state
         .audit
         .log(json!({"event":"soul_proposal_decision","id":id,"status":record["status"]}));

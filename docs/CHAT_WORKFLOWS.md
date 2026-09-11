@@ -76,11 +76,24 @@ explicit confirmation and the reviewed content hash. A changed active persona,
 changed proposal, or already-decided proposal refuses application. A rejection
 does not alter the active persona.
 
-Persona replacement and proposal-status persistence are separate durable writes.
-After a storage error or crash, inspect both records before retrying. A failed
-replacement preserves the active file; a crash after successful replacement can
-leave proposal status requiring reconciliation. The base-revision check prevents
-silently replaying the old proposal against changed content.
+Before applying, the server records the proposal ID and base/candidate hashes in
+private `soul-pending-apply.json`. It then replaces the persona, persists the
+proposal status, and removes the marker. Startup and the next persona document,
+review, edit, propose, or decision operation reconcile a retained marker under
+the persona edit lock:
+
+- Candidate hash matches the current document: mark `applied`.
+- Base hash still matches: leave `pending`; another explicit reviewed apply is required.
+- Neither matches: mark `interrupted`; preserve the document and create a new
+  proposal against its current revision if the change is still wanted.
+
+Recovery only updates proposal bookkeeping; it never replays a document write.
+An unreadable/mismatched marker or storage failure retains recovery evidence and
+refuses startup or subsequent persona operations until repaired. Preserve the
+active document, history, and marker before manual repair. Old pending proposals
+without markers are not inferred to be applied merely because their text matches.
+These are process-interruption guarantees, not an atomic transaction across files,
+power-loss durability, or protection against concurrent external writers.
 
 ## Select runtime prompt skills
 

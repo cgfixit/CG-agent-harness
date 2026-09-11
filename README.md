@@ -130,7 +130,9 @@ To deliberately turn the current goal into coding work, use
 `/agent confirm <reason>`. `/goal task` restores a staged request or shows its
 retained job evidence. No coding work starts from ordinary `/loop`.
 See [chat, persona, skills and goal controls](docs/CHAT_WORKFLOWS.md) for bounds,
-proposal review, recovery and completion semantics.
+proposal review, recovery and completion semantics. Interrupted persona applies
+reconcile proposal status on startup or the next persona operation; recovery
+never reapplies text or overwrites a changed document.
 
 `/web` exposes the explicit enable/allow/fetch/search/inject controls.
 `/connectors` is a catalog, not a claim that every listed connector is executable;

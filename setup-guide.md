@@ -470,10 +470,20 @@ Review first; issuing the apply command with a reason sends explicit confirmatio
 for that exact reviewed revision. There is no additional proposal-apply dialog. To refuse it, use `/soul reject <proposal-id> <reason>` after review.
 Rejection preserves the active persona. Changed base content or already-decided
 proposals are refused. Backup/proposal storage is limited to 32 records and does
-not automatically delete old history. A storage failure after successful persona
-replacement can leave proposal status needing reconciliation; inspect both before
-retrying. [Chat workflow details](docs/CHAT_WORKFLOWS.md) explain history retrieval
-and restoration through the guarded edit flow.
+not automatically delete old history. Apply records a private recovery marker before
+replacement. Startup and the next persona document/review/edit/proposal operation
+reconcile it: matching candidate content becomes `applied`, unchanged base content
+stays `pending` and needs a new explicit apply, and unrelated content becomes
+`interrupted`. Recovery never writes persona text. Review an interrupted record and
+create a new proposal against the current document if still wanted.
+
+If recovery storage is unreadable or cannot be updated, startup and later persona
+operations refuse until repaired. Preserve `soul.md`, `soul-history/`, and
+`soul-pending-apply.json` before manual repair; do not blindly delete the marker.
+This covers process interruption, not power-loss atomicity or concurrent external
+file edits. Older interrupted applies without a marker still need manual review.
+[Chat workflow details](docs/CHAT_WORKFLOWS.md) explain history retrieval and
+restoration through the guarded edit flow.
 
 ### 7.3 Runtime skills and Codex development skills
 
@@ -794,7 +804,7 @@ live outside the bundle, so replacing or uninstalling the app preserves them.
 |---|---|
 | `config.yaml` | Seeded configuration; edit existing mappings and restart |
 | `harness.json` | Persisted chat model selection, soul/memory/web toggles and other console settings |
-| `soul.md`, `soul-history/` | Optional persona and bounded editor backup/proposal records |
+| `soul.md`, `soul-history/`, `soul-pending-apply.json` | Optional persona, bounded backups/proposals, and temporary apply-recovery marker |
 | `skills/<id>/SKILL.md` | Runtime skill bodies; existing files are preserved |
 | `sessions/` | Chat history, goals, selected skills and current goal-stage linkage |
 | `memory/`, `tools/` | Operator notes and web context/allowlist state |
