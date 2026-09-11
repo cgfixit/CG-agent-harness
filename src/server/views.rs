@@ -37,7 +37,8 @@ pub fn list_repo_skills(skills_dir: &Path) -> Vec<Value> {
         let dir_name = entry.file_name().to_string_lossy().to_string();
         let name = frontmatter_field(&text, "name");
         out.push(json!({
-            "name": if name.is_empty() { dir_name } else { name },
+            "id": dir_name,
+            "name": if name.is_empty() { dir_name.clone() } else { name },
             "description": frontmatter_field(&text, "description"),
             "source": "repo",
             "path": format!("skills/{}/SKILL.md", entry.file_name().to_string_lossy()),
@@ -98,7 +99,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 29] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 29] = [
     ("chat", "(plain text)", "POST", "/api/chat", "local model chat turn"),
     (
         "goal",
@@ -334,15 +335,15 @@ fn render_tools_diagram(tools: &[Value], wired: usize, total: usize) -> String {
             ),
             format!(" kind        {}", r["kind"].as_str().unwrap_or("")),
             format!(
-                " invoked     {}",
+                " history     {}",
                 if r["invoked"].as_bool().unwrap_or(false) {
                     "yes"
                 } else {
-                    "no (catalog only)"
+                    "not recorded"
                 }
             ),
             format!(
-                " wired       {}",
+                " registered  {}",
                 if r["wired"].as_bool().unwrap_or(false) {
                     "yes"
                 } else {
@@ -354,7 +355,10 @@ fn render_tools_diagram(tools: &[Value], wired: usize, total: usize) -> String {
         ];
         return box_render(r["name"].as_str().unwrap_or(""), &inner);
     }
-    let mut lines = vec![format!("HARNESS TOOLS — {wired} wired / {total} listed"), String::new()];
+    let mut lines = vec![
+        format!("HARNESS TOOLS — {wired} registered / {total} listed"),
+        String::new(),
+    ];
     if tools.is_empty() {
         lines.push("(none)".into());
         return lines.join("\n");
@@ -389,7 +393,9 @@ pub fn list_wired_tools(registered: &BTreeSet<String>) -> Value {
         .iter()
         .map(|(name, slash, method, path, desc)| {
             json!({"name": name, "slash": slash, "method": method, "path": path, "description": desc,
-                   "kind": "harness", "invoked": true, "wired": registered.contains(*path)})
+                   "kind": "harness", "invoked": false, "wired": registered.contains(*path),
+                   "registered": registered.contains(*path), "enabled": null, "ready": null,
+                   "unavailable_reason": "requires request-time prerequisite checks", "last_result": null})
         })
         .collect();
     let wired: Vec<Value> = tools
@@ -422,15 +428,15 @@ fn render_skills_diagram(rows: &[Value], wired: usize, total: usize) -> String {
             format!(" path        {}", r["path"].as_str().unwrap_or("")),
             format!(" source      {}", r["source"].as_str().unwrap_or("")),
             format!(
-                " invoked     {}",
+                " history     {}",
                 if r["invoked"].as_bool().unwrap_or(false) {
                     "yes"
                 } else {
-                    "no (catalog only)"
+                    "not recorded"
                 }
             ),
             format!(
-                " wired       {}",
+                " registered  {}",
                 if r["wired"].as_bool().unwrap_or(false) {
                     "yes"
                 } else {
@@ -443,7 +449,7 @@ fn render_skills_diagram(rows: &[Value], wired: usize, total: usize) -> String {
         return box_render(r["name"].as_str().unwrap_or(""), &inner);
     }
     let mut lines = vec![
-        format!("HARNESS SKILLS — {wired} wired / {total} listed"),
+        format!("HARNESS SKILLS — {wired} registered / {total} listed"),
         String::new(),
     ];
     let groups = [
@@ -490,16 +496,17 @@ pub fn list_wired_skills(home: &Home) -> Value {
         let name = entry["name"].as_str().unwrap_or("").to_string();
         let path = entry["path"].as_str().unwrap_or("").to_string();
         let desc = clip_desc(entry["description"].as_str().unwrap_or(""));
-        if DISCIPLINE_SKILLS.contains(&name.as_str()) {
-            let readable = home.root.join(&path).is_file();
+        let id = entry["id"].as_str().unwrap_or("");
+        if DISCIPLINE_SKILLS.contains(&id) {
+            let readable = super::prompts::read_skill_body(&home.skills_dir(), id).is_some_and(|body| !body.is_empty());
             rows.push(
                 json!({"name": name, "role": "prompt", "path": path, "description": desc, "source": "repo",
-                             "invoked": readable, "wired": readable}),
+                             "id": id, "invoked": false, "wired": readable, "loaded": readable}),
             );
         } else {
             rows.push(
                 json!({"name": name, "role": "repo", "path": path, "description": desc, "source": "repo",
-                             "invoked": false, "wired": false}),
+                             "id": id, "invoked": false, "wired": false}),
             );
         }
     }
@@ -508,13 +515,34 @@ pub fn list_wired_skills(home: &Home) -> Value {
     for (name, desc) in agent_policy::available_profiles() {
         rows.push(
             json!({"name": name, "role": "check", "path": "", "description": clip_desc(&desc),
-                         "source": "agent-check", "invoked": true, "wired": true}),
+                         "source": "agent-check", "id": format!("check:{name}"), "invoked": false, "wired": true}),
         );
     }
     for entry in list_governed_skills(&home.registry_path()) {
         rows.push(json!({"name": entry["name"], "role": "governed", "path": entry["path"],
                          "description": clip_desc(entry["description"].as_str().unwrap_or("")),
                          "source": "agentic-registry", "invoked": false, "wired": false}));
+    }
+    for row in &mut rows {
+        row["registered"] = json!(true);
+        row["last_result"] = Value::Null;
+        row["enabled"] = if row["role"] == "prompt" {
+            row["wired"].clone()
+        } else {
+            Value::Null
+        };
+        row["ready"] = if row["role"] == "prompt" {
+            row["wired"].clone()
+        } else {
+            Value::Null
+        };
+        row["unavailable_reason"] = if row["role"] == "prompt" && row["wired"] == true {
+            Value::Null
+        } else if row["role"] == "check" {
+            json!("requires a staged coding request and execution-time checks")
+        } else {
+            json!("catalog only; no invocation adapter")
+        };
     }
     let wired: Vec<Value> = rows
         .iter()
@@ -523,7 +551,7 @@ pub fn list_wired_skills(home: &Home) -> Value {
         .collect();
     let count = wired.len();
     let total = rows.len();
-    json!({"skills": rows, "wired": count, "total": total, "diagram": render_skills_diagram(&wired, count, total)})
+    json!({"skills": rows, "wired": count, "total": total, "diagram": render_skills_diagram(&rows, count, total)})
 }
 
 #[cfg(test)]

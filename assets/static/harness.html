@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="csrf-token" content="__CYCLAW_CSRF_TOKEN__">
-<title>CyClaw Harness</title>
+<title>CG Agent Harness</title>
 <!-- No external fonts or CDNs: offline-first, loopback-only. System stacks. -->
 <!-- The nonce placeholders below are swapped for a fresh per-response value by
      harness/server.py's console(); served from gate.py's /static mount instead
@@ -165,7 +165,7 @@
 </head>
 <body>
   <div class="header">
-    <div class="logo">CyClaw <span>/ harness</span></div>
+    <div class="logo">CG Agent <span>/ harness</span></div>
     <div class="header-right">
       <span id="harnessAuth">
         <span id="hAuthSetup" hidden>
@@ -281,6 +281,7 @@ const CSRF_TOKEN = csrfMeta ? csrfMeta.content : '';
 
 let currentSession = null;   // session_id string or null
 let soulEnabled = true;
+let soulStatus = {};
 let memoryEnabled = false;
 /* A staged (not yet sent) agent run. The server's own gate needs an explicit
    reason plus confirm, so the console stages first and shows the operator
@@ -363,15 +364,18 @@ function renderToolsDiagram(tools, wired, total) {
   if (!tools || !tools.length) return 'HARNESS TOOLS — none';
   if (tools.length === 1) {
     const row = tools[0];
-    const invoked = row.invoked ? 'yes' : 'no (catalog only)';
+    const invoked = row.last_result ? JSON.stringify(row.last_result) : 'not recorded';
     const wiredMark = row.wired ? 'yes' : 'no';
     const inner = [
       ' name        ' + row.name,
       ' slash       ' + row.slash,
       ' route       ' + row.method + ' ' + row.path,
       ' kind        ' + row.kind,
-      ' invoked     ' + invoked,
-      ' wired       ' + wiredMark,
+      ' enabled     ' + row.enabled,
+      ' ready       ' + row.ready,
+      ' reason      ' + (row.unavailable_reason || 'none'),
+      ' history     ' + invoked,
+      ' registered  ' + wiredMark,
       '',
       ' ' + row.description,
     ];
@@ -385,7 +389,7 @@ function renderToolsDiagram(tools, wired, total) {
     const body = inner.map(line => '│' + line.padEnd(width, ' ') + ' │');
     return [head].concat(body).concat(['└' + edge + '┘']).join('\n');
   }
-  const lines = ['HARNESS TOOLS — ' + wired + ' wired / ' + total + ' listed', ''];
+  const lines = ['HARNESS TOOLS — ' + wired + ' registered / ' + total + ' listed', ''];
   const harness = tools.filter(t => t.kind === 'harness');
   const mcp = tools.filter(t => t.kind === 'mcp');
   const treeLines = (row, last, indent) => {
@@ -418,15 +422,17 @@ function renderSkillsDiagram(skills, wired, total) {
   if (!skills || !skills.length) return 'HARNESS SKILLS — none';
   if (skills.length === 1) {
     const row = skills[0];
-    const invoked = row.invoked ? 'yes' : 'no (catalog only)';
+    const invoked = row.last_result ? JSON.stringify(row.last_result) : 'not recorded';
     const wiredMark = row.wired ? 'yes' : 'no';
     const inner = [
       ' name        ' + row.name,
       ' role        ' + row.role,
+      ' ready       ' + row.ready,
+      ' reason      ' + (row.unavailable_reason || 'none'),
       ' path        ' + row.path,
       ' source      ' + row.source,
-      ' invoked     ' + invoked,
-      ' wired       ' + wiredMark,
+      ' history     ' + invoked,
+      ' registered  ' + wiredMark,
       '',
       ' ' + row.description,
     ];
@@ -440,7 +446,7 @@ function renderSkillsDiagram(skills, wired, total) {
     const body = inner.map(line => '│' + line.padEnd(width, ' ') + ' │');
     return [head].concat(body).concat(['└' + edge + '┘']).join('\n');
   }
-  const lines = ['HARNESS SKILLS — ' + wired + ' wired / ' + total + ' listed', ''];
+  const lines = ['HARNESS SKILLS — ' + wired + ' registered / ' + total + ' listed', ''];
   const groups = [
     ['prompt', 'prompt (injected into every chat turn)'],
     ['check', 'agent-check (named /agent checks profiles)'],
@@ -610,7 +616,7 @@ async function refreshStatus() {
     }
     $('sHome').textContent = s.home;
     $('sHome').title = 'harness home: ' + s.home + '  ·  repo: ' + s.repo_root;
-    soulEnabled = s.soul_enabled;
+    soulEnabled = s.soul_enabled; soulStatus = s.soul || {};
     if (typeof s.memory_enabled === 'boolean') memoryEnabled = s.memory_enabled;
     paintSoul();
     paintMemory();
@@ -641,7 +647,7 @@ document.addEventListener('visibilitychange', () => {
 });
 function paintSoul() {
   const v = $('sSoulV');
-  v.textContent = soulEnabled ? 'on' : 'off';
+  v.textContent = soulEnabled ? (soulStatus.loaded ? 'loaded' : (soulStatus.unavailable_reason || 'unverified')) : 'off';
   v.className = 'v ' + (soulEnabled ? 'on' : 'off');
 }
 function paintMemory() {
@@ -707,10 +713,10 @@ const COMMANDS = [
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
   ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (off by default)'],
   ['/goal [text]|clear', 'set, show, or clear the session goal'],
-  ['/loop [n]|stop|auto', 'human-gated chat; aggregate completion budget; per-turn budget set by server'],
+  ['/loop [n]|stop|auto', 'chat continuation only; aggregate completion budget; per-turn budget set by server'],
   ['/model [use <name>]', 'show or select the model'],
-  ['/skills [all|<name>]', 'wired harness skills as a diagram'],
-  ['/tools [all|<name>]', 'wired harness tools as a diagram'],
+  ['/skills [all|<name>]', 'registered runtime skills as a diagram'],
+  ['/tools [all|<name>]', 'registered runtime tools as a diagram'],
   ['/web [on|off|allow|deny|fetch|search|inject|forget]', 'allowlist-only web fetch (off by default)'],
   ['/connectors', 'connector catalog'],
   ['/github', 'agentic GitHub status'],
@@ -720,9 +726,9 @@ const COMMANDS = [
   ['/agent status|approve|reject <id>', 'inspect or decide a pending run'],
   ['/harness', 'harness optimizer runs'],
   ['/tokens', 'token tally'],
-  ['/api [set <KEY> <value>]', 'view or store CyClaw API keys (.env, mode 600)'],
+  ['/api [set <KEY> <value>]', 'view or store harness API keys (.env, mode 600)'],
   ['/status', 'server status'],
-  ['/users', 'manage CyClaw accounts (same users as the gate)'],
+  ['/users', 'manage optional local harness accounts'],
   ['/clear', 'clear the console'],
 ];
 
@@ -979,12 +985,12 @@ async function runSlash(line) {
       case 'soul': {
         if (arg === 'on' || arg === 'off') {
           const r = await api('/api/soul', 'POST', { enabled: arg === 'on' });
-          soulEnabled = r.enabled; paintSoul();
+          soulEnabled = r.enabled; soulStatus = r; paintSoul();
           sys('soul ' + (r.enabled ? 'enabled' : 'disabled') +
               ' (system prompt only — soul.md itself is governed and untouched)');
         } else {
           const r = await api('/api/soul');
-          sys('soul is ' + (r.enabled ? 'ON' : 'OFF'));
+          sys(JSON.stringify(r, null, 2));
         }
         break;
       }
@@ -995,7 +1001,7 @@ async function runSlash(line) {
           const r = await api('/api/memory', 'POST', { enabled: sub === 'on' });
           memoryEnabled = !!r.enabled; paintMemory();
           sys('memory ' + (r.enabled ? 'ON' : 'OFF') +
-              ' — notes stay in ~/.CyClaw/memory; RAG memory/ is ' +
+              ' — notes stay in <harness home>/memory; RAG memory/ is ' +
               ((r.rag && r.rag.enabled) ? 'on' : 'off') +
               ' (read-only; this command cannot flip it)');
         } else if (sub === 'add') {
@@ -1043,7 +1049,7 @@ async function runSlash(line) {
           // printed "-> undefined" on every successful save.
           sys('saved: ' + r.written.join(', ') + '  ->  ' + r.path);
           if (r.restart_required)
-            sys('restart gate.py to load it: nothing in CyClaw reads .env at runtime, ' +
+            sys('restart CG Agent Harness to load updated credentials: ' +
                 'your shell sources it (see docs/HARNESS_API_KEYS.md)');
           if (r.self_auth_written && r.self_auth_written.length)
             sys('note: ' + r.self_auth_written.join(', ') + ' is the key guarding this console. ' +
@@ -1086,7 +1092,7 @@ async function runSlash(line) {
       case 'skills': {
         if (arg === 'help') {
           sys(table([
-            ['/skills', 'diagram of harness skills that are actually wired'],
+            ['/skills', 'diagram of harness skills that are registered (not proof of readiness)'],
             ['/skills all', 'include repo / governed catalog'],
             ['/skills <name>', 'one-skill box diagram'],
           ], ['command', 'action']));
@@ -1099,21 +1105,21 @@ async function runSlash(line) {
           const needle = arg.replace(/^\//, '');
           rows = listed.filter(s => s.name === needle || s.name === arg);
           if (!rows.length) {
-            sys('unknown skill: ' + arg + ' — /skills to list wired names');
+            sys('unknown skill: ' + arg + ' — /skills to list registered names');
             break;
           }
         } else if (arg !== 'all') {
           rows = listed.filter(s => s.wired);
         }
         sys(renderSkillsDiagram(rows, inventory.wired, inventory.total),
-            inventory.wired + ' wired / ' + inventory.total + ' listed');
+            inventory.wired + ' registered / ' + inventory.total + ' listed');
         break;
       }
 
       case 'tools': {
         if (arg === 'help') {
           sys(table([
-            ['/tools', 'diagram of harness tools that are actually wired'],
+            ['/tools', 'diagram of harness tools that are registered (not proof of readiness)'],
             ['/tools all', 'include unwired / catalog rows'],
             ['/tools <name>', 'one-tool box diagram'],
           ], ['command', 'action']));
@@ -1127,14 +1133,14 @@ async function runSlash(line) {
           rows = listed.filter(t => t.name === needle || t.name === arg ||
             (t.slash && t.slash.replace(/^\//, '').split(' ')[0] === needle));
           if (!rows.length) {
-            sys('unknown tool: ' + arg + ' — /tools to list wired names');
+            sys('unknown tool: ' + arg + ' — /tools to list registered names');
             break;
           }
         } else if (arg !== 'all') {
           rows = listed.filter(t => t.wired);
         }
         sys(renderToolsDiagram(rows, inventory.wired, inventory.total),
-            inventory.wired + ' wired / ' + inventory.total + ' listed');
+            inventory.wired + ' registered / ' + inventory.total + ' listed');
         break;
       }
 
@@ -1455,6 +1461,7 @@ async function runSlash(line) {
           if (!currentSession) { sys('no active session — nothing to clear'); break; }
           const cleared = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: '' });
           sessionGoal = cleared.goal || '';
+          requestLoopStop('goal cleared — chat continuation stopped');
           paintGoalLoop();
           sys('goal cleared');
           break;
@@ -1624,13 +1631,15 @@ function stopLoop(reason) {
 
 async function runLoopTurns() {
   if (!loopState || loopState.running) return;
+  const activeLoop = loopState;
   loopState.running = true;
   paintGoalLoop();
   try {
-    while (loopState && !loopState.stop && loopState.remaining > 0) {
+    while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
       const framed = 'Continue toward the session goal. Be concise (local 27b). If the goal is fully satisfied, end with GOAL_DONE on its own line. Stay in this chat; do not request a real-repo write.';
       const reply = await sendChat(framed, true);
+      if (loopState !== activeLoop) return;
       if (!loopState || loopState.stop) {
         stopLoop(loopState && loopState.stop ? 'loop stop honored' : '');
         return;
@@ -1652,7 +1661,7 @@ async function runLoopTurns() {
       }
       loopState.lastReply = reply.trim();
       if (replyHasGoalDone(reply)) {
-        stopLoop('model signaled GOAL_DONE — loop stopped');
+        stopLoop('model reported GOAL_DONE (unverified) — chat continuation stopped');
         return;
       }
       if (loopState.completionTokens >= MAX_LOOP_TOTAL_COMPLETION_TOKENS) {
@@ -1672,7 +1681,7 @@ async function runLoopTurns() {
       await sleepMs(LOOP_COOLDOWN_MS);
     }
   } finally {
-    if (loopState) loopState.running = false;
+    if (loopState === activeLoop) loopState.running = false;
     paintGoalLoop();
   }
 }
@@ -1939,7 +1948,7 @@ refreshSessions().catch(() => {});
 refreshRegistry().catch(() => {});
 sys('CGagentHarness — local coding console (CLI: cgagentharness).');
 sys('System prompt: ponytail + karpathy-guidelines discipline contracts for agentic GitHub coding.');
-sys('Type /help for commands. /skills and /tools list wired surfaces. /web is allowlist-only and off by default. /goal + /loop are chat-only (rate-limited for local 27b).');
+sys('Type /help for commands. /skills and /tools list registered surfaces. /web is allowlist-only and off by default. /goal + /loop are chat-only (rate-limited for local 27b).');
 input.focus();
 paintGoalLoop();
 </script>

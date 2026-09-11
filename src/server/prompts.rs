@@ -2,6 +2,7 @@
 //! Order: header, discipline skills (ponytail, karpathy-guidelines), soul
 //! (read-only), goal, web extract, memory notes.
 
+use serde::Serialize;
 use std::path::Path;
 
 pub const DISCIPLINE_SKILLS: [&str; 2] = ["ponytail", "karpathy-guidelines"];
@@ -37,6 +38,38 @@ pub fn read_skill_body(skills_dir: &Path, name: &str) -> Option<String> {
     std::fs::read_to_string(path).ok().map(|t| strip_frontmatter(&t))
 }
 
+/// Safe diagnostics share the exact loader used by prompt composition.
+#[derive(Debug, Serialize)]
+pub struct TextLoad {
+    pub enabled: bool,
+    pub present: bool,
+    pub loaded: bool,
+    pub truncated: bool,
+    pub unavailable_reason: Option<&'static str>,
+    #[serde(skip)]
+    pub text: String,
+}
+
+pub fn load_text(path: &Path, enabled: bool, max_chars: usize) -> TextLoad {
+    let read = std::fs::read_to_string(path);
+    let present = !matches!(&read, Err(e) if e.kind() == std::io::ErrorKind::NotFound);
+    let (text, reason) = match read {
+        Ok(t) if t.trim().is_empty() => (String::new(), Some("empty")),
+        Ok(t) => (t, None),
+        Err(_) => (String::new(), Some(if present { "unreadable" } else { "missing" })),
+    };
+    let truncated = text.chars().count() > max_chars;
+    let text = crate::common::clip_chars(&text, max_chars).trim().to_string();
+    TextLoad {
+        enabled,
+        present,
+        loaded: enabled && !text.is_empty(),
+        truncated,
+        unavailable_reason: if enabled { reason } else { Some("disabled") },
+        text,
+    }
+}
+
 pub struct PromptInputs<'a> {
     pub skills_dir: &'a Path,
     pub soul_enabled: bool,
@@ -61,14 +94,9 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
             }
         }
     }
-    if inputs.soul_enabled {
-        let soul = std::fs::read_to_string(inputs.soul_path).unwrap_or_default();
-        let soul = crate::common::clip_chars(&soul, inputs.soul_max_chars)
-            .trim()
-            .to_string();
-        if !soul.is_empty() {
-            parts.push(format!("\n## Operator persona (soul, read-only)\n\n{soul}"));
-        }
+    let soul = load_text(inputs.soul_path, inputs.soul_enabled, inputs.soul_max_chars);
+    if soul.loaded {
+        parts.push(format!("\n## Operator persona (soul, read-only)\n\n{}", soul.text));
     }
     let goal = clipped(inputs.goal, MAX_GOAL_CHARS);
     if !goal.is_empty() {

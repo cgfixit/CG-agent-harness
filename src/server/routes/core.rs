@@ -35,6 +35,7 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<Value> {
         "api_key_optional": state.api_key_optional,
         "base_url": state.backend.base_url,
         "soul_enabled": settings.soul_enabled,
+        "soul": soul_status(&state, settings.soul_enabled),
         "memory_enabled": settings.memory_enabled,
         "home": state.home.root.display().to_string(),
         "repo_root": state.home.root.display().to_string(),
@@ -106,9 +107,17 @@ pub async fn session_goal(
     Ok(Json(out))
 }
 
+fn soul_status(state: &AppState, enabled: bool) -> Value {
+    json!(crate::server::prompts::load_text(
+        &state.home.soul_path(),
+        enabled,
+        state.cfg.u64_or("personality.soul_max_chars", 8000) as usize
+    ))
+}
+
 pub async fn soul_state(State(state): State<Arc<AppState>>) -> Json<Value> {
     let enabled = state.settings.lock().unwrap_or_else(|p| p.into_inner()).soul_enabled;
-    Json(json!({"enabled": enabled}))
+    Json(soul_status(&state, enabled))
 }
 
 pub async fn soul_toggle(
@@ -123,7 +132,7 @@ pub async fn soul_toggle(
     snapshot
         .save(&state.home)
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    Ok(Json(json!({"enabled": snapshot.soul_enabled})))
+    Ok(Json(soul_status(&state, snapshot.soul_enabled)))
 }
 
 pub async fn model_select(
