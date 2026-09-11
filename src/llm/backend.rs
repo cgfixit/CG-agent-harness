@@ -1,15 +1,12 @@
 //! Local backend resolution (primary Ollama -> optional loopback fallback).
 //! Port of `llm/client.py::resolve_local_backend` + `resolve_reasoning_effort`.
 
-use std::time::Duration;
-
 use serde::Serialize;
 
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 
 pub const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
-const DEFAULT_PROBE_TIMEOUT_SEC: f64 = 1.5;
 const VALID_EFFORTS: [&str; 5] = ["none", "low", "medium", "high", "max"];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -59,23 +56,6 @@ pub fn resolve_reasoning_effort(cfg: &AppConfig) -> Result<Option<String>> {
             "models.local_llm.reasoning_effort must be a string",
         )),
     }
-}
-
-async fn probe_models(base_url: &str, timeout_sec: f64, api_key: &str) -> bool {
-    let client = match reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs_f64(timeout_sec.max(0.1)))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    let mut req = client.get(format!("{}/models", base_url.trim_end_matches('/')));
-    if !api_key.is_empty() {
-        req = req.bearer_auth(api_key);
-    }
-    matches!(req.send().await, Ok(resp) if resp.status().is_success())
 }
 
 /// Pick the primary or fallback local backend. With `fallback.enabled` false
@@ -129,10 +109,7 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
     if fb_provider.is_empty() {
         fb_provider = "lmstudio".into();
     }
-    let mut probe_timeout = cfg.f64_or("models.local_llm.fallback.probe_timeout_sec", DEFAULT_PROBE_TIMEOUT_SEC);
-    if probe_timeout <= 0.0 {
-        probe_timeout = DEFAULT_PROBE_TIMEOUT_SEC;
-    }
+    let limits = super::inventory::InventoryLimits::for_fallback(cfg)?;
     if fb_url.is_empty() || fb_model.is_empty() {
         return Err(HarnessError::new(
             "LLM_SERVICE_ERROR",
@@ -145,7 +122,9 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
             "models.local_llm.fallback.base_url must be loopback (127.0.0.1 / localhost / ::1)",
         ));
     }
-    if probe_models(&primary.base_url, probe_timeout, &primary_key).await {
+    if super::inventory::model_readiness(&primary.base_url, &primary.model, &primary_key, limits).await["state"]
+        == "installed"
+    {
         tracing::info!("local LLM backend: primary ({primary_provider}) probe ok");
         return Ok(primary);
     }
@@ -158,11 +137,14 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
         degraded: false,
         reasoning_effort: effort_for(&fb_provider),
     };
-    if probe_models(&secondary.base_url, probe_timeout, &secondary.api_key).await {
-        tracing::warn!("local LLM backend: primary unreachable; using fallback ({fb_provider})");
+    if super::inventory::model_readiness(&secondary.base_url, &secondary.model, &secondary.api_key, limits).await
+        ["state"]
+        == "installed"
+    {
+        tracing::warn!("local LLM backend: primary model unavailable; using configured fallback ({fb_provider})");
         return Ok(secondary);
     }
-    tracing::warn!("local LLM backend: neither primary nor fallback answered; keeping primary (degraded)");
+    tracing::warn!("local LLM backend: neither selected model is ready; keeping primary (degraded)");
     Ok(ResolvedLocalBackend {
         degraded: true,
         ..primary

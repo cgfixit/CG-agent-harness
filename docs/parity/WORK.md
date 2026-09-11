@@ -64,10 +64,22 @@ DevSkim flagged all 99 bare 40-character commit hash strings in the JSON ledger
 as possible tokens. The ledger now stores directly inspectable immutable commit
 URLs, preserving the exact identities. No scan rules, tests or policy were disabled.
 
-Next smallest action: finish A3 publication/package verification, then extend
-L5's fallback resolver to require an exact installed tag and bounded inventory
-response, sharing the current desktop readiness contract. Keep no-probe default
-and existing local fallback selection. A2 and the other 46 actions remain open.
+L5 extension on `codex/model-readiness` depends on PR 29's
+`8d8d20d` head. Two new fixture tests reproduced HTTP-success-without-model
+misclassification. The resolver now shares desktop inventory validation, checks
+the exact selected tag and bounds responses. Six targeted Rust regressions and
+eleven public process tests pass; missing tags, disabled/no-probe state, malformed
+and oversized bodies, provider-error redaction, redirects, unsafe destinations,
+deadlines and invalid limit types are covered. Desktop chat/planner tags remain
+independent. Optional provider diagnostics and native UI acceptance still prevent
+closing the full L5 action. Default config adds only inventory bounds; older
+homes get the same limits without a config rewrite or schema migration.
+
+Next smallest action: finish L5 full gates and exact-commit package/PR evidence.
+Then implement A2's optional Keychain source and consumer-specific delivery,
+followed by the shared connector dispatch/service foundations. The 48-action
+assignment is not complete. No remaining implementation is waived by the native
+interaction blocker. Phase 0's integrated native exit gate is still unmet.
 
 All database/service tests must use disposable environments. No external
 Telegram/OpenTweet writes, real Dropbox sync, production database use, persistent
