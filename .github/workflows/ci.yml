@@ -28,9 +28,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: node --experimental-websocket scripts/chat-browser-acceptance.mjs
+      - name: Resolve Chrome binary
+        run: |
+          set -euo pipefail
+          resolve() {
+            local candidate="${1:-}"
+            if [[ -n "$candidate" && -x "$candidate" ]]; then
+              echo "CHROME_BIN=${candidate}" >> "$GITHUB_ENV"
+              "${candidate}" --version
+              return 0
+            fi
+            return 1
+          }
+          if resolve "${CHROME_BIN:-}"; then exit 0; fi
+          if resolve /usr/bin/google-chrome; then exit 0; fi
+          if resolve /usr/bin/google-chrome-stable; then exit 0; fi
+          if resolve /opt/google/chrome/google-chrome; then exit 0; fi
+          echo "Preinstalled Chrome missing; installing google-chrome-stable" >&2
+          wget -q -O /tmp/google-chrome-stable.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get update
+          sudo apt-get install -y /tmp/google-chrome-stable.deb
+          resolve /usr/bin/google-chrome
         env:
           CHROME_BIN: /usr/bin/google-chrome
+      - run: node --experimental-websocket scripts/chat-browser-acceptance.mjs
 
   fmt:
     name: rustfmt

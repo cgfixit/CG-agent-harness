@@ -1,9 +1,10 @@
 // Deterministic actual-browser slash-command tests with a local mock HTTP API.
 // Protocol/UI evidence only; this is not WKWebView or a real model acceptance.
 import assert from 'node:assert/strict';
+import {constants as fsConstants} from 'node:fs';
 import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
-import {readFile, mkdtemp, rm} from 'node:fs/promises';
+import {access, readFile, mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
@@ -33,12 +34,55 @@ const server=createServer(async(req,res)=>{
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const base='http://127.0.0.1:'+server.address().port;
-const profile=await mkdtemp(join(tmpdir(),'cgah-chat-browser-'));
-const chrome=spawn(process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--no-first-run','--disable-background-networking','--disable-extensions','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:'ignore'});
-const pause=ms=>new Promise(r=>setTimeout(r,ms));let ws;
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+const chromeBinary=process.env.CHROME_BIN||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':'/usr/bin/google-chrome');
+await access(chromeBinary,fsConstants.X_OK).catch(()=>{throw new Error('Chrome binary missing or not executable: '+chromeBinary);});
+const chromeArgs=profile=>[
+ '--headless=new',
+ ...(process.platform==='linux'?['--no-sandbox','--disable-setuid-sandbox']:[]),
+ '--no-first-run','--disable-background-networking','--disable-extensions',
+ '--disable-gpu','--disable-dev-shm-usage','--disable-software-rasterizer','--disable-breakpad',
+ '--metrics-recording-only','--remote-debugging-port=0','--remote-allow-origins=*',
+ '--crash-dumps-dir='+profile,'--user-data-dir='+profile,'about:blank',
+];
+const stopChrome=async chrome=>{
+ if(!chrome||chrome.exitCode!==null||chrome.signalCode)return;
+ chrome.kill('SIGTERM');
+ await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});
+};
+const launchChrome=async()=>{
+ const profile=await mkdtemp(join(tmpdir(),'cgah-chat-browser-'));
+ const stderrChunks=[];
+ let exitInfo;
+ const chrome=spawn(chromeBinary,chromeArgs(profile),{stdio:['ignore','ignore','pipe']});
+ if(chrome.stderr)chrome.stderr.on('data',chunk=>{if(Buffer.concat(stderrChunks).length<16384)stderrChunks.push(chunk);});
+ chrome.once('error',err=>{exitInfo={error:err.message};});
+ chrome.once('exit',(code,signal)=>{exitInfo={code,signal};});
+ let port;
+ for(let i=0;i<300;i++){
+  if(exitInfo)break;
+  try{const line=(await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0].trim();if(line){port=line;break;}}catch{await pause(100);}
+ }
+ return {chrome,profile,port,exitInfo,stderr:Buffer.concat(stderrChunks).toString('utf8').slice(-4000)};
+};
+const describeLaunch=launched=>{
+ const head=launched.exitInfo?JSON.stringify(launched.exitInfo):'DevToolsActivePort missing';
+ return launched.stderr?head+'\n'+launched.stderr:head;
+};
+let launched=await launchChrome();
+if(!launched.port){
+ await stopChrome(launched.chrome);
+ await rm(launched.profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
+ const first=launched;
+ launched=await launchChrome();
+ if(!launched.port){
+  await stopChrome(launched.chrome);
+  await rm(launched.profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
+  assert.ok(false,'Chrome must start ('+chromeBinary+'); first '+describeLaunch(first)+'; retry '+describeLaunch(launched));
+ }
+}
+const {chrome,profile}=launched;const port=launched.port;let ws;
 try {
- let port;for(let i=0;i<100;i++){try{port=(await readFile(profile+'/DevToolsActivePort','utf8')).split('\n')[0];break;}catch{await pause(100);}}
- assert.ok(port,'Chrome must start');
  const targets=await(await fetch('http://127.0.0.1:'+port+'/json')).json();
  ws=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j;});
  let seq=0;const pending=new Map();
