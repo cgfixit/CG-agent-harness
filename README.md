@@ -32,17 +32,19 @@ remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
 
 **Source scope:** checked against `origin/main` at
-[`b227f6c`](https://github.com/cgfixit/CG-agent-harness/commit/b227f6c)
+[`3082e7df`](https://github.com/cgfixit/CG-agent-harness/commit/3082e7df)
 on September 12, 2026. The last behavior change on main is
-[`b227f6c`](https://github.com/cgfixit/CG-agent-harness/commit/b227f6c)
-(rolling rejection digest in real-repo loop feedback). The published
-[`v0.1.3`](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.3) build
-was cut from `6a0bf9a` and includes the prompt/persona/skill/goal controls and
-session-history deletion; it predates that loop-feedback change. The crate
-`version` in `Cargo.toml` stays `0.1.0` on purpose — release tags and the app's
-`Contents/Resources/COMMIT` identify a build, not the Cargo package field. For
-the current loop behavior, use a successful main Bundle artifact containing this
-revision or build current main.
+[`74b5038`](https://github.com/cgfixit/CG-agent-harness/commit/74b5038)
+(planner-requested read selectors in the real-repo loop). The published
+[`v0.1.4`](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.4) build
+was cut from `d60211d` and includes that loop behavior (#64 rolling rejection
+digest and #65 planner-requested reads). Commits after `d60211d` on this tree are
+test isolation of the write kill-switch (`9e3a290`) and an empty
+`.codex/README.md` (`3082e7df`); they do not change operator-facing loop
+behavior. The crate `version` in `Cargo.toml` stays `0.1.0` on purpose — release
+tags and the app's `Contents/Resources/COMMIT` identify a build, not the Cargo
+package field. For the current loop behavior, use a published v0.1.4 app, a
+successful main Bundle artifact containing this revision, or build current main.
 
 ## What you can do
 
@@ -270,7 +272,17 @@ whole file. A typical console sequence is:
    feedback. This authorizes candidate work in a harness-owned clone, with no
    commit yet. The console polls a detached job; `/agent jobs`, `/agent job <id>`
    and `/agent runs` rediscover retained work, and `/agent stop <id>` requests
-   cancellation.
+   cancellation. A **local** planner may also emit `=== READ path ===` or
+   `=== READ path#Lstart-Lend ===` (same selector grammar as `/agent read`).
+   Those lines are stripped before proposal parsing, jailed like operator
+   `--read-file` values, capped at 6 accepted model selectors per run
+   (`MAX_MODEL_READ_REQUESTS`), and shown on the **next** iteration only. They
+   are data, not commands: they do not bypass confirm, reason, or write gates.
+   Operator-declared paths are never replaced. A **cloud** planner refuses every
+   model-requested read so undeclared files are not sent off-machine — pre-stage
+   what that run may see with `/agent read`. Accepted and refused selectors are
+   audit-logged (`agentic_real_repo_read_request` /
+   `agentic_real_repo_read_request_refused`).
 3. `/agent status <run-id>` prints the run record and its diff. Approval is bound
    to the reviewed files, modes, and base commit.
 4. `/agent approve <run-id> <why>` commits locally. It re-fetches the run and
@@ -322,7 +334,10 @@ every source file the run declared or read via `/agent read` — `edits::collect
 caps each file at `MAX_READ_FILE_CHARS` (4,000 chars), caps the aggregate at
 `MAX_TOTAL_READ_CHARS` (12,000 chars), can omit unreadable or oversized files,
 and an explicit `#L10-L40` selector sends only that window — plus any GitHub
-PR/issue text pulled into session context. `CloudProposerClient::invoke`
+PR/issue text pulled into session context. A cloud planner never expands that
+read set from model `=== READ ===` output (`apply_model_read_request` refuses
+with `cloud_proposer`); requested reads displace rather than accumulate under
+the same char budgets on a local planner. `CloudProposerClient::invoke`
 passes that assembled prompt through `sanitize_handoff` — an injection scan
 and secret-pattern redaction pass, `policy.privacy.redact_secrets_like` — and
 then sends it to the selected provider's API (`api.x.ai` or
@@ -413,6 +428,7 @@ See [web setup and controls](setup-guide.md#76-web-fetch-search-and-injected-con
 test_home="$(mktemp -d)"
 CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 # fmt, clippy -D warnings, optional installed cargo-deny, tests, release build
+# If rustup's cargo-clippy is older than Homebrew's: CLIPPY=/opt/homebrew/bin/cargo-clippy
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
 cargo test --test invariant_guard          # fast I6 source scan
 python3 scripts/test-desktop-backend.py    # built release backend; disposable homes

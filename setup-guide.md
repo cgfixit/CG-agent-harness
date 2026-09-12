@@ -13,23 +13,26 @@ app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
 **Version scope:** verified against `origin/main` at
-[`b227f6c`](https://github.com/cgfixit/CG-agent-harness/commit/b227f6c)
+[`3082e7df`](https://github.com/cgfixit/CG-agent-harness/commit/3082e7df)
 on September 12, 2026. The last behavior change on main is
-[`b227f6c`](https://github.com/cgfixit/CG-agent-harness/commit/b227f6c)
-(rolling rejection digest in real-repo loop feedback). Prompt/persona editing,
+[`74b5038`](https://github.com/cgfixit/CG-agent-harness/commit/74b5038)
+(planner-requested read selectors in the real-repo loop). Prompt/persona editing,
 runtime skills, goal staging, exact model-inventory checks, session isolation and
 confirmed history deletion are in both current main and the latest published
 release. Earlier issue #32 comments about unmerged feature branches are
 historical; use the code and the latest evidence when checking remaining work.
 
-The published [v0.1.3 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.3)
-was built from `6a0bf9a`. It includes the console features in this guide; it
-does not include the `#64` rolling rejection digest. The crate `version` in
-`Cargo.toml` stays `0.1.0` on purpose — release tags and
-`Contents/Resources/COMMIT` identify a build. To match this revision, choose a
-successful main Bundle run containing `b227f6c` or build current main. Check
-`Contents/Resources/COMMIT`, release notes and `/help` for the installed app;
-an unknown command is not fixed by changing persona or arming a write gate.
+The published [v0.1.4 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.4)
+was built from `d60211d`. It includes the console features in this guide and the
+`#64` rolling rejection digest plus `#65` planner-requested reads. Commits after
+`d60211d` on this tree are test isolation of the write kill-switch (`9e3a290`)
+and an empty `.codex/README.md` (`3082e7df`); they do not change operator-facing
+loop behavior. The crate `version` in `Cargo.toml` stays `0.1.0` on purpose —
+release tags and `Contents/Resources/COMMIT` identify a build. To match this
+revision, choose a published v0.1.4 app, a successful main Bundle run containing
+this SHA, or build current main. Check `Contents/Resources/COMMIT`, release notes
+and `/help` for the installed app; an unknown command is not fixed by changing
+persona or arming a write gate.
 
 ## Quick route through this guide
 
@@ -896,7 +899,7 @@ The `/agent` family operates the separate coding workflow:
 | `/agent iterations <n>` or `clear` | Set a staged iteration cap from 1–10, or restore the configured default |
 | `/agent pr <number>` or `/agent issue <number>`; `clear` | Select one context source; choosing one clears the other |
 | `/agent plan` or `/agent plan clear` | Open a file chooser for a supplied plan, or clear it; does not generate a plan |
-| `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage bounded file-context declarations, or clear them |
+| `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage up to 8 bounded file-context declarations, or clear them. A local planner may later emit `=== READ path ===` (cap 6, next iteration, same jail); that is not a slash command. A cloud planner refuses model-requested reads. |
 | `/agent cancel` | Clear the staged request; does not stop an already submitted job |
 | `/agent confirm <reason>` | Explicitly submit the staged request through the execution gates |
 | `/agent jobs`, `/agent job <id>`, `/agent stop <id>` | List, inspect or request cancellation of retained jobs |
@@ -1198,7 +1201,17 @@ Back in the app or browser console:
 1. `/agent run codex/fix-topic Describe the intended change` stages an instruction.
 2. `/agent checks` lists supported profiles. The server default is `cargo-test`;
    `/agent checks cargo-fmt` is an example explicit selection.
-3. `/agent read src/lib.rs#L40-L80` declares a bounded existing-file window.
+3. `/agent read src/lib.rs#L40-L80` declares a bounded existing-file window
+   (up to 8 staged paths). During a **local** planner run the model may also
+   emit `=== READ path ===` or `=== READ path#Lstart-Lend ===`. Those lines
+   are stripped before proposal parsing, jailed like operator `--read-file`
+   values, capped at 6 accepted model selectors per run, and shown on the
+   **next** iteration only. They are data, not commands, and do not bypass
+   confirm, reason, or write gates. Operator-declared paths are never
+   replaced. A **cloud** planner refuses every model-requested read so
+   undeclared files are not sent off-machine — pre-stage what that run may
+   see here. An unclosed `=== FILE ===` / `=== EDITS ===` block in the model
+   reply leaves later READ lines in the body instead of extracting them.
 4. `/agent confirm <reason>` submits a job and returns its ID immediately.
 5. `/agent job <job-id>` resumes monitoring, including after refresh without key entry in default local mode.
 6. `/agent status <run-id>` displays the candidate and complete diff. A truncated
@@ -1309,9 +1322,12 @@ Run the repository gates with application inference omitted:
 ```bash
 test_home="$(mktemp -d)"
 CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
+# If rustup's cargo-clippy is older than Homebrew's:
+# CLIPPY=/opt/homebrew/bin/cargo-clippy CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
-The disposable home avoids colliding with a running app's home lock. This is the
+The disposable home avoids colliding with a running app's home lock. Use a unique
+`--port` if a leftover `serve` already owns `:8790`. This is the
 same invocation as [README](README.md#tests-and-cicd): formatting, Clippy with
 warnings denied, tests (planner keys blanked), and a release build.
 `scripts/verify-local.sh` does not pass `--locked` or `CARGO_NET_OFFLINE`.
@@ -1366,7 +1382,8 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain v0.1.3 or later, or a successful main Bundle artifact containing the required source |
+| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain v0.1.4 or later, or a successful main Bundle artifact containing the required source |
+| Local coding loop never fetches a file the planner asked for | Cloud planner is in use, the selector failed the clone jail, the per-run model-read cap (6) was hit, or an unclosed FILE/EDITS block swallowed the `=== READ ===` line | Pre-stage needed files with `/agent read`. Cloud runs refuse model-requested reads on purpose. Local refusals are audit-logged as `agentic_real_repo_read_request_refused`. |
 | New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona/web are still included | Verify the running bundle includes `71eef11` or later; inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
 | Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify the app includes the capability-guide fix at `71eef11` or later |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
