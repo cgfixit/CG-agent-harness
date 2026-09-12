@@ -138,6 +138,9 @@ jobs:
           GROK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""
+          # Operator emergency write kill-switch must not leak into cargo test.
+          # Tests also isolate this; empty is not a disable value.
+          CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
       - name: Public backend lifecycle and chat contracts (no model downloads)
         run: python3 scripts/test-desktop-backend.py
         env:
@@ -201,6 +204,7 @@ jobs:
           GROK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""
+          CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
       # Legacy text smoke prints a SKIP line on a host with no hard sandbox; the
       # required macOS Cargo gate above fails if sandbox execution is unavailable.
       - run: cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture
@@ -208,6 +212,7 @@ jobs:
           GROK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""
+          CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
 
   deny:
     name: cargo deny (advisories, licenses, bans)

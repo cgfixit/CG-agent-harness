@@ -19,9 +19,21 @@ use serde_json::{json, Value};
 pub const BIN: &str = env!("CARGO_BIN_EXE_cgagentharness");
 pub const CSRF_HEADER: &str = "x-cyclaw-csrf";
 
+/// Drop the operator emergency write kill-switch for this test process.
+///
+/// `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` is disable-only and inherited at
+/// process creation. A dogfood shell that exports it makes `cargo test` fail
+/// at `execution_enabled` before later gates (`confirm`, jail, plan integrity)
+/// can be asserted. Isolation lives only in tests; `EXECUTION_ENABLED` stays
+/// true and the env remains AND-ed, never OR-ed.
+pub fn isolate_write_kill_switch() {
+    std::env::remove_var(cgagentharness::agentic::writer::WRITE_DISABLE_ENV);
+}
+
 /// A config built from the shipped default with YAML overrides applied as
 /// dotted `key: value` replacements (simple scalar overrides only).
 pub fn config_with(dir: &Path, overrides: &[(&str, &str)]) -> AppConfig {
+    isolate_write_kill_switch();
     let mut text = AppConfig::embedded_default().to_string();
     // Armed test fixtures select a disposable target explicitly; production has no default repository.
     if overrides.iter().any(|(k, v)| *k == "agentic.enabled" && *v == "true")

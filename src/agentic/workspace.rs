@@ -1068,6 +1068,7 @@ mod transaction_tests {
     use std::collections::BTreeMap;
 
     fn write_enabled_ctx(dir: &Path) -> AgenticCtx {
+        std::env::remove_var(crate::agentic::writer::WRITE_DISABLE_ENV);
         let text = AppConfig::embedded_default()
             .replacen("repo: \"\"", "repo: \"fixture/repository\"", 1)
             .replacen(

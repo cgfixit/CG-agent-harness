@@ -29,7 +29,7 @@ fn accepted_publication_with_output_overflow_is_indeterminate_and_not_retried() 
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::env::set_var("PATH", tmp.path());
     std::env::set_var("CGAH_WRITE_MARKER", tmp.path().join("accepted"));
-    std::env::remove_var("CGAGENTHARNESS_AGENTIC_WRITE_DISABLE");
+    common::isolate_write_kill_switch();
     let plan = plan_write(
         &ctx.acfg,
         &ctx.audit,
