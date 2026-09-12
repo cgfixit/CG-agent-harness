@@ -71,9 +71,7 @@ pub fn extract_read_requests(response: &str) -> (String, Vec<String>) {
     let mut kept = Vec::new();
     for line in response.lines() {
         let trimmed = line.trim();
-        let inner = trimmed
-            .strip_prefix("=== READ ")
-            .and_then(|s| s.strip_suffix(" ==="));
+        let inner = trimmed.strip_prefix("=== READ ").and_then(|s| s.strip_suffix(" ==="));
         match inner {
             Some(sel) if !sel.trim().is_empty() => reads.push(sel.trim().to_string()),
             _ => kept.push(line),
@@ -444,7 +442,8 @@ pub fn run_real_repo_loop(
             };
             let selector = selector.replacen(path_part, &canonical, 1);
             if !read_paths.contains(&selector) {
-                ctx.audit.log(json!({"event": "agentic_real_repo_read_request", "path": canonical}));
+                ctx.audit
+                    .log(json!({"event": "agentic_real_repo_read_request", "path": canonical}));
                 read_paths.push(selector);
             }
         }
