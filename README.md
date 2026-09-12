@@ -219,7 +219,11 @@ selected check profiles; draft-PR publication and `/github` status additionally
 require a logged-in `gh` at or above `agentic.gh_min_version` (2.40.0 as
 shipped). Cargo dependency preparation additionally requires Python 3's standard
 library. A packaged app does not supply repository build dependencies or replace
-the execution sandbox. `agentic test` reports each of these as a self-test row.
+the execution sandbox. `agentic test` covers only part of that list — config
+parsing, workspace placement, the `gh` version, Git on `PATH`, the hard sandbox
+and the injection scanner. It does not probe the planner, Python, check-profile
+executables or prepared dependencies, so a passing self-test is not a complete
+readiness report.
 
 The shipped master, deepagent, and Git-write gates are false. Adjacent fields
 such as `mode: write` and `writes_enabled: true` already ship permissive, so read
@@ -254,9 +258,12 @@ whole file. A typical console sequence is:
    cancellation.
 3. `/agent status <run-id>` prints the run record and its diff. Approval is bound
    to the reviewed files, modes, and base commit.
-4. `/agent approve <run-id> <why>` commits locally, and deliberately refuses the
-   first time: it re-fetches the run, displays the diff, and only commits when you
-   repeat the same command against a diff you have already been shown.
+4. `/agent approve <run-id> <why>` commits locally. It re-fetches the run and
+   commits only against a diff this console has already displayed and that has
+   not changed since — so after step 3 it commits on the first call. When the
+   diff has not been shown, or the re-fetch returns a different one, it displays
+   the diff and withholds approval until you repeat the command. Treat the
+   approve call as the commit, not as a preview.
    `/agent reject <run-id>` discards the candidate instead.
 5. `/agent push <run-id> <why>` separately pushes the approved commit.
 6. `/agent pr-body <run-id>` loads and previews a completed repository PR template;
@@ -356,8 +363,9 @@ scripts/smoke-ollama.sh
 
 Always blank `GROK_API_KEY`, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY` when
 running tests: a real key on a developer machine must never become something the
-suite asserts on. Tests drive a real `git`, so a global `user.name`/`user.email`
-must be configured. Set `CGAH_TEST_BINARY` to test another built backend,
+suite asserts on. Tests drive a real `git` but do not need your global Git
+identity: the fixtures neutralize `GIT_CONFIG_GLOBAL` and set `user.name` /
+`user.email` per seed repository. Set `CGAH_TEST_BINARY` to test another built backend,
 including the copy inside a macOS bundle. The Python suite uses only the standard
 library and a temporary loopback HTTP model fixture; it downloads no models and
 makes no cloud inference requests. Its chat/restart test verifies history, goal,

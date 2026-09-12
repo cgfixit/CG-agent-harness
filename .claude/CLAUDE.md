@@ -56,7 +56,9 @@ scripts/check-pr-template.sh                       # validate PR body before ope
 
 - Always blank `GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY` when running tests; a real
   `GROK_API_KEY` exists on the maintainer's machine and tests must not assert on it.
-- Tests drive a real `git`; a global `user.name`/`user.email` must be configured.
+- Tests drive a real `git` but need no global identity: `tests/common/mod.rs::git`
+  neutralizes `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM` and seed repos set
+  `user.name`/`user.email` locally.
 - `[profile.dev.package."*"] opt-level=3` in `Cargo.toml` is load-bearing (scrypt n=2^17); do not remove.
 - `tests/macos_cargo.rs` is macOS-only and needs
   `cargo fetch --locked --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml` first.
