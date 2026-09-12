@@ -13,6 +13,6 @@ echo "== fmt"; cargo fmt --all -- --check
 echo "== clippy"; $CLIPPY --all-targets --all-features -- -D warnings
 if command -v cargo-deny >/dev/null 2>&1; then echo "== deny"; cargo deny check; else echo "== deny (skipped: cargo-deny not installed; CI runs it)"; fi
 echo "== test"; GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
-echo "== release build"; cargo build --release
+echo "== release build"; cargo build --release --locked
 if [[ "${SKIP_LIVE:-0}" == "1" ]]; then echo "== live smoke skipped"; exit 0; fi
 exec scripts/smoke-ollama.sh
