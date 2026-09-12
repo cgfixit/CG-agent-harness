@@ -21,8 +21,8 @@ INFERENCE only if labeled as such and never replaces cargo evidence.
 | ID | Severity | Contract |
 |---|---|---|
 | H1 | FAIL | `flag_is_true`: unquoted YAML `true` only; quoted `"true"` / `"false"` / other strings are **OFF** |
-| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `auth.enabled`, `security.api_key_optional`, `unslop.enabled` (exact list locked by `shipped_config_keeps_every_gate_closed`) |
-| H3 | FAIL | Literal boolean `false` needles remain in shipped YAML for `api_key_optional` / `allow_git_write_tools` (string forms hide mistakes) |
+| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `auth.enabled`, `unslop.enabled` (exact list locked by `shipped_config_keeps_every_gate_closed`). `security.api_key_optional` is **not** in that closed list — it ships unquoted `true` (`flag_is_true`; direct local use) |
+| H3 | FAIL | Literal YAML needles: `api_key_optional: true` and `allow_git_write_tools: false`; shipped YAML must not contain `allow_git_write_tools: true` (string forms hide mistakes) |
 | H4 | FAIL | Write path still requires human `reason` + per-call `confirm` (never defaulted) — behavior locked in writer + `real_repo_loop` / shim routes; config must not document or enable a bypass |
 | H5 | FAIL | Kill switch remains disable-only env `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` (AND-ed); `EXECUTION_ENABLED` does not flip itself closed |
 | H6 | FAIL | Loopback posture: serve binds loopback only; model `base_url` examples stay `127.0.0.1`; non-loopback refused in code |
