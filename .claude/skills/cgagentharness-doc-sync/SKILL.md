@@ -216,7 +216,12 @@ doc_sync_check() {
   route_test_output=$(cargo test registered_paths_are_unique_and_cover_every_router_route 2>&1)
   route_test_status=$?
   echo "$route_test_output" | grep -E "test result|FAILED"
-  [ "$route_test_status" -eq 0 ] && echo "✓ PASS" || echo "✗ FAIL: route coverage regressed"
+  if [ "$route_test_status" -eq 0 ]; then
+    echo "✓ PASS"
+  else
+    echo "✗ FAIL: route coverage regressed"
+    return 1
+  fi
 
   echo "=== CSRF Placeholders ==="
   grep -l "__CYCLAW_CSRF_TOKEN__" assets/static/harness.html
