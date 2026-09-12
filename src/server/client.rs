@@ -77,7 +77,6 @@ struct SavedSession {
 struct Portal {
     client: Client,
     origin: String,
-    certificate_sha256: String,
     csrf: String,
     cookie: String,
     path: PathBuf,
@@ -179,7 +178,6 @@ impl Portal {
         Ok(Self {
             client,
             origin,
-            certificate_sha256,
             csrf,
             cookie,
             path,
@@ -231,11 +229,18 @@ impl Portal {
                     cookie.starts_with("cgagentharness_session=") && cookie.len() <= 256,
                     "invalid session response"
                 );
+                let home = Home::resolve(None);
+                let cfg = home.load_config()?;
+                let certificate_sha256 = if cfg.flag_is_true("tls.enabled") {
+                    crate::common::sha256_bytes_hex(&certificate(&home, &cfg)?)
+                } else {
+                    String::new()
+                };
                 write_atomic(
                     &self.path,
                     &serde_json::to_vec(&SavedSession {
                         origin: self.origin.clone(),
-                        certificate_sha256: self.certificate_sha256.clone(),
+                        certificate_sha256,
                         cookie: cookie.clone(),
                     })?,
                     Some(0o600),

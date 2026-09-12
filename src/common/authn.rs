@@ -101,12 +101,14 @@ fn hash_unchecked(password: &str, salt: &[u8]) -> Result<String> {
     ))
 }
 
+fn random_salt() -> [u8; SALT_BYTES] {
+    use rand::Rng;
+    rand::thread_rng().gen()
+}
+
 /// The sole short-password exception: fresh restricted bootstrap credentials.
 pub(super) fn hash_bootstrap_password() -> Result<String> {
-    use rand::RngCore;
-    let mut salt = [0u8; SALT_BYTES];
-    rand::thread_rng().fill_bytes(&mut salt);
-    hash_unchecked("admin", &salt)
+    hash_unchecked("admin", &random_salt())
 }
 
 pub(super) fn valid_password_record(record: &str) -> bool {
@@ -122,10 +124,7 @@ pub(super) fn valid_password_record(record: &str) -> bool {
 }
 
 pub fn hash_password(password: &str) -> Result<String> {
-    use rand::RngCore;
-    let mut salt = [0u8; SALT_BYTES];
-    rand::thread_rng().fill_bytes(&mut salt);
-    hash_password_with_salt(password, &salt)
+    hash_password_with_salt(password, &random_salt())
 }
 
 pub fn is_pending_password_record(record: &str) -> bool {
