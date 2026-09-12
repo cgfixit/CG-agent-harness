@@ -32,15 +32,17 @@ remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
 
 **Source scope:** checked against `origin/main` at
-[`65dd01b`](https://github.com/cgfixit/CG-agent-harness/commit/65dd01b)
+[`b227f6c`](https://github.com/cgfixit/CG-agent-harness/commit/b227f6c)
 on September 12, 2026. The last behavior change on main is
-[`8644b91`](https://github.com/cgfixit/CG-agent-harness/commit/8644b91); commits
-after it are documentation only. The published
-[`v0.1.1`](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.1) build
-was cut from `ceea4e5` and predates the recovered prompt/persona/skill/goal
-controls and recent session fixes. For those features, use a successful main
-Bundle artifact containing this revision or build current main; check the app's
-`Contents/Resources/COMMIT`.
+[`b227f6c`](https://github.com/cgfixit/CG-agent-harness/commit/b227f6c)
+(rolling rejection digest in real-repo loop feedback). The published
+[`v0.1.3`](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.3) build
+was cut from `6a0bf9a` and includes the prompt/persona/skill/goal controls and
+session-history deletion; it predates that loop-feedback change. The crate
+`version` in `Cargo.toml` stays `0.1.0` on purpose — release tags and the app's
+`Contents/Resources/COMMIT` identify a build, not the Cargo package field. For
+the current loop behavior, use a successful main Bundle artifact containing this
+revision or build current main.
 
 ## What you can do
 

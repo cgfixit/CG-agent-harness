@@ -41,7 +41,10 @@ What the code guarantees lives in [INVARIANTS.md](INVARIANTS.md). In short:
   false, an unset `CGAGENTHARNESS_API_KEY` refuses guarded routes (401).
 - I6: the HTTP process never calls the agentic pipeline in-process; it
   only spawns `cgagentharness agentic …` as a child.
-- Every write gate ships closed.
+- Master, deepagent, and clone-write gates ship closed (`agentic.enabled`,
+  `deepagent_github.enabled`, `allow_git_write_tools`). Adjacent fields such as
+  `mode: write` and `writes_enabled: true` already ship permissive and cannot
+  arm writes alone.
 
 ## Out of scope
 

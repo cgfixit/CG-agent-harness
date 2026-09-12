@@ -91,15 +91,19 @@ Read the relevant entrypoint under `.codex/skills` when its task applies:
 
 ## Project Claude skills
 
-The same nine skills above (`fable-protocol`, `cgagentharness-invariant-guard`,
-`cgagentharness-gotchas`, `cgagentharness-project-guidance`,
-`cgagentharness-write-policy-redteam`, `verification-specialist`,
-`cgagentharness-config-guard`, `cgagentharness-parity`) are mirrored verbatim
-under `.claude/skills/<slug>/SKILL.md` for Claude Code's own discovery, plus a
-Claude-depth `cgagentharness-optimize/SKILL.md` playbook (the `.codex` twin
-stays the short runtime). Each is also registered as a `.claude/commands/<slug>.md`
-slash command (`/fable-protocol`, `/cgagentharness-invariant-guard`, etc.) that
-loads the matching `SKILL.md`.
+The eight Codex twins above that are not optimize/release/verify
+(`fable-protocol`, `cgagentharness-invariant-guard`, `cgagentharness-gotchas`,
+`cgagentharness-project-guidance`, `cgagentharness-write-policy-redteam`,
+`verification-specialist`, `cgagentharness-config-guard`, `cgagentharness-parity`)
+are mirrored under `.claude/skills/<slug>/SKILL.md`, plus a Claude-depth
+`cgagentharness-optimize/SKILL.md` playbook (the `.codex` twin stays the short
+runtime). Claude Code also has three verification skills that Codex does not:
+`cgagentharness-doc-sync`, `cgagentharness-verify-deps`, and
+`cgagentharness-runtime-invariant-check`. A separate `run-cg-agent-harness`
+skill drives a local fake-model console smoke and has no slash command. Every
+other Claude skill above is registered as `.claude/commands/<slug>.md`
+(`/fable-protocol`, `/cgagentharness-doc-sync`, etc.) and loads the matching
+`SKILL.md`.
 
 These are repository guidance, not application `/api/skills` runtime plugins.
 Existing user authorization governs publication; selecting a skill adds none.
