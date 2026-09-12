@@ -28,6 +28,21 @@ class ReleasePlanTests(unittest.TestCase):
         self.assertEqual(result["tag"], "v0.1.1")
         self.assertEqual(result["should_release"], "true")
         self.assertEqual(result["source_sha"], "a" * 40)
+        self.assertEqual(result["bundle_ok"], "true")
+
+    def test_changed_main_skips_without_successful_bundle(self):
+        result = self.plan(bundle_ok=False)
+        self.assertEqual(result["changed"], "true")
+        self.assertEqual(result["bundle_ok"], "false")
+        self.assertEqual(result["should_release"], "false")
+
+    def test_identical_tree_skips_even_with_green_bundle(self):
+        self.assertEqual(self.plan(tree="old", bundle_ok=True)["should_release"], "false")
+
+    def test_tag_push_ignores_missing_bundle(self):
+        result = self.plan(event="push", ref="refs/tags/v1.0.0", bundle_ok=False)
+        self.assertEqual(result["tag"], "v1.0.0")
+        self.assertEqual(result["should_release"], "true")
 
     def test_identical_tree_skips_even_with_different_commit(self):
         self.assertEqual(self.plan(tree="old")["should_release"], "false")
@@ -68,6 +83,7 @@ class ReleasePlanTests(unittest.TestCase):
             {"tag_name": "v0.1.0", "draft": False, "prerelease": False},
             {"commit": {"tree": {"sha": "old"}}},
             {"commit": {"tree": {"sha": "new"}}},
+            {"workflow_runs": [{"head_sha": "a" * 40, "conclusion": "success"}]},
             [{"name": "v0.1.0"}], [{"tag_name": "v0.1.0"}],
         ]
         with tempfile.TemporaryDirectory() as tmp:
@@ -92,6 +108,30 @@ class ReleasePlanTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True), patch.object(module, "api", side_effect=replies):
             with self.assertRaisesRegex(ValueError, "Tag moved"):
                 module.main()
+
+    def test_main_skips_when_bundle_runs_are_empty(self):
+        replies = [
+            {"tag_name": "v0.1.0", "draft": False, "prerelease": False},
+            {"commit": {"tree": {"sha": "old"}}},
+            {"commit": {"tree": {"sha": "new"}}},
+            {"workflow_runs": []},
+            [{"name": "v0.1.0"}], [{"tag_name": "v0.1.0"}],
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output"
+            env = {"GITHUB_REPOSITORY": "example/repo", "GITHUB_SHA": "a" * 40,
+                   "GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main",
+                   "GITHUB_OUTPUT": str(output)}
+            with patch.dict(os.environ, env, clear=True), patch.object(module, "api", side_effect=replies):
+                module.main()
+            text = output.read_text()
+            self.assertIn("changed=true", text)
+            self.assertIn("bundle_ok=false", text)
+            self.assertIn("should_release=false", text)
+
+    def test_bundle_payload_must_be_a_runs_list(self):
+        with self.assertRaises(ValueError):
+            module.bundle_succeeded([], "a" * 40)
 
     def test_api_errors_are_not_unchanged_success(self):
         with patch.object(module.subprocess, "check_output", side_effect=subprocess.CalledProcessError(1, "gh")):

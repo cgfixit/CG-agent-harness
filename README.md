@@ -456,7 +456,7 @@ key nor a login.
 | [Desktop CI](.github/workflows/desktop.yml) | Bundle PRs/`main`, tag releases, and manual runs reuse this job to build the universal app on Rust 1.90, run desktop policy and packaged-backend tests, verify signatures/checksums and the extracted bundle, then retain the universal ZIP and checksums as artifacts. |
 | [Bundle](.github/workflows/bundle.yml) | Packages the loopback CLI for `linux-x86_64` and `macos-arm64` alongside the universal desktop job, checksums each artifact, and re-verifies it after extraction. |
 | Workflow and source checks | CodeQL, DevSkim, Gitleaks secret scanning, and PR-template/base-branch checks are separate workflows. Workflow changes additionally trigger actionlint/zizmor. |
-| [Release](.github/workflows/release.yml) | Daily at 08:17 UTC, publish the next patch version only if `main` differs from the latest release. Backend CI, CLI packaging, universal desktop checks, and downloaded checksums gate publication. Stable tags and manual preview/publish are also supported. See [release controls](docs/RELEASING.md). |
+| [Release](.github/workflows/release.yml) | Every 12 hours at 08:17 and 20:17 UTC, publish the next patch as Latest only if `main` differs from the latest release **and** that SHA already has a successful Bundle run. Backend CI, CLI packaging, universal desktop checks, and downloaded checksums still gate publication. Stable tags and manual preview/publish are also supported. See [release controls](docs/RELEASING.md). |
 
 CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
 does not prove real-model quality, complete native GUI behavior, or notarized
