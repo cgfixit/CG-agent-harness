@@ -222,7 +222,10 @@ scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app' universal
 Use rustup's Cargo on PATH so each package's toolchain file applies. Build/sign
 the universal sidecar before compiling either shell slice's embedded hash.
 The packager combines both backends with `lipo`, signs that file, then builds
-both shells against its SHA256. Do not re-sign the sidecar afterward. Packaging refuses a
+both shells against its SHA256. Do not re-sign the sidecar afterward.
+`scripts/verify-desktop-bundle.sh` hashes the staged `Contents/MacOS/cgagentharness`
+after the final `.app` codesign and requires that SHA-256 to still appear in the
+shell binary (`CGAH_BACKEND_SHA256`). Packaging refuses a
 dirty tree unless `CGAH_ALLOW_DIRTY=1`, which marks the bundle as development.
 It produces `.app`, ZIP, optional DMG and SHA256SUMS in `dist/`; the bundle's
 `Contents/Resources/COMMIT` identifies the source commit. Build outputs are not
