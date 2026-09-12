@@ -52,10 +52,12 @@ grep -r "use crate::server" src/agentic --include="*.rs"
 
 ### I2: Guard chain order is inviolable
 
-**The rule:** Every route that mutates state passes through guards in this exact order:
+**The rule:** Every operator route that mutates state passes through guards in this exact order:
 ```
 rate_limit → same_origin → api_key → csrf
 ```
+
+This applies to operator/API routes (e.g., `/api/agent/run`, `/api/keys`). Account/session routes use a separate auth partition (e.g., bootstrap/login use `auth_open`, account mutations use `auth_sess` middleware).
 
 Order is load-bearing. A wrong key against a spent budget returns 429 (rate limit), not 401 (auth). A missing CSRF against a wrong key returns 401 first.
 
@@ -112,15 +114,13 @@ grep "__CYCLAW_CSRF_TOKEN__" assets/static/harness.html && echo "✓ HTML token 
 grep "__CYCLAW_CSP_NONCE__" assets/static/harness.html && echo "✓ HTML nonce placeholder found"
 
 # Check header name in HTML
-grep "X-CyClaw-CSRF" assets/static/harness.html && echo "✓ HTML header name found"
+grep -i "x-cyclaw-csrf" assets/static/harness.html && echo "✓ HTML header name found"
 
-# Check header name in code (should match)
-grep "X-CyClaw-CSRF" src/server/headers.rs && echo "✓ Code header name found"
+# Check header name in code (guard chain constant is CSRF_HEADER in guards.rs; HTTP headers are case-insensitive)
+grep -i "csrf_header\|x-cyclaw-csrf" src/server/guards.rs && echo "✓ Code CSRF constant found"
 
-# All four should match
-count=$(grep -l "__CYCLAW_CSRF_TOKEN__\|__CYCLAW_CSP_NONCE__\|X-CyClaw-CSRF" \
-  assets/static/harness.html src/server/headers.rs | wc -l)
-[ "$count" -ge 2 ] && echo "✓ Placeholders found in both locations"
+# Verify token placeholders in HTML
+grep -E "__CYCLAW_CSRF_TOKEN__|__CYCLAW_CSP_NONCE__" assets/static/harness.html && echo "✓ Token/nonce placeholders found"
 ```
 
 **Fix:** Do NOT rename these placeholders. If you change them:
@@ -206,15 +206,16 @@ grep -n "RUN_ID_PATTERN" src/agentic/run_store.rs
 
 # They should match exactly (same regex)
 
-# Find planner timeout on both sides
-echo "=== Shim ==="
-grep -n "PLANNER_TIMEOUT\|timeout.*secs" src/shim/mod.rs | head -5
+# Find planner timeout on both sides (note: these have different names)
+echo "=== Shim side: REAL_REPO_RUN_FALLBACK_PLANNER_SEC ==="
+grep -n "REAL_REPO_RUN_FALLBACK_PLANNER_SEC" src/shim/mod.rs
 
-echo "=== Agentic ==="
-grep -n "PLANNER_TIMEOUT\|timeout.*secs" src/agentic/proposer.rs | head -5
+echo "=== Agentic side: DEFAULT_PLANNER_TIMEOUT_SEC ==="
+grep -n "DEFAULT_PLANNER_TIMEOUT_SEC" src/agentic/config.rs
 
-# Find test that syncs them
-grep -rn "RUN_ID_PATTERN\|PLANNER_TIMEOUT" tests/invariant_guard.rs | head -10
+# Or run the test that syncs them (recommended for accuracy)
+echo "=== Invariant test for constant sync ==="
+cargo test --test invariant_guard constant_sync 2>&1 | grep -E "PASS|FAIL|passed"
 ```
 
 **Fix:** If constants drift:
@@ -330,7 +331,13 @@ verify_invariants() {
 
   echo ""
   echo "=== Running automated tests ==="
+  set -o pipefail
   cargo test --test invariant_guard 2>&1 | grep -E "test result|FAILED|passed"
+  local cargo_status=$?
+  set +o pipefail
+  
+  [ $cargo_status -eq 0 ] && echo "✓ PASS" || echo "✗ FAIL: invariant_guard did not pass"
+  return $cargo_status
 }
 
 verify_invariants

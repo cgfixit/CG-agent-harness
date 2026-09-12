@@ -235,7 +235,8 @@ verify_deps() {
   if command -v cargo-deny &> /dev/null; then
     cargo deny check && echo "✓" || echo "✗ FAIL"
   else
-    echo "⊘ cargo-deny not installed"
+    echo "✗ FAIL: cargo-deny not installed (required by quality bar; install with 'cargo install cargo-deny')"
+    return 1
   fi
 
   echo "=== 4. Unsafe code has comments ==="
@@ -248,9 +249,9 @@ verify_deps() {
   echo "Pinned: $pinned, Running: $running"
 
   echo "=== 6. Check for outdated security deps ==="
-  for dep in cap_std sha2 ring tokio hyper; do
-    echo -n "$dep: "
-    grep "^$dep " Cargo.lock | head -1
+  for dep in cap-std sha2 ring tokio hyper; do
+    echo "=== $dep ==="
+    cargo tree --depth 0 --prefix none | grep "^$dep " || echo "  Not found directly"
   done
 
   echo "=== 7. Dependency tree (summary) ==="
