@@ -19,6 +19,16 @@ pub trait ProposerClient {
         temperature: Option<f64>,
     ) -> Result<String>;
     fn provider(&self) -> &str;
+    /// True when `invoke` sends the prompt off-machine.
+    ///
+    /// Distinguishes the two concrete clients `run_real_repo_loop` actually
+    /// receives: `LocalProposerClient` (always `"ollama"`) vs
+    /// `CloudProposerClient` (`CLOUD_PROVIDERS`: `grok`, `claude`). Test
+    /// doubles inherit this default, so a mock that reports a cloud provider
+    /// name is treated as cloud.
+    fn is_cloud(&self) -> bool {
+        super::config::CLOUD_PROVIDERS.contains(&self.provider())
+    }
 }
 
 pub struct LocalProposerClient<'a> {
@@ -74,6 +84,10 @@ impl<'a> LocalProposerClient<'a> {
 impl ProposerClient for LocalProposerClient<'_> {
     fn provider(&self) -> &str {
         "ollama"
+    }
+
+    fn is_cloud(&self) -> bool {
+        false
     }
 
     fn invoke(

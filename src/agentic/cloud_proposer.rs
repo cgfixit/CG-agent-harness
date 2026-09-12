@@ -223,6 +223,10 @@ impl ProposerClient for CloudProposerClient<'_> {
         &self.settings.provider
     }
 
+    fn is_cloud(&self) -> bool {
+        true
+    }
+
     fn invoke(
         &self,
         system_prompt: &str,
