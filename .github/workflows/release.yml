@@ -4,7 +4,7 @@ on:
   push:
     tags: ["v*"]
   schedule:
-    - cron: "17 8 * * *"
+    - cron: "17 8,20 * * *"
   workflow_dispatch:
     inputs:
       publish:
@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
     outputs:
       tag: ${{ steps.plan.outputs.tag }}
       source_sha: ${{ steps.plan.outputs.source_sha }}
