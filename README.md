@@ -11,10 +11,18 @@ bounded plan → edit → check → feedback loop before reviewing and publishin
 
 Use the universal macOS app or run the Rust backend in a browser. Chat is served
 only by an OpenAI-compatible **loopback** model server; a non-loopback chat
-endpoint is refused. The coding pipeline can optionally hand a sanitized plan
-request to a cloud planner (xAI Grok or Anthropic Claude) behind six gates
-including a per-run `--confirm-online`; that path ships closed and is never used
-for chat.
+endpoint is refused. The coding pipeline can optionally route its planner to a
+cloud provider (xAI Grok or Anthropic Claude) instead of the local model,
+behind six gates including a per-run `--confirm-online`; that path ships
+closed and is never used for chat. Enabling it is a real repository-content
+egress decision, not just a plan handoff: each loop iteration sends the
+instruction, the approved plan, prior check feedback, the full contents of
+every read/declared source file, and any fetched GitHub PR/issue context to
+the provider's API (`real_repo_loop.rs` builds this payload;
+`CloudProposerClient::invoke` sends it). It passes through an injection scan
+and redaction pass first (`sanitize_handoff`), but "sanitized" describes that
+scan, not a reduction to a small prompt — read the full data-egress note in
+[Run a coding task](#run-a-coding-task) before turning it on.
 
 Chat starts without an assigned repository or automatically injected coding
 skills. It can discuss supplied context; it does not inspect files or run tools
@@ -302,6 +310,22 @@ the planner. On macOS, checks receive read-only candidate/source/toolchain input
 and fresh writable scratch, with network access denied. Tests must write temporary
 state under the supplied temporary directory. See [bounded edits](docs/BOUNDED_EDITS.md)
 and [Git approval](docs/GIT_APPROVAL.md) for scope, reviewed-tree checks, and limits.
+
+**Cloud planner data egress.** With `deepagent_github.allow_cloud_providers`
+and a provider enabled, `--confirm-online` does not send a short plan prompt —
+it sends the real working context for that iteration. `real_repo_loop.rs`
+assembles, per attempt: the operator's instruction, the approved plan (if
+staged), the prior attempt's check failure feedback, the full contents of
+every source file the run declared or read via `/agent read`, and any GitHub
+PR/issue text pulled into session context. `CloudProposerClient::invoke`
+passes that assembled prompt through `sanitize_handoff` — an injection scan
+and secret-pattern redaction pass, `policy.privacy.redact_secrets_like` — and
+then sends it to the selected provider's API (`api.x.ai` or
+`api.anthropic.com`). Redaction catches known secret shapes; it does not
+strip proprietary source code, comments, or issue content, and none of that
+data is reviewable before it leaves the machine. Treat enabling a cloud
+provider as authorizing repository-content egress for every subsequent
+`--confirm-online` run, not as a one-time low-risk toggle.
 
 ## Optional credentials and enforced boundaries
 
