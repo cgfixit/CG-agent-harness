@@ -28,6 +28,12 @@ CSRF names, YAML `"true"`, Seatbelt), load `cgagentharness-gotchas` (`/cgagentha
 - `cgagentharness-parity` (`/cgagentharness-parity`) — `docs/parity/*` + `scripts/parity-status.py` (CyClaw↔harness)
 - `cgagentharness-optimize` (`/cgagentharness-optimize`, Claude deep) — deep optimize playbook; Codex twin for short runs
 
+### New documentation & verification skills
+
+- `cgagentharness-doc-sync` (`/cgagentharness-doc-sync`) — verify docs stay in sync with code; check shim actions, config gates, routes, guard chain, CSRF contracts, and hardcoded values
+- `cgagentharness-verify-deps` (`/cgagentharness-verify-deps`) — verify Cargo dependencies, advisories, licenses, locked versions, unsafe code, and toolchain match
+- `cgagentharness-runtime-invariant-check` (`/cgagentharness-runtime-invariant-check`) — verify core security invariants (I6, guard chain, CSRF, write gates, RUN_ID_PATTERN sync, clone jail)
+
 Authoritative contracts: `INVARIANTS.md`, `AGENTS.md`, `assets/config.default.yaml`.
 Existing: `.codex/skills/cgagentharness-{optimize,release,verify}/`.
 
