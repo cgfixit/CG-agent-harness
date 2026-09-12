@@ -214,11 +214,13 @@ terminal, or fsconnect/sqlconnect/netconnect services.
 
 ## Run a coding task
 
-Coding runs require Git on `PATH`, the chosen planner, and the tools for the
-selected check profiles; draft-PR publication and `/github` status additionally
-require a logged-in `gh` at or above `agentic.gh_min_version` (2.40.0 as
-shipped). Cargo dependency preparation additionally requires Python 3's standard
-library. A packaged app does not supply repository build dependencies or replace
+Coding runs require Git on `PATH`, a `gh` at or above `agentic.gh_min_version`
+(2.40.0 as shipped) and authenticated for the target repository, the chosen
+planner, and the tools for the selected check profiles. `gh` is needed from the
+very start, not only to publish: the workspace clone itself goes through
+`gh repo clone` via `gh_client::run_read`, which re-checks the minimum version,
+so a missing or too-old `gh` fails the run before planning. Cargo dependency
+preparation additionally requires Python 3's standard library. A packaged app does not supply repository build dependencies or replace
 the execution sandbox. `agentic test` covers only part of that list — config
 parsing, workspace placement, the `gh` version, Git on `PATH`, the hard sandbox
 and the injection scanner. It does not probe the planner, Python, check-profile
