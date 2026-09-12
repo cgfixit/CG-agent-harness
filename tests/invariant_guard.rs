@@ -135,9 +135,13 @@ fn shipped_config_keeps_every_gate_closed() {
     assert_eq!(cfg.str_list("policy.prompt_filter.banned_patterns").len(), 40);
     // Armed by construction, held closed only by agentic.enabled (checked above) and
     // the disable-only env kill switch -- never by EXECUTION_ENABLED flipping itself.
-    if std::env::var(cgagentharness::agentic::writer::WRITE_DISABLE_ENV).is_err() {
-        assert!(cgagentharness::agentic::writer::execution_enabled());
-    }
+    // Isolate the operator shell: cargo test must not inherit a dogfood
+    // CGAGENTHARNESS_AGENTIC_WRITE_DISABLE and skip this assert.
+    std::env::remove_var(cgagentharness::agentic::writer::WRITE_DISABLE_ENV);
+    assert!(
+        cgagentharness::agentic::writer::execution_enabled(),
+        "EXECUTION_ENABLED ships true; tests must not inherit the operator kill switch"
+    );
 
     // Source of truth: the shipped YAML uses literal booleans (quoted
     // "true" / "false" would be strings and flag_is_true would hide a mistake).

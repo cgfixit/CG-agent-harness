@@ -37,6 +37,9 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   `__CYCLAW_CSP_NONCE__` and the `X-CyClaw-CSRF` header name are contractual.
 - The env var `GROK_API_KEY` on a developer machine is real: tests must not
   assert on its presence and CI blanks it.
+- The env var `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` on an operator machine is
+  real: `cargo test` isolates it so later write gates are what fail. Do not
+  flip `EXECUTION_ENABLED` to false (or OR the kill switch) to make tests green.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
 - `cargo clippy` may resolve to a rustup proxy older than Homebrew's toolchain
