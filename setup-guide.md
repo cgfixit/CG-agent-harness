@@ -1092,11 +1092,13 @@ ordinary Finder launch later uses its normal environment/home. Do not change
 
 The app has no built-in updater. Download and replace it deliberately. The
 repository's [release workflow](.github/workflows/release.yml) checks changed main
-daily at **08:17 UTC** (04:17 New York during daylight time, 03:17 during standard
-time). Scheduled GitHub runs can be delayed. It skips unchanged source, verifies
-backend and universal desktop builds, then publishes a regular Latest release.
-Opening a PR does not publish a release; after a merge, the next scheduled check
-can include that new main source.
+every 12 hours at **08:17 and 20:17 UTC** (04:17/16:17 New York during daylight
+time, 03:17/15:17 during standard time). Scheduled GitHub runs can be delayed.
+It skips unchanged source, and also skips until that exact SHA has a successful
+Bundle run. A green Bundle run does not itself publish. When both conditions
+hold, it verifies backend and universal desktop builds, then publishes a regular
+Latest release. Opening a PR does not publish a release; after a merge, the next
+scheduled check can include that new main source.
 
 Maintainers change the schedule in `.github/workflows/release.yml` through a PR.
 The manual workflow's `publish: false` default previews the plan; setting it true
