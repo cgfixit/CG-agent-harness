@@ -315,8 +315,11 @@ and [Git approval](docs/GIT_APPROVAL.md) for scope, reviewed-tree checks, and li
 and a provider enabled, `--confirm-online` does not send a short plan prompt —
 it sends the real working context for that iteration. `real_repo_loop.rs`
 assembles, per attempt: the operator's instruction, the approved plan (if
-staged), the prior attempt's check failure feedback, the full contents of
-every source file the run declared or read via `/agent read`, and any GitHub
+staged), the prior attempt's check failure feedback, and a bounded excerpt of
+every source file the run declared or read via `/agent read` — `edits::collect`
+caps each file at `MAX_READ_FILE_CHARS` (4,000 chars), caps the aggregate at
+`MAX_TOTAL_READ_CHARS` (12,000 chars), can omit unreadable or oversized files,
+and an explicit `#L10-L40` selector sends only that window — plus any GitHub
 PR/issue text pulled into session context. `CloudProposerClient::invoke`
 passes that assembled prompt through `sanitize_handoff` — an injection scan
 and secret-pattern redaction pass, `policy.privacy.redact_secrets_like` — and
@@ -347,8 +350,12 @@ bypass only under `security.api_key_optional`) → per-process CSRF token.
 Read-only status and inventory routes are deliberately open; each mutation
 route above is guarded. The optional `/api/auth/*` account routes are a
 deliberate exception with a narrower chain: `bootstrap-password` and `login`
-(`guards::auth_open`) run only rate limit + same-origin — no API key, no CSRF,
-because a client without a session cannot present either yet — and `logout`
+(`guards::auth_open`) run only rate limit + same-origin — no API key, no CSRF.
+This is not because the client can't present them: `console()` bakes the
+per-process CSRF token into the page before login, and the console's request
+helper attaches both `X-CyClaw-CSRF` and an entered `Authorization` bearer key
+on every call, session or not. The exemption is deliberate route policy, not a
+credential-availability limit — and `logout`
 and account management (`guards::auth_sess`) run rate limit + same-origin +
 CSRF, but still no harness API key. Do not assume the full four-guard chain on
 `/api/auth/*`.
@@ -360,8 +367,12 @@ still require their own credentials, including GitHub publication.
 The HTTP server reaches agentic execution only by spawning one of twelve
 whitelisted actions through `src/shim`. The bar is wider than the server module:
 `tests/invariant_guard.rs` scans all four console-side trees — `src/server`,
-`src/shim`, `src/llm` and `src/common` — for any reference to the pipeline, and
-scans the pipeline for any reference back. Child exit codes are the entire
+`src/shim`, `src/llm` and `src/common` — for four literal substrings
+(`crate::agentic`, `agentic::`, `super::agentic`, `use crate::agentic`), and
+scans the pipeline for four matching substrings back. It is a literal-text
+scan, not a full import-graph analysis: a grouped or aliased form such as
+`use crate::{agentic as pipeline}` would not contain any of those substrings
+and would not be caught. Child exit codes are the entire
 interface: `0` ok, `2` failed, `3` env/config, `4` write refused. A non-zero
 child exit is HTTP 200 with `ok=false`; only shim failures map to 400/502/504
 and a disabled layer to 409.
