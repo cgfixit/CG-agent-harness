@@ -100,8 +100,11 @@ cargo build --release --locked
 loopback address is refused, and a request whose `Host` header is not a loopback
 name is rejected before routing. The standalone CLI/server is one
 self-reexecuting Rust binary, `cgagentharness`, with `serve` as its only
-operator subcommand; `agentic` and `desktop` are hidden and spawned by the
-server. Prebuilt CLI binaries for `linux-x86_64` and `macos-arm64` are attached
+operator subcommand; `agentic` is hidden and spawned only by `src/shim` (never
+by anything else in the server). `desktop` is a separate hidden subcommand of
+the same binary, but the server does not spawn it — the desktop shell
+(`desktop/src/backend.rs::Backend::start`, a separate crate) launches it as its
+bundled sidecar. Prebuilt CLI binaries for `linux-x86_64` and `macos-arm64` are attached
 to Bundle runs; Windows CI and release legs are parked. The desktop shell is a
 separate package that bundles this same backend.
 
@@ -313,10 +316,18 @@ To require a key, set `security.api_key_optional: false`, configure
 Forwarded requests never use the local bypass. Explicitly enforce the key behind
 any proxy, including one stripping forwarding headers.
 
-Every operator route runs the same guard chain in a load-bearing order:
-rate limit → same-origin → API key (constant-time, with the loopback bypass only
-under `security.api_key_optional`) → per-process CSRF token. Read-only status and
-inventory routes are deliberately open; each mutation route is guarded.
+Every `/api/agent`, `/api/soul`, `/api/web`, `/api/memory`, `/api/sessions` and
+similar operator-mutation route runs the same guard chain in a load-bearing
+order: rate limit → same-origin → API key (constant-time, with the loopback
+bypass only under `security.api_key_optional`) → per-process CSRF token.
+Read-only status and inventory routes are deliberately open; each mutation
+route above is guarded. The optional `/api/auth/*` account routes are a
+deliberate exception with a narrower chain: `bootstrap-password` and `login`
+(`guards::auth_open`) run only rate limit + same-origin — no API key, no CSRF,
+because a client without a session cannot present either yet — and `logout`
+and account management (`guards::auth_sess`) run rate limit + same-origin +
+CSRF, but still no harness API key. Do not assume the full four-guard chain on
+`/api/auth/*`.
 
 `auth.enabled` retains optional accounts, login sessions, and role-based account
 management. It does not gate chat or the coding pipeline. External services
