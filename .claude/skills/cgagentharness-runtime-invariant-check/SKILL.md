@@ -134,31 +134,34 @@ grep -E "__CYCLAW_CSRF_TOKEN__|__CYCLAW_CSP_NONCE__" assets/static/harness.html 
 
 ### I4: Write gates ship closed (fail-safe by default)
 
-**The rule:** Every write gate in `assets/config.default.yaml` must default to a closed (false/disabled) state:
+**The rule:** These write gates in `assets/config.default.yaml` must default to a closed (`false`) state —
+this is exactly what `tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed` asserts:
 - `agentic.enabled: false`
-- `writes_enabled: false`
-- `deepagent_github.enabled: false`
+- `deepagent_github.enabled: false` (if present)
 - `deepagent_github.allow_git_write_tools: false`
-- `security.api_key_optional: "true"` ← quoted string is false (see `flag_is_true`)
+
+Two related settings are NOT part of this closed-by-default set and intentionally ship open — do not "fix"
+them to false, and do not add them to the list above:
+- `agentic.writes_enabled: true` — safe because the master `agentic.enabled` gate and `mode` still block execution
+- `security.api_key_optional: true` (unquoted boolean) — intentionally permits direct loopback access
 
 **Why:** An operator who hasn't explicitly enabled write access should not be able to mutate repositories. Fail-safe defaults prevent accidental damage.
 
 **How to check:**
 
 ```bash
-# Extract all boolean gates
+# Extract all boolean gates for a quick look
 grep -E "enabled|writes_enabled|allow_.*:" assets/config.default.yaml | grep -v "^#"
 
-# Verify each is false or disabled
-for gate in agentic.enabled mode writes_enabled deepagent_github.enabled allow_git_write_tools security.api_key_optional; do
+# Verify only the three gates that must be false actually are
+for gate in enabled allow_git_write_tools; do
   echo "=== $gate ==="
-  grep -A 1 "^[[:space:]]*$gate" assets/config.default.yaml
+  grep -n "^[[:space:]]*$gate:" assets/config.default.yaml
 done
-
-# Check for any "true" or true (not quoted)
-grep ": true\|: [Tt]rue" assets/config.default.yaml | grep -v "^#"
-# Should only return non-gate values (like log level = true)
 ```
+
+`agentic.writes_enabled: true` and unquoted `security.api_key_optional: true` will show up in a broad
+`true`/`enabled` grep — that's expected, not a finding.
 
 **Shipped fail-closed gates (from tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed):**
 - `agentic.enabled` must be `false`
@@ -175,11 +178,13 @@ grep -rn "flag_is_true" src/common --include="*.rs" -A 3
 # Should confirm: quoted "true" is treated as false
 ```
 
-**Fix:** If a write gate defaults to `true` when it should be `false`:
+**Fix:** If `agentic.enabled`, `deepagent_github.enabled`, or `deepagent_github.allow_git_write_tools`
+defaults to `true` when it should be `false` (do NOT apply this to `writes_enabled` or `api_key_optional` —
+those are supposed to be `true`):
 1. Change it to `false` immediately
 2. Add a comment explaining why it's safe
 3. File a security issue if this was merged
-4. Run `cargo test --test invariant_guard shipped_config_keeps_every_gate_closed`
+4. Run `cargo test shipped_config_keeps_every_gate_closed`
 
 **Test:** `cargo test invariant_guard shipped_config_keeps_every_gate_closed` enforces this.
 
@@ -213,9 +218,11 @@ grep -n "REAL_REPO_RUN_FALLBACK_PLANNER_SEC" src/shim/mod.rs
 echo "=== Agentic side: DEFAULT_PLANNER_TIMEOUT_SEC ==="
 grep -n "DEFAULT_PLANNER_TIMEOUT_SEC" src/agentic/config.rs
 
-# Or run the test that syncs them (recommended for accuracy)
+# Or run the actual test that syncs them (recommended for accuracy — the
+# real name is duplicated_constants_still_agree, not "constant_sync"; a
+# nonexistent-name filter would silently match zero tests and look like a pass)
 echo "=== Invariant test for constant sync ==="
-cargo test --test invariant_guard constant_sync 2>&1 | grep -E "PASS|FAIL|passed"
+cargo test --test invariant_guard duplicated_constants_still_agree 2>&1 | grep -E "test result|FAILED|passed"
 ```
 
 **Fix:** If constants drift:
@@ -295,34 +302,47 @@ Use this bash function to verify all invariants:
 ```bash
 verify_invariants() {
   echo "=== I6: Process isolation ==="
-  if grep -r "use crate::agentic" src/server src/llm --include="*.rs"; then
-    echo "✗ FAIL: server imports agentic"
-    return 1
-  else
+  # A hand-rolled grep here is a trap: it must cover all four console-side
+  # modules (server, shim, llm, common — not just server+llm), strip comment
+  # lines (a doc comment is allowed to NAME the far side of the boundary),
+  # and match qualified references too, not just `use` statements. The real
+  # test (tests/invariant_guard.rs::server_side_never_references_agentic)
+  # already does exactly this — call it instead of reimplementing it:
+  if cargo test --test invariant_guard server_side_never_references_agentic 2>&1 | grep -q "test result: ok"; then
     echo "✓ PASS"
+  else
+    echo "✗ FAIL: server-side code references agentic — see test output"
+    return 1
   fi
 
   echo "=== I2: Guard chain order ==="
-  order=$(grep -n "rate_limit\|same_origin\|api_key\|csrf" src/server/guards.rs | head -4 | cut -d: -f1)
-  if echo "$order" | sort -c 2>/dev/null; then
+  # Extract guard function NAMES from the fully-guarded chain (the block that
+  # calls enforce_csrf — a partial chain omits it), not line numbers: sorting
+  # line numbers from an already-line-ordered `grep -n` output is a no-op that
+  # can never fail regardless of the code's actual order.
+  chain=$(grep -A6 "pub async fn guarded" src/server/guards.rs \
+    | grep -oE "enforce_(rate_limit|same_origin|api_key_or_optional|csrf)")
+  expected=$'enforce_rate_limit\nenforce_same_origin\nenforce_api_key_or_optional\nenforce_csrf'
+  if [ "$chain" = "$expected" ]; then
     echo "✓ PASS"
   else
-    echo "✗ FAIL: Guard order is wrong"
+    echo "✗ FAIL: guard order is wrong (found: $chain)"
     return 1
   fi
 
   echo "=== I3: CSRF placeholders ==="
-  csrf_html=$(grep -c "__CYCLAW_CSRF_TOKEN__\|X-CyClaw-CSRF" assets/static/harness.html)
-  csrf_code=$(grep -c "X-CyClaw-CSRF" src/server/headers.rs)
+  csrf_html=$(grep -ic "x-cyclaw-csrf\|__CYCLAW_CSRF_TOKEN__" assets/static/harness.html)
+  csrf_code=$(grep -ic "x-cyclaw-csrf" src/server/guards.rs)
   [ "$csrf_html" -ge 1 ] && [ "$csrf_code" -ge 1 ] && echo "✓ PASS" || echo "✗ FAIL"
 
   echo "=== I4: Write gates closed ==="
-  if grep ": true\|: [Tt]rue" assets/config.default.yaml | grep -q "enabled\|writes_enabled"; then
-    echo "✗ FAIL: gate defaults to true"
-    return 1
-  else
-    echo "✓ PASS"
-  fi
+  # Only these three are asserted closed; writes_enabled and api_key_optional
+  # intentionally ship true and must not be flagged.
+  closed=1
+  if grep -A1 "^\s*agentic:" assets/config.default.yaml | grep -q "enabled: true"; then closed=0; fi
+  if grep -A1 "^\s*deepagent_github:" assets/config.default.yaml | grep -q "enabled: true"; then closed=0; fi
+  if grep "allow_git_write_tools" assets/config.default.yaml | grep -q ": true"; then closed=0; fi
+  [ "$closed" -eq 1 ] && echo "✓ PASS" || { echo "✗ FAIL: a fail-closed gate defaults to true"; return 1; }
 
   echo "=== I5: Constants duplicated ==="
   server_pattern=$(grep "RUN_ID_PATTERN.*=" src/server/agent_policy.rs | grep -oE '"[^"]*"')

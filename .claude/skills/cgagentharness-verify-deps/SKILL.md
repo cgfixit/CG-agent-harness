@@ -31,15 +31,19 @@ CG-Agent-Harness enforces strict supply-chain controls. This skill verifies that
 ls -la Cargo.lock
 git ls-files | grep Cargo.lock
 
-# Check if lock is fresh (no `cargo update` pending)
-# Must check exit status separately from output to catch resolution failures
-if cargo update --dry-run --locked 2>&1 | grep -q "would"; then
+# Check if lock is fresh (no `cargo update` pending).
+# Capture cargo's own exit status BEFORE inspecting output: `$?` right after
+# an `if cmd | grep ...` reflects grep's status, not cargo's, so a run that
+# genuinely failed (registry unavailable, resolution error) would otherwise
+# look identical to "nothing to update" and get reported as fine.
+update_output=$(cargo update --dry-run --locked 2>&1)
+update_status=$?
+if [ "$update_status" -ne 0 ]; then
+  echo "ERROR: cargo update --dry-run --locked failed (exit $update_status): registry unavailable or resolution failed"
+elif echo "$update_output" | grep -q "would"; then
   echo "LOCK NEEDS UPDATE"
-elif [ $? -eq 0 ]; then
-  echo "Lock is current"
 else
-  echo "ERROR: Cargo command failed (registry unavailable or resolution failed)"
-  return 1
+  echo "Lock is current"
 fi
 
 # Verify locked compile succeeds
@@ -87,35 +91,41 @@ cat deny.toml | head -30
 The codebase uses unsafe code sparingly (primarily in `src/agentic/executor/sandbox.rs` for Seatbelt syscalls, `src/agentic/workspace.rs` for capability-based reads). All unsafe blocks must have a comment explaining WHY.
 
 **Verification:**
+
+The repo does not put a `SAFETY:` comment on the line directly above every single `unsafe { ... }` — one
+comment often covers a whole cluster of related calls in the same function (e.g. the Windows Job Object
+sequence in `sandbox.rs` has one `// SAFETY:` near the top of the block covering several subsequent
+`unsafe { CloseHandle(...) }` / `unsafe { TerminateJobObject(...) }` calls). A pure "is the immediately
+preceding line a SAFETY comment" grep will flag most of that cluster as false positives.
+
 ```bash
-# Find all unsafe blocks and check for preceding SAFETY comments
-# The repository places SAFETY comments on the line BEFORE unsafe
-grep -rn "unsafe {" src/ --include="*.rs" | while read line; do
-  linenum=$(echo "$line" | cut -d: -f2)
-  file=$(echo "$line" | cut -d: -f1)
-  prevline=$((linenum - 1))
-  
-  if ! sed -n "${prevline}p" "$file" | grep -q "SAFETY:"; then
-    echo "$file:$linenum: unsafe block without SAFETY comment above"
+# List every `unsafe {` occurrence and whether a SAFETY comment appears anywhere
+# in the ~20 lines above it. Treat matches as candidates to eyeball, not an
+# automatic pass/fail — confirm by reading the surrounding function whether one
+# comment is meant to cover the whole cluster.
+grep -rn "unsafe {" src/ --include="*.rs" | cut -d: -f1,2 | while IFS=: read -r file linenum; do
+  start=$(( linenum > 20 ? linenum - 20 : 1 ))
+  if ! sed -n "${start},${linenum}p" "$file" | grep -q "SAFETY:"; then
+    echo "$file:$linenum: no SAFETY comment within 20 lines above — review this one"
   fi
 done
 
-# Count total unsafe blocks
+# Count total unsafe blocks (not string/prose occurrences of the word "unsafe")
 total=$(grep -r "unsafe {" src/ --include="*.rs" | wc -l)
 echo "Total unsafe blocks: $total"
-
-# Expected: ~8-12 (sandboxing + clone jail + signal handlers)
-# If count jumps, each new unsafe must have a preceding comment
 ```
 
 **Failure modes:**
-- `unsafe {` with no SAFETY comment on the preceding line → add `// SAFETY: <reason>` above it
+- `unsafe {` with no `SAFETY:` comment anywhere in the enclosing function/cluster → add `// SAFETY: <reason>`
 - New unsafe in unexpected location → code review finding
 - unsafe in server side (not sandbox) → likely a security issue
 
 ### 4. No outdated critical dependencies
 
-High-severity crates (especially in security-sensitive paths like `cap_std`, `seatbelt`, `sha2`, `ring`, OpenSSL bindings) must be current.
+High-severity crates (especially in security-sensitive paths like `cap-std`, `sha2`, `ring`, and the HTTP
+stack) must be current. Note the crate name is `cap-std` (hyphen) — `cap_std` is only the Rust module path
+after import; Seatbelt itself is this repo's own macOS sandbox code in `src/agentic/executor/sandbox.rs`,
+not an external crate, so it won't show up in a dependency tree at all.
 
 **Verification:**
 ```bash
@@ -125,14 +135,17 @@ cargo tree --depth 1
 # Look for outdated dependencies
 cargo outdated --root-only 2>/dev/null || echo "cargo-outdated not installed"
 
-# Check security-critical crates specifically
-for dep in cap_std seatbelt sha2 ring tokio hyper; do
+# Check security-critical crates specifically. Cargo.lock stores entries as
+# `name = "pkg"` (not `^pkg `), so grepping the lockfile directly is fragile —
+# resolve each package through cargo instead, which also catches a rename or
+# a version bump against MSRV:
+for dep in cap-std sha2 ring tokio hyper; do
   echo "=== $dep ==="
-  grep "^$dep" Cargo.lock | head -1
+  cargo tree -p "$dep" 2>/dev/null | head -1 || echo "  Not a dependency"
 done
 
 # Compare against latest on crates.io
-# Example: https://crates.io/crates/cap_std
+# Example: https://crates.io/crates/cap-std
 ```
 
 **Red flags:**
@@ -140,11 +153,8 @@ done
 - Security deps (crypto, sandbox, network) especially
 - Pinned old versions without explanation → needs a comment in Cargo.toml
 
-**Verification:**
-```bash
-# In Cargo.toml, old deps should have a comment:
-# cap_std = "1.0" # pinned for Seatbelt compatibility with MSRV Rust 1.70
-```
+In Cargo.toml, an intentionally old/pinned dep should carry a comment explaining why, e.g.
+`cap-std = "..." # pinned for <reason>`.
 
 ### 5. Toolchain version matches rust-toolchain.toml (always)
 
@@ -233,15 +243,25 @@ verify_deps() {
 
   echo "=== 3. cargo deny check ==="
   if command -v cargo-deny &> /dev/null; then
-    cargo deny check && echo "✓" || echo "✗ FAIL"
+    if cargo deny check; then
+      echo "✓"
+    else
+      echo "✗ FAIL: cargo deny check reported an advisory/license/ban violation"
+      return 1
+    fi
   else
     echo "✗ FAIL: cargo-deny not installed (required by quality bar; install with 'cargo install cargo-deny')"
     return 1
   fi
 
-  echo "=== 4. Unsafe code has comments ==="
-  unsafe_without_comment=$(grep -r "unsafe" src/ --include="*.rs" | grep -v "// SAFETY:\|// reason:" | wc -l)
-  [ "$unsafe_without_comment" -eq 0 ] && echo "✓" || echo "✗ $unsafe_without_comment unsafe blocks lack comments"
+  echo "=== 4. Unsafe code has comments (candidates — eyeball clustered comments) ==="
+  unsafe_flagged=0
+  grep -rn "unsafe {" src/ --include="*.rs" | cut -d: -f1,2 | while IFS=: read -r file linenum; do
+    start=$(( linenum > 20 ? linenum - 20 : 1 ))
+    if ! sed -n "${start},${linenum}p" "$file" | grep -q "SAFETY:"; then
+      echo "  $file:$linenum: no SAFETY comment within 20 lines above"
+    fi
+  done
 
   echo "=== 5. Toolchain version ==="
   pinned=$(grep channel rust-toolchain.toml | cut -d'"' -f2)
@@ -249,9 +269,13 @@ verify_deps() {
   echo "Pinned: $pinned, Running: $running"
 
   echo "=== 6. Check for outdated security deps ==="
+  # cargo tree's --depth is a MAXIMUM display depth, not a target depth — depth 0
+  # only prints the root package, so every one of these deps would report "not
+  # found" regardless of whether it's actually a dependency. Resolve each
+  # package directly instead:
   for dep in cap-std sha2 ring tokio hyper; do
     echo "=== $dep ==="
-    cargo tree --depth 0 --prefix none | grep "^$dep " || echo "  Not found directly"
+    cargo tree -p "$dep" 2>/dev/null | head -1 || echo "  Not a dependency"
   done
 
   echo "=== 7. Dependency tree (summary) ==="

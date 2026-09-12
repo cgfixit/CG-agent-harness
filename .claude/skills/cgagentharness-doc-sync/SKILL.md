@@ -30,42 +30,52 @@ The shim ACTIONS whitelist in `src/shim/mod.rs` must match:
 
 **Verification:**
 ```bash
-# Extract ACTIONS from shim (match type annotation)
-grep "ACTIONS.*\[&str;" src/shim/mod.rs | grep -oP '"[a-z_-]+"' | sort
+# ACTIONS is declared as `pub const ACTIONS: [&str; N] = [` with entries on
+# following lines, so the match must read past the declaration line (-A) into
+# the array body, stopping at the closing bracket.
+grep -A 30 "pub const ACTIONS:.*\[&str;" src/shim/mod.rs | sed '/^\];/q' | grep -oP '"[a-z_-]+"' | sort
 
 # Check dispatch covers all
 grep "^[[:space:]]*\"" src/agentic/commands.rs | grep "=>" | grep -oP '"[a-z_-]+"' | sort
 
-# Cross-check invariant guard
-grep "ACTIONS.*\[&str;" tests/invariant_guard.rs -A 30 | grep -oP '"[a-z_-]+"' | sort
+# Cross-check invariant guard's whitelist assertion the same way
+grep -A 30 "ACTIONS.*\[&str;" tests/invariant_guard.rs | sed '/^\];/q' | grep -oP '"[a-z_-]+"' | sort
 ```
 
-If counts don't match, a new action is missing from one location. The hyphen pattern accounts for action names like `real-repo-run`.
+If counts don't match, a new action is missing from one location. The hyphen pattern accounts for action names like `real-repo-run`. Prefer `cargo test --test invariant_guard` over this grep when you just need a pass/fail signal — it already knows the real whitelist logic.
 
 ### 2. Config Gates (if touching assets/config.default.yaml)
 
-Every gate mentioned in code must:
-- Exist in `assets/config.default.yaml`
-- Have a descriptive inline comment
-- Ship with `false` or `"false"` (fail-closed)
-- Match its `flag_is_true` check in code
+Not every gate ships `false` — only the ones `tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed`
+actually asserts closed:
+- `agentic.enabled` must be `false`
+- `deepagent_github.enabled` must be `false` (if present)
+- `deepagent_github.allow_git_write_tools` must be `false`
+
+Two gates intentionally ship open and are NOT contract violations:
+- `agentic.writes_enabled: true` — safe because the master `agentic.enabled` gate and `mode` still block execution
+- `security.api_key_optional: true` (unquoted boolean) — intentionally permits direct loopback access
+
+Every gate mentioned in code must still exist in config with a descriptive comment, and its literal value must
+match what `flag_is_true` treats as on/off (quoted `"true"` is OFF).
 
 **Verification:**
 ```bash
 # Find all gate checks in code
 grep -r "flag_is_true\|get_bool\|config\..*enabled" src/ | grep -oE '\w+\.\w+' | sort -u
 
-# Verify each exists in config with "false" default
-for gate in agentic.enabled mode writes_enabled; do
-  echo "Checking $gate:"
-  grep -A 2 "^\s*$gate:" assets/config.default.yaml
+# Verify only the fail-closed gates are false; don't flag writes_enabled/api_key_optional as violations
+for gate in agentic.enabled deepagent_github.enabled deepagent_github.allow_git_write_tools; do
+  echo "Checking $gate (must be false):"
+  grep -A 2 "^\s*${gate##*.}:" assets/config.default.yaml
 done
 
-# Verify quoted "true" is OFF
+# Confirm quoted "true" is OFF (flag_is_true) — do not treat this as a violation to "fix"
 grep '"true"' assets/config.default.yaml
 ```
 
-If any gate is missing or defaults to `true`, that's a contract violation.
+If one of the three fail-closed gates above is missing or defaults to `true`, that's a contract violation.
+`writes_enabled: true` or unquoted `api_key_optional: true` are NOT violations — never "fix" them to false.
 
 ### 3. API Routes (if touching src/server/routes/mod.rs)
 
@@ -74,16 +84,25 @@ Every new route must be added to:
 - `views.rs` (if the console lists it)
 - `AGENTS.md` under the route description (if it's user-facing)
 
+A raw grep count comparison here will not match even on an unchanged tree: `.route(...)` calls that wrap onto
+multiple lines aren't captured by a single-line grep, and `registered_paths()` deliberately adds five
+`/api/auth/*` routes outside the `REGISTERED_PATHS` const array (see `routes/mod.rs::registered_paths`). Don't
+treat a raw count mismatch as drift.
+
 **Verification:**
 ```bash
-# Extract routes from handlers
-grep -r "Router::new\|\.route\|\.post\|\.get" src/server/routes/ | grep -oE '"(/api/[^"]+)"' | sort -u
-
 # Check REGISTERED_PATHS (match array type annotation, extract all entries)
 grep -A 200 "REGISTERED_PATHS.*\[&str;" src/server/routes/mod.rs | sed '/^\]/q' | grep -oE '"/api/[^"]*"' | sort -u
 
-# Count should match
+# The reliable check is the existing unit test in src/server/routes/mod.rs —
+# it already accounts for the extra auth routes and multiline .route() calls.
+# It's a lib test (in a #[cfg(test)] mod), not a tests/ integration target,
+# so run it by name, not with --test:
+cargo test registered_paths_are_unique_and_cover_every_router_route
 ```
+
+Use the grep above only to eyeball whether a specific new route was added to the array; use the test to decide
+pass/fail.
 
 ### 4. Guard Chain Order (if touching src/server/guards.rs or src/server/headers.rs)
 
@@ -101,22 +120,26 @@ grep "rate limit ->" INVARIANTS.md
 
 If the order differs, invariant I2 is violated.
 
-### 5. CSRF Placeholders (if touching assets/static/harness.html or src/server/headers.rs)
+### 5. CSRF Placeholders (if touching assets/static/harness.html or src/server/guards.rs)
 
 The CSRF token placeholder names are contractual and must NOT change:
 - `__CYCLAW_CSRF_TOKEN__` (HTML placeholder)
 - `__CYCLAW_CSP_NONCE__` (CSP nonce placeholder)
-- `X-CyClaw-CSRF` (header name in code and HTML)
+- `X-CyClaw-CSRF` (header name in HTML; the Rust constant is `CSRF_HEADER` in `src/server/guards.rs`, stored
+  lowercase as `"x-cyclaw-csrf"` — HTTP header names are case-insensitive, so this is not a mismatch)
 
 **Verification:**
 ```bash
 # Check placeholders exist in HTML
 grep -c "__CYCLAW_CSRF_TOKEN__\|__CYCLAW_CSP_NONCE__" assets/static/harness.html
 
-# Check header name matches
-grep "X-CyClaw-CSRF" src/server/headers.rs assets/static/harness.html | wc -l
-# Should be consistent (2+ matches)
+# Check the header name in code (guards.rs, not headers.rs) case-insensitively
+grep -i "csrf_header\|x-cyclaw-csrf" src/server/guards.rs
+grep -i "x-cyclaw-csrf" assets/static/harness.html
 ```
+
+If the Rust constant is renamed or its value changes, `cargo test --test security_headers` catches the
+browser/server mismatch — treat that test as authoritative over a manual grep count.
 
 ### 6. Hardcoded Values (if adding new constants to code)
 
@@ -160,7 +183,9 @@ If your PR touches these core files, your PR body must explicitly state which in
 If docs are out of sync:
 
 1. **Code is always right.** If code and docs differ, update docs.
-2. **Config defaults ship closed.** If a gate has `true` as default, change it to `false`.
+2. **Only the three asserted gates ship closed.** If `agentic.enabled`, `deepagent_github.enabled`, or
+   `deepagent_github.allow_git_write_tools` defaults to `true`, that's a violation — fix it. Do not change
+   `agentic.writes_enabled` or `security.api_key_optional`; they intentionally ship open.
 3. **Truth order precedence.** Use the ranked sources above to decide what's authoritative.
 4. **Tests catch drift.** If `tests/invariant_guard.rs` fails, the code is broken, not the docs.
 
@@ -171,19 +196,23 @@ Use this bash function to run all checks at once:
 ```bash
 doc_sync_check() {
   echo "=== Shim Actions ==="
-  grep -A 30 "ACTIONS = \[" src/shim/mod.rs | grep -oP '"[a-z_]+"' | wc -l
+  grep -A 30 "pub const ACTIONS:.*\[&str;" src/shim/mod.rs | sed '/^\];/q' | grep -oP '"[a-z_-]+"' | wc -l
   grep "^[[:space:]]*\"" src/agentic/commands.rs | grep "=>" | wc -l
+  # If these two counts differ, a new action is missing from one location.
 
   echo "=== Config Gates ==="
   grep -r "flag_is_true\|get_bool" src/ | wc -l
   grep '^\s*\w\+:' assets/config.default.yaml | grep -v '^#' | wc -l
 
-  echo "=== API Routes ==="
-  grep -r "Router::new\|\.route\|\.post\|\.get" src/server/routes/ | grep -oE '"(/api/[^"]+)"' | sort -u | wc -l
-  grep -A 100 "REGISTERED_PATHS = \[" src/server/routes/mod.rs | grep -oE '"/api/[^"]*"' | sort -u | wc -l
+  echo "=== API Routes (informational only — see note below) ==="
+  # A raw count here will not match: registered_paths() adds 5 auth routes
+  # outside REGISTERED_PATHS, and multiline .route() calls aren't grep-single-line-friendly.
+  # Use the unit test below to actually verify coverage.
+  cargo test registered_paths_are_unique_and_cover_every_router_route 2>&1 | grep -E "test result|FAILED"
 
   echo "=== CSRF Placeholders ==="
-  grep -l "__CYCLAW_CSRF_TOKEN__" assets/static/harness.html src/server/headers.rs
+  grep -l "__CYCLAW_CSRF_TOKEN__" assets/static/harness.html
+  grep -il "x-cyclaw-csrf" src/server/guards.rs assets/static/harness.html
 
   echo "=== Guard Chain ==="
   grep -E "rate_limit|same_origin|api_key|csrf" src/server/guards.rs | head -5
