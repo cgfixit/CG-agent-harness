@@ -28,7 +28,7 @@ pub const MAX_CHECK_PROFILES: usize = 8;
 pub const MAX_READ_FILES: usize = 8;
 pub const MAX_READ_FILE_LEN: usize = 1024;
 pub const MAX_GOAL_LEN: usize = 2000;
-pub const MAX_WEB_URL_LEN: usize = 500;
+pub const MAX_WEB_URL_LEN: usize = super::web_policy::MAX_URL_BYTES;
 pub const MAX_WEB_QUERY_LEN: usize = 200;
 pub const MAX_NOTE_LEN: usize = 500;
 pub const MAX_NOTE_ID_LEN: usize = 32;
@@ -198,6 +198,36 @@ impl Validate for WebUrlRequest {
 #[serde(deny_unknown_fields)]
 pub struct WebSearchRequest {
     pub query: String,
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebRuleRequest {
+    pub url: String,
+    #[serde(default = "web_default_group")]
+    pub group: String,
+    #[serde(default)]
+    pub seeds: Vec<String>,
+}
+
+fn web_default_group() -> String {
+    "default".into()
+}
+
+impl Validate for WebRuleRequest {
+    fn validate(&self) -> Vec<String> {
+        if len_ok(&self.url, 1, MAX_WEB_URL_LEN)
+            && super::web_policy::valid_group(&self.group)
+            && self.seeds.len() <= 16
+            && self.seeds.iter().all(|s| len_ok(s, 1, MAX_WEB_URL_LEN))
+        {
+            vec![]
+        } else {
+            vec!["url, group or seeds".into()]
+        }
+    }
 }
 
 impl Validate for WebSearchRequest {
@@ -441,12 +471,18 @@ impl Validate for AgentPublishRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApiKeysRequest {
+    #[serde(default)]
     pub keys: BTreeMap<String, String>,
+    #[serde(default)]
+    pub clear: Vec<String>,
 }
 
 impl Validate for ApiKeysRequest {
     fn validate(&self) -> Vec<String> {
-        if self.keys.is_empty() || self.keys.len() > MAX_API_KEYS_PER_REQUEST {
+        if self.keys.len() + self.clear.len() == 0
+            || self.keys.len() + self.clear.len() > MAX_API_KEYS_PER_REQUEST
+            || self.clear.iter().any(|name| name.len() > MAX_ENV_NAME_LEN)
+        {
             return vec!["keys".into()];
         }
         for (name, secret) in &self.keys {
@@ -484,6 +520,33 @@ impl Validate for AuthLoginRequest {
 #[serde(deny_unknown_fields)]
 pub struct AuthSetPasswordRequest {
     pub password: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthChangePasswordRequest {
+    pub current_password: String,
+    pub password: String,
+}
+impl Validate for AuthChangePasswordRequest {
+    fn validate(&self) -> Vec<String> {
+        if len_ok(&self.current_password, 1, 1024) && len_ok(&self.password, 1, 1024) {
+            vec![]
+        } else {
+            vec!["password".into()]
+        }
+    }
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthDisabledRequest {
+    pub disabled: bool,
+}
+impl Validate for AuthDisabledRequest {
+    fn validate(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 impl Validate for AuthSetPasswordRequest {

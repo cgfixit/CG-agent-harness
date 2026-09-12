@@ -1,5 +1,38 @@
 # Desktop acceptance
 
+## Secure portal development acceptance (2026-09-12)
+
+The `codex/secure-web-research-auth-tls` implementation based on `44a205e`
+has separate backend, real-browser and native evidence. These observations do not
+replace the historical artifact-specific results below or certify distribution.
+
+- Backend: 222 all-target/all-feature tests passed with no skips, including real
+  HTTPS, account/role/migration/revocation, content policy and native sandbox tests.
+- Desktop: four unit tests passed for ownership/navigation, exact leaf validation,
+  and Security.framework name/expiry/substitution refusal.
+- Real Chrome with mock APIs: existing chat suite plus minimal anonymous status,
+  forced password replacement, API Keys masked save/clear and logout passed.
+- Native WKWebView, isolated home: actual HTTPS page load without a trust
+  interstitial, admin/admin restricted login, password replacement, normal portal
+  access, masked credential save, restart with saved/active `startup_file` status,
+  key clearing with restart-needed status, and logout clearing private panels
+  passed. Certificate bytes and the replaced password persisted across restart.
+  HTTP/2 authority uses the same strict
+  origin boundary as HTTP/1 Host. No certificate was installed in system trust.
+- Local-model release smoke: HTTPS account login/password replacement, negative
+  auth/CSRF/Host controls, real child dispatch and exact `pong` passed with the
+  installed `qwen3.8:27b-mlx` tag (850 prompt + 1 completion tokens).
+
+Public provider credentials, live cloud inference, external-browser trust
+installation, Developer ID/notarization, native Intel execution, and macOS 12
+interaction remain unverified. Native file chooser, external-link confirmation,
+active-job quit and accessibility/scale acceptance are not established by the
+login/key observations. The evidence artifact for this work records exact final
+bundle digests and restart checks. These initial observations used development
+bundles before final documentation/dependency synchronization; the PR and handoff
+record final committed source and subsequent verification separately.
+
+
 ## Issue #32 candidate — September 2026
 
 PRs #35–#38 implement status/verification, prompt/persona controls, runtime skill
@@ -132,7 +165,7 @@ home. This helper prepares a local bare remote and mock gh transport; it does
 not authorize real GitHub fixture publication. Do not paste its API key into
 logs, screenshots, process arguments or reports.
 
-With the operator, verify: actual console display and use with empty key/no login; optional key entry; chat and stop;
+With the operator, verify: actual console display with HTTPS, account login, forced password replacement and an empty optional key; chat and stop;
 sessions/goals/model selection/notes/persona; keys/auth/skills/tools; staged agent
 run, complete diff and separately authorized fixture decisions; plan/PR file
 inputs; external-link confirmation, invalid schemes and hostile rendered text;

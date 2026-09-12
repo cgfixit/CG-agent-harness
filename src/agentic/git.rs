@@ -177,7 +177,9 @@ pub fn require_raw_paths(worktree: &Path, paths: &[String]) -> Result<()> {
         return Err(HarnessError::agentic("invalid Git attribute response"));
     }
     if parts
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .any(|part| !matches!(part[2], "unspecified" | "unset"))
     {
         return Err(HarnessError::write_refused(

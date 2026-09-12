@@ -17,7 +17,7 @@ behind six gates including a per-run `--confirm-online`; that path ships
 closed and is never used for chat. Enabling it is a real repository-content
 egress decision, not just a plan handoff: each loop iteration sends the
 instruction, the approved plan, prior check feedback, the full contents of
-every read/declared source file, and any fetched GitHub PR/issue context to
+bounded excerpts of read/declared source files, and any fetched GitHub PR/issue context to
 the provider's API (`real_repo_loop.rs` builds this payload;
 `CloudProposerClient::invoke` sends it). It passes through an injection scan
 and redaction pass first (`sanitize_handoff`), but "sanitized" describes that
@@ -27,24 +27,18 @@ scan, not a reduction to a small prompt — read the full data-egress note in
 Chat starts without an assigned repository or automatically injected coding
 skills. It can discuss supplied context; it does not inspect files or run tools
 from a model reply. Coding execution is separately staged and confirmed.
-> **Local use needs no harness API key or account login.** Repository mutations
+> **Fresh homes require HTTPS and account login; the harness API key is optional.** Start with `admin` / `admin`, then replace the password immediately. See [secure setup](docs/SECURE_RESEARCH.md). Repository mutations
 remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
 
-**Source scope:** checked against `origin/main` at
-[`3082e7df`](https://github.com/cgfixit/CG-agent-harness/commit/3082e7df)
-on September 12, 2026. The last behavior change on main is
-[`74b5038`](https://github.com/cgfixit/CG-agent-harness/commit/74b5038)
-(planner-requested read selectors in the real-repo loop). The published
-[`v0.1.4`](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.4) build
-was cut from `d60211d` and includes that loop behavior (#64 rolling rejection
-digest and #65 planner-requested reads). Commits after `d60211d` on this tree are
-test isolation of the write kill-switch (`9e3a290`) and an empty
-`.codex/README.md` (`3082e7df`); they do not change operator-facing loop
-behavior. The crate `version` in `Cargo.toml` stays `0.1.0` on purpose — release
-tags and the app's `Contents/Resources/COMMIT` identify a build, not the Cargo
-package field. For the current loop behavior, use a published v0.1.4 app, a
-successful main Bundle artifact containing this revision, or build current main.
+**Version scope:** this document describes this source tree, including secure
+web research, SQLite accounts and native HTTPS. These changes are absent from
+the September 12 `v0.1.7` release. Until merged and released, build this branch or
+use its verified PR artifact. Check the selected workflow SHA and the app's
+`Contents/Resources/COMMIT`; a release tag or the Cargo package version `0.1.0`
+alone does not establish feature availability. See [setup](setup-guide.md) for
+upgrade and recovery, and [verification](docs/SECURE_RESEARCH.md#reproducible-evidence)
+for the acceptance boundaries.
 
 ## What you can do
 
@@ -55,7 +49,8 @@ successful main Bundle artifact containing this revision, or build current main.
 | Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
-| Web context | Explicitly enable allowlisted web fetch/search, inspect fetched text, and inject selected context into chat. Web access ships off. |
+| Web research | Enable exact/wildcard URL permission, bounded discovery and BM25 passage search; run `/web research` for local-model answers with verified quote references, usage and partial coverage. Web access ships off; selection/injection is account scoped. |
+| Accounts and API Keys | Fresh `admin` / `admin` requires password replacement. Administrator, Portal operator and Auditor permissions are enforced on API reads and writes. Administrators manage masked saved/active credentials in API Keys. |
 | Coding loop | Stage a repository task and inspect files or a plan; confirm an isolated run that proposes bounded edits, runs fixed check profiles in a hard sandbox, and feeds check results back into later attempts. |
 | Review and publication | Inspect retained run status and diffs, approve the reviewed tree for a local commit, then separately push and publish a draft PR with a reviewed repository template. |
 | Recovery | Rediscover retained jobs and runs after reopening. Worker leases distinguish active work from interrupted runs; reopening does not automatically resume work or replay a publication. |
@@ -105,14 +100,16 @@ git clone https://github.com/cgfixit/CG-agent-harness.git
 cd CG-agent-harness
 cargo build --release --locked
 ./target/release/cgagentharness serve
-# Open http://127.0.0.1:8790/
+# Open https://127.0.0.1:8790 with explicit browser trust; see docs/SECURE_RESEARCH.md
 ```
 
 `serve` accepts `--host` and `--port` (1024–65535). Any bind host that is not a
 loopback address is refused, and a request whose `Host` header is not a loopback
 name is rejected before routing. The standalone CLI/server is one
-self-reexecuting Rust binary, `cgagentharness`, with `serve` as its only
-operator subcommand; `agentic` is hidden and spawned only by `src/shim` (never
+self-reexecuting Rust binary, `cgagentharness`. Public commands are `serve`,
+`account`, `web` and `tls`; `account`/`web` use the authenticated running service,
+while certificate export/renewal is local filesystem-owner administration.
+`agentic` is hidden and spawned only by `src/shim` (never
 by anything else in the server). `desktop` is a separate hidden subcommand of
 the same binary, but the server does not spawn it — the desktop shell
 (`desktop/src/backend.rs::Backend::start`, a separate crate) launches it as its
@@ -189,14 +186,15 @@ skills.
 
 `/session new` clears the visible conversation and starts separate message/goal/skill
 context. Switching sessions restores only that session’s saved messages. Shared
-persona and enabled memory/web context remain; `/prompt` shows them. Chat knows
+persona and enabled memory remain shared; your account's permitted web selection
+survives session changes. `/prompt` shows the resulting context. Chat knows
 the operator commands, but cannot execute them. `/memory` lists real saved notes;
 `/memory add <note>` saves literal text, not an instruction to archive every session.
 
 `/tokens` reports the current session tally, `/api` inspects managed-key presence
 (`CGAGENTHARNESS_API_KEY`, `GROK_API_KEY`, `ANTHROPIC_API_KEY`,
 `DEEPAGENT_API_KEY` — presence and a masked tail only, never a stored secret),
-`/users` opens optional local account administration, and `/harness` lists
+`/users` opens administrator-only account management, and `/harness` lists
 retained harness-optimizer runs.
 
 Choose the reset that matches your intent:
@@ -222,7 +220,9 @@ proposal review, recovery and completion semantics. Interrupted persona applies
 reconcile proposal status on startup or the next persona operation; recovery
 never reapplies text or overwrites a changed document.
 
-`/web` exposes the explicit enable/allow/fetch/search/inject controls.
+`/web` exposes enable/allow/fetch/search/research/cancel/inject controls. See
+[secure research](docs/SECURE_RESEARCH.md#url-permission-and-migration) for URL
+rules, separately permitted robots traversal, source groups and terminal examples.
 `/connectors` is a catalog, not a claim that every listed connector is executable;
 use `/tools <name>` to inspect registration and known prerequisites. This harness does not include CyClaw's RAG corpus,
 terminal, or fsconnect/sqlconnect/netconnect services.
@@ -349,37 +349,19 @@ provider as authorizing repository-content egress for every subsequent
 
 ## Optional credentials and enforced boundaries
 
-Fresh homes set `security.api_key_optional: true`: direct loopback harness
-operations work without a key or account login. For an older home, set that flag
-explicitly and restart. Origin, CSRF, request budgets, repository policy, and
-approval checks still apply.
+Fresh homes set `auth.enabled: true` and `tls.enabled: true`. Sign in with
+`admin` / `admin`, then replace the password before using the portal. Account
+roles protect all operational routes, including reads. Secure cookies, same-origin,
+CSRF, rate limits and every existing coding/write/publication gate remain enforced.
+The harness API key is optional metadata and never grants account access. The old
+key-required setting is deprecated. Forwarded/proxy connections are refused.
 
-To require a key, set `security.api_key_optional: false`, configure
-`CGAGENTHARNESS_API_KEY` in the server environment or desktop home's private
-`.env`, and restart. Enter the key in the console; it stays in page memory.
-Forwarded requests never use the local bypass. Explicitly enforce the key behind
-any proxy, including one stripping forwarding headers.
-
-Every `/api/agent`, `/api/soul`, `/api/web`, `/api/memory`, `/api/sessions` and
-similar operator-mutation route runs the same guard chain in a load-bearing
-order: rate limit → same-origin → API key (constant-time, with the loopback
-bypass only under `security.api_key_optional`) → per-process CSRF token.
-Read-only status and inventory routes are deliberately open; each mutation
-route above is guarded. The optional `/api/auth/*` account routes are a
-deliberate exception with a narrower chain: `bootstrap-password` and `login`
-(`guards::auth_open`) run only rate limit + same-origin — no API key, no CSRF.
-This is not because the client can't present them: `console()` bakes the
-per-process CSRF token into the page before login, and the console's request
-helper attaches both `X-CyClaw-CSRF` and an entered `Authorization` bearer key
-on every call, session or not. The exemption is deliberate route policy, not a
-credential-availability limit — and `logout`
-and account management (`guards::auth_sess`) run rate limit + same-origin +
-CSRF, but still no harness API key. Do not assume the full four-guard chain on
-`/api/auth/*`.
-
-`auth.enabled` retains optional accounts, login sessions, and role-based account
-management. It does not gate chat or the coding pipeline. External services
-still require their own credentials, including GitHub publication.
+Existing homes keep their configuration. Valid legacy accounts migrate to private
+transactional SQLite, retaining hashes and permissions; initialized missing or
+corrupt stores fail closed. Research is account scoped; chat sessions, jobs, notes
+and persona remain shared portal resources. See [secure research and migration](docs/SECURE_RESEARCH.md)
+for the role matrix, TLS trust/renewal, terminal login, exact/wildcard URL rules,
+research budgets and API Keys saved-versus-active status.
 
 The HTTP server reaches agentic execution only by spawning one of twelve
 whitelisted actions through `src/shim`. The bar is wider than the server module:
@@ -419,7 +401,8 @@ executing. Native sandbox and descendant-cleanup limits are recorded in
 
 `/web off` excludes saved web context from subsequent chat and prompt previews;
 `/web on` can resume it. `/web forget` deletes the saved extract and context.
-A completed search with no hits clears both to prevent reuse of stale results.
+A completed search with no hits clears your account's last/injected selection to
+prevent stale reuse; it does not erase the shared public-document cache.
 See [web setup and controls](setup-guide.md#76-web-fetch-search-and-injected-context) for bounds.
 
 ## Tests and CI/CD
@@ -445,8 +428,8 @@ identity: the fixtures neutralize `GIT_CONFIG_GLOBAL` and set `user.name` /
 including the copy inside a macOS bundle. The Python suite uses only the standard
 library and a temporary loopback HTTP model fixture; it downloads no models and
 makes no cloud inference requests. Its chat/restart test verifies history, goal,
-notes, model selection, token counts, fresh CSRF, and no replay with neither a
-key nor a login.
+notes, model selection, token counts, fresh CSRF and no replay using a disposable
+account, HTTPS and an optional empty harness key.
 
 | Gate | Evidence and scope |
 |---|---|
@@ -486,6 +469,8 @@ explicit invariant statement in the PR body.
 | [INVARIANTS.md](INVARIANTS.md) | Process isolation, guard chain, write policy, clone jail, and sandbox guarantees |
 | [SECURITY.md](SECURITY.md) | Supported surface and how to report a vulnerability |
 | [assets/config.default.yaml](assets/config.default.yaml) | Shipped settings and configurable budgets |
+| [docs/SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) | HTTPS trust/renewal, SQLite migration, roles, terminal commands, URL rules, research budgets and API Keys |
+| [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Toolchains, lockfiles, feature choices, retained pins and dependency drift checks |
 | [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging, and recovery |
 | [docs/BOUNDED_EDITS.md](docs/BOUNDED_EDITS.md) | Exact-content edit format, scope and budget limits |
 | [docs/GIT_APPROVAL.md](docs/GIT_APPROVAL.md) | Approval binding, commit/push/publish separation |

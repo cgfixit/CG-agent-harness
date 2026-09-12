@@ -40,6 +40,7 @@ pub struct AppState {
     pub api_key_optional: bool,
     /// Snapshot of `CGAGENTHARNESS_API_KEY` at build time (tests inject it).
     pub api_key: Option<String>,
+    pub key_file_sources: BTreeSet<String>,
     pub auth: Option<AuthManager>,
     pub web: WebTool,
     pub notes: MemoryNotes,

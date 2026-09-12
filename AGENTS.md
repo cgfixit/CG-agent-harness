@@ -13,7 +13,10 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 
 ## The map
 
-- `cgagentharness serve` -> `src/server` (axum, 127.0.0.1 only).
+- `cgagentharness serve` -> shared HTTP/HTTPS transport in `src/server`, loopback only.
+- Public `account` and `web` CLI operations call the same protected service; `tls` exports/renews local certificate material. See `docs/SECURE_RESEARCH.md`.
+- Fresh auth/TLS switches are true; existing explicit choices survive upgrades. SQLite accounts protect operational reads and writes. Harness API keys are optional metadata, never login authority.
+- Web starts disabled, with exact/wildcard content permission distinct from account and provider authority. Research/web selection is account scoped; sessions/jobs/notes/persona are shared portal resources.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim`, never called in-process from the server).
 - Exit codes are an API: `0` ok, `2` failed, `3` env/config, `4` write refused.

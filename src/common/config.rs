@@ -35,10 +35,24 @@ impl AppConfig {
         if !raw.is_mapping() {
             return Err(HarnessError::config("config file must contain a YAML mapping"));
         }
-        Ok(Self {
+        let config = Self {
             raw,
             path: path.to_path_buf(),
-        })
+        };
+        // Malformed protection switches cannot silently become an opt-out.
+        // Absent fields retain compatibility with homes predating these features.
+        for section in ["auth", "tls"] {
+            if config.get(section).is_some_and(|v| !v.is_mapping())
+                || config
+                    .get(&format!("{section}.enabled"))
+                    .is_some_and(|v| v.as_bool().is_none())
+            {
+                return Err(HarnessError::config(format!(
+                    "{section}.enabled must be a literal YAML boolean"
+                )));
+            }
+        }
+        Ok(config)
     }
 
     /// Look up a dotted path such as `models.local_llm.base_url`.

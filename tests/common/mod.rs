@@ -113,7 +113,13 @@ pub struct ServerOptions {
 impl Default for ServerOptions {
     fn default() -> Self {
         Self {
-            overrides: Vec::new(),
+            // Existing operation fixtures exercise their independent contracts
+            // under the explicit legacy opt-out. Secure-default tests opt in
+            // and authenticate through the actual account routes.
+            overrides: vec![
+                ("auth.enabled".into(), "false".into()),
+                ("tls.enabled".into(), "false".into()),
+            ],
             api_key: Some("test-api-key-0123456789".to_string()),
             deny_all_tools: false,
             web_resolve: None,
@@ -151,26 +157,28 @@ pub async fn spawn_server(model_url: &str, opts: ServerOptions) -> TestServer {
     app_opts.web_test_resolve = opts.web_resolve;
     app_opts.shim_exe = Some(PathBuf::from(BIN));
     let (router, state) = build_app(app_opts).await.unwrap();
+    let transport = cgagentharness::server::transport::Transport::load(&state.home, &state.cfg, "127.0.0.1").unwrap();
+    let scheme = transport.scheme();
+    let mut client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none());
+    if !transport.certificate_der.is_empty() {
+        client = client.add_root_certificate(reqwest::Certificate::from_der(&transport.certificate_der).unwrap());
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
-        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-            .await
-            .unwrap();
+        transport.serve(listener, router).await.unwrap();
     });
     let csrf = state.csrf_token.clone();
     TestServer {
-        base: format!("http://127.0.0.1:{}", addr.port()),
+        base: format!("{scheme}://127.0.0.1:{}", addr.port()),
         addr,
         state,
         home: home_dir,
         api_key: opts.api_key.unwrap_or_default(),
         csrf,
-        client: reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap(),
+        client: client.build().unwrap(),
         _tmp: tmp,
         _task: task,
     }

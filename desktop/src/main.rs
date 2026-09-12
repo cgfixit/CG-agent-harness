@@ -1,5 +1,6 @@
 mod backend;
 mod instance;
+mod trust;
 
 use backend::Backend;
 use serde::Serialize;
@@ -135,14 +136,14 @@ fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), 
             let window = WebviewWindowBuilder::new(
                 app,
                 "harness",
-                WebviewUrl::External(origin.parse().map_err(|_| "Invalid origin.")?),
+                WebviewUrl::External("about:blank".parse().expect("static blank URL")),
             )
             .title("CG Agent Harness")
             .incognito(true)
             .inner_size(1150.0, 820.0)
             .min_inner_size(700.0, 480.0)
             .on_navigation(move |url| {
-                if backend::allowed_navigation(url, &allowed) {
+                if url.as_str() == "about:blank" || backend::allowed_navigation(url, &allowed) {
                     true
                 } else {
                     external_link(&navigation_app, url.clone());
@@ -158,14 +159,16 @@ fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), 
             .zoom_hotkeys_enabled(true)
             .build()
             .map_err(|_| "Cannot create native harness webview.")?;
-            let key_state = if backend.hello["api_key_optional"] == true {
-                "Ready to use. API key entry and account login are optional."
-            } else if backend.hello["key_configured"] == true {
-                "Enter your existing API key in the console."
-            } else {
-                "No API key configured. Use Setup to save a new key, then enter it in the console."
-            };
-            owner.message = format!("Backend ready. {key_state}");
+            if origin.starts_with("https:") {
+                if let Err(error) = trust::install(&window, &origin, backend.certificate_der.clone()) {
+                    let _ = window.destroy();
+                    return Err(error);
+                }
+            }
+            window
+                .navigate(origin.parse().map_err(|_| "Invalid origin.")?)
+                .map_err(|_| "Cannot navigate to owned backend.")?;
+            owner.message = "Backend ready. Sign in to the harness. Fresh homes use admin / admin with an immediate password change.".into();
             let tools: Vec<_> = ["git", "gh", "cargo", "rustc", "python3", "xcrun"]
                 .into_iter()
                 .map(|name| {
@@ -295,6 +298,14 @@ fn request_quit(app: &tauri::AppHandle) {
 }
 
 fn main() {
+    // Read-only package verification, before home ownership or GUI startup.
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--bundled-backend-sha256")
+    {
+        println!("{}", env!("CGAH_BACKEND_SHA256"));
+        return;
+    }
     let instance = match backend::home().and_then(|home| instance::Instance::acquire(&home)) {
         Ok(Some(instance)) => Some(instance),
         Ok(None) => return,

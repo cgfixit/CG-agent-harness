@@ -303,6 +303,7 @@ impl Validate for PreviewRequest {
 }
 pub async fn preview(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<PreviewRequest>,
 ) -> ApiResult<PrivateJson> {
     let session = req
@@ -315,7 +316,9 @@ pub async fn preview(
         validate_content(&state, content)?;
     }
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    let web = state.web.context_text(settings.web_enabled);
+    let web = state
+        .web
+        .context_text(settings.web_enabled, &super::auth::context_owner(user));
     let memory = if settings.memory_enabled {
         state.notes.context_text()
     } else {

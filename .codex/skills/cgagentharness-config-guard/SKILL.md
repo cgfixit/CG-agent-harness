@@ -11,7 +11,7 @@ contracts the running system assumes? Not a code/topology review (see
 (`AGENTS.md`); relations and fail-closed defaults are load-bearing.
 
 **Checker (FACT):** Rust tests — primarily
-`tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed` and
+`tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` and
 `flag_is_true` coverage in `tests/common_layer.rs`. **Do not invent a Python
 parser** as the merge gate. A FUTURE stdlib/PyYAML companion checker is
 INFERENCE only if labeled as such and never replaces cargo evidence.
@@ -21,13 +21,14 @@ INFERENCE only if labeled as such and never replaces cargo evidence.
 | ID | Severity | Contract |
 |---|---|---|
 | H1 | FAIL | `flag_is_true`: unquoted YAML `true` only; quoted `"true"` / `"false"` / other strings are **OFF** |
-| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `auth.enabled`, `unslop.enabled` (exact list locked by `shipped_config_keeps_every_gate_closed`). `security.api_key_optional` is **not** in that closed list — it ships unquoted `true` (`flag_is_true`; direct local use) |
+| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `unslop.enabled`; web also starts off. Fresh `auth.enabled` and `tls.enabled` must be true. These are locked by `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`. `security.api_key_optional` remains true but is deprecated metadata, not an account bypass |
+| H10 | FAIL | Invalid auth/TLS switch types refuse configuration; missing legacy fields remain off. Do not apply the generic quoted-gate OFF behavior to these security switches |
 | H3 | FAIL | Literal YAML needles: `api_key_optional: true` and `allow_git_write_tools: false`; shipped YAML must not contain `allow_git_write_tools: true` (string forms hide mistakes) |
 | H4 | FAIL | Write path still requires human `reason` + per-call `confirm` (never defaulted) — behavior locked in writer + `real_repo_loop` / shim routes; config must not document or enable a bypass |
 | H5 | FAIL | Kill switch remains disable-only env `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` (AND-ed); `EXECUTION_ENABLED` does not flip itself closed |
 | H6 | FAIL | Loopback posture: serve binds loopback only; model `base_url` examples stay `127.0.0.1`; non-loopback refused in code |
 | H7 | WARN | `writes_enabled: true` in shipped agentic block is **armed-by-construction** and held closed by `agentic.enabled` + kill switch — changing either without an invariant statement is conscious risk |
-| H8 | WARN | `policy.prompt_filter.banned_patterns` length stays aligned with the documentary CyClaw-port count (asserted 40 in `shipped_config_keeps_every_gate_closed`) |
+| H8 | WARN | `policy.prompt_filter.banned_patterns` length stays aligned with the documentary CyClaw-port count (asserted 40 in `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`) |
 | H9 | WARN | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agents_md`) |
 
 ## Run
@@ -59,7 +60,7 @@ When the change is semantically load-bearing for writes/jails, also run
 ```text
 Config Guard: PASS|FAIL
 Evidence: <test names + results>
-Gates: <each H1–H9 one line>
+Gates: <each H1–H10 one line>
 Re-tune: <none | list>
 Verdict: safe to merge / fix required: ...
 ```

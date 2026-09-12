@@ -7,7 +7,7 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderValue, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use axum::{Extension, Json};
 use serde_json::{json, Value};
 
 use crate::common::auth_store::{AuthManager, UserSummary, BOOTSTRAP_USERNAME};
@@ -44,15 +44,17 @@ fn cookie_value(req: &Request<Body>) -> Option<String> {
     None
 }
 
-fn set_cookie(resp: &mut Response, value: &str) {
-    let v = format!("{SESSION_COOKIE}={value}; HttpOnly; SameSite=Strict; Path=/");
+fn set_cookie(resp: &mut Response, value: &str, secure: bool) {
+    let suffix = if secure { "; Secure" } else { "" };
+    let v = format!("{SESSION_COOKIE}={value}; HttpOnly; SameSite=Strict; Path=/{suffix}");
     if let Ok(hv) = HeaderValue::from_str(&v) {
         resp.headers_mut().append(header::SET_COOKIE, hv);
     }
 }
 
-fn clear_cookie(resp: &mut Response) {
-    let v = format!("{SESSION_COOKIE}=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/");
+fn clear_cookie(resp: &mut Response, secure: bool) {
+    let suffix = if secure { "; Secure" } else { "" };
+    let v = format!("{SESSION_COOKIE}=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/{suffix}");
     if let Ok(hv) = HeaderValue::from_str(&v) {
         resp.headers_mut().append(header::SET_COOKIE, hv);
     }
@@ -71,7 +73,10 @@ fn map_auth_error(e: &HarnessError) -> ApiError {
     }
 }
 
-fn actor(state: &AppState, req: &Request<Body>) -> ApiResult<UserSummary> {
+pub(crate) fn actor(state: &AppState, req: &Request<Body>) -> ApiResult<UserSummary> {
+    if let Some(user) = req.extensions().get::<UserSummary>() {
+        return Ok(user.clone());
+    }
     let mgr = manager(state)?;
     let token = cookie_value(req).unwrap_or_default();
     let unauthorized = || ApiError::new(StatusCode::UNAUTHORIZED, "AUTH_REQUIRED", "authentication required");
@@ -79,12 +84,26 @@ fn actor(state: &AppState, req: &Request<Body>) -> ApiResult<UserSummary> {
     mgr.get_user(&info.username).ok_or_else(unauthorized)
 }
 
+/// Request-owned web state uses the authenticated account; explicitly disabled
+/// authentication has one documented local operator namespace.
+pub(super) fn web_owner(state: &AppState, req: &Request<Body>) -> ApiResult<String> {
+    if state.auth.is_some() {
+        actor(state, req).map(|u| u.user_id)
+    } else {
+        Ok("local".into())
+    }
+}
+
+pub(super) fn context_owner(user: Option<Extension<UserSummary>>) -> String {
+    user.map(|u| u.user_id.clone()).unwrap_or_else(|| "local".into())
+}
+
 fn denied() -> ApiError {
     ApiError::new(StatusCode::FORBIDDEN, PERM_DENIED, "denied")
 }
 
 fn require_user_admin(account: &UserSummary) -> ApiResult<()> {
-    if account.role != ROLE_ADMIN && account.role != ROLE_OPERATOR {
+    if account.role != ROLE_ADMIN || account.must_change_password {
         return Err(denied());
     }
     Ok(())
@@ -98,6 +117,7 @@ fn user_payload(u: &UserSummary) -> Value {
         "created_ts": u.created_ts,
         "last_login_ts": u.last_login_ts,
         "locked": u.locked_until_ts.is_some(),
+        "must_change_password": u.must_change_password,
     })
 }
 
@@ -112,6 +132,7 @@ pub async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<
 }
 
 pub async fn bootstrap_password(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
+    let secure = crate::server::guards::request_scheme(&req) == "https";
     manager(&state)?;
     if !is_loopback_peer(&req) || looks_proxied(req.headers()) {
         return Err(ApiError::new(
@@ -129,12 +150,13 @@ pub async fn bootstrap_password(State(state): State<Arc<AppState>>, req: Request
     .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))??;
     let mut resp =
         Json(json!({"username": result.username, "role": ROLE_ADMIN, "csrf_token": result.csrf_token})).into_response();
-    set_cookie(&mut resp, &result.session_id);
+    set_cookie(&mut resp, &result.session_id, secure);
     Ok(resp)
 }
 
 pub async fn login(
     State(state): State<Arc<AppState>>,
+    scheme: Option<Extension<crate::server::transport::ListenerScheme>>,
     ValidJson(req): ValidJson<AuthLoginRequest>,
 ) -> ApiResult<Response> {
     manager(&state)?;
@@ -148,25 +170,117 @@ pub async fn login(
         .get_user(&result.username)
         .map(|u| u.role)
         .unwrap_or_else(|| ROLE_OPERATOR.to_string());
-    let mut resp =
-        Json(json!({"username": result.username, "role": role, "csrf_token": result.csrf_token})).into_response();
-    set_cookie(&mut resp, &result.session_id);
+    let must_change_password = manager(&state)?
+        .get_user(&result.username)
+        .is_some_and(|u| u.must_change_password);
+    state
+        .audit
+        .log(json!({"event":"account.login", "actor":result.username,"outcome":"success"}));
+    let mut resp = Json(json!({"username": result.username, "role": role, "csrf_token": result.csrf_token,"must_change_password":must_change_password})).into_response();
+    set_cookie(&mut resp, &result.session_id, scheme.is_some_and(|s| s.0 .0 == "https"));
     Ok(resp)
 }
 
 pub async fn logout(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
     let mgr = manager(&state)?;
     if let Some(token) = cookie_value(&req) {
-        mgr.logout(&token);
+        mgr.logout(&token).map_err(|e| map_auth_error(&e))?;
     }
     let mut resp = Json(json!({"ok": true})).into_response();
-    clear_cookie(&mut resp);
+    clear_cookie(&mut resp, crate::server::guards::request_scheme(&req) == "https");
     Ok(resp)
 }
 
 pub async fn whoami(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
     let account = actor(&state, &req)?;
-    Ok(Json(json!({"username": account.username, "role": account.role})))
+    Ok(Json(
+        json!({"username": account.username, "role": account.role,"must_change_password":account.must_change_password}),
+    ))
+}
+
+pub async fn change_password(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
+    let account = actor(&state, &req)?;
+    let secure = crate::server::guards::request_scheme(&req) == "https";
+    let ValidJson(body) = ValidJson::<AuthChangePasswordRequest>::from_request(req, &()).await?;
+    let st = state.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        manager(&st)?
+            .change_password(&account.username, &body.current_password, &body.password)
+            .map_err(|e| map_auth_error(&e))
+    })
+    .await
+    .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))??;
+    let mut response = Json(json!({"ok":true,"must_change_password":false})).into_response();
+    set_cookie(&mut response, &result.session_id, secure);
+    Ok(response)
+}
+
+pub async fn set_disabled(
+    State(state): State<Arc<AppState>>,
+    Path(username): Path<String>,
+    req: Request<Body>,
+) -> ApiResult<Json<Value>> {
+    require_user_admin(&actor(&state, &req)?)?;
+    let ValidJson(body) = ValidJson::<AuthDisabledRequest>::from_request(req, &()).await?;
+    let mgr = manager(&state)?;
+    (if body.disabled {
+        mgr.disable_user(&username)
+    } else {
+        mgr.enable_user(&username)
+    })
+    .map_err(|e| map_auth_error(&e))?;
+    Ok(Json(json!({"ok":true})))
+}
+
+/// Audit accounts see only this fixed projection of request events. Model
+/// content, paths in the filesystem, account records and keys are never read.
+pub async fn audit_events(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut file = match options.open(state.audit.path()) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Json(json!({"events":[]}))),
+        Err(_) => {
+            return Err(ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "AUDIT_UNAVAILABLE",
+                "audit unavailable",
+            ))
+        }
+    };
+    let size = file
+        .metadata()
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "AUDIT_UNAVAILABLE",
+                "audit unavailable",
+            )
+        })?
+        .len();
+    file.seek(SeekFrom::Start(size.saturating_sub(65536))).map_err(|_| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "AUDIT_UNAVAILABLE",
+            "audit unavailable",
+        )
+    })?;
+    let mut text = String::new();
+    file.take(65536).read_to_string(&mut text).map_err(|_| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "AUDIT_UNAVAILABLE",
+            "audit unavailable",
+        )
+    })?;
+    let events:Vec<Value>=text.lines().rev().filter_map(|line|serde_json::from_str::<Value>(line).ok()).filter(|v|v["event"]=="portal.request").take(100).map(|v|json!({"timestamp":v["timestamp"],"actor":v["actor"],"method":v["method"],"route":v["route"],"status":v["status"]})).collect();
+    Ok(Json(json!({"events":events,"bounded":true})))
 }
 
 pub async fn list_users(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {

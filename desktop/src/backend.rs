@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub const PROTOCOL: u64 = 1;
+pub const PROTOCOL: u64 = 2;
+
+#[path = "../../src/common/local_tls.rs"]
+mod local_tls;
 
 pub fn home() -> Result<PathBuf, String> {
     if let Some(value) = std::env::var_os("CGAGENTHARNESS_HOME").filter(|v| !v.is_empty()) {
@@ -104,6 +107,7 @@ pub struct Backend {
     buffer: Vec<u8>,
     pub origin: String,
     pub hello: Value,
+    pub certificate_der: Vec<u8>,
 }
 
 impl Backend {
@@ -144,6 +148,7 @@ impl Backend {
             buffer: Vec::new(),
             origin: String::new(),
             hello: Value::Null,
+            certificate_der: Vec::new(),
         };
         let mut random = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut random);
@@ -163,20 +168,52 @@ impl Backend {
             .as_u64()
             .filter(|p| *p > 0 && *p <= 65535)
             .ok_or("Invalid owned listener.")?;
-        let origin = format!("http://127.0.0.1:{port}");
-        let client = reqwest::blocking::Client::builder()
+        let scheme = hello["scheme"]
+            .as_str()
+            .filter(|s| matches!(*s, "http" | "https"))
+            .ok_or("Invalid backend transport.")?;
+        let origin = format!("{scheme}://127.0.0.1:{port}");
+        let mut client = reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(3))
-            .build()
-            .map_err(|_| "Cannot create readiness verifier.")?;
-        let response: Value = client
+            .tls_info(true);
+        if scheme == "https" {
+            use base64::Engine;
+            let encoded = hello["certificate_der"]
+                .as_str()
+                .filter(|s| s.len() <= 8192)
+                .ok_or("Missing private-channel certificate identity.")?;
+            owner.certificate_der = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|_| "Invalid private-channel certificate.")?;
+            if hello["certificate_sha256"].as_str()
+                != Some(hex::encode(Sha256::digest(&owner.certificate_der)).as_str())
+            {
+                return Err("Backend certificate identity mismatch.".into());
+            }
+            client =
+                client.use_preconfigured_tls(local_tls::client_config(owner.certificate_der.clone(), "127.0.0.1")?);
+        }
+        let client = client.build().map_err(|_| "Cannot create readiness verifier.")?;
+        let response = client
             .get(format!("{origin}/_desktop/ready"))
             .header("x-cgah-readiness", challenge)
             .send()
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json())
             .map_err(|_| "Owned backend readiness authentication failed.")?;
+        if scheme == "https"
+            && response
+                .extensions()
+                .get::<reqwest::tls::TlsInfo>()
+                .and_then(|t| t.peer_certificate())
+                != Some(owner.certificate_der.as_slice())
+        {
+            return Err("Owned listener presented a different certificate.".into());
+        }
+        let response: Value = response
+            .json()
+            .map_err(|_| "Malformed owned listener readiness response.")?;
         if response["protocol"].as_u64() != Some(PROTOCOL) || response["pid"].as_u64() != Some(owner.child.id() as u64)
         {
             return Err("Owned listener identity mismatch.".into());

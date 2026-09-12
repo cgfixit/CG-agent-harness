@@ -143,8 +143,9 @@ chat-browser flakes → issue **#43**; do not hollow asserts.
 
 - **I6** — server never links/calls `crate::agentic`; only `src/shim` spawns
   `current_exe() agentic <action>` with ACTIONS whitelist.
-- **Guard chain** — rate limit → same-origin → API key → CSRF; Host loopback;
-  fail-closed unset API key.
+- **Guard chain** — rate limit → same-origin → direct loopback/no proxy →
+  account/RBAC → mutation CSRF. Fresh auth/TLS are true; the optional harness key
+  grants no authority. Host/HTTP2 authority remains unambiguous loopback.
 - **Browser never supplies a command** — profile names + `--opt=value` / temp
   files; hostile argv refused.
 - **Write gates** — shipped gates closed; `confirm` never defaulted; `reason`

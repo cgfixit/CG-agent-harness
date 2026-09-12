@@ -20,7 +20,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 51] = [
+pub const REGISTERED_PATHS: [&str; 56] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -34,6 +34,8 @@ pub const REGISTERED_PATHS: [&str; 51] = [
     "/api/web/deny",
     "/api/web/fetch",
     "/api/web/search",
+    "/api/web/research",
+    "/api/web/research/cancel",
     "/api/web/inject",
     "/api/web/forget",
     "/api/memory",
@@ -72,6 +74,9 @@ pub const REGISTERED_PATHS: [&str; 51] = [
     "/api/auth/bootstrap-password",
     "/api/auth/login",
     "/api/auth/logout",
+    "/api/auth/password",
+    "/api/audit",
+    "/api/auth/users/{username}/disabled",
 ];
 
 pub fn registered_paths() -> BTreeSet<String> {
@@ -94,6 +99,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(super::console::console))
         .route("/static/{name}", get(super::console::static_asset))
         .route("/api/status", get(core::status))
+        .route("/api/audit", get(auth::audit_events))
         .route("/api/registry", get(panels::registry))
         .route("/api/tools", get(panels::tools))
         .route("/api/skills", get(panels::skills))
@@ -123,6 +129,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/web/deny", post(panels::web_deny))
         .route("/api/web/fetch", post(panels::web_fetch))
         .route("/api/web/search", post(panels::web_search))
+        .route("/api/web/research", post(panels::web_research))
+        .route("/api/web/research/cancel", post(panels::web_cancel))
         .route("/api/web/inject", post(panels::web_inject))
         .route("/api/web/forget", post(panels::web_forget))
         .route("/api/memory", get(panels::memory_status).post(panels::memory_toggle))
@@ -160,11 +168,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/auth/bootstrap-password", post(auth::bootstrap_password))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/whoami", get(auth::whoami))
-        .route("/api/auth/users", get(auth::list_users))
-        .route_layer(middleware::from_fn_with_state(state.clone(), guards::auth_open));
+        .route("/api/auth/users", get(auth::list_users));
 
     let auth_sess = Router::new()
         .route("/api/auth/logout", post(auth::logout))
+        .route("/api/auth/password", post(auth::change_password))
+        .route("/api/auth/users/{username}/disabled", post(auth::set_disabled))
         .route("/api/auth/users", post(auth::create_user))
         .route("/api/auth/users/{username}/password", post(auth::set_password))
         .route("/api/auth/users/{username}/role", post(auth::set_role))
@@ -177,6 +186,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(guarded)
         .merge(auth_open)
         .merge(auth_sess)
+        .layer(middleware::from_fn_with_state(state.clone(), guards::account_gate))
         .layer(middleware::from_fn(super::headers::trusted_host))
         .layer(middleware::from_fn(super::headers::security_headers));
     // Outermost so the line records the status the client actually saw
@@ -227,7 +237,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 51);
+        assert_eq!(REGISTERED_PATHS.len(), 56);
 
         let all = registered_paths();
         assert!(

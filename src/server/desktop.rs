@@ -1,7 +1,6 @@
 //! Private parent/sidecar protocol. It carries ownership, never API authority.
 //! No route here can approve, edit, push, publish, or spawn a worker.
 use std::io::{BufRead, Write};
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::http::{HeaderMap, StatusCode};
@@ -14,7 +13,7 @@ use crate::common::home::Home;
 use crate::common::home_lock::HomeLock;
 use crate::llm::inventory::{local_endpoint, model_readiness, InventoryLimits};
 
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 const MAX_FRAME: u64 = 8192;
 
 #[derive(Deserialize)]
@@ -107,17 +106,23 @@ fn start() -> anyhow::Result<()> {
         super::env_keys::write_keys(&home.env_path(), &update)?;
         keys.extend(update);
     }
+    let mut options = super::AppOptions::new(home);
     for (name, value) in keys {
         // This entrypoint is still single-threaded; preserve explicit env precedence.
         if std::env::var_os(&name).is_none() {
+            options.key_file_sources.insert(name.clone());
             std::env::set_var(name, value);
         }
     }
     let rt = tokio::runtime::Runtime::new()?;
     let outcome = rt.block_on(async {
-        let mut options = super::AppOptions::new(home);
         options.config = Some(config);
         let (app, state) = super::build_app(options).await?;
+        let transport = super::transport::Transport::load(&state.home, &state.cfg, "127.0.0.1")?;
+        let scheme = transport.scheme();
+        use base64::Engine;
+        let certificate = base64::engine::general_purpose::STANDARD.encode(&transport.certificate_der);
+        let fingerprint = crate::common::sha256_bytes_hex(&transport.certificate_der);
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
         let port = listener.local_addr()?.port();
         let proof = hello.challenge.clone();
@@ -139,11 +144,10 @@ fn start() -> anyhow::Result<()> {
             }
         });
         let app = app.route("/_desktop/ready", readiness);
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await
-        });
+        let server = tokio::spawn(transport.serve(listener, app));
         send(
             json!({"protocol":PROTOCOL,"challenge":hello.challenge,"pid":std::process::id(),"port":port,
+            "scheme":scheme,"certificate_der":certificate,"certificate_sha256":fingerprint,
             "key_configured":state.api_key.as_deref().is_some_and(|s| !s.is_empty()),
             "api_key_optional":state.api_key_optional,
             "home":state.home.root,"chat_model":state.current_model(),

@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 36] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 38] = [
     (
         "goal-stage",
         "/goal stage|task",
@@ -336,7 +336,21 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 36] = [
         "/web search",
         "POST",
         "/api/web/search",
-        "grep allowlisted pages for a query (no search engine)",
+        "bounded discovery and local passage retrieval",
+    ),
+    (
+        "web-research",
+        "/web research",
+        "POST",
+        "/api/web/research",
+        "bounded local-model research with checked citations",
+    ),
+    (
+        "web-research-cancel",
+        "/web cancel",
+        "POST",
+        "/api/web/research/cancel",
+        "cancel your active research request",
     ),
     (
         "keys",
@@ -619,10 +633,10 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 36);
+        assert_eq!(HARNESS_SURFACES.len(), 38);
         let report = list_wired_tools(&registered);
-        assert_eq!(report["total"], 36);
-        assert_eq!(report["wired"], 36, "a catalog surface is unwired");
+        assert_eq!(report["total"], 38);
+        assert_eq!(report["wired"], 38, "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }

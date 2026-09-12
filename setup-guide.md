@@ -12,27 +12,14 @@ has no outbound network access. The **console** is the same interface in the
 app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
-**Version scope:** verified against `origin/main` at
-[`3082e7df`](https://github.com/cgfixit/CG-agent-harness/commit/3082e7df)
-on September 12, 2026. The last behavior change on main is
-[`74b5038`](https://github.com/cgfixit/CG-agent-harness/commit/74b5038)
-(planner-requested read selectors in the real-repo loop). Prompt/persona editing,
-runtime skills, goal staging, exact model-inventory checks, session isolation and
-confirmed history deletion are in both current main and the latest published
-release. Earlier issue #32 comments about unmerged feature branches are
-historical; use the code and the latest evidence when checking remaining work.
-
-The published [v0.1.4 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.4)
-was built from `d60211d`. It includes the console features in this guide and the
-`#64` rolling rejection digest plus `#65` planner-requested reads. Commits after
-`d60211d` on this tree are test isolation of the write kill-switch (`9e3a290`)
-and an empty `.codex/README.md` (`3082e7df`); they do not change operator-facing
-loop behavior. The crate `version` in `Cargo.toml` stays `0.1.0` on purpose —
-release tags and `Contents/Resources/COMMIT` identify a build. To match this
-revision, choose a published v0.1.4 app, a successful main Bundle run containing
-this SHA, or build current main. Check `Contents/Resources/COMMIT`, release notes
-and `/help` for the installed app; an unknown command is not fixed by changing
-persona or arming a write gate.
+**Version scope:** this guide follows this source tree. The September 12
+[v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
+predates the HTTPS, SQLite account, permitted research and API Keys changes
+described here. Until those changes merge and ship, use a source build or a
+successful PR Bundle artifact containing them. The Cargo package version remains
+`0.1.0`; identify the installed source using `Contents/Resources/COMMIT`, the
+workflow SHA, release notes and `/help`. Earlier acceptance records retain their
+dated results and do not certify these new boundaries.
 
 ## Quick route through this guide
 
@@ -44,6 +31,11 @@ persona or arming a write gate.
 - **Execute a coding goal:** section 9, after local chat works.
 - **Start fresh or delete saved chats:** section 7.1; memory is separate in 7.5.
 - **Upgrade, preserve data or change release cadence:** section 8.
+- **Sign in, manage roles or recover authentication:** sections 6 and 10.
+- **Use HTTPS from Terminal, renew certificates or migrate old URL rules:**
+  [secure operations](docs/SECURE_RESEARCH.md).
+- **Check lockfiles, toolchains and dependency drift:** section 11 and
+  [dependency policy](docs/DEPENDENCIES.md).
 - **Recover a failed setup:** section 12.
 
 ## 1. Choose how to run it
@@ -52,8 +44,8 @@ persona or arming a write gate.
 |---|---|---|
 | Existing macOS app bundle | Apple Silicon or Intel Mac; working local model service for chat | Native app; owned loopback port chosen at launch |
 | Build the macOS app | Apple Silicon build host, Git, Xcode Command Line Tools, rustup with Rust 1.88 and 1.90 | Native app after packaging in section 5.2 |
-| Standalone server (macOS) | Git, Xcode Command Line Tools and Rust 1.88 | Browser at `http://127.0.0.1:8790/` by default |
-| Standalone server (Linux) | Git, a C toolchain, Rust 1.88 and `unshare` for sandboxed checks | Browser at `http://127.0.0.1:8790/` by default |
+| Standalone server (macOS) | Git, Xcode Command Line Tools and Rust 1.88 | Browser at `https://127.0.0.1:8790/` by default |
+| Standalone server (Linux) | Git, a C toolchain, Rust 1.88 and `unshare` for sandboxed checks | Browser at `https://127.0.0.1:8790/` by default |
 
 This guide is written for macOS. The backend itself is also built and tested on
 Linux in CI, and Bundle runs attach a `cgagentharness-linux-x86_64` binary. On
@@ -70,9 +62,9 @@ For that path, use section 4 to check the model and section 5.2 to obtain/instal
 the app, then follow sections 6–8. Build prerequisites and cloning are only needed
 if you build from source or choose the standalone server.
 
-Local harness use requires neither an API key nor account login. No cloud model
-or account is required for local chat. Account administration and external services retain their own credentials;
-repository writes still require their independent approvals.
+Fresh homes require a local account login over HTTPS; no harness API key or
+cloud account is required for local chat. Provider credentials remain independent,
+and repository writes still require their existing approvals.
 
 ## 2. Prerequisites
 
@@ -388,23 +380,22 @@ successful build do not prove native interaction acceptance; see
 
 ## 6. First run
 
-Local harness use does not require an API key or account login. For the app,
+Fresh homes require account login over HTTPS; no harness API key is required. For the app,
 open it from Finder. For the standalone path, start the server:
 
 ```bash
 ./target/release/cgagentharness serve
 ```
 
-For an existing home, set `security.api_key_optional: true` in its `config.yaml`
-and restart. Saved settings are preserved on upgrade. Optional key enforcement
-is still available: set that flag false, export a generated
-`CGAGENTHARNESS_API_KEY` before `serve`, and enter the matching key in the console.
-Desktop Setup can initialize a missing key in the private home `.env`.
+Existing settings are preserved on upgrade. Merge `auth.enabled: true` and
+`tls.enabled: true` into the active configuration to adopt the new boundaries.
+Sign in as `admin` / `admin` on a fresh account store and replace the password
+immediately. See [TLS trust, migration and recovery](docs/SECURE_RESEARCH.md).
 
 The standalone server prints its address, for example:
 
 ```
-CGagentHarness console on http://127.0.0.1:8790/ (home /Users/you/.CGagentHarness)
+CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarness)
 ```
 
 On first run either path seeds the application home. Before the first chat,
@@ -431,15 +422,14 @@ chat and planner models** to check configured tag availability without downloadi
 For the standalone server, leave its terminal open and visit:
 
 ```
-http://127.0.0.1:8790/
+https://127.0.0.1:8790/
 ```
 
-You'll land on a dark, terminal-styled page with a text input at the bottom and a small key
-field. Leave it empty for default local use. If you explicitly enabled key enforcement, enter the matching `CGAGENTHARNESS_API_KEY` —
-you'll need to do this once per browser tab/session, since the console never stores it anywhere
-on disk or in cookies; it's held only in that input field. Type a message and
-send it, leaving the field empty for normal local use. The current client waits for a complete non-streaming response; latency depends on the model (the first
-reply after starting Ollama can be slower, since it has to load the model into memory).
+The native app verifies its owned local certificate. External browsers need
+explicit operator-controlled trust or an operator certificate already trusted by
+the browser; see the secure setup guide. After login and password replacement,
+leave the optional metadata key field empty and send a message. Chat waits for a
+complete non-streaming reply, so latency depends on the selected local model.
 
 If the browser page hangs and never responds, double-check that Ollama (section 4) is still
 available at its configured local endpoint.
@@ -481,13 +471,14 @@ New/session-switch actions replace the visible transcript, stop chat continuatio
 discard delayed replies from the previous selection, and clear hidden staged
 coding/persona reviews. Saved sessions remain intact; switching restores their
 retained messages. A new session has no prior messages, goal, or selected prompt
-skills. Persona, enabled notes, and enabled web context remain shared within the
-home. The reset controls have different scopes:
+skills. Persona and enabled notes remain shared within the home. Web selection
+and injected context belong to your account and survive your session changes;
+other accounts cannot inherit that selection. The reset controls have different scopes:
 
 | Intent | Control | Retained data |
 |---|---|---|
 | Clear the visible output | `/clear` | Saved messages, session ID and goal remain; later chat still receives recent history. Hidden staged reviews and loop state clear. |
-| Start a separate conversation | **+ new session** or `/session new <title>` | Old sessions remain available; shared persona, enabled notes/web and model selection remain. |
+| Start a separate conversation | **+ new session** or `/session new <title>` | Old sessions, shared persona/notes/model selection, and your account's web selection remain. |
 | Delete all saved conversations | **Clear all session history**, immediately below **+ new session** | Shared notes/persona/web, model configuration, coding runs and audit records remain. |
 
 For deletion, read the dialog, then choose **Delete all session history** to confirm
@@ -762,72 +753,32 @@ context, and use actual command results to establish runtime facts.
 
 ### 7.6 Web fetch, search and injected context
 
-Web ships off and requires an explicit public URL allowlist. It is a bounded
-text fetcher, not an autonomous browser or a general search-engine connector.
-The following illustrates a single public page; substitute the page you need:
+Web ships off and requires explicit current public URL permission. Administrators
+manage versioned exact URLs, explicit host/path wildcards, source groups and
+crawl seeds through `/web allow` and the authenticated terminal `web` commands.
 
 ```text
-/web
-/web allow https://example.com/
+/web allow https://example.com/docs/* docs https://example.com/docs/
+/web allow https://example.com/robots.txt docs
 /web on
-/web fetch https://example.com/
+/web search group=docs widget_open
+/web research group=docs How does widget_open fail?
+/web cancel
 /web inject
-/prompt
 ```
 
-Inspect the fetch result before injection. Fetch stores the last extract;
-`/web inject` copies that stored extract into context for subsequent chat. Neither
-command asks the model a question by itself. `/web search <query>` searches text
-from up to the first eight allowlisted pages, returning bounded snippets. It does
-not search the wider internet. A completed search with no hits clears the previous
-last extract and injected context, including when every page fetch failed; inspect
-its `errors` as well as its `hits`. `/web inject` then refuses until a new fetch or
-matching search stores a page. Rejected requests (for example, an empty query or
-disabled web) preserve stored state. Cleanup failures report `WEB_CLEAR_FAILED`.
+The sole secure fetcher pins validated public DNS addresses, refuses redirects,
+proxies and ambiguous URLs, and applies bounded HTML/robots discovery. Tantivy
+retrieves original passages; dedicated research uses bounded local-model planning
+and cited synthesis. All cache/index/injection/delivery paths recheck current
+policy, and revocation discards in-flight evidence. Research and web selections
+are account scoped; the public-document cache is a shared portal resource.
 
-**Allow the exact page you intend to fetch.** The current matcher accepts a path
-prefix, but the network target is rebuilt from the matched allowlist entry.
-Allowing a site's root and then requesting a deeper path can therefore fetch the
-root. An earlier broad entry can also win over a later specific entry. Remove
-that broad entry with `/web deny <url>`, allow the exact page, and inspect the
-returned source URL. Do not assume a domain entry enables arbitrary page browsing.
-
-Current network restrictions and bounds:
-
-- Only HTTP/HTTPS public destinations; private, loopback, local and metadata
-  destinations are refused. `/web` cannot reach the local Ollama endpoint or a
-  private LAN service.
-- No credentials in URLs, query strings or fragments for fetch requests; no
-  redirects or proxy use. There is no authenticated browser session, JavaScript
-  execution or cookie-based login.
-- Text-like responses only, with HTML text extraction. Maximum response size is
-  262,144 bytes and timeout is eight seconds. This is not PDF/document ingestion.
-- Up to 32 allowlist entries; search queries up to 200 characters, at most three
-  hits per page and 160 characters per snippet. Injected context is capped at
-  4,000 characters. These are current code bounds, not YAML knobs.
-
-**`/web off` stops new fetch/search/inject requests and excludes saved web context
-from subsequent chat system prompts and `/prompt` previews.** Saved files remain;
-`/web on` resumes inclusion of previously injected context. This does not retract
-an in-flight request or erase earlier conversation messages. `/web deny <url>`
-removes an allowlist entry but does not erase saved context. To delete saved web
-state as well as disable web:
-
-```text
-/web forget
-/web off
-/web
-/prompt
-```
-
-`forget` clears both the last extract and injected context, preserving the
-allowlist. `/web` distinguishes `context stored` from `injected`: saved context
-is inactive while web is off. The allowlist, last extract and context live at
-`<home>/tools/web_allowlist.json`,
-`web_last.json` and `web_context.txt`; they are shared across sessions and survive
-restart. A new session alone does not clear them. Treat fetched text as untrusted
-source material, not permission to execute instructions found on a page.
-See [web implementation](src/server/web_search.rs) for exact restrictions.
+`/web off` suppresses future web work and injection. `/web forget` clears the
+initiating account's selection, and `/web deny` revokes the selected rule. Neither
+erases already delivered conversation text. Legacy unproven shared context is
+refused. See [exact URL semantics, migration, network bounds, research usage and
+coverage](docs/SECURE_RESEARCH.md) for the full operational contract.
 
 ### 7.7 Tools and connectors: available versus catalog-only
 
@@ -880,14 +831,15 @@ confirmation and persistence semantics.
 | `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |
 | `/skill use <id...>`, `clear`, `status` | Replace, clear or inspect session prompt-skill selection |
 | `/skill check:<profile>` | Replace the check selection for an already staged coding request |
-| `/web`, `on`, `off`, `allow <url>`, `deny <url>` | Inspect/toggle fetching or edit its allowlist |
-| `/web fetch <url>`, `search <query>`, `inject`, `forget` | Fetch/search text, include the last extract, or clear stored context |
+| `/web`, `on`, `off`, `allow <url> [group] [seed-url]`, `deny <id-or-pattern>` | Inspect fetching; administrators toggle or edit exact/wildcard permission |
+| `/web fetch <url>`, `search [group=name] <query>`, `inject`, `forget` | Fetch/search original passages, include your last selection, or clear it |
+| `/web research [group=name] <question>`, `cancel` | Run/cancel your bounded local-model research; return citations, usage and coverage |
 | `/goal`, `/goal <text>`, `/goal clear` | Inspect, set or clear the saved session goal |
 | `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; section 7.1 |
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
 | `/connectors`, `/registry`, `/github`, `/harness` | Inventory, GitHub status, or retained harness-run listing; not connector activation or optimizer execution |
-| `/api`, `/api set <KEY> <value>` | Inspect managed-key presence or save a supported key; section 8 |
-| `/users` | Open optional account administration; section 10 |
+| `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields for secret entry; section 8 |
+| `/users` | Open administrator-only account management; section 10 |
 | `/clear` | Clear visible console output, staged coding request, displayed diff tracking and loop state; does not delete saved chats, notes, persona or web context |
 
 The `/agent` family operates the separate coding workflow:
@@ -947,27 +899,19 @@ live outside the bundle, so replacing or uninstalling the app preserves them.
 | `skills/<id>/SKILL.md` | Runtime skill bodies; existing files are preserved |
 | `sessions/` | Chat history, goals, selected skills and current goal-stage linkage |
 | `memory/`, `tools/` | Operator notes and web context/allowlist state |
-| `.env`, optional `auth.json` | Managed credentials and configured account records; keep private |
+| `.env`, `auth.sqlite3`, `auth.initialized` | Private provider credentials, transactional accounts and initialization marker; legacy JSON retained for recovery |
+| `tls/server.pem`, `cli-session.json` | Private persisted TLS material and optional CLI login bound to its origin/certificate |
 | `data/agentic/` | Registry, retained console jobs, workspaces and run evidence |
 | `logs/` | Bounded audit/spend/optional metrics logs |
 
 
-New homes ship `security.api_key_optional: true`. In an existing home's
-`config.yaml`, set that literal boolean and restart for credential-free local
-use. Existing settings are never overwritten merely by upgrading the app.
-Origin/CSRF checks, rate limits and repository write controls still apply.
-Forwarded requests do not qualify for the local key bypass; use key enforcement
-behind a proxy, including a proxy that strips forwarding headers.
-
-To opt into API-key enforcement, set `security.api_key_optional: false` and
-configure `CGAGENTHARNESS_API_KEY`. Desktop and Unix standalone `serve` read
-supported managed keys from the home's private `.env` as data, in addition to the
-process environment. Neither sources a shell; explicit inherited values take precedence.
-The file must be current-user-owned, regular, not a symlink, mode 0600 and no
-larger than 64 KiB. Setup can save a missing key but will not replace an existing
-one. Enter the matching value in the console after restart; it stays only in
-page memory. Do not put credentials in command output, screenshots or shared logs.
-Per-user login is independently optional (section 10).
+New homes require HTTPS and account login. The old key-required setting is
+deprecated; a harness metadata key is optional and grants no account authority.
+Administrators save/replace/clear credentials in **API Keys**; saved and active
+masks are separate. Unix startup reads private bounded `.env` as data; explicit
+inherited environment values override stored values. Restart to reload, and remove
+an inherited value separately when clearing a saved key is insufficient.
+Forwarded/proxy requests are unsupported. See [secure setup](docs/SECURE_RESEARCH.md).
 
 ### Which settings take effect where?
 
@@ -986,7 +930,7 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 | Goal and chat history | Saved session; goal maximum 2,000 characters | `/goal`, `/session list`, `/goal task` for coding linkage |
 | Loop counters and automatic continuation | Current page only; not an unattended scheduler | Visible loop state; restart does not resume it |
 | Memory notes and inclusion | Home-wide saved notes/toggle; next request | `/memory`, `/prompt` |
-| Web allowlist, last extract and injected text | Home-wide saved files; web enablement gates fetch/search/inject and prompt inclusion | `/web`, `/prompt`; use `forget` to remove context |
+| Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
 | Managed credentials | Home `.env`, loaded at process startup on Unix; inherited values win | `/api` reports presence/masked tail, not proof of provider authentication |
 | Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |
@@ -1005,7 +949,7 @@ not a general environment-variable editor or connector credential vault.
 
 | Key | Purpose |
 |---|---|
-| `CGAGENTHARNESS_API_KEY` | Optional authentication for the harness's own guarded routes |
+| `CGAGENTHARNESS_API_KEY` | Optional compatibility metadata; never grants account access |
 | `GROK_API_KEY` | Optional explicitly governed cloud coding planner |
 | `ANTHROPIC_API_KEY` | Optional explicitly governed cloud coding planner |
 | `DEEPAGENT_API_KEY` | Bearer credential for a configured non-Ollama compatible local planner |
@@ -1016,16 +960,19 @@ storage. The slash-command workflow does not expose arbitrary cloud-provider
 selection flags; review the separate provider controls in
 [the configuration reference](assets/config.default.yaml) before considering
 a cloud coding run. Values must be nonempty, no more than 4,096 characters
-and contain no newline, carriage return or NUL. There is no generic key-deletion
-slash command. Preserve other entries when deliberately maintaining the private
+and contain no newline, carriage return or NUL. `/api clear <KEY>` removes only
+the named managed credential. Preserve other entries when deliberately maintaining the private
 file, and restart after changing credentials.
 
-The current console prints a stale “your shell sources it” hint after saving,
-pointing at `docs/HARNESS_API_KEYS.md`, a path that does not exist in this
-repository.
-For this Unix desktop/`serve` implementation, the startup loader reads the managed
-file as data; follow the loading and permissions rules above. Do not source it as
-a shell script. Never put key values in soul, memory, skill files or shared prompts.
+Prefer the **API Keys** pane for pasting secrets; its password inputs are cleared
+after successful save. Use **Clear saved value** to remove a stored credential.
+The pane displays masked **Saved** and **Active** values separately, their source
+(`startup_file`, `environment` or `unset`), and whether a restart is needed.
+Clearing a saved value leaves a currently active value running until restart;
+an explicit process environment override still wins after restart. `/registry`
+and **View registry** preserve inventory access. The Unix startup loader reads
+the managed file as data. Do not source it as a shell script or put secrets in
+soul, memory, skill files or shared prompts.
 
 ### Close, quit and reopen
 
@@ -1215,7 +1162,7 @@ Back in the app or browser console:
    see here. An unclosed `=== FILE ===` / `=== EDITS ===` block in the model
    reply leaves later READ lines in the body instead of extracting them.
 4. `/agent confirm <reason>` submits a job and returns its ID immediately.
-5. `/agent job <job-id>` resumes monitoring, including after refresh without key entry in default local mode.
+5. `/agent job <job-id>` resumes monitoring after refresh and account login; the optional harness key may stay empty.
 6. `/agent status <run-id>` displays the candidate and complete diff. A truncated
    diff cannot satisfy console approval.
 7. `/agent approve <run-id> <reason>` commits after explicit diff review.
@@ -1284,19 +1231,43 @@ switch set for new processes, or revoke `agentic.writes_enabled` in YAML to bloc
 mutation boundaries in an active child. Neither action cancels an already executing
 Git command or check. Scope/budget changes also refuse later writes until a fresh invocation.
 
-## 10. (Optional) Turn on per-user login
+## 10. Accounts and roles
 
-Direct local harness use does not require account login. To retain named accounts,
-sessions and roles for account management, you can enable the optional auth feature:
+Fresh homes create restricted `admin` / `admin`; login and replace it immediately
+with at least 12 characters. `admin` manages global credentials, users and URL
+policy; `operator` uses normal authorized harness work; `audit` sees designated
+redacted status/audit information. Every role can change its own password.
+Operational routes require login when enabled. Existing config is preserved;
+set `auth.enabled: true` to enable this boundary on a legacy home. See [account
+migration, shared resources, last-admin protection and recovery](docs/SECURE_RESEARCH.md).
 
-1. In `~/.CGagentHarness/config.yaml`, set `auth.enabled: true` and restart the app or server.
-2. Visit the console; it will detect that no accounts exist yet and walk you through creating a
-   bootstrap `admin` account with a password you choose, over your own loopback connection.
-3. From then on, `/api/auth/login` (surfaced in the console's login UI, not a slash command) is
-   how you and any additional users you create sign in.
+| Account | Portal work | Administrative changes |
+|---|---|---|
+| Administrator (`admin`) | Chat, permitted research, shared sessions/jobs and separately authorized coding | Users, roles, reset/disable, global keys and web policy |
+| Portal operator (`operator`) | Same permitted operational resources and coding gates | Own password/logout only |
+| Auditor (`audit`) | Minimal status and designated redacted audit entries | Own password/logout only; no chat/research/jobs |
 
-Account authentication can stay off for local use. Enabling it protects account
-management with sessions and roles; it does not gate chat or the agent pipeline.
+Use **change password** in the account bar and provide the current password.
+An administrator creates users through **USERS** and can reset another user's
+password. Resets, role changes, disabling and deletion revoke that user's sessions.
+The last enabled administrator cannot be removed, disabled or demoted. **logout**
+revokes this session and clears private displayed state; sign in again to resume.
+
+For Terminal, while this home's server is running:
+
+```bash
+./target/release/cgagentharness account login admin
+./target/release/cgagentharness account password
+./target/release/cgagentharness web status
+./target/release/cgagentharness account logout
+```
+
+Passwords are read privately from stdin, never arguments. Add `--url <actual-origin>`
+after `account` or `web` for a nondefault port, including the desktop's ephemeral
+origin. Both clients enforce the same account/CSRF/TLS boundaries as the console.
+Backup and recovery must preserve `auth.sqlite3` and `auth.initialized` together;
+do not delete them to recreate `admin/admin`. A legacy pending-password account
+uses its existing recovery flow, while malformed initialized storage refuses startup.
 
 ## 11. Verify your setup
 
@@ -1337,6 +1308,12 @@ It runs cargo-deny only when installed; record a skipped audit and run the
 dependency policy separately when needed. Tests include required native Cargo sandbox and process tests.
 An outer tool sandbox can prevent nested Seatbelt; run native acceptance from
 the operator's terminal without weakening the application profile.
+
+For reproducible dependency acceptance, also run `cargo build --locked` and
+`cargo deny check` in both the repository root and `desktop/`, using each pinned
+toolchain. [Dependency maintenance](docs/DEPENDENCIES.md) documents compatible
+updates, retained pins, feature review and the exact drift commands. A lockfile
+can be valid even when newer releases exist; a blind update can exceed the MSRV.
 
 For the existing live chat smoke, set the exact installed tag explicitly:
 
@@ -1386,7 +1363,7 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 |---|---|---|
 | `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain v0.1.4 or later, or a successful main Bundle artifact containing the required source |
 | Local coding loop never fetches a file the planner asked for | Cloud planner is in use, the selector failed the clone jail, the per-run model-read cap (6) was hit, or an unclosed FILE/EDITS block swallowed the `=== READ ===` line | Pre-stage needed files with `/agent read`. Cloud runs refuse model-requested reads on purpose. Local refusals are audit-logged as `agentic_real_repo_read_request_refused`. |
-| New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona/web are still included | Verify the running bundle includes `71eef11` or later; inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
+| New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona and your account's web selection are still included | Verify the running bundle includes `71eef11` or later; inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
 | Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify the app includes the capability-guide fix at `71eef11` or later |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
 | Model inventory says `tag_missing`, or fallback is selected unexpectedly | Exact configured ID is absent from a responding inventory | Compare section 4 inventories and config; verify persisted `/model` selection against the resolved endpoint, then restart to reevaluate fallback |
@@ -1397,7 +1374,7 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 | `/loop` does not edit the repository | It is chat continuation | Use the explicitly configured goal-to-coding workflow in section 9.4 |
 | Goal task is stale/interrupted/unavailable | Goal changed, job already submitted, restart interrupted work or retention removed job evidence | Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval or replay work from `GOAL_DONE` |
 | App asks for Rosetta or shows Intel-only kind | Old app copy, forced translation or separate Intel-only component | Verify the installed universal copy and both executable slices; see section 2.1 before changing the OS |
-| `401 Unauthorized` on harness requests | Key enforcement is enabled, or forwarding headers prevent the local bypass | For direct local use set `security.api_key_optional: true` and restart; for enforced access configure and enter the matching key |
+| `401 Unauthorized` on harness requests | Missing, expired or revoked account session | Sign in again; a fresh bootstrap account must replace its password. A harness key cannot grant access |
 | App reports a home ownership conflict | Another app/server owns the same home | Quit that owner normally before retrying; do not delete its lock |
 | App waits at startup | File-access mediation, unavailable backend or damaged/moved bundle | Check macOS prompts; quit, move the complete app to Applications and retry; inspect Setup without deleting the home |
 | Changing config appears to do nothing | The running backend retains startup settings; closing its window only hides it | Quit with Cmd-Q and relaunch, or restart standalone `serve` |

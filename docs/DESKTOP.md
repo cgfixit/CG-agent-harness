@@ -3,21 +3,23 @@
 The Apple Silicon desktop app opens the existing harness console in a native
 WKWebView and owns its bundled Rust backend. Ordinary launch needs no Terminal,
 external browser, frontend server, Rust or Python. Coding checks still need their
-configured tools. **Native interaction acceptance is pending**; see
-[DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md) for verified results and gaps.
+configured tools. Native HTTPS login, password replacement and credential editing
+have local acceptance evidence; broader window/coding interactions retain the
+limits in [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
 
 ## Install and launch
 
 1. Unzip the universal archive and move **CG Agent Harness.app** to Applications
    (or a directory you own). Quit an existing copy before replacing it.
 2. Open it from Finder or the Dock. No login item or service is installed.
-3. Start using the harness without entering an API key or logging in. For an
-   existing home, set `security.api_key_optional: true` in its `config.yaml` and
-   restart once; saved settings are preserved on upgrade. Use **Harness → Setup
-   and recovery** (Cmd-,) for diagnostics.
-4. Optional key enforcement remains available: set `security.api_key_optional: false`, configure a key in the private home `.env`, restart, then enter the
-   matching key in the console. Setup can save a missing key and refuses to
-   replace an existing one. Account login is needed only for account management.
+3. Fresh homes open HTTPS and require account login. Sign in as `admin` with
+   password `admin`, then replace it immediately. The native webview verifies its
+   owned certificate without system trust changes. Existing home configuration
+   is preserved. Use **Harness → Setup and recovery** (Cmd-,) for diagnostics.
+4. Administrators manage optional provider credentials in **API Keys**. Restart
+   to activate saved values; inherited environment values take precedence. A
+   harness metadata key never grants account access. See [migration, roles and
+   TLS recovery](SECURE_RESEARCH.md).
 
 This build is **ad-hoc signed, universal (Apple Silicon + Intel), and not notarized**. Its signature
 checks integrity; it does not establish a publisher identity or satisfy normal
@@ -41,8 +43,8 @@ owned by the current user, private (0600), at most 64 KiB, and not a symlink.
 Explicit inherited environment values retain precedence. Unknown lines are
 preserved when initializing a missing key. API keys are absent from argv,
 URLs, readiness files and desktop diagnostics. Config/key parse failures show
-an actionable setup error without quoting values. Existing per-user auth and
-roles remain enabled only when configured; no desktop session elevation exists.
+an actionable setup error without quoting values. Existing configuration is preserved; fresh homes enable accounts and roles.
+No desktop session elevation exists.
 
 Headless `serve` uses the same private-file validation before starting its async
 runtime; a missing file is allowed and an unsafe/unreadable file refuses startup.
@@ -52,7 +54,7 @@ integration. Windows headless startup still uses explicitly supplied environment
 values; native Windows credential loading remains a separate parity action.
 
 Webview storage is private to that window, avoiding cookie collisions between
-independent homes on ephemeral ports. If you opt into credential use, re-enter them after reopening.
+independent homes on ephemeral ports. Sign in again after reopening; provider keys remain server-side.
 Sessions, notes, settings and retained jobs persist through the backend, not
 browser storage. `/agent jobs` and `/agent runs` rediscover retained work.
 
@@ -69,10 +71,10 @@ CG Agent Harness.app (Tauri/WKWebView)
 
 The shell verifies the sidecar's build-time SHA-256, launches its absolute bundle
 path from `/`, and verifies protocol, child PID and a fresh challenge through
-inherited stdin/stdout plus authenticated HTTP readiness. The backend binds port
+inherited stdin/stdout plus certificate-pinned HTTPS readiness. The backend binds port
 zero before reporting its address; there is no port-probe/rebind race and no
-adoption of an existing listener. The retained local HTTP endpoint still exists
-and applies optional local API-key access plus origin, CSRF, rate and account-role checks. A readiness
+adoption of an existing listener. The local HTTPS endpoint applies account roles, origin, CSRF and rate checks.
+Explicit legacy HTTP configuration is preserved. A readiness
 challenge provides no operator API authority. `serve --port …` and worker CLI
 behavior remain available independently.
 
@@ -243,7 +245,8 @@ GUI acceptance.
 Tauri is pinned to 2.11.5. Its `tauri-utils` uses upstream commit
 `dd725f4b13c30a86b398ccc59eb498f151f461c5` to replace the unmaintained rust-unic
 chain with ICU through urlpattern 0.6. This requires desktop Rust 1.90; backend
-Rust 1.88 and its lockfile are unchanged. Desktop dependency policy uses the same
+Rust 1.88 remains independently pinned. Each crate owns its lockfile; see
+[dependency maintenance](DEPENDENCIES.md). Desktop dependency policy uses the same
 advisory/license/source rules, scoped to both shipped macOS targets,
 with only that upstream Git repository permitted and no advisory exceptions.
 This unreleased upstream pin needs review when moving to a published replacement.

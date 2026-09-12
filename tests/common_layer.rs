@@ -383,12 +383,16 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     mgr.set_clock(Box::new(move || *c.lock().unwrap()));
     assert!(mgr.bootstrap_if_empty().unwrap());
     assert!(!mgr.bootstrap_if_empty().unwrap());
-    assert!(mgr.needs_password_setup());
+    assert!(!mgr.needs_password_setup());
+    assert!(mgr.get_user("admin").unwrap().must_change_password);
     assert_eq!(
         mgr.login(BOOTSTRAP_USERNAME, "anything at all!").unwrap_err().code,
         "AUTH_LOGIN_FAILED"
     );
-    let first = mgr.bootstrap_set_password("first-admin-password").unwrap();
+    let restricted = mgr.login("admin", "admin").unwrap();
+    let first = mgr.change_password("admin", "admin", "first-admin-password").unwrap();
+    assert!(mgr.validate_session(&restricted.session_id).is_none());
+    assert!(!mgr.get_user("admin").unwrap().must_change_password);
     assert!(!mgr.needs_password_setup());
     assert_eq!(
         mgr.bootstrap_set_password("another-password-1").unwrap_err().code,
@@ -413,8 +417,8 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     *now.lock().unwrap() += 10.0;
     let ok = mgr.login("admin", "first-admin-password").unwrap();
     assert!(mgr.validate_session(&ok.session_id).is_some());
-    assert!(mgr.logout(&ok.session_id));
-    assert!(!mgr.logout(&ok.session_id));
+    assert!(mgr.logout(&ok.session_id).unwrap());
+    assert!(!mgr.logout(&ok.session_id).unwrap());
     assert!(mgr.validate_session(&ok.session_id).is_none());
 
     // Users, roles, last-admin guard.
@@ -458,7 +462,7 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(dir.path().join("auth.json"))
+        let mode = std::fs::metadata(dir.path().join("auth.sqlite3"))
             .unwrap()
             .permissions()
             .mode()
@@ -485,7 +489,8 @@ fn home_layout_seeds_config_registry_and_skills_once() {
     );
     let cfg = home.load_config().unwrap();
     assert!(!cfg.flag_is_true("agentic.enabled"));
-    assert!(!cfg.flag_is_true("auth.enabled"));
+    assert!(cfg.flag_is_true("auth.enabled"));
+    assert!(cfg.flag_is_true("tls.enabled"));
     assert!(!cfg.flag_is_true("agentic.deepagent_github.allow_git_write_tools"));
     assert_eq!(cfg.str_or("models.local_llm.base_url", ""), "http://127.0.0.1:11434/v1");
 
@@ -513,11 +518,11 @@ fn port_validation() {
 fn quoted_true_is_off() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = AppConfig::from_str(
-        "auth:\n  enabled: \"true\"\nx:\n  y: true\n",
+        "agentic:\n  enabled: \"true\"\nx:\n  y: true\n",
         &dir.path().join("c.yaml"),
     )
     .unwrap();
-    assert!(!cfg.flag_is_true("auth.enabled"));
+    assert!(!cfg.flag_is_true("agentic.enabled"));
     assert!(cfg.flag_is_true("x.y"));
     for raw in ["\"true\"", "\"false\"", "false", "1", "\"1\""] {
         let cfg = AppConfig::from_str(&format!("agentic:\n  enabled: {raw}\n"), &dir.path().join("c.yaml")).unwrap();
@@ -564,4 +569,17 @@ fn process_runner_kills_on_timeout_and_captures_output() {
     assert!(process::pid_alive(std::process::id()));
     assert!(process::which("sh").is_some());
     assert!(process::which("definitely-not-a-real-binary-xyz").is_none());
+}
+
+#[test]
+fn security_switches_require_boolean_values() {
+    for section in ["auth", "tls"] {
+        for value in ["'true'", "'false'", "0", "null", "[]"] {
+            assert!(AppConfig::from_str(
+                &format!("{section}: {{enabled: {value}}}"),
+                std::path::Path::new("fixture.yaml")
+            )
+            .is_err());
+        }
+    }
 }

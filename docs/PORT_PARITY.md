@@ -3,6 +3,10 @@
 Acceptance is **incomplete**. This ledger distinguishes source comparison,
 fixture verification, and real-model acceptance. No whole-port equivalence claim.
 
+This is a historical acceptance record. The old auth/key/web rows below describe
+that baseline; current HTTPS, SQLite accounts and permitted research are documented
+in [SECURE_RESEARCH.md](SECURE_RESEARCH.md).
+
 ## Pinned baseline
 
 - Rust remote: `https://github.com/cgfixit/CG-agent-harness.git`, default `main`,

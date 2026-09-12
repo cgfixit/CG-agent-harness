@@ -24,7 +24,15 @@ const CHAT_HISTORY_CHARS: usize = 8000;
 const DEFAULT_MAX_TOKENS: u64 = 4096;
 const DEFAULT_TEMPERATURE: f64 = 0.3;
 
-pub async fn status(State(state): State<Arc<AppState>>) -> Json<Value> {
+pub async fn status(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+) -> Json<Value> {
+    if state.auth.is_some() && user.is_none_or(|u| u.role == "audit" || u.must_change_password) {
+        return Json(
+            json!({"version":crate::VERSION,"auth_enabled":true,"api_key_optional":true,"status":"login required for operational details"}),
+        );
+    }
     let sessions = state.store.list();
     let total_tokens: u64 = sessions.iter().filter_map(|s| s["tokens"]["total"].as_u64()).sum();
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
@@ -200,6 +208,7 @@ fn loop_error(code: &str, message: &str) -> ApiError {
 pub async fn chat(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<ChatRequest>,
 ) -> ApiResult<Json<Value>> {
     if req.loop_turn && req.session_id.as_deref().unwrap_or("").is_empty() {
@@ -274,7 +283,9 @@ pub async fn chat(
         .details(details));
     };
 
-    let web_context = state.web.context_text(settings.web_enabled);
+    let web_context = state
+        .web
+        .context_text(settings.web_enabled, &super::auth::context_owner(user));
     let memory_context = if settings.memory_enabled {
         Some(state.notes.context_text())
     } else {

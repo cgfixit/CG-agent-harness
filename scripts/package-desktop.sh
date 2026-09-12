@@ -52,7 +52,7 @@ cp target/release/cgagentharness "$app/Contents/MacOS/"
 cp desktop/target/release/cg-agent-harness-desktop "$app/Contents/MacOS/"
 cp desktop/Info.plist "$app/Contents/Info.plist"
 cp desktop/icons/icon.icns scripts/prepare-cargo.py "$app/Contents/Resources/"
-cp docs/DESKTOP.md docs/DESKTOP_ACCEPTANCE.md docs/PROCESS_LIFECYCLE.md "$app/Contents/Resources/"
+cp docs/DESKTOP.md docs/DESKTOP_ACCEPTANCE.md docs/PROCESS_LIFECYCLE.md docs/SECURE_RESEARCH.md docs/DEPENDENCIES.md "$app/Contents/Resources/"
 git rev-parse HEAD > "$app/Contents/Resources/COMMIT"
 if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
   echo 'DEVELOPMENT BUILD: uncommitted changes' >> "$app/Contents/Resources/COMMIT"

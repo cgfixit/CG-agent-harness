@@ -19,6 +19,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Account-authenticated web operations through the running portal.
+    Web {
+        #[arg(long)]
+        url: Option<String>,
+        #[command(subcommand)]
+        action: cgagentharness::server::client::WebCommand,
+    },
+    /// Login, change your password, or logout through the running portal.
+    Account {
+        #[arg(long)]
+        url: Option<String>,
+        #[command(subcommand)]
+        action: cgagentharness::server::client::AccountCommand,
+    },
+    /// Inspect or explicitly renew the local TLS certificate.
+    Tls {
+        #[command(subcommand)]
+        action: cgagentharness::server::client::TlsCommand,
+    },
     /// Private desktop sidecar protocol over inherited pipes.
     #[cfg(unix)]
     #[command(hide = true)]
@@ -43,6 +62,9 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Web { url, action } => report(cgagentharness::server::client::web(action, url)),
+        Command::Account { url, action } => report(cgagentharness::server::client::account(action, url)),
+        Command::Tls { action } => report(cgagentharness::server::client::tls(action)),
         #[cfg(unix)]
         Command::Desktop => match cgagentharness::server::desktop::run() {
             Ok(()) => ExitCode::SUCCESS,
@@ -63,6 +85,16 @@ fn main() -> ExitCode {
         Command::Agentic { args } => {
             let code = cgagentharness::agentic::cli::main(args);
             ExitCode::from(code)
+        }
+    }
+}
+
+fn report(result: anyhow::Result<()>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("cgagentharness: {error}");
+            ExitCode::from(1)
         }
     }
 }

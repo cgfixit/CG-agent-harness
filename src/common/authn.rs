@@ -88,6 +88,10 @@ fn derive(password: &str, salt: &[u8], log_n: u8, r: u32, p: u32) -> Option<[u8;
 /// `scrypt$n$r$p$salt_b64$hash_b64` with a random salt (or a pinned one for tests).
 pub fn hash_password_with_salt(password: &str, salt: &[u8]) -> Result<String> {
     validate_password(password)?;
+    hash_unchecked(password, salt)
+}
+
+fn hash_unchecked(password: &str, salt: &[u8]) -> Result<String> {
     let derived = derive(password, salt, SCRYPT_LOG_N, SCRYPT_R, SCRYPT_P)
         .ok_or_else(|| HarnessError::new("AUTH_ERROR", "scrypt derivation failed"))?;
     Ok(format!(
@@ -97,11 +101,30 @@ pub fn hash_password_with_salt(password: &str, salt: &[u8]) -> Result<String> {
     ))
 }
 
+fn random_salt() -> [u8; SALT_BYTES] {
+    use rand::Rng;
+    rand::thread_rng().gen()
+}
+
+/// The sole short-password exception: fresh restricted bootstrap credentials.
+pub(super) fn hash_bootstrap_password() -> Result<String> {
+    hash_unchecked("admin", &random_salt())
+}
+
+pub(super) fn valid_password_record(record: &str) -> bool {
+    let record = record.strip_prefix(PENDING_HASH_PREFIX).unwrap_or(record);
+    let parts: Vec<_> = record.split('$').collect();
+    if parts.len() != 6 || parts[0] != ALGO {
+        return false;
+    }
+    matches!((parts[1].parse::<u64>(),parts[2].parse::<u32>(),parts[3].parse::<u32>()),
+        (Ok(n),Ok(r),Ok(p)) if n>=2 && n.is_power_of_two() && n<=SCRYPT_N && r>0 && r<=SCRYPT_R && p>0 && p<=SCRYPT_P)
+        && unb64(parts[4]).is_some_and(|s| !s.is_empty() && s.len() <= 64)
+        && unb64(parts[5]).is_some_and(|h| h.len() == SCRYPT_DKLEN)
+}
+
 pub fn hash_password(password: &str) -> Result<String> {
-    use rand::RngCore;
-    let mut salt = [0u8; SALT_BYTES];
-    rand::thread_rng().fill_bytes(&mut salt);
-    hash_password_with_salt(password, &salt)
+    hash_password_with_salt(password, &random_salt())
 }
 
 pub fn is_pending_password_record(record: &str) -> bool {

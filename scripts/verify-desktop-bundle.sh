@@ -28,10 +28,9 @@ done
 sidecar="$app/Contents/MacOS/cgagentharness"
 shell="$app/Contents/MacOS/cg-agent-harness-desktop"
 digest="$(shasum -a 256 "$sidecar" | awk '{print $1}')"
-python3 -c 'import pathlib, sys; d = sys.argv[1].encode(); b = pathlib.Path(sys.argv[2]).read_bytes(); raise SystemExit(0 if d in b else 1)' \
-  "$digest" "$shell" \
+[[ "$("$shell" --bundled-backend-sha256)" == "$digest" ]] \
   || { echo "Staged sidecar SHA-256 is not the digest compiled into the shell (post-bundle codesign)." >&2; exit 1; }
-for resource in prepare-cargo.py icon.icns DESKTOP.md DESKTOP_ACCEPTANCE.md PROCESS_LIFECYCLE.md COMMIT; do
+for resource in prepare-cargo.py icon.icns DESKTOP.md DESKTOP_ACCEPTANCE.md PROCESS_LIFECYCLE.md SECURE_RESEARCH.md DEPENDENCIES.md COMMIT; do
   [[ -s "$app/Contents/Resources/$resource" ]]
 done
 "$app/Contents/MacOS/cgagentharness" --help | grep -q serve

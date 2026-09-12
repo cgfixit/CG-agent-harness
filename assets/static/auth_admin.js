@@ -13,6 +13,7 @@
     const getCsrf = opts.getCsrf || function () { return ""; };
     const actorRole = opts.actorRole || "operator";
     const onStatus = opts.onStatus || function () {};
+    if (actorRole !== "admin") { root.textContent = "Administrator access required."; return; }
 
     root.textContent = "";
     const listBox = el("div", { id: "authUsersList" });
@@ -120,6 +121,11 @@
             });
           });
           row.appendChild(roleSel);
+          const disable = el("button", { type: "button", class: "toolbar-btn" }, u.disabled ? "Enable" : "Disable");
+          disable.addEventListener("click", function () {
+            mutate("account status", base + "/users/" + encodeURIComponent(u.username) + "/disabled", { method: "POST", headers: headers(true), body: JSON.stringify({ disabled: !u.disabled }) });
+          });
+          row.appendChild(disable);
           const del = el("button", { type: "button", class: "toolbar-btn" }, "Delete");
           del.addEventListener("click", function () {
             if (!global.confirm("Delete " + u.username + "?")) return;
