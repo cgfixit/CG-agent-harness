@@ -111,6 +111,38 @@ async fn api_keys_panel_writes_dotenv_and_never_returns_values() {
     );
     let (status, _) = s.post_json("/api/keys", json!({"keys": {}})).await;
     assert_eq!(status, 422);
+    let (status, body) = s.post_json("/api/keys", json!({"clear":["GROK_API_KEY"]})).await;
+    assert_eq!(status, 200, "{body}");
+    let row = body["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|k| k["name"] == "GROK_API_KEY")
+        .unwrap();
+    assert_eq!(row["saved_configured"], false);
+    let retained = std::fs::read_to_string(s.home.join(".env")).unwrap();
+    assert!(!retained.contains("export GROK_API_KEY="));
+    assert!(retained.contains("# keep me") && retained.contains("export OTHER='x'"));
+    let (status, _) = s
+        .post_json(
+            "/api/keys",
+            json!({"keys":{"GROK_API_KEY":"value"},"clear":["GROK_API_KEY"]}),
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(std::fs::read_to_string(s.home.join(".env")).unwrap(), retained);
+    #[cfg(unix)]
+    {
+        let foreign = s.home.join("foreign-env");
+        std::fs::rename(s.home.join(".env"), &foreign).unwrap();
+        std::os::unix::fs::symlink(&foreign, s.home.join(".env")).unwrap();
+        assert_eq!(s.get_json("/api/keys").await.0, 500);
+        assert_eq!(
+            s.post_json("/api/keys", json!({"clear":["DEEPAGENT_API_KEY"]})).await.0,
+            400
+        );
+        assert_eq!(std::fs::read_to_string(foreign).unwrap(), retained);
+    }
 }
 
 // ---------------------------------------------------------------- memory
@@ -213,14 +245,26 @@ async fn start_page_server(body: &'static str, ctype: &'static str) -> std::net:
 #[tokio::test]
 async fn web_disable_suppresses_saved_context_in_chat_and_preview() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
-    let tools = s.home.join("tools");
-    std::fs::write(
-        tools.join("web_last.json"),
-        r#"{"url":"https://docs.example/","text":"WEB_CONTEXT_MARKER"}"#,
+    let page = start_page_server("WEB_CONTEXT_MARKER", "text/plain").await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions {
+            web_resolve: Some(("docs.example".into(), page)),
+            ..ServerOptions::default()
+        },
     )
+    .await;
+    let tools = s.home.join("tools");
+    let url = format!("http://docs.example:{}/", page.port());
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+    assert_eq!(s.post_json("/api/web", json!({"enabled":true})).await.0, 200);
+    assert_eq!(s.post_json("/api/web/fetch", json!({"url":url})).await.0, 200);
+    assert_eq!(s.post_json("/api/web/inject", json!({})).await.0, 200);
+    let saved = std::fs::read_to_string(tools.join(format!(
+        "web_{}_context.json",
+        cgagentharness::common::sha256_hex("local")
+    )))
     .unwrap();
-    std::fs::write(tools.join("web_context.txt"), "WEB_CONTEXT_MARKER").unwrap();
     for enabled in [false, true, false, true] {
         let (status, web) = s.post_json("/api/web", json!({"enabled":enabled})).await;
         assert_eq!(status, 200, "{web}");
@@ -245,8 +289,12 @@ async fn web_disable_suppresses_saved_context_in_chat_and_preview() {
             assert_eq!(code(&body), "WEB_DISABLED");
         }
         assert_eq!(
-            std::fs::read_to_string(tools.join("web_context.txt")).unwrap(),
-            "WEB_CONTEXT_MARKER"
+            std::fs::read_to_string(tools.join(format!(
+                "web_{}_context.json",
+                cgagentharness::common::sha256_hex("local")
+            )))
+            .unwrap(),
+            saved
         );
     }
 }
@@ -278,7 +326,9 @@ async fn web_search_fetches_each_overlapping_allowlist_entry() {
         .iter()
         .map(|hit| hit["url"].clone())
         .collect();
-    assert_eq!(urls, vec![json!(root), json!(child)]);
+    assert_eq!(body["coverage"]["searched"], json!([root, child]));
+    assert_eq!(urls.len(), 1, "identical passages across URLs are deduplicated");
+    assert!(urls[0] == root || urls[0] == child);
     assert_eq!(s.post_json("/api/web/inject", json!({})).await.0, 200);
     // Rejected queries preserve the previous deliberate selection.
     assert_eq!(s.post_json("/api/web/search", json!({"query":" "})).await.0, 400);
@@ -297,7 +347,11 @@ async fn web_search_fetches_each_overlapping_allowlist_entry() {
     let (_, preview) = s.post_json("/api/prompt/preview", json!({})).await;
     assert!(!preview["prompt"].as_str().unwrap().contains("Searchable page"));
     // Filesystem failures must not masquerade as successful cleanup.
-    std::fs::create_dir(s.home.join("tools/web_context.txt")).unwrap();
+    std::fs::create_dir(s.home.join(format!(
+        "tools/web_{}_context.json",
+        cgagentharness::common::sha256_hex("local")
+    )))
+    .unwrap();
     for (path, request) in [
         ("/api/web/forget", json!({})),
         ("/api/web/search", json!({"query":"no-match"})),
@@ -361,7 +415,7 @@ async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
         .await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["allowlist"][0], format!("http://{host_port}/docs/page"));
-    // Duplicate is a no-op; prefix match on segment boundaries; other paths denied.
+    // Duplicate is a no-op; exact permission never authorizes a child path.
     s.post_json(
         "/api/web/allow",
         json!({"url": format!("http://{host_port}/docs/page")}),
@@ -383,13 +437,19 @@ async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
         )
         .await;
     assert_eq!(status, 400);
-    assert_eq!(code(&body), "WEB_BAD_URL");
-    // The GET target is rebuilt from the allowlist row, not the user URL:
-    // a sub-path is allowed by prefix, but the fetched URL is the row itself.
+    assert_eq!(code(&body), "WEB_HOST_DENIED");
     let (status, body) = s
         .post_json(
             "/api/web/fetch",
             json!({"url": format!("http://{host_port}/docs/page/sub/thing")}),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "WEB_HOST_DENIED");
+    let (status, body) = s
+        .post_json(
+            "/api/web/fetch",
+            json!({"url": format!("http://{host_port}/docs/page")}),
         )
         .await;
     assert_eq!(status, 200, "{body}");
@@ -426,8 +486,8 @@ async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
     let (status, body) = s
         .post_json("/api/web/fetch", json!({"url": format!("http://{host_port}/big")}))
         .await;
-    assert_eq!(status, 200);
-    assert!(body["chars"].as_u64().unwrap() <= 262_144);
+    assert_eq!(status, 400);
+    assert_eq!(code(&body), "WEB_TOO_LARGE");
     s.post_json("/api/web/allow", json!({"url": format!("http://{host_port}/bin")}))
         .await;
     let (status, body) = s
@@ -440,11 +500,8 @@ async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
     let (status, body) = s
         .post_json("/api/web/fetch", json!({"url": format!("http://{host_port}/redir")}))
         .await;
-    assert_eq!(
-        status, 200,
-        "redirects are not followed; the 302 body is returned: {body}"
-    );
-    assert_eq!(body["status"], 302);
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "WEB_REDIRECT_REFUSED");
     // Deny + cap.
     let (status, body) = s
         .post_json("/api/web/deny", json!({"url": format!("http://{host_port}/docs/page")}))
@@ -481,7 +538,7 @@ async fn tools_and_skills_views_report_wiring() {
     let (status, tools) = s.open_get("/api/tools").await;
     assert_eq!(status, 200);
     assert_eq!(tools["wired"], tools["total"], "every catalog surface is registered");
-    assert_eq!(tools["total"], 36);
+    assert_eq!(tools["total"], 38);
     assert!(tools["diagram"].as_str().unwrap().starts_with("HARNESS TOOLS"));
     let (status, skills) = s.open_get("/api/skills").await;
     assert_eq!(status, 200);
@@ -562,54 +619,36 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
     let s = spawn_server(&model.base_url(), opts).await;
     let (status, body) = s.open_get("/api/auth/setup-status").await;
     assert_eq!(status, 200);
-    assert_eq!(body["needs_password"], true);
-    assert_eq!(body["username"], "admin");
-    // whoami without a session.
-    let (status, body) = s.open_get("/api/auth/whoami").await;
-    assert_eq!(status, 401);
-    assert_eq!(code(&body), "AUTH_REQUIRED");
-    // Bootstrap: proxied request refused; policy 422; success sets cookie.
+    assert_eq!(body["needs_password"], false);
+    assert_eq!(s.open_get("/api/auth/whoami").await.0, 401);
     let resp = s
         .client
-        .post(s.url("/api/auth/bootstrap-password"))
-        .header("x-forwarded-for", "1.2.3.4")
-        .json(&json!({"password": "first-admin-password"}))
+        .post(s.url("/api/auth/login"))
+        .json(&json!({"username":"admin","password":"admin"}))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 403);
+    assert_eq!(resp.status().as_u16(), 200);
+    let cookie = resp.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
     let resp = s
         .client
-        .post(s.url("/api/auth/bootstrap-password"))
-        .json(&json!({"password": "short"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status().as_u16(), 422);
-    assert_eq!(code(&resp.json::<serde_json::Value>().await.unwrap()), "AUTH_POLICY");
-    let resp = s
-        .client
-        .post(s.url("/api/auth/bootstrap-password"))
-        .json(&json!({"password": "first-admin-password"}))
+        .post(s.url("/api/auth/password"))
+        .header("cookie", &cookie)
+        .header(CSRF_HEADER, &s.csrf)
+        .json(&json!({"current_password":"admin","password":"first-admin-password"}))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
     let cookie = resp.headers()["set-cookie"].to_str().unwrap().to_string();
-    assert!(cookie.starts_with("cgagentharness_session="));
     assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
     let session = cookie.split(';').next().unwrap().to_string();
-    let b: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(b["role"], "admin");
-    assert!(b["csrf_token"].as_str().unwrap().len() > 20);
-    let resp = s
-        .client
-        .post(s.url("/api/auth/bootstrap-password"))
-        .json(&json!({"password": "another-password-1"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status().as_u16(), 409);
     // whoami with the cookie; users list.
     let resp = s
         .client
@@ -768,7 +807,21 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
-    // The deleted admin's cookie is dead; logout is idempotent.
+    // Role changes and deletion revoke the old cookies. Login again to log out.
+    let resp = s
+        .client
+        .post(s.url("/api/auth/login"))
+        .json(&json!({"username":"op","password":"operator-password-1"}))
+        .send()
+        .await
+        .unwrap();
+    let op_session = resp.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
     let resp = s
         .client
         .get(s.url("/api/auth/whoami"))

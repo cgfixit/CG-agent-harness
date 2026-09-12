@@ -1,577 +1,425 @@
-//! Allowlist-only web fetch for `/web`, port of `harness/web_search.py`.
-//!
-//! Default-off. A fetch happens only if the tool is enabled, the URL matches
-//! the operator allowlist, and DNS resolves to a public address BEFORE the
-//! GET. The GET target is rebuilt from the persisted allowlist row only, so no
-//! user-supplied URL fragment reaches the socket. Empty allowlist is fail-closed.
-
+//! Default-off content reads. Every network/evidence path reloads URL policy.
 use std::collections::BTreeSet;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::io::Read;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::sync::Semaphore;
 
-use crate::common::atomic::{write_atomic, write_json_atomic};
+use super::web_policy::{canonical_url, error, is_public_ip, Policy, Rule, MAX_RULES};
 use crate::common::audit::Audit;
+use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::tool_broker::assert_allowed;
 
-pub const MAX_ALLOW: usize = 32;
+pub const MAX_ALLOW: usize = MAX_RULES;
 pub const MAX_BYTES: usize = 262_144;
-const TIMEOUT_SEC: f64 = 8.0;
-const MAX_QUERY: usize = 200;
-const MAX_SNIPPET: usize = 160;
-const MAX_HITS_PER_URL: usize = 3;
-const MAX_SEARCH_URLS: usize = 8;
 const MAX_CONTEXT: usize = 4000;
-const MAX_RAW: usize = 500;
-const SNIP_BEFORE: usize = 40;
-const SNIP_AFTER: usize = 120;
-const BLOCKED_HOSTS: [&str; 4] = [
-    "localhost",
-    "localhost.localdomain",
-    "metadata.google.internal",
-    "metadata.goog",
-];
-const PATH_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~/=+-";
-const TEXT_TYPES: [&str; 5] = [
-    "text/",
-    "application/json",
-    "application/xml",
-    "application/xhtml+xml",
-    "application/javascript",
-];
-const SKIP_TAGS: [&str; 4] = ["script", "style", "noscript", "template"];
-const BREAK_TAGS: [&str; 10] = ["p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "pre"];
 
-fn werr(code: &str, message: impl Into<String>) -> HarnessError {
-    HarnessError::new(code, message)
+#[derive(Debug, Clone)]
+pub struct Limits {
+    pub response_bytes: usize,
+    pub request_seconds: u64,
+    pub concurrency: usize,
+    pub pages: usize,
+    pub run_bytes: usize,
+    pub run_seconds: u64,
+    pub per_site_pages: usize,
+    pub pace_ms: u64,
+    pub cache_pages: usize,
+    pub cache_bytes: usize,
+    pub subqueries: usize,
+    pub rounds: usize,
+    pub evidence_tokens: u64,
+    pub model_tokens: u64,
+    pub total_tokens: u64,
+    pub research_seconds: u64,
+    pub stale_seconds: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AllowEntry {
-    pub scheme: String,
-    pub host: String,
-    pub port: String,
-    pub path: String,
-    pub raw: String,
-}
-
-impl AllowEntry {
-    fn key(&self) -> (String, String, String) {
-        (self.host.clone(), self.port.clone(), self.path.clone())
-    }
-
-    fn to_json(&self) -> Value {
-        json!({"scheme": self.scheme, "host": self.host, "port": self.port, "path": self.path, "raw": self.raw})
-    }
-
-    fn rendered(&self) -> String {
-        if self.raw.is_empty() {
-            format!("{}://{}{}", self.scheme, authority(&self.host, &self.port), self.path)
-        } else {
-            self.raw.clone()
-        }
-    }
-}
-
-fn host_of(raw: &str) -> String {
-    raw.trim().to_lowercase().trim_end_matches('.').to_string()
-}
-
-fn authority(host: &str, port: &str) -> String {
-    let h = match host.parse::<IpAddr>() {
-        Ok(IpAddr::V6(_)) => format!("[{host}]"),
-        _ => host.to_string(),
-    };
-    if port.is_empty() {
-        h
-    } else {
-        format!("{h}:{port}")
-    }
-}
-
-/// Hand-rolled `is_global` (the std one is unstable).
-pub fn is_public_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_public_v4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_public_v4(v4);
+impl Limits {
+    pub fn load(cfg: &AppConfig) -> Result<Self> {
+        let bound = |name: &str, default: u64, min: u64, max: u64| -> Result<u64> {
+            let key = format!("web.{name}");
+            let value = match cfg.get(&key) {
+                None => default,
+                Some(v) => v
+                    .as_u64()
+                    .ok_or_else(|| HarnessError::config(format!("{key} must be an integer")))?,
+            };
+            if !(min..=max).contains(&value) {
+                return Err(HarnessError::config(format!("{key} must be {min}..={max}")));
             }
-            let seg = v6.segments();
-            !(v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || (seg[0] & 0xfe00) == 0xfc00 // unique local fc00::/7
-                || (seg[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
-                || seg[0] == 0x2001 && seg[1] == 0x0db8 // documentation
-                || seg[0] == 0x2001 && seg[1] == 0x0002 && seg[2] == 0 // benchmarking
-                || v6 == Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 1))
-        }
-    }
-}
-
-fn is_public_v4(v4: Ipv4Addr) -> bool {
-    let o = v4.octets();
-    !(v4.is_private()
-        || v4.is_loopback()
-        || v4.is_link_local()
-        || v4.is_broadcast()
-        || v4.is_documentation()
-        || v4.is_unspecified()
-        || v4.is_multicast()
-        || (o[0] == 100 && (64..=127).contains(&o[1])) // CGNAT 100.64/10
-        || (o[0] == 198 && (o[1] == 18 || o[1] == 19)) // benchmarking
-        || o[0] == 0
-        || o[0] >= 240) // reserved + 255.255.255.255
-}
-
-/// Normalise a host or URL into an allowlist row. No DNS (offline-safe).
-pub fn parse_allow_entry(raw: &str) -> Result<AllowEntry> {
-    let text = raw.trim();
-    if text.is_empty() || text.chars().count() > MAX_RAW {
-        return Err(werr("WEB_BAD_URL", "allowlist entry must be a non-empty URL or host"));
-    }
-    let text = if text.contains("://") {
-        text.to_string()
-    } else {
-        format!("https://{text}")
-    };
-    let parsed = url::Url::parse(&text).map_err(|_| werr("WEB_BAD_URL", "URL could not be parsed"))?;
-    let scheme = parsed.scheme().to_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return Err(werr("WEB_BAD_URL", "only http and https URLs are allowed"));
-    }
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(werr("WEB_BAD_URL", "URLs with userinfo are refused"));
-    }
-    let port = match parsed.port() {
-        None => String::new(),
-        Some(p) if (scheme == "http" && p == 80) || (scheme == "https" && p == 443) => String::new(),
-        Some(p) => p.to_string(),
-    };
-    let host = host_of(parsed.host_str().unwrap_or(""))
-        .trim_matches(['[', ']'])
-        .to_string();
-    if host.is_empty() || BLOCKED_HOSTS.contains(&host.as_str()) || host.ends_with(".local") {
-        return Err(werr("WEB_SSRF_DENIED", "that host cannot be allowlisted"));
-    }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if !is_public_ip(ip) {
-            return Err(werr("WEB_SSRF_DENIED", "private or loopback IPs cannot be allowlisted"));
-        }
-    }
-    let mut path = parsed.path().to_string();
-    if path.is_empty() {
-        path = "/".into();
-    }
-    if !path.starts_with('/') {
-        path = format!("/{path}");
-    }
-    let raw = format!("{scheme}://{}{path}", authority(&host, &port));
-    Ok(AllowEntry {
-        scheme,
-        host,
-        port,
-        path,
-        raw,
-    })
-}
-
-fn load_entries(path: &Path) -> Result<Vec<AllowEntry>> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_) => return Err(werr("WEB_ALLOWLIST_UNREADABLE", "allowlist is unreadable")),
-    };
-    let parsed: Value =
-        serde_json::from_str(&text).map_err(|_| werr("WEB_ALLOWLIST_UNREADABLE", "allowlist is unreadable"))?;
-    let rows = parsed.get("entries").cloned().unwrap_or(parsed);
-    let mut out = Vec::new();
-    if let Some(list) = rows.as_array() {
-        for row in list {
-            let host = row.get("host").and_then(|v| v.as_str()).unwrap_or("");
-            if host.is_empty() {
-                continue;
-            }
-            out.push(AllowEntry {
-                scheme: row
-                    .get("scheme")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("https")
-                    .to_string(),
-                host: host_of(host),
-                port: row.get("port").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                path: row
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("/")
-                    .to_string(),
-                raw: row.get("raw").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            });
-        }
-    }
-    Ok(out)
-}
-
-fn save_entries(path: &Path, entries: &[AllowEntry]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let rows: Vec<Value> = entries.iter().map(|e| e.to_json()).collect();
-    write_json_atomic(path, &json!({"entries": rows}))
-}
-
-/// The matching allowlist row, or None.
-pub fn url_is_allowed<'a>(url: &str, entries: &'a [AllowEntry]) -> Option<&'a AllowEntry> {
-    let wanted = parse_allow_entry(url).ok()?;
-    let mut aliases: BTreeSet<String> = BTreeSet::new();
-    aliases.insert(wanted.host.clone());
-    if let Some(bare) = wanted.host.strip_prefix("www.") {
-        aliases.insert(bare.to_string());
-    } else {
-        aliases.insert(format!("www.{}", wanted.host));
-    }
-    for entry in entries {
-        if !aliases.contains(&entry.host) || entry.port != wanted.port {
-            continue;
-        }
-        let prefix = if entry.path.is_empty() {
-            "/"
-        } else {
-            entry.path.as_str()
+            Ok(value)
         };
-        if prefix == "/" {
-            return Some(entry);
-        }
-        let trimmed = prefix.trim_end_matches('/');
-        if wanted.path == trimmed || wanted.path.starts_with(&format!("{trimmed}/")) {
-            return Some(entry);
-        }
+        Ok(Self {
+            response_bytes: bound("response_bytes", MAX_BYTES as u64, 1024, 1_048_576)? as usize,
+            request_seconds: bound("request_seconds", 8, 1, 30)?,
+            concurrency: bound("concurrency", 2, 1, 4)? as usize,
+            pages: bound("pages", 20, 1, 40)? as usize,
+            run_bytes: bound("run_bytes", 2_097_152, 1024, 8_388_608)? as usize,
+            run_seconds: bound("run_seconds", 60, 1, 180)?,
+            per_site_pages: bound("per_site_pages", 10, 1, 20)? as usize,
+            pace_ms: bound("pace_ms", 250, 100, 5000)?,
+            cache_pages: bound("cache_pages", 128, 1, 256)? as usize,
+            cache_bytes: bound("cache_bytes", 16_777_216, 1_048_576, 33_554_432)? as usize,
+            subqueries: bound("subqueries", 3, 1, 5)? as usize,
+            rounds: bound("rounds", 2, 1, 2)? as usize,
+            evidence_tokens: bound("evidence_tokens", 3000, 256, 6000)?,
+            model_tokens: bound("model_tokens", 1024, 256, 2048)?,
+            total_tokens: bound("total_tokens", 16000, 2048, 32000)?,
+            research_seconds: bound("research_seconds", 300, 10, 1800)?,
+            stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
+        })
     }
-    None
 }
 
-/// Resolve `host` and refuse any non-public address (pre-connect snapshot; not a pin).
-pub async fn assert_public_host(host: &str) -> Result<()> {
-    let clean = host_of(host);
-    if clean.is_empty() || BLOCKED_HOSTS.contains(&clean.as_str()) {
-        return Err(werr("WEB_SSRF_DENIED", "host is not fetchable"));
-    }
-    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((clean.as_str(), 443))
-        .await
-        .map_err(|_| werr("WEB_DNS", format!("DNS failed for {clean}")))?
-        .collect();
-    if addrs.is_empty() {
-        return Err(werr("WEB_DNS", format!("DNS returned no addresses for {clean}")));
-    }
-    for a in addrs {
-        if !is_public_ip(a.ip()) {
-            return Err(
-                werr("WEB_SSRF_DENIED", "resolved address is not public; refused").detail("host", clean.clone())
-            );
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Page {
+    pub url: String,
+    pub title: String,
+    pub text: String,
+    pub links: Vec<String>,
+    pub status: u16,
+    pub content_type: String,
+    pub bytes: usize,
+    pub transfer_bytes: usize,
+    pub chars: usize,
+    pub fetched_at: f64,
+    pub content_hash: String,
+    pub extraction_version: u32,
+    pub policy_revision: String,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+}
+
+impl Page {
+    pub fn validate(&self, policy: &Policy, group: Option<&str>) -> Result<()> {
+        policy.authorize(&self.url, group)?;
+        if self.extraction_version != 1
+            || self.policy_revision.len() != 64
+            || self.content_hash != crate::common::sha256_hex(&self.text)
+            || !self.fetched_at.is_finite()
+            || self.links.len() > 128
+        {
+            return Err(error(
+                "WEB_EVIDENCE_INVALID",
+                "unproven or corrupt saved evidence refused",
+            ));
         }
+        Ok(())
+    }
+}
+
+/// A fresh client has exactly one DNS override and no fallback resolver.
+struct RefuseDns;
+impl reqwest::dns::Resolve for RefuseDns {
+    fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async { Err(std::io::Error::other("unvalidated DNS refused").into()) })
+    }
+}
+
+pub fn validate_addresses(addresses: &[SocketAddr]) -> Result<()> {
+    if addresses.is_empty() {
+        return Err(error("WEB_DNS", "DNS returned no addresses"));
+    }
+    if addresses.len() > 32 || addresses.iter().any(|a| !is_public_ip(a.ip())) {
+        return Err(error("WEB_SSRF_DENIED", "DNS answer includes prohibited addresses"));
     }
     Ok(())
 }
 
-/// Visible text from HTML (script/style dropped); otherwise a whitespace-collapsed body.
-pub fn extract_text(body: &str, content_type: &str) -> String {
-    let lowered = content_type.split(';').next().unwrap_or("").trim().to_lowercase();
-    let text = if lowered.contains("html") {
-        strip_html(body)
-    } else {
-        body.to_string()
+/// HTML5 parsing decodes entities and repairs malformed markup. Never execute it.
+pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, String, Vec<String>) {
+    if !content_type.contains("html") {
+        return (String::new(), body.to_string(), Vec::new());
+    }
+    let html = scraper::Html::parse_document(body);
+    let mut title = String::new();
+    let mut text = String::new();
+    let mut links = BTreeSet::new();
+    let mut previous_block = None;
+    let block = |name: &str| {
+        matches!(
+            name,
+            "body"
+                | "main"
+                | "article"
+                | "section"
+                | "p"
+                | "div"
+                | "li"
+                | "tr"
+                | "td"
+                | "pre"
+                | "blockquote"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+        )
     };
-    let collapsed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    crate::common::clip_chars(&unescape_entities(&collapsed), MAX_BYTES)
-}
-
-fn strip_html(body: &str) -> String {
-    let mut out = String::with_capacity(body.len());
-    let mut skip_depth = 0usize;
-    let mut rest = body;
-    while let Some(start) = rest.find('<') {
-        if skip_depth == 0 {
-            out.push_str(&rest[..start]);
+    for node in html.tree.root().descendants() {
+        if node.ancestors().any(|a| {
+            a.value().as_element().is_some_and(|e| {
+                matches!(
+                    e.name(),
+                    "script" | "style" | "noscript" | "template" | "nav" | "header" | "footer" | "form" | "svg"
+                ) || e.attr("hidden").is_some()
+                    || e.attr("aria-hidden") == Some("true")
+            })
+        }) {
+            continue;
         }
-        let after = &rest[start + 1..];
-        let Some(end) = after.find('>') else {
-            break;
-        };
-        let tag_body = &after[..end];
-        let is_close = tag_body.starts_with('/');
-        let name: String = tag_body
-            .trim_start_matches('/')
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric())
-            .collect::<String>()
-            .to_lowercase();
-        if SKIP_TAGS.contains(&name.as_str()) {
-            if is_close {
-                skip_depth = skip_depth.saturating_sub(1);
-            } else if !tag_body.ends_with('/') {
-                skip_depth += 1;
+        if let Some(element) = node.value().as_element() {
+            if block(element.name()) {
+                previous_block = Some(node.id());
             }
-        } else if BREAK_TAGS.contains(&name.as_str()) && skip_depth == 0 {
-            out.push('\n');
-        }
-        rest = &after[end + 1..];
-    }
-    if skip_depth == 0 {
-        out.push_str(rest);
-    }
-    out
-}
-
-fn unescape_entities(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(idx) = rest.find('&') {
-        out.push_str(&rest[..idx]);
-        let tail = &rest[idx..];
-        let Some(semi) = tail.find(';') else {
-            out.push_str(tail);
-            return out;
-        };
-        let entity = &tail[1..semi];
-        let replacement = match entity {
-            "amp" => Some("&".to_string()),
-            "lt" => Some("<".to_string()),
-            "gt" => Some(">".to_string()),
-            "quot" => Some("\"".to_string()),
-            "apos" | "#39" => Some("'".to_string()),
-            "nbsp" => Some(" ".to_string()),
-            e if e.starts_with("#x") || e.starts_with("#X") => u32::from_str_radix(&e[2..], 16)
-                .ok()
-                .and_then(char::from_u32)
-                .map(|c| c.to_string()),
-            e if e.starts_with('#') => e[1..]
-                .parse::<u32>()
-                .ok()
-                .and_then(char::from_u32)
-                .map(|c| c.to_string()),
-            _ => None,
-        };
-        match replacement {
-            Some(r) if semi <= 12 => {
-                out.push_str(&r);
-                rest = &tail[semi + 1..];
+            if matches!(
+                element.name(),
+                "p" | "div" | "br" | "li" | "tr" | "pre" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+            ) {
+                text.push('\n');
             }
-            _ => {
-                out.push('&');
-                rest = &tail[1..];
+            if matches!(element.name(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+                text.push_str("# ");
+            }
+            if element.name() == "a" && links.len() < 128 {
+                if let Some(url) = element
+                    .attr("href")
+                    .and_then(|v| base.join(v).ok())
+                    .and_then(|u| canonical_url(u.as_str()).ok())
+                {
+                    links.insert(url.to_string());
+                }
             }
         }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn snippets(text: &str, query: &regex::Regex) -> Vec<String> {
-    let mut found = Vec::new();
-    for matched in query.find_iter(text).take(MAX_HITS_PER_URL) {
-        let lo = floor_char(text, matched.start().saturating_sub(SNIP_BEFORE));
-        let hi = floor_char(text, (matched.end() + SNIP_AFTER).min(text.len()));
-        let mut chunk = text[lo..hi].trim().to_string();
-        if lo > 0 {
-            chunk = format!("…{chunk}");
-        }
-        if hi < text.len() {
-            chunk = format!("{chunk}…");
-        }
-        found.push(crate::common::clip_chars(&chunk, MAX_SNIPPET));
-    }
-    found
-}
-
-fn floor_char(s: &str, mut i: usize) -> usize {
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
-/// GET URL from the persisted allowlist row only, never from user URL pieces.
-fn allowlist_target(entry: &AllowEntry) -> Result<String> {
-    let scheme = if entry.scheme == "http" || entry.scheme == "https" {
-        entry.scheme.as_str()
-    } else {
-        "https"
-    };
-    if !entry.port.is_empty() {
-        let ok = entry.port.bytes().all(|b| b.is_ascii_digit())
-            && entry.port.parse::<u32>().map(|p| p > 0 && p <= 65535).unwrap_or(false);
-        if !ok {
-            return Err(werr("WEB_BAD_URL", "allowlist port is invalid"));
+        if let Some(value) = node.value().as_text() {
+            if node
+                .ancestors()
+                .any(|a| a.value().as_element().is_some_and(|e| e.name() == "title"))
+            {
+                title.push_str(value);
+            } else if !node
+                .ancestors()
+                .any(|a| a.value().as_element().is_some_and(|e| e.name() == "head"))
+            {
+                let current = node
+                    .ancestors()
+                    .find(|n| n.value().as_element().is_some_and(|e| block(e.name())))
+                    .map(|n| n.id());
+                if current != previous_block {
+                    text.push('\n');
+                    previous_block = current;
+                }
+                if node
+                    .ancestors()
+                    .any(|a| a.value().as_element().is_some_and(|e| e.name() == "pre"))
+                {
+                    text.push_str(value);
+                } else {
+                    text.push_str(&value.split_whitespace().collect::<Vec<_>>().join(" "));
+                    text.push(' ');
+                }
+            }
         }
     }
-    let mut path = if entry.path.is_empty() {
-        "/".to_string()
-    } else {
-        entry.path.clone()
-    };
-    if !path.starts_with('/') {
-        path = format!("/{path}");
-    }
-    if path.chars().any(|c| !PATH_CHARS.contains(c)) {
-        return Err(werr("WEB_BAD_URL", "allowlist path is invalid"));
-    }
-    Ok(format!("{scheme}://{}{path}", authority(&entry.host, &entry.port)))
+    (
+        title.trim().to_string(),
+        text.trim().to_string(),
+        links.into_iter().collect(),
+    )
 }
 
+#[derive(Debug)]
 pub struct WebTool {
-    tools_dir: PathBuf,
-    /// Test hook: `(host, addr)` skips the public-DNS check for `host` and pins it to `addr`.
+    pub(super) tools_dir: PathBuf,
+    /// Programmatic fixture hook; no configuration, CLI or HTTP path sets it.
     pub test_resolve: Option<(String, SocketAddr)>,
-}
-
-impl std::fmt::Debug for WebTool {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WebTool").field("tools_dir", &self.tools_dir).finish()
-    }
+    /// Additional exact hosts for bounded multi-site fixtures, never runtime configuration.
+    pub test_resolve_extra: Vec<(String, SocketAddr)>,
+    pub limits: Limits,
+    permits: Semaphore,
+    pub(super) mutation: Mutex<()>,
+    pub(super) search_gate: Arc<Semaphore>,
+    pub research: super::web_research::ResearchState,
 }
 
 impl WebTool {
-    pub fn new(tools_dir: &Path) -> Self {
-        Self {
-            tools_dir: tools_dir.to_path_buf(),
+    pub fn new(tools_dir: &Path, cfg: &AppConfig) -> Result<Self> {
+        let limits = Limits::load(cfg)?;
+        Ok(Self {
+            tools_dir: tools_dir.into(),
             test_resolve: None,
-        }
+            test_resolve_extra: Vec::new(),
+            permits: Semaphore::new(limits.concurrency),
+            limits,
+            mutation: Mutex::new(()),
+            search_gate: Arc::new(Semaphore::new(1)),
+            research: super::web_research::ResearchState::default(),
+        })
     }
-
     fn allow_path(&self) -> PathBuf {
         self.tools_dir.join("web_allowlist.json")
     }
-    fn last_path(&self) -> PathBuf {
-        self.tools_dir.join("web_last.json")
+    fn last_path(&self, owner: &str) -> PathBuf {
+        self.tools_dir
+            .join(format!("web_{}_last.json", crate::common::sha256_hex(owner)))
     }
-    fn context_path(&self) -> PathBuf {
-        self.tools_dir.join("web_context.txt")
+    fn context_path(&self, owner: &str) -> PathBuf {
+        self.tools_dir
+            .join(format!("web_{}_context.json", crate::common::sha256_hex(owner)))
+    }
+    pub fn policy(&self) -> Result<Policy> {
+        Policy::load(&self.allow_path())
     }
 
-    pub fn status(&self, enabled: bool) -> Result<Value> {
-        let entries = load_entries(&self.allow_path())?;
-        let ctx = self.context_path();
-        let context_stored = std::fs::metadata(&ctx)
-            .map(|m| m.is_file() && m.len() > 0)
-            .unwrap_or(false);
-        Ok(json!({
-            "enabled": enabled,
-            "allowlist": entries.iter().map(|e| e.rendered()).collect::<Vec<_>>(),
-            "injected": enabled && context_stored,
-            "context_stored": context_stored,
-            "has_last": self.last_path().is_file(),
-            "max_allow": MAX_ALLOW,
-        }))
+    pub(super) fn read_page(&self, path: &Path, group: Option<&str>) -> Result<Page> {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = opts
+            .open(path)
+            .map_err(|_| error("WEB_NO_LAST", "no valid saved extract"))?;
+        if !file.metadata()?.is_file() {
+            return Err(error("WEB_EVIDENCE_INVALID", "saved extract must be a file"));
+        }
+        let mut bytes = Vec::new();
+        let cap = self.limits.response_bytes * 8 + 65_536;
+        file.take(cap as u64 + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > cap {
+            return Err(error("WEB_EVIDENCE_INVALID", "saved extract exceeds limit"));
+        }
+        let page: Page = serde_json::from_slice(&bytes)
+            .map_err(|_| error("WEB_EVIDENCE_INVALID", "unproven saved extract refused"))?;
+        page.validate(&self.policy()?, group)?;
+        Ok(page)
+    }
+
+    pub fn status(&self, enabled: bool, owner: &str) -> Result<Value> {
+        let policy = self.policy()?;
+        let stored = self.read_page(&self.context_path(owner), None).is_ok();
+        Ok(
+            json!({"enabled": enabled, "allowlist": policy.rules.iter().map(|r| &r.pattern).collect::<Vec<_>>(),
+            "rules": policy.rules, "policy_revision": policy.revision,
+            "injected": enabled && stored, "context_stored": stored,
+            "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": MAX_ALLOW}),
+        )
     }
 
     pub fn allow(&self, raw: &str, enabled: bool) -> Result<Value> {
-        let entry = parse_allow_entry(raw)?;
-        let path = self.allow_path();
-        let mut entries = load_entries(&path)?;
-        if entries.iter().any(|e| e.key() == entry.key()) {
-            return self.status(enabled);
+        self.allow_rule(raw, "default", &[], enabled)
+    }
+    pub fn allow_rule(&self, raw: &str, group: &str, seeds: &[String], enabled: bool) -> Result<Value> {
+        let rule = Rule::new(raw, group, seeds)?;
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        // An explicit validated admin grant can initialize a missing policy.
+        // Reads still fail closed, and corrupt/unsafe existing files never reset.
+        let mut policy = match std::fs::symlink_metadata(self.allow_path()) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Policy::empty(),
+            _ => self.policy()?,
+        };
+        if let Some(existing) = policy.rules.iter_mut().find(|r| r.id == rule.id) {
+            *existing = rule;
+        } else {
+            if policy.rules.len() >= MAX_ALLOW {
+                return Err(error("WEB_ALLOWLIST_FULL", "rule cap reached"));
+            }
+            policy.rules.push(rule);
         }
-        if entries.len() >= MAX_ALLOW {
-            return Err(werr("WEB_ALLOWLIST_FULL", format!("allowlist cap is {MAX_ALLOW}")));
-        }
-        entries.push(entry);
-        save_entries(&path, &entries)?;
-        self.status(enabled)
+        self.save_policy(&policy)?;
+        self.status(enabled, "")
+    }
+
+    fn save_policy(&self, policy: &Policy) -> Result<()> {
+        let bytes = serde_json::to_vec(policy)?;
+        Policy::parse(&bytes)?;
+        crate::common::atomic::write_atomic(&self.allow_path(), &bytes, Some(0o600))
     }
 
     pub fn deny(&self, raw: &str, enabled: bool) -> Result<Value> {
-        let entry = parse_allow_entry(raw)?;
-        let path = self.allow_path();
-        let entries: Vec<AllowEntry> = load_entries(&path)?
-            .into_iter()
-            .filter(|e| e.key() != entry.key())
-            .collect();
-        save_entries(&path, &entries)?;
-        self.status(enabled)
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        let mut policy = self.policy()?;
+        let pattern = Rule::new(raw, "default", &[]).ok().map(|r| r.pattern);
+        if pattern.is_none() && !policy.rules.iter().any(|r| r.id == raw) {
+            return Err(error("WEB_BAD_URL", "use a rule ID or pattern"));
+        }
+        policy
+            .rules
+            .retain(|r| r.id != raw && pattern.as_ref().is_none_or(|p| r.pattern != *p));
+        self.save_policy(&policy)?;
+        self.status(enabled, "")
     }
 
-    pub fn context_text(&self, enabled: bool) -> String {
+    pub fn context_text(&self, enabled: bool, owner: &str) -> String {
         if !enabled {
             return String::new();
         }
-        std::fs::read_to_string(self.context_path())
-            .map(|t| crate::common::clip_chars(&t, MAX_CONTEXT))
+        self.read_page(&self.context_path(owner), None)
+            .map(|p| crate::common::clip_chars(&format!("Source: {}\n\n{}", p.url, p.text), MAX_CONTEXT))
             .unwrap_or_default()
     }
 
-    pub fn forget(&self, enabled: bool) -> Result<Value> {
-        for path in [self.context_path(), self.last_path()] {
+    pub fn forget(&self, enabled: bool, owner: &str) -> Result<Value> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        for path in [self.context_path(owner), self.last_path(owner)] {
             match std::fs::remove_file(path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => return Err(werr("WEB_CLEAR_FAILED", "could not clear stored web context")),
+                Err(_) => return Err(error("WEB_CLEAR_FAILED", "could not clear saved web evidence")),
             }
         }
-        self.status(enabled)
+        self.status(enabled, owner)
     }
 
-    pub fn inject(&self, enabled: bool) -> Result<Value> {
+    pub fn inject(&self, enabled: bool, owner: &str) -> Result<Value> {
+        self.require_enabled(enabled)?;
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        let page = self.read_page(&self.last_path(owner), None)?;
+        if page.text.is_empty() {
+            return Err(error("WEB_NO_LAST", "last extract is empty"));
+        }
+        page.validate(&self.policy()?, None)?;
+        crate::common::atomic::write_json_atomic_mode(&self.context_path(owner), &serde_json::to_value(&page)?, 0o600)?;
+        self.status(enabled, owner)
+    }
+
+    pub fn require_enabled(&self, enabled: bool) -> Result<Policy> {
         if !enabled {
-            return Err(werr("WEB_DISABLED", "web context is off - /web on before injecting"));
+            return Err(error("WEB_DISABLED", "web access is disabled"));
         }
-        let payload: Value = std::fs::read_to_string(self.last_path())
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .ok_or_else(|| werr("WEB_NO_LAST", "nothing to inject - /web fetch or /web search first"))?;
-        let text = payload
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        let source = payload.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        if text.is_empty() {
-            return Err(werr("WEB_NO_LAST", "last extract is empty"));
+        let policy = self.policy()?;
+        if policy.rules.is_empty() {
+            return Err(error("WEB_ALLOWLIST_EMPTY", "empty URL policy refuses all web access"));
         }
-        let body = crate::common::clip_chars(&format!("Source: {source}\n\n{text}"), MAX_CONTEXT);
-        write_atomic(&self.context_path(), body.as_bytes(), None)?;
-        let mut status = self.status(enabled)?;
-        status["chars"] = json!(body.chars().count());
-        Ok(status)
+        Ok(policy)
     }
 
-    fn require_enabled(&self, enabled: bool) -> Result<Vec<AllowEntry>> {
-        if !enabled {
-            return Err(werr(
-                "WEB_DISABLED",
-                "web fetch is off - /web on after allowlisting hosts",
-            ));
-        }
-        let entries = load_entries(&self.allow_path())?;
-        if entries.is_empty() {
-            return Err(werr(
-                "WEB_ALLOWLIST_EMPTY",
-                "allowlist is empty - /web allow <url> first (fail-closed)",
-            ));
-        }
-        Ok(entries)
-    }
-
-    fn client(&self) -> Result<reqwest::Client> {
-        let mut builder = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs_f64(TIMEOUT_SEC))
-            .user_agent("CGagentHarness-web/0.1 (+allowlist-only; no-browser)");
-        if let Some((host, addr)) = &self.test_resolve {
-            builder = builder.resolve(host, *addr);
-        }
-        builder.build().map_err(|_| werr("WEB_FETCH_FAILED", "fetch failed"))
-    }
-
-    fn gate_tool(&self, name: &str, argv: &[String], enabled: bool, audit: &Audit) -> Result<()> {
-        let allow: BTreeSet<String> = if enabled {
+    pub(super) fn gate_tool(&self, name: &str, argv: &[String], enabled: bool, audit: &Audit) -> Result<()> {
+        let allow = if enabled {
             ["web_fetch".to_string(), "web_search".to_string()]
                 .into_iter()
                 .collect()
@@ -583,134 +431,340 @@ impl WebTool {
             .map_err(|e| HarnessError::new("WEB_TOOL_DENIED", e.message).with_details(e.details))
     }
 
-    async fn get(&self, url: &str, entries: &[AllowEntry]) -> Result<Value> {
-        let entry = url_is_allowed(url, entries)
-            .ok_or_else(|| werr("WEB_HOST_DENIED", "URL is not on the allowlist").detail("url", url))?;
-        let full = if url.contains("://") {
-            url.to_string()
-        } else {
-            format!("https://{url}")
-        };
-        if let Ok(parsed) = url::Url::parse(&full) {
-            if parsed.query().is_some() || parsed.fragment().is_some() {
-                return Err(werr("WEB_BAD_URL", "query or fragment is not allowed"));
+    pub(super) async fn get(&self, raw: &str, group: Option<&str>, cached: Option<&Page>) -> Result<Page> {
+        tokio::time::timeout(Duration::from_secs(self.limits.request_seconds), async {
+            let _permit = self
+                .permits
+                .acquire()
+                .await
+                .map_err(|_| error("WEB_CANCELLED", "fetch cancelled"))?;
+            let policy = self.policy()?;
+            let target = policy.authorize(raw, group)?;
+            let host = target.host_str().unwrap().trim_matches(['[', ']']);
+            let port = target.port_or_known_default().unwrap();
+            let addresses = match self
+                .test_resolve
+                .iter()
+                .chain(self.test_resolve_extra.iter())
+                .find(|(test_host, _)| test_host == host)
+            {
+                Some((_, addr)) => vec![*addr],
+                _ => {
+                    let addresses: Vec<_> = tokio::net::lookup_host((host, port))
+                        .await
+                        .map_err(|_| error("WEB_DNS", "DNS lookup failed"))?
+                        .take(33)
+                        .collect();
+                    validate_addresses(&addresses)?;
+                    addresses
+                }
+            };
+            // New client, no pooling/retries/proxies/redirects, only validated DNS.
+            // HTTP/1's finite Hyper header-count/buffer caps apply before our 16KiB header check.
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .http1_only()
+                .pool_max_idle_per_host(0)
+                .retry(reqwest::retry::never())
+                .redirect(reqwest::redirect::Policy::none())
+                .dns_resolver(Arc::new(RefuseDns))
+                .resolve_to_addrs(host, &addresses)
+                .timeout(Duration::from_secs(self.limits.request_seconds))
+                .user_agent("CGagentHarness-web/1.0")
+                .build()
+                .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))?;
+            let current = self.policy()?;
+            current.authorize(target.as_str(), group)?;
+            if current.revision != policy.revision {
+                return Err(error("WEB_POLICY_CHANGED", "policy changed during request"));
             }
-        }
-        match &self.test_resolve {
-            Some((host, _)) if host == &entry.host => {}
-            _ => assert_public_host(&entry.host).await?,
-        }
-        let target = allowlist_target(entry)?;
-        let client = self.client()?;
-        let resp = client
-            .get(&target)
-            .send()
-            .await
-            .map_err(|_| werr("WEB_FETCH_FAILED", "fetch failed"))?;
-        let status = resp.status().as_u16();
-        if status >= 400 {
-            return Err(werr("WEB_FETCH_FAILED", format!("upstream HTTP {status}")).detail("status", status));
-        }
-        let ctype = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("text/plain")
-            .to_string();
-        let lowered = ctype.to_lowercase();
-        let is_text = TEXT_TYPES.iter().any(|p| lowered.starts_with(p)) || lowered.contains("html");
-        if !is_text {
-            return Err(werr("WEB_NOT_TEXT", "content-type is not text; refused"));
-        }
-        let mut body: Vec<u8> = Vec::new();
-        let mut resp = resp;
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|_| werr("WEB_FETCH_FAILED", "fetch failed"))?
-        {
-            let remaining = MAX_BYTES.saturating_sub(body.len());
-            body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-            if body.len() >= MAX_BYTES {
-                break;
+            let mut request = client.get(target.clone());
+            if let Some(page) = cached {
+                page.validate(&current, group)?;
+                if page.url != target.as_str() {
+                    return Err(error("WEB_EVIDENCE_INVALID", "validator source mismatch"));
+                }
+                if let Some(etag) = &page.etag {
+                    request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+                }
+                if let Some(modified) = &page.last_modified {
+                    request = request.header(reqwest::header::IF_MODIFIED_SINCE, modified);
+                }
             }
-        }
-        let text = extract_text(&String::from_utf8_lossy(&body), &ctype);
-        Ok(json!({"url": target, "status": status, "content_type": ctype, "chars": text.chars().count(), "text": text}))
-    }
-
-    pub async fn fetch(&self, url: &str, enabled: bool, audit: &Audit) -> Result<Value> {
-        let target = url.trim().to_string();
-        let entries = self.require_enabled(enabled)?;
-        self.gate_tool("web_fetch", std::slice::from_ref(&target), enabled, audit)?;
-        let page = self.get(&target, &entries).await?;
-        write_json_atomic(&self.last_path(), &page)?;
-        Ok(page)
-    }
-
-    pub async fn search(&self, query: &str, enabled: bool, audit: &Audit) -> Result<Value> {
-        let needle = query.trim().to_string();
-        if needle.is_empty() || needle.chars().count() > MAX_QUERY {
-            return Err(werr("WEB_BAD_QUERY", "search query must be 1-200 characters"));
-        }
-        let entries: Vec<AllowEntry> = self
-            .require_enabled(enabled)?
-            .into_iter()
-            .take(MAX_SEARCH_URLS)
-            .collect();
-        self.gate_tool("web_search", std::slice::from_ref(&needle), enabled, audit)?;
-        // Match original-text offsets; Unicode case conversion can change byte lengths.
-        let query_pattern = regex::RegexBuilder::new(&regex::escape(&needle))
-            .case_insensitive(true)
-            .build()
-            .map_err(|_| werr("WEB_BAD_QUERY", "search query could not be compiled"))?;
-        let mut hits = Vec::new();
-        let mut errors = Vec::new();
-        let mut recorded_last = false;
-        for entry in &entries {
-            let url = entry.rendered();
-            match self.get(&url, std::slice::from_ref(entry)).await {
-                Ok(page) => {
-                    let text = page.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                    let snips = snippets(text, &query_pattern);
-                    if !snips.is_empty() {
-                        hits.push(json!({"url": page["url"], "snippets": snips}));
-                        if !recorded_last {
-                            write_json_atomic(&self.last_path(), &page)?;
-                            recorded_last = true;
-                        }
+            let mut response = request
+                .send()
+                .await
+                .map_err(|_| error("WEB_FETCH_FAILED", "fetch failed"))?;
+            let status = response.status();
+            if response
+                .headers()
+                .iter()
+                .map(|(k, v)| k.as_str().len() + v.len())
+                .sum::<usize>()
+                > 16_384
+            {
+                return Err(error("WEB_HEADERS_TOO_LARGE", "response headers exceed limit"));
+            }
+            let header = |name| {
+                response
+                    .headers()
+                    .get(name)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string)
+            };
+            let mut page = if status == reqwest::StatusCode::NOT_MODIFIED {
+                let mut page = cached
+                    .cloned()
+                    .ok_or_else(|| error("WEB_FETCH_FAILED", "304 without cached evidence"))?;
+                page.transfer_bytes = 0;
+                page
+            } else {
+                if status.is_redirection() {
+                    return Err(error("WEB_REDIRECT_REFUSED", "redirect refused"));
+                }
+                if !status.is_success() {
+                    return Err(error("WEB_FETCH_FAILED", "upstream error"));
+                }
+                if response
+                    .content_length()
+                    .is_some_and(|n| n > self.limits.response_bytes as u64)
+                {
+                    return Err(error("WEB_TOO_LARGE", "response exceeds limit"));
+                }
+                if header(reqwest::header::CONTENT_ENCODING).is_some_and(|v| v != "identity") {
+                    return Err(error("WEB_ENCODING_REFUSED", "compressed responses are not enabled"));
+                }
+                let content_type = header(reqwest::header::CONTENT_TYPE)
+                    .unwrap_or_default()
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                if !matches!(
+                    content_type.as_str(),
+                    "text/plain" | "text/html" | "application/xhtml+xml" | "text/markdown"
+                ) {
+                    return Err(error("WEB_NOT_TEXT", "unsupported content type"));
+                }
+                let etag = header(reqwest::header::ETAG);
+                let last_modified = header(reqwest::header::LAST_MODIFIED);
+                let mut bytes = Vec::new();
+                while let Some(chunk) = response
+                    .chunk()
+                    .await
+                    .map_err(|_| error("WEB_FETCH_FAILED", "response read failed"))?
+                {
+                    if bytes.len() + chunk.len() > self.limits.response_bytes {
+                        return Err(error("WEB_TOO_LARGE", "response exceeds limit"));
                     }
+                    bytes.extend_from_slice(&chunk);
                 }
-                Err(e) => {
-                    tracing::info!("web search skipped {url}: {}", e.code);
-                    errors.push(json!({"url": url, "code": e.code}));
+                let (title, text, links) = extract(&String::from_utf8_lossy(&bytes), &content_type, &target);
+                Page {
+                    url: target.to_string(),
+                    title,
+                    content_hash: crate::common::sha256_hex(&text),
+                    chars: text.chars().count(),
+                    text,
+                    links,
+                    status: status.as_u16(),
+                    content_type,
+                    bytes: bytes.len(),
+                    transfer_bytes: bytes.len(),
+                    fetched_at: 0.0,
+                    extraction_version: 1,
+                    policy_revision: policy.revision.clone(),
+                    etag,
+                    last_modified,
                 }
+            };
+            let current = self.policy()?;
+            current.authorize(&page.url, group)?;
+            if current.revision != policy.revision {
+                return Err(error(
+                    "WEB_POLICY_CHANGED",
+                    "policy changed during request; result discarded",
+                ));
             }
-        }
-        if hits.is_empty() {
-            self.forget(enabled)?;
-        }
-        Ok(json!({"query": needle, "hits": hits, "errors": errors, "scanned": entries.len()}))
+            page.fetched_at = crate::common::now_ts();
+            page.policy_revision = current.revision;
+            Ok(page)
+        })
+        .await
+        .map_err(|_| error("WEB_TIMEOUT", "request deadline exceeded"))?
+    }
+
+    pub(super) fn store_last(&self, page: &Page, group: Option<&str>, owner: &str) -> Result<()> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        page.validate(&self.policy()?, group)?;
+        crate::common::atomic::write_json_atomic_mode(&self.last_path(owner), &serde_json::to_value(page)?, 0o600)
+    }
+
+    pub async fn fetch(&self, raw: &str, enabled: bool, audit: &Audit, owner: &str) -> Result<Value> {
+        self.require_enabled(enabled)?;
+        self.gate_tool("web_fetch", &[raw.into()], enabled, audit)?;
+        let page = self.get(raw, None, None).await?;
+        self.cache_page(&page, None)?;
+        self.store_last(&page, None, owner)?;
+        page.validate(&self.policy()?, None)?;
+        Ok(serde_json::to_value(page)?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::atomic::write_json_atomic;
+    use axum::{extract::State, routing::get, Router};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
+
+    #[derive(Clone, Default)]
+    struct Fixture {
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+        requests: Arc<AtomicUsize>,
+    }
+
+    #[tokio::test]
+    async fn pinned_fetch_refuses_redirects_and_discards_revoked_or_cancelled_work() {
+        let fixture = Fixture::default();
+        let app = Router::new()
+            .route(
+                "/docs/child",
+                get(|| async { ([("content-type", "text/plain")], "actual child Target after İK") }),
+            )
+            .route(
+                "/redirect",
+                get(|| async {
+                    (
+                        axum::http::StatusCode::FOUND,
+                        [("location", "http://127.0.0.1/private")],
+                        "untrusted redirect",
+                    )
+                }),
+            )
+            .route(
+                "/slow",
+                get(|State(f): State<Fixture>| async move {
+                    f.requests.fetch_add(1, Ordering::SeqCst);
+                    f.started.notify_one();
+                    f.release.notified().await;
+                    ([("content-type", "text/plain")], "REVOKED_MARKER")
+                }),
+            )
+            .with_state(fixture.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        write_json_atomic(&dir.path().join("web_allowlist.json"), &json!({"version":1,"rules":[]})).unwrap();
+        let mut web = WebTool::new(dir.path(), &cfg).unwrap();
+        web.test_resolve = Some(("fixture.invalid".into(), address));
+        let web = Arc::new(web);
+        let root = format!("http://fixture.invalid:{}/", address.port());
+        let all = format!("{root}*");
+        let child = format!("{root}docs/child");
+        web.allow(&all, true).unwrap();
+        let audit = Arc::new(Audit::new(dir.path().join("audit.jsonl"), &cfg));
+        let page = web.fetch(&child, true, &audit, "local").await.unwrap();
+        assert_eq!(page["url"], child);
+        assert!(page["text"].as_str().unwrap().starts_with("actual child"));
+        // fixture.invalid cannot resolve via system DNS. Success proves the
+        // checked connection override works with the refusing fallback resolver.
+        assert_eq!(
+            web.fetch(&format!("{root}redirect"), true, &audit, "local")
+                .await
+                .unwrap_err()
+                .code,
+            "WEB_REDIRECT_REFUSED"
+        );
+        web.inject(true, "local").unwrap();
+        assert!(web.context_text(true, "local").contains("actual child"));
+        assert!(web.context_text(false, "local").is_empty());
+        let slow = format!("{root}slow");
+        let pending = {
+            let web = web.clone();
+            let audit = audit.clone();
+            let slow = slow.clone();
+            tokio::spawn(async move { web.fetch(&slow, true, &audit, "local").await })
+        };
+        fixture.started.notified().await;
+        web.deny(&all, true).unwrap();
+        assert!(web.context_text(true, "local").is_empty());
+        assert!(!web.status(true, "local").unwrap()["has_last"].as_bool().unwrap());
+        fixture.release.notify_one();
+        assert_eq!(pending.await.unwrap().unwrap_err().code, "WEB_HOST_DENIED");
+        assert!(!std::fs::read_to_string(web.last_path("local"))
+            .unwrap()
+            .contains("REVOKED_MARKER"));
+        web.allow(&all, true).unwrap();
+        let pending = {
+            let web = web.clone();
+            let audit = audit.clone();
+            tokio::spawn(async move { web.fetch(&slow, true, &audit, "local").await })
+        };
+        fixture.started.notified().await;
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
+        fixture.release.notify_one();
+        assert_eq!(web.permits.available_permits(), web.limits.concurrency);
+        std::fs::write(web.allow_path(), "{invalid").unwrap();
+        assert_eq!(
+            web.fetch(&child, true, &audit, "local").await.unwrap_err().code,
+            "WEB_POLICY_INVALID"
+        );
+        assert!(web.context_text(true, "local").is_empty());
+        assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
 
     #[test]
-    fn search_snippets_preserve_matches_after_unicode_case_changes() {
-        let query = regex::RegexBuilder::new("target")
-            .case_insensitive(true)
-            .build()
-            .unwrap();
-        for prefix in ["K", "İ"] {
-            let text = format!("{} Target", prefix.repeat(200));
-            let hits = snippets(&text, &query);
-            assert_eq!(hits.len(), 1);
-            assert!(hits[0].contains("Target"), "match missing after {prefix}: {hits:?}");
-            assert!(hits[0].chars().count() <= MAX_SNIPPET);
+    fn mixed_dns_special_ranges_and_unproven_context_are_refused() {
+        let public: SocketAddr = "8.8.8.8:443".parse().unwrap();
+        assert!(validate_addresses(&[public]).is_ok());
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "169.254.169.254",
+            "192.0.0.1",
+            "100.64.0.1",
+            "198.18.0.1",
+            "224.1.1.1",
+            "::1",
+            "::ffff:127.0.0.1",
+            "64:ff9b::7f00:1",
+            "2002:7f00:1::",
+            "2001:db8::1",
+            "fc00::1",
+            "fe80::1",
+            "3fff::1",
+        ] {
+            let private = SocketAddr::new(ip.parse().unwrap(), 443);
+            assert!(validate_addresses(&[public, private]).is_err(), "{ip}");
         }
-        assert_eq!(snippets("Target TARGET target target", &query).len(), MAX_HITS_PER_URL);
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        let web = WebTool::new(dir.path(), &cfg).unwrap();
+        write_json_atomic(&web.allow_path(), &json!({"version":1,"rules":[]})).unwrap();
+        web.allow("https://example.com/", true).unwrap();
+        std::fs::write(web.context_path("local"), "legacy shared context").unwrap();
+        assert!(web.context_text(true, "local").is_empty());
+        let base = canonical_url("https://example.com/").unwrap();
+        let (title, text, links) = extract("<title>Docs &amp; tests</title><script>evil()</script><nav>noise</nav><h1>Heading</h1><p>A &amp; B</p><pre>x = 1\n  y = 2</pre><a href='/nested'>Next</a>", "text/html", &base);
+        assert_eq!(title, "Docs & tests");
+        assert!(text.contains("Heading") && text.contains("A & B") && text.contains("x = 1\n  y = 2"));
+        assert!(!text.contains("evil()") && !text.contains("noise"));
+        assert_eq!(links, vec!["https://example.com/nested"]);
+        assert!(
+            Limits::load(&AppConfig::from_str("web: {concurrency: 0}", Path::new("config.yaml")).unwrap()).is_err()
+        );
     }
 }

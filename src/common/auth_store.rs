@@ -1,7 +1,5 @@
-//! `AuthManager`: users, sessions, lockout, bootstrap. Port of
-//! `utils/authn_manager.py` + `utils/authn_store.py`, persisted to a single
-//! `auth.json` (0600, atomic) instead of SQLite -- the single-operator scope
-//! this binary targets never needed a database.
+//! Users, sessions, lockout and bootstrap backed by transactional SQLite.
+//! Legacy auth.json records are migrated once; failures never create a new admin.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -9,7 +7,8 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use super::atomic::write_json_atomic_mode;
+#[path = "auth_sqlite.rs"]
+mod sqlite;
 use super::authn;
 use super::config::AppConfig;
 use super::errors::{HarnessError, Result};
@@ -19,7 +18,12 @@ const DEFAULT_IDLE_TIMEOUT_SEC: f64 = 43200.0;
 const DEFAULT_ABSOLUTE_TIMEOUT_SEC: f64 = 604800.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UserRow {
+    #[serde(default)]
+    user_id: String,
+    #[serde(default)]
+    must_change_password: bool,
     password_hash: String,
     created_ts: f64,
     #[serde(default)]
@@ -39,6 +43,7 @@ fn default_role() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SessionRow {
     username: String,
     csrf_hash: String,
@@ -49,7 +54,8 @@ struct SessionRow {
     revoked: bool,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AuthDb {
     #[serde(default)]
     users: BTreeMap<String, UserRow>,
@@ -60,6 +66,7 @@ struct AuthDb {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserSummary {
+    pub user_id: String,
     pub username: String,
     pub created_ts: f64,
     pub disabled: bool,
@@ -67,6 +74,7 @@ pub struct UserSummary {
     pub failed_count: u32,
     pub locked_until_ts: Option<f64>,
     pub role: String,
+    pub must_change_password: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -98,7 +106,8 @@ pub struct AuthManager {
     path: PathBuf,
     idle_timeout_sec: f64,
     absolute_timeout_sec: f64,
-    state: Mutex<AuthDb>,
+    state: Mutex<(rusqlite::Connection, AuthDb)>,
+    fresh_bootstrap: std::sync::atomic::AtomicBool,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
 
@@ -110,18 +119,13 @@ impl std::fmt::Debug for AuthManager {
 
 impl AuthManager {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
-        let db = if path.exists() {
-            let text = std::fs::read_to_string(path)?;
-            serde_json::from_str::<AuthDb>(&text)
-                .map_err(|e| HarnessError::new("AUTH_CONFIG_INVALID", format!("auth store is not valid: {e}")))?
-        } else {
-            AuthDb::default()
-        };
+        let (connection, db, fresh) = sqlite::open(path)?;
         let mgr = Self {
             path: path.to_path_buf(),
             idle_timeout_sec: cfg.f64_or("auth.session.idle_timeout_sec", DEFAULT_IDLE_TIMEOUT_SEC),
             absolute_timeout_sec: cfg.f64_or("auth.session.absolute_timeout_sec", DEFAULT_ABSOLUTE_TIMEOUT_SEC),
-            state: Mutex::new(db),
+            state: Mutex::new((connection, db)),
+            fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
             clock: Box::new(super::now_ts),
         };
         // Warm the timing-equalization dummy before any login can arrive.
@@ -138,13 +142,15 @@ impl AuthManager {
         (self.clock)()
     }
 
-    fn persist(&self, db: &AuthDb) -> Result<()> {
-        let value = serde_json::to_value(db)?;
-        write_json_atomic_mode(&self.path, &value, 0o600)
+    fn persist(&self, stored: &mut (rusqlite::Connection, AuthDb), db: &AuthDb) -> Result<()> {
+        sqlite::persist(&mut stored.0, db)?;
+        stored.1 = db.clone();
+        Ok(())
     }
 
     fn summary(username: &str, row: &UserRow) -> UserSummary {
         UserSummary {
+            user_id: row.user_id.clone(),
             username: username.to_string(),
             created_ts: row.created_ts,
             disabled: row.disabled,
@@ -152,6 +158,7 @@ impl AuthManager {
             failed_count: row.failed_count,
             locked_until_ts: row.locked_until_ts,
             role: row.role.clone(),
+            must_change_password: row.must_change_password,
         }
     }
 
@@ -159,31 +166,15 @@ impl AuthManager {
         username.trim().to_lowercase()
     }
 
-    /// Create the bootstrap admin with an UNUSABLE placeholder if no user exists.
+    /// Creation happens atomically with the fresh database, never on an empty
+    /// existing database. Retained for callers that report first-run status.
     pub fn bootstrap_if_empty(&self) -> Result<bool> {
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if !db.users.is_empty() {
-            return Ok(false);
-        }
-        let record = authn::hash_pending_placeholder()?;
-        db.users.insert(
-            BOOTSTRAP_USERNAME.to_string(),
-            UserRow {
-                password_hash: record,
-                created_ts: self.now(),
-                disabled: false,
-                last_login_ts: None,
-                failed_count: 0,
-                locked_until_ts: None,
-                role: "admin".to_string(),
-            },
-        );
-        self.persist(&db)?;
-        Ok(true)
+        Ok(self.fresh_bootstrap.swap(false, std::sync::atomic::Ordering::SeqCst))
     }
 
     pub fn needs_password_setup(&self) -> bool {
-        let db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let db = &stored.1;
         db.users
             .get(BOOTSTRAP_USERNAME)
             .map(|u| authn::is_pending_password_record(&u.password_hash))
@@ -193,7 +184,8 @@ impl AuthManager {
     pub fn bootstrap_set_password(&self, password: &str) -> Result<LoginResult> {
         let record = authn::hash_password(password)?;
         let now = self.now();
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
         let pending = db
             .users
             .get(BOOTSTRAP_USERNAME)
@@ -208,8 +200,8 @@ impl AuthManager {
             u.locked_until_ts = None;
         }
         revoke_sessions_for(&mut db, BOOTSTRAP_USERNAME);
-        let result = self.create_session(&mut db, BOOTSTRAP_USERNAME, now);
-        self.persist(&db)?;
+        let result = self.create_session(&mut db, BOOTSTRAP_USERNAME, now)?;
+        self.persist(&mut stored, &db)?;
         Ok(result)
     }
 
@@ -217,13 +209,19 @@ impl AuthManager {
         let canonical = authn::validate_username(username)?;
         let canonical_role = authn::validate_role(role)?;
         let record = authn::hash_password(password)?;
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
+        if db.users.len() >= 128 {
+            return Err(HarnessError::new("AUTH_LIMIT", "account limit reached"));
+        }
         if db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_exists(&canonical));
         }
         db.users.insert(
             canonical.clone(),
             UserRow {
+                user_id: crate::common::random_hex(16),
+                must_change_password: false,
                 password_hash: record,
                 created_ts: self.now(),
                 disabled: false,
@@ -233,24 +231,27 @@ impl AuthManager {
                 role: canonical_role,
             },
         );
-        self.persist(&db)?;
+        self.persist(&mut stored, &db)?;
         Ok(canonical)
     }
 
     pub fn get_user(&self, username: &str) -> Option<UserSummary> {
         let canonical = Self::canonical(username);
-        let db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let db = &stored.1;
         db.users.get(&canonical).map(|u| Self::summary(&canonical, u))
     }
 
     pub fn list_users(&self) -> Vec<UserSummary> {
-        let db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let db = &stored.1;
         db.users.iter().map(|(k, v)| Self::summary(k, v)).collect()
     }
 
     pub fn count_enabled_admins(&self) -> usize {
-        let db = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        count_enabled_admins(&db)
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let db = &stored.1;
+        count_enabled_admins(db)
     }
 
     fn is_last_enabled_admin(db: &AuthDb, username: &str) -> bool {
@@ -263,7 +264,8 @@ impl AuthManager {
     pub fn set_role(&self, username: &str, role: &str) -> Result<()> {
         let canonical = Self::canonical(username);
         let canonical_role = authn::validate_role(role)?;
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
         if !db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_not_found(&canonical));
         }
@@ -273,12 +275,14 @@ impl AuthManager {
         if let Some(u) = db.users.get_mut(&canonical) {
             u.role = canonical_role;
         }
-        self.persist(&db)
+        revoke_sessions_for(&mut db, &canonical);
+        self.persist(&mut stored, &db)
     }
 
     pub fn delete_user(&self, username: &str) -> Result<()> {
         let canonical = Self::canonical(username);
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
         if !db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_not_found(&canonical));
         }
@@ -286,13 +290,14 @@ impl AuthManager {
             return Err(HarnessError::auth_last_admin());
         }
         db.users.remove(&canonical);
-        revoke_sessions_for(&mut db, &canonical);
-        self.persist(&db)
+        db.sessions.retain(|_, row| row.username != canonical);
+        self.persist(&mut stored, &db)
     }
 
     fn set_disabled(&self, username: &str, disabled: bool) -> Result<()> {
         let canonical = Self::canonical(username);
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
         if !db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_not_found(&canonical));
         }
@@ -310,7 +315,7 @@ impl AuthManager {
         if disabled {
             revoke_sessions_for(&mut db, &canonical);
         }
-        self.persist(&db)
+        self.persist(&mut stored, &db)
     }
 
     pub fn disable_user(&self, username: &str) -> Result<()> {
@@ -324,18 +329,48 @@ impl AuthManager {
     pub fn set_password(&self, username: &str, password: &str) -> Result<()> {
         let canonical = Self::canonical(username);
         let record = authn::hash_password(password)?;
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
         let Some(u) = db.users.get_mut(&canonical) else {
             return Err(HarnessError::auth_user_not_found(&canonical));
         };
         u.password_hash = record;
+        u.must_change_password = false;
         u.failed_count = 0;
         u.locked_until_ts = None;
         revoke_sessions_for(&mut db, &canonical);
-        self.persist(&db)
+        self.persist(&mut stored, &db)
     }
 
-    fn create_session(&self, db: &mut AuthDb, username: &str, now: f64) -> LoginResult {
+    pub fn change_password(&self, username: &str, current: &str, password: &str) -> Result<LoginResult> {
+        let canonical = Self::canonical(username);
+        let record = authn::hash_password(password)?;
+        let now = self.now();
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
+        let user = db
+            .users
+            .get_mut(&canonical)
+            .ok_or_else(HarnessError::auth_login_failed)?;
+        if user.disabled || !authn::verify_password(current, &user.password_hash).0 {
+            return Err(HarnessError::auth_login_failed());
+        }
+        user.password_hash = record;
+        user.must_change_password = false;
+        user.failed_count = 0;
+        user.locked_until_ts = None;
+        revoke_sessions_for(&mut db, &canonical);
+        let result = self.create_session(&mut db, &canonical, now)?;
+        self.persist(&mut stored, &db)?;
+        Ok(result)
+    }
+
+    fn create_session(&self, db: &mut AuthDb, username: &str, now: f64) -> Result<LoginResult> {
+        db.sessions
+            .retain(|_, row| !row.revoked && row.expires_ts > now && row.last_seen_ts + self.idle_timeout_sec > now);
+        if db.sessions.len() >= 4096 {
+            return Err(HarnessError::new("AUTH_LIMIT", "active session limit reached"));
+        }
         let session_id = authn::new_session_id();
         let csrf_token = authn::new_csrf_token();
         let expires_ts = now + self.absolute_timeout_sec;
@@ -350,12 +385,12 @@ impl AuthManager {
                 revoked: false,
             },
         );
-        LoginResult {
+        Ok(LoginResult {
             username: username.to_string(),
             session_id,
             csrf_token,
             expires_ts,
-        }
+        })
     }
 
     /// Unknown username, wrong password and disabled account all raise the
@@ -363,7 +398,8 @@ impl AuthManager {
     pub fn login(&self, username: &str, password: &str) -> Result<LoginResult> {
         let canonical = Self::canonical(username);
         let now = self.now();
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
         let Some(row) = db.users.get(&canonical).cloned() else {
             let _ = authn::verify_password(password, dummy_record());
             return Err(HarnessError::auth_login_failed());
@@ -374,12 +410,12 @@ impl AuthManager {
         }
         let (ok, needs_rehash) = authn::verify_password(password, &row.password_hash);
         if row.disabled || !ok {
-            let new_count = row.failed_count + 1;
+            let new_count = row.failed_count.saturating_add(1);
             if let Some(u) = db.users.get_mut(&canonical) {
                 u.failed_count = new_count;
                 u.locked_until_ts = Some(authn::next_lock_until(new_count, now));
             }
-            let _ = self.persist(&db);
+            self.persist(&mut stored, &db)?;
             return Err(HarnessError::auth_login_failed());
         }
         if let Some(u) = db.users.get_mut(&canonical) {
@@ -392,8 +428,8 @@ impl AuthManager {
                 }
             }
         }
-        let result = self.create_session(&mut db, &canonical, now);
-        self.persist(&db)?;
+        let result = self.create_session(&mut db, &canonical, now)?;
+        self.persist(&mut stored, &db)?;
         Ok(result)
     }
 
@@ -405,7 +441,8 @@ impl AuthManager {
         }
         let key = authn::hash_token(session_id);
         let now = self.now();
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
         let idle = self.idle_timeout_sec;
         let outcome = match db.sessions.get_mut(&key) {
             None => return None,
@@ -423,16 +460,17 @@ impl AuthManager {
                 }
             }
         };
-        let _ = self.persist(&db);
-        outcome
+        self.persist(&mut stored, &db).ok()?;
+        outcome.filter(|info| db.users.get(&info.username).is_some_and(|user| !user.disabled))
     }
 
-    pub fn logout(&self, session_id: &str) -> bool {
+    pub fn logout(&self, session_id: &str) -> Result<bool> {
         if session_id.is_empty() {
-            return false;
+            return Ok(false);
         }
         let key = authn::hash_token(session_id);
-        let mut db = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
         let hit = match db.sessions.get_mut(&key) {
             Some(row) if !row.revoked => {
                 row.revoked = true;
@@ -441,9 +479,9 @@ impl AuthManager {
             _ => false,
         };
         if hit {
-            let _ = self.persist(&db);
+            self.persist(&mut stored, &db)?;
         }
-        hit
+        Ok(hit)
     }
 }
 

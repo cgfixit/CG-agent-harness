@@ -594,7 +594,7 @@ fn cmd_real_repo_runs(ctx: &AgenticCtx) -> Result<u8> {
             paths.push((entry.metadata()?.modified()?, id.to_string()));
         }
     }
-    paths.sort_by(|a, b| b.0.cmp(&a.0));
+    paths.sort_by_key(|a| std::cmp::Reverse(a.0));
     let truncated = scanned > 4096 || paths.len() > 128;
     let mut records = Vec::new();
     for (_, id) in paths.into_iter().take(128) {

@@ -8,7 +8,8 @@ selects chat only and reports the separately configured planner model.
 
 `/agent confirm <reason>` submits to `/api/agent/jobs` and immediately retains
 its job ID in the URL fragment. `/agent job <id>` resumes monitoring after a
-refresh; re-enter the API key, which is never persisted in browser storage.
+refresh; sign in again if the account session expired. The optional harness key
+may remain empty and cannot restore account access.
 `/agent jobs` lists durable retained jobs, including interrupted entries after restart. Failed CLI results are
 failed jobs, with their error output retained. Completed results display the
 run record and verification output.
@@ -36,15 +37,15 @@ cannot satisfy console review.
 Requires a built release binary, Python 3, Node with built-in WebSocket support,
 Google Chrome and an already installed, explicitly chosen Ollama model. The
 fixture helper creates a new directory, local bare remote, isolated application
-home, synthetic API key and a local `gh` adapter. It prepares locked Cargo
+home, synthetic optional metadata key and a local `gh` adapter. It prepares locked Cargo
 inputs offline. It never calls the real GitHub CLI or pulls models.
 
 First inspect `ollama list`; use the exact installed identifier. In one terminal:
 
 ```sh
-cargo build --release
+cargo build --release --locked
 python3 scripts/browser-fixture.py /tmp/cgah-browser-acceptance \
-  --model qwen3.8:27b --endpoint http://127.0.0.1:11434/v1 --port 8792
+  --model qwen3.8:27b --endpoint http://127.0.0.1:11434/v1 --port 8792 --http
 ```
 
 The destination must not exist. In another terminal, from the checkout:
@@ -57,7 +58,10 @@ CGAH_TEST_FIXTURE=disposable-arithmetic \
 node scripts/browser-acceptance.mjs
 ```
 
-The test starts a fresh headless Chrome profile, checks authentication and CSRF,
+The fixture explicitly opts into HTTP for this browser coding test and keeps
+account authentication enabled. Native/standalone HTTPS is checked separately
+by `scripts/test-desktop-backend.py` and native acceptance. The test starts a
+fresh headless Chrome profile, replaces the fixture bootstrap password, checks authentication and CSRF,
 stages an explicit large-file window, verifies server defaults/check selection,
 submits an asynchronous job, refreshes, restores authentication, reviews the
 complete expected one-expression diff, approves a local commit, separately
@@ -73,6 +77,10 @@ URL alone does not prove offline inference. This test does not establish remote
 GitHub publication, startup recovery or descendant termination.
 
 ## Recorded acceptance
+
+The following describes the earlier recorded model/runtime, not the current
+HTTPS/account acceptance. Current security evidence is in
+[DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md) and [SECURE_RESEARCH.md](SECURE_RESEARCH.md).
 
 On the target Apple M5 Pro/48 GiB, macOS 26.6.2, actual Chrome exercised the flow
 with installed `qwen3.8:27b`, a separate Ollama process with Seatbelt non-loopback

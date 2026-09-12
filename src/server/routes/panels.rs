@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::body::Body;
+use axum::extract::{FromRequest, State};
+use axum::http::Request;
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -48,7 +50,8 @@ pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
 
 fn web_err(e: &HarnessError) -> ApiError {
     let status = match e.code.as_str() {
-        "WEB_DISABLED" | "WEB_ALLOWLIST_EMPTY" => StatusCode::CONFLICT,
+        "WEB_DISABLED" | "WEB_ALLOWLIST_EMPTY" | "WEB_BUSY" => StatusCode::CONFLICT,
+        "WEB_PERMISSION_DENIED" => StatusCode::FORBIDDEN,
         "WEB_FETCH_FAILED" | "WEB_DNS" | "WEB_CLEAR_FAILED" => StatusCode::BAD_GATEWAY,
         _ => StatusCode::BAD_REQUEST,
     };
@@ -60,14 +63,24 @@ fn web_enabled(state: &AppState) -> bool {
     state.settings.lock().unwrap_or_else(|p| p.into_inner()).web_enabled
 }
 
-pub async fn web_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
-    state.web.status(web_enabled(&state)).map(Json).map_err(|e| web_err(&e))
+pub async fn web_status(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    state
+        .web
+        .status(web_enabled(&state), &owner)
+        .map(Json)
+        .map_err(|e| web_err(&e))
 }
 
 pub async fn web_toggle(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<ToggleRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     let snapshot = {
         let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
         s.web_enabled = req.enabled;
@@ -78,41 +91,49 @@ pub async fn web_toggle(
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     state
         .web
-        .status(snapshot.web_enabled)
+        .status(snapshot.web_enabled, &owner)
         .map(Json)
         .map_err(|e| web_err(&e))
 }
 
 pub async fn web_allow(
     State(state): State<Arc<AppState>>,
-    ValidJson(req): ValidJson<WebUrlRequest>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<WebRuleRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     state
         .web
-        .allow(&req.url, web_enabled(&state))
+        .allow_rule(&req.url, &req.group, &req.seeds, web_enabled(&state))
+        .and_then(|_| state.web.status(web_enabled(&state), &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
 }
 
 pub async fn web_deny(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<WebUrlRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     state
         .web
         .deny(&req.url, web_enabled(&state))
+        .and_then(|_| state.web.status(web_enabled(&state), &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
 }
 
 pub async fn web_fetch(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<WebUrlRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
     state
         .web
-        .fetch(&req.url, enabled, &state.audit)
+        .fetch(&req.url, enabled, &state.audit, &owner)
         .await
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -120,23 +141,60 @@ pub async fn web_fetch(
 
 pub async fn web_search(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<WebSearchRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
     state
         .web
-        .search(&req.query, enabled, &state.audit)
+        .search(&req.query, req.group.as_deref(), enabled, &state.audit, &owner)
         .await
         .map(Json)
         .map_err(|e| web_err(&e))
 }
 
-pub async fn web_inject(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
-    state.web.inject(web_enabled(&state)).map(Json).map_err(|e| web_err(&e))
+pub async fn web_inject(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    state
+        .web
+        .inject(web_enabled(&state), &owner)
+        .map(Json)
+        .map_err(|e| web_err(&e))
 }
 
-pub async fn web_forget(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
-    state.web.forget(web_enabled(&state)).map(Json).map_err(|e| web_err(&e))
+pub async fn web_forget(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    state
+        .web
+        .forget(web_enabled(&state), &owner)
+        .map(Json)
+        .map_err(|e| web_err(&e))
+}
+
+pub async fn web_research(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
+    let owner = super::auth::web_owner(&state, &req)?;
+    let ValidJson(body) = ValidJson::<WebSearchRequest>::from_request(req, &()).await?;
+    crate::server::web_research::run(state, &owner, &body.query, body.group.as_deref())
+        .await
+        .map(Json)
+        .map_err(|e| web_err(&e))
+}
+
+pub async fn web_cancel(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
+    let owner = super::auth::web_owner(&state, &req)?;
+    state
+        .web
+        .research
+        .cancel(&owner)
+        .map(|cancelled| Json(json!({"cancelled":cancelled})))
+        .map_err(|e| web_err(&e))
 }
 
 // ---------------------------------------------------------------- memory
@@ -216,13 +274,13 @@ fn merge(target: &mut Value, extra: Value) {
 
 // ---------------------------------------------------------------- keys
 
-pub async fn api_keys_status(State(state): State<Arc<AppState>>) -> Response {
+pub async fn api_keys_status(State(state): State<Arc<AppState>>) -> ApiResult<Response> {
     let path = state.home.env_path();
-    let body = json!({"keys": env_keys::read_status(&path), "env_file": path.display().to_string()});
+    let body = json!({"keys": env_keys::read_status(&path, &state.key_file_sources).map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?, "env_file": path.display().to_string()});
     let mut resp = Json(body).into_response();
     resp.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
-    resp
+    Ok(resp)
 }
 
 pub async fn api_keys_set(
@@ -230,7 +288,7 @@ pub async fn api_keys_set(
     ValidJson(req): ValidJson<ApiKeysRequest>,
 ) -> ApiResult<Json<Value>> {
     let path = state.home.env_path();
-    let written = env_keys::write_keys(&path, &req.keys).map_err(|e| {
+    let written = env_keys::update_keys(&path, &req.keys, &req.clear).map_err(|e| {
         if e.code == env_keys::ENV_KEY_ERROR {
             ApiError::new(StatusCode::BAD_REQUEST, "ENV_KEY_REJECTED", e.message.clone())
         } else {
@@ -246,7 +304,8 @@ pub async fn api_keys_set(
         .audit
         .log(json!({"event": "harness_api_keys_updated", "keys": written["written"]}));
     let mut out = written;
-    out["keys"] = json!(env_keys::read_status(&path));
+    out["keys"] = json!(env_keys::read_status(&path, &state.key_file_sources)
+        .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?);
     Ok(Json(out))
 }
 

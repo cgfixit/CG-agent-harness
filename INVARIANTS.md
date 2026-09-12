@@ -18,22 +18,62 @@ the server or the shim.
   corrupt the server's memory or bypass its guard chain; the exit-code contract
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
 
-## Guard chain on every operator route
+## Account, transport and request boundaries
 
-`rate limit -> same-origin (Sec-Fetch-Site + exact Origin scheme/host/port) ->
-API key (constant-time; bypass only if security.api_key_optional AND loopback
-peer AND no forwarding headers) -> CSRF (per-process token, absent header rejects)`.
-Order is load-bearing: a wrong key against a spent budget is 429, and a missing
-key is 401 even when CSRF is also missing in key-enforced mode.
+Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`.
+Existing explicit configuration is preserved. Invalid auth/TLS switch types fail
+closed. The optional harness key grants no account, provider or coding authority;
+legacy key-required mode is deprecated and ignored. Forwarded requests are refused.
 
-- Locked by: `tests/auth_guards.rs`, `tests/security_headers.rs`.
-- Direct local access ships with `security.api_key_optional: true`: no API key
-  or account login is needed for harness operations. When explicitly set false,
-  an unset `CGAGENTHARNESS_API_KEY` refuses every guarded route.
-- Per-user sessions and roles protect account management only; enabling
-  `auth.enabled` does not add a login requirement to harness operations.
-- The Host header must be a loopback name (DNS-rebinding defense); the bind is
-  refused for a non-loopback host in `serve`.
+Every API request passes rate limiting, exact same-origin checks and direct
+loopback validation. Operational reads and writes additionally require an enabled
+account and its server-side role permissions. Mutations retain the existing CSRF
+header/token; only minimal status/static/login/setup surfaces are public. A fresh
+admin/admin account can only replace its password, inspect its identity or log out.
+The replacement revokes old sessions. The last enabled administrator is protected.
+
+SQLite is authoritative after transactional legacy migration; corrupt, empty or
+missing initialized storage never recreates default credentials. Failed commits
+never publish an in-memory account mutation. Private account identity scopes web
+selection; shared portal sessions/jobs/notes/persona remain explicitly shared.
+
+The HTTP/1 Host and HTTP/2 authority must be unambiguous loopback names. HTTPS
+scheme comes from the actual listener, never forwarding headers. TLS generation
+is atomic and private; certificates are reused and invalid/expired material fails
+startup. Native readiness and webview trust bind to the exact certificate supplied
+by the owned sidecar's private handshake. No global TLS bypass or root installation.
+Cookies are Secure over HTTPS, HttpOnly and SameSite=Strict, including clearing.
+
+Locked by `tests/auth_guards.rs`, `tests/secure_portal.rs`,
+`tests/security_headers.rs`, transport/account units and native trust checks.
+See [migration and operation](docs/SECURE_RESEARCH.md).
+
+## Public web evidence requires current content permission
+
+Web reads remain disabled initially. `tools/web_allowlist.json` is a bounded,
+versioned document; malformed, missing, unreadable or partially invalid policy
+refuses access. Exact HTTP(S) URLs retain scheme, port, path and query identity.
+Only explicit `*.host` and `/path/*` rules broaden scope. Legacy rows authorize
+only their stored fetch target, never old host aliases or implicit descendants.
+
+The fetcher resolves once, rejects every mixed/special-use address answer, then
+pins a fresh Reqwest client to the validated addresses with a refusing fallback
+resolver. Public TLS verification stays enabled; proxies, redirects, retries,
+compression and connection reuse are disabled. Deadlines include queueing and
+DNS; response headers, bodies and concurrent fetches have finite limits.
+
+Policy is reloaded before dispatch and before storage or delivery. Revoked or
+unproven saved evidence is inaccessible, including old shared plain-text context.
+Revocation prevents future retrieval/injection; it cannot erase historical chat
+or content already sent to a model. No atomicity against arbitrary external file
+edits between an authorization check and an OS operation is claimed.
+
+Content permission grants neither account authority nor provider configuration
+authority. None of these authorities substitutes for coding/write/publication
+gates. Page text is data, never a tool command.
+
+- Locked by: `server::web_policy::tests`, `server::web_search::tests`, and web
+  integration tests in `tests/panels.rs`.
 
 ## The browser never supplies a command
 
@@ -74,7 +114,7 @@ Git command/check; process-tree cancellation limitations remain separately track
 No atomic transaction between an external policy edit and a syscall is claimed.
 
 - Locked by: `tests/write_policy.rs`, `tests/real_repo_loop.rs`, and
-  `tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed`.
+  `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 
 ## The clone jail
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Public desktop sidecar tests. Disposable homes and a loopback model fixture; no external inference."""
+import base64
+import hashlib
+import ssl
 import contextlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -70,7 +73,7 @@ class ModelFixture:
         self.thread.join(timeout=5)
 
 class Sidecar:
-    def __init__(self, home, key=None, protocol=1):
+    def __init__(self, home, key=None, protocol=2):
         env = {k: v for k, v in os.environ.items() if k not in (
             "CGAGENTHARNESS_API_KEY", "GROK_API_KEY", "ANTHROPIC_API_KEY", "DEEPAGENT_API_KEY")}
         env["CGAGENTHARNESS_HOME"] = str(home)
@@ -84,7 +87,14 @@ class Sidecar:
         except BaseException:
             self.close()
             raise
-        self.base = f'http://127.0.0.1:{self.hello.get("port", 0)}'
+        self.base = f'{self.hello.get("scheme", "https")}://127.0.0.1:{self.hello.get("port", 0)}'
+        self.http = HTTP
+        if self.hello.get('scheme') == 'https':
+            der = base64.b64decode(self.hello['certificate_der'], validate=True)
+            assert hashlib.sha256(der).hexdigest() == self.hello['certificate_sha256']
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.load_verify_locations(cadata=ssl.DER_cert_to_PEM_cert(der))
+            self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
 
     def send(self, frame):
         self.process.stdin.write(json.dumps(frame).encode() + b"\n")
@@ -111,10 +121,27 @@ class Sidecar:
         if body is not None:
             request.add_header("Content-Type", "application/json")
         try:
-            response = HTTP.open(request, timeout=4)
+            response = self.http.open(request, timeout=4)
         except urllib.error.HTTPError as error:
             response = error
-        return response.status, response.read(), response.headers
+        with response:
+            return response.status, response.read(), response.headers
+
+    def authorize(self):
+        """Disposable fixture account only; never read an operator credential."""
+        html = self.request('/')[1]
+        csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
+        headers = {'X-CyClaw-CSRF': csrf, 'Origin': self.base}
+        for password in ('desktop-fixture-password', 'admin'):
+            status, body, response_headers = self.request('/api/auth/login', headers, {'username':'admin','password':password})
+            if status == 200:
+                headers['Cookie'] = response_headers['Set-Cookie'].split(';')[0]
+                if json.loads(body)['must_change_password']:
+                    status, _, response_headers = self.request('/api/auth/password', headers, {'current_password':password,'password':'desktop-fixture-password'})
+                    assert status == 200
+                    headers['Cookie'] = response_headers['Set-Cookie'].split(';')[0]
+                return headers
+        raise AssertionError('fixture account login failed')
 
     def close(self):
         if self.process.poll() is None:
@@ -160,7 +187,7 @@ class DesktopBoundary(unittest.TestCase):
             html = child.request('/')[1]
             csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
             self.assertEqual(child.request('/api/model',
-                {'X-CyClaw-CSRF': csrf, 'Origin': child.base}, {'model': 'fixture-chat-mlx'})[0], 200)
+                child.authorize(), {'model': 'fixture-chat-mlx'})[0], 200)
             child.send({'command': 'models'})
             result = child.read()
             self.assertEqual(result['chat']['state'], 'tag_missing')
@@ -195,30 +222,43 @@ class DesktopBoundary(unittest.TestCase):
                 with tempfile.TemporaryFile() as output:
                     child = subprocess.Popen([str(BIN), 'serve', '--port', str(port)],
                         env=env, cwd='/', stdout=output, stderr=output)
-                    base = f'http://127.0.0.1:{port}'
+                    base = f'https://127.0.0.1:{port}'
+                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    context.load_verify_locations(cafile=str(self.home / 'tls/server.pem'))
+                    http = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
                     try:
                         deadline = time.monotonic() + 5
                         while True:
                             self.assertIsNone(child.poll(), 'headless startup exited')
                             try:
-                                with HTTP.open(base + '/', timeout=.2) as response:
+                                with http.open(base + '/', timeout=.2) as response:
                                     html = response.read()
                                 break
                             except (urllib.error.URLError, TimeoutError):
                                 self.assertLess(time.monotonic(), deadline, 'headless startup deadline')
                                 time.sleep(.02)
                         csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
-                        def status(key):
-                            request = urllib.request.Request(base + '/api/memory', headers={
-                                'Authorization': 'Bearer ' + key, 'X-CyClaw-CSRF': csrf, 'Origin': base})
-                            try:
-                                with HTTP.open(request, timeout=2) as response:
-                                    return response.status
-                            except urllib.error.HTTPError as error:
-                                error.close()
-                                return error.code
-                        self.assertEqual(status(override or file_key), 200)
-                        self.assertEqual(status(file_key if override else 'wrong-key'), 401)
+                        def request(path, headers, body=None):
+                            req = urllib.request.Request(base + path, headers=headers, data=None if body is None else json.dumps(body).encode())
+                            if body is not None: req.add_header('Content-Type','application/json')
+                            try: response = http.open(req,timeout=5)
+                            except urllib.error.HTTPError as error: response = error
+                            with response: return response.status, response.read(), response.headers
+                        headers={'X-CyClaw-CSRF':csrf,'Origin':base}
+                        self.assertEqual(request('/api/keys',{**headers,'Authorization':'Bearer '+(override or file_key)})[0],401)
+                        for password in ('desktop-fixture-password','admin'):
+                            status,body,reply=request('/api/auth/login',headers,{'username':'admin','password':password})
+                            if status==200: break
+                        self.assertEqual(status,200)
+                        headers['Cookie']=reply['Set-Cookie'].split(';')[0]
+                        if json.loads(body)['must_change_password']:
+                            status,_,reply=request('/api/auth/password',headers,{'current_password':password,'password':'desktop-fixture-password'})
+                            self.assertEqual(status,200);headers['Cookie']=reply['Set-Cookie'].split(';')[0]
+                        status,body,_=request('/api/keys',{**headers,'Authorization':'Bearer wrong-key'})
+                        self.assertEqual(status,200)
+                        keys=json.loads(body)['keys']
+                        row=next(k for k in keys if k['name']=='CGAGENTHARNESS_API_KEY')
+                        self.assertTrue(row['masked'].endswith((override or file_key)[-4:]))
                         self.assertFalse(marker.exists(), 'dotenv must never execute a shell')
                     finally:
                         child.terminate()
@@ -277,7 +317,7 @@ class DesktopBoundary(unittest.TestCase):
         config = self.home / 'config.yaml'
         config.write_text(config.read_text().replace('api_key_optional: true', 'api_key_optional: false'))
         child = self.start()
-        self.assertFalse(child.hello["api_key_optional"])
+        self.assertTrue(child.hello["api_key_optional"])
         self.assertEqual(child.hello["challenge"], child.challenge)
         self.assertEqual(child.hello["pid"], child.process.pid)
         self.assertEqual(child.request('/_desktop/ready')[0], 401)
@@ -289,7 +329,7 @@ class DesktopBoundary(unittest.TestCase):
         self.assertNotIn(key.encode(), html)
         csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
         self.assertEqual(child.request('/api/keys', {"Authorization": "Bearer " + child.challenge, "X-CyClaw-CSRF": csrf})[0], 401)
-        auth = {"Authorization": "Bearer " + key, "X-CyClaw-CSRF": csrf, "Origin": child.base}
+        auth = {**child.authorize(), "Authorization": "Bearer " + key}
         self.assertEqual(child.request('/api/keys', auth)[0], 200)
         self.assertEqual(child.request('/api/keys', {**auth, "Origin": "https://unapproved.invalid"})[0], 403)
         self.assertEqual(child.request('/api/keys', {**auth, "X-CyClaw-CSRF": "wrong"})[0], 403)
@@ -299,21 +339,25 @@ class DesktopBoundary(unittest.TestCase):
         self.assertEqual(child.read()["active"], 0)
         self.assertEqual((self.home / '.env').stat().st_mode & 0o777, 0o600)
 
-    def test_fresh_home_needs_no_key_or_login(self):
+    def test_fresh_home_requires_https_login_and_password_replacement(self):
         child = self.start()
         self.assertTrue(child.hello["api_key_optional"])
         self.assertFalse(child.hello["key_configured"])
+        self.assertEqual(child.hello["scheme"],"https")
+        with self.assertRaises(urllib.error.URLError): HTTP.open(child.base + "/api/status",timeout=2)
         html = child.request('/')[1]
         csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
         headers = {"X-CyClaw-CSRF": csrf, "Origin": child.base}
+        self.assertEqual(child.request('/api/keys', headers)[0], 401)
+        headers = child.authorize()
         self.assertEqual(child.request('/api/keys', headers)[0], 200)
-        self.assertEqual(child.request('/api/memory/add', headers, {"text":"no credentials needed"})[0], 200)
-        self.assertEqual(child.request('/api/keys')[0], 403)
+        self.assertEqual(child.request('/api/memory/add', headers, {"text":"authenticated fixture note"})[0], 200)
+        self.assertEqual(child.request('/api/keys')[0], 401)
         self.assertEqual(child.request('/api/keys', {**headers, "Origin":"https://unapproved.invalid"})[0], 403)
-        self.assertEqual(child.request('/api/keys', {**headers, "X-Forwarded-For":"127.0.0.1"})[0], 401)
+        self.assertEqual(child.request('/api/keys', {**headers, "X-Forwarded-For":"127.0.0.1"})[0], 403)
         self.assertEqual(child.request('/api/agent/run', headers, {"instruction":"x", "branch":"codex/test", "commit_message":"test", "reason":"fixture"})[0], 409)
 
-    def test_chat_goal_memory_and_model_survive_backend_restart_without_credentials(self):
+    def test_chat_goal_memory_and_model_survive_authenticated_backend_restart(self):
         model = ModelFixture()
         self.addCleanup(model.close)
         seed = self.start()
@@ -330,7 +374,7 @@ class DesktopBoundary(unittest.TestCase):
             status, html, _ = child.request('/')
             self.assertEqual(status, 200)
             csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
-            return {"X-CyClaw-CSRF": csrf, "Origin": child.base}
+            return child.authorize()
 
         def call(child, headers, path, body=None, expected=200):
             status, payload, _ = child.request(path, headers, body)
@@ -447,8 +491,8 @@ class DesktopBoundary(unittest.TestCase):
             child = self.start()
             html = child.request('/')[1]
             csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
-            auth = {"Authorization":"Bearer " + key,"X-CyClaw-CSRF":csrf,"Origin":child.base}
-            self.assertEqual(child.request('/api/agent/runs')[0], 403)  # CSRF still required
+            auth = {**child.authorize(),"Authorization":"Bearer " + key}
+            self.assertEqual(child.request('/api/agent/runs')[0], 401)  # account required before CSRF
             def listing():
                 status, body, _ = child.request('/api/agent/runs', auth)
                 self.assertEqual(status, 200)

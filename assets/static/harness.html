@@ -182,9 +182,10 @@
         <span id="hAuthLoginBox" hidden>
           <input class="apikey" id="hAuthUser" placeholder="user" autocomplete="username">
           <input class="apikey" id="hAuthPass" type="password" placeholder="pass" autocomplete="current-password">
-          <button class="toggle" id="hAuthLogin" type="button" title="Optional account login for user management">login</button>
+          <button class="toggle" id="hAuthLogin" type="button" title="Sign in to use the harness">login</button>
         </span>
-        <span id="hAuthWho"></span>
+        <span id="hAuthWho" role="status"></span>
+        <button class="toggle" id="hAuthPassword" type="button" hidden>change password</button>
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
       </span>
       <div class="pill model">model <b id="hModel">…</b></div>
@@ -198,13 +199,13 @@
       <div class="side-tabs">
         <button class="side-tab active" data-pane="commands">Commands</button>
         <button class="side-tab" data-pane="sessions">Sessions</button>
-        <button class="side-tab" data-pane="registry">Registry</button>
+        <button class="side-tab" data-pane="api-keys">API Keys</button>
         <button class="side-tab" data-pane="users">Users</button>
       </div>
       <div class="side-body">
         <div class="side-pane active" id="pane-commands"></div>
         <div class="side-pane" id="pane-sessions"></div>
-        <div class="side-pane" id="pane-registry"></div>
+        <div class="side-pane" id="pane-api-keys"><p>Sign in as an administrator to manage credentials.</p></div>
         <div class="side-pane" id="pane-users">
           <div id="usersPanelStatus" class="panel-status" hidden></div>
           <div id="usersPanelBody"></div>
@@ -241,6 +242,17 @@
   <input id="agentPRBodyFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
   <input id="agentPlanFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
 
+<dialog id="passwordDialog" aria-labelledby="passwordTitle">
+  <h2 id="passwordTitle">Change your password</h2>
+  <p id="passwordHelp">Enter your current password and a new password of at least 12 characters.</p>
+  <form id="passwordForm">
+    <p><label>Current password <input id="passwordCurrent" type="password" autocomplete="current-password" required maxlength="1024"></label></p>
+    <p><label>New password <input id="passwordNew" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
+    <p><label>Confirm new password <input id="passwordConfirm" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
+    <button type="submit">Save password</button><button type="button" id="passwordClose">Close</button>
+    <p id="passwordFeedback" role="status"></p>
+  </form>
+</dialog>
 <dialog id="sessionClearDialog" aria-labelledby="sessionClearTitle" aria-describedby="sessionClearDescription">
   <h2 id="sessionClearTitle">Clear all session history?</h2>
   <p id="sessionClearDescription">Permanently delete every saved chat session, including messages, titles, goals, selected skills and token totals. This cannot be undone.</p>
@@ -587,21 +599,13 @@ async function api(path, method, body, timeoutMs) {
         : typeof d === 'string'
           ? 'HTTP ' + resp.status + ': ' + d
           : 'HTTP ' + resp.status;
-    /* The console's key input sends a Bearer to the server, but the server
-       compares it against CGAGENTHARNESS_API_KEY in its own process environment. When
-       that env var is unset, typing a key here cannot help until the server is
-       restarted with the key sourced from the shell. Make that explicit so the
-       operator does not think the input field is broken. */
-    if (typed && typed.code === 'UNAUTHORIZED' && typed.details && typed.details.reason === 'key_not_configured') {
-      msg += '\nThe harness server was started without CGAGENTHARNESS_API_KEY in its environment. For credential-free local use, set security.api_key_optional: true in your home config.yaml and restart. For key enforcement, configure the server key and enter the same key here.';
-    }
     if (code === 'CHAT_BUSY') {
       msg += typed && typed.details && typed.details.cancel
         ? '\nA local model turn is still running. Type /loop stop to abort it, or wait for the current turn to finish.'
         : '\nA local model turn is still running.';
     }
     if (code === 'CROSS_ORIGIN_BLOCKED' || code === 'CROSS_SITE_BLOCKED') {
-      msg += '\nBookmark and fetch the same host, scheme, and port. localhost and 127.0.0.1 are different browser origins. Open http://127.0.0.1:8790/ (use your configured harness port), not file://.';
+      msg += '\nBookmark and fetch the same host, scheme, and port. localhost and 127.0.0.1 are different browser origins. Use the actual HTTPS origin and configured port.';
     }
     const err = new Error(msg);
     err.code = code;
@@ -636,16 +640,14 @@ async function refreshStatus() {
   try {
     const s = await api('/api/status');
     $('hModel').textContent = s.model || '(unset)';
-    $('hTokens').textContent = s.total_tokens.toLocaleString();
-    $('sProvider').textContent = s.provider;
+    $('hTokens').textContent = Number(s.total_tokens || 0).toLocaleString();
+    $('sProvider').textContent = s.provider || 'sign in';
     if (apiKeyInput) {
-      apiKeyInput.placeholder = s.api_key_optional ? 'optional API key' : 'CGAGENTHARNESS_API_KEY';
-      apiKeyInput.title = s.api_key_optional
-        ? 'Optional for direct local use; held in page memory only'
-        : 'Required by this home configuration; held in page memory only';
+      apiKeyInput.placeholder = 'optional metadata key';
+      apiKeyInput.title = 'Optional compatibility metadata; account login is required. Held in page memory only.';
     }
-    $('sHome').textContent = s.home;
-    $('sHome').title = 'harness home: ' + s.home + ' · chat has no assigned repository';
+    $('sHome').textContent = s.home || '';
+    $('sHome').title = s.home ? 'harness home: ' + s.home + ' · chat has no assigned repository' : 'Sign in to use the harness';
     soulEnabled = s.soul_enabled; soulStatus = s.soul || {};
     if (typeof s.memory_enabled === 'boolean') memoryEnabled = s.memory_enabled;
     paintSoul();
@@ -720,30 +722,43 @@ async function refreshSessions() {
   });
 }
 
-/* ── registry pane ── */
-async function refreshRegistry() {
-  const pane = $('pane-registry');
-  pane.textContent = '';
-  const reg = await api('/api/registry');
-  const entry = (name, desc, aux, catalog) => {
-    const e = document.createElement('div'); e.className = 'reg-entry';
-    const n = document.createElement('div'); n.className = 'n' + (catalog ? ' catalog' : ''); n.textContent = name;
-    const d = document.createElement('div'); d.className = 'd'; d.textContent = desc || '';
-    e.appendChild(n); e.appendChild(d);
-    if (aux) { const a = document.createElement('div'); a.className = 'a'; a.textContent = aux; e.appendChild(a); }
-    return e;
-  };
-  const section = (label, items, render) => {
-    const h = document.createElement('div'); h.className = 'reg-head'; h.textContent = label;
-    pane.appendChild(h);
-    items.forEach(it => pane.appendChild(render(it)));
-  };
-  section('skills (' + reg.skills.length + ')', reg.skills,
-    s => entry(s.name, s.description, s.source));
-  section('tools (' + reg.tools.length + ')', reg.tools,
-    t => entry(t.name, t.description));
-  section('connectors (' + reg.connectors.length + ')', reg.connectors,
-    c => entry(c.name, c.notes, 'auth: ' + (c.auth || ''), c.kind === 'catalog'));
+/* ── API Keys pane; catalog and persistence remain server-owned ── */
+async function refreshKeys() {
+  const pane = $('pane-api-keys'); pane.replaceChildren();
+  const note = document.createElement('p');
+  note.textContent = 'Administrator access required. Saved values load after restart. Explicit process environment values take precedence. Harness metadata never grants account access.';
+  pane.appendChild(note);
+  const registry = document.createElement('button'); registry.textContent = 'View registry';
+  registry.addEventListener('click', () => runSlash('/registry')); pane.appendChild(registry);
+  let response;
+  try { response = await api('/api/keys'); }
+  catch (error) { const message = document.createElement('p'); message.textContent = error.message; pane.appendChild(message); return; }
+  for (const key of response.keys) {
+    const form = document.createElement('form'); form.className = 'reg-entry';
+    const label = document.createElement('label'); label.textContent = key.label + ' (' + key.name + ')';
+    const field = document.createElement('input'); field.id = 'saved-' + key.name; field.type = 'password';
+    field.autocomplete = 'new-password'; field.maxLength = 4096; field.placeholder = 'New value'; label.htmlFor = field.id;
+    const detail = document.createElement('p'); detail.textContent = key.detail;
+    const status = document.createElement('p');
+    status.textContent = 'Saved: ' + (key.saved_configured ? key.saved_masked : 'unset') +
+      ' · Active: ' + (key.active_configured ? key.active_masked : 'unset') + ' (' + key.active_source + ')' +
+      (key.pending_restart ? ' · saved and active differ; restart needed' : '') +
+      (key.environment_override ? ' · environment overrides saved value, including after restart' : '');
+    const save = document.createElement('button'); save.type = 'submit'; save.textContent = key.saved_configured ? 'Replace saved value' : 'Save';
+    const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear saved value'; clear.disabled = !key.saved_configured;
+    const feedback = document.createElement('p'); feedback.setAttribute('role', 'status');
+    const change = async body => {
+      save.disabled = clear.disabled = true;
+      try { await api('/api/keys', 'POST', body); await refreshKeys(); }
+      catch (error) { feedback.textContent = error.message; save.disabled = false; clear.disabled = !key.saved_configured; }
+    };
+    form.addEventListener('submit', event => {
+      event.preventDefault(); const value = field.value; field.value = '';
+      if (value.trim()) change({keys: {[key.name]: value}});
+    });
+    clear.addEventListener('click', () => { field.value = ''; change({clear: [key.name]}); });
+    form.append(label, detail, status, field, save, clear, feedback); pane.appendChild(form);
+  }
 }
 
 /* ── commands pane ── */
@@ -761,7 +776,7 @@ const COMMANDS = [
   ['/skill use <id...>|clear|status|check:<profile>', 'select bounded prompt context or stage a fixed coding check'],
   ['/skills [all|<name>]', 'registered runtime skills as a diagram'],
   ['/tools [all|<name>]', 'registered runtime tools as a diagram'],
-  ['/web [on|off|allow|deny|fetch|search|inject|forget]', 'allowlist-only web fetch (off by default)'],
+  ['/web [on|off|allow|deny|fetch|search|research|cancel|inject|forget]', 'bounded research over permitted sources'],
   ['/connectors', 'connector catalog'],
   ['/github', 'agentic GitHub status'],
   ['/agent run|plan|read|checks|confirm|cancel', 'stage and start a real-repo coding run'],
@@ -770,22 +785,17 @@ const COMMANDS = [
   ['/agent status|approve|reject <id>', 'inspect or decide a pending run'],
   ['/harness', 'harness optimizer runs'],
   ['/tokens', 'token tally'],
-  ['/api [set <KEY> <value>]', 'view or store harness API keys (.env, mode 600)'],
+  ['/api [set <KEY> <value>|clear <KEY>]', 'admin credential editor; prefer the API Keys password fields'],
   ['/status', 'server status'],
-  ['/users', 'manage optional local harness accounts'],
+  ['/users', 'administer local harness accounts'],
   ['/clear', 'clear the console'],
 ];
 
-/* Renders the /api key table. The server never sends a secret: each row
-   carries only presence, a masked tail, and where the value is coming from
-   (`env` = this process already has it, `file` = written but needs a restart). */
 function renderKeys(keys) {
-  sys(table(keys.map(k => [
-    k.name,
-    k.configured ? k.masked : '(unset)',
-    k.source,
-    k.pending_restart ? 'restart pending' : '',
-  ]), ['key', 'value', 'source', 'state']));
+  sys(table(keys.map(k => [k.name, k.saved_configured ? k.saved_masked : '(unset)',
+    k.active_configured ? k.active_masked : '(unset)', k.active_source,
+    k.environment_override ? 'environment overrides saved value' : k.pending_restart ? 'restart pending' : '']),
+    ['key', 'saved', 'active', 'active source', 'state']));
 }
 
 function buildCommands() {
@@ -1155,15 +1165,13 @@ async function runSlash(line) {
           // `env_file` is the GET-only spelling. Reading the wrong one here
           // printed "-> undefined" on every successful save.
           sys('saved: ' + r.written.join(', ') + '  ->  ' + r.path);
-          if (r.restart_required)
-            sys('restart CG Agent Harness to load updated credentials: ' +
-                'your shell sources it (see docs/HARNESS_API_KEYS.md)');
-          if (r.self_auth_written && r.self_auth_written.length)
-            sys('note: ' + r.self_auth_written.join(', ') + ' is the key guarding this console. ' +
-                'It was NOT applied live -- your current key keeps working until you restart.');
+          sys('Saved credentials load after restart; explicit environment values override them. Harness metadata does not grant account access.');
           await renderKeys(r.keys);
-        } else if (rest[0] === 'set') {
-          sys('usage: /api set <KEY> <value>');
+        } else if (rest[0] === 'clear' && rest[1]) {
+          const r = await api('/api/keys', 'POST', {clear: [rest[1].toUpperCase()]});
+          sys('Cleared saved value. Restart required; an explicit environment value still takes precedence.'); renderKeys(r.keys);
+        } else if (rest[0] === 'set' || rest[0] === 'clear') {
+          sys('usage: /api set <KEY> <value> or /api clear <KEY>; prefer API Keys for secret entry');
         } else {
           const r = await api('/api/keys');
           sys('key file: ' + r.env_file);
@@ -1274,10 +1282,12 @@ async function runSlash(line) {
           sys(table([
             ['/web', 'status: enabled + allowlist (no page text)'],
             ['/web on|off', 'enable or disable fetches and saved prompt context (persisted)'],
-            ['/web allow <url>', 'add a host or URL-prefix (no wildcards)'],
-            ['/web deny <url>', 'remove one allowlist entry'],
+            ['/web allow <url> [group] [seed-url]', 'allow an exact URL or explicit wildcard with a crawl seed'],
+            ['/web deny <url>', 'remove a rule by ID or pattern'],
             ['/web fetch <url>', 'GET one allowlisted URL (text only)'],
-            ['/web search <query>', 'scan allowlisted pages; no search engine'],
+            ['/web search [group=name] <query>', 'bounded discovery and local passage retrieval'],
+            ['/web research [group=name] <question>', 'bounded local-model research with cited passages'],
+            ['/web cancel', 'cancel your running research'],
             ['/web inject', 'put last extract in the next chat prompt'],
             ['/web forget', 'clear injected extract'],
           ], ['command', 'action']));
@@ -1288,9 +1298,9 @@ async function runSlash(line) {
           break;
         }
         if (sub === 'allow') {
-          const url = rest.slice(1).join(' ').trim();
-          if (!url) { sys('usage: /web allow <https://host/path>'); break; }
-          sys(renderWebStatus(await api('/api/web/allow', 'POST', { url: url })));
+          const url = rest[1] || '';
+          if (!url || rest.length > 4) { sys('usage: /web allow <url> [group] [seed-url]'); break; }
+          sys(renderWebStatus(await api('/api/web/allow', 'POST', { url, group: rest[2] || 'default', seeds: rest[3] ? [rest[3]] : [] })));
           break;
         }
         if (sub === 'deny') {
@@ -1306,10 +1316,29 @@ async function runSlash(line) {
           sys((page.text || '').slice(0, 2000), (page.url || url) + ' · ' + (page.chars || 0) + ' chars');
           break;
         }
-        if (sub === 'search') {
-          const q = rest.slice(1).join(' ').trim();
+        if (sub === 'cancel') {
+          sys(JSON.stringify(await api('/api/web/research/cancel', 'POST', {})));
+          break;
+        }
+        if (sub === 'search' || sub === 'research') {
+          const args = rest.slice(1);
+          const group = args[0] && args[0].startsWith('group=') ? args.shift().slice(6) : null;
+          const q = args.join(' ').trim();
           if (!q) { sys('usage: /web search <query>'); break; }
-          const found = await api('/api/web/search', 'POST', { query: q });
+          if (sub === 'research') {
+            sys('research started; /web cancel stops your request');
+            const result = await api('/api/web/research', 'POST', { query: q, group }, 1810000);
+            const answer = result.answer || {};
+            for (const kind of ['supported', 'conflicts', 'inferences']) {
+              const claims = answer[kind] || [];
+              if (claims.length) sys(kind + '\n' + claims.map(c => c.text + '\n' + c.citations.map(x => '[' + x.id + '] “' + x.quote + '”').join('\n')).join('\n\n'));
+            }
+            sys('Missing: ' + (answer.missing || []).join('; ') + '\nWarnings: ' + (result.warnings || []).join(', '));
+            sys(table((result.passages || []).map(p => [p.id, p.url, p.text]), ['citation', 'source', 'original extract']));
+            sys(JSON.stringify({ coverage: result.coverage, usage: result.usage, stale_passages: result.stale_passages }, null, 2), 'bounded research; completeness is not asserted');
+            break;
+          }
+          const found = await api('/api/web/search', 'POST', { query: q, group }, 190000);
           const rows = (found.hits || []).flatMap(h =>
             (h.snippets || []).map(s => [h.url, s]));
           if (!rows.length) {
@@ -1946,6 +1975,7 @@ document.querySelectorAll('.side-tab').forEach(tab => {
     tab.classList.add('active');
     $('pane-' + tab.dataset.pane).classList.add('active');
     if (tab.dataset.pane === 'users') runSlash('/users');
+    if (tab.dataset.pane === 'api-keys') refreshKeys();
   });
 });
 const hAuthLogin = document.getElementById('hAuthLogin');
@@ -1954,6 +1984,7 @@ const hAuthSetup = document.getElementById('hAuthSetup');
 const hAuthLogout = document.getElementById('hAuthLogout');
 function setHarnessLogoutVisible(on) {
   if (hAuthLogout) hAuthLogout.hidden = !on;
+  document.getElementById('hAuthPassword').hidden = !on;
 }
 /* Both probes are bounded, matching terminal.js's refreshAuthUi. The catch
    below deliberately keeps the last-known UI on failure, but a bare fetch
@@ -1969,7 +2000,7 @@ async function refreshHarnessAuth() {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(false);
-      if (who) who.textContent = 'local use · login optional';
+      if (who) who.textContent = 'authentication disabled by local configuration';
       return;
     }
     if (me.ok) {
@@ -1979,6 +2010,7 @@ async function refreshHarnessAuth() {
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
       if (who) who.textContent = data.username + ' · ' + data.role;
+      if (data.must_change_password) openPasswordChange(true);
       return;
     }
     const setup = await fetchWithTimeout('/api/auth/setup-status', {}, 5000);
@@ -1994,7 +2026,7 @@ async function refreshHarnessAuth() {
     if (hAuthSetup) hAuthSetup.hidden = true;
     if (hAuthLoginBox) hAuthLoginBox.hidden = false;
     window.__cyclawRole = null;
-    if (who) who.textContent = 'local use · login optional';
+    if (who) who.textContent = 'Sign in. Fresh homes start with admin / admin and require immediate password replacement.';
     setHarnessLogoutVisible(false);
   } catch (e) { /* keep last UI */ }
 }
@@ -2017,6 +2049,8 @@ if (hAuthLogin) {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
+      if (data.must_change_password) openPasswordChange(true);
+      else { await refreshStatus(); await refreshSessions(); }
     } catch (e) {
       pass.value = '';
       if (who) who.textContent = 'network error: login failed';
@@ -2043,6 +2077,8 @@ if (hAuthLogout) {
         return;
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
+    $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('usersPanelBody').replaceChildren();
+    currentSession = null; sessionRevision++; await refreshStatus();
     await refreshHarnessAuth();
   });
 }
@@ -2075,6 +2111,26 @@ if (hAuthSetupBtn) {
     }
   });
 }
+function openPasswordChange(required) {
+  $('passwordHelp').textContent = required ? 'Replace the initial admin password before using the harness. Use at least 12 characters.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
+  $('passwordFeedback').textContent = '';
+  if (!$('passwordDialog').open) $('passwordDialog').showModal();
+  $('passwordCurrent').focus();
+}
+$('hAuthPassword').addEventListener('click', () => openPasswordChange(false));
+$('passwordClose').addEventListener('click', () => $('passwordDialog').close());
+$('passwordDialog').addEventListener('close', () => $('passwordForm').reset());
+$('passwordForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  if ($('passwordNew').value !== $('passwordConfirm').value) { $('passwordFeedback').textContent = 'Passwords do not match.'; return; }
+  const body = { current_password: $('passwordCurrent').value, password: $('passwordNew').value };
+  $('passwordForm').reset();
+  try {
+    await api('/api/auth/password', 'POST', body);
+    $('passwordDialog').close();
+    await refreshHarnessAuth(); await refreshStatus(); await refreshSessions();
+  } catch (error) { $('passwordFeedback').textContent = error.message; }
+});
 refreshHarnessAuth();
 let soulDocument = null, reviewedSoulProposal = null;
 async function openSoulEditor(proposalOnly) {
@@ -2109,7 +2165,7 @@ $('sMemory').addEventListener('click', () => runSlash('/memory ' + (memoryEnable
 buildCommands();
 refreshStatus();
 refreshSessions().catch(() => {});
-refreshRegistry().catch(() => {});
+
 sys('CG Agent Harness — local chat with optional governed coding.');
 sys('Chat starts without an assigned repository or automatic coding skills. /prompt previews context; /skill use selects optional skills.');
 sys('Type /help for commands. /skills and /tools list registered surfaces. /web is allowlist-only and off by default. /goal + /loop are chat-only (bounded chat continuation).');

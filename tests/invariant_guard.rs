@@ -117,7 +117,7 @@ fn duplicated_constants_still_agree() {
 }
 
 #[test]
-fn shipped_config_keeps_every_gate_closed() {
+fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     let cfg = cgagentharness::common::config::AppConfig::from_str(
         cgagentharness::common::config::AppConfig::embedded_default(),
         Path::new("config.yaml"),
@@ -127,10 +127,12 @@ fn shipped_config_keeps_every_gate_closed() {
         "agentic.enabled",
         "agentic.deepagent_github.enabled",
         "agentic.deepagent_github.allow_git_write_tools",
-        "auth.enabled",
         "unslop.enabled",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
+    }
+    for boundary in ["auth.enabled", "tls.enabled", "tls.auto_generate"] {
+        assert!(cfg.flag_is_true(boundary), "{boundary} must ship true");
     }
     assert_eq!(cfg.str_list("policy.prompt_filter.banned_patterns").len(), 40);
     // Armed by construction, held closed only by agentic.enabled (checked above) and

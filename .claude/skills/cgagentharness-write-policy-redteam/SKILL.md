@@ -22,7 +22,7 @@ optional only if labeled INFERENCE/future and never replaces the tests.
 | Git approval / digest binding | `real_repo_loop::loop_iterates_on_feedback_then_accepts_and_finalizes`, `agentic_foundations::manifest_digest_binds_files_and_head` |
 | Clone / read jail | `agentic_foundations::write_jail_refuses_escapes_and_reports_landed_paths`, `read_jail_refuses_symlink_escapes_without_following_the_leaf` |
 | Hostile argv / confirm never manufactured | `tests/shim_and_agent_routes.rs` hostile-argv matrix, `a_request_can_never_carry_an_argv`, publish-missing-confirm → child exit 4 |
-| Kill switch AND-only / shipped gates | `invariant_guard::writer_kill_switch_is_and_not_or`, `shipped_config_keeps_every_gate_closed` |
+| Kill switch AND-only / shipped gates | `invariant_guard::writer_kill_switch_is_and_not_or`, `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
 
 **What "done" looks like:** every targeted test still fails closed on the
 attack; each newly closed bypass has a minimal gate fix + a regression assert;

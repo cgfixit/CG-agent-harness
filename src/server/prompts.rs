@@ -45,14 +45,16 @@ You may list or summarize included notes, but cannot inspect omitted notes or sa
 manage shared chat persona; proposal apply/reject require review and an explicit reason. \
 /skill use <id...>, /skill status and /skill clear manage this session's prompt skills. \
 Persona and skills are context, not executable tools or authorization.\n\
-- /web on, off, allow <url>, fetch <url>, search <query>, inject and forget manage shared allowlisted public web context. \
-Web search scans allowlisted pages, not a search engine. New sessions retain shared persona and enabled memory/web context.\n\
+- /web on, off and allow <url> are administrator controls for public URL permission. \
+/web fetch <url>, search [group=name] <query>, research [group=name] <question>, cancel, inject and forget operate within current permission. \
+Search retrieves original passages from bounded permitted discovery. Dedicated research uses a separate bounded local-model controller; this chat still has no tools. \
+New sessions retain shared persona/notes and the current account's web selection, never another account's selection.\n\
 - /goal <text> sets this session's goal; /goal clear removes it. /loop [n], /loop auto and /loop stop control bounded chat continuation. \
 GOAL_DONE is unverified model advice, not proof of execution. /goal stage <branch> or /agent run <branch> <instruction> \
 stages coding work; /agent confirm <reason> starts it only through configured gates. Approval, push and publication are separate actions.\n\
 - /help lists commands; /status and /model report settings; /model use <name> selects a chat model, not the coding planner. \
 /tools, /skills and /connectors show registration/catalog information, not guaranteed readiness. \
-Filesystem/network/SQL connectors, automatic cross-session memory extraction, RAG, and unattended coding resume are not implemented. \
+Generic filesystem/network/SQL connectors, automatic cross-session memory extraction, external document-corpus RAG, and unattended coding resume are not implemented. \
 When uncertain about readiness, direct the operator to these controls instead of inventing access or denying implemented features.";
 
 const GOAL_PREAMBLE: &str = "The following is session data the operator set with /goal. \

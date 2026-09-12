@@ -44,18 +44,44 @@ api:
     window_seconds: 300
     max_tokens: 2048
 
+# Bounded public content reads; harness.json keeps web_enabled false initially.
+# Missing values in existing homes use these defaults; invalid values fail boot.
+web:
+  response_bytes: 262144 # 1024–1048576; compressed bodies refused
+  request_seconds: 8 # 1–30, includes queue, DNS, headers and body
+  concurrency: 2 # 1–4 total fetches
+  pages: 20 # 1–40 per run
+  run_bytes: 2097152 # 1024–8388608 per run
+  run_seconds: 60 # 1–180
+  per_site_pages: 10 # 1–20
+  pace_ms: 250 # 100–5000 between requests to an origin
+  cache_pages: 128 # 1–256; derived cache, oldest documents evicted
+  cache_bytes: 16777216 # 1048576–33554432 serialized cache bytes
+  subqueries: 3 # 1–5 total model-selected subqueries
+  rounds: 2 # 1–2 planning/retrieval rounds; one bounded crawl per run
+  evidence_tokens: 3000 # 256–6000, estimated when no tokenizer is available
+  model_tokens: 1024 # 256–2048 maximum synthesis completion
+  total_tokens: 16000 # 2048–32000 across planning and synthesis
+  research_seconds: 300 # 10–1800 overall research deadline
+  stale_seconds: 604800 # 60–31536000; fetch age, not publication-date verification
+
 security:
-  # Local harness use needs no API key by default. The bypass applies ONLY
-  # to a loopback socket peer with no reverse-proxy forwarding headers.
-  # Set false to require CGAGENTHARNESS_API_KEY on every operator request.
+  # Compatibility setting. Harness keys are optional metadata and never grant
+  # account permissions. False is deprecated and does not disable account login.
   api_key_optional: true
 
-# Per-user authentication. Ships false. When the literal boolean true, the
-# /api/auth/* account-management routes come alive. A bootstrap "admin" account
-# has an unusable placeholder until its first password is set over loopback.
-# Account login is never a prerequisite for chat or agent pipeline operations.
+tls:
+  enabled: true # newly seeded homes use HTTPS; existing configs are not rewritten
+  auto_generate: true # unique local cert/key in a private atomic PEM bundle
+  certificate_days: 90 # 1–365; renew explicitly before expiry
+  cert_file: "" # optional operator PEM chain, relative to home or absolute
+  key_file: "" # paired private PEM key; never overwritten by automatic generation
+
 auth:
-  enabled: false
+  # New homes require login on operational routes. Existing configs are retained.
+  # Fresh admin/admin can only inspect its identity, change its password or log
+  # out. Password replacement requires 12 characters and revokes old sessions.
+  enabled: true
   session:
     idle_timeout_sec: 43200
     absolute_timeout_sec: 604800

@@ -30,11 +30,11 @@ HEAD/base and scope.
 
 | Change class | Evidence / probes |
 |---|---|
-| HTTP guards / CSRF / Host | `tests/auth_guards.rs`, `tests/security_headers.rs`; same-origin + CSRF absent → reject; Host must be loopback; API key fail-closed when unset; placeholders `__CYCLAW_CSRF_TOKEN__` / `__CYCLAW_CSP_NONCE__` / `X-CyClaw-CSRF` unchanged |
+| HTTP guards / CSRF / Host | `tests/auth_guards.rs`, `tests/security_headers.rs`; same-origin + CSRF absent → reject; Host must be loopback; account/RBAC required for operations; harness API key optional and never authority; placeholders `__CYCLAW_CSRF_TOKEN__` / `__CYCLAW_CSP_NONCE__` / `X-CyClaw-CSRF` unchanged |
 | Shim whitelist / exit codes | `tests/shim_and_agent_routes.rs`, `tests/invariant_guard.rs`; ACTIONS whitelist; hostile argv → 422; exit API `0/2/3/4` (`4` = write refused) |
 | Write refused paths | `tests/real_repo_loop.rs` writer/publish paths; missing confirm → 4; reason required; kill switch AND-only |
 | Clone / Seatbelt sandbox | `tests/agentic_foundations.rs` jail + `sandbox_*`; no backend ⇒ exit 3 remains correct |
-| Config / shipped gates | `shipped_config_keeps_every_gate_closed`; `flag_is_true` (quoted `"true"` OFF) |
+| Config / shipped gates | `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; `flag_is_true` (quoted `"true"` OFF) |
 | Live serve / smoke | Owned temp `CGAGENTHARNESS_HOME` + **unique port**; never assume default `:8790` is this binary (`scripts/smoke-ollama.sh` pattern) |
 | Chrome chat-browser | Acceptance is flake-prone (issue **#43**); do not hollow asserts; PARTIAL if environment cannot run Chrome |
 | Desktop package | Packaging/signing evidence ≠ HTTP console proof; WKWebView ≠ fetch/CSRF semantics; ad-hoc ≠ Developer ID |

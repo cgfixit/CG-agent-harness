@@ -9,8 +9,9 @@ const base=process.env.CGAH_TEST_BASE_URL;
 const home=resolve(process.env.CGAH_TEST_HOME);
 assert.equal(process.env.CGAH_TEST_FIXTURE,'disposable-arithmetic');
 assert.equal(new URL(base).hostname,'127.0.0.1');
-assert.equal((await (await fetch(base+'/api/status')).json()).home,home);
-const key=''; // Exercise default local access without a key or login.
+assert.equal(new URL(base).protocol,'http:','Use browser-fixture.py --http; HTTPS/native trust has separate acceptance');
+assert.ok(!(await (await fetch(base+'/api/status')).json()).home,'public status must be minimal');
+const key=''; // Account authentication remains required with an empty optional key.
 const profile=await mkdtemp(join(tmpdir(),'cgah-browser-'));
 const binary=process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const chrome=spawn(binary,['--headless=new','--no-first-run','--disable-background-networking','--disable-sync','--disable-extensions','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:'ignore'});
@@ -28,6 +29,12 @@ try {
  const until=async (expression,timeout=15000)=>{const start=Date.now();while(Date.now()-start<timeout){const value=await evaluate(expression);if(value)return value;await pause(100);}throw Error('Browser expectation timed out: '+expression);};
  const send=async command=>{await until('!document.getElementById("send").disabled');await evaluate('document.getElementById("input").value='+JSON.stringify(command)+';onSend()');await until('!document.getElementById("send").disabled');};
  await call('Page.enable');await call('Network.enable');await call('Page.navigate',{url:base+'/'});await until('!!document.getElementById("apiKey")');
+ await until('!document.getElementById("hAuthLoginBox").hidden');
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ await until('document.getElementById("passwordDialog").open');
+ await evaluate('document.getElementById("passwordCurrent").value="admin";document.getElementById("passwordNew").value="arithmetic-fixture-password";document.getElementById("passwordConfirm").value="arithmetic-fixture-password";document.getElementById("passwordForm").requestSubmit()');
+ await until('!document.getElementById("passwordDialog").open');
+ assert.equal(await evaluate('api("/api/status").then(s=>s.home)'),home);
  assert.equal(await evaluate('fetch("/api/agent/jobs").then(r=>r.status)'),403);
  await evaluate('document.getElementById("apiKey").value='+JSON.stringify(key));
  assert.equal(await evaluate('fetch("/api/agent/jobs",{method:"POST",headers:{"Authorization":"Bearer "+document.getElementById("apiKey").value,"Content-Type":"application/json"},body:"{}"}).then(r=>r.status)'),403);
@@ -79,7 +86,7 @@ try {
  await send('/agent stop '+cancelled);await pause(500);
  assert.equal((await evaluate('api("/api/agent/jobs/'+cancelled+'")')).status,'cancelled');
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("may still survive")'));
- console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','no key or login','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','reviewed PR body','mock draft publication','staged cancel','active request cancel']}));
+ console.log(JSON.stringify({passed:true,job,run:run.run_id,cancelled,coverage:['real Chrome','account login with empty optional key','CSRF','server defaults','check selection','staging','job creation','refresh recovery','complete fixture diff','explicit approval','separate local push','reviewed PR body','mock draft publication','staged cancel','active request cancel']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

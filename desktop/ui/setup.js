@@ -17,10 +17,6 @@ async function action(command, args) {
   finally { busy = false; for (const b of document.querySelectorAll('button')) b.disabled = false; refresh(); }
 }
 document.getElementById('retry').addEventListener('click', () => action('retry_backend', { initializeKey: null }));
-document.getElementById('initialize').addEventListener('click', () => {
-  const input = document.getElementById('key'); const key = input.value; input.value = '';
-  if (key.trim()) action('retry_backend', { initializeKey: key });
-});
 document.getElementById('prepare').addEventListener('click', () => action('prepare_cargo'));
 document.getElementById('models').addEventListener('click', () => action('check_models'));
 refresh(); setInterval(refresh, 2000);

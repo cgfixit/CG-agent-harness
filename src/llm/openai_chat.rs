@@ -27,6 +27,7 @@ pub struct ChatResult {
     pub model: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    pub usage_reported: bool,
 }
 
 pub struct ChatClient {
@@ -80,12 +81,20 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         .and_then(|c| c.as_str())
         .ok_or_else(|| llm_err("malformed response from model server"))?
         .to_string();
+    let usage = obj.get("usage").and_then(|u| u.as_object());
+    let prompt_tokens = token_count(usage.and_then(|u| u.get("prompt_tokens")));
+    let completion_tokens = token_count(usage.and_then(|u| u.get("completion_tokens")));
+    let usage_reported = usage.is_some_and(|u| {
+        u.get("prompt_tokens").is_some_and(Value::is_number) && u.get("completion_tokens").is_some_and(Value::is_number)
+    });
+    let incomplete = |message: &str| {
+        llm_err(message).with_details(json!({"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "usage_reported":usage_reported, "output_bytes":body_text.len()}))
+    };
     match first.get("finish_reason").and_then(Value::as_str) {
         Some("stop") => {}
-        Some("length") => return Err(llm_err("model output was truncated; reduce the requested output or adjust the configured token budget before retrying")),
-        _ => return Err(llm_err("model response did not report a normal completion (finish_reason=stop required)")),
+        Some("length") => return Err(incomplete("model output was truncated; reduce the requested output or adjust the configured token budget before retrying")),
+        _ => return Err(incomplete("model response did not report a normal completion (finish_reason=stop required)")),
     }
-    let usage = obj.get("usage").and_then(|u| u.as_object());
     Ok(ChatResult {
         body_text,
         model: obj
@@ -93,8 +102,9 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
             .and_then(|m| m.as_str())
             .unwrap_or(fallback_model)
             .to_string(),
-        prompt_tokens: token_count(usage.and_then(|u| u.get("prompt_tokens"))),
-        completion_tokens: token_count(usage.and_then(|u| u.get("completion_tokens"))),
+        prompt_tokens,
+        completion_tokens,
+        usage_reported,
     })
 }
 
@@ -191,13 +201,33 @@ impl ChatClient {
                 tracing::debug!("harness chat upstream HTTP {status}");
                 return Err(llm_err(format!("model server returned HTTP {}", status.as_u16())));
             }
-            let parsed: Value = resp
-                .json()
+            // Bound model-controlled JSON independently of the requested tokens.
+            const MAX_RESPONSE_BYTES: usize = 4_194_304;
+            let mut resp = resp;
+            let mut body = Vec::new();
+            while let Some(chunk) = resp
+                .chunk()
                 .await
-                .map_err(|_| llm_err("malformed response from model server"))?;
+                .map_err(|_| llm_err("malformed response from model server"))?
+            {
+                if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                    return Err(llm_err("model response exceeds limit"));
+                }
+                body.extend_from_slice(&chunk);
+            }
+            let parsed: Value =
+                serde_json::from_slice(&body).map_err(|_| llm_err("malformed response from model server"))?;
             Ok::<Value, HarnessError>(parsed)
         });
         *self.inflight.lock().unwrap_or_else(|p| p.into_inner()) = Some(task.abort_handle());
+        // Dropping a research/chat request must also abort its spawned HTTP task.
+        struct AbortOnDrop(AbortHandle);
+        impl Drop for AbortOnDrop {
+            fn drop(&mut self) {
+                self.0.abort();
+            }
+        }
+        let _abort_on_drop = AbortOnDrop(task.abort_handle());
         let outcome = task.await;
         *self.inflight.lock().unwrap_or_else(|p| p.into_inner()) = None;
         match outcome {

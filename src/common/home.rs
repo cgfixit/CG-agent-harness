@@ -8,7 +8,7 @@
 //!   config.yaml        tunables (seeded from assets/config.default.yaml)
 //!   harness.json       {soul_enabled, selected_model, web_enabled, memory_enabled, port}
 //!   .env               managed API keys (written by env_keys)
-//!   auth.json          users + sessions (only when auth.enabled)
+//!   auth.sqlite3       users + hashed sessions; legacy auth.json is migration input
 //!   soul.md            optional read-only operator persona
 //!   sessions/          one JSON per chat session
 //!   skills/<name>/SKILL.md
@@ -147,6 +147,12 @@ impl Home {
         }
         let _ = std::fs::create_dir_all(self.tmp_dir());
         if !self.config_path().exists() {
+            // Only a genuinely new home is seeded. A missing policy on restart
+            // remains an error instead of silently replacing authoritative data.
+            let policy = self.tools_dir().join("web_allowlist.json");
+            if std::fs::symlink_metadata(&policy).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+                write_json_atomic(&policy, &serde_json::json!({"version": 1, "rules": []}))?;
+            }
             std::fs::write(self.config_path(), AppConfig::embedded_default())?;
         }
         if !self.registry_path().exists() {

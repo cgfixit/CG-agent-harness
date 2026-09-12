@@ -2,7 +2,11 @@
 //! Port of `harness/env_keys.py`: `export KEY='value'` lines, 0600, atomic,
 //! unrelated lines preserved verbatim, never returns a value.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
+
+// ponytail: one small credential file per owned server; split locks only if contention is measured.
+static KEY_MUTATION: Mutex<()> = Mutex::new(());
 use std::path::Path;
 
 use serde_json::{json, Value};
@@ -36,7 +40,7 @@ pub const MANAGED_KEYS: [KeySpec; 4] = [
     KeySpec {
         name: crate::common::apikey::API_KEY_ENV,
         label: "CGagentHarness API key",
-        detail: "Bearer secret for this console's guarded routes.",
+        detail: "Optional compatibility metadata. Never grants account access or provider permissions.",
         self_auth: true,
     },
     KeySpec {
@@ -129,14 +133,6 @@ fn split_assignment(line: &str) -> Option<(String, String)> {
     Some((name.trim().to_string(), raw.to_string()))
 }
 
-/// `{name: value}` for allowlisted keys only; missing file reads as empty.
-pub fn read_env_file(path: &Path) -> BTreeMap<String, String> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return BTreeMap::new();
-    };
-    parse_env_text(&text)
-}
-
 fn parse_env_text(text: &str) -> BTreeMap<String, String> {
     let mut found = BTreeMap::new();
     for line in text.lines() {
@@ -151,23 +147,31 @@ fn parse_env_text(text: &str) -> BTreeMap<String, String> {
 
 /// Unix desktop/headless startup reads credentials as data through one validated descriptor.
 /// Missing is distinct from unreadable/unsafe; no shell expansion is performed.
-#[cfg(unix)]
-pub fn read_startup_keys(path: &Path) -> anyhow::Result<BTreeMap<String, String>> {
+fn read_private_text(path: &Path) -> anyhow::Result<String> {
     use std::io::Read;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let file = match std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(path)
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
     {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    }
+    let file = match options.open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
         Err(_) => anyhow::bail!("credential file unreadable; check its owner, access and symlink status"),
     };
     let metadata = file.metadata()?;
-    // SAFETY: getuid has no arguments or memory effects.
-    if !metadata.is_file() || metadata.uid() != unsafe { libc::getuid() } || metadata.mode() & 0o077 != 0 {
-        anyhow::bail!("credential file must be a private regular file owned by this user (0600)");
+    if !metadata.is_file() {
+        anyhow::bail!("credential file must be a regular file");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: getuid has no arguments or memory effects.
+        if metadata.uid() != unsafe { libc::getuid() } || metadata.mode() & 0o077 != 0 || metadata.nlink() != 1 {
+            anyhow::bail!("credential file must be private, singly linked, and owned by this user (0600)");
+        }
     }
     let mut text = String::new();
     file.take(65537)
@@ -176,7 +180,11 @@ pub fn read_startup_keys(path: &Path) -> anyhow::Result<BTreeMap<String, String>
     if text.len() > 65536 {
         anyhow::bail!("credential file exceeds 64 KiB");
     }
-    let keys = parse_env_text(&text);
+    Ok(text)
+}
+
+pub fn read_startup_keys(path: &Path) -> anyhow::Result<BTreeMap<String, String>> {
+    let keys = parse_env_text(&read_private_text(path)?);
     for (name, value) in &keys {
         validate_value(name, value)
             .map_err(|_| anyhow::anyhow!("credential file contains an invalid managed value"))?;
@@ -185,9 +193,10 @@ pub fn read_startup_keys(path: &Path) -> anyhow::Result<BTreeMap<String, String>
 }
 
 /// Presence + masked tail for every managed key. Never returns a value.
-pub fn read_status(path: &Path) -> Vec<Value> {
-    let stored = read_env_file(path);
-    MANAGED_KEYS
+pub fn read_status(path: &Path, loaded_from_file: &BTreeSet<String>) -> Result<Vec<Value>> {
+    let _guard = KEY_MUTATION.lock().map_err(|_| err("credential lock unavailable"))?;
+    let stored = read_startup_keys(path).map_err(|e| err(e.to_string()))?;
+    Ok(MANAGED_KEYS
         .iter()
         .map(|spec| {
             let live = std::env::var(spec.name).unwrap_or_default().trim().to_string();
@@ -208,10 +217,16 @@ pub fn read_status(path: &Path) -> Vec<Value> {
                 "configured": !value_for_mask.is_empty(),
                 "masked": if value_for_mask.is_empty() { String::new() } else { mask(&value_for_mask) },
                 "source": source,
-                "pending_restart": !in_file.is_empty() && in_file != live,
+                "saved_configured": !in_file.is_empty(),
+                "saved_masked": if in_file.is_empty() { String::new() } else { mask(&in_file) },
+                "active_configured": !live.is_empty(),
+                "active_masked": if live.is_empty() { String::new() } else { mask(&live) },
+                "active_source": if loaded_from_file.contains(spec.name) { "startup_file" } else if std::env::var_os(spec.name).is_some() { "environment" } else { "unset" },
+                "environment_override": !loaded_from_file.contains(spec.name) && std::env::var_os(spec.name).is_some(),
+                "pending_restart": in_file != live,
             })
         })
-        .collect()
+        .collect())
 }
 
 fn render_file(existing: &[String], updates: &BTreeMap<String, String>) -> String {
@@ -228,20 +243,33 @@ fn render_file(existing: &[String], updates: &BTreeMap<String, String>) -> Strin
         kept = HEADER_LINES.iter().map(|s| s.to_string()).collect();
     }
     for (name, secret) in updates {
-        kept.push(format!("export {name}={}", shell_single_quote(secret)));
+        if !secret.is_empty() {
+            kept.push(format!("export {name}={}", shell_single_quote(secret)));
+        }
     }
     format!("{}\n", kept.join("\n"))
 }
 
 /// Validate every value BEFORE writing; returns names only.
 pub fn write_keys(path: &Path, updates: &BTreeMap<String, String>) -> Result<Value> {
-    if updates.is_empty() {
+    update_keys(path, updates, &[])
+}
+
+pub fn update_keys(path: &Path, updates: &BTreeMap<String, String>, clear: &[String]) -> Result<Value> {
+    if updates.is_empty() && clear.is_empty() {
         return Err(err("no keys supplied"));
     }
     let mut cleaned = BTreeMap::new();
     for (name, secret) in updates {
         cleaned.insert(name.clone(), validate_value(name, secret)?);
     }
+    for name in clear {
+        spec_for(name)?;
+        if cleaned.insert(name.clone(), String::new()).is_some() {
+            return Err(err("a key cannot be saved and cleared together or cleared twice"));
+        }
+    }
+    let _guard = KEY_MUTATION.lock().map_err(|_| err("credential lock unavailable"))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
@@ -250,10 +278,15 @@ pub fn write_keys(path: &Path, updates: &BTreeMap<String, String>) -> Result<Val
             let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
         }
     }
-    let existing: Vec<String> = std::fs::read_to_string(path)
-        .map(|t| t.lines().map(|l| l.to_string()).collect())
-        .unwrap_or_default();
+    let existing: Vec<String> = read_private_text(path)
+        .map_err(|e| err(e.to_string()))?
+        .lines()
+        .map(str::to_string)
+        .collect();
     let rendered = render_file(&existing, &cleaned);
+    if rendered.len() > 65536 {
+        return Err(err("credential file exceeds 64 KiB"));
+    }
     write_atomic(path, rendered.as_bytes(), Some(0o600))?;
     let written: Vec<&String> = cleaned.keys().collect();
     let self_auth: Vec<&String> = cleaned
@@ -262,6 +295,7 @@ pub fn write_keys(path: &Path, updates: &BTreeMap<String, String>) -> Result<Val
         .collect();
     Ok(json!({
         "written": written,
+        "cleared": clear,
         "path": path.display().to_string(),
         "restart_required": true,
         "self_auth_written": self_auth,

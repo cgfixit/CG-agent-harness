@@ -95,10 +95,10 @@ harness-only. Never weaken security posture.
        `current_exe() agentic <action>` as a child (`kill_on_drop`, process-group
        SIGKILL on unix). Exit codes `0` ok / `2` failed / `3` env_config /
        `4` write_refused are the whole interface.
-     - **Guard chain:** rate limit → same-origin → API key (constant-time;
-       optional bypass only if `security.api_key_optional` AND loopback peer AND
-       no forwarding headers) → CSRF. Unset `CGAGENTHARNESS_API_KEY` refuses
-       every guarded route. Bind is loopback-only; Host must be a loopback name.
+     - **Guard chain:** rate limit → same-origin → direct loopback/no proxy →
+       account/RBAC → mutation CSRF. Fresh auth/TLS are true; public login/minimal
+       status still receive early guards. The optional harness key grants no access.
+       Bind and unambiguous Host/HTTP2 authority must remain loopback-only.
      - **Browser never supplies a command:** check-profile NAMES map to fixed
        argv; free-text crosses as `--opt=value` or temp files, never separate
        argv tokens. `confirm` is never defaulted.
@@ -262,7 +262,7 @@ diffs.
 | Intentional constant duplication across shim boundary | Keep; tests sync them |
 | Quoted YAML `"true"` is OFF | `flag_is_true`; keep |
 | CSRF placeholder / header CyClaw names | Contractual; keep verbatim |
-| Write gates ship closed | `shipped_config_keeps_every_gate_closed` |
+| Write gates ship closed | `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
 | Kill switch AND-ed, never OR-ed | `writer_kill_switch_is_and_not_or` |
 | Skills ≠ publish rights | Standing authorization boundary |
 

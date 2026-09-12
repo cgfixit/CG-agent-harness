@@ -9,6 +9,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 let persona=''; let clearFails=false;
+let authFixture=false, signedIn=false, mustChange=true, savedKey='';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
@@ -16,6 +17,17 @@ const server=createServer(async(req,res)=>{
  const reply=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
  if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/static/')){res.end('');return;}
+ if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:'admin',role:'admin',must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
+ if(path==='/api/auth/setup-status'){reply({needs_password:false});return;}
+ if(path==='/api/auth/login'){signedIn=body.username==='admin'&&body.password==='admin';reply({username:'admin',role:'admin',must_change_password:true},signedIn?200:401);return;}
+ if(path==='/api/auth/password'){assert.equal(body.current_password,'admin');assert.ok(body.password.length>=12);mustChange=false;reply({changed:true});return;}
+ if(path==='/api/auth/logout'){signedIn=false;reply({logged_out:true});return;}
+ if(path==='/api/keys'){
+  if(!signedIn || mustChange){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
+  if(req.method==='POST'){if(body.clear?.length)savedKey='';else savedKey=body.keys.DEEPAGENT_API_KEY;}
+  reply({keys:[{name:'DEEPAGENT_API_KEY',label:'Planner key',detail:'Optional fixture provider',saved_configured:!!savedKey,saved_masked:savedKey?'••••••••1234':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedKey,environment_override:false}]});return;
+ }
+ if(path==='/api/status'&&authFixture&&(!signedIn||mustChange)){reply({version:'fixture',auth_enabled:true});return;}
  if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:0});return;}
  if(path==='/api/soul/document'){
   if(req.method==='POST'){if(!body.confirm){reply({detail:{code:'SOUL_CONFIRM',message:'Confirmation required'}},400);return;}persona=body.content;reply({saved:true,revision:'1'.repeat(64)});return;}
@@ -208,7 +220,27 @@ try {
  await send('/session use '+goalSession);await send('/goal task');assert.equal(await evaluate('pendingAgentRun.goal_stage.session_id'),goalSession);
  await send('/agent confirm');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture','missing reason keeps request staged');
  assert.ok(!requests.some(r=>r[0]==='POST' && ['/api/agent/jobs','/api/agent/run'].includes(r[1])),'chat and skill staging never execute coding work');
- console.log(JSON.stringify({passed:true,coverage:['fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
+ // The real browser must execute the minimal-status login and key editor flows.
+ authFixture=true;await call('Page.reload',{ignoreCache:true});
+ await until('!document.getElementById("hAuthLoginBox").hidden');
+ await until('document.getElementById("sProvider").textContent === "sign in"');
+ assert.equal(await evaluate('document.querySelector("[data-pane=registry]")'),null);
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ await until('document.getElementById("passwordDialog").open');
+ await evaluate('document.getElementById("passwordCurrent").value="admin";document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
+ await until('!document.getElementById("passwordDialog").open');assert.equal(mustChange,false);
+ await evaluate('document.querySelector("[data-pane=api-keys]").click()');
+ await until('!!document.getElementById("saved-DEEPAGENT_API_KEY")');
+ await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value="fixture-secret-value-1234";document.getElementById("saved-DEEPAGENT_API_KEY").form.requestSubmit()');
+ await until('document.getElementById("pane-api-keys").textContent.includes("••••••••1234")');
+ assert.equal(savedKey,'fixture-secret-value-1234');
+ assert.equal(await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value'),'');
+ assert.equal(await evaluate('document.body.textContent.includes("fixture-secret-value-1234")'),false);
+ await evaluate('Array.from(document.querySelectorAll("#pane-api-keys button")).find(b=>b.textContent==="Clear saved value").click()');
+ await until('document.getElementById("pane-api-keys").textContent.includes("Saved: unset")');assert.equal(savedKey,'');
+ await evaluate('document.getElementById("hAuthLogout").click()');
+ await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(await evaluate('currentSession'),null);
+ console.log(JSON.stringify({passed:true,coverage:['minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

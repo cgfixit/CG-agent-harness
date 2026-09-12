@@ -56,7 +56,7 @@ cargo test --test real_repo_loop real_repo_run_smoke_end_to_end -- --nocapture  
 cargo test --test invariant_guard                  # fast source-scan guard; run after any structural change
 SKIP_LIVE=1 scripts/verify-local.sh                # fmt + clippy + deny (if installed) + tests + release build
 CGAH_TEST_BINARY=target/debug/cgagentharness python3 scripts/test-desktop-backend.py  # stdlib-only backend contract suite
-cargo run -- serve                                 # console at http://127.0.0.1:8790/
+cargo run -- serve                                 # HTTPS + account login; see docs/SECURE_RESEARCH.md
 scripts/check-pr-template.sh                       # validate PR body before opening a PR
 ```
 
@@ -74,8 +74,9 @@ scripts/check-pr-template.sh                       # validate PR body before ope
 
 ## Architecture
 
-One self-reexecuting binary with three subcommands (`src/main.rs`): `serve` (public loopback console),
-`agentic` (hidden, spawned only by the server), `desktop` (hidden, unix sidecar over inherited pipes).
+One self-reexecuting binary (`src/main.rs`): public `serve`, `account`, `web`, and `tls`;
+hidden `agentic` (spawned only by the shim) and `desktop` (Unix sidecar over inherited pipes).
+Account/web CLI operations use the protected service; TLS maintenance is local-owner administration.
 
 ### I6: process isolation (the rule everything else hangs on)
 
@@ -101,9 +102,10 @@ src/agentic                                   <- pipeline side; NEVER references
 ### Server (`src/server`)
 
 - Guard chain on every operator route, order is load-bearing:
-  `rate limit -> same-origin -> API key (constant-time; loopback bypass only when
-  security.api_key_optional) -> CSRF (per-process token)`. Lives in `guards.rs`/`headers.rs`;
-  locked by `tests/auth_guards.rs` and `tests/security_headers.rs`.
+  `rate limit -> same-origin -> direct loopback/no proxy -> account/RBAC -> mutation CSRF`.
+  Public login/minimal status still get early guards. Fresh auth/TLS are true; the optional
+  harness key grants no authority. Lives in `guards.rs`/`headers.rs`; locked by
+  `tests/auth_guards.rs`, `tests/secure_portal.rs` and `tests/security_headers.rs`.
 - `routes/mod.rs::REGISTERED_PATHS` feeds `/api/tools`'s "wired" report. A new route must be added
   there (and `views.rs` if the console lists it) or it shows as unwired.
 - The browser never supplies a command: `POST /api/agent/run` carries check-profile NAMES and
@@ -135,7 +137,7 @@ boundary; a changed repo/workspace/scope/budget refuses rather than continuing o
 - Home is `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`, must be absolute). Never write outside it
   except into a clone the pipeline made.
 - All write gates ship closed (`agentic.enabled`, `mode`, `writes_enabled`, `deepagent_github.enabled`,
-  `allow_git_write_tools`); `tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed` enforces it.
+  `allow_git_write_tools`); `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` enforces it.
   Quoted YAML `"true"` is OFF for every gate (`flag_is_true`). `confirm` is never defaulted on;
   `reason` is never optional on a write. `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` is AND-ed with
   `EXECUTION_ENABLED` and can only disable.

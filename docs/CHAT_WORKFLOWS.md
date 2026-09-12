@@ -24,7 +24,9 @@ To delete saved chats, choose **Clear all session history** below **+ new sessio
 in the Sessions sidebar and confirm. This stops chat and removes session files,
 goals, skill selections and token totals; shared notes/persona/web and coding runs remain.
 
-Shared persona and enabled memory/web context survive new sessions. The header
+Shared persona and enabled memory survive new sessions. Web selection and injected
+context are account scoped and survive that account's session changes. Research
+rechecks current URL permission and account access; see [secure research](SECURE_RESEARCH.md). The header
 token count covers all saved sessions; `/tokens` reports the selected session.
 `/prompt` exposes shared context; use its explicit toggles when you want to exclude
 it. Do not confuse a new conversation with deleting all shared notes/persona.

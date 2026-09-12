@@ -45,24 +45,32 @@ pub async fn security_headers(req: Request<Body>, next: Next) -> Response {
     resp
 }
 
-/// Host header hostname (port stripped, IPv6 brackets kept intact).
-pub fn host_name(raw: &str) -> String {
-    let raw = raw.trim();
-    if let Some(rest) = raw.strip_prefix('[') {
-        if let Some(end) = rest.find(']') {
-            return rest[..end].to_string();
-        }
+/// One authority parser for HTTP/1 Host and HTTP/2 :authority. Conflicting
+/// representations are refused; forwarding headers never supply authority.
+pub fn request_authority(req: &Request<Body>) -> Option<axum::http::uri::Authority> {
+    if req.headers().get_all(header::HOST).iter().count() > 1 {
+        return None;
     }
-    raw.rsplit_once(':').map(|(h, _)| h).unwrap_or(raw).to_string()
+    let host = req.headers().get(header::HOST).map(|h| h.to_str()).transpose().ok()?;
+    let authority = req.uri().authority().map(|a| a.as_str());
+    if host.zip(authority).is_some_and(|(h, a)| !h.eq_ignore_ascii_case(a)) {
+        return None;
+    }
+    let raw = authority.or(host)?;
+    if raw.contains('@') || raw.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let parsed: axum::http::uri::Authority = raw.parse().ok()?;
+    if parsed.port().is_some() && parsed.port_u16().is_none() {
+        return None;
+    }
+    Some(parsed)
 }
 
-/// Reject any request whose Host is not a loopback name (DNS-rebinding defense).
+/// Reject any request whose authority is not a loopback name (DNS rebinding defense).
 pub async fn trusted_host(req: Request<Body>, next: Next) -> Response {
-    let host = req
-        .headers()
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .map(host_name)
+    let host = request_authority(&req)
+        .map(|a| a.host().trim_matches(['[', ']']).to_lowercase())
         .unwrap_or_default();
     if !LOOPBACK_HOSTS.contains(&host.to_lowercase().as_str()) {
         return (StatusCode::BAD_REQUEST, "Invalid host header").into_response();

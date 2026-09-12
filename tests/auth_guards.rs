@@ -59,11 +59,14 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
 }
 
 #[tokio::test]
-async fn guarded_routes_refuse_missing_and_wrong_keys() {
+async fn account_routes_refuse_missing_sessions_regardless_of_key() {
     let model = start_mock_model().await;
     let s = spawn_server(
         &model.base_url(),
-        ServerOptions::default().with("security.api_key_optional", "false"),
+        ServerOptions::default()
+            .with("security.api_key_optional", "false")
+            .with("auth.enabled", "true")
+            .with("api.rate_limit.max_requests", "200"),
     )
     .await;
     for (method, path, body) in guarded_routes() {
@@ -78,8 +81,7 @@ async fn guarded_routes_refuse_missing_and_wrong_keys() {
         let resp = r.send().await.unwrap();
         assert_eq!(resp.status().as_u16(), 401, "{method} {path} without key");
         let b: serde_json::Value = resp.json().await.unwrap();
-        assert_eq!(code(&b), "UNAUTHORIZED");
-        assert_eq!(b["detail"]["details"]["reason"], "bad_credentials");
+        assert_eq!(code(&b), "AUTH_REQUIRED");
         // Wrong key.
         let mut r = s
             .client
@@ -146,7 +148,7 @@ async fn open_routes_need_nothing_and_leak_no_message_content() {
 }
 
 #[tokio::test]
-async fn enforced_unset_api_key_fails_closed() {
+async fn obsolete_key_requirement_does_not_block_explicit_auth_opt_out() {
     let model = start_mock_model().await;
     let opts = ServerOptions {
         api_key: Some(String::new()),
@@ -162,10 +164,7 @@ async fn enforced_unset_api_key_fails_closed() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 401);
-    let b: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(b["detail"]["details"]["reason"], "key_not_configured");
-    assert!(message(&b).contains("CGAGENTHARNESS_API_KEY"));
+    assert_eq!(resp.status().as_u16(), 200);
 }
 
 #[tokio::test]
@@ -200,7 +199,7 @@ async fn api_key_optional_bypass_requires_loopback_peer_and_no_proxy_headers() {
             .send()
             .await
             .unwrap();
-        assert_eq!(resp.status().as_u16(), 401, "{header}");
+        assert_eq!(resp.status().as_u16(), 403, "{header}");
     }
     // Without CSRF the bypass still does not open the route.
     let resp = s
@@ -266,7 +265,7 @@ async fn cross_site_and_cross_origin_are_rejected_even_with_a_key() {
 }
 
 #[tokio::test]
-async fn csrf_runs_after_the_key_check_and_is_required_unconditionally() {
+async fn csrf_remains_required_regardless_of_optional_key() {
     let model = start_mock_model().await;
     let s = spawn_server(
         &model.base_url(),
@@ -296,7 +295,7 @@ async fn csrf_runs_after_the_key_check_and_is_required_unconditionally() {
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 403);
-    // Wrong key AND wrong CSRF -> 401 (key runs first).
+    // A stale optional key cannot bypass an invalid CSRF token.
     let resp = s
         .client
         .post(s.url("/api/soul"))
@@ -306,7 +305,7 @@ async fn csrf_runs_after_the_key_check_and_is_required_unconditionally() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 401);
+    assert_eq!(resp.status().as_u16(), 403);
     // Token differs per instance.
     let s2 = spawn_server(
         &model.base_url(),
@@ -350,9 +349,9 @@ async fn rate_limit_runs_before_auth_and_reports_retry_after() {
     let b: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(code(&b), "RATE_LIMIT");
     assert_eq!(b["detail"]["details"]["retry_after_sec"], retry);
-    // Open routes are exempt.
+    // Even the minimal public API status is rate-limited.
     for _ in 0..5 {
-        assert_eq!(s.open_get("/api/status").await.0, 200);
+        assert_eq!(s.open_get("/api/status").await.0, 429);
     }
 }
 
@@ -387,7 +386,7 @@ async fn host_header_must_be_loopback() {
 }
 
 #[tokio::test]
-async fn default_local_access_needs_neither_key_nor_login_for_harness_routes() {
+async fn only_explicit_auth_opt_out_allows_login_free_operations() {
     let model = start_mock_model().await;
     for auth_enabled in ["false", "true"] {
         for configured_key in ["", "optional-existing-key"] {
@@ -413,6 +412,10 @@ async fn default_local_access_needs_neither_key_nor_login_for_harness_routes() {
                 let resp = r.send().await.unwrap();
                 let status = resp.status().as_u16();
                 let result: serde_json::Value = resp.json().await.unwrap();
+                if auth_enabled == "true" {
+                    assert_eq!(status, 401, "{method} {path}: {result}");
+                    continue;
+                }
                 assert!(![401, 403].contains(&status), "{method} {path}: {status} {result}");
                 if path == "/api/chat" {
                     assert_eq!(status, 200, "{result}");
@@ -443,8 +446,7 @@ async fn default_local_access_needs_neither_key_nor_login_for_harness_routes() {
                     assert_eq!(outcome["error"]["http_status"], 409, "worker gate: {outcome}");
                 }
             }
-            // Account management keeps its own sessions/RBAC even though core
-            // harness use above succeeds with auth enabled and no login.
+            // Account and operation authority both require login when enabled.
             let status = s.open_get("/api/auth/users").await.0;
             assert_eq!(status, if auth_enabled == "true" { 401 } else { 503 });
         }
@@ -452,11 +454,13 @@ async fn default_local_access_needs_neither_key_nor_login_for_harness_routes() {
 }
 
 #[tokio::test]
-async fn quoted_optional_flag_never_opens_the_key_gate() {
+async fn obsolete_optional_flag_never_controls_account_permissions() {
     let model = start_mock_model().await;
     let s = spawn_server(
         &model.base_url(),
-        ServerOptions::default().with("security.api_key_optional", "\"true\""),
+        ServerOptions::default()
+            .with("security.api_key_optional", "\"true\"")
+            .with("auth.enabled", "true"),
     )
     .await;
     let resp = s

@@ -13,6 +13,7 @@ parser.add_argument('directory', type=Path, help='new directory; must not exist'
 parser.add_argument('--model', required=True, help='exact installed Ollama tag')
 parser.add_argument('--endpoint', default='http://127.0.0.1:11434/v1')
 parser.add_argument('--port', type=int, default=8792)
+parser.add_argument('--http', action='store_true', help='explicit HTTP browser-fixture lane; account authentication stays enabled')
 parser.add_argument('--prepare-only', action='store_true', help='prepare the fixture without launching a server (desktop acceptance)')
 args = parser.parse_args()
 assert urlparse(args.endpoint).hostname == '127.0.0.1', 'local inference only'
@@ -68,7 +69,7 @@ for key, value in {
     'agentic.deepagent_github.planner_max_tokens': 1024,
     'models.local_llm.base_url': args.endpoint,
     'models.local_llm.model': args.model,
-    'models.local_llm.max_tokens': 256,
+    'models.local_llm.max_tokens': 256, 'tls.enabled': not args.http,
 }.items():
     config = override(config, key, value)
 (home / 'config.yaml').write_text(config)
@@ -96,7 +97,7 @@ keyfile.touch(mode=0o600)
 keyfile.write_text(key)
 env.update(CGAGENTHARNESS_HOME=str(home), CGAGENTHARNESS_API_KEY=key,
            PATH=str(fakebin) + os.pathsep + env['PATH'])
-print(json.dumps({'base_url': f'http://127.0.0.1:{args.port}', 'home': str(home), 'key_file': str(keyfile), 'fixture': 'disposable-arithmetic'}), flush=True)
+print(json.dumps({'base_url': f'{"http" if args.http else "https"}://127.0.0.1:{args.port}', 'home': str(home), 'key_file': str(keyfile), 'fixture': 'disposable-arithmetic'}), flush=True)
 if args.prepare_only:
     (home / '.env').touch(mode=0o600)
     (home / '.env').write_text("export CGAGENTHARNESS_API_KEY='" + key + "'\n")
