@@ -13,11 +13,14 @@ app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
 **Version scope:** verified against `origin/main` at
-[`8644b91`](https://github.com/cgfixit/CG-agent-harness/commit/8644b91)
-on September 11, 2026. Prompt/persona editing, runtime skills, goal staging, exact
-model-inventory checks, session isolation and confirmed history deletion are
-present on main. Earlier issue #32 comments about unmerged feature branches are
-historical; use the code and the latest evidence when checking remaining work.
+[`65dd01b`](https://github.com/cgfixit/CG-agent-harness/commit/65dd01b)
+on September 12, 2026. The last behavior change on main is
+[`8644b91`](https://github.com/cgfixit/CG-agent-harness/commit/8644b91); everything
+merged after it is documentation. Prompt/persona editing, runtime skills, goal
+staging, exact model-inventory checks, session isolation and confirmed history
+deletion are present on main. Earlier issue #32 comments about unmerged feature
+branches are historical; use the code and the latest evidence when checking
+remaining work.
 
 The published [v0.1.1 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.1)
 was built from `ceea4e5`, before these additions. To use everything in this guide,
@@ -43,7 +46,17 @@ an unknown command is not fixed by changing persona or arming a write gate.
 |---|---|---|
 | Existing macOS app bundle | Apple Silicon or Intel Mac; working local model service for chat | Native app; owned loopback port chosen at launch |
 | Build the macOS app | Apple Silicon build host, Git, Xcode Command Line Tools, rustup with Rust 1.88 and 1.90 | Native app after packaging in section 5.2 |
-| Standalone server | Git, Xcode Command Line Tools and Rust 1.88 | Browser at `http://127.0.0.1:8790/` by default |
+| Standalone server (macOS) | Git, Xcode Command Line Tools and Rust 1.88 | Browser at `http://127.0.0.1:8790/` by default |
+| Standalone server (Linux) | Git, a C toolchain, Rust 1.88 and `unshare` for sandboxed checks | Browser at `http://127.0.0.1:8790/` by default |
+
+This guide is written for macOS. The backend itself is also built and tested on
+Linux in CI, and Bundle runs attach a `cgagentharness-linux-x86_64` binary. On
+Linux, skip the Xcode and app-bundle steps (sections 2.2, 5.2, 6's app path and
+the packaging parts of section 8) and note that the hard sandbox is
+`unshare --net`: it isolates the network but does not give checks the read-only
+input confinement that Seatbelt does on macOS. Windows CI and release legs are
+parked. `serve` also accepts `--host` and `--port` (1024-65535); any non-loopback
+bind host is refused.
 
 An already-built app needs no Terminal, external browser, Rust or Python merely
 to launch. Coding checks still need their own tools and prepared dependencies.
@@ -1001,7 +1014,9 @@ and contain no newline, carriage return or NUL. There is no generic key-deletion
 slash command. Preserve other entries when deliberately maintaining the private
 file, and restart after changing credentials.
 
-The current console prints a stale “your shell sources it” hint after saving.
+The current console prints a stale “your shell sources it” hint after saving,
+pointing at `docs/HARNESS_API_KEYS.md`, a path that does not exist in this
+repository.
 For this Unix desktop/`serve` implementation, the startup loader reads the managed
 file as data; follow the loading and permissions rules above. Do not source it as
 a shell script. Never put key values in soul, memory, skill files or shared prompts.
