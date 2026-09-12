@@ -327,7 +327,12 @@ verify_invariants() {
   echo "=== I3: CSRF placeholders ==="
   csrf_html=$(grep -ic "x-cyclaw-csrf\|__CYCLAW_CSRF_TOKEN__" assets/static/harness.html)
   csrf_code=$(grep -ic "x-cyclaw-csrf" src/server/guards.rs)
-  [ "$csrf_html" -ge 1 ] && [ "$csrf_code" -ge 1 ] && echo "✓ PASS" || echo "✗ FAIL"
+  if [ "$csrf_html" -ge 1 ] && [ "$csrf_code" -ge 1 ]; then
+    echo "✓ PASS"
+  else
+    echo "✗ FAIL"
+    return 1
+  fi
 
   echo "=== I4: Write gates closed ==="
   # Five different `enabled:` keys live under five different YAML parents
