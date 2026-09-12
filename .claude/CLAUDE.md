@@ -112,11 +112,14 @@ src/agentic                                   <- pipeline side; NEVER references
 ### Agentic pipeline (`src/agentic`)
 
 `real_repo_loop.rs` drives: clone into `<home>/data/agentic/workspaces` (`workspace.rs`) ->
-plan (`proposer.rs` / `cloud_proposer.rs`) -> bounded edits (`edits.rs`, injection + scope + budget
-checks in `writer.rs`, clone jail via `cap_std`) -> sandboxed checks (`executor/sandbox.rs`:
+plan (`proposer.rs` / `cloud_proposer.rs`) -> bounded edits (`edits.rs`; injection, budget and
+protected-path decisions in `real_repo_loop.rs`, rechecked by `workspace.rs::apply_proposal`;
+clone jail via `cap_std`) -> sandboxed checks (`executor/sandbox.rs`:
 Seatbelt / `unshare --net` / Job Object; no backend = exit 3) -> feedback into the next attempt.
 Runs are retained by `run_store.rs`; `decide` (local commit), `push`, and `publish` (draft PR via
-`gh_client.rs`) are separate actions, each requiring `--reason=<why> --confirm`. Combined
+`gh_client.rs`) are separate actions, each requiring `--reason=<why> --confirm`.
+`writer.rs` is the GitHub write gate for the one executable op (`pr_create`, always `--draft`),
+not the edit preflight; `protected_write_paths` is a refusal list, not an allowed scope. Combined
 `decide --push/--publish` is refused. `governance.rs` reloads `config.yaml` at every mutation
 boundary; a changed repo/workspace/scope/budget refuses rather than continuing on a stale snapshot.
 

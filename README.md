@@ -321,13 +321,23 @@ management. It does not gate chat or the coding pipeline. External services
 still require their own credentials, including GitHub publication.
 
 The HTTP server reaches agentic execution only by spawning one of twelve
-whitelisted actions through `src/shim`; it never imports the pipeline
-implementation, and `tests/invariant_guard.rs` scans both directions for a
-violation. Child exit codes are the entire interface: `0` ok, `2` failed, `3`
-env/config, `4` write refused. A non-zero child exit is HTTP 200 with
-`ok=false`; only shim failures map to 400/502/504 and a disabled layer to 409.
-Model output passes scope, injection, edit-budget, and exact-content checks
-before candidate writes. Quoted YAML `"true"` does not enable a gate.
+whitelisted actions through `src/shim`. The bar is wider than the server module:
+`tests/invariant_guard.rs` scans all four console-side trees — `src/server`,
+`src/shim`, `src/llm` and `src/common` — for any reference to the pipeline, and
+scans the pipeline for any reference back. Child exit codes are the entire
+interface: `0` ok, `2` failed, `3` env/config, `4` write refused. A non-zero
+child exit is HTTP 200 with `ok=false`; only shim failures map to 400/502/504
+and a disabled layer to 409.
+
+Model output is judged before it lands: `real_repo_loop.rs` applies the
+injection, edit-budget and protected-path decisions, and
+`workspace.rs::apply_proposal` rechecks protected destinations and aggregate
+size before staging, with exact-content binding on each edit.
+`deepagent_github.protected_write_paths` is a refusal list — a candidate
+touching one of those destinations is rejected — not a scope that edits must
+stay inside. `writer.rs` is a different gate: it guards the single executable
+GitHub write op (`gh pr create`, always `--draft`). Quoted YAML `"true"` does
+not enable a gate.
 
 Chat reports upstream HTTP failures as `502 HARNESS_LLM_ERROR` with the model
 server's status code. It drops error bodies without reading or logging them,
