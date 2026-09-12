@@ -13,19 +13,22 @@ app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
 **Version scope:** verified against `origin/main` at
-[`65dd01b`](https://github.com/cgfixit/CG-agent-harness/commit/65dd01b)
+[`b227f6c`](https://github.com/cgfixit/CG-agent-harness/commit/b227f6c)
 on September 12, 2026. The last behavior change on main is
-[`8644b91`](https://github.com/cgfixit/CG-agent-harness/commit/8644b91); everything
-merged after it is documentation. Prompt/persona editing, runtime skills, goal
-staging, exact model-inventory checks, session isolation and confirmed history
-deletion are present on main. Earlier issue #32 comments about unmerged feature
-branches are historical; use the code and the latest evidence when checking
-remaining work.
+[`b227f6c`](https://github.com/cgfixit/CG-agent-harness/commit/b227f6c)
+(rolling rejection digest in real-repo loop feedback). Prompt/persona editing,
+runtime skills, goal staging, exact model-inventory checks, session isolation and
+confirmed history deletion are in both current main and the latest published
+release. Earlier issue #32 comments about unmerged feature branches are
+historical; use the code and the latest evidence when checking remaining work.
 
-The published [v0.1.1 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.1)
-was built from `ceea4e5`, before these additions. To use everything in this guide,
-choose a successful main Bundle run containing `8644b91` or build current main.
-Check `Contents/Resources/COMMIT`, release notes and `/help` for the installed app;
+The published [v0.1.3 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.3)
+was built from `6a0bf9a`. It includes the console features in this guide; it
+does not include the `#64` rolling rejection digest. The crate `version` in
+`Cargo.toml` stays `0.1.0` on purpose — release tags and
+`Contents/Resources/COMMIT` identify a build. To match this revision, choose a
+successful main Bundle run containing `b227f6c` or build current main. Check
+`Contents/Resources/COMMIT`, release notes and `/help` for the installed app;
 an unknown command is not fixed by changing persona or arming a write gate.
 
 ## Quick route through this guide
@@ -1305,13 +1308,15 @@ Run the repository gates with application inference omitted:
 
 ```bash
 test_home="$(mktemp -d)"
-CGAGENTHARNESS_HOME="$test_home" CARGO_NET_OFFLINE=true SKIP_LIVE=1 scripts/verify-local.sh
+CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
-The disposable home avoids colliding with a running app's home lock. This runs
-formatting, Clippy, tests and release build. It runs cargo-deny only
-when installed; record a skipped audit and run the dependency policy separately
-when needed. Tests include required native Cargo sandbox and process tests.
+The disposable home avoids colliding with a running app's home lock. This is the
+same invocation as [README](README.md#tests-and-cicd): formatting, Clippy with
+warnings denied, tests (planner keys blanked), and a release build.
+`scripts/verify-local.sh` does not pass `--locked` or `CARGO_NET_OFFLINE`.
+It runs cargo-deny only when installed; record a skipped audit and run the
+dependency policy separately when needed. Tests include required native Cargo sandbox and process tests.
 An outer tool sandbox can prevent nested Seatbelt; run native acceptance from
 the operator's terminal without weakening the application profile.
 
@@ -1361,7 +1366,7 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes, including v0.1.1 | Inspect `/help` and bundle `Resources/COMMIT`; obtain a successful main Bundle artifact or a later release containing the required source |
+| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain v0.1.3 or later, or a successful main Bundle artifact containing the required source |
 | New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona/web are still included | Verify the running bundle includes `71eef11` or later; inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
 | Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify the app includes the capability-guide fix at `71eef11` or later |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
