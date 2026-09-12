@@ -22,13 +22,17 @@ This skill verifies that changes to core security code preserve the invariants t
 **How to check:**
 
 ```bash
-# This should find NOTHING (empty result)
-grep -r "use crate::agentic" src/server src/llm src/shim
+# Check all four console-side modules (server, shim, llm, common) for any agentic reference
+for module in server shim llm common; do
+  echo "=== Checking src/$module ==="
+  if grep -r "crate::agentic\|use.*agentic" src/$module --include="*.rs" 2>/dev/null; then
+    echo "✗ FAIL: Found agentic reference in $module"
+  else
+    echo "✓ OK"
+  fi
+done
 
-# This is OK (appears in src/shim only, wrapped in timeout)
-grep -r "use.*agentic" src/ --include="*.rs" | grep -v "src/shim"
-
-# Verify shim spawns child
+# Verify shim spawns child (not in-process call)
 grep -A 10 "fn dispatch" src/shim/mod.rs | grep -E "spawn|child|Command"
 
 # Verify agentic never imports server
@@ -87,7 +91,7 @@ router
 3. Update the guard test if it changed
 4. Test manually: wrong-auth-key against rate-limited IP should 429, not 401
 
-**Test:** `cargo test --test auth_guards security_headers` should pass.
+**Test:** `cargo test --test auth_guards && cargo test --test security_headers` should both pass.
 
 ---
 
@@ -156,6 +160,13 @@ grep ": true\|: [Tt]rue" assets/config.default.yaml | grep -v "^#"
 # Should only return non-gate values (like log level = true)
 ```
 
+**Shipped fail-closed gates (from tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed):**
+- `agentic.enabled` must be `false`
+- `deepagent_github.enabled` must be `false` (if present)
+- `deepagent_github.allow_git_write_tools` must be `false`
+
+Note: `agentic.writes_enabled` intentionally ships `true` (master layer + mode gate keep writes closed); `security.api_key_optional` intentionally ships unquoted boolean `true` (direct loopback access).
+
 **Verify in code:** The `flag_is_true` helper checks quoted `"true"` as false:
 
 ```bash
@@ -164,11 +175,11 @@ grep -rn "flag_is_true" src/common --include="*.rs" -A 3
 # Should confirm: quoted "true" is treated as false
 ```
 
-**Fix:** If a gate defaults to `true`:
+**Fix:** If a write gate defaults to `true` when it should be `false`:
 1. Change it to `false` immediately
 2. Add a comment explaining why it's safe
 3. File a security issue if this was merged
-4. Run `cargo test --test invariant_guard::shipped_config_keeps_every_gate_closed`
+4. Run `cargo test --test invariant_guard shipped_config_keeps_every_gate_closed`
 
 **Test:** `cargo test invariant_guard shipped_config_keeps_every_gate_closed` enforces this.
 
@@ -218,37 +229,41 @@ grep -rn "RUN_ID_PATTERN\|PLANNER_TIMEOUT" tests/invariant_guard.rs | head -10
 
 ## Additional checks (per-module)
 
-### If touching `src/agentic/writer.rs`
+### If touching `src/agentic/real_repo_loop.rs` or `src/agentic/workspace.rs`
 
-The writer applies three checks BEFORE any file is written:
-1. **Injection scan** — detects code injection attempts in proposed content
-2. **Scope check** — verifies the path is within `protected_write_paths`
-3. **Budget check** — enforces max bytes/files
+Write preflight checks happen in two stages:
+1. **real_repo_loop** — initial scanning and protected-path/budget decisions
+2. **workspace::apply_proposal** — rechecks protected destinations and aggregate size before staging
 
-All three must run BEFORE calling `fs::write`. They're not optional optimizations.
+Protected paths are destinations to REFUSE, not a scope that paths must be within.
 
 ```bash
-# Verify order in code
-grep -n "inject\|scope\|budget" src/agentic/writer.rs | head -10
+# Verify initial checks in real_repo_loop
+grep -n "protected_write_paths\|budget" src/agentic/real_repo_loop.rs | head -10
 
-# Should show injection check first, then scope, then budget
+# Verify workspace applies rechecks
+grep -n "protected_write_paths\|apply_proposal" src/agentic/workspace.rs | head -10
 ```
 
 ### If touching `src/agentic/executor/sandbox.rs`
 
-The sandbox (Seatbelt / `unshare --net` / Job Object) runs verification checks. Three guarantees:
-1. No network I/O (`unshare --net` on Linux, Seatbelt on macOS, Job Object on Windows)
-2. Limited filesystem access (read candidate + vendored sources only, writable scratch only)
-3. Process cannot outlive sandbox (kill_on_drop)
+The sandbox varies by platform with platform-specific guarantees:
+- **macOS:** Seatbelt denies network, filesystem reads outside allowed roots, data exfiltration
+- **Linux:** `unshare --net` blocks network only; no filesystem confinement
+- **Windows:** Job Object provides process-tree control and kill-on-close; no network/filesystem confinement
+
+All platforms: process cannot outlive sandbox (kill_on_drop).
+
+See `INVARIANTS.md` → "Native macOS Cargo boundary" and `docs/OFFLINE_CARGO.md` for detailed platform capabilities.
 
 ```bash
-# Verify platform detection
+# Verify platform detection and capabilities
 grep -n "target_os\|cfg.*unix\|cfg.*windows" src/agentic/executor/sandbox.rs | head -10
 
-# Verify network isolation
-grep -n "unshare\|Seatbelt\|Job.*Object" src/agentic/executor/sandbox.rs
+# Verify network isolation (macOS Seatbelt, Linux unshare)
+grep -n "unshare\|Seatbelt" src/agentic/executor/sandbox.rs
 
-# Verify kill_on_drop or equivalent
+# Verify process lifetime control
 grep -n "kill_on_drop\|Drop\|impl Drop" src/agentic/executor/sandbox.rs
 ```
 
@@ -288,7 +303,12 @@ verify_invariants() {
 
   echo "=== I2: Guard chain order ==="
   order=$(grep -n "rate_limit\|same_origin\|api_key\|csrf" src/server/guards.rs | head -4 | cut -d: -f1)
-  [ "$(echo "$order" | sort -c 2>&1)" ] && echo "✓ PASS" || echo "⚠ Check manually"
+  if echo "$order" | sort -c 2>/dev/null; then
+    echo "✓ PASS"
+  else
+    echo "✗ FAIL: Guard order is wrong"
+    return 1
+  fi
 
   echo "=== I3: CSRF placeholders ==="
   csrf_html=$(grep -c "__CYCLAW_CSRF_TOKEN__\|X-CyClaw-CSRF" assets/static/harness.html)

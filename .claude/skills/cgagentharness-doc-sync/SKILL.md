@@ -30,17 +30,17 @@ The shim ACTIONS whitelist in `src/shim/mod.rs` must match:
 
 **Verification:**
 ```bash
-# Extract ACTIONS from shim
-grep -A 30 "ACTIONS = \[" src/shim/mod.rs | grep -oP '"[a-z_]+"' | sort
+# Extract ACTIONS from shim (match type annotation)
+grep "ACTIONS.*\[&str;" src/shim/mod.rs | grep -oP '"[a-z_-]+"' | sort
 
 # Check dispatch covers all
-grep "^[[:space:]]*\"" src/agentic/commands.rs | grep "=>" | sort
+grep "^[[:space:]]*\"" src/agentic/commands.rs | grep "=>" | grep -oP '"[a-z_-]+"' | sort
 
 # Cross-check invariant guard
-grep "ACTIONS = \[" tests/invariant_guard.rs -A 30
+grep "ACTIONS.*\[&str;" tests/invariant_guard.rs -A 30 | grep -oP '"[a-z_-]+"' | sort
 ```
 
-If counts don't match, a new action is missing from one location.
+If counts don't match, a new action is missing from one location. The hyphen pattern accounts for action names like `real-repo-run`.
 
 ### 2. Config Gates (if touching assets/config.default.yaml)
 
@@ -79,8 +79,8 @@ Every new route must be added to:
 # Extract routes from handlers
 grep -r "Router::new\|\.route\|\.post\|\.get" src/server/routes/ | grep -oE '"(/api/[^"]+)"' | sort -u
 
-# Check REGISTERED_PATHS
-grep -A 50 "REGISTERED_PATHS = \[" src/server/routes/mod.rs | grep -oE '"/api/[^"]*"' | sort -u
+# Check REGISTERED_PATHS (match array type annotation, extract all entries)
+grep -A 200 "REGISTERED_PATHS.*\[&str;" src/server/routes/mod.rs | sed '/^\]/q' | grep -oE '"/api/[^"]*"' | sort -u
 
 # Count should match
 ```

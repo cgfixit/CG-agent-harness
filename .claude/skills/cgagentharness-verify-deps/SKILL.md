@@ -32,7 +32,15 @@ ls -la Cargo.lock
 git ls-files | grep Cargo.lock
 
 # Check if lock is fresh (no `cargo update` pending)
-cargo update --dry-run --locked 2>&1 | grep -q "would" && echo "LOCK NEEDS UPDATE" || echo "Lock is current"
+# Must check exit status separately from output to catch resolution failures
+if cargo update --dry-run --locked 2>&1 | grep -q "would"; then
+  echo "LOCK NEEDS UPDATE"
+elif [ $? -eq 0 ]; then
+  echo "Lock is current"
+else
+  echo "ERROR: Cargo command failed (registry unavailable or resolution failed)"
+  return 1
+fi
 
 # Verify locked compile succeeds
 cargo build --locked 2>&1 | grep -q "error" && echo "BUILD FAILS WITH LOCK" || echo "Locked build OK"
@@ -80,24 +88,28 @@ The codebase uses unsafe code sparingly (primarily in `src/agentic/executor/sand
 
 **Verification:**
 ```bash
-# Find all unsafe blocks
-grep -rn "unsafe" src/ --include="*.rs" | grep -v "// SAFETY:\|// unsafe\|// reason:" | head -20
+# Find all unsafe blocks and check for preceding SAFETY comments
+# The repository places SAFETY comments on the line BEFORE unsafe
+grep -rn "unsafe {" src/ --include="*.rs" | while read line; do
+  linenum=$(echo "$line" | cut -d: -f2)
+  file=$(echo "$line" | cut -d: -f1)
+  prevline=$((linenum - 1))
+  
+  if ! sed -n "${prevline}p" "$file" | grep -q "SAFETY:"; then
+    echo "$file:$linenum: unsafe block without SAFETY comment above"
+  fi
+done
 
 # Count total unsafe blocks
-grep -r "unsafe {" src/ --include="*.rs" | wc -l
+total=$(grep -r "unsafe {" src/ --include="*.rs" | wc -l)
+echo "Total unsafe blocks: $total"
 
-# Expected: ~8-12 unsafe blocks (sandboxing + clone jail + signal handlers)
-# If count jumps unexpectedly, each new unsafe must have a comment
-
-# Check each has a comment above it
-for file in $(grep -l "unsafe" src/**/*.rs); do
-  echo "=== $file ==="
-  grep -B 1 "unsafe" "$file" | grep -E "SAFETY:|unsafe"
-done
+# Expected: ~8-12 (sandboxing + clone jail + signal handlers)
+# If count jumps, each new unsafe must have a preceding comment
 ```
 
 **Failure modes:**
-- `unsafe` with no comment above → add `// SAFETY: <reason>` or `// reason:` comment
+- `unsafe {` with no SAFETY comment on the preceding line → add `// SAFETY: <reason>` above it
 - New unsafe in unexpected location → code review finding
 - unsafe in server side (not sandbox) → likely a security issue
 
