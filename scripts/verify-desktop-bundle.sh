@@ -22,6 +22,15 @@ for binary in cgagentharness cg-agent-harness-desktop; do
     echo 'Unexpected non-system dynamic dependency.' >&2; exit 1
   fi
 done
+# After the bundle codesign: staged sidecar bytes must still be the digest
+# compiled into the shell (CGAH_BACKEND_SHA256). Re-signing the sidecar after
+# embed would fail this check.
+sidecar="$app/Contents/MacOS/cgagentharness"
+shell="$app/Contents/MacOS/cg-agent-harness-desktop"
+digest="$(shasum -a 256 "$sidecar" | awk '{print $1}')"
+python3 -c 'import pathlib, sys; d = sys.argv[1].encode(); b = pathlib.Path(sys.argv[2]).read_bytes(); raise SystemExit(0 if d in b else 1)' \
+  "$digest" "$shell" \
+  || { echo "Staged sidecar SHA-256 is not the digest compiled into the shell (post-bundle codesign)." >&2; exit 1; }
 for resource in prepare-cargo.py icon.icns DESKTOP.md DESKTOP_ACCEPTANCE.md PROCESS_LIFECYCLE.md COMMIT; do
   [[ -s "$app/Contents/Resources/$resource" ]]
 done
