@@ -46,8 +46,16 @@ else
   echo "Lock is current"
 fi
 
-# Verify locked compile succeeds
-cargo build --locked 2>&1 | grep -q "error" && echo "BUILD FAILS WITH LOCK" || echo "Locked build OK"
+# Verify locked compile succeeds — check Cargo's own exit status, not a text
+# match on "error": several real dependency names contain that substring
+# (e.g. "Compiling thiserror" on a cold build), which would misreport success
+# as a failure, and a failure whose diagnostic doesn't say "error" would slip
+# through the other way.
+if cargo build --locked > /dev/null 2>&1; then
+  echo "Locked build OK"
+else
+  echo "BUILD FAILS WITH LOCK"
+fi
 ```
 
 **Failure modes:**
@@ -138,10 +146,17 @@ cargo outdated --root-only 2>/dev/null || echo "cargo-outdated not installed"
 # Check security-critical crates specifically. Cargo.lock stores entries as
 # `name = "pkg"` (not `^pkg `), so grepping the lockfile directly is fragile —
 # resolve each package through cargo instead, which also catches a rename or
-# a version bump against MSRV:
+# a version bump against MSRV. `head -1` always exits 0, so piping straight to
+# it swallows a failed/ambiguous `cargo tree -p` lookup — capture cargo's own
+# status first:
 for dep in cap-std sha2 ring tokio hyper; do
   echo "=== $dep ==="
-  cargo tree -p "$dep" 2>/dev/null | head -1 || echo "  Not a dependency"
+  tree_output=$(cargo tree -p "$dep" 2>/dev/null)
+  if [ $? -eq 0 ]; then
+    echo "$tree_output" | head -1
+  else
+    echo "  Not a dependency (or ambiguous/renamed — check manually)"
+  fi
 done
 
 # Compare against latest on crates.io
@@ -184,24 +199,28 @@ rustup override set $(grep channel rust-toolchain.toml | cut -d'"' -f2)
 
 ### 6. No unsafe feature flags
 
-The `deny.toml` also blocks crates that export unsafe feature combinations. For example, a crate might have `feature = "unsafe-crypto"` that should never be enabled. Check:
+`deny.toml`'s `[bans]` section (not `[deny.bans]` — there's no `deny.` prefix on the section names) only
+polices `multiple-versions` and `wildcards`; it has no rule that inspects which Cargo features a dependency
+enables. Checking for a security-weakening feature (e.g. a crate offering `features = ["insecure-tls"]`) is
+a manual read of `Cargo.toml`, not something this repo's tooling enforces automatically today — don't present
+the grep below as enforcement, treat it as a prompt for a human read:
 
 **Verification:**
 ```bash
-# Check Cargo.toml for feature enables
+# Eyeball what features are enabled per dependency
 grep -r "features = \[" Cargo.toml
 
-# Cross-check against deny.toml bans
-grep -A 5 "\[deny.bans\]" deny.toml
-
-# Verify no security-weakening features are enabled
-# Example: should NOT see features = ["allow-unsafe-crypto"]
+# The actual deny.toml policy (multiple-versions, wildcards, licenses, advisories, sources) — this section
+# does NOT cover feature flags
+sed -n '/^\[bans\]/,/^\[/p' deny.toml
 ```
 
 **Failure modes:**
 - Crypto feature that weakens security enabled → remove it
 - Sandbox feature that disables isolation enabled → fix
 - Known-dangerous feature combination enabled → document or remove
+- If this needs to be enforced automatically rather than caught by eye, that's a `deny.toml` gap to fix, not
+  a check this skill can currently claim to perform
 
 ### 7. Dependency tree has no circular imports (dev-only check)
 
@@ -236,10 +255,23 @@ Use this bash function to run all verification at once:
 ```bash
 verify_deps() {
   echo "=== 1. Cargo.lock exists and is in git ==="
-  [ -f Cargo.lock ] && git ls-files | grep -q Cargo.lock && echo "✓" || echo "✗ FAIL"
+  if [ -f Cargo.lock ] && git ls-files | grep -q Cargo.lock; then
+    echo "✓"
+  else
+    echo "✗ FAIL: Cargo.lock missing or untracked"
+    return 1
+  fi
 
   echo "=== 2. Locked build passes ==="
-  cargo build --locked 2>&1 | grep -q "error" && echo "✗ FAIL" || echo "✓"
+  # Check cargo's own exit status, not a text match on "error" — dependency
+  # names like "thiserror" contain that substring on a normal, successful
+  # "Compiling thiserror" line.
+  if cargo build --locked > /dev/null 2>&1; then
+    echo "✓"
+  else
+    echo "✗ FAIL: locked build does not compile"
+    return 1
+  fi
 
   echo "=== 3. cargo deny check ==="
   if command -v cargo-deny &> /dev/null; then
@@ -255,7 +287,6 @@ verify_deps() {
   fi
 
   echo "=== 4. Unsafe code has comments (candidates — eyeball clustered comments) ==="
-  unsafe_flagged=0
   grep -rn "unsafe {" src/ --include="*.rs" | cut -d: -f1,2 | while IFS=: read -r file linenum; do
     start=$(( linenum > 20 ? linenum - 20 : 1 ))
     if ! sed -n "${start},${linenum}p" "$file" | grep -q "SAFETY:"; then
@@ -275,7 +306,12 @@ verify_deps() {
   # package directly instead:
   for dep in cap-std sha2 ring tokio hyper; do
     echo "=== $dep ==="
-    cargo tree -p "$dep" 2>/dev/null | head -1 || echo "  Not a dependency"
+    tree_output=$(cargo tree -p "$dep" 2>/dev/null)
+    if [ $? -eq 0 ]; then
+      echo "$tree_output" | head -1
+    else
+      echo "  Not a dependency (or ambiguous/renamed — check manually)"
+    fi
   done
 
   echo "=== 7. Dependency tree (summary) ==="

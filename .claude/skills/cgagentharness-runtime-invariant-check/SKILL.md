@@ -134,11 +134,14 @@ grep -E "__CYCLAW_CSRF_TOKEN__|__CYCLAW_CSP_NONCE__" assets/static/harness.html 
 
 ### I4: Write gates ship closed (fail-safe by default)
 
-**The rule:** These write gates in `assets/config.default.yaml` must default to a closed (`false`) state —
-this is exactly what `tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed` asserts:
+**The rule:** These write gates in `assets/config.default.yaml` must default to a closed (`false`) state.
+Don't recite this list from memory — it's exactly, and only, the five gates
+`tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed` asserts:
 - `agentic.enabled: false`
-- `deepagent_github.enabled: false` (if present)
-- `deepagent_github.allow_git_write_tools: false`
+- `agentic.deepagent_github.enabled: false`
+- `agentic.deepagent_github.allow_git_write_tools: false`
+- `auth.enabled: false`
+- `unslop.enabled: false`
 
 Two related settings are NOT part of this closed-by-default set and intentionally ship open — do not "fix"
 them to false, and do not add them to the list above:
@@ -149,26 +152,18 @@ them to false, and do not add them to the list above:
 
 **How to check:**
 
-```bash
-# Extract all boolean gates for a quick look
-grep -E "enabled|writes_enabled|allow_.*:" assets/config.default.yaml | grep -v "^#"
+Five different `enabled:` keys live under five different YAML parents here — a flat grep can't tell them
+apart without risking a false match against the wrong one. Run the test; it's the actual contract:
 
-# Verify only the three gates that must be false actually are
-for gate in enabled allow_git_write_tools; do
-  echo "=== $gate ==="
-  grep -n "^[[:space:]]*$gate:" assets/config.default.yaml
-done
+```bash
+cargo test --test invariant_guard shipped_config_keeps_every_gate_closed
+
+# For a quick eyeball only (not a substitute for the test above):
+grep -E "enabled|writes_enabled|allow_.*:" assets/config.default.yaml | grep -v "^#"
 ```
 
-`agentic.writes_enabled: true` and unquoted `security.api_key_optional: true` will show up in a broad
-`true`/`enabled` grep — that's expected, not a finding.
-
-**Shipped fail-closed gates (from tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed):**
-- `agentic.enabled` must be `false`
-- `deepagent_github.enabled` must be `false` (if present)
-- `deepagent_github.allow_git_write_tools` must be `false`
-
-Note: `agentic.writes_enabled` intentionally ships `true` (master layer + mode gate keep writes closed); `security.api_key_optional` intentionally ships unquoted boolean `true` (direct loopback access).
+`agentic.writes_enabled: true` and unquoted `security.api_key_optional: true` will show up in that broad
+grep — that's expected, not a finding.
 
 **Verify in code:** The `flag_is_true` helper checks quoted `"true"` as false:
 
@@ -178,13 +173,12 @@ grep -rn "flag_is_true" src/common --include="*.rs" -A 3
 # Should confirm: quoted "true" is treated as false
 ```
 
-**Fix:** If `agentic.enabled`, `deepagent_github.enabled`, or `deepagent_github.allow_git_write_tools`
-defaults to `true` when it should be `false` (do NOT apply this to `writes_enabled` or `api_key_optional` —
-those are supposed to be `true`):
+**Fix:** If any of the five gates above defaults to `true` when it should be `false` (do NOT apply this to
+`writes_enabled` or `api_key_optional` — those are supposed to be `true`):
 1. Change it to `false` immediately
 2. Add a comment explaining why it's safe
 3. File a security issue if this was merged
-4. Run `cargo test shipped_config_keeps_every_gate_closed`
+4. Run `cargo test --test invariant_guard shipped_config_keeps_every_gate_closed`
 
 **Test:** `cargo test invariant_guard shipped_config_keeps_every_gate_closed` enforces this.
 
@@ -336,13 +330,16 @@ verify_invariants() {
   [ "$csrf_html" -ge 1 ] && [ "$csrf_code" -ge 1 ] && echo "✓ PASS" || echo "✗ FAIL"
 
   echo "=== I4: Write gates closed ==="
-  # Only these three are asserted closed; writes_enabled and api_key_optional
-  # intentionally ship true and must not be flagged.
-  closed=1
-  if grep -A1 "^\s*agentic:" assets/config.default.yaml | grep -q "enabled: true"; then closed=0; fi
-  if grep -A1 "^\s*deepagent_github:" assets/config.default.yaml | grep -q "enabled: true"; then closed=0; fi
-  if grep "allow_git_write_tools" assets/config.default.yaml | grep -q ": true"; then closed=0; fi
-  [ "$closed" -eq 1 ] && echo "✓ PASS" || { echo "✗ FAIL: a fail-closed gate defaults to true"; return 1; }
+  # Five different `enabled:` keys live under five different YAML parents
+  # (agentic, agentic.deepagent_github, auth, unslop) plus allow_git_write_tools —
+  # a hand-rolled grep here previously missed two of them. Delegate to the
+  # test that already knows the full, authoritative list:
+  if cargo test --test invariant_guard shipped_config_keeps_every_gate_closed 2>&1 | grep -q "test result: ok"; then
+    echo "✓ PASS"
+  else
+    echo "✗ FAIL: a fail-closed gate defaults to true — see test output"
+    return 1
+  fi
 
   echo "=== I5: Constants duplicated ==="
   server_pattern=$(grep "RUN_ID_PATTERN.*=" src/server/agent_policy.rs | grep -oE '"[^"]*"')

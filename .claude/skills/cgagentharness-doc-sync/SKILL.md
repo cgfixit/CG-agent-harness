@@ -46,11 +46,13 @@ If counts don't match, a new action is missing from one location. The hyphen pat
 
 ### 2. Config Gates (if touching assets/config.default.yaml)
 
-Not every gate ships `false` — only the ones `tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed`
-actually asserts closed:
+Not every gate ships `false` — derive the closed set from every gate the test actually asserts, not from
+memory. `tests/invariant_guard.rs::shipped_config_keeps_every_gate_closed` asserts exactly five:
 - `agentic.enabled` must be `false`
-- `deepagent_github.enabled` must be `false` (if present)
-- `deepagent_github.allow_git_write_tools` must be `false`
+- `agentic.deepagent_github.enabled` must be `false`
+- `agentic.deepagent_github.allow_git_write_tools` must be `false`
+- `auth.enabled` must be `false`
+- `unslop.enabled` must be `false`
 
 Two gates intentionally ship open and are NOT contract violations:
 - `agentic.writes_enabled: true` — safe because the master `agentic.enabled` gate and `mode` still block execution
@@ -64,17 +66,17 @@ match what `flag_is_true` treats as on/off (quoted `"true"` is OFF).
 # Find all gate checks in code
 grep -r "flag_is_true\|get_bool\|config\..*enabled" src/ | grep -oE '\w+\.\w+' | sort -u
 
-# Verify only the fail-closed gates are false; don't flag writes_enabled/api_key_optional as violations
-for gate in agentic.enabled deepagent_github.enabled deepagent_github.allow_git_write_tools; do
-  echo "Checking $gate (must be false):"
-  grep -A 2 "^\s*${gate##*.}:" assets/config.default.yaml
-done
+# A grep can't safely disambiguate five different `enabled:` keys living
+# under different YAML parents (agentic:, agentic.deepagent_github:, auth:,
+# unslop:) without a real parser, and matching the wrong one is worse than
+# not checking. Run the test — it's the source of truth for this list:
+cargo test --test invariant_guard shipped_config_keeps_every_gate_closed
 
 # Confirm quoted "true" is OFF (flag_is_true) — do not treat this as a violation to "fix"
 grep '"true"' assets/config.default.yaml
 ```
 
-If one of the three fail-closed gates above is missing or defaults to `true`, that's a contract violation.
+If one of the five fail-closed gates above is missing or defaults to `true`, that's a contract violation.
 `writes_enabled: true` or unquoted `api_key_optional: true` are NOT violations — never "fix" them to false.
 
 ### 3. API Routes (if touching src/server/routes/mod.rs)
@@ -183,9 +185,10 @@ If your PR touches these core files, your PR body must explicitly state which in
 If docs are out of sync:
 
 1. **Code is always right.** If code and docs differ, update docs.
-2. **Only the three asserted gates ship closed.** If `agentic.enabled`, `deepagent_github.enabled`, or
-   `deepagent_github.allow_git_write_tools` defaults to `true`, that's a violation — fix it. Do not change
-   `agentic.writes_enabled` or `security.api_key_optional`; they intentionally ship open.
+2. **Only the five asserted gates ship closed.** If `agentic.enabled`, `agentic.deepagent_github.enabled`,
+   `agentic.deepagent_github.allow_git_write_tools`, `auth.enabled`, or `unslop.enabled` defaults to `true`,
+   that's a violation — fix it. Do not change `agentic.writes_enabled` or `security.api_key_optional`; they
+   intentionally ship open.
 3. **Truth order precedence.** Use the ranked sources above to decide what's authoritative.
 4. **Tests catch drift.** If `tests/invariant_guard.rs` fails, the code is broken, not the docs.
 
@@ -207,8 +210,13 @@ doc_sync_check() {
   echo "=== API Routes (informational only — see note below) ==="
   # A raw count here will not match: registered_paths() adds 5 auth routes
   # outside REGISTERED_PATHS, and multiline .route() calls aren't grep-single-line-friendly.
-  # Use the unit test below to actually verify coverage.
-  cargo test registered_paths_are_unique_and_cover_every_router_route 2>&1 | grep -E "test result|FAILED"
+  # Use the unit test below to actually verify coverage. Capture cargo's own
+  # exit status separately — piping straight to grep would let a printed
+  # "FAILED" line succeed (grep found its match) and mask the real failure.
+  route_test_output=$(cargo test registered_paths_are_unique_and_cover_every_router_route 2>&1)
+  route_test_status=$?
+  echo "$route_test_output" | grep -E "test result|FAILED"
+  [ "$route_test_status" -eq 0 ] && echo "✓ PASS" || echo "✗ FAIL: route coverage regressed"
 
   echo "=== CSRF Placeholders ==="
   grep -l "__CYCLAW_CSRF_TOKEN__" assets/static/harness.html
