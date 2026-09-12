@@ -183,9 +183,10 @@ cat rust-toolchain.toml
 # Check running version
 rustc --version
 
-# They must match (or running version is newer; pinned is minimum)
-# Example: pinned is 1.88.0, running is 1.88.1 ✓
-# Example: pinned is 1.88.0, running is 1.87.0 ✗
+# Exact match against rust-toolchain.toml channel (not "newer is fine").
+# rustup channel "1.88" selects toolchain 1.88-<target>; rustc reports 1.88.0.
+# Example: pinned is 1.88, active is 1.88-x86_64-unknown-linux-gnu ✓
+# Example: pinned is 1.88, active is 1.89-x86_64-unknown-linux-gnu ✗
 
 # Update toolchain if behind
 rustup update
@@ -298,6 +299,19 @@ verify_deps() {
   pinned=$(grep channel rust-toolchain.toml | cut -d'"' -f2)
   running=$(rustc --version | cut -d' ' -f2)
   echo "Pinned: $pinned, Running: $running"
+  # rust-toolchain.toml names a rustup channel. Exact match: active
+  # toolchain is that channel, optionally with rustup's -<target> suffix.
+  # "1.88" matches 1.88-x86_64-unknown-linux-gnu, not 1.89-* / 1.88.1-*.
+  active=$(rustup show active-toolchain 2>/dev/null | awk '{print $1}')
+  case "$active" in
+    "$pinned"|"$pinned"-*)
+      echo "✓ PASS"
+      ;;
+    *)
+      echo "✗ FAIL: toolchain mismatch (pinned=$pinned active=${active:-none})"
+      return 1
+      ;;
+  esac
 
   echo "=== 6. Check for outdated security deps ==="
   # cargo tree's --depth is a MAXIMUM display depth, not a target depth — depth 0
