@@ -37,8 +37,8 @@ missing initialized storage never recreates default credentials. Failed commits
 never publish an in-memory account mutation. Private account identity scopes web
 selection and structured memory (facts and governed proposals). Shared portal
 sessions/jobs/pinned notes/persona remain explicitly shared. Structured memory
-uses authenticated `user_id`, or the documented `local` namespace from
-`context_owner` when accounts are disabled. Canonical facts change only through
+uses authenticated `user_id`, the documented `local` namespace from
+`context_owner` when accounts are disabled, or labeled `user_*` fixture owners. Canonical facts change only through
 an explicit human confirm+reason path; proposals may suggest but never apply
 themselves. `structured_memory.enabled` is a literal-boolean admin gate
 (`flag_is_true`); `harness.json.memory_enabled` remains pinned-note prompt

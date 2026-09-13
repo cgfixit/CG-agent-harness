@@ -50,9 +50,11 @@ Later phases in #87 remain independently gated. Do not treat this PR as M2–M7.
 
 ## Ownership
 
-Rows are keyed by `owner_id`. That is the authenticated account `user_id`, or
-the documented `local` namespace from `context_owner` when accounts are
-disabled. A second owner cannot list, get, or mutate a known id. Admin
+Rows are keyed by `owner_id`. That is the authenticated account `user_id`
+(32 hex digits, generated at runtime), the documented `local` namespace from
+`context_owner` when accounts are disabled, or a labeled `user_*` id used by
+fixtures (`user_alice`, `user_bob`). Tests must not embed 32-hex token-shaped
+literals. A second owner cannot list, get, or mutate a known id. Admin
 capability does not grant inspection of another owner's structured memory.
 
 ## Proposal contract (persona semantics, SQLite store)

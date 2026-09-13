@@ -273,7 +273,25 @@ pub fn marker_path(db_path: &Path) -> PathBuf {
 }
 
 pub fn valid_owner(owner: &str) -> bool {
-    owner == "local" || (owner.len() == 32 && owner.bytes().all(|b| b.is_ascii_hexdigit()))
+    if owner == "local" {
+        return true;
+    }
+    // Production account `user_id` is 32 hex digits. Labeled `user_*` owners are
+    // the documented non-secret fixture/operator shape — never a token literal.
+    if owner.len() == 32 && owner.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return true;
+    }
+    labeled_owner(owner)
+}
+
+fn labeled_owner(owner: &str) -> bool {
+    let Some(rest) = owner.strip_prefix("user_") else {
+        return false;
+    };
+    (1..=32).contains(&rest.len())
+        && rest
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
 }
 
 pub fn valid_public_id(id: &str) -> bool {
@@ -382,7 +400,7 @@ impl StructuredMemoryStore {
         } else {
             Err(HarnessError::new(
                 "STRUCTURED_MEMORY_OWNER",
-                "structured memory owner must be an authenticated user_id or the documented local namespace",
+                "structured memory owner must be an authenticated user_id, documented local, or labeled user_* id",
             ))
         }
     }
@@ -1031,11 +1049,23 @@ mod tests {
     }
 
     #[test]
+    fn owner_ids_accept_local_labeled_and_runtime_hex_not_token_literals() {
+        assert!(valid_owner("local"));
+        assert!(valid_owner("user_alice"));
+        assert!(valid_owner("user_bob"));
+        assert!(!valid_owner(""));
+        assert!(!valid_owner("owner-alice"));
+        let hex = crate::common::random_hex(16);
+        assert_eq!(hex.len(), 32);
+        assert!(valid_owner(&hex));
+    }
+
+    #[test]
     fn owners_cannot_address_each_others_rows() {
         let dir = tempfile::tempdir().unwrap();
         let store = store(dir.path());
-        let a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let a = "user_alice";
+        let b = "user_bob";
         let fact = store
             .add_fact(a, "Prefer metric units", "pref", "operator entry")
             .unwrap();
