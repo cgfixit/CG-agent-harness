@@ -86,8 +86,11 @@ if [[ -n "${CGAGENTHARNESS_PR_FILES:-}" ]]; then
 elif merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null)"; then
   # --no-renames: a core file moved elsewhere must still surface its source
   # path, not only the destination Git's rename detection would report.
-  changed="$(git -C "$repo_root" diff --name-only --no-renames "$merge_base" 2>/dev/null || true)"
-  files_source="git diff against $base merge base"
+  # Do not `|| true`: an empty list with files_source set would skip the
+  # core-path rule while claiming it ran.
+  if changed="$(git -C "$repo_root" diff --name-only --no-renames "$merge_base")"; then
+    files_source="git diff against $base merge base"
+  fi
 fi
 if [[ -z "$files_source" ]]; then
   printf 'check-pr-template: core-path rule skipped (set CGAGENTHARNESS_PR_FILES or fetch %s)\n' "$base" >&2
@@ -105,8 +108,13 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   # detected; a reviewer reads the section either way.
   template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
   fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/; s/[[:space:]]+/ /g; s/^ //; s/ $//'; }
-  contributed="$body"
-  if [[ -f "$template" ]]; then
+  # Fail closed: without the template the whole body looks "contributed" and
+  # the stock invariant headings satisfy the guarantee regex. Mirrors
+  # pr-template-check.yml `core.setFailed` on a failed template fetch.
+  if [[ ! -f "$template" ]]; then
+    missing+=("PR template not readable; cannot evaluate the core-path rule")
+    fail=1
+  else
     contributed="$(awk '
       NR == FNR { tmpl[$0] = 1; next }
       {
@@ -125,13 +133,13 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
       }
       END { if (!seen) for (i = 0; i < n; i++) print other[i] }
     ' <(fold_boxes < "$template") <(printf '%s\n' "$body" | fold_boxes))"
-  fi
-  # The statement must name a guarantee from INVARIANTS.md (or say none),
-  # not merely occupy the section. Wording beyond that is for the reviewer.
-  guarantee='invariant|\bnone\b|\bi6\b|process isolation|guard chain|write[ -]gate|clone jail|judged|approval|secret|redact|detached|csrf|sandbox|loopback|weaker than'
-  if ! printf '%s' "$contributed" | grep -Eiq "$guarantee"; then
-    missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
-    fail=1
+    # The statement must name a guarantee from INVARIANTS.md (or say none),
+    # not merely occupy the section. Wording beyond that is for the reviewer.
+    guarantee='invariant|\bnone\b|\bi6\b|process isolation|guard chain|write[ -]gate|clone jail|judged|approval|secret|redact|detached|csrf|sandbox|loopback|weaker than'
+    if ! printf '%s' "$contributed" | grep -Eiq "$guarantee"; then
+      missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
+      fail=1
+    fi
   fi
 fi
 
