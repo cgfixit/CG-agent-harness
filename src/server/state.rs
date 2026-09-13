@@ -14,6 +14,7 @@ use crate::llm::openai_chat::ChatClient;
 use super::generation_gate::GenerationGate;
 use super::memory_notes::MemoryNotes;
 use super::sessions::SessionStore;
+use super::structured_memory::StructuredMemoryStore;
 use super::web_search::WebTool;
 
 pub const HARNESS_LOOP_TOOL: &str = "harness_loop";
@@ -44,6 +45,8 @@ pub struct AppState {
     pub auth: Option<AuthManager>,
     pub web: WebTool,
     pub notes: MemoryNotes,
+    /// Present only when `structured_memory.enabled` is the literal boolean true.
+    pub structured_memory: Option<StructuredMemoryStore>,
     /// Test hook: when set, replaces the closed tool allowlists (empty = deny all).
     pub tool_allowlist_override: Option<BTreeSet<String>>,
     /// The only server -> agentic edge (a child process).

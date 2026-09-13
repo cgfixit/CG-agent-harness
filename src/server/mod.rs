@@ -24,6 +24,7 @@ pub mod routes;
 pub mod schemas;
 pub mod sessions;
 pub mod state;
+pub mod structured_memory;
 pub mod transport;
 pub mod views;
 mod web_google;
@@ -53,6 +54,7 @@ use generation_gate::GenerationGate;
 use memory_notes::MemoryNotes;
 use sessions::SessionStore;
 use state::AppState;
+use structured_memory::StructuredMemoryStore;
 use web_search::WebTool;
 
 pub const HOST_ENV: &str = "CGAGENTHARNESS_HARNESS_HOST";
@@ -153,8 +155,14 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         shim.exe = exe;
     }
     let jobs = agent_jobs::JobStore::open(&home.data_dir().join("agentic/console-jobs.json"))?;
+    let structured_memory = if cfg.flag_is_true("structured_memory.enabled") {
+        Some(StructuredMemoryStore::open(&home.structured_memory_path(), &cfg)?)
+    } else {
+        None
+    };
     let state = Arc::new(AppState {
         notes: MemoryNotes::new(&home.memory_dir()),
+        structured_memory,
         web,
         home,
         cfg: cfg.clone(),

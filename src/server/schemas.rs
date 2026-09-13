@@ -32,6 +32,10 @@ pub const MAX_WEB_URL_LEN: usize = super::web_policy::MAX_URL_BYTES;
 pub const MAX_WEB_QUERY_LEN: usize = 200;
 pub const MAX_NOTE_LEN: usize = 500;
 pub const MAX_NOTE_ID_LEN: usize = 32;
+pub const MAX_STRUCTURED_FACT_CHARS: usize = 4000;
+pub const MAX_STRUCTURED_CATEGORY_CHARS: usize = 64;
+pub const MAX_STRUCTURED_ID_LEN: usize = 32;
+pub const MAX_STRUCTURED_DIGEST_LEN: usize = 64;
 pub const MAX_PLAN_CHARS: usize = 6_100;
 pub const MAX_ITERATIONS_CEILING: u32 = 10;
 pub const MAX_API_KEYS_PER_REQUEST: usize = 16;
@@ -175,6 +179,139 @@ impl Validate for MemoryForgetRequest {
         } else {
             vec!["id".into()]
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredFactAddRequest {
+    pub content: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    pub reason: String,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl Validate for StructuredFactAddRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if !len_ok(&self.content, 1, MAX_STRUCTURED_FACT_CHARS) {
+            bad.push("content".into());
+        }
+        if self
+            .category
+            .as_ref()
+            .is_some_and(|c| !len_ok(c, 0, MAX_STRUCTURED_CATEGORY_CHARS))
+        {
+            bad.push("category".into());
+        }
+        if !len_ok(&self.reason, 1, MAX_REASON_LEN) {
+            bad.push("reason".into());
+        }
+        bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredFactDeactivateRequest {
+    pub expected_revision: i64,
+    pub reason: String,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl Validate for StructuredFactDeactivateRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if self.expected_revision < 1 {
+            bad.push("expected_revision".into());
+        }
+        if !len_ok(&self.reason, 1, MAX_REASON_LEN) {
+            bad.push("reason".into());
+        }
+        bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredMemoryProposeRequest {
+    pub action: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub target_fact_id: Option<String>,
+    #[serde(default)]
+    pub expected_revision: Option<i64>,
+    #[serde(default)]
+    pub expected_digest: Option<String>,
+}
+
+impl Validate for StructuredMemoryProposeRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if !matches!(self.action.as_str(), "add" | "update" | "deactivate") {
+            bad.push("action".into());
+        }
+        if self
+            .content
+            .as_ref()
+            .is_some_and(|c| !len_ok(c, 1, MAX_STRUCTURED_FACT_CHARS))
+        {
+            bad.push("content".into());
+        }
+        if self
+            .category
+            .as_ref()
+            .is_some_and(|c| !len_ok(c, 0, MAX_STRUCTURED_CATEGORY_CHARS))
+        {
+            bad.push("category".into());
+        }
+        if self
+            .target_fact_id
+            .as_ref()
+            .is_some_and(|id| !len_ok(id, 1, MAX_STRUCTURED_ID_LEN))
+        {
+            bad.push("target_fact_id".into());
+        }
+        if self.expected_revision.is_some_and(|n| n < 1) {
+            bad.push("expected_revision".into());
+        }
+        if self
+            .expected_digest
+            .as_ref()
+            .is_some_and(|d| !len_ok(d, MAX_STRUCTURED_DIGEST_LEN, MAX_STRUCTURED_DIGEST_LEN))
+        {
+            bad.push("expected_digest".into());
+        }
+        bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredMemoryDecisionRequest {
+    pub revision: String,
+    pub reason: String,
+    #[serde(default)]
+    pub confirm: bool,
+    pub apply: bool,
+}
+
+impl Validate for StructuredMemoryDecisionRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if !len_ok(&self.revision, MAX_STRUCTURED_DIGEST_LEN, MAX_STRUCTURED_DIGEST_LEN) {
+            bad.push("revision".into());
+        }
+        if !len_ok(&self.reason, 1, MAX_REASON_LEN) {
+            bad.push("reason".into());
+        }
+        bad
     }
 }
 

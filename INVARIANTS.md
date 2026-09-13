@@ -35,7 +35,16 @@ The replacement revokes old sessions. The last enabled administrator is protecte
 SQLite is authoritative after transactional legacy migration; corrupt, empty or
 missing initialized storage never recreates default credentials. Failed commits
 never publish an in-memory account mutation. Private account identity scopes web
-selection; shared portal sessions/jobs/notes/persona remain explicitly shared.
+selection and structured memory (facts and governed proposals). Shared portal
+sessions/jobs/pinned notes/persona remain explicitly shared. Structured memory
+uses authenticated `user_id`, or the documented `local` namespace from
+`context_owner` when accounts are disabled. Canonical facts change only through
+an explicit human confirm+reason path; proposals may suggest but never apply
+themselves. `structured_memory.enabled` is a literal-boolean admin gate
+(`flag_is_true`); `harness.json.memory_enabled` remains pinned-note prompt
+inclusion only. The structured SQLite file uses owner-private mode as OS access
+control — that is not encryption at rest. Pinned `/memory` notes stay on
+`memory/notes.json` and are not migrated.
 
 The HTTP/1 Host and HTTP/2 authority must be unambiguous loopback names. HTTPS
 scheme comes from the actual listener, never forwarding headers. TLS generation

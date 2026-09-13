@@ -238,6 +238,12 @@ fn memory_payload(state: &AppState) -> ApiResult<Value> {
         .status(enabled)
         .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
     payload["rag"] = rag_flags();
+    payload["structured_memory"] = json!({
+        "separate": true,
+        "enabled": state.cfg.flag_is_true("structured_memory.enabled"),
+        "status_path": "/api/structured-memory",
+        "prompt_toggle": "harness.json.memory_enabled remains pinned-note inclusion only",
+    });
     Ok(payload)
 }
 

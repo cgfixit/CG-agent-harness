@@ -771,10 +771,17 @@ constants, not documented YAML settings. If memory is on but absent from
 `/prompt`, inspect `/memory` for an unreadable store rather than assuming it
 loaded. Back up before manual repair.
 
-The structured-memory capability flags remain disabled. Adding a speculative
-`memory.enabled` setting will not install facts, episodes, retrieval fusion or
-automatic learning. Use notes for stable preferences and small pieces of supplied
-context, and use actual command results to establish runtime facts.
+Pinned-note capability flags (`rag.facts`, episodes, retrieval fusion) remain
+false. `/memory on` does not enable structured memory.
+
+A separate, default-off store implements issue #87 M1: account-private facts
+and governed proposals. Set `structured_memory.enabled: true` (literal YAML
+boolean) in `config.yaml` to open `<home>/memory/structured.sqlite3`. Models
+may POST a proposal; applying still requires `confirm` and `reason`. File mode
+is access control, not encryption. This is not episode capture, FTS, embeddings,
+or prompt injection. See [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md).
+Use pinned notes for shared-home preferences; use structured facts only after
+explicit review.
 
 ### 7.6 Google search, URL fetch and permitted-page research
 
