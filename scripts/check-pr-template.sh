@@ -86,10 +86,15 @@ if [[ -n "${CGAGENTHARNESS_PR_FILES:-}" ]]; then
 elif merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null)"; then
   # --no-renames: a core file moved elsewhere must still surface its source
   # path, not only the destination Git's rename detection would report.
-  # Do not `|| true`: an empty list with files_source set would skip the
-  # core-path rule while claiming it ran.
-  if changed="$(git -C "$repo_root" diff --name-only --no-renames "$merge_base")"; then
-    files_source="git diff against $base merge base"
+  # Untracked, non-ignored files are appended: `git diff` omits a new core
+  # file until it is added, but CI's pulls.listFiles sees it once committed,
+  # so the local gate must count it now to predict CI. Do not `|| true`: an
+  # empty list with files_source set would skip the core-path rule while
+  # claiming it ran.
+  if changed="$(git -C "$repo_root" diff --name-only --no-renames "$merge_base")" \
+    && untracked="$(git -C "$repo_root" ls-files --others --exclude-standard)"; then
+    changed="$changed"$'\n'"$untracked"
+    files_source="git diff against $base merge base plus untracked files"
   fi
 fi
 if [[ -z "$files_source" ]]; then
