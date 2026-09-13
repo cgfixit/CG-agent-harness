@@ -16,15 +16,15 @@ has no outbound network access. The **console** is the same interface in the
 app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
-**Version scope:** this guide follows this source tree. HTTPS, SQLite accounts,
-permitted research and API Keys merged into `main` through
-[PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76) at `a93006d`. The
-September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
-targets `44a205e` and predates those features. [PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77)
-at `b53ef9d` enables fresh web settings and provides the login hint and role
-feedback; [PR #78](https://github.com/cgfixit/CG-agent-harness/pull/78) at
-`dbaa808` adds chat web tools and Google keyword search, and `f47d41d` keeps web
-source links readable in the dark console.
+**Version scope:** this guide follows this source tree. The
+[v0.1.8 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.8)
+targets `f47d41d` and includes [PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76)
+(`a93006d`, HTTPS, SQLite accounts, permitted research and API Keys),
+[PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77) (`b53ef9d`, fresh
+web settings, login hint and role feedback), [PR #78](https://github.com/cgfixit/CG-agent-harness/pull/78)
+(`dbaa808`, chat web tools and Google keyword search), and the dark-console
+source-link fix at `f47d41d`. The September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
+targets `44a205e` and predates those features.
 Use a source build or successful Bundle artifact containing the desired changes;
 a PR artifact remains a candidate until merged. The Cargo package version remains
 `0.1.0`; identify the installed source using `Contents/Resources/COMMIT`, the
