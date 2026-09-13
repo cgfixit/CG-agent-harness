@@ -57,6 +57,21 @@ async fn every_response_carries_the_hardening_headers() {
 }
 
 #[tokio::test]
+async fn console_markup_is_served_only_through_the_substituted_root() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    // The raw asset carries both placeholders and inline script/style tags;
+    // only `/` substitutes them, so no static path may hand the markup out.
+    let resp = s.client.get(s.url("/static/harness.html")).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 404);
+    assert_hardened(&resp);
+    let body = resp.text().await.unwrap();
+    assert!(!body.contains("__CYCLAW_CSRF_TOKEN__"));
+    assert!(!body.contains("__CYCLAW_CSP_NONCE__"));
+    assert!(!body.contains("<script"));
+}
+
+#[tokio::test]
 async fn console_uses_a_per_response_nonce_and_no_store() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
