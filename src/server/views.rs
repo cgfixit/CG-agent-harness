@@ -336,7 +336,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 38] = [
         "/web search",
         "POST",
         "/api/web/search",
-        "bounded discovery and local passage retrieval",
+        "Google keyword listings or bounded permitted-page retrieval",
     ),
     (
         "web-research",

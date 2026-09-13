@@ -1,5 +1,44 @@
 # Desktop acceptance
 
+## Chat web tools and Google search (2026-09-12)
+
+Native Computer Use tested an arm64 development bundle based on merged main
+`b53ef9d` on Apple Silicon/macOS 26.6.2, with a separate disposable home. This
+record precedes the final documentation sync and clean universal package; the
+PR/handoff records their final source and validation separately.
+
+- Fresh HTTPS login accepted admin/admin and opened password replacement;
+  the replacement was saved through the native form and survived restart.
+- `/web allow https://www.google.com/*` preserved the wildcard. The ordinary
+  message `Search Google for the top 5 results for "veeam software cve"` caused
+  the real `qwen3.8:27b-mlx` model to invoke `web_search`. The public Google request
+  returned a JavaScript challenge, surfaced as `WEB_GOOGLE_CHALLENGE`, with no
+  fabricated results (1,363 prompt + 50 completion tokens).
+- Asking chat to read the explicitly permitted Rust Book installation URL
+  invoked `web_fetch`, retrieved 5,967 source characters and answered
+  `rustc --version`. An administrator turn used 4,455 prompt + 314 completion
+  tokens; an operator turn used 4,321 + 46. This establishes one functional
+  example, not general answer accuracy or validated research citations.
+- An operator's request for an unlisted URL returned `WEB_HOST_DENIED`, and
+  allowlist modification/API Keys administration returned permission refusals.
+- The native API Keys pane showed Google results (SerpAPI). A synthetic key was
+  masked after saving, became active from `startup_file` after restart, and
+  returned to saved/active unset after clearing and restarting. The private
+  credential file had mode 0600. The synthetic key was never sent to a provider.
+- Logged out and quit the isolated test app; existing installed copies and homes
+  were preserved.
+
+Live SerpAPI success was **not tested without an actual service key**. A local
+HTTP fixture verifies its request parameters, result parsing, quota errors and
+credential-reflection refusal. Parser fixtures verify public Google listings
+and challenge detection. Real Chrome tests verify Google/page command routing,
+rendered source/errors and masked key controls. Neither fixture is live Google
+ranking evidence. Public HTML fallback can be blocked; no CAPTCHA bypass, page
+JavaScript execution or browser-cookie import is implemented.
+
+Native Intel hardware, older macOS, every coding interaction, Developer ID
+signing and notarization remain outside this pass.
+
 ## Fresh-install defaults and native role checks (2026-09-12)
 
 Tested `codex/fresh-install-defaults`, based on merged main `a93006d`, on

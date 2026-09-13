@@ -55,8 +55,18 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_FETCH_FAILED" | "WEB_DNS" | "WEB_CLEAR_FAILED" => StatusCode::BAD_GATEWAY,
         _ => StatusCode::BAD_REQUEST,
     };
-    // Code only: never the exception text.
-    ApiError::new(status, &e.code, e.code.clone())
+    // Fixed public guidance only; upstream exception bodies never reach the UI.
+    let message = match e.code.as_str() {
+        "WEB_GOOGLE_PERMISSION" => "Allow https://www.google.com/* before Google search. Exact homepage grants do not permit search URLs.",
+        "WEB_GOOGLE_BLOCKED" => "Public Google refused or redirected the request. Configure a SerpAPI key in API Keys, then restart.",
+        "WEB_GOOGLE_CHALLENGE" => "Public Google requires JavaScript or CAPTCHA. Configure a Google results (SerpAPI) key in API Keys, then restart.",
+        "WEB_GOOGLE_UNREADABLE" => "Google returned no recognizable result listing. Configure a SerpAPI key in API Keys, then restart.",
+        "WEB_SEARCH_KEY_REJECTED" => "The configured SerpAPI key was rejected. Check API Keys; no public fallback was attempted.",
+        "WEB_SEARCH_QUOTA" => "SerpAPI quota or rate limit reached. No public fallback was attempted.",
+        "WEB_SEARCH_PROVIDER" => "The configured search provider failed. No public fallback was attempted.",
+        _ => &e.code,
+    };
+    ApiError::new(status, &e.code, message)
 }
 
 fn web_enabled(state: &AppState) -> bool {
@@ -146,6 +156,21 @@ pub async fn web_search(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
+    if req.engine.as_deref() == Some("google") {
+        if req.group.is_some() {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "WEB_BAD_QUERY",
+                "Google search cannot use a local source group",
+            ));
+        }
+        return state
+            .web
+            .google_search(&req.query, req.count, enabled, &state.audit)
+            .await
+            .map(Json)
+            .map_err(|e| web_err(&e));
+    }
     state
         .web
         .search(&req.query, req.group.as_deref(), enabled, &state.audit, &owner)
@@ -181,6 +206,13 @@ pub async fn web_forget(
 pub async fn web_research(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
     let owner = super::auth::web_owner(&state, &req)?;
     let ValidJson(body) = ValidJson::<WebSearchRequest>::from_request(req, &()).await?;
+    if body.engine.as_deref().is_some_and(|v| v != "pages") {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "WEB_BAD_QUERY",
+            "Dedicated research uses permitted pages",
+        ));
+    }
     crate::server::web_research::run(state, &owner, &body.query, body.group.as_deref())
         .await
         .map(Json)

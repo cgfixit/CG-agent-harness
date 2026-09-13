@@ -36,7 +36,13 @@ pub struct KeySpec {
 }
 
 /// Every entry is an env var this binary actually reads.
-pub const MANAGED_KEYS: [KeySpec; 4] = [
+pub const MANAGED_KEYS: [KeySpec; 5] = [
+    KeySpec {
+        name: "SERPAPI_API_KEY",
+        label: "Google results (SerpAPI)",
+        detail: "Optional SerpAPI key for Google keyword results. Restart after saving. With no active key, public Google is attempted and may require JavaScript or CAPTCHA.",
+        self_auth: false,
+    },
     KeySpec {
         name: crate::common::apikey::API_KEY_ENV,
         label: "CGagentHarness API key",

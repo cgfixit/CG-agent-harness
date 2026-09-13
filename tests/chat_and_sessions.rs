@@ -49,7 +49,7 @@ async fn new_session_isolates_history_goal_and_skills_but_keeps_explicit_shared_
         assert!(!request.to_string().contains("OLD_SESSION_GOAL"));
         assert_eq!(prompt.contains("SHARED_NOTE_2_PLUS_2_EQUALS_4"), enabled);
         assert!(prompt.contains(&format!("memory={enabled}")));
-        assert!(prompt.contains("You have no callable tools in this chat, including gh"));
+        assert!(prompt.contains("You have no filesystem, shell, gh, account or policy-editing tools in this chat"));
         for command in [
             "/memory add",
             "/memory forget",
@@ -97,11 +97,19 @@ async fn chat_turn_records_the_exchange_and_tally() {
     assert!(!system.contains("Discipline contract:"));
     assert!(!system.contains("Begin the review now"));
     assert!(!system.contains("CyClaw"));
-    assert!(req.get("tools").is_none(), "chat has no model tool dispatcher");
+    assert_eq!(
+        req["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["function"]["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["web_search", "web_fetch"]
+    );
     let (_, status) = s.open_get("/api/status").await;
     assert!(status["repo_root"].is_null());
     assert_eq!(status["chat_mode"], "conversation");
-    assert_eq!(status["chat_tools_available"], false);
+    assert_eq!(status["chat_tools_available"], true);
     assert_eq!(req["messages"][1]["content"], "ping");
     assert_eq!(req["stream"], false);
     assert_eq!(
@@ -172,7 +180,7 @@ async fn cancel_aborts_the_in_flight_turn_and_releases_the_gate() {
     };
     let ((status, body), ()) = tokio::join!(chat, cancel);
     assert_eq!(status, 502, "{body}");
-    assert_eq!(code(&body), "HARNESS_LLM_ERROR");
+    assert_eq!(code(&body), "WEB_CANCELLED");
     assert!(message(&body).contains("cancelled"));
     assert!(!s.state.generation_gate.is_held());
     // Idempotent when idle.

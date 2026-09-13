@@ -26,7 +26,8 @@ exact tested sources and broader window/coding limits are recorded in
    harness metadata key never grants account access. See [migration, roles and
    TLS recovery](SECURE_RESEARCH.md).
 5. Web starts enabled with an empty URL allowlist. An administrator grants sources
-   with `/web allow`; operators can then fetch/search/research those sources. No
+   with `/web allow`; operators can then ask chat to fetch permitted URLs or search
+   Google. `/web pages` and `/web research` retain permitted-page retrieval. No
    content is fetched merely by launching the app. With the shipped local model
    tag installed, chat requires no config-file edit. `/model list` and
    `/model use <exact-tag>` select another installed chat model.
@@ -60,14 +61,17 @@ without a shell, `eval`, or shell startup files. The file must be a regular file
 owned by the current user, private (0600), at most 64 KiB, and not a symlink.
 Explicit inherited environment values retain precedence. Unknown lines are
 preserved when initializing a missing key. API keys are absent from argv,
-URLs, readiness files and desktop diagnostics. Config/key parse failures show
+user-facing URLs, readiness files and desktop diagnostics. The optional SerpAPI
+key is sent only in that fixed provider's HTTPS request query, never to result URLs. Config/key parse failures show
 an actionable setup error without quoting values. Existing configuration is preserved; fresh homes enable accounts and roles.
 No desktop session elevation exists.
 
 Headless `serve` uses the same private-file validation before starting its async
 runtime; a missing file is allowed and an unsafe/unreadable file refuses startup.
-Restart after using the key panel. Loading a key neither enables a provider nor
-authorizes a connector or a write. This is dotenv support, not macOS Keychain
+Restart after using the key panel. A SerpAPI key selects API-backed Google results
+when web and Google URL permission are enabled; no active key selects public
+Google, which may be blocked by JavaScript/CAPTCHA. Other provider gates remain
+independent. Loading a key never grants content, account or repository-write access. This is dotenv support, not macOS Keychain
 integration. Windows headless startup still uses explicitly supplied environment
 values; native Windows credential loading remains a separate parity action.
 

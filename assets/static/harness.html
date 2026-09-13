@@ -513,10 +513,36 @@ function renderSkillsDiagram(skills, wired, total) {
   return lines.join('\n');
 }
 
+function renderSearchResults(result) {
+  const box = document.createElement('div');
+  const provider = document.createElement('p'); provider.textContent = result.provider || 'search'; box.appendChild(provider);
+  const list = document.createElement('ol');
+  for (const row of result.results || []) {
+    const item = document.createElement('li'); const link = document.createElement('a');
+    link.textContent = row.title || row.url;
+    if (/^https?:\/\//i.test(row.url || '')) { link.href = row.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+    item.appendChild(link);
+    const source = document.createElement('p'); source.textContent = row.url + (row.snippet ? '\n' + row.snippet : ''); item.appendChild(source);
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  const notice = document.createElement('p'); notice.textContent = result.notice || ''; box.appendChild(notice);
+  return box;
+}
+function renderChatWebTools(events) {
+  for (const event of events || []) {
+    if (!event.ok) { sys(event.tool + ': ' + event.code + ' — ' + event.message); continue; }
+    const result = event.result || {};
+    if (result.results) sys(renderSearchResults(result));
+    else sys(renderSearchResults({provider:event.tool,results:[{title:result.title || result.url,url:result.url}],notice:result.notice}), (result.source_chars || 0) + ' source characters');
+  }
+}
+
 function renderWebStatus(data) {
   const rows = [
     ['enabled', data.enabled ? 'yes' : 'no (fail-closed)'],
     ['allowlist', (data.allowlist && data.allowlist.length) ? data.allowlist.join('\n') : '(empty — /web allow <url>)'],
+    ['keyword search', data.search_provider || 'Google; /web pages for permitted-page passages'],
     ['injected', data.injected ? 'yes' : 'no'],
     ['context stored', data.context_stored ? 'yes' : 'no'],
     ['last extract', data.has_last ? (data.enabled ? 'yes — /web inject to put it in chat' : 'yes — /web on before injecting') : 'none'],
@@ -784,7 +810,7 @@ const COMMANDS = [
   ['/skill use <id...>|clear|status|check:<profile>', 'select bounded prompt context or stage a fixed coding check'],
   ['/skills [all|<name>]', 'registered runtime skills as a diagram'],
   ['/tools [all|<name>]', 'registered runtime tools as a diagram'],
-  ['/web [on|off|allow|deny|fetch|search|research|cancel|inject|forget]', 'bounded research over permitted sources'],
+  ['/web [on|off|allow|deny|fetch|search|pages|research|cancel|inject|forget]', 'Google search, permitted URL reads and bounded page research'],
   ['/connectors', 'connector catalog'],
   ['/github', 'agentic GitHub status'],
   ['/agent run|plan|read|checks|confirm|cancel', 'stage and start a real-repo coding run'],
@@ -1293,7 +1319,8 @@ async function runSlash(line) {
             ['/web allow <url> [group] [seed-url]', 'allow an exact URL or explicit wildcard with a crawl seed'],
             ['/web deny <url>', 'remove a rule by ID or pattern'],
             ['/web fetch <url>', 'GET one allowlisted URL (text only)'],
-            ['/web search [group=name] <query>', 'bounded discovery and local passage retrieval'],
+            ['/web search <query>', 'Google keyword results (SerpAPI key, otherwise public Google)'],
+            ['/web pages [group=name] <query>', 'search passages from permitted pages'],
             ['/web research [group=name] <question>', 'bounded local-model research with cited passages'],
             ['/web cancel', 'cancel your running research'],
             ['/web inject', 'put last extract in the next chat prompt'],
@@ -1328,7 +1355,7 @@ async function runSlash(line) {
           sys(JSON.stringify(await api('/api/web/research/cancel', 'POST', {})));
           break;
         }
-        if (sub === 'search' || sub === 'research') {
+        if (sub === 'search' || sub === 'pages' || sub === 'research') {
           const args = rest.slice(1);
           const group = args[0] && args[0].startsWith('group=') ? args.shift().slice(6) : null;
           const q = args.join(' ').trim();
@@ -1346,11 +1373,16 @@ async function runSlash(line) {
             sys(JSON.stringify({ coverage: result.coverage, usage: result.usage, stale_passages: result.stale_passages }, null, 2), 'bounded research; completeness is not asserted');
             break;
           }
-          const found = await api('/api/web/search', 'POST', { query: q, group }, 190000);
+          const found = await api('/api/web/search', 'POST', { query: q, group, engine: sub === 'search' && !group ? 'google' : 'pages' }, 190000);
+          if (found.results) {
+            sys(renderSearchResults(found));
+            break;
+          }
           const rows = (found.hits || []).flatMap(h =>
             (h.snippets || []).map(s => [h.url, s]));
           if (!rows.length) {
-            sys('no hits on allowlisted pages for: ' + q + '; cleared last extract and injected context');
+            sys('No matching passages for: ' + q + '. This searches permitted pages, not Google. Use /web search <keywords> for Google. Cleared last extract and injected context.');
+            sys(JSON.stringify({coverage:found.coverage, errors:found.errors, cache_errors:found.cache_errors}, null, 2));
           } else {
             sys(table(rows, ['url', 'snippet']));
           }
@@ -1894,6 +1926,7 @@ async function sendChat(text, asLoop) {
     if (loopState && r.usage) {
       loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
     }
+    renderChatWebTools(r.web_tools);
     agent(r.reply, r.model + ' · +' + r.usage.prompt_tokens + '/' + r.usage.completion_tokens +
           ' tok · session total ' + r.tally.total);
     await refreshStatus();

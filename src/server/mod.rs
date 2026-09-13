@@ -7,6 +7,7 @@
 
 pub mod agent_jobs;
 pub mod agent_policy;
+mod chat_web;
 pub mod client;
 pub mod console;
 #[cfg(unix)]
@@ -25,6 +26,7 @@ pub mod sessions;
 pub mod state;
 pub mod transport;
 pub mod views;
+mod web_google;
 pub mod web_index;
 pub mod web_policy;
 pub mod web_research;

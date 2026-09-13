@@ -21,7 +21,10 @@ permitted research and API Keys merged into `main` through
 [PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76) at `a93006d`. The
 September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
 targets `44a205e` and predates those features. This source additionally enables
-fresh web settings and provides the login hint and role feedback described below.
+fresh web settings and provides the login hint and role feedback, merged through
+[PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77) at `b53ef9d`.
+The follow-up source adds chat web tools and Google keyword search; use a bundle
+built from this branch or a later main containing it.
 Use a source build or successful Bundle artifact containing the desired changes;
 a PR artifact remains a candidate until merged. The Cargo package version remains
 `0.1.0`; identify the installed source using `Contents/Resources/COMMIT`, the
@@ -745,9 +748,11 @@ extract facts, index documents or provide structured RAG retrieval.
 ```
 
 Chat receives a guide to these controls plus current inclusion settings. It has
-no callable tools, including `gh`; it can explain commands and list the notes
-actually included in its prompt, but cannot perform saves or deletes itself.
-Plain-language requests go to the model; slash commands execute in the console.
+two read-only web tools when web is enabled: Google keyword search and permitted
+URL fetch. It has no shell, `gh`, note-save, permission-editing or credential tools.
+It can list notes actually included in its prompt, but cannot save or delete them.
+Plain-language requests can invoke the web tools; slash commands run directly in
+the console. `/loop` retains tool-free chat continuation.
 `/memory add save all session history` stores those exact words, not a summary
 or a reference that loads other sessions. Store concrete facts or a reviewed
 summary instead. The app saves bounded conversation histories separately.
@@ -771,36 +776,91 @@ The structured-memory capability flags remain disabled. Adding a speculative
 automatic learning. Use notes for stable preferences and small pieces of supplied
 context, and use actual command results to establish runtime facts.
 
-### 7.6 Web fetch, search and injected context
+### 7.6 Google search, URL fetch and permitted-page research
 
-Fresh web settings are enabled and require explicit current public URL permission.
-The URL allowlist starts empty. Existing true/false choices are preserved, while
-absent or invalid legacy `web_enabled` fields remain off; `/web on` enables a
-previously disabled setting. Administrators manage versioned exact URLs, explicit
-host/path wildcards, source groups and crawl seeds through `/web allow` and the
-authenticated terminal `web` commands.
+The bundled app and browser console use the same backend; no terminal is needed.
+Fresh web settings are on, with an empty URL allowlist. Existing settings remain
+unchanged. Administrators grant URLs; operators can use granted reads. Enter
+slash commands as plain text starting with `/`, without Markdown backticks.
 
 ```text
+/web allow https://www.google.com/*
+/web allow https://doc.rust-lang.org/book/ch01-01-installation.html
+```
+
+Now ask in ordinary chat:
+
+```text
+Search Google for the top 5 results for "veeam software cve".
+Read https://doc.rust-lang.org/book/ch01-01-installation.html and tell me which command checks the installed Rust compiler version.
+```
+
+The model receives `web_search` and `web_fetch` tools. It must support standard
+OpenAI-compatible tool calls. Successful tool calls show source links and
+outcomes; failures are shown explicitly. The tools cannot grant URLs, change
+accounts or keys, run a shell, or write a repository. `/loop` has no web tools.
+
+**Google API setup:** open **API Keys** in the left pane, paste a **SerpAPI** key
+into **Google results (SerpAPI)**, save and restart the app. This is a SerpAPI
+Google-results key, not a Google Cloud/Custom Search key. Obtain it through
+[SerpAPI](https://serpapi.com/search-api). Saved/active masks and restart status
+are displayed separately. Existing process environment values take precedence.
+No key belongs in the chat transcript or `config.yaml`.
+
+With no active `SERPAPI_API_KEY`, Google search attempts the public Google page.
+That fallback has no API key requirement, but can return a JavaScript challenge,
+CAPTCHA, redirect or unreadable page. The app reports the failure; it does not
+solve challenges, execute the page's JavaScript or manufacture five results.
+A configured key's authentication/quota/network error stays an API error; it
+does not silently switch to public Google. Clearing a saved key requires another
+restart before fallback becomes active.
+
+Grant `https://www.google.com/*` for the generated Google search URLs. A grant
+for the exact homepage is insufficient. `https://google.com/*` does not grant
+`www`; the apex endpoint may redirect and redirects remain refused. Path
+wildcards permit query strings while retaining scheme/host/port/path boundaries.
+Exact grants retain exact query identity. Search listings contain provider
+snippets and ranked links, not fetched destination content. To read a linked
+page, independently grant that destination (or an appropriate explicit wildcard).
+
+Direct commands:
+
+```text
+/web search veeam software cve
+/web fetch https://doc.rust-lang.org/book/ch01-01-installation.html
 /web allow https://example.com/docs/* docs https://example.com/docs/
 /web allow https://example.com/robots.txt docs
-/web search group=docs widget_open
+/web pages group=docs widget_open
 /web research group=docs How does widget_open fail?
 /web cancel
 /web inject
 ```
 
-The sole secure fetcher pins validated public DNS addresses, refuses redirects,
-proxies and ambiguous URLs, and applies bounded HTML/robots discovery. Tantivy
-retrieves original passages; dedicated research uses bounded local-model planning
-and cited synthesis. All cache/index/injection/delivery paths recheck current
-policy, and revocation discards in-flight evidence. Research and web selections
-are account scoped; the public-document cache is a shared portal resource.
+`/web pages` retains bounded discovery and BM25 passage retrieval; the legacy
+`/web search group=docs ...` form also selects page search. `/web research`
+retains its dedicated local-model controller and checked quote references.
+`/web inject` explicitly selects the last fetched/page-search extract for later
+chat; Google listings do not replace that saved selection. `/loop stop` or the
+chat cancellation endpoint cancels an in-flight chat tool turn; `/web cancel`
+cancels dedicated research.
 
-`/web off` suppresses future web work and injection. `/web forget` clears the
-initiating account's selection, and `/web deny` revokes the selected rule. Neither
-erases already delivered conversation text. Legacy unproven shared context is
-refused. See [exact URL semantics, migration, network bounds, research usage and
-coverage](docs/SECURE_RESEARCH.md) for the full operational contract.
+The authenticated terminal also supports `web search '<keywords>' --count 5`
+(default Google), or `web search '<query>' --engine pages --group docs`.
+`POST /api/web/search` uses `engine: "google"` for Google and `count: 1..10`;
+omitting `engine` preserves legacy page-search API behavior. Direct chat uses
+`POST /api/chat` and returns `web_tools` alongside the reply and aggregate usage.
+
+Web chat defaults to at most 3 tool calls (validated `web.chat_tool_calls`, 1–5),
+within the chat timeout and web token budget. Fetches retain bounded bytes/time,
+public DNS pinning, no proxies/redirects/cookies, and ordinary TLS validation.
+Google's fixed API transport shares those network bounds. Permission is checked
+before reads and evidence delivery. Search sends the selected query to the
+provider, not the complete conversation; retrieved content goes to the local model.
+
+`/web off` suppresses future reads and injection. `/web forget` clears the current
+account's selection; `/web deny` revokes a rule. Neither erases previously
+recorded conversations. Research/web selections are account scoped and the
+public-document cache is shared. See [secure web behavior and evidence](docs/SECURE_RESEARCH.md).
 
 ### 7.7 Tools and connectors: available versus catalog-only
 
@@ -816,7 +876,7 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | Capability | Current configuration / action | Actual boundary |
 |---|---|---|
 | Local model | `models.local_llm` in `config.yaml`; `/model` and `/model use <name>` | Chat uses a configured loopback service; selecting a tag does not download it |
-| Public web text | `/web` controls in section 7.6 | Explicit allowlisted fetch/search and manual context injection |
+| Public web text | Chat web tools and `/web` controls in section 7.6 | Google listings, permitted URL fetch, page research and optional context injection |
 | GitHub coding | Explicit `agentic.repo`, gates and prerequisites in section 9; `/github` reports status | Separate governed child-process workflow; a chat reply does not execute Git commands |
 | Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
 | `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
@@ -854,7 +914,8 @@ confirmation and persistence semantics.
 | `/skill use <id...>`, `clear`, `status` | Replace, clear or inspect session prompt-skill selection |
 | `/skill check:<profile>` | Replace the check selection for an already staged coding request |
 | `/web`, `on`, `off`, `allow <url> [group] [seed-url]`, `deny <id-or-pattern>` | Inspect fetching; administrators toggle or edit exact/wildcard permission |
-| `/web fetch <url>`, `search [group=name] <query>`, `inject`, `forget` | Fetch/search original passages, include your last selection, or clear it |
+| `/web search <keywords>`, `fetch <url>`, `pages [group=name] <query>` | Search Google, fetch a permitted URL, or search permitted-page passages |
+| `/web inject`, `forget` | Include your last fetched/page-search selection in chat, or clear it |
 | `/web research [group=name] <question>`, `cancel` | Run/cancel your bounded local-model research; return citations, usage and coverage |
 | `/goal`, `/goal <text>`, `/goal clear` | Inspect, set or clear the saved session goal |
 | `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; section 7.1 |

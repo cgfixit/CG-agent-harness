@@ -48,7 +48,7 @@ pub async fn status(
         "home": state.home.root.display().to_string(),
         "repo_root": Value::Null,
         "chat_mode": "conversation",
-        "chat_tools_available": false,
+        "chat_tools_available": settings.web_enabled,
         "sessions": sessions.len(),
         "total_tokens": total_tokens,
         "layout": {
@@ -283,9 +283,8 @@ pub async fn chat(
         .details(details));
     };
 
-    let web_context = state
-        .web
-        .context_text(settings.web_enabled, &super::auth::context_owner(user));
+    let owner = super::auth::context_owner(user);
+    let web_context = state.web.context_text(settings.web_enabled, &owner);
     let memory_context = if settings.memory_enabled {
         Some(state.notes.context_text())
     } else {
@@ -340,11 +339,28 @@ pub async fn chat(
         .clone()
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| state.current_model());
-    let reply = state
-        .chat
-        .chat(&system_prompt, &history, Some(&model), max_tokens, temperature)
+    let (reply, web_tools) = if settings.web_enabled && !req.loop_turn {
+        crate::server::chat_web::run(
+            &state,
+            &owner,
+            &system_prompt,
+            &history,
+            &model,
+            max_tokens,
+            temperature,
+        )
         .await
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?
+    } else {
+        (
+            state
+                .chat
+                .chat(&system_prompt, &history, Some(&model), max_tokens, temperature)
+                .await
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
+            Vec::new(),
+        )
+    };
     drop(release);
 
     let updated = state
@@ -368,6 +384,7 @@ pub async fn chat(
     Ok(Json(json!({
         "session_id": session.session_id,
         "reply": reply.body_text,
+        "web_tools": web_tools,
         "model": reply.model,
         "usage": {"prompt_tokens": reply.prompt_tokens, "completion_tokens": reply.completion_tokens},
         "tally": updated.tally.to_json(),
@@ -389,7 +406,15 @@ impl Drop for LoopRelease {
     }
 }
 
-pub async fn cancel_chat(State(state): State<Arc<AppState>>) -> Json<Value> {
+pub async fn cancel_chat(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+) -> ApiResult<Json<Value>> {
+    state
+        .web
+        .chat_turn
+        .cancel(&super::auth::context_owner(user))
+        .map_err(|e| ApiError::from_err(StatusCode::FORBIDDEN, &e))?;
     state.chat.abort_in_flight();
-    Json(json!({"cancelled": true}))
+    Ok(Json(json!({"cancelled": true})))
 }
