@@ -113,8 +113,11 @@ jobs:
                 if (r.length >= 8) contributed.push(line);
               } else contributed.push(line);
             }
+            // The statement must name a guarantee from INVARIANTS.md (or say none),
+            // not merely occupy the section. Wording beyond that is for the reviewer.
+            const guarantee = /invariant|\bnone\b|\bi6\b|process isolation|guard chain|write[ -]gate|clone jail|judged|approval|secret|redact|detached|csrf|sandbox|loopback|weaker than/i;
             const statement = (seen ? contributed : other).join("\n").trim();
-            if (touchesCore && statement.length === 0) {
+            if (touchesCore && !guarantee.test(statement)) {
               missing.push("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)");
             }
             const marker = "<!-- pr-template-check -->";

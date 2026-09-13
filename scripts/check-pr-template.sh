@@ -126,7 +126,10 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
       END { if (!seen) for (i = 0; i < n; i++) print other[i] }
     ' <(fold_boxes < "$template") <(printf '%s\n' "$body" | fold_boxes))"
   fi
-  if [[ -z "${contributed//[[:space:]]/}" ]]; then
+  # The statement must name a guarantee from INVARIANTS.md (or say none),
+  # not merely occupy the section. Wording beyond that is for the reviewer.
+  guarantee='invariant|\bnone\b|\bi6\b|process isolation|guard chain|write[ -]gate|clone jail|judged|approval|secret|redact|detached|csrf|sandbox|loopback|weaker than'
+  if ! printf '%s' "$contributed" | grep -Eiq "$guarantee"; then
     missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
     fail=1
   fi
