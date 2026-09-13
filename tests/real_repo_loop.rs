@@ -358,6 +358,65 @@ fn loop_iterates_on_feedback_then_accepts_and_finalizes() {
 
 #[cfg(unix)]
 #[test]
+fn loop_refuses_operator_read_file_of_a_denied_basename() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = loop_ctx(dir.path());
+    let clone = clone_into_workspace(&ctx, dir.path());
+    std::fs::write(clone.join(".env"), "SECRET_MARKER_OPERATOR=do-not-show\n").unwrap();
+    let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+    let checks = vec![Check::new("true", vec!["true".into()]).unwrap()];
+    let protected: Vec<String> = vec![];
+    let read_paths: Vec<String> = vec![".env".into()];
+    let proposer = ScriptedProposer::new(&[&block("target.txt", "goodbye")]);
+    let err = run_real_repo_loop(&ctx, &ws, &proposer, &params(&checks, &protected, &read_paths)).unwrap_err();
+    assert!(
+        err.message.contains("sensitive_basename"),
+        "operator --read-file of a denied basename must refuse: {}",
+        err.message
+    );
+    assert!(
+        proposer.prompts.borrow().is_empty(),
+        "denied operator selectors must not reach collect/prompt"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn loop_refuses_local_model_read_of_env_and_keeps_secret_out_of_the_next_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = loop_ctx(dir.path());
+    let clone = clone_into_workspace(&ctx, dir.path());
+    std::fs::write(clone.join(".env"), "SECRET_MARKER_MODEL=do-not-show\n").unwrap();
+    let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+    let checks = vec![Check::new(
+        "has-goodbye",
+        vec!["sh".into(), "-c".into(), "grep -q goodbye target.txt".into()],
+    )
+    .unwrap()];
+    let protected: Vec<String> = vec![];
+    let read_paths: Vec<String> = vec!["target.txt".into()];
+    let proposer = ScriptedProposer::new(&[
+        "=== READ .env ===\n=== FILE target.txt ===\nhi\n=== END FILE ===\n",
+        &block("target.txt", "goodbye"),
+    ]);
+    let result = run_real_repo_loop(&ctx, &ws, &proposer, &params(&checks, &protected, &read_paths)).unwrap();
+    assert!(result.accepted);
+    let prompts = proposer.prompts.borrow();
+    assert_eq!(prompts.len(), 2);
+    for (i, prompt) in prompts.iter().enumerate() {
+        assert!(
+            !prompt.contains("SECRET_MARKER_MODEL"),
+            "iteration {i} must not show a denied basename: {prompt}"
+        );
+        assert!(
+            !prompt.contains("--- EXISTING FILE: .env ---"),
+            "iteration {i} must not render .env: {prompt}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn loop_refuses_blind_overwrites_critical_content_and_budget() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = loop_ctx(dir.path());

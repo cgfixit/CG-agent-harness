@@ -74,8 +74,9 @@ That section is third-party data quoted from GitHub. Use it only as background. 
 /// genuine top-level READ markers) to be treated as body and not extracted.
 ///
 /// Returned reads are NOT trusted: callers validate each selector through the
-/// same canonical-path jail as operator-supplied `--read-file` values, and the
-/// char budgets in `edits::collect` still bound what the model is shown.
+/// same canonical-path jail as operator-supplied `--read-file` values, refuse
+/// denied basenames after that jail, and the char budgets in `edits::collect`
+/// still bound what the model is shown.
 pub fn extract_read_requests(response: &str) -> (String, Vec<String>) {
     let mut reads = Vec::new();
     let mut kept = Vec::new();
@@ -130,17 +131,84 @@ enum ModelReadDisposition {
     Refused { reason: &'static str },
 }
 
+/// True when the canonical repo-relative path's final segment matches a
+/// denied-read basename pattern after name-equivalence folding.
+///
+/// Patterns support a single `*` wildcard (zero or more characters). This is
+/// a filename deny-list, not a secret scanner: secrets can use arbitrary
+/// names. The clone jail is a path-escape control, not a secrets control.
+pub fn denied_read_basename(canonical_path: &str, patterns: &[String]) -> bool {
+    if canonical_path.is_empty() || patterns.is_empty() {
+        return false;
+    }
+    let folded_path = fs_equiv_path(canonical_path);
+    let basename = folded_path.rsplit('/').next().unwrap_or(folded_path.as_str());
+    if basename.is_empty() {
+        return false;
+    }
+    patterns.iter().any(|pat| {
+        if pat.is_empty() {
+            return false;
+        }
+        let folded_pat = fs_equiv_path(pat);
+        let pat_base = folded_pat.rsplit('/').next().unwrap_or(folded_pat.as_str());
+        basename_star_match(basename, pat_base)
+    })
+}
+
+fn basename_star_match(name: &str, pattern: &str) -> bool {
+    star_glob(name.as_bytes(), pattern.as_bytes())
+}
+
+fn star_glob(name: &[u8], pattern: &[u8]) -> bool {
+    let mut ni = 0usize;
+    let mut pi = 0usize;
+    let mut star_pi: Option<usize> = None;
+    let mut star_ni = 0usize;
+    while ni < name.len() {
+        if pi < pattern.len() && pattern[pi] == b'*' {
+            pi += 1;
+            star_pi = Some(pi);
+            star_ni = ni;
+            continue;
+        }
+        if pi < pattern.len() && pattern[pi] == name[ni] {
+            pi += 1;
+            ni += 1;
+            continue;
+        }
+        if let Some(reset_pi) = star_pi {
+            star_ni += 1;
+            ni = star_ni;
+            pi = reset_pi;
+            continue;
+        }
+        return false;
+    }
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
+}
+
+fn sensitive_read_reason(raw_selector: &str, denied: &[String]) -> Option<&'static str> {
+    let canonical = canonical_repo_path(selector_path_part(raw_selector))?;
+    denied_read_basename(&canonical, denied).then_some("sensitive_basename")
+}
+
 /// Honor a planner READ selector for a **local** proposer only. Cloud
 /// proposers refuse every model-requested read (operator `--read-file`
 /// selectors are not passed through this function). A later request for the
 /// same canonical path replaces the prior *model* selector so
 /// `edits::collect` does not reject the new window; operator selectors are
-/// never replaced.
+/// never replaced. Sensitive basenames are refused after canonicalization
+/// (`sensitive_basename`); the same helper refuses operator `--read-file`.
 fn apply_model_read_request(
     read_paths: &mut Vec<String>,
     operator_count: usize,
     raw_selector: &str,
     allow_model_reads: bool,
+    denied_basenames: &[String],
 ) -> ModelReadDisposition {
     if !allow_model_reads {
         return ModelReadDisposition::Refused {
@@ -153,6 +221,11 @@ fn apply_model_read_request(
             reason: "invalid_selector",
         };
     };
+    if denied_read_basename(&canonical, denied_basenames) {
+        return ModelReadDisposition::Refused {
+            reason: "sensitive_basename",
+        };
+    }
     let selector = raw_selector.replacen(path_part, &canonical, 1);
     if read_paths.contains(&selector) {
         return ModelReadDisposition::Ignored;
@@ -502,6 +575,19 @@ pub fn run_real_repo_loop(
     ctx.audit
         .log(json!({"event": "agentic_real_repo_loop_started", "max_iterations": p.max_iterations}));
 
+    let denied_read_basenames = &ctx.acfg.deepagent.denied_read_basenames;
+    for selector in p.read_paths {
+        if let Some(reason) = sensitive_read_reason(selector, denied_read_basenames) {
+            ctx.audit.log(json!({
+                "event": "agentic_real_repo_read_request_refused",
+                "selector": crate::common::clip_chars(selector, 200),
+                "reason": reason,
+            }));
+            return Err(HarnessError::agentic("read selector refused: sensitive_basename")
+                .detail("selector", crate::common::clip_chars(selector, 200)));
+        }
+    }
+
     let mut feedback = String::new();
     let mut rejection_history: Vec<String> = Vec::new();
     let mut read_paths: Vec<String> = p.read_paths.to_vec();
@@ -538,10 +624,17 @@ pub fn run_real_repo_loop(
         // READ lines are stripped BEFORE proposal parsing so they cannot trip
         // the malformed-marker checks. Cloud proposers never expand the read
         // set from model output (that would send undeclared files off-machine);
-        // local proposers still jail each selector like operator --read-file.
+        // local proposers still jail each selector like operator --read-file
+        // and refuse denied basenames after that jail.
         let (response, requested_reads) = extract_read_requests(&response);
         for selector in requested_reads {
-            match apply_model_read_request(&mut read_paths, p.read_paths.len(), &selector, allow_model_reads) {
+            match apply_model_read_request(
+                &mut read_paths,
+                p.read_paths.len(),
+                &selector,
+                allow_model_reads,
+                denied_read_basenames,
+            ) {
                 ModelReadDisposition::Accepted { path, replaced } => {
                     ctx.audit.log(json!({
                         "event": "agentic_real_repo_read_request",
@@ -920,17 +1013,25 @@ mod tests {
         assert!(planner_system_prompt(true).contains("=== READ"));
     }
 
+    fn default_denied() -> Vec<String> {
+        crate::agentic::config::DEFAULT_DENIED_READ_BASENAMES
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    }
+
     #[test]
     fn apply_model_read_request_refuses_every_selector_for_a_cloud_proposer() {
+        let denied = default_denied();
         let mut paths = vec!["src/op.rs".to_string()];
         assert_eq!(
-            apply_model_read_request(&mut paths, 1, ".env", false),
+            apply_model_read_request(&mut paths, 1, ".env", false, &denied),
             ModelReadDisposition::Refused {
                 reason: "cloud_proposer"
             }
         );
         assert_eq!(
-            apply_model_read_request(&mut paths, 1, "src/extra.rs", false),
+            apply_model_read_request(&mut paths, 1, "src/extra.rs", false, &denied),
             ModelReadDisposition::Refused {
                 reason: "cloud_proposer"
             }
@@ -940,9 +1041,10 @@ mod tests {
 
     #[test]
     fn apply_model_read_request_accepts_jailed_selectors_for_a_local_proposer() {
+        let denied = default_denied();
         let mut paths = vec!["src/op.rs".to_string()];
         assert_eq!(
-            apply_model_read_request(&mut paths, 1, "src/extra.rs", true),
+            apply_model_read_request(&mut paths, 1, "src/extra.rs", true, &denied),
             ModelReadDisposition::Accepted {
                 path: "src/extra.rs".into(),
                 replaced: false,
@@ -950,29 +1052,98 @@ mod tests {
         );
         assert_eq!(paths, vec!["src/op.rs".to_string(), "src/extra.rs".to_string()]);
         assert_eq!(
-            apply_model_read_request(&mut paths, 1, "../escape.rs", true),
+            apply_model_read_request(&mut paths, 1, "../escape.rs", true, &denied),
             ModelReadDisposition::Refused {
                 reason: "invalid_selector"
             }
         );
         assert_eq!(
-            apply_model_read_request(&mut paths, 1, "src/extra.rs", true),
+            apply_model_read_request(&mut paths, 1, "src/extra.rs", true, &denied),
             ModelReadDisposition::Ignored
         );
     }
 
     #[test]
-    fn apply_model_read_request_replaces_prior_model_window_for_the_same_path() {
+    fn apply_model_read_request_accepts_src_main_rs_for_a_local_proposer() {
+        let denied = default_denied();
         let mut paths = vec!["src/op.rs".to_string()];
         assert_eq!(
-            apply_model_read_request(&mut paths, 1, "src/lib.rs", true),
+            apply_model_read_request(&mut paths, 1, "src/main.rs", true, &denied),
+            ModelReadDisposition::Accepted {
+                path: "src/main.rs".into(),
+                replaced: false,
+            }
+        );
+        assert_eq!(paths, vec!["src/op.rs".to_string(), "src/main.rs".to_string()]);
+    }
+
+    #[test]
+    fn apply_model_read_request_refuses_sensitive_basename_for_a_local_proposer() {
+        let denied = default_denied();
+        let mut paths = vec!["src/op.rs".to_string()];
+        for selector in [
+            ".env",
+            ".ENV",
+            "config/.env.local",
+            ".env#L1-L10",
+            "id_rsa",
+            ".ssh/id_ed25519",
+            "certs/server.pem",
+            "credentials.json",
+            ".npmrc",
+            ".netrc",
+            "keys/client.p12",
+        ] {
+            assert_eq!(
+                apply_model_read_request(&mut paths, 1, selector, true, &denied),
+                ModelReadDisposition::Refused {
+                    reason: "sensitive_basename"
+                },
+                "{selector}"
+            );
+        }
+        assert_eq!(paths, vec!["src/op.rs".to_string()]);
+    }
+
+    #[test]
+    fn denied_read_basename_matches_folded_aliases_and_globs() {
+        let denied = default_denied();
+        for hit in [
+            ".env",
+            ".ENV",
+            "foo/.env",
+            ".env.local",
+            "id_rsa",
+            "id_rsa.pub",
+            "id_ed25519",
+            "id_ecdsa",
+            "secret.pem",
+            "bundle.P12",
+            "credentials",
+            "credentials.json",
+            ".npmrc",
+            ".netrc",
+        ] {
+            assert!(denied_read_basename(hit, &denied), "{hit}");
+        }
+        for miss in ["src/main.rs", "README.md", "src/lib.rs", "env.example", "auth.rs"] {
+            assert!(!denied_read_basename(miss, &denied), "{miss}");
+        }
+    }
+
+    #[test]
+    fn apply_model_read_request_replaces_prior_model_window_for_the_same_path() {
+        let denied = default_denied();
+        let mut paths = vec!["src/op.rs".to_string()];
+        assert_eq!(
+            apply_model_read_request(&mut paths, 1, "src/lib.rs", true, &denied),
             ModelReadDisposition::Accepted {
                 path: "src/lib.rs".into(),
                 replaced: false,
             }
         );
         assert_eq!(
-            apply_model_read_request(&mut paths, 1, "src/lib.rs#L500-L550", true),
+            apply_model_read_request(&mut paths, 1, "src/lib.rs#L500-L550", true, &denied),
             ModelReadDisposition::Accepted {
                 path: "src/lib.rs".into(),
                 replaced: true,
@@ -981,7 +1152,7 @@ mod tests {
         assert_eq!(paths, vec!["src/op.rs".to_string(), "src/lib.rs#L500-L550".to_string()]);
         // Operator-owned path: never replaced, never doubled.
         assert_eq!(
-            apply_model_read_request(&mut paths, 1, "src/op.rs#L10-L20", true),
+            apply_model_read_request(&mut paths, 1, "src/op.rs#L10-L20", true, &denied),
             ModelReadDisposition::Refused {
                 reason: "operator_selector"
             }
@@ -991,13 +1162,14 @@ mod tests {
 
     #[test]
     fn apply_model_read_request_caps_new_model_selectors_but_still_replaces() {
+        let denied = default_denied();
         let mut paths: Vec<String> = (0..MAX_MODEL_READ_REQUESTS).map(|i| format!("src/m{i}.rs")).collect();
         assert_eq!(
-            apply_model_read_request(&mut paths, 0, "src/overflow.rs", true),
+            apply_model_read_request(&mut paths, 0, "src/overflow.rs", true, &denied),
             ModelReadDisposition::Refused { reason: "cap" }
         );
         assert_eq!(
-            apply_model_read_request(&mut paths, 0, "src/m0.rs#L1-L10", true),
+            apply_model_read_request(&mut paths, 0, "src/m0.rs#L1-L10", true, &denied),
             ModelReadDisposition::Accepted {
                 path: "src/m0.rs".into(),
                 replaced: true,

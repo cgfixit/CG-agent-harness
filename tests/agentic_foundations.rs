@@ -57,6 +57,10 @@ fn agentic_config_validation() {
     assert!(ac.registry_path.starts_with(dir.path().join("data")));
     assert!(ac.deepagent.workspace_root.starts_with(dir.path().join("data")));
     assert!(
+        ac.deepagent.denied_read_basenames.iter().any(|s| s == ".env"),
+        "shipped denied_read_basenames must include .env"
+    );
+    assert!(
         ac.deepagent.cloud_provider("grok").is_some(),
         "shipped: armed but held by masters"
     );

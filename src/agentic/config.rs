@@ -37,6 +37,25 @@ pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 19] = [
     "deny.toml",
     "rustfmt.toml",
 ];
+/// Conservative default-on READ basename deny-list. Patterns match the final
+/// path segment after name-equivalence folding; `*` is the only wildcard
+/// (zero or more characters). This is not a secret scanner — secrets can use
+/// arbitrary names — and the clone jail is a path-escape control, not a
+/// secrets control. Operators may override the list in config.yaml.
+pub const DEFAULT_DENIED_READ_BASENAMES: [&str; 12] = [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "id_rsa",
+    "id_rsa*",
+    "id_ed25519*",
+    "id_ecdsa*",
+    "credentials*",
+    "credentials.json",
+    ".npmrc",
+    ".netrc",
+    "*.p12",
+];
 pub const DEFAULT_MAX_WRITE_BUDGET_BYTES: u64 = 100_000;
 pub const DEFAULT_MAX_HANDOFF_CHARS: usize = 200_000;
 pub const DEFAULT_PLANNER_TIMEOUT_SEC: u64 = 720;
@@ -133,6 +152,7 @@ pub struct DeepAgentConfig {
     pub providers: BTreeMap<String, CloudProviderConfig>,
     pub allow_git_write_tools: bool,
     pub protected_write_paths: Vec<String>,
+    pub denied_read_basenames: Vec<String>,
     pub max_write_budget_bytes: u64,
     pub max_handoff_chars: usize,
     pub planner_timeout_sec: u64,
@@ -314,6 +334,28 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
             )))
         }
     };
+    let denied_read_basenames = match cfg.get(&format!("{d}.denied_read_basenames")) {
+        None => DEFAULT_DENIED_READ_BASENAMES.iter().map(|s| s.to_string()).collect(),
+        Some(serde_yaml_ng::Value::Sequence(items)) => {
+            let mut out = Vec::new();
+            for it in items {
+                match it.as_str() {
+                    Some(s) if !s.is_empty() => out.push(s.to_string()),
+                    _ => {
+                        return Err(cfg_err(format!(
+                            "{d}.denied_read_basenames must be a list of non-empty strings"
+                        )))
+                    }
+                }
+            }
+            out
+        }
+        Some(_) => {
+            return Err(cfg_err(format!(
+                "{d}.denied_read_basenames must be a list of non-empty strings"
+            )))
+        }
+    };
     let deepagent = DeepAgentConfig {
         enabled: bool_field(cfg, &format!("{d}.enabled"), false)?,
         provider,
@@ -324,6 +366,7 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
         providers,
         allow_git_write_tools: bool_field(cfg, &format!("{d}.allow_git_write_tools"), false)?,
         protected_write_paths,
+        denied_read_basenames,
         max_write_budget_bytes: positive_int(
             cfg,
             &format!("{d}.max_write_budget_bytes"),

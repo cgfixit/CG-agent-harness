@@ -175,6 +175,45 @@ fn shipped_defaults_protect_agents_md() {
 }
 
 #[test]
+fn shipped_defaults_deny_sensitive_read_basenames() {
+    let yaml = cgagentharness::common::config::AppConfig::embedded_default();
+    assert!(
+        yaml.contains("denied_read_basenames:"),
+        "shipped config.default.yaml must seed denied_read_basenames"
+    );
+    for needle in [
+        "- \".env\"",
+        "- \".env.*\"",
+        "- \"*.pem\"",
+        "- \"id_rsa\"",
+        "- \"id_rsa*\"",
+        "- \"id_ed25519*\"",
+        "- \"credentials*\"",
+        "- \".npmrc\"",
+        "- \".netrc\"",
+        "- \"*.p12\"",
+    ] {
+        assert!(yaml.contains(needle), "shipped denied_read_basenames lost {needle}");
+    }
+    let defaults = cgagentharness::agentic::config::DEFAULT_DENIED_READ_BASENAMES;
+    for required in [
+        ".env",
+        ".env.*",
+        "*.pem",
+        "id_rsa",
+        "id_ed25519*",
+        ".npmrc",
+        ".netrc",
+        "*.p12",
+    ] {
+        assert!(
+            defaults.contains(&required),
+            "DEFAULT_DENIED_READ_BASENAMES must include {required}"
+        );
+    }
+}
+
+#[test]
 fn fresh_chat_does_not_select_a_repository() {
     assert_eq!(cgagentharness::agentic::config::DEFAULT_REPO, "");
     let cfg = cgagentharness::common::config::AppConfig::from_str(

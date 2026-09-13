@@ -213,6 +213,25 @@ agentic:
       - "Cargo.lock"
       - "deny.toml"
       - "rustfmt.toml"
+    # Default-on READ basename deny-list (model === READ === and operator
+    # --read-file). Enforced after clone-jail canonicalization against the
+    # final path segment, with name-equivalence folding so aliases/case still
+    # match. `*` is the only wildcard. This is not a secret scanner: secrets
+    # can use arbitrary names. The clone jail stops path escape; it is not a
+    # secrets control. Override the list in the home config.yaml if needed.
+    denied_read_basenames:
+      - ".env"
+      - ".env.*"
+      - "*.pem"
+      - "id_rsa"
+      - "id_rsa*"
+      - "id_ed25519*"
+      - "id_ecdsa*"
+      - "credentials*"
+      - "credentials.json"
+      - ".npmrc"
+      - ".netrc"
+      - "*.p12"
     max_write_budget_bytes: 100000
     scan_code_shape: true
     max_handoff_chars: 200000
