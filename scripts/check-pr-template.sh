@@ -95,10 +95,13 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   # The template itself says "invariant" in its headings and checklist, so
   # only contributor-written lines (those not copied verbatim from the
   # template) can satisfy the statement requirement.
+  # Ticking a template checkbox is not a statement either, so `- [x]` is
+  # folded back to `- [ ]` on both sides before the comparison.
   template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
+  fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/'; }
   contributed="$body"
   if [[ -f "$template" ]]; then
-    contributed="$(printf '%s\n' "$body" | grep -Fxv -f "$template" || true)"
+    contributed="$(printf '%s\n' "$body" | fold_boxes | grep -Fxv -f <(fold_boxes < "$template") || true)"
   fi
   if ! printf '%s' "$contributed" | grep -Eiq 'invariant'; then
     missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
