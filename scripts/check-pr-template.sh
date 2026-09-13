@@ -95,22 +95,38 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   # The template itself says "invariant" in its headings and checklist, so
   # only contributor-written lines (those not copied verbatim from the
   # template) can satisfy the statement requirement.
-  # Ticking a template checkbox, nudging whitespace, or lightly editing a
-  # template line is not a statement either: `- [x]` folds back to `- [ ]`,
-  # runs of whitespace collapse, and a body line that starts with the first
-  # 24 characters of a template line while adding fewer than 9 characters is
-  # treated as that template line. A real statement adds far more text.
+  # Only the "Invariant / Governance Impact" section counts, after folding
+  # `- [x]` to `- [ ]` and collapsing whitespace on both sides. Lines copied
+  # from the template are dropped; on the heading line itself the template's
+  # own words are removed and at least eight characters must remain, so a
+  # concise statement on that line passes while a reworded heading does not.
+  # Without that heading, any non-template line mentioning an invariant
+  # counts. Light edits inside the template's instruction text are not
+  # detected; a reviewer reads the section either way.
   template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
   fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/; s/[[:space:]]+/ /g; s/^ //; s/ $//'; }
   contributed="$body"
   if [[ -f "$template" ]]; then
     contributed="$(awk '
-      NR == FNR { tmpl[$0] = 1; if (length($0) >= 24) pre[substr($0, 1, 24)] = length($0); next }
-      $0 in tmpl { next }
-      { p = substr($0, 1, 24); if (p in pre && length($0) <= pre[p] + 8) next; print }
+      NR == FNR { tmpl[$0] = 1; next }
+      {
+        line = $0; low = tolower(line)
+        heading = (low ~ /invariant \/ governance impact/)
+        if (!insec) { if (heading) { insec = 1; seen = 1 } else { if (!(line in tmpl) && low ~ /invariant/) other[n++] = line; next } }
+        else if (line ~ /^(---|#)/) { insec = 0; next }
+        if (line in tmpl) next
+        if (heading) {
+          r = low
+          gsub(/invariant \/ governance impact/, "", r)
+          gsub(/\(required for any change touching core paths\):?/, "", r)
+          gsub(/[*: ]+/, "", r)
+          if (length(r) >= 8) print line
+        } else print line
+      }
+      END { if (!seen) for (i = 0; i < n; i++) print other[i] }
     ' <(fold_boxes < "$template") <(printf '%s\n' "$body" | fold_boxes))"
   fi
-  if ! printf '%s' "$contributed" | grep -Eiq 'invariant'; then
+  if [[ -z "${contributed//[[:space:]]/}" ]]; then
     missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
     fail=1
   fi
