@@ -20,11 +20,11 @@ separate child process and ships disarmed.
 permitted research and API Keys merged into `main` through
 [PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76) at `a93006d`. The
 September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
-targets `44a205e` and predates those features. This source additionally enables
-fresh web settings and provides the login hint and role feedback, merged through
-[PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77) at `b53ef9d`.
-The follow-up source adds chat web tools and Google keyword search; use a bundle
-built from this branch or a later main containing it.
+targets `44a205e` and predates those features. [PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77)
+at `b53ef9d` enables fresh web settings and provides the login hint and role
+feedback; [PR #78](https://github.com/cgfixit/CG-agent-harness/pull/78) at
+`dbaa808` adds chat web tools and Google keyword search, and `f47d41d` keeps web
+source links readable in the dark console.
 Use a source build or successful Bundle artifact containing the desired changes;
 a PR artifact remains a candidate until merged. The Cargo package version remains
 `0.1.0`; identify the installed source using `Contents/Resources/COMMIT`, the

@@ -226,7 +226,7 @@ substitute `(unexpected field)` for a caller-supplied key.
 model is also the planner) the chat gate are held by the TASK via
 `GateGuard`'s `Drop`, not by the HTTP request. A closed tab, a proxy timeout,
 or a client that never polls again cannot leave the gate stuck: cancelling
-(`POST /api/agent/jobs/{id}/cancel`) aborts the task, dropping the guards and
+(`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping the guards and
 the child (`kill_on_drop`). A job's terminal state is set exactly once —
 `JobStore::finish` is a no-op if the job was already cancelled — so a slow
 child finishing after cancellation can never resurrect a job the operator
