@@ -35,7 +35,8 @@ compressed Codex twin of `.claude/skills/fable-protocol/SKILL.md` (deep playbook
   <action>` with the ACTIONS whitelist. Exit codes `0/2/3/4` are the API.
 - Keep the combined write policy closed by default: master/deepagent/clone-write
   flags are false; mode/write-enabled alone cannot arm writes. Reason and per-call
-  confirm remain required, never defaulted. Fresh auth/TLS are true; web is off.
+  confirm remain required, never defaulted. Fresh auth/TLS and web settings are
+  true; the empty URL allowlist still denies all content reads.
   Clone jail + judged-before-land stay load-bearing.
 - Console CSRF placeholders `__CYCLAW_CSRF_TOKEN__` / `__CYCLAW_CSP_NONCE__` and
   the `X-CyClaw-CSRF` header name are contractual (names retained from the port).

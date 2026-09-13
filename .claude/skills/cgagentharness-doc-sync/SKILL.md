@@ -19,8 +19,9 @@ old acceptance records are historical evidence, not current contracts.
   clone-write flags are false. `writes_enabled: true` alone cannot arm writes.
   Reason and explicit per-call confirmation remain required.
 - Fresh `auth.enabled` and `tls.enabled` are true. Missing legacy fields stay off;
-  invalid switch types refuse configuration. Web starts disabled and needs a
-  valid current URL policy. The generic `flag_is_true` quoted-string behavior
+  invalid switch types refuse configuration. Fresh web settings start enabled
+  with an empty URL allowlist; reads need a current grant. Existing web choices
+  are retained, while missing/invalid legacy web values remain off. The generic `flag_is_true` quoted-string behavior
   does not silently disable malformed auth/TLS switches.
 - Guard order: rate limit, same origin, direct loopback/no forwarding headers,
   account/RBAC, then mutation CSRF. Minimal status/login/setup still receive

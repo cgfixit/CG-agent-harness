@@ -9,7 +9,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 let persona=''; let clearFails=false;
-let authFixture=false, signedIn=false, mustChange=true, savedKey='';
+let authFixture=false, signedIn=false, mustChange=true, savedKey='', authRole='admin', authUsername='admin';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
@@ -17,17 +17,23 @@ const server=createServer(async(req,res)=>{
  const reply=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
  if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/static/')){res.end('');return;}
- if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:'admin',role:'admin',must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
+ if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
  if(path==='/api/auth/setup-status'){reply({needs_password:false});return;}
- if(path==='/api/auth/login'){signedIn=body.username==='admin'&&body.password==='admin';reply({username:'admin',role:'admin',must_change_password:true},signedIn?200:401);return;}
+ if(path==='/api/auth/login'){
+  const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
+  signedIn=auditor||(body.username==='admin'&&body.password==='admin');
+  authUsername=auditor?'audit-fixture':'admin';authRole=auditor?'audit':'admin';
+  if(auditor)mustChange=false;
+  reply({username:authUsername,role:authRole,must_change_password:mustChange},signedIn?200:401);return;
+ }
  if(path==='/api/auth/password'){assert.equal(body.current_password,'admin');assert.ok(body.password.length>=12);mustChange=false;reply({changed:true});return;}
  if(path==='/api/auth/logout'){signedIn=false;reply({logged_out:true});return;}
  if(path==='/api/keys'){
-  if(!signedIn || mustChange){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
+  if(!signedIn || mustChange || authRole!=='admin'){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
   if(req.method==='POST'){if(body.clear?.length)savedKey='';else savedKey=body.keys.DEEPAGENT_API_KEY;}
   reply({keys:[{name:'DEEPAGENT_API_KEY',label:'Planner key',detail:'Optional fixture provider',saved_configured:!!savedKey,saved_masked:savedKey?'••••••••1234':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedKey,environment_override:false}]});return;
  }
- if(path==='/api/status'&&authFixture&&(!signedIn||mustChange)){reply({version:'fixture',auth_enabled:true});return;}
+ if(path==='/api/status'&&authFixture&&(!signedIn||mustChange||authRole==='audit')){reply({version:'fixture',auth_enabled:true});return;}
  if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:0});return;}
  if(path==='/api/soul/document'){
   if(req.method==='POST'){if(!body.confirm){reply({detail:{code:'SOUL_CONFIRM',message:'Confirmation required'}},400);return;}persona=body.content;reply({saved:true,revision:'1'.repeat(64)});return;}
@@ -35,6 +41,7 @@ const server=createServer(async(req,res)=>{
  }
  if(path==='/api/prompt/preview'){reply({scope:'Chat preview',prompt:'Discipline contract\n'+(body.soul_content??persona)});return;}
  if(path==='/api/registry'){reply({skills:[],tools:[],connectors:[]});return;}
+ if(authFixture&&signedIn&&authRole==='audit'&&(path==='/api/sessions'||path.startsWith('/api/sessions/'))){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'Your role does not permit access to sessions.'}},403);return;}
  if(path==='/api/sessions/clear'){
   if(clearFails){reply({detail:{code:'HARNESS_SESSION_PERSIST_ERROR',message:'fixture storage failure'}},502);return;}
   if(!body.confirm || !body.reason?.trim()){reply({},422);return;}
@@ -132,6 +139,8 @@ try {
  const chatCount=()=>requests.filter(r=>r[1]==='/api/chat').length;
  await call('Page.navigate',{url:base});await until('typeof onSend === "function"');
  await until('document.getElementById("sSoulV").textContent === "missing"');
+ await until('document.getElementById("hAuthWho").textContent.includes("authentication disabled")');
+ assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'disabled-auth homes must not advertise a login');
  assert.ok(await evaluate('document.body.innerText.includes("Chat starts without an assigned repository")'));
  assert.equal(await evaluate('document.body.innerText.includes("agentic GitHub coding")'),false);
  await evaluate('agent("Branding fixture")');
@@ -223,10 +232,16 @@ try {
  // The real browser must execute the minimal-status login and key editor flows.
  authFixture=true;await call('Page.reload',{ignoreCache:true});
  await until('!document.getElementById("hAuthLoginBox").hidden');
+ assert.equal(await evaluate('document.getElementById("hAuthHint")?.hidden'),false,'show the fresh-install login hint before authentication');
+ assert.match(await evaluate('document.getElementById("hAuthHint").innerText'),/Default login is User: admin \/ Password: admin/);
+ assert.ok(await evaluate('document.querySelector(".logo").compareDocumentPosition(document.getElementById("hAuthHint")) & Node.DOCUMENT_POSITION_FOLLOWING'));
+ assert.ok(await evaluate('document.getElementById("hAuthHint").compareDocumentPosition(document.getElementById("harnessAuth")) & Node.DOCUMENT_POSITION_FOLLOWING'));
  await until('document.getElementById("sProvider").textContent === "sign in"');
  assert.equal(await evaluate('document.querySelector("[data-pane=registry]")'),null);
  await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("passwordDialog").open');
+ assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'hide bootstrap guidance after login');
+ assert.match(await evaluate('document.getElementById("passwordHelp").innerText'),/Replace the initial admin password/);
  await evaluate('document.getElementById("passwordCurrent").value="admin";document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');assert.equal(mustChange,false);
  await evaluate('document.querySelector("[data-pane=api-keys]").click()');
@@ -240,7 +255,22 @@ try {
  await until('document.getElementById("pane-api-keys").textContent.includes("Saved: unset")');assert.equal(savedKey,'');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(await evaluate('currentSession'),null);
- console.log(JSON.stringify({passed:true,coverage:['minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
+ assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false,'restore login guidance after logout');
+ // Authentication succeeds for an auditor even though the server denies operational sessions.
+ await evaluate('document.getElementById("hAuthUser").value="audit-fixture";document.getElementById("hAuthPass").value="browser-auditor-password";document.getElementById("hAuthLogin").click()');
+ await until('document.getElementById("pane-sessions").textContent.includes("Your role does not permit access to sessions.")');
+ assert.equal(await evaluate('document.getElementById("hAuthWho").textContent'),'audit-fixture · audit','a session permission denial must not turn successful login into a network error');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-sessions button").length'),0,'auditors must not see New Session or Clear History controls');
+ assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
+ await evaluate('document.getElementById("stream").replaceChildren()');await send('/status');
+ const auditorStatus=await evaluate('document.getElementById("stream").innerText');
+ assert.equal(auditorStatus.includes('undefined'),false,'redacted status must not render missing fields');
+ assert.match(auditorStatus,/read.only/i,'auditor status must explain its read-only scope');
+ await evaluate('document.getElementById("hAuthLogout").click()');
+ await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
+ assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
+ assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
+ console.log(JSON.stringify({passed:true,coverage:['minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

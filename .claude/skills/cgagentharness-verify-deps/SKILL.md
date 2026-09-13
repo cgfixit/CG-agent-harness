@@ -3,8 +3,8 @@ name: cgagentharness-verify-deps
 description: |
   Verify Cargo dependencies, security advisories, licenses, and locked versions for CG-Agent-Harness. Run this whenever Cargo.toml changes, after adding/updating dependencies, or before pushing security-sensitive PRs. Checks: Cargo.lock is committed and locked, cargo deny passes (advisories/licenses/bans), no unsafe code regressions, no outdated critical deps, toolchain version matches rust-toolchain.toml, and no feature flags that contradict security posture. Essential for maintaining supply-chain hygiene and reproducible builds.
 compatibility: |
-  Requires: cargo, cargo-deny (if installed), rustup, Cargo.toml and Cargo.lock in repo
-  Context: Single-crate Rust project (cgagentharness crate)
+  Requires: cargo, cargo-deny, rustup, Cargo.toml and Cargo.lock in both crates
+  Context: Independent backend and desktop Rust crates with separate toolchains and policies
 ---
 
 # Dependency verification

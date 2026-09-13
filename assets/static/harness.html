@@ -39,14 +39,16 @@
   /* ── HEADER ── */
   .header {
     background: var(--bg-secondary); border-bottom: 1px solid var(--border);
-    padding: 8px 16px; display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+    padding: 8px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; flex-shrink: 0;
   }
   .logo {
     font-family: var(--mono); font-weight: 700; font-size: 14px;
     color: var(--accent-amber); letter-spacing: 1.5px; text-transform: uppercase;
   }
   .logo span { color: var(--text-muted); font-weight: 400; }
-  .header-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .login-hint { max-width: 320px; font-size: 11px; color: var(--text-secondary); }
+  .login-hint strong { color: var(--text-primary); }
+  .header-right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   .pill {
     font-family: var(--mono); font-size: 10.5px; padding: 3px 10px;
     border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary);
@@ -172,6 +174,7 @@
 <body>
   <div class="header">
     <div class="logo">CG Agent <span>/ harness</span></div>
+    <p id="hAuthHint" class="login-hint" hidden>Default login is <strong>User: admin / Password: admin</strong><br>Fresh installs only. You will be prompted to replace it.</p>
     <div class="header-right">
       <span id="harnessAuth">
         <span id="hAuthSetup" hidden>
@@ -641,7 +644,7 @@ async function refreshStatus() {
     const s = await api('/api/status');
     $('hModel').textContent = s.model || '(unset)';
     $('hTokens').textContent = Number(s.total_tokens || 0).toLocaleString();
-    $('sProvider').textContent = s.provider || 'sign in';
+    $('sProvider').textContent = s.provider || (window.__cyclawRole === 'audit' ? 'read-only' : 'sign in');
     if (apiKeyInput) {
       apiKeyInput.placeholder = 'optional metadata key';
       apiKeyInput.title = 'Optional compatibility metadata; account login is required. Held in page memory only.';
@@ -694,6 +697,13 @@ async function refreshSessions() {
   const revision = sessionRevision;
   const pane = $('pane-sessions');
   pane.textContent = '';
+  let data;
+  try { data = await api('/api/sessions'); }
+  catch (error) {
+    if (revision === sessionRevision) pane.textContent = error.message;
+    return;
+  }
+  if (revision !== sessionRevision) return;
   const add = document.createElement('button');
   add.className = 'cmd-item';
   const plus = document.createElement('span'); plus.className = 'c'; plus.textContent = '+ new session';
@@ -708,8 +718,6 @@ async function refreshSessions() {
     $('sessionClearDialog').showModal();
   });
   pane.appendChild(clear);
-  const data = await api('/api/sessions');
-  if (revision !== sessionRevision) return;
   data.sessions.forEach(s => {
     const el = document.createElement('div');
     el.className = 'sess-item' + (s.session_id === currentSession ? ' current' : '');
@@ -1710,6 +1718,11 @@ async function runSlash(line) {
 
       case 'status': {
         const s = await api('/api/status');
+        if (s.auth_enabled && !('sessions' in s)) {
+          const access = window.__cyclawRole === 'audit' ? 'Auditor: read-only status and audit records.' : s.status || 'Sign in to view operational details.';
+          sys(table([['version', s.version], ['access', access]]));
+          break;
+        }
         sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider],
                    ['soul', s.soul_enabled ? 'on' : 'off'],
                    ['memory', s.memory_enabled ? 'on' : 'off'],
@@ -1985,6 +1998,7 @@ const hAuthLogout = document.getElementById('hAuthLogout');
 function setHarnessLogoutVisible(on) {
   if (hAuthLogout) hAuthLogout.hidden = !on;
   document.getElementById('hAuthPassword').hidden = !on;
+  $('hAuthHint').hidden = on || !hAuthLoginBox || hAuthLoginBox.hidden;
 }
 /* Both probes are bounded, matching terminal.js's refreshAuthUi. The catch
    below deliberately keeps the last-known UI on failure, but a bare fetch
@@ -2026,7 +2040,7 @@ async function refreshHarnessAuth() {
     if (hAuthSetup) hAuthSetup.hidden = true;
     if (hAuthLoginBox) hAuthLoginBox.hidden = false;
     window.__cyclawRole = null;
-    if (who) who.textContent = 'Sign in. Fresh homes start with admin / admin and require immediate password replacement.';
+    if (who) who.textContent = 'Sign in to use the harness.';
     setHarnessLogoutVisible(false);
   } catch (e) { /* keep last UI */ }
 }
@@ -2078,7 +2092,7 @@ if (hAuthLogout) {
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('usersPanelBody').replaceChildren();
-    currentSession = null; sessionRevision++; await refreshStatus();
+    currentSession = null; sessionRevision++; window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
   });
 }
@@ -2168,7 +2182,7 @@ refreshSessions().catch(() => {});
 
 sys('CG Agent Harness — local chat with optional governed coding.');
 sys('Chat starts without an assigned repository or automatic coding skills. /prompt previews context; /skill use selects optional skills.');
-sys('Type /help for commands. /skills and /tools list registered surfaces. /web is allowlist-only and off by default. /goal + /loop are chat-only (bounded chat continuation).');
+sys('Type /help for commands. /skills and /tools list registered surfaces. /web is on for fresh homes; add permitted URLs before searching. /goal + /loop are chat-only (bounded chat continuation).');
 input.focus();
 paintGoalLoop();
 </script>

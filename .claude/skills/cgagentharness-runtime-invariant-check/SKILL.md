@@ -18,7 +18,7 @@ This checks the supplied implementation; it does not authorize policy changes.
 | I6 | Server/common/LLM/shim never call pipeline code; only shim spawns the whitelisted child | `cargo test --locked --test invariant_guard` |
 | Requests | Rate, exact origin, direct loopback/no proxy, account/RBAC, mutation CSRF | `cargo test --locked --test auth_guards --test secure_portal --test security_headers` |
 | Browser arguments | Fixed check-profile names, bounded arguments, no arbitrary command; reason/confirm explicit | `cargo test --locked --test shim_and_agent_routes` |
-| Default configuration | Master/deepagent/clone-write gates false; web off; fresh auth/TLS true; quoted security switches invalid | `cargo test --locked --test invariant_guard shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
+| Default configuration | Master/deepagent/clone-write gates false; fresh auth/TLS and web settings true, empty URL allowlist; existing choices retained; quoted security switches invalid | `cargo test --locked --test invariant_guard --test common_layer` |
 | Mutation policy | Reloaded write gates, clone jail, exact edits and reviewed-tree approval before commit/push/publication | `cargo test --locked --test write_policy --test real_repo_loop` |
 | Web evidence | Exact/wildcard permission, checked DNS pinning, bounded retrieval and current-policy revocation | `cargo test --locked --test panels --test web_research` |
 | Native TLS | Owned handshake, exact certificate/origin and platform trust validation | Desktop tests plus actual native acceptance in `docs/DESKTOP_ACCEPTANCE.md` |

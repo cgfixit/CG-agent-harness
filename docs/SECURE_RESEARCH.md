@@ -1,7 +1,9 @@
 # Local HTTPS, accounts, and permitted web research
 
-Fresh homes use HTTPS and account authentication. Upgrades preserve the existing
-`config.yaml`; missing legacy auth/TLS switches remain off. To adopt the secure
+Fresh homes enable HTTPS, account authentication with role permissions, and web
+fetch/search/research. Web content still requires an explicit URL grant; its
+allowlist starts empty. Upgrades preserve the existing `config.yaml`; missing
+legacy auth/TLS switches remain off. To adopt the secure
 defaults, merge these literal booleans into the active home's existing mappings,
 then stop and restart its server:
 
@@ -27,9 +29,9 @@ access. Forwarding headers are refused; a reverse proxy is unsupported.
 ## First login and account storage
 
 Only a fresh account store creates `admin` / `admin`. That short initial password
-uses the normal scrypt hash with a narrowly scoped bootstrap exception. Sign in,
-then replace it with a password of at least 12 characters. Until replacement,
-the account can inspect its identity, change its own password, or log out; it
+uses the normal scrypt hash with a narrowly scoped bootstrap exception. Sign in;
+the login dialog then requires a replacement password of at least 12 characters.
+Until replacement, the account can inspect its identity, change its own password, or log out; it
 cannot run chat, research, coding, account administration, or key management.
 Replacement checks the current password and CSRF token and invalidates all old
 sessions. Normal administrative resets retain the ordinary password policy.
@@ -125,7 +127,6 @@ origin with `--url` when using an explicit port or an ephemeral desktop listener
 ./target/release/cgagentharness web status
 ./target/release/cgagentharness web allow 'https://example.com/docs/*' --group docs --seed https://example.com/docs/
 ./target/release/cgagentharness web allow https://example.com/robots.txt --group docs
-./target/release/cgagentharness web on
 ./target/release/cgagentharness web fetch https://example.com/docs/start
 ./target/release/cgagentharness web search 'widget_open' --group docs
 ./target/release/cgagentharness web research 'How does widget_open fail?' --group docs
@@ -176,12 +177,14 @@ injected. Current selections use `tools/web_<account-hash>_{last,context}.json`.
 
 ## Fetch, discovery and research
 
-Web starts off. In chat:
+Fresh web settings are enabled. Existing explicit true/false settings are
+preserved; absent or invalid legacy `web_enabled` fields remain off. Use `/web on`
+(or terminal `web on`) to enable a previously disabled setting. URL permission
+remains required regardless of this switch. In chat:
 
 ```text
 /web allow https://example.com/docs/* docs https://example.com/docs/
 /web allow https://example.com/robots.txt docs
-/web on
 /web search group=docs widget_open
 /web research group=docs How does widget_open fail?
 /web cancel

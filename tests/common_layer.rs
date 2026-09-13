@@ -496,6 +496,8 @@ fn home_layout_seeds_config_registry_and_skills_once() {
 
     let mut s = HarnessSettings::load(&home).unwrap();
     assert!(s.soul_enabled);
+    assert!(s.web_enabled);
+    assert!(HarnessSettings::load(&home).unwrap().web_enabled);
     s.selected_model = "m".into();
     s.port = 80; // below the floor: ignored on reload
     s.save(&home).unwrap();
@@ -504,6 +506,39 @@ fn home_layout_seeds_config_registry_and_skills_once() {
     assert_eq!(s2.port, 8790);
     std::fs::write(home.settings_path(), "[]").unwrap();
     assert_eq!(HarnessSettings::load(&home).unwrap_err().code, "HARNESS_CONFIG_ERROR");
+}
+
+#[test]
+fn existing_web_settings_preserve_choices_and_keep_legacy_values_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::at(dir.path().join("h"));
+    home.ensure_layout().unwrap();
+    let mut settings = HarnessSettings::load(&home).unwrap();
+    settings.web_enabled = false;
+    settings.save(&home).unwrap();
+    assert!(!HarnessSettings::load(&home).unwrap().web_enabled);
+
+    for value in [
+        json!({}),
+        json!({"web_enabled": false}),
+        json!({"web_enabled": "true"}),
+        json!({"web_enabled": 1}),
+        json!({"web_enabled": null}),
+        json!({"web_enabled": []}),
+        json!({"web_enabled": {}}),
+        json!({"web_enabled": true}),
+    ] {
+        let text = value.to_string();
+        std::fs::write(home.settings_path(), &text).unwrap();
+        let loaded = HarnessSettings::load(&home).unwrap();
+        assert_eq!(loaded.web_enabled, value["web_enabled"] == true, "{value}");
+        assert_eq!(std::fs::read_to_string(home.settings_path()).unwrap(), text);
+    }
+    assert!(
+        !serde_json::from_value::<HarnessSettings>(json!({}))
+            .unwrap()
+            .web_enabled
+    );
 }
 
 #[test]

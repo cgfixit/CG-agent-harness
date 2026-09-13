@@ -1,5 +1,53 @@
 # Desktop acceptance
 
+## Fresh-install defaults and native role checks (2026-09-12)
+
+Tested `codex/fresh-install-defaults`, based on merged main `a93006d`, on
+Apple Silicon / macOS 26.6.2 through native Computer Use and WKWebView. The
+initial development bundle was universal; the auditor UI corrections were
+rebuilt and tested in an arm64 development bundle. These observations precede
+the final documentation sync and clean universal package; the PR records final
+committed source, bundle verification and CI separately.
+
+| Native operation | Observed result |
+|---|---|
+| Fresh launch with unedited shipped config | HTTPS console opens; login hint follows HARNESS and precedes authentication controls |
+| `admin` / `admin` | Login opens the password dialog automatically; closing it still leaves `/web` refused with `AUTH_PASSWORD_CHANGE_REQUIRED` |
+| Password replacement | Saving a replacement through the native form unlocks operations; the hint hides; a separately changed operator password works after app restart |
+| Fresh web settings | Enabled without editing config; empty URL policy refuses search; no source is granted automatically |
+| Administrator | Creates operator and auditor accounts, opens API Keys, and grants an exact public URL |
+| Portal operator | Local chat and permitted fetch succeed; Users, API Keys and URL-policy changes are refused |
+| Auditor | Login retains the correct account identity; Sessions shows permission denial without mutation controls; `/status` explains read-only access; chat, web, Users and API Keys are refused |
+| Logout | Private transcript/panels clear, the login hint returns, and status returns to “sign in” |
+| Transport and persistence | Owned loopback HTTPS works without a trust interstitial; certificate bytes and account data are retained across restart; no certificate is installed into system trust |
+
+The installed `qwen3.8:27b-mlx` returned exactly `pong` for operator chat
+(896 prompt + 1 completion tokens). An explicit permitted fetch of the Rust
+Book installation page produced 5,967 extracted characters; passage search
+returned that source. A subsequent research question about checking the compiler
+version answered `rustc --version` with quote references and stated limitations.
+That cached-evidence run reported 1,214 prompt + 256 completion tokens, one
+synthesis call and zero additional content requests. This is a single functional
+sample, not a retrieval benchmark or evidence of general answer accuracy.
+
+Native testing exposed a successful auditor login being mislabeled as a network
+failure when its session-list refresh was denied. The shared refresh now reports
+that denial inside Sessions; redacted status no longer renders missing fields.
+The 31-flow real-Chrome fixture independently covers this regression and logout.
+The packaged-backend suite also checks fresh HTTPS/login/password replacement,
+enabled web and empty-policy refusal for fetch, search and research.
+
+A disposable home under Documents stalled on a filesystem open during a native
+restart. Copying the same fixture outside Documents allowed immediate launch,
+consistent with macOS file-access controls. The operator home was untouched.
+Use an accessible separate home for acceptance; do not weaken system privacy or
+the application sandbox to make a test pass.
+
+This pass does not certify native Intel hardware or older macOS interaction,
+Developer ID signing/notarization, external-browser trust setup, live cloud
+providers, or every coding/file-chooser/active-job-quit interaction. Earlier
+records below retain their own source and acceptance limits.
+
 ## Secure portal development acceptance (2026-09-12)
 
 The `codex/secure-web-research-auth-tls` implementation based on `44a205e`
