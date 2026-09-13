@@ -103,7 +103,9 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   # The template itself says "invariant" in its headings and checklist, so
   # only contributor-written lines (those not copied verbatim from the
   # template) can satisfy the statement requirement.
-  # Only the "Invariant / Governance Impact" section counts, after folding
+  # Only the "Invariant / Governance Impact" section counts (its heading must
+  # start the line, so prose that merely mentions the phrase is not a
+  # heading), after folding
   # `- [x]` to `- [ ]` and collapsing whitespace on both sides. Lines copied
   # from the template are dropped; on the heading line itself the template's
   # own words are removed and at least eight characters must remain, so a
@@ -124,7 +126,7 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
       NR == FNR { tmpl[$0] = 1; next }
       {
         line = $0; low = tolower(line)
-        heading = (low ~ /invariant \/ governance impact/)
+        heading = (low ~ /^[#*_ ]*invariant \/ governance impact/)
         if (!insec) { if (heading) { insec = 1; seen = 1 } else { if (!(line in tmpl) && low ~ /invariant/) other[n++] = line; next } }
         else if (line ~ /^(---|#)/) { insec = 0; next }
         if (line in tmpl) next

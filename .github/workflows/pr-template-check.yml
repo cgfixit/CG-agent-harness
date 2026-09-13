@@ -79,7 +79,9 @@ jobs:
             // The template itself says "invariant" in its headings and checklist, so
             // only contributor-written lines (not copied verbatim from the template)
             // can satisfy the statement requirement. Mirrors scripts/check-pr-template.sh.
-            // Only the "Invariant / Governance Impact" section counts, after folding
+            // Only the "Invariant / Governance Impact" section counts (its heading must
+            // start the line, so prose that merely mentions the phrase is not a
+            // heading), after folding
             // `- [x]` to `- [ ]` and collapsing whitespace on both sides. Lines copied
             // from the template are dropped; on the heading line itself the template's
             // own words are removed and at least eight characters must remain, so a
@@ -101,7 +103,7 @@ jobs:
             let insec = false, seen = false;
             for (const line of body.split(/\r?\n/).map(foldBoxes)) {
               const low = line.toLowerCase();
-              const heading = /invariant \/ governance impact/.test(low);
+              const heading = /^[#*_ ]*invariant \/ governance impact/.test(low);
               if (!insec) {
                 if (heading) { insec = true; seen = true; }
                 else { if (!templateLines.has(line) && /invariant/.test(low)) other.push(line); continue; }
