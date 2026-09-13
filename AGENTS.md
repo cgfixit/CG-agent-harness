@@ -25,6 +25,9 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   400/502/504 and the disabled-layer banner to 409.
 - Home: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`). Never write outside it
   except into a clone the pipeline itself made under `data/agentic/workspaces`.
+- Local planner `=== READ ===` and operator `--read-file` refuse a small
+  default basename deny-list (`agentic.deepagent_github.denied_read_basenames`)
+  after clone-jail canonicalization. Deny-list ≠ secret scanner; jail ≠ secrets.
 
 ## Traps
 

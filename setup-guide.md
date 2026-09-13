@@ -934,7 +934,7 @@ The `/agent` family operates the separate coding workflow:
 | `/agent iterations <n>` or `clear` | Set a staged iteration cap from 1–10, or restore the configured default |
 | `/agent pr <number>` or `/agent issue <number>`; `clear` | Select one context source; choosing one clears the other |
 | `/agent plan` or `/agent plan clear` | Open a file chooser for a supplied plan, or clear it; does not generate a plan |
-| `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage up to 8 bounded file-context declarations, or clear them. A local planner may later emit `=== READ path ===` (cap 6, next iteration, same jail); that is not a slash command. A cloud planner refuses model-requested reads. |
+| `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage up to 8 bounded file-context declarations, or clear them. A local planner may later emit `=== READ path ===` (cap 6, next iteration, same jail + basename deny-list); that is not a slash command. Denied basenames (`.env`, keys, credentials, …) refuse operator and model READ alike. A cloud planner refuses model-requested reads. The deny-list is not a secret scanner; the jail is not a secrets control. |
 | `/agent cancel` | Clear the staged request; does not stop an already submitted job |
 | `/agent confirm <reason>` | Explicitly submit the staged request through the execution gates |
 | `/agent jobs`, `/agent job <id>`, `/agent stop <id>` | List, inspect or request cancellation of retained jobs |
@@ -1242,12 +1242,16 @@ Back in the app or browser console:
    emit `=== READ path ===` or `=== READ path#Lstart-Lend ===`. Those lines
    are stripped before proposal parsing, jailed like operator `--read-file`
    values, capped at 6 accepted model selectors per run, and shown on the
-   **next** iteration only. They are data, not commands, and do not bypass
-   confirm, reason, or write gates. Operator-declared paths are never
-   replaced. A **cloud** planner refuses every model-requested read so
-   undeclared files are not sent off-machine — pre-stage what that run may
-   see here. An unclosed `=== FILE ===` / `=== EDITS ===` block in the model
-   reply leaves later READ lines in the body instead of extracting them.
+   **next** iteration only. After canonicalization, denied basenames
+   (`agentic.deepagent_github.denied_read_basenames`) refuse both model READ
+   and operator `--read-file` (`sensitive_basename`). They are data, not
+   commands, and do not bypass confirm, reason, or write gates. The deny-list
+   is not a secret scanner; the clone jail is not a secrets control.
+   Operator-declared paths are never replaced. A **cloud** planner refuses
+   every model-requested read so undeclared files are not sent off-machine —
+   pre-stage what that run may see here. An unclosed `=== FILE ===` /
+   `=== EDITS ===` block in the model reply leaves later READ lines in the
+   body instead of extracting them.
 4. `/agent confirm <reason>` submits a job and returns its ID immediately.
 5. `/agent job <job-id>` resumes monitoring after refresh and account login; the optional harness key may stay empty.
 6. `/agent status <run-id>` displays the candidate and complete diff. A truncated
@@ -1455,7 +1459,7 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain v0.1.4 or later, or a successful main Bundle artifact containing the required source |
-| Local coding loop never fetches a file the planner asked for | Cloud planner is in use, the selector failed the clone jail, the per-run model-read cap (6) was hit, or an unclosed FILE/EDITS block swallowed the `=== READ ===` line | Pre-stage needed files with `/agent read`. Cloud runs refuse model-requested reads on purpose. Local refusals are audit-logged as `agentic_real_repo_read_request_refused`. |
+| Local coding loop never fetches a file the planner asked for | Cloud planner is in use, the selector failed the clone jail, the basename is on `denied_read_basenames` (`.env`, keys, credentials, …), the per-run model-read cap (6) was hit, or an unclosed FILE/EDITS block swallowed the `=== READ ===` line | Pre-stage needed ordinary files with `/agent read`. Denied basenames refuse operator and model READ alike (`sensitive_basename`). Cloud runs refuse every model-requested read. Local refusals are audit-logged as `agentic_real_repo_read_request_refused`. The deny-list is not a secret scanner; the jail is not a secrets control. |
 | New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona and your account's web selection are still included | Verify the running bundle includes `71eef11` or later; inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
 | Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify the app includes the capability-guide fix at `71eef11` or later |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |

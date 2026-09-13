@@ -148,6 +148,18 @@ with `O_NOFOLLOW` (unix). 256 KB cap, UTF-8 required.
   carried as a documented residual: capability-based resolution has no window
   to race, because there is never a bare path handed to the OS a second time.
 
+Clone jail ≠ secrets. After a selector canonicalizes inside the jail, local
+planner `=== READ ===` requests and operator `--read-file` values are refused
+when the final path segment matches `agentic.deepagent_github.denied_read_basenames`
+(name-equivalence folded; audit `agentic_real_repo_read_request_refused` /
+`sensitive_basename`). Cloud proposers still refuse every model-requested read
+(`cloud_proposer`). The deny-list is not a secret scanner: secrets can use
+arbitrary names, and hiding a basename from the next prompt does not remediate
+repository history.
+
+- Locked by: `src/agentic/real_repo_loop.rs` (`denied_read_basename`,
+  `apply_model_read_request`) and `tests/real_repo_loop.rs`.
+
 ## Nothing lands before it is judged
 
 Every proposed file is injection-scanned and code-shape-scanned, scope-checked

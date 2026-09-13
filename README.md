@@ -303,10 +303,16 @@ whole file. A typical console sequence is:
    `--read-file` values, capped at 6 accepted model selectors per run
    (`MAX_MODEL_READ_REQUESTS`), and shown on the **next** iteration only. They
    are data, not commands: they do not bypass confirm, reason, or write gates.
-   Operator-declared paths are never replaced. A **cloud** planner refuses every
-   model-requested read so undeclared files are not sent off-machine — pre-stage
-   what that run may see with `/agent read`. Accepted and refused selectors are
-   audit-logged (`agentic_real_repo_read_request` /
+   After canonicalization, a conservative basename deny-list
+   (`agentic.deepagent_github.denied_read_basenames`: `.env` / `.env.*`,
+   `*.pem`, private-key names, `credentials*`, `.npmrc`, `.netrc`, `*.p12`)
+   refuses both model READ and operator `--read-file` / `/agent read` of those
+   names (`sensitive_basename`). The deny-list is not a secret scanner; the
+   clone jail is not a secrets control. Operator-declared paths are never
+   replaced. A **cloud** planner refuses every model-requested read so
+   undeclared files are not sent off-machine — pre-stage what that run may see
+   with `/agent read`. Accepted and refused selectors are audit-logged
+   (`agentic_real_repo_read_request` /
    `agentic_real_repo_read_request_refused`).
 3. `/agent status <run-id>` prints the run record and its diff. Approval is bound
    to the reviewed files, modes, and base commit.
@@ -361,8 +367,10 @@ caps each file at `MAX_READ_FILE_CHARS` (4,000 chars), caps the aggregate at
 and an explicit `#L10-L40` selector sends only that window — plus any GitHub
 PR/issue text pulled into session context. A cloud planner never expands that
 read set from model `=== READ ===` output (`apply_model_read_request` refuses
-with `cloud_proposer`); requested reads displace rather than accumulate under
-the same char budgets on a local planner. `CloudProposerClient::invoke`
+with `cloud_proposer`); a local planner still refuses denied basenames
+(`sensitive_basename`) after the jail. Requested reads displace rather than
+accumulate under the same char budgets on a local planner.
+`CloudProposerClient::invoke`
 passes that assembled prompt through `sanitize_handoff` — an injection scan
 and secret-pattern redaction pass, `policy.privacy.redact_secrets_like` — and
 then sends it to the selected provider's API (`api.x.ai` or
@@ -446,7 +454,8 @@ injection, edit-budget and protected-path decisions, and
 size before staging, with exact-content binding on each edit.
 `deepagent_github.protected_write_paths` is a refusal list — a candidate
 touching one of those destinations is rejected — not a scope that edits must
-stay inside. `writer.rs` is a different gate: it guards the single executable
+stay inside. `deepagent_github.denied_read_basenames` is a separate READ
+deny-list (not a secret scanner; jail ≠ secrets). `writer.rs` is a different gate: it guards the single executable
 GitHub write op (`gh pr create`, always `--draft`). Quoted YAML `"true"` does
 not enable a gate.
 
