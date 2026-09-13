@@ -85,7 +85,8 @@ jobs:
             // `- [x]` to `- [ ]` and collapsing whitespace on both sides. Lines copied
             // from the template are dropped; on the heading line itself the template's
             // own words are removed and at least eight characters must remain, so a
-            // concise statement on that line passes while a reworded heading does not.
+            // concise statement on that line passes while a reworded heading does not;
+            // only that remainder (never the heading's own "Invariant") is judged.
             // Without that heading, any non-template line mentioning an invariant
             // counts. Mirrors scripts/check-pr-template.sh. The template is required:
             // without it boilerplate cannot be told apart, so a fetch failure fails.
@@ -111,8 +112,8 @@ jobs:
               if (templateLines.has(line)) continue;
               if (heading) {
                 const r = low.replace(/invariant \/ governance impact/g, "")
-                  .replace(/\(required for any change touching core paths\):?/g, "").replace(/[*: ]+/g, "");
-                if (r.length >= 8) contributed.push(line);
+                  .replace(/\(required for any change touching core paths\):?/g, "");
+                if (r.replace(/[*: ]+/g, "").length >= 8) contributed.push(r);
               } else contributed.push(line);
             }
             // The statement must name a guarantee from INVARIANTS.md (or say none),

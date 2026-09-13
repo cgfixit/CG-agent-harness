@@ -109,7 +109,8 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   # `- [x]` to `- [ ]` and collapsing whitespace on both sides. Lines copied
   # from the template are dropped; on the heading line itself the template's
   # own words are removed and at least eight characters must remain, so a
-  # concise statement on that line passes while a reworded heading does not.
+  # concise statement on that line passes while a reworded heading does not;
+  # only that remainder (never the heading's own "Invariant") is judged.
   # Without that heading, any non-template line mentioning an invariant
   # counts. Light edits inside the template's instruction text are not
   # detected; a reviewer reads the section either way.
@@ -134,8 +135,8 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
           r = low
           gsub(/invariant \/ governance impact/, "", r)
           gsub(/\(required for any change touching core paths\):?/, "", r)
-          gsub(/[*: ]+/, "", r)
-          if (length(r) >= 8) print line
+          s = r; gsub(/[*: ]+/, "", s)
+          if (length(s) >= 8) print r
         } else print line
       }
       END { if (!seen) for (i = 0; i < n; i++) print other[i] }
