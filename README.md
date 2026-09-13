@@ -5,9 +5,10 @@
 
 ![CG Agent Harness running on macOS](assets/app-ss.png)
 
-A local agentic harness for **coding, chat, and controlled tool use**. Work with a
-local model, keep session goals and context, and take repository changes through a
-bounded plan → edit → check → feedback loop before reviewing and publishing them.
+A local harness for **chat, permitted web research, and reviewed coding**. Keep
+conversations and working context with a local model, retrieve evidence from
+sources you authorize, and take repository changes through a bounded
+plan → edit → check → feedback loop before reviewing and publishing them.
 
 Use the universal macOS app or run the Rust backend in a browser. Chat is served
 only by an OpenAI-compatible **loopback** model server; a non-loopback chat
@@ -31,16 +32,26 @@ from a model reply. Coding execution is separately staged and confirmed.
 remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
 
-**Version scope:** this document describes this source tree, including secure
-web research, SQLite accounts and native HTTPS. These changes are absent from
-the September 12 `v0.1.7` release. Until merged and released, build this branch or
-use its verified PR artifact. Check the selected workflow SHA and the app's
-`Contents/Resources/COMMIT`; a release tag or the Cargo package version `0.1.0`
-alone does not establish feature availability. See [setup](setup-guide.md) for
+**Version scope:** secure web research, SQLite accounts, API Keys and native
+HTTPS merged into `main` through [PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76)
+at `a93006d`. The September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
+targets `44a205e` and predates them. This source also enables fresh web settings
+and adds the login hint and clearer role feedback. Use a source build or successful
+Bundle artifact containing the desired changes; a PR artifact remains a candidate
+until merged. Check the workflow SHA and app's `Contents/Resources/COMMIT`; the
+Cargo package version `0.1.0` alone does not establish feature availability. See [setup](setup-guide.md) for
 upgrade and recovery, and [verification](docs/SECURE_RESEARCH.md#reproducible-evidence)
 for the acceptance boundaries.
 
 ## What you can do
+
+- Discuss supplied code or documents, save a session goal and revisit the
+  conversation with its selected prompt context.
+- Grant a documentation URL, fetch or search it, and ask `/web research` for a
+  local-model answer with checked quote references and reported coverage. Use
+  `/web inject` to include selected evidence in later chat.
+- Stage a bounded repository change, inspect the proposed diff and checks, then
+  separately approve a commit, push and draft PR when ready.
 
 | Capability | How it works |
 |---|---|
@@ -49,7 +60,7 @@ for the acceptance boundaries.
 | Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
-| Web research | Enable exact/wildcard URL permission, bounded discovery and BM25 passage search; run `/web research` for local-model answers with verified quote references, usage and partial coverage. Web access ships off; selection/injection is account scoped. |
+| Web research | Grant exact/wildcard URL permission for bounded discovery and BM25 passage search; run `/web research` for local-model answers with verified quote references, usage and partial coverage. Fresh web settings are enabled with an empty URL allowlist; selection/injection is account scoped. |
 | Accounts and API Keys | Fresh `admin` / `admin` requires password replacement. Administrator, Portal operator and Auditor permissions are enforced on API reads and writes. Administrators manage masked saved/active credentials in API Keys. |
 | Coding loop | Stage a repository task and inspect files or a plan; confirm an isolated run that proposes bounded edits, runs fixed check profiles in a hard sandbox, and feeds check results back into later attempts. |
 | Review and publication | Inspect retained run status and diffs, approve the reviewed tree for a local commit, then separately push and publish a draft PR with a reviewed repository template. |
@@ -71,6 +82,11 @@ run on `main`; extract the outer Actions archive first. Verify the inner ZIP wit
 `shasum -a 256 -c SHA256SUMS`, extract it, then open **CG Agent Harness.app** from
 Finder, Applications, or the Dock. The app owns a bundled backend on an ephemeral
 loopback port; ordinary launch needs no Terminal, external browser, Rust, or Python.
+Fresh login, roles, TLS and web controls need no config-file edit. An installed
+`qwen3.8:27b-mlx` on the default loopback model service works with the shipped
+selection; otherwise use `/model list` and `/model use <exact-tag>` for chat.
+Check the home shown in the console footer or Setup before comparing app copies:
+source revision identifies the program, while its home holds accounts and data.
 
 To build the app from source on macOS:
 
@@ -349,14 +365,23 @@ provider as authorizing repository-content egress for every subsequent
 
 ## Optional credentials and enforced boundaries
 
-Fresh homes set `auth.enabled: true` and `tls.enabled: true`. Sign in with
-`admin` / `admin`, then replace the password before using the portal. Account
-roles protect all operational routes, including reads. Secure cookies, same-origin,
+Fresh homes enable account authentication, role permissions, HTTPS and web
+fetch/search/research without editing configuration. Sign in with `admin` /
+`admin`; the header shows this fresh-install hint between HARNESS and the
+authentication controls. The password replacement dialog opens automatically
+after initial login and requires a new password before portal use.
+The web URL allowlist starts empty: add permitted sources with `/web allow`
+before fetching or searching. Account roles protect all operational routes,
+including reads. The account bar displays the role; an Auditor sees a Sessions
+permission refusal and a minimal read-only `/status`, not operational records.
+Secure cookies, same-origin,
 CSRF, rate limits and every existing coding/write/publication gate remain enforced.
 The harness API key is optional metadata and never grants account access. The old
 key-required setting is deprecated. Forwarded/proxy connections are refused.
 
-Existing homes keep their configuration. Valid legacy accounts migrate to private
+Existing homes keep their configuration and explicit web setting; absent or
+invalid legacy `web_enabled` fields remain off. Use `/web on` to enable a
+previously disabled web setting. Valid legacy accounts migrate to private
 transactional SQLite, retaining hashes and permissions; initialized missing or
 corrupt stores fail closed. Research is account scoped; chat sessions, jobs, notes
 and persona remain shared portal resources. See [secure research and migration](docs/SECURE_RESEARCH.md)

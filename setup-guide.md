@@ -3,7 +3,11 @@
 CG Agent Harness runs either as a universal macOS app or as a standalone
 Rust server with a browser console. This guide covers both paths, optional
 credentials, local model selection, persistent work and the governed coding
-pipeline. See [README.md](README.md) for the overview and
+pipeline. Use it to keep local-model conversations and goals, research permitted
+public documentation with cited evidence, or stage a repository change for
+bounded checks and human review. The app owns its backend and keeps account and
+work data outside the bundle, so replacing the app does not replace that data.
+See [README.md](README.md) for the overview and
 [desktop details](docs/DESKTOP.md) for the app's architecture and limits.
 
 **Loopback-only** means the server listens on a local address such as
@@ -12,14 +16,17 @@ has no outbound network access. The **console** is the same interface in the
 app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
-**Version scope:** this guide follows this source tree. The September 12
-[v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
-predates the HTTPS, SQLite account, permitted research and API Keys changes
-described here. Until those changes merge and ship, use a source build or a
-successful PR Bundle artifact containing them. The Cargo package version remains
+**Version scope:** this guide follows this source tree. HTTPS, SQLite accounts,
+permitted research and API Keys merged into `main` through
+[PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76) at `a93006d`. The
+September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
+targets `44a205e` and predates those features. This source additionally enables
+fresh web settings and provides the login hint and role feedback described below.
+Use a source build or successful Bundle artifact containing the desired changes;
+a PR artifact remains a candidate until merged. The Cargo package version remains
 `0.1.0`; identify the installed source using `Contents/Resources/COMMIT`, the
 workflow SHA, release notes and `/help`. Earlier acceptance records retain their
-dated results and do not certify these new boundaries.
+dated results and do not certify a different source or bundle.
 
 ## Quick route through this guide
 
@@ -380,8 +387,11 @@ successful build do not prove native interaction acceptance; see
 
 ## 6. First run
 
-Fresh homes require account login over HTTPS; no harness API key is required. For the app,
-open it from Finder. For the standalone path, start the server:
+Fresh homes enable account login, role permissions, HTTPS and web
+fetch/search/research automatically; no harness API key or configuration edit
+is required for those features. Web starts with an empty URL allowlist, so an
+administrator must grant sources through `/web allow` before content reads. For
+the app, open it from Finder. For the standalone path, start the server:
 
 ```bash
 ./target/release/cgagentharness serve
@@ -389,8 +399,11 @@ open it from Finder. For the standalone path, start the server:
 
 Existing settings are preserved on upgrade. Merge `auth.enabled: true` and
 `tls.enabled: true` into the active configuration to adopt the new boundaries.
-Sign in as `admin` / `admin` on a fresh account store and replace the password
-immediately. See [TLS trust, migration and recovery](docs/SECURE_RESEARCH.md).
+The fresh-install login hint appears between HARNESS and the authentication
+controls. Sign in as `admin` / `admin` on a fresh account store; the password
+replacement dialog opens automatically and requires a new password before
+portal use. See
+[TLS trust, migration and recovery](docs/SECURE_RESEARCH.md).
 
 The standalone server prints its address, for example:
 
@@ -398,22 +411,29 @@ The standalone server prints its address, for example:
 CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarness)
 ```
 
-On first run either path seeds the application home. Before the first chat,
-quit the app with Cmd-Q or stop `serve` with Ctrl-C. Open that home's `config.yaml`
-and merge your exact installed
-model into these existing fields (do not duplicate the YAML mappings):
+On first run either path seeds the application home. If the configured loopback
+service already has the shipped `qwen3.8:27b-mlx` tag, chat needs no model-config
+edit. Use `/model list` to inspect available tags and `/model use <exact-tag>` to
+select another installed chat model. The harness never downloads a missing tag.
+
+Only if the model endpoint needs changing, or you intend to configure the optional
+coding planner, quit with Cmd-Q or stop `serve` with Ctrl-C and update the active
+home's `config.yaml`. Merge the exact installed tag into the applicable existing
+fields (do not duplicate YAML mappings):
 
 ```yaml
 models:
   local_llm:
-    model: "qwen3.8:27b"       # replace with your exact installed tag
+    model: "qwen3.8:27b-mlx"   # chat default; use the exact installed tag
 agentic:
   deepagent_github:
-    model: "qwen3.8:27b"       # same selected tag; writes remain disarmed
+    model: "qwen3.8:27b-mlx"   # optional planner; writes remain disarmed
 ```
 
-Relaunch the app or restart the same `serve` command. Existing homes are not overwritten with new
-configuration defaults; review new fields when upgrading. A missing `soul.md` is a valid starting state; section 7.2 explains optional
+Restart only after editing configuration; `/model use` applies to chat without
+a restart and does not change the coding planner. Existing homes are not
+overwritten with new configuration defaults; review new fields when upgrading.
+A missing `soul.md` is a valid starting state; section 7.2 explains optional
 explicit creation.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
@@ -753,14 +773,16 @@ context, and use actual command results to establish runtime facts.
 
 ### 7.6 Web fetch, search and injected context
 
-Web ships off and requires explicit current public URL permission. Administrators
-manage versioned exact URLs, explicit host/path wildcards, source groups and
-crawl seeds through `/web allow` and the authenticated terminal `web` commands.
+Fresh web settings are enabled and require explicit current public URL permission.
+The URL allowlist starts empty. Existing true/false choices are preserved, while
+absent or invalid legacy `web_enabled` fields remain off; `/web on` enables a
+previously disabled setting. Administrators manage versioned exact URLs, explicit
+host/path wildcards, source groups and crawl seeds through `/web allow` and the
+authenticated terminal `web` commands.
 
 ```text
 /web allow https://example.com/docs/* docs https://example.com/docs/
 /web allow https://example.com/robots.txt docs
-/web on
 /web search group=docs widget_open
 /web research group=docs How does widget_open fail?
 /web cancel
@@ -1029,11 +1051,15 @@ candidate_home="$(mktemp -d /private/tmp/cgah-candidate.XXXXXX)"
 open -n --env "CGAGENTHARNESS_HOME=$candidate_home" '/Applications/CG Agent Harness.app'
 ```
 
-Use Setup to confirm this home, then configure its exact model and keep write
-gates disarmed unless performing a deliberate disposable coding test. It will
+Use the console footer or Setup to confirm this home, check the selected model,
+and keep write gates disarmed unless performing a deliberate disposable coding test. It will
 start without your normal sessions, optional skills, credentials or soul. An
-ordinary Finder launch later uses its normal environment/home. Do not change
-`HOME` to point at a test directory.
+ordinary Finder launch later uses its normal environment/home. A deliberately
+prepared local app copy can retain a separate absolute home through its per-copy
+launch environment; that local customization does not change the published app's
+`~/.CGagentHarness` default. A different app source and a different data home are
+separate choices: record both when comparing versions. Do not change `HOME` to
+point at a test directory.
 
 ### Release cadence and finding updates
 
@@ -1247,6 +1273,11 @@ migration, shared resources, last-admin protection and recovery](docs/SECURE_RES
 | Portal operator (`operator`) | Same permitted operational resources and coding gates | Own password/logout only |
 | Auditor (`audit`) | Minimal status and designated redacted audit entries | Own password/logout only; no chat/research/jobs |
 
+The account bar displays the signed-in role. An Auditor sees a permission refusal
+in **Sessions** and a read-only `/status` with minimal details; chat, web, users
+and API Keys remain unavailable to that role. This presentation does not grant
+additional backend permissions.
+
 Use **change password** in the account bar and provide the current password.
 An administrator creates users through **USERS** and can reset another user's
 password. Resets, role changes, disabling and deletion revoke that user's sessions.
@@ -1303,7 +1334,8 @@ The disposable home avoids colliding with a running app's home lock. Use a uniqu
 `--port` if a leftover `serve` already owns `:8790`. This is the
 same invocation as [README](README.md#tests-and-cicd): formatting, Clippy with
 warnings denied, tests (planner keys blanked), and a release build.
-`scripts/verify-local.sh` does not pass `--locked` or `CARGO_NET_OFFLINE`.
+`scripts/verify-local.sh` uses `--locked` for its release build; its Clippy and
+test invocations are not locked, and it does not set `CARGO_NET_OFFLINE`.
 It runs cargo-deny only when installed; record a skipped audit and run the
 dependency policy separately when needed. Tests include required native Cargo sandbox and process tests.
 An outer tool sandbox can prevent nested Seatbelt; run native acceptance from

@@ -44,7 +44,7 @@ api:
     window_seconds: 300
     max_tokens: 2048
 
-# Bounded public content reads; harness.json keeps web_enabled false initially.
+# Bounded public content reads; fresh harness.json enables web with an empty URL allowlist.
 # Missing values in existing homes use these defaults; invalid values fail boot.
 web:
   response_bytes: 262144 # 1024–1048576; compressed bodies refused

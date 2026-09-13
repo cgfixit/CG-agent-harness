@@ -322,7 +322,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 38] = [
         "/web",
         "GET",
         "/api/web",
-        "allowlist-only web fetch (off until /web on)",
+        "allowlist-only web fetch; explicit URL permission required",
     ),
     (
         "web-fetch",

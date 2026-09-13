@@ -372,20 +372,28 @@ async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
     opts.web_resolve = Some(("docs.example".to_string(), page));
     let s = spawn_server(&model.base_url(), opts).await;
     let host_port = format!("docs.example:{}", page.port());
-    // Off by default; fail-closed on empty allowlist.
+    // Enabled on a fresh home, but no URL can be fetched without a grant.
+    let (status, body) = s.get_json("/api/web").await;
+    assert_eq!(status, 200);
+    assert_eq!(body["enabled"], true);
+    for (path, request) in [
+        ("/api/web/fetch", json!({"url": format!("http://{host_port}/")})),
+        ("/api/web/search", json!({"query": "docs"})),
+        ("/api/web/research", json!({"query": "What do the docs say?"})),
+    ] {
+        let (status, body) = s.post_json(path, request).await;
+        assert_eq!(status, 409, "{path}: {body}");
+        assert_eq!(code(&body), "WEB_ALLOWLIST_EMPTY", "{path}: {body}");
+    }
+    let (status, body) = s.post_json("/api/web", json!({"enabled": false})).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["enabled"], false);
     let (status, body) = s
         .post_json("/api/web/fetch", json!({"url": format!("http://{host_port}/")}))
         .await;
     assert_eq!(status, 409);
     assert_eq!(code(&body), "WEB_DISABLED");
-    let (status, body) = s.post_json("/api/web", json!({"enabled": true})).await;
-    assert_eq!(status, 200);
-    assert_eq!(body["enabled"], true);
-    let (status, body) = s
-        .post_json("/api/web/fetch", json!({"url": format!("http://{host_port}/")}))
-        .await;
-    assert_eq!(status, 409);
-    assert_eq!(code(&body), "WEB_ALLOWLIST_EMPTY");
+    assert_eq!(s.post_json("/api/web", json!({"enabled": true})).await.0, 200);
     // SSRF refusals at allow time.
     for bad in [
         "http://127.0.0.1/",

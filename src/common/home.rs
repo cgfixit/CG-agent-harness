@@ -200,6 +200,7 @@ pub struct HarnessSettings {
     pub soul_enabled: bool,
     #[serde(default)]
     pub selected_model: String,
+    // Missing legacy fields remain off; Default seeds new settings enabled.
     #[serde(default)]
     pub web_enabled: bool,
     #[serde(default)]
@@ -220,7 +221,7 @@ impl Default for HarnessSettings {
         Self {
             soul_enabled: true,
             selected_model: String::new(),
-            web_enabled: false,
+            web_enabled: true,
             memory_enabled: false,
             port: DEFAULT_PORT,
         }
@@ -250,9 +251,8 @@ impl HarnessSettings {
         if let Some(m) = value.get("selected_model").and_then(|v| v.as_str()) {
             s.selected_model = m.to_string();
         }
-        if let Some(b) = value.get("web_enabled").and_then(|v| v.as_bool()) {
-            s.web_enabled = b;
-        }
+        // Retain existing choices and fail closed for absent or malformed legacy values.
+        s.web_enabled = value.get("web_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
         if let Some(b) = value.get("memory_enabled").and_then(|v| v.as_bool()) {
             s.memory_enabled = b;
         }

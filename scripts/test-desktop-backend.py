@@ -351,6 +351,17 @@ class DesktopBoundary(unittest.TestCase):
         self.assertEqual(child.request('/api/keys', headers)[0], 401)
         headers = child.authorize()
         self.assertEqual(child.request('/api/keys', headers)[0], 200)
+        status, body, _ = child.request('/api/web', headers)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)['enabled'])
+        for path, request in [
+            ('/api/web/fetch', {'url': 'https://example.com/'}),
+            ('/api/web/search', {'query': 'fixture'}),
+            ('/api/web/research', {'query': 'What does the fixture say?'}),
+        ]:
+            status, body, _ = child.request(path, headers, request)
+            self.assertEqual(status, 409)
+            self.assertEqual(json.loads(body)['detail']['code'], 'WEB_ALLOWLIST_EMPTY')
         self.assertEqual(child.request('/api/memory/add', headers, {"text":"authenticated fixture note"})[0], 200)
         self.assertEqual(child.request('/api/keys')[0], 401)
         self.assertEqual(child.request('/api/keys', {**headers, "Origin":"https://unapproved.invalid"})[0], 403)

@@ -1,25 +1,39 @@
 # CG Agent Harness for macOS
 
-The Apple Silicon desktop app opens the existing harness console in a native
-WKWebView and owns its bundled Rust backend. Ordinary launch needs no Terminal,
+The universal macOS app (Apple Silicon and Intel) opens the harness console in
+a native WKWebView and owns its bundled Rust backend. Ordinary launch needs no Terminal,
 external browser, frontend server, Rust or Python. Coding checks still need their
-configured tools. Native HTTPS login, password replacement and credential editing
-have local acceptance evidence; broader window/coding interactions retain the
-limits in [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
+configured tools. Use the app for persistent local-model conversations, permitted
+public-document research, and separately reviewed coding work. Native HTTPS login,
+password replacement and account-role enforcement have local acceptance evidence;
+exact tested sources and broader window/coding limits are recorded in
+[DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
 
 ## Install and launch
 
 1. Unzip the universal archive and move **CG Agent Harness.app** to Applications
    (or a directory you own). Quit an existing copy before replacing it.
 2. Open it from Finder or the Dock. No login item or service is installed.
-3. Fresh homes open HTTPS and require account login. Sign in as `admin` with
-   password `admin`, then replace it immediately. The native webview verifies its
-   owned certificate without system trust changes. Existing home configuration
-   is preserved. Use **Harness → Setup and recovery** (Cmd-,) for diagnostics.
+3. Fresh homes enable HTTPS, accounts, roles and web controls. A login hint
+   between HARNESS and the authentication controls shows `admin` / `admin`.
+   Signing in opens the password replacement dialog automatically; closing it
+   does not unlock portal work. Replace the password with at least 12 characters.
+   The native webview verifies its owned certificate without system trust changes.
+   Existing home configuration is preserved. Use **Harness → Setup and recovery**
+   (Cmd-,) for diagnostics.
 4. Administrators manage optional provider credentials in **API Keys**. Restart
    to activate saved values; inherited environment values take precedence. A
    harness metadata key never grants account access. See [migration, roles and
    TLS recovery](SECURE_RESEARCH.md).
+5. Web starts enabled with an empty URL allowlist. An administrator grants sources
+   with `/web allow`; operators can then fetch/search/research those sources. No
+   content is fetched merely by launching the app. With the shipped local model
+   tag installed, chat requires no config-file edit. `/model list` and
+   `/model use <exact-tag>` select another installed chat model.
+
+The account bar displays the role. Auditors see a permission refusal in Sessions
+and minimal read-only status; they cannot use chat, research, users or API Keys.
+These messages reflect the existing server permissions.
 
 This build is **ad-hoc signed, universal (Apple Silicon + Intel), and not notarized**. Its signature
 checks integrity; it does not establish a publisher identity or satisfy normal
@@ -35,7 +49,11 @@ Home precedence stays `CGAGENTHARNESS_HOME`, then `USERPROFILE`/`HOME` plus
 `.CGagentHarness`. The override must be absolute. There is no silent migration
 to Application Support. Config, sessions, notes, persona, keys and run evidence
 stay outside the bundle; updating/uninstalling the app does not remove them.
-The default home is `~/.CGagentHarness`.
+The published app defaults to `~/.CGagentHarness`. A deliberately prepared local
+copy may use a separate absolute home through its per-copy launch environment;
+that does not migrate the existing home or alter the published default. Check
+the home shown in the console footer or Setup, and record it separately from
+`Contents/Resources/COMMIT` when comparing app copies.
 
 Desktop and Unix headless `serve` startup load supported managed keys from the home's `.env` **as data**,
 without a shell, `eval`, or shell startup files. The file must be a regular file,

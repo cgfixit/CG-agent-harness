@@ -50,7 +50,10 @@ See [migration and operation](docs/SECURE_RESEARCH.md).
 
 ## Public web evidence requires current content permission
 
-Web reads remain disabled initially. `tools/web_allowlist.json` is a bounded,
+Fresh web settings are enabled with an empty URL allowlist, so no content can be
+fetched until an administrator grants URL permission. Existing true/false choices
+are preserved; absent or invalid legacy `web_enabled` values remain off.
+`tools/web_allowlist.json` is a bounded,
 versioned document; malformed, missing, unreadable or partially invalid policy
 refuses access. Exact HTTP(S) URLs retain scheme, port, path and query identity.
 Only explicit `*.host` and `/path/*` rules broaden scope. Legacy rows authorize

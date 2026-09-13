@@ -67,3 +67,8 @@ the [RustSec advisory database](https://rustsec.org/advisories/) and upstream
 [Cargo resolver documentation](https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version)
 when investigating newly reported drift. A clean dependency-policy result is a
 point-in-time advisory/license/source check, not proof of vulnerability absence.
+
+The fresh-install follow-up rechecked both crates with locked metadata/tree
+commands and the MSRV-aware update preview on September 12. Both previews
+reported zero package changes; the manifests, lockfiles, toolchains and deny
+policies were retained. The default/onboarding changes add no dependencies.
