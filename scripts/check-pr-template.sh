@@ -92,7 +92,15 @@ fi
 if [[ -z "$files_source" ]]; then
   printf 'check-pr-template: core-path rule skipped (set CGAGENTHARNESS_PR_FILES or fetch %s)\n' "$base" >&2
 elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
-  if ! printf '%s' "$body" | grep -Eiq 'invariant'; then
+  # The template itself says "invariant" in its headings and checklist, so
+  # only contributor-written lines (those not copied verbatim from the
+  # template) can satisfy the statement requirement.
+  template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
+  contributed="$body"
+  if [[ -f "$template" ]]; then
+    contributed="$(printf '%s\n' "$body" | grep -Fxv -f "$template" || true)"
+  fi
+  if ! printf '%s' "$contributed" | grep -Eiq 'invariant'; then
     missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
     fail=1
   fi
