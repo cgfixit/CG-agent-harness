@@ -1,0 +1,7 @@
+# Cargo policy shared by the backend crate and desktop/ (config discovery walks
+# up to this directory). `cargo update` prefers releases whose rust-version fits
+# the crate's MSRV (backend 1.88, desktop 1.90) instead of selecting one that
+# fails the MSRV CI job; `--ignore-rust-version` or `--precise` still override
+# it. See docs/DEPENDENCIES.md.
+[resolver]
+incompatible-rust-versions = "fallback"

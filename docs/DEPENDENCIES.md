@@ -26,7 +26,14 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
 ## Retained constraints
 
 - Backend `ordered-float` remains locked at 5.4: 5.5 requires Rust 1.90.
-  A semver-compatible release can still exceed the backend MSRV.
+  A semver-compatible release can still exceed the backend MSRV, so
+  `.cargo/config.toml` sets `resolver.incompatible-rust-versions = "fallback"`
+  for both crates: plain `cargo update` prefers releases within each crate's
+  `rust-version`, and `--ignore-rust-version` or `--precise` remain explicit
+  overrides.
+- The backend license allowlist names only identifiers the locked graph uses.
+  Add an identifier deliberately, with the crate that needs it, rather than
+  keeping unused allowances that would admit a future dependency silently.
 - Desktop Tauri is pinned to 2.11.5. The immutable upstream `tauri-utils`
   patch at `dd725f4b13c30a86b398ccc59eb498f151f461c5` replaces its unmaintained
   rust-unic dependency path. The desktop policy allows only that upstream Git
@@ -46,7 +53,7 @@ Run in the repository root, then repeat inside `desktop/`:
 rustup show active-toolchain
 cargo metadata --locked --format-version 1 > /private/tmp/cgah-dependencies.json
 cargo tree --locked --depth 1
-cargo update --dry-run --locked --verbose --config 'resolver.incompatible-rust-versions="fallback"'
+cargo update --dry-run --locked --verbose
 cargo build --locked
 cargo deny check
 ```
@@ -55,8 +62,9 @@ Use another private report path on non-macOS systems. Check Cargo's exit status;
 do not infer success from a grep match or suppress errors. The update command is
 a preview and leaves the lockfile unchanged; `--locked` alone does not mean all
 available versions are installed. Review compatibility and upstream changes.
-For an authorized update, omit `--dry-run --locked`, keep the MSRV-aware resolver
-setting, inspect the manifest/lock diff, and rerun both crates' formatting,
+For an authorized update, omit `--dry-run --locked` (the MSRV-aware resolver
+setting is committed in `.cargo/config.toml`), inspect the manifest/lock diff,
+and rerun both crates' formatting,
 Clippy, tests, dependency policy, release builds and applicable native/package
 acceptance. Do not change global rustup overrides to satisfy a dependency.
 
