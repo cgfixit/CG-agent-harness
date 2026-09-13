@@ -92,16 +92,18 @@ model inference. A public-Google challenge is not a dependency or test pass.
 
 ## Optimization sweep (2026-09-13)
 
-Backend (Cargo 1.88.0, lockfile at `f47d41d`): `cargo metadata --locked` and
-`cargo build --all-targets --locked` exit 0. `cargo update --dry-run --locked
---verbose` with the MSRV-aware resolver locks 0 packages; `ordered-float` 5.4.0 is
-retained (5.5.0 requires Rust 1.90) and the remaining eight "behind latest"
-entries are semver-incompatible releases. Without that resolver setting the same
-preview selects `ordered-float` 5.5.0, which is why
-[PR #80](https://github.com/cgfixit/CG-agent-harness/pull/80) commits the setting
-in `.cargo/config.toml`, together with the removal of the unused direct
-`http-body-util` declaration and the unused `OpenSSL`/`Unicode-DFS-2016`
-license allowances. `cargo deny check` (cargo-deny
+Backend (Cargo 1.88.0, lockfile at `093749b`, the `main` tree after
+[PR #80](https://github.com/cgfixit/CG-agent-harness/pull/80) merged): `cargo
+metadata --locked`, `cargo build --all-targets --locked` and `cargo test --test
+invariant_guard --locked` exit 0. `cargo update --dry-run --locked --verbose`
+locks 0 packages with the committed `.cargo/config.toml` resolver setting;
+`ordered-float` 5.4.0 is retained (5.5.0 requires Rust 1.90) and the remaining
+eight "behind latest" entries are semver-incompatible releases. The same checks
+were first run on the pre-#80 lockfile at `f47d41d`, where the plain preview
+selected `ordered-float` 5.5.0; that is why PR #80 committed the resolver
+setting, removed the unused direct `http-body-util` declaration and dropped the
+unused `OpenSSL`/`Unicode-DFS-2016` license allowances, and the results above
+were re-run on the merged lockfile that this ledger entry ships with. `cargo deny check` (cargo-deny
 0.20.2, RustSec advisory database cloned 2026-09-13, run offline because the
 sandbox proxy blocks cargo-deny's own fetch): advisories, bans, licenses and
 sources ok; duplicate-version warnings unchanged. Backend `Cargo.lock`
