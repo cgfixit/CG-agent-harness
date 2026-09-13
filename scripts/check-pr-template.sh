@@ -11,6 +11,14 @@
 # Git hooks cannot intercept GitHub API / gh pr create bodies — agents and
 # humans should run this before opening a PR. CI runs the same headers as a
 # blocking check (.github/workflows/pr-template-check.yml).
+#
+# The core-path rule is mirrored from that workflow too: when the change
+# touches src/shim/, the guard or header layers, writer, sandbox, workspace,
+# or the shipped config, the body must mention an invariant. The changed-file
+# list comes from CGAGENTHARNESS_PR_FILES (newline-separated) when set,
+# otherwise from the working tree against the merge base with
+# CGAGENTHARNESS_PR_BASE (default origin/main). With neither source the rule
+# is reported as skipped rather than silently passed.
 set -euo pipefail
 
 input="${1:-${CGAGENTHARNESS_PR_BODY_FILE:-${CYCLAW_PR_BODY_FILE:-}}}"
@@ -57,9 +65,90 @@ require_header "Risks to monitor" \
 require_header "Checklist" \
   '^#{1,4}[[:space:]]*checklist\b'
 
-if [[ "${#body}" -lt 40 ]]; then
+# CI measures the trimmed body; a whitespace-padded stub must not pass here
+# and fail there.
+trimmed="${body#"${body%%[![:space:]]*}"}"
+trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+if [[ "${#trimmed}" -lt 40 ]]; then
   missing+=("Body too short (< 40 chars)")
   fail=1
+fi
+
+# Core-path rule (same file set as pr-template-check.yml).
+core_pattern='^(src/shim/|src/server/guards\.rs$|src/server/headers\.rs$|src/agentic/writer\.rs$|src/agentic/executor/sandbox\.rs$|src/agentic/workspace\.rs$|assets/config\.default\.yaml$)'
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+base="${CGAGENTHARNESS_PR_BASE:-origin/main}"
+changed=""
+files_source=""
+if [[ -n "${CGAGENTHARNESS_PR_FILES:-}" ]]; then
+  changed="$CGAGENTHARNESS_PR_FILES"
+  files_source="CGAGENTHARNESS_PR_FILES"
+elif merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null)"; then
+  # --no-renames: a core file moved elsewhere must still surface its source
+  # path, not only the destination Git's rename detection would report.
+  # Untracked, non-ignored files are appended: `git diff` omits a new core
+  # file until it is added, but CI's pulls.listFiles sees it once committed,
+  # so the local gate must count it now to predict CI. Do not `|| true`: an
+  # empty list with files_source set would skip the core-path rule while
+  # claiming it ran.
+  if changed="$(git -C "$repo_root" diff --name-only --no-renames "$merge_base")" \
+    && untracked="$(git -C "$repo_root" ls-files --others --exclude-standard)"; then
+    changed="$changed"$'\n'"$untracked"
+    files_source="git diff against $base merge base plus untracked files"
+  fi
+fi
+if [[ -z "$files_source" ]]; then
+  printf 'check-pr-template: core-path rule skipped (set CGAGENTHARNESS_PR_FILES or fetch %s)\n' "$base" >&2
+elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
+  # The template itself says "invariant" in its headings and checklist, so
+  # only contributor-written lines (those not copied verbatim from the
+  # template) can satisfy the statement requirement.
+  # Only the "Invariant / Governance Impact" section counts (its heading must
+  # start the line, so prose that merely mentions the phrase is not a
+  # heading), after folding
+  # `- [x]` to `- [ ]` and collapsing whitespace on both sides. Lines copied
+  # from the template are dropped; on the heading line itself the template's
+  # own words are removed and at least eight characters must remain, so a
+  # concise statement on that line passes while a reworded heading does not;
+  # only that remainder (never the heading's own "Invariant") is judged.
+  # Without that heading, any non-template line mentioning an invariant
+  # counts. Light edits inside the template's instruction text are not
+  # detected; a reviewer reads the section either way.
+  template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
+  fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/; s/[[:space:]]+/ /g; s/^ //; s/ $//'; }
+  # Fail closed: without the template the whole body looks "contributed" and
+  # the stock invariant headings satisfy the guarantee regex. Mirrors
+  # pr-template-check.yml `core.setFailed` on a failed template fetch.
+  if [[ ! -f "$template" ]]; then
+    missing+=("PR template not readable; cannot evaluate the core-path rule")
+    fail=1
+  else
+    contributed="$(awk '
+      NR == FNR { tmpl[$0] = 1; next }
+      {
+        line = $0; low = tolower(line)
+        heading = (low ~ /^[#*_ ]*invariant \/ governance impact/)
+        if (!insec) { if (heading) { insec = 1; seen = 1 } else { if (!(line in tmpl) && low ~ /invariant/) other[n++] = line; next } }
+        else if (line ~ /^(---|#)/) { insec = 0; next }
+        if (line in tmpl) next
+        if (heading) {
+          r = low
+          gsub(/invariant \/ governance impact/, "", r)
+          gsub(/\(required for any change touching core paths\):?/, "", r)
+          s = r; gsub(/[*: ]+/, "", s)
+          if (length(s) >= 8) print r
+        } else print line
+      }
+      END { if (!seen) for (i = 0; i < n; i++) print other[i] }
+    ' <(fold_boxes < "$template") <(printf '%s\n' "$body" | fold_boxes))"
+    # The statement must name a guarantee from INVARIANTS.md (or say none),
+    # not merely occupy the section. Wording beyond that is for the reviewer.
+    guarantee='invariant|\bnone\b|\bi6\b|process isolation|guard chain|write[ -]gate|clone jail|judged|approval|secret|redact|detached|csrf|sandbox|loopback|weaker than'
+    if ! printf '%s' "$contributed" | grep -Eiq "$guarantee"; then
+      missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
+      fail=1
+    fi
+  fi
 fi
 
 if [[ "$fail" -ne 0 ]]; then
@@ -81,5 +170,5 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 
-printf 'check-pr-template: OK — required template sections present\n'
+printf 'check-pr-template: OK — required template sections present (%s)\n' "${files_source:-core-path rule skipped}"
 exit 0

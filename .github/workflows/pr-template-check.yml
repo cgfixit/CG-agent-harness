@@ -72,8 +72,55 @@ jobs:
             });
             const corePaths = [/^src\/shim\//, /^src\/server\/guards\.rs$/, /^src\/server\/headers\.rs$/, /^src\/agentic\/writer\.rs$/,
                           /^src\/agentic\/executor\/sandbox\.rs$/, /^src\/agentic\/workspace\.rs$/, /^assets\/config\.default\.yaml$/];
-            const touchesCore = files.some(f => corePaths.some(re => re.test(f.filename)));
-            if (touchesCore && !/invariant/i.test(body)) {
+            // A renamed file reports its source as previous_filename; a core file
+            // moved elsewhere still counts as touching that core path.
+            const touched = files.flatMap(f => [f.filename, f.previous_filename].filter(Boolean));
+            const touchesCore = touched.some(name => corePaths.some(re => re.test(name)));
+            // The template itself says "invariant" in its headings and checklist, so
+            // only contributor-written lines (not copied verbatim from the template)
+            // can satisfy the statement requirement. Mirrors scripts/check-pr-template.sh.
+            // Only the "Invariant / Governance Impact" section counts (its heading must
+            // start the line, so prose that merely mentions the phrase is not a
+            // heading), after folding
+            // `- [x]` to `- [ ]` and collapsing whitespace on both sides. Lines copied
+            // from the template are dropped; on the heading line itself the template's
+            // own words are removed and at least eight characters must remain, so a
+            // concise statement on that line passes while a reworded heading does not;
+            // only that remainder (never the heading's own "Invariant") is judged.
+            // Without that heading, any non-template line mentioning an invariant
+            // counts. Mirrors scripts/check-pr-template.sh. The template is required:
+            // without it boilerplate cannot be told apart, so a fetch failure fails.
+            const foldBoxes = l => l.replace(/^(\s*- \[)[xX](\])/, "$1 $2").replace(/\s+/g, " ").trim();
+            let templateLines;
+            try {
+              const t = await github.rest.repos.getContent({ owner: context.repo.owner, repo: context.repo.repo,
+                path: ".github/PULL_REQUEST_TEMPLATE.md", ref: context.payload.pull_request.base.sha });
+              templateLines = new Set(Buffer.from(t.data.content, "base64").toString("utf8").split(/\r?\n/).map(foldBoxes));
+            } catch (e) {
+              core.setFailed(`PR template not readable (${e.message}); cannot evaluate the core-path rule`);
+              return;
+            }
+            const contributed = [], other = [];
+            let insec = false, seen = false;
+            for (const line of body.split(/\r?\n/).map(foldBoxes)) {
+              const low = line.toLowerCase();
+              const heading = /^[#*_ ]*invariant \/ governance impact/.test(low);
+              if (!insec) {
+                if (heading) { insec = true; seen = true; }
+                else { if (!templateLines.has(line) && /invariant/.test(low)) other.push(line); continue; }
+              } else if (/^(---|#)/.test(line)) { insec = false; continue; }
+              if (templateLines.has(line)) continue;
+              if (heading) {
+                const r = low.replace(/invariant \/ governance impact/g, "")
+                  .replace(/\(required for any change touching core paths\):?/g, "");
+                if (r.replace(/[*: ]+/g, "").length >= 8) contributed.push(r);
+              } else contributed.push(line);
+            }
+            // The statement must name a guarantee from INVARIANTS.md (or say none),
+            // not merely occupy the section. Wording beyond that is for the reviewer.
+            const guarantee = /invariant|\bnone\b|\bi6\b|process isolation|guard chain|write[ -]gate|clone jail|judged|approval|secret|redact|detached|csrf|sandbox|loopback|weaker than/i;
+            const statement = (seen ? contributed : other).join("\n").trim();
+            if (touchesCore && !guarantee.test(statement)) {
               missing.push("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)");
             }
             const marker = "<!-- pr-template-check -->";
