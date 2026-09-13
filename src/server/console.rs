@@ -1,5 +1,8 @@
-//! `GET /` and `/static/*`: the verbatim CyClaw console with the two serve-time
-//! placeholders substituted (CSRF token per process, CSP nonce per response).
+//! `GET /`: the verbatim CyClaw console with the two serve-time placeholders
+//! substituted (CSRF token per process, CSP nonce per response). `/static/{name}`
+//! serves only the script asset that page loads; the markup itself is never
+//! handed out unsubstituted, so the root route is the single place the nonce
+//! and token contracts are applied.
 
 use std::sync::Arc;
 
@@ -45,12 +48,6 @@ pub async fn static_asset(axum::extract::Path(name): axum::extract::Path<String>
             StatusCode::OK,
             [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
             AUTH_ADMIN_JS,
-        )
-            .into_response(),
-        "harness.html" => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            HARNESS_HTML,
         )
             .into_response(),
         _ => (StatusCode::NOT_FOUND, "Not Found").into_response(),
