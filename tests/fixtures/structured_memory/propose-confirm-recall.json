@@ -1,0 +1,33 @@
+{
+  "name": "propose-confirm-recall",
+  "issue": 87,
+  "phase": "M1",
+  "steps": [
+    {
+      "action": "propose",
+      "body": {
+        "action": "add",
+        "content": "Prefer metric units in examples.",
+        "category": "pref"
+      },
+      "expect": { "status": "pending" }
+    },
+    {
+      "action": "decide_without_confirm",
+      "expect": { "code": "STRUCTURED_MEMORY_CONFIRM" }
+    },
+    {
+      "action": "recall_before_apply",
+      "expect": { "fact_count": 0 }
+    },
+    {
+      "action": "decide_apply",
+      "body": { "confirm": true, "apply": true, "reason": "Reviewed operator fact" },
+      "expect": { "status": "applied" }
+    },
+    {
+      "action": "recall",
+      "expect": { "content": "Prefer metric units in examples." }
+    }
+  ]
+}

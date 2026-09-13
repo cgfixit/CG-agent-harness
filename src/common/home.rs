@@ -13,7 +13,7 @@
 //!   sessions/          one JSON per chat session
 //!   skills/<name>/SKILL.md
 //!   tools/             web allowlist + last extract
-//!   memory/            operator /memory notes
+//!   memory/            operator /memory notes; structured.sqlite3 only if enabled
 //!   data/agentic/      skills_registry.json, workspaces/, harness_optimizer/runs/
 //!   logs/              audit.jsonl, spend.jsonl
 //!   tmp/               staged shim temp files
@@ -114,6 +114,10 @@ impl Home {
     }
     pub fn memory_dir(&self) -> PathBuf {
         self.root.join("memory")
+    }
+    /// Dedicated structured-memory database. Created only when the admin gate is on.
+    pub fn structured_memory_path(&self) -> PathBuf {
+        self.memory_dir().join("structured.sqlite3")
     }
     pub fn data_dir(&self) -> PathBuf {
         self.root.join("data")

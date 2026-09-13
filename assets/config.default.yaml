@@ -252,3 +252,15 @@ agentic:
 unslop:
   enabled: false
   metrics_path: "logs/unslop.jsonl"
+
+# Account-private structured facts and governed proposals. Distinct from
+# harness.json.memory_enabled, which only includes pinned /memory notes in
+# the chat prompt. Missing, quoted, or non-boolean values evaluate false.
+# File mode 0600 is OS access control, not encryption.
+structured_memory:
+  enabled: false
+  max_facts_per_owner: 64
+  max_fact_chars: 1000
+  max_category_chars: 64
+  max_proposals_per_owner: 32
+  max_reason_chars: 1000

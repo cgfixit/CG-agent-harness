@@ -48,6 +48,14 @@ refuse startup; no automatic reset occurs. Failed writes do not publish successf
 in-memory account changes. Stop the server before an operator-controlled backup
 or recovery; preserve the database and initialization marker together.
 
+Structured memory, when the administrator sets `structured_memory.enabled: true`,
+uses a separate `memory/structured.sqlite3` with the same class of open policy
+(owned parent, `SQLITE_OPEN_NOFOLLOW`, `foreign_keys=ON`, `trusted_schema=OFF`,
+rollback journal, `synchronous=FULL`). Missing initialized or corrupt files
+refuse startup rather than bootstrapping. Owner-private file mode is **not**
+encryption: anyone who can run as the home owner can read fact bytes. Models
+cannot create that database or apply facts. Pinned notes remain `memory/notes.json`.
+
 | Role | Allowed | Refused |
 |---|---|---|
 | Administrator (`admin`) | Normal harness work; users, roles, disable/reset; global credentials; web enablement and URL policy | Every operation lacking existing repository/write/approval/publication authorization |

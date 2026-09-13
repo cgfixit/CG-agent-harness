@@ -55,8 +55,11 @@ runtime skill directory.
 
 Chat is told which application features exist and how the operator invokes them.
 It still has no callable tools, including `gh`. A prose request to save or delete
-memory does not execute a command. `/memory` lists persistent notes and
+memory does not execute a command. `/memory` lists persistent pinned notes and
 `/memory add <note>` saves literal text; it does not archive or summarize sessions.
+Structured facts (#87 M1) are a separate account-private API: a model may
+propose, but confirm+reason is required to apply, and M1 does not inject those
+facts into `/prompt`. See [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 Included notes are real stored content, not placeholders. Model answers can still
 be wrong; only actual command results establish successful execution.
 

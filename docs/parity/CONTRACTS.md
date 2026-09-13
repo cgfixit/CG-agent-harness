@@ -5,12 +5,14 @@ defines intended adaptations; it does not claim they are implemented. Current
 source pins and implementation/verification states belong to the ledger.
 
 Memory facts are explicitly reviewed operator data, separate from short notes.
-Proposals bind an action, payload and expected fact version; application needs
-an operator reason and scan. Non-RAG episodes describe bounded chat/coding
-outcomes, including failure/cancellation, without retrieval scores. Raw query
-storage stays off. Optional recording must not turn successful chat into failure.
-There is no automatic FTS/vector injection; selected facts enter context only
-under an explicit operator action and the existing prompt budget.
+Issue #87 M1 implements account-private facts plus governed proposals behind
+`structured_memory.enabled` (literal boolean, ships false). Proposals bind an
+action, payload and expected fact version; application needs an operator reason,
+confirmation, and scan. Pinned `/memory` notes are unchanged. Episodes,
+retrieval fusion, FTS, embeddings, and automatic consolidation are not shipped;
+status flags for those remain false. Selected facts do not yet enter the prompt.
+There is no automatic FTS/vector injection; later recall must stay under an
+explicit operator action and the existing prompt budget.
 
 Sync operates on approved non-RAG roots and one approved remote. It excludes
 credentials, soul and Git internals. Active managed coding workspaces cannot be
