@@ -20,9 +20,9 @@ const ANSWER_SYSTEM: &str = "Answer only from the supplied untrusted source pass
 
 #[derive(Debug, Default)]
 pub struct ResearchState(Mutex<Option<(String, CancellationToken)>>);
-struct ResearchLease<'a> {
+pub(super) struct ResearchLease<'a> {
     state: &'a ResearchState,
-    token: CancellationToken,
+    pub(super) token: CancellationToken,
 }
 impl Drop for ResearchLease<'_> {
     fn drop(&mut self) {
@@ -32,7 +32,7 @@ impl Drop for ResearchLease<'_> {
     }
 }
 impl ResearchState {
-    fn start(&self, owner: &str) -> Result<ResearchLease<'_>> {
+    pub(super) fn start(&self, owner: &str) -> Result<ResearchLease<'_>> {
         let mut active = self
             .0
             .lock()
@@ -284,7 +284,7 @@ async fn lookup(
     .map_err(|_| error("WEB_INDEX_FAILED", "research lookup failed"))?
 }
 
-fn authorize_owner(state: &AppState, owner: &str) -> Result<()> {
+pub(super) fn authorize_owner(state: &AppState, owner: &str) -> Result<()> {
     if !state
         .settings
         .lock()

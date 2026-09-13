@@ -157,15 +157,17 @@ owner edits, or use serialized atomic API/CLI mutations while it runs.
 |---|---|
 | `https://example.com/article` | That canonical URL only, no children or additional query |
 | `https://example.com/docs/*` | `/docs/` and descendants, excluding `/docs` |
-| `https://example.com/*` | Query-free paths on that exact HTTPS origin, including `/` |
+| `https://example.com/*` | Paths and query strings on that exact HTTPS origin, including `/` |
 | `https://*.example.com/docs/*` | Explicit subdomains below the named domain; apex excluded |
 | `https://example.com/article?q=one` | Exact query identity/order; no arbitrary parameters |
 
 Default ports normalize; schemes never downgrade. Fragments are stripped. IDNA
 and hostname case normalize; trailing-dot hosts, credentials, alternate IP
-spellings, dot segments, encoded separators/dots/nested escapes, malformed escapes
-and ambiguous authorities are refused. Wildcards grant no query strings, implicit
-`www`, suffix impostors or alternate ports. Scheme-relative discovered links
+spellings, dot segments, encoded path separators/dots/nested escapes, malformed escapes
+and ambiguous authorities are refused. Encoded punctuation/space in query data
+retains its identity; it cannot change the parsed host or path. Encoded controls
+remain refused. Path wildcards include query strings, but never implicit `www`,
+suffix impostors or alternate ports. Scheme-relative discovered links
 resolve against the source and still require current permission.
 
 Legacy rows migrate only to the actual stored URL targets the old fetcher could
@@ -174,6 +176,68 @@ explicitly to permit discovery. Unknown legacy fields/invalid rows fail the whol
 migration. Reading legacy data normalizes it in memory; the next authorized
 mutation persists v1. Legacy unproven `web_context.txt`/`web_last.json` are never
 injected. Current selections use `tools/web_<account-hash>_{last,context}.json`.
+
+## Google keyword search and chat tools
+
+With web enabled, ordinary chat can invoke `web_search` (Google keyword listings)
+and `web_fetch` (an exact permitted public URL). They use standard OpenAI tool
+calls against the configured local model. No repository, shell, policy, account,
+key or other mutation tool is exposed. `/loop` remains tool-free. Invalid names,
+arguments, parallel calls and excess tool requests are refused. A turn allows
+at most `web.chat_tool_calls` (default 3, range 1–5), shares the chat timeout,
+and reserves estimated tokens against `web.total_tokens` before each model call.
+Reported usage sums all completed model calls; absent upstream usage remains
+marked unreported internally rather than being invented as actual token counts.
+Cancellation aborts the whole turn, including an outstanding content request.
+
+An administrator grants the generated search destination, normally:
+
+```text
+/web allow https://www.google.com/*
+/web search veeam software cve
+```
+
+Natural language works in the same app: `Search Google for the top 5 results for
+"veeam software cve"`. `/web search` defaults to Google in the console and CLI;
+`/web pages` selects the existing permitted-page passage search. A source-group
+argument retains the legacy page-search interpretation. For API compatibility,
+`POST /api/web/search` without `engine` still means page search; explicitly send
+`engine: "google"` and optional `count` (1–10, default 5) for Google listings.
+Dedicated `/api/web/research` only accepts the page-search engine.
+
+The **API Keys → Google results (SerpAPI)** field manages `SERPAPI_API_KEY` through
+the existing private dotenv store. An active nonempty key selects the fixed
+`https://serpapi.com/search.json` Google backend. This is a SerpAPI credential,
+not a Google Custom Search/Cloud key. See [the provider's API](https://serpapi.com/search-api).
+The API receives the chosen keyword query, engine, result count and its key;
+it receives neither the full chat history nor harness account credentials.
+The key appears only in the fixed provider's HTTPS request query as required by
+that API, never in user-facing URLs, model context, returned metadata or error
+messages. Responses reflecting the credential in extracted listings are refused.
+Returned destination URLs never receive the key. The API client retains public
+DNS pinning, shared concurrency, no proxy/redirect/retry/pooling, and finite
+header/body/time bounds. Provider-key configuration and Google URL permission
+are both required for this path; neither authorizes arbitrary destinations.
+
+With no active key, the app requests the permitted public Google search URL and
+parses recognizable organic result links in their returned order. It does not
+execute JavaScript, solve CAPTCHA, adopt browser cookies, or silently switch
+search engines. Challenges, redirects, unreadable output and transport failures
+are explicit failures. A keyed request's invalid-key, quota or upstream failure
+also stays explicit; public fallback occurs only when the active key is absent.
+Saving/clearing keys takes effect after restart; process environment overrides
+still apply. A test on this Mac returned a Google JavaScript challenge, so
+credential-free success is not promised.
+
+The console renders actual provider/source information separately from the
+model answer. Listings and snippets are attributed to the search provider;
+linked pages have not been fetched. A follow-up `web_fetch` must independently
+pass the current allowlist and account checks. Permission is rechecked before
+model consumption and final delivery. Provider listings are not inserted into
+the page cache or saved `/web inject` selection. Fetched pages reuse the existing
+cache and current-account selection. Previously recorded chat cannot be erased
+by later revocation. Model answers are not validated research citations; use
+dedicated `/web research` when checked quote references are required.
 
 ## Fetch, discovery and research
 
@@ -185,7 +249,7 @@ remains required regardless of this switch. In chat:
 ```text
 /web allow https://example.com/docs/* docs https://example.com/docs/
 /web allow https://example.com/robots.txt docs
-/web search group=docs widget_open
+/web pages group=docs widget_open
 /web research group=docs How does widget_open fail?
 /web cancel
 /web inject
@@ -198,8 +262,9 @@ same content policy. Without permitted/readable robots, explicit seeds remain
 readable but discovered-link traversal stops. Relative links are parsed from HTML,
 deduplicated, paced per origin and restricted to the selected group. Robots
 responses consume request budgets but never become indexed evidence. Optional
-sitemap and external search-provider discovery are not implemented; strict local
-research needs no provider credentials and has no cloud fallback.
+sitemap discovery is not implemented. Dedicated permitted-page research needs
+no provider credentials and has no cloud-model fallback. Google listings are a
+separate search mode described below.
 
 Every content request resolves once, rejects any non-public/mixed address set,
 and pins only the checked addresses to the actual connection while preserving

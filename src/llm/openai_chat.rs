@@ -53,7 +53,7 @@ fn llm_err(message: impl Into<String>) -> HarnessError {
     HarnessError::new(LLM_ERROR_CODE, message)
 }
 
-fn token_count(v: Option<&Value>) -> u64 {
+pub(crate) fn token_count(v: Option<&Value>) -> u64 {
     match v {
         Some(Value::Number(n)) => n
             .as_u64()
@@ -174,6 +174,37 @@ impl ChatClient {
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = Value::String(effort.clone());
         }
+        let parsed = self.send_payload(payload).await?;
+        parse_chat_response(&parsed, &use_model)
+    }
+
+    /// Standard OpenAI tool protocol; the server validates and executes the
+    /// narrow read-only tool schema. This client never dispatches a tool.
+    pub async fn chat_with_tools(
+        &self,
+        system: &str,
+        messages: &[Value],
+        model: &str,
+        max_tokens: u64,
+        temperature: f64,
+        tools: &[Value],
+    ) -> Result<Value> {
+        let mut all = vec![json!({"role":"system","content":system})];
+        all.extend_from_slice(messages);
+        let mut payload = json!({"model":model,"messages":all,"max_tokens":max_tokens,
+            "temperature":temperature,"stream":false});
+        if !tools.is_empty() {
+            payload["tools"] = json!(tools);
+            payload["tool_choice"] = json!("auto");
+            payload["parallel_tool_calls"] = json!(false);
+        }
+        if let Some(effort) = &self.reasoning_effort {
+            payload["reasoning_effort"] = json!(effort);
+        }
+        self.send_payload(payload).await
+    }
+
+    async fn send_payload(&self, payload: Value) -> Result<Value> {
         let mut req = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
@@ -231,7 +262,7 @@ impl ChatClient {
         let outcome = task.await;
         *self.inflight.lock().unwrap_or_else(|p| p.into_inner()) = None;
         match outcome {
-            Ok(Ok(parsed)) => parse_chat_response(&parsed, &use_model),
+            Ok(Ok(parsed)) => Ok(parsed),
             Ok(Err(e)) => Err(e),
             Err(join) if join.is_cancelled() => Err(llm_err("cancelled").detail("cancelled", true)),
             Err(_) => Err(llm_err("model call failed")),

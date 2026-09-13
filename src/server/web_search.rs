@@ -1,4 +1,4 @@
-//! Default-off content reads. Every network/evidence path reloads URL policy.
+//! Permission-checked content reads. Every network/evidence path reloads URL policy.
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -39,6 +39,7 @@ pub struct Limits {
     pub total_tokens: u64,
     pub research_seconds: u64,
     pub stale_seconds: u64,
+    pub chat_tool_calls: usize,
 }
 
 impl Limits {
@@ -73,6 +74,7 @@ impl Limits {
             model_tokens: bound("model_tokens", 1024, 256, 2048)?,
             total_tokens: bound("total_tokens", 16000, 2048, 32000)?,
             research_seconds: bound("research_seconds", 300, 10, 1800)?,
+            chat_tool_calls: bound("chat_tool_calls", 3, 1, 5)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
         })
     }
@@ -246,10 +248,11 @@ pub struct WebTool {
     /// Additional exact hosts for bounded multi-site fixtures, never runtime configuration.
     pub test_resolve_extra: Vec<(String, SocketAddr)>,
     pub limits: Limits,
-    permits: Semaphore,
+    pub(super) permits: Semaphore,
     pub(super) mutation: Mutex<()>,
     pub(super) search_gate: Arc<Semaphore>,
     pub research: super::web_research::ResearchState,
+    pub chat_turn: super::web_research::ResearchState,
 }
 
 impl WebTool {
@@ -264,6 +267,7 @@ impl WebTool {
             mutation: Mutex::new(()),
             search_gate: Arc::new(Semaphore::new(1)),
             research: super::web_research::ResearchState::default(),
+            chat_turn: super::web_research::ResearchState::default(),
         })
     }
     fn allow_path(&self) -> PathBuf {
@@ -313,6 +317,7 @@ impl WebTool {
         Ok(
             json!({"enabled": enabled, "allowlist": policy.rules.iter().map(|r| &r.pattern).collect::<Vec<_>>(),
             "rules": policy.rules, "policy_revision": policy.revision,
+            "search_provider": if std::env::var("SERPAPI_API_KEY").unwrap_or_default().trim().is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": MAX_ALLOW}),
         )
@@ -431,7 +436,52 @@ impl WebTool {
             .map_err(|e| HarnessError::new("WEB_TOOL_DENIED", e.message).with_details(e.details))
     }
 
+    pub(super) async fn pinned_client(&self, target: &url::Url) -> Result<reqwest::Client> {
+        let host = target.host_str().unwrap().trim_matches(['[', ']']);
+        let port = target.port_or_known_default().unwrap();
+        let addresses = match self
+            .test_resolve
+            .iter()
+            .chain(self.test_resolve_extra.iter())
+            .find(|(test_host, _)| test_host == host)
+        {
+            Some((_, addr)) => vec![*addr],
+            _ => {
+                let addresses: Vec<_> = tokio::net::lookup_host((host, port))
+                    .await
+                    .map_err(|_| error("WEB_DNS", "DNS lookup failed"))?
+                    .take(33)
+                    .collect();
+                validate_addresses(&addresses)?;
+                addresses
+            }
+        };
+        // New client, no pooling/retries/proxies/redirects, only validated DNS.
+        // HTTP/1's finite Hyper header-count/buffer caps apply before our 16KiB header check.
+        reqwest::Client::builder()
+            .no_proxy()
+            .http1_only()
+            .pool_max_idle_per_host(0)
+            .retry(reqwest::retry::never())
+            .redirect(reqwest::redirect::Policy::none())
+            .dns_resolver(Arc::new(RefuseDns))
+            .resolve_to_addrs(host, &addresses)
+            .timeout(Duration::from_secs(self.limits.request_seconds))
+            .user_agent("CGagentHarness-web/1.0")
+            .build()
+            .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
+    }
+
     pub(super) async fn get(&self, raw: &str, group: Option<&str>, cached: Option<&Page>) -> Result<Page> {
+        self.get_raw(raw, group, cached).await.map(|(page, _)| page)
+    }
+
+    pub(super) async fn get_raw(
+        &self,
+        raw: &str,
+        group: Option<&str>,
+        cached: Option<&Page>,
+    ) -> Result<(Page, String)> {
         tokio::time::timeout(Duration::from_secs(self.limits.request_seconds), async {
             let _permit = self
                 .permits
@@ -440,39 +490,7 @@ impl WebTool {
                 .map_err(|_| error("WEB_CANCELLED", "fetch cancelled"))?;
             let policy = self.policy()?;
             let target = policy.authorize(raw, group)?;
-            let host = target.host_str().unwrap().trim_matches(['[', ']']);
-            let port = target.port_or_known_default().unwrap();
-            let addresses = match self
-                .test_resolve
-                .iter()
-                .chain(self.test_resolve_extra.iter())
-                .find(|(test_host, _)| test_host == host)
-            {
-                Some((_, addr)) => vec![*addr],
-                _ => {
-                    let addresses: Vec<_> = tokio::net::lookup_host((host, port))
-                        .await
-                        .map_err(|_| error("WEB_DNS", "DNS lookup failed"))?
-                        .take(33)
-                        .collect();
-                    validate_addresses(&addresses)?;
-                    addresses
-                }
-            };
-            // New client, no pooling/retries/proxies/redirects, only validated DNS.
-            // HTTP/1's finite Hyper header-count/buffer caps apply before our 16KiB header check.
-            let client = reqwest::Client::builder()
-                .no_proxy()
-                .http1_only()
-                .pool_max_idle_per_host(0)
-                .retry(reqwest::retry::never())
-                .redirect(reqwest::redirect::Policy::none())
-                .dns_resolver(Arc::new(RefuseDns))
-                .resolve_to_addrs(host, &addresses)
-                .timeout(Duration::from_secs(self.limits.request_seconds))
-                .user_agent("CGagentHarness-web/1.0")
-                .build()
-                .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))?;
+            let client = self.pinned_client(&target).await?;
             let current = self.policy()?;
             current.authorize(target.as_str(), group)?;
             if current.revision != policy.revision {
@@ -512,6 +530,7 @@ impl WebTool {
                     .and_then(|v| v.to_str().ok())
                     .map(str::to_string)
             };
+            let mut raw_body = String::new();
             let mut page = if status == reqwest::StatusCode::NOT_MODIFIED {
                 let mut page = cached
                     .cloned()
@@ -560,7 +579,8 @@ impl WebTool {
                     }
                     bytes.extend_from_slice(&chunk);
                 }
-                let (title, text, links) = extract(&String::from_utf8_lossy(&bytes), &content_type, &target);
+                raw_body = String::from_utf8_lossy(&bytes).into_owned();
+                let (title, text, links) = extract(&raw_body, &content_type, &target);
                 Page {
                     url: target.to_string(),
                     title,
@@ -589,7 +609,7 @@ impl WebTool {
             }
             page.fetched_at = crate::common::now_ts();
             page.policy_revision = current.revision;
-            Ok(page)
+            Ok((page, raw_body))
         })
         .await
         .map_err(|_| error("WEB_TIMEOUT", "request deadline exceeded"))?

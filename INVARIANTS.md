@@ -56,7 +56,9 @@ are preserved; absent or invalid legacy `web_enabled` values remain off.
 `tools/web_allowlist.json` is a bounded,
 versioned document; malformed, missing, unreadable or partially invalid policy
 refuses access. Exact HTTP(S) URLs retain scheme, port, path and query identity.
-Only explicit `*.host` and `/path/*` rules broaden scope. Legacy rows authorize
+Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
+query strings; exact rules retain exact query identity. Encoded query data cannot
+alter the parsed host/path, and encoded path escapes remain refused. Legacy rows authorize
 only their stored fetch target, never old host aliases or implicit descendants.
 
 The fetcher resolves once, rejects every mixed/special-use address answer, then
@@ -70,6 +72,16 @@ unproven saved evidence is inaccessible, including old shared plain-text context
 Revocation prevents future retrieval/injection; it cannot erase historical chat
 or content already sent to a model. No atomicity against arbitrary external file
 edits between an authorization check and an OS operation is claimed.
+
+Chat exposes only two read-only model tools while web is enabled: Google keyword
+search and permitted URL fetch. The dispatcher bounds calls, tokens, time and
+arguments and rechecks current account/URL permissions before reads and evidence
+delivery. It cannot mutate policy, credentials, accounts or repositories, and
+`/loop` exposes no tools. Search-provider snippets are listings, not fetched
+linked pages; each content fetch still requires its own URL permission. A
+configured SerpAPI key selects the fixed Google-results API transport, while no
+active key selects public Google. Challenges and provider failures never become
+fabricated results. Keys remain server-side and never enter model context.
 
 Content permission grants neither account authority nor provider configuration
 authority. None of these authorities substitutes for coding/write/publication

@@ -50,16 +50,25 @@ pub fn canonical_url(raw: &str) -> Result<Url> {
         return Err(bad());
     }
     // Percent escapes retain their identity (including query order). Refuse
-    // nested escapes, encoded dot/separator/control bytes, and malformed escapes.
+    // nested escapes and encoded dot/separator/space bytes in paths. Query data
+    // may encode these characters; it cannot change the parsed URL authority.
+    // Encoded controls and malformed escapes are refused everywhere.
     let mut normalized = String::with_capacity(text.len());
     let mut chars = text.chars();
+    let mut query = false;
     while let Some(c) = chars.next() {
+        if c == '?' {
+            query = true;
+        }
+        if c == '#' {
+            query = false;
+        }
         normalized.push(c);
         if c == '%' {
             let a = chars.next().and_then(|x| x.to_digit(16)).ok_or_else(bad)?;
             let b = chars.next().and_then(|x| x.to_digit(16)).ok_or_else(bad)?;
             let byte = a * 16 + b;
-            if byte <= 32 || matches!(byte, 37 | 46 | 47 | 92 | 127) {
+            if byte < 32 || byte == 127 || !query && matches!(byte, 32 | 37 | 46 | 47 | 92) {
                 return Err(bad());
             }
             normalized.push_str(&format!("{byte:02X}"));
@@ -215,7 +224,7 @@ impl Pattern {
         };
         host_ok
             && if self.subtree {
-                target.query().is_none() && target.path().starts_with(self.url.path())
+                target.path().starts_with(self.url.path())
             } else {
                 target.path() == self.url.path() && target.query() == self.url.query()
             }
@@ -445,8 +454,8 @@ mod tests {
             ),
             (
                 "https://example.com/*",
-                "https://example.com/nested/page",
                 "https://example.com/nested/page?q=1",
+                "https://www.example.com/nested/page?q=1",
             ),
             (
                 "https://*.example.com/docs/*",
@@ -488,6 +497,14 @@ mod tests {
             assert!(canonical_url(bad).is_err(), "{bad}");
         }
         assert!(Rule::new("https://example.com/docs/*?q=1", "docs", &[]).is_err());
+        let query = canonical_url("https://example.com/search?q=TCP%2fIP%20%2520").unwrap();
+        assert_eq!(query.host_str(), Some("example.com"));
+        assert_eq!(query.path(), "/search");
+        assert_eq!(query.query(), Some("q=TCP%2FIP%20%2520"));
+        assert!(canonical_url("https://example.com/search?q=%0A").is_err());
+        assert!(Rule::new("https://example.com/*", "default", &[])
+            .unwrap()
+            .permits(&query));
     }
 
     #[test]

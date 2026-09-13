@@ -72,3 +72,12 @@ The fresh-install follow-up rechecked both crates with locked metadata/tree
 commands and the MSRV-aware update preview on September 12. Both previews
 reported zero package changes; the manifests, lockfiles, toolchains and deny
 policies were retained. The default/onboarding changes add no dependencies.
+
+## Chat Google-search follow-up (2026-09-12)
+
+The chat web tools and Google result parsers reuse Reqwest, Scraper, Serde and
+Tokio already in the lockfiles. No crate, feature, lockfile, toolchain or advisory
+exception was added. Both MSRV-aware dry-run updates again found zero compatible
+updates; backend and desktop cargo-deny policies passed. Google/SerpAPI are
+optional runtime search services, distinct from Cargo dependencies and local
+model inference. A public-Google challenge is not a dependency or test pass.

@@ -34,6 +34,10 @@ pub enum WebCommand {
     },
     Search {
         query: String,
+        #[arg(long, value_parser = ["google", "pages"])]
+        engine: Option<String>,
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=10))]
+        count: u8,
         #[arg(long)]
         group: Option<String>,
     },
@@ -333,7 +337,18 @@ pub fn web(command: WebCommand, origin: Option<String>) -> anyhow::Result<()> {
         ),
         WebCommand::Deny { rule } => ("POST", "/api/web/deny", Some(json!({"url":rule}))),
         WebCommand::Fetch { url } => ("POST", "/api/web/fetch", Some(json!({"url":url}))),
-        WebCommand::Search { query, group } => ("POST", "/api/web/search", Some(json!({"query":query,"group":group}))),
+        WebCommand::Search {
+            query,
+            group,
+            engine,
+            count,
+        } => (
+            "POST",
+            "/api/web/search",
+            Some(
+                json!({"query":query,"group":group,"engine":engine.as_deref().unwrap_or(if group.is_some() { "pages" } else { "google" }),"count":count}),
+            ),
+        ),
         WebCommand::Research { query, group } => {
             ("POST", "/api/web/research", Some(json!({"query":query,"group":group})))
         }

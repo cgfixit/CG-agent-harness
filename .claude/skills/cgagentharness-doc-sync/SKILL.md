@@ -26,6 +26,10 @@ old acceptance records are historical evidence, not current contracts.
 - Guard order: rate limit, same origin, direct loopback/no forwarding headers,
   account/RBAC, then mutation CSRF. Minimal status/login/setup still receive
   early guards. The optional harness key is metadata, never account authority.
+- Chat exposes only bounded Google search and permitted-URL fetch tools when web
+  is enabled; `/loop` remains tool-free. Public Google is the no-key fallback;
+  `SERPAPI_API_KEY` selects the fixed API. Path wildcards include queries on the
+  same origin; listings never grant destination permissions.
 - SQLite is authoritative after transactional legacy JSON migration. Research
   and web selections are account scoped; sessions/jobs/persona/notes are shared.
 - I6 remains server/common/LLM/shim to child only through the shim whitelist.

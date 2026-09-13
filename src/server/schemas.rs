@@ -199,6 +199,10 @@ impl Validate for WebUrlRequest {
 pub struct WebSearchRequest {
     pub query: String,
     #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default = "search_count")]
+    pub count: usize,
+    #[serde(default)]
     pub group: Option<String>,
 }
 
@@ -230,9 +234,16 @@ impl Validate for WebRuleRequest {
     }
 }
 
+fn search_count() -> usize {
+    5
+}
+
 impl Validate for WebSearchRequest {
     fn validate(&self) -> Vec<String> {
-        if len_ok(&self.query, 1, MAX_WEB_QUERY_LEN) {
+        if len_ok(&self.query, 1, MAX_WEB_QUERY_LEN)
+            && (1..=10).contains(&self.count)
+            && self.engine.as_deref().is_none_or(|v| matches!(v, "google" | "pages"))
+        {
             vec![]
         } else {
             vec!["query".into()]

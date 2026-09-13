@@ -47,6 +47,7 @@ api:
 # Bounded public content reads; fresh harness.json enables web with an empty URL allowlist.
 # Missing values in existing homes use these defaults; invalid values fail boot.
 web:
+  chat_tool_calls: 3 # 1–5 read-only calls per chat turn; no tools in /loop
   response_bytes: 262144 # 1024–1048576; compressed bodies refused
   request_seconds: 8 # 1–30, includes queue, DNS, headers and body
   concurrency: 2 # 1–4 total fetches

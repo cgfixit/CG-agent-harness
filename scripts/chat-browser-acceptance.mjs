@@ -9,7 +9,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 let persona=''; let clearFails=false;
-let authFixture=false, signedIn=false, mustChange=true, savedKey='', authRole='admin', authUsername='admin';
+let authFixture=false, signedIn=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
@@ -30,8 +30,8 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/auth/logout'){signedIn=false;reply({logged_out:true});return;}
  if(path==='/api/keys'){
   if(!signedIn || mustChange || authRole!=='admin'){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
-  if(req.method==='POST'){if(body.clear?.length)savedKey='';else savedKey=body.keys.DEEPAGENT_API_KEY;}
-  reply({keys:[{name:'DEEPAGENT_API_KEY',label:'Planner key',detail:'Optional fixture provider',saved_configured:!!savedKey,saved_masked:savedKey?'••••••••1234':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedKey,environment_override:false}]});return;
+  if(req.method==='POST'){if(body.clear?.includes('DEEPAGENT_API_KEY'))savedKey='';if(body.clear?.includes('SERPAPI_API_KEY'))savedSearchKey='';if(body.keys?.DEEPAGENT_API_KEY)savedKey=body.keys.DEEPAGENT_API_KEY;if(body.keys?.SERPAPI_API_KEY)savedSearchKey=body.keys.SERPAPI_API_KEY;}
+  reply({keys:[{name:'SERPAPI_API_KEY',label:'Google results (SerpAPI)',detail:'Public Google fallback when unset',saved_configured:!!savedSearchKey,saved_masked:savedSearchKey?'••••••••5678':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedSearchKey,environment_override:false},{name:'DEEPAGENT_API_KEY',label:'Planner key',detail:'Optional fixture provider',saved_configured:!!savedKey,saved_masked:savedKey?'••••••••1234':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedKey,environment_override:false}]});return;
  }
  if(path==='/api/status'&&authFixture&&(!signedIn||mustChange||authRole==='audit')){reply({version:'fixture',auth_enabled:true});return;}
  if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:0});return;}
@@ -68,6 +68,7 @@ const server=createServer(async(req,res)=>{
   if(body.id!=='check:cargo-fmt'){reply({detail:{code:'SKILL_ID',message:'Unknown fixed check'}},400);return;}
   reply({id:body.id,profile:'cargo-fmt',executed:false});return;
  }
+ if(path==='/api/web/search'){reply(body.engine==='google'?{provider:'google-serpapi',results:[{rank:1,title:'Fixture Google result',url:'https://veeam.com/kb1',snippet:'Search listing only'}],notice:'Linked page not fetched'}:{hits:[],coverage:{searched:[],failed:[]}});return;}
  if(path==='/api/chat/cancel'){reply({cancelled:true});return;}
  if(path==='/api/chat'){
   if(mode==='delay'){setTimeout(()=>reply({reply:'LATE_OLD_REPLY',session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:2},tally:{total:3}}),500).unref();return;}
@@ -228,6 +229,10 @@ try {
  await until('typeof onSend === "function" && window.__cgahLoaded!==1');
  await send('/session use '+goalSession);await send('/goal task');assert.equal(await evaluate('pendingAgentRun.goal_stage.session_id'),goalSession);
  await send('/agent confirm');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture','missing reason keeps request staged');
+ await send('/web search veeam software cve');assert.equal(requests.filter(r=>r[1]==='/api/web/search').at(-1)[2].engine,'google');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("Fixture Google result")'));
+ await send('/web pages veeam');assert.equal(requests.filter(r=>r[1]==='/api/web/search').at(-1)[2].engine,'pages');
+ await evaluate('renderChatWebTools([{tool:"web_fetch",ok:true,result:{url:"https://veeam.com/kb1",source_chars:123,notice:"Fetched fixture page"}},{tool:"web_search",ok:false,code:"WEB_GOOGLE_CHALLENGE",message:"Google requires interaction"}])');
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("WEB_GOOGLE_CHALLENGE")'));
  assert.ok(!requests.some(r=>r[0]==='POST' && ['/api/agent/jobs','/api/agent/run'].includes(r[1])),'chat and skill staging never execute coding work');
  // The real browser must execute the minimal-status login and key editor flows.
  authFixture=true;await call('Page.reload',{ignoreCache:true});
@@ -249,9 +254,16 @@ try {
  await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value="fixture-secret-value-1234";document.getElementById("saved-DEEPAGENT_API_KEY").form.requestSubmit()');
  await until('document.getElementById("pane-api-keys").textContent.includes("••••••••1234")');
  assert.equal(savedKey,'fixture-secret-value-1234');
+ await evaluate('document.getElementById("saved-SERPAPI_API_KEY").value="fixture-search-key-5678";document.getElementById("saved-SERPAPI_API_KEY").form.requestSubmit()');
+ await until('document.getElementById("pane-api-keys").textContent.includes("••••••••5678")');
+ assert.equal(savedSearchKey,'fixture-search-key-5678');
+ assert.equal(await evaluate('document.body.textContent.includes("fixture-search-key-5678")'),false);
+ await evaluate('Array.from(document.getElementById("saved-SERPAPI_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
+ await until('document.getElementById("saved-SERPAPI_API_KEY") && !document.getElementById("pane-api-keys").textContent.includes("••••••••5678")');assert.equal(savedSearchKey,'');
+
  assert.equal(await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value'),'');
  assert.equal(await evaluate('document.body.textContent.includes("fixture-secret-value-1234")'),false);
- await evaluate('Array.from(document.querySelectorAll("#pane-api-keys button")).find(b=>b.textContent==="Clear saved value").click()');
+ await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
  await until('document.getElementById("pane-api-keys").textContent.includes("Saved: unset")');assert.equal(savedKey,'');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(await evaluate('currentSession'),null);
@@ -270,7 +282,7 @@ try {
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
- console.log(JSON.stringify({passed:true,coverage:['minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
+ console.log(JSON.stringify({passed:true,coverage:['Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

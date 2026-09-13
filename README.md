@@ -26,8 +26,10 @@ scan, not a reduction to a small prompt — read the full data-egress note in
 [Run a coding task](#run-a-coding-task) before turning it on.
 
 Chat starts without an assigned repository or automatically injected coding
-skills. It can discuss supplied context; it does not inspect files or run tools
-from a model reply. Coding execution is separately staged and confirmed.
+skills. With web enabled, chat can call two bounded read-only tools: Google
+keyword search and fetching permitted public URLs. It cannot inspect local files,
+run shell commands, edit permissions or mutate repositories. Coding execution is
+separately staged and confirmed.
 > **Fresh homes require HTTPS and account login; the harness API key is optional.** Start with `admin` / `admin`, then replace the password immediately. See [secure setup](docs/SECURE_RESEARCH.md). Repository mutations
 remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
@@ -36,7 +38,9 @@ publication each require a separate operator decision.
 HTTPS merged into `main` through [PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76)
 at `a93006d`. The September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
 targets `44a205e` and predates them. This source also enables fresh web settings
-and adds the login hint and clearer role feedback. Use a source build or successful
+and adds the login hint and clearer role feedback, merged as [PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77) at `b53ef9d`.
+This follow-up source adds chat web tools and Google keyword search; those changes
+require a bundle built from this branch or a later main containing it. Use a source build or successful
 Bundle artifact containing the desired changes; a PR artifact remains a candidate
 until merged. Check the workflow SHA and app's `Contents/Resources/COMMIT`; the
 Cargo package version `0.1.0` alone does not establish feature availability. See [setup](setup-guide.md) for
@@ -47,7 +51,10 @@ for the acceptance boundaries.
 
 - Discuss supplied code or documents, save a session goal and revisit the
   conversation with its selected prompt context.
-- Grant a documentation URL, fetch or search it, and ask `/web research` for a
+- Ask chat to search Google for current links, or to read and summarize an
+  authorized URL. A SerpAPI key is optional; the public Google fallback can be
+  blocked by JavaScript or CAPTCHA and reports that explicitly.
+- Grant a documentation URL, fetch or search its passages, and ask `/web research` for a
   local-model answer with checked quote references and reported coverage. Use
   `/web inject` to include selected evidence in later chat.
 - Stage a bounded repository change, inspect the proposed diff and checks, then
@@ -60,6 +67,7 @@ for the acceptance boundaries.
 | Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
+| Chat web tools | Natural-language Google search and permitted URL fetch. API Keys accepts `SERPAPI_API_KEY`; no active key selects public Google. Actual tool outcomes and source links appear in chat. No web tools run in `/loop`. |
 | Web research | Grant exact/wildcard URL permission for bounded discovery and BM25 passage search; run `/web research` for local-model answers with verified quote references, usage and partial coverage. Fresh web settings are enabled with an empty URL allowlist; selection/injection is account scoped. |
 | Accounts and API Keys | Fresh `admin` / `admin` requires password replacement. Administrator, Portal operator and Auditor permissions are enforced on API reads and writes. Administrators manage masked saved/active credentials in API Keys. |
 | Coding loop | Stage a repository task and inspect files or a plan; confirm an isolated run that proposes bounded edits, runs fixed check profiles in a hard sandbox, and feeds check results back into later attempts. |
@@ -363,6 +371,36 @@ data is reviewable before it leaves the machine. Treat enabling a cloud
 provider as authorizing repository-content egress for every subsequent
 `--confirm-online` run, not as a one-time low-risk toggle.
 
+## Search Google or read a URL in chat
+
+In the bundled app or its web console, sign in, replace the bootstrap password,
+and grant URLs as an administrator. Type commands directly, without backticks:
+
+```text
+/web allow https://www.google.com/*
+/web allow https://doc.rust-lang.org/book/ch01-01-installation.html
+```
+
+Then ask normally: **Search Google for the top 5 results for "veeam software cve"**,
+or **Read https://doc.rust-lang.org/book/ch01-01-installation.html and tell me the
+Rust version-check command**. The local model invokes the supplied web tools;
+chat shows actual tool outcomes, ranked search links and fetched-source URLs.
+A model must support the OpenAI-compatible tool-call protocol.
+
+For API-backed Google listings, save a **SerpAPI** key in the left **API Keys →
+Google results (SerpAPI)** field and restart. The key stays server-side. With no
+active key, the app attempts public Google HTML. JavaScript/CAPTCHA, unreadable
+responses and network failures are explicit failures, never invented results.
+A configured key's rejection/quota/network failure does not silently fall back.
+Search queries go to the selected provider; chat history and provider keys are
+not included in the tool's search payload. See [provider setup and limits](docs/SECURE_RESEARCH.md#google-keyword-search-and-chat-tools).
+
+`/web search <keywords>` performs Google search directly; `/web pages <keywords>`
+searches passages from permitted pages. `/web fetch <url>` retrieves a permitted
+URL without model routing. Search listings do **not** authorize reading their
+linked destinations. Path wildcards cover query strings on that same origin;
+`google.com` does not implicitly include `www.google.com`.
+
 ## Optional credentials and enforced boundaries
 
 Fresh homes enable account authentication, role permissions, HTTPS and web
@@ -428,7 +466,7 @@ executing. Native sandbox and descendant-cleanup limits are recorded in
 `/web on` can resume it. `/web forget` deletes the saved extract and context.
 A completed search with no hits clears your account's last/injected selection to
 prevent stale reuse; it does not erase the shared public-document cache.
-See [web setup and controls](setup-guide.md#76-web-fetch-search-and-injected-context) for bounds.
+See [web setup and controls](setup-guide.md#76-google-search-url-fetch-and-permitted-page-research) for bounds.
 
 ## Tests and CI/CD
 
