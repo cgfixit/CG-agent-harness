@@ -84,7 +84,9 @@ if [[ -n "${CGAGENTHARNESS_PR_FILES:-}" ]]; then
   changed="$CGAGENTHARNESS_PR_FILES"
   files_source="CGAGENTHARNESS_PR_FILES"
 elif merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null)"; then
-  changed="$(git -C "$repo_root" diff --name-only "$merge_base" 2>/dev/null || true)"
+  # --no-renames: a core file moved elsewhere must still surface its source
+  # path, not only the destination Git's rename detection would report.
+  changed="$(git -C "$repo_root" diff --name-only --no-renames "$merge_base" 2>/dev/null || true)"
   files_source="git diff against $base merge base"
 fi
 if [[ -z "$files_source" ]]; then
