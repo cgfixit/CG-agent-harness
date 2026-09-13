@@ -13,7 +13,11 @@ use std::time::{Duration, Instant};
 fn acquire_lease(path: &Path, deadline: Instant, retry: Duration) -> std::io::Result<FileLease> {
     loop {
         match FileLease::acquire(path, true) {
-            Err(e) if e.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => std::thread::sleep(retry),
+            Err(e) if e.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => {
+                // Never sleep past the deadline: the configured wait is the bound
+                // even when the retry interval is coarser than what remains.
+                std::thread::sleep(retry.min(deadline.saturating_duration_since(Instant::now())));
+            }
             other => return other,
         }
     }
@@ -123,11 +127,13 @@ mod tests {
         // releases it inside the retry window: the record must land, after
         // waiting, instead of being dropped on the first EWOULDBLOCK.
         let held = FileLease::acquire(&lock, true).unwrap();
+        // `start` is taken before the holder thread exists, so its 20 ms hold
+        // always begins after `start` and the lower bound below cannot race.
+        let start = Instant::now();
         let holder = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(20));
             drop(held);
         });
-        let start = Instant::now();
         let retry = Duration::from_millis(2);
         // Generous deadline: this case proves the wait happens, not its bound,
         // and a loaded runner can delay the holder thread well past 20 ms.
@@ -144,6 +150,21 @@ mod tests {
         let err = append_until(&path, "{\"n\":2}", 1024, start + Duration::from_millis(50), retry).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::WouldBlock);
         assert!(start.elapsed() < Duration::from_secs(1));
+        // A retry interval coarser than the remaining wait is clipped to it.
+        let start = Instant::now();
+        let err = append_until(
+            &path,
+            "{\"n\":5}",
+            1024,
+            start + Duration::from_millis(5),
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::WouldBlock);
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "sleep overshot the deadline"
+        );
         // A record whose submission deadline already passed while it queued
         // behind other writers gets one attempt, not a fresh window; the plain
         // `append` is the same nonblocking path.
