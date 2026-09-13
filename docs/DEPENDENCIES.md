@@ -89,3 +89,24 @@ exception was added. Both MSRV-aware dry-run updates again found zero compatible
 updates; backend and desktop cargo-deny policies passed. Google/SerpAPI are
 optional runtime search services, distinct from Cargo dependencies and local
 model inference. A public-Google challenge is not a dependency or test pass.
+
+## Optimization sweep (2026-09-13)
+
+Backend (Cargo 1.88.0, lockfile at `f47d41d`): `cargo metadata --locked` and
+`cargo build --all-targets --locked` exit 0. `cargo update --dry-run --locked
+--verbose` with the MSRV-aware resolver locks 0 packages; `ordered-float` 5.4.0 is
+retained (5.5.0 requires Rust 1.90) and the remaining eight "behind latest"
+entries are semver-incompatible releases. Without that resolver setting the same
+preview selects `ordered-float` 5.5.0, which is why
+[PR #80](https://github.com/cgfixit/CG-agent-harness/pull/80) commits the setting
+in `.cargo/config.toml`, together with the removal of the unused direct
+`http-body-util` declaration and the unused `OpenSSL`/`Unicode-DFS-2016`
+license allowances. `cargo deny check` (cargo-deny
+0.20.2, RustSec advisory database cloned 2026-09-13, run offline because the
+sandbox proxy blocks cargo-deny's own fetch): advisories, bans, licenses and
+sources ok; duplicate-version warnings unchanged (`windows-sys` 0.59/0.60,
+`rand` 0.8/0.9/0.10, `thiserror` 1/2). Desktop (`desktop/Cargo.lock`, Tauri
+2.11.5 with the retained `tauri-utils` patch): `cargo fetch --locked`,
+`cargo metadata --locked --offline` and `cargo deny check` with
+`desktop/deny.toml` exit 0. No dependency was added or updated; no native
+desktop build was run in this sweep.

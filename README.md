@@ -37,10 +37,11 @@ publication each require a separate operator decision.
 **Version scope:** secure web research, SQLite accounts, API Keys and native
 HTTPS merged into `main` through [PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76)
 at `a93006d`. The September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
-targets `44a205e` and predates them. This source also enables fresh web settings
-and adds the login hint and clearer role feedback, merged as [PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77) at `b53ef9d`.
-This follow-up source adds chat web tools and Google keyword search; those changes
-require a bundle built from this branch or a later main containing it. Use a source build or successful
+targets `44a205e` and predates them. [PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77)
+at `b53ef9d` enables fresh web settings and adds the login hint and clearer role
+feedback; [PR #78](https://github.com/cgfixit/CG-agent-harness/pull/78) at
+`dbaa808` adds chat web tools and Google keyword search, and `f47d41d` keeps web
+source links readable in the dark console. Use a source build or successful
 Bundle artifact containing the desired changes; a PR artifact remains a candidate
 until merged. Check the workflow SHA and app's `Contents/Resources/COMMIT`; the
 Cargo package version `0.1.0` alone does not establish feature availability. See [setup](setup-guide.md) for
