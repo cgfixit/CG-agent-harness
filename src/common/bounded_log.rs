@@ -67,6 +67,17 @@ pub fn append_until(
     if line.len() as u64 + 1 > max_bytes {
         return Err(std::io::Error::other("log record exceeds retention bound"));
     }
+    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+    // The audit path is operator-configured, not an HTTP field; refuse traversal
+    // anyway so a tainted config/home value cannot create directories elsewhere.
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "log path must not contain parent-directory components",
+        ));
+    }
+    let path = Path::new(raw.as_ref());
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -115,6 +126,16 @@ mod tests {
         assert!(std::fs::metadata(adjacent(&path, ".1")).unwrap().len() <= 32);
         assert!(std::fs::read_to_string(&path).unwrap().contains("19"));
         assert!(append(&path, &"x".repeat(33), 32).is_err());
+    }
+
+    #[test]
+    fn traversal_components_are_refused_before_directories_are_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("..").join("audit.jsonl");
+        let err = append(&path, "{\"n\":1}", 1024).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+        assert!(!dir.path().join("nested").exists());
+        assert!(!dir.path().join("audit.jsonl").exists());
     }
 
     #[cfg(unix)]

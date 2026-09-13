@@ -335,13 +335,22 @@ fn proposal_revision(
 
 impl StructuredMemoryStore {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
-        let marker = marker_path(path);
+        // Same CodeQL rust/path-injection barrier as the audit sink: the store
+        // path is home-relative, never an HTTP field, but `..` is still refused.
+        let raw = path.to_string_lossy();
+        if raw.contains("..") {
+            return Err(invalid(
+                "structured memory path must not contain parent-directory components",
+            ));
+        }
+        let path = PathBuf::from(raw.as_ref());
+        let marker = marker_path(&path);
         let parent = path
             .parent()
             .ok_or_else(|| invalid("missing structured memory directory"))?;
         std::fs::create_dir_all(parent)?;
-        let conn = if present(path)? {
-            let conn = connect(path)?;
+        let conn = if present(&path)? {
+            let conn = connect(&path)?;
             check_schema(&conn)?;
             if !present(&marker)? {
                 write_atomic(&marker, MARKER_BODY, Some(0o600))?;
@@ -369,13 +378,13 @@ impl StructuredMemoryStore {
             conn.close().map_err(|(_, e)| sql(e))?;
             staged.as_file().sync_all()?;
             staged
-                .persist_noclobber(path)
+                .persist_noclobber(&path)
                 .map_err(|e| invalid(format!("cannot install structured memory database: {}", e.error)))?;
             write_atomic(&marker, MARKER_BODY, Some(0o600))?;
-            connect(path)?
+            connect(&path)?
         };
         Ok(Self {
-            path: path.to_path_buf(),
+            path,
             conn: Mutex::new(conn),
             limits: Limits::from_config(cfg),
             scanner: Scanner::core(),
@@ -1115,5 +1124,14 @@ mod tests {
         let home = Home::at(dir.path().join("home"));
         home.ensure_layout().unwrap();
         assert!(!home.structured_memory_path().exists());
+    }
+
+    #[test]
+    fn traversal_path_does_not_create_a_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory").join("..").join("structured.sqlite3");
+        assert!(StructuredMemoryStore::open(&path, &cfg(dir.path())).is_err());
+        assert!(!dir.path().join("memory").exists());
+        assert!(!dir.path().join("structured.sqlite3").exists());
     }
 }
