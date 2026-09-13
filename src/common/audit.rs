@@ -4,8 +4,10 @@
 //! never raises: a disk-full or serialization failure degrades to a tracing
 //! warning so an already-computed response is never turned into a 500.
 
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use regex::Regex;
 use serde_json::Value;
@@ -140,36 +142,42 @@ impl Audit {
                 return;
             }
         };
-        // The lease deadline starts now, before queueing on the in-process
-        // lock, so callers that pile up behind a busy sink share one bound
-        // instead of each spending a fresh wait after the previous one.
-        let deadline = std::time::Instant::now() + self.retention.lease_wait;
-        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        if super::bounded_log::append_until(
-            &self.path,
-            &line,
-            self.retention.max_bytes,
-            deadline,
-            self.retention.lease_retry,
-        )
-        .is_err()
-        {
+        // Deadline is stamped at submission, before any in-process wait, so
+        // callers that pile up behind a busy sink share one bound.
+        if self.append_line(&self.path, &line).is_err() {
             tracing::warn!("audit sink unavailable, busy, or record exceeds retention bound");
         }
     }
 
     pub fn append_spend(&self, path: &Path, record: &Value) {
-        let deadline = std::time::Instant::now() + self.retention.lease_wait;
-        if super::bounded_log::append_until(
-            path,
-            &record.to_string(),
-            self.retention.max_bytes,
-            deadline,
-            self.retention.lease_retry,
-        )
-        .is_err()
-        {
+        if self.append_line(path, &record.to_string()).is_err() {
             tracing::warn!("spend sink unavailable, busy, or record exceeds retention bound");
+        }
+    }
+
+    /// Retry a busy lease *outside* `self.lock`. Sleeping under that mutex
+    /// serialized every `/api/*` `portal.request` behind the waiter, so the
+    /// nth caller both stalled and then dropped the line when the shared
+    /// deadline expired. One non-blocking attempt runs under the mutex
+    /// (Windows has no flock); the wait itself does not.
+    fn append_line(&self, path: &Path, line: &str) -> std::io::Result<()> {
+        let deadline = Instant::now() + self.retention.lease_wait;
+        let retry = self.retention.lease_retry;
+        loop {
+            {
+                let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+                // `append` is the non-blocking path (busy lease → WouldBlock).
+                match super::bounded_log::append(path, line, self.retention.max_bytes) {
+                    Ok(()) => return Ok(()),
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(std::io::Error::from(ErrorKind::WouldBlock));
+            }
+            std::thread::sleep(retry.min(deadline.saturating_duration_since(now)));
         }
     }
 }
