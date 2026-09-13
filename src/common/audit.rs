@@ -4,6 +4,7 @@
 //! never raises: a disk-full or serialization failure degrades to a tracing
 //! warning so an already-computed response is never turned into a 500.
 
+use std::borrow::Cow;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -46,17 +47,29 @@ impl Redactors {
         Self { rules }
     }
 
-    pub fn redact(&self, text: &str) -> String {
-        let mut out = text.to_string();
+    /// Apply every rule. The input is borrowed back untouched when no rule
+    /// matched, so the per-request audit path allocates only for real hits
+    /// instead of once per rule per string.
+    pub fn redact<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        let mut owned: Option<String> = None;
         for (re, replacement) in &self.rules {
-            out = re.replace_all(&out, *replacement).into_owned();
+            let replaced = match re.replace_all(owned.as_deref().unwrap_or(text), *replacement) {
+                Cow::Owned(s) => Some(s),
+                Cow::Borrowed(_) => None,
+            };
+            if let Some(s) = replaced {
+                owned = Some(s);
+            }
         }
-        out
+        match owned {
+            Some(s) => Cow::Owned(s),
+            None => Cow::Borrowed(text),
+        }
     }
 
     pub fn redact_value(&self, value: &Value) -> Value {
         match value {
-            Value::String(s) => Value::String(self.redact(s)),
+            Value::String(s) => Value::String(self.redact(s).into_owned()),
             Value::Array(items) => Value::Array(items.iter().map(|v| self.redact_value(v)).collect()),
             Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), self.redact_value(v))).collect()),
             other => other.clone(),
@@ -103,7 +116,7 @@ impl Audit {
     }
 
     pub fn redact(&self, text: &str) -> String {
-        self.redactors.redact(text)
+        self.redactors.redact(text).into_owned()
     }
 
     /// Append one redacted, timestamped record. Never fails.
