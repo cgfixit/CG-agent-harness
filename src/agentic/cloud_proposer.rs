@@ -93,7 +93,7 @@ pub fn sanitize_handoff(
         "event": HANDOFF_EVENT, "provider": provider, "prompt_sha256": crate::common::sha256_hex(&redacted),
         "prompt_chars": redacted.chars().count(), "context_doc_ids": [], "had_redactions": redacted != prompt,
     }));
-    Ok(redacted)
+    Ok(redacted.into_owned())
 }
 
 impl std::fmt::Debug for CloudProposerClient<'_> {

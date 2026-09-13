@@ -55,12 +55,21 @@ impl RateLimiter {
         let now = (self.clock)();
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
         self.sweep(&mut st, now);
-        let entry = st.hits.entry(client.to_string()).or_default();
-        entry.retain(|t| now - *t < self.window_seconds);
-        if entry.len() >= self.max_requests {
+        // Every `/api/*` request passes here: a known client is one `&str`
+        // lookup with no allocation; only a first-seen client pays for an
+        // owned key.
+        match st.hits.get_mut(client) {
+            Some(hits) => self.record(hits, now),
+            None => self.record(st.hits.entry(client.to_string()).or_default(), now),
+        }
+    }
+
+    fn record(&self, hits: &mut Vec<f64>, now: f64) -> bool {
+        hits.retain(|t| now - *t < self.window_seconds);
+        if hits.len() >= self.max_requests {
             return false;
         }
-        entry.push(now);
+        hits.push(now);
         true
     }
 
@@ -68,15 +77,22 @@ impl RateLimiter {
     pub fn retry_after_sec(&self, client: &str) -> f64 {
         let now = (self.clock)();
         let st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let recent: Vec<f64> = st
-            .hits
-            .get(client)
-            .map(|h| h.iter().copied().filter(|t| now - t < self.window_seconds).collect())
-            .unwrap_or_default();
-        if recent.len() < self.max_requests {
+        let Some(hits) = st.hits.get(client) else {
+            return 0.0;
+        };
+        // One pass: count the in-window hits and keep the oldest, without
+        // materializing a filtered copy just to take its minimum.
+        let mut in_window = 0usize;
+        let mut oldest = f64::INFINITY;
+        for &t in hits {
+            if now - t < self.window_seconds {
+                in_window += 1;
+                oldest = oldest.min(t);
+            }
+        }
+        if in_window < self.max_requests {
             return 0.0;
         }
-        let oldest = recent.iter().cloned().fold(f64::INFINITY, f64::min);
         (self.window_seconds - (now - oldest)).max(0.0)
     }
 
