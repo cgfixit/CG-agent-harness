@@ -4,18 +4,16 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// A busy lease is retried within this bound before the record is refused.
+/// A busy lease is retried until `deadline` before the record is refused.
 /// The agentic child and the server append to one audit file, so a momentary
-/// overlap must not drop either writer's evidence; an unavailable sink still
-/// cannot hold a request longer than this.
-const LEASE_WAIT: Duration = Duration::from_millis(50);
-const LEASE_RETRY: Duration = Duration::from_millis(2);
-
-fn acquire_lease(path: &Path) -> std::io::Result<FileLease> {
-    let deadline = Instant::now() + LEASE_WAIT;
+/// overlap must not drop either writer's evidence. The deadline is fixed by the
+/// caller at submission time, so a record that already queued behind other
+/// writers does not earn a fresh window of its own, and an unavailable sink
+/// never holds a request past the configured bound.
+fn acquire_lease(path: &Path, deadline: Instant, retry: Duration) -> std::io::Result<FileLease> {
     loop {
         match FileLease::acquire(path, true) {
-            Err(e) if e.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => std::thread::sleep(LEASE_RETRY),
+            Err(e) if e.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => std::thread::sleep(retry),
             other => return other,
         }
     }
@@ -25,19 +23,50 @@ pub fn limit(cfg: &AppConfig) -> u64 {
     cfg.u64_or("logging.max_file_bytes", 8 * 1024 * 1024)
         .clamp(64 * 1024, 64 * 1024 * 1024)
 }
+
+/// Retention bound plus the lease-wait policy for one JSONL sink, from the
+/// shipped `logging.*` keys.
+#[derive(Debug, Clone, Copy)]
+pub struct Retention {
+    pub max_bytes: u64,
+    /// How long a submitted record may wait for a busy lease, measured from
+    /// submission (before any in-process queueing), before it is refused.
+    pub lease_wait: Duration,
+    pub lease_retry: Duration,
+}
+
+pub fn retention(cfg: &AppConfig) -> Retention {
+    Retention {
+        max_bytes: limit(cfg),
+        lease_wait: Duration::from_millis(cfg.u64_or("logging.audit_lease_wait_ms", 50).clamp(0, 5_000)),
+        lease_retry: Duration::from_millis(cfg.u64_or("logging.audit_lease_retry_ms", 2).clamp(1, 1_000)),
+    }
+}
 fn adjacent(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);
     PathBuf::from(name)
 }
+/// Nonblocking append: a busy lease is refused immediately.
 pub fn append(path: &Path, line: &str, max_bytes: u64) -> std::io::Result<()> {
+    append_until(path, line, max_bytes, Instant::now(), Duration::from_millis(1))
+}
+
+/// Append, waiting for a busy lease until `deadline` (polling every `retry`).
+pub fn append_until(
+    path: &Path,
+    line: &str,
+    max_bytes: u64,
+    deadline: Instant,
+    retry: Duration,
+) -> std::io::Result<()> {
     if line.len() as u64 + 1 > max_bytes {
         return Err(std::io::Error::other("log record exceeds retention bound"));
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let _lease = acquire_lease(&adjacent(path, ".lock"))?;
+    let _lease = acquire_lease(&adjacent(path, ".lock"), deadline, retry)?;
     let mut options = std::fs::OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]
@@ -99,7 +128,8 @@ mod tests {
             drop(held);
         });
         let start = Instant::now();
-        append(&path, "{\"n\":1}", 1024).unwrap();
+        let retry = Duration::from_millis(2);
+        append_until(&path, "{\"n\":1}", 1024, start + Duration::from_millis(50), retry).unwrap();
         assert!(
             start.elapsed() >= Duration::from_millis(15),
             "append did not wait for the lease"
@@ -109,9 +139,26 @@ mod tests {
         // A lease held past the bound is refused, and the caller is not hung.
         let _stuck = FileLease::acquire(&lock, true).unwrap();
         let start = Instant::now();
-        let err = append(&path, "{\"n\":2}", 1024).unwrap_err();
+        let err = append_until(&path, "{\"n\":2}", 1024, start + Duration::from_millis(50), retry).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::WouldBlock);
         assert!(start.elapsed() < Duration::from_secs(1));
-        assert!(!std::fs::read_to_string(&path).unwrap().contains("\"n\":2"));
+        // A record whose submission deadline already passed while it queued
+        // behind other writers gets one attempt, not a fresh window; the plain
+        // `append` is the same nonblocking path.
+        let start = Instant::now();
+        assert_eq!(
+            append_until(&path, "{\"n\":3}", 1024, start, retry).unwrap_err().kind(),
+            ErrorKind::WouldBlock
+        );
+        assert_eq!(
+            append(&path, "{\"n\":4}", 1024).unwrap_err().kind(),
+            ErrorKind::WouldBlock
+        );
+        assert!(
+            start.elapsed() < Duration::from_millis(20),
+            "expired deadline must not sleep"
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("\"n\":2") && !text.contains("\"n\":3") && !text.contains("\"n\":4"));
     }
 }

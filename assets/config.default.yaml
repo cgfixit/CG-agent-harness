@@ -96,6 +96,12 @@ logging:
   spend_file: "logs/spend.jsonl"
   # Each JSONL sink retains a current file and one .1 generation.
   max_file_bytes: 8388608 # clamped to 64 KiB–64 MiB; oversized events are dropped
+  # The server and the agentic child append to one audit file. A busy lease
+  # is retried every audit_lease_retry_ms until audit_lease_wait_ms has
+  # elapsed since the record was submitted, then the record is refused with a
+  # warning. 0 disables the wait (refuse on the first busy lease).
+  audit_lease_wait_ms: 50 # clamped to 0–5000
+  audit_lease_retry_ms: 2 # clamped to 1–1000
   audit_fields:
     include_query_hash: true
 

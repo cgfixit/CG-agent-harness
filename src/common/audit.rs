@@ -68,7 +68,7 @@ pub struct Audit {
     path: PathBuf,
     redactors: Redactors,
     include_query_hash: bool,
-    max_file_bytes: u64,
+    retention: super::bounded_log::Retention,
     lock: Mutex<()>,
 }
 
@@ -79,7 +79,7 @@ impl Audit {
             path,
             redactors: Redactors::from_config(cfg),
             include_query_hash,
-            max_file_bytes: super::bounded_log::limit(cfg),
+            retention: super::bounded_log::retention(cfg),
             lock: Mutex::new(()),
         }
     }
@@ -140,14 +140,35 @@ impl Audit {
                 return;
             }
         };
+        // The lease deadline starts now, before queueing on the in-process
+        // lock, so callers that pile up behind a busy sink share one bound
+        // instead of each spending a fresh wait after the previous one.
+        let deadline = std::time::Instant::now() + self.retention.lease_wait;
         let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        if super::bounded_log::append(&self.path, &line, self.max_file_bytes).is_err() {
+        if super::bounded_log::append_until(
+            &self.path,
+            &line,
+            self.retention.max_bytes,
+            deadline,
+            self.retention.lease_retry,
+        )
+        .is_err()
+        {
             tracing::warn!("audit sink unavailable, busy, or record exceeds retention bound");
         }
     }
 
     pub fn append_spend(&self, path: &Path, record: &Value) {
-        if super::bounded_log::append(path, &record.to_string(), self.max_file_bytes).is_err() {
+        let deadline = std::time::Instant::now() + self.retention.lease_wait;
+        if super::bounded_log::append_until(
+            path,
+            &record.to_string(),
+            self.retention.max_bytes,
+            deadline,
+            self.retention.lease_retry,
+        )
+        .is_err()
+        {
             tracing::warn!("spend sink unavailable, busy, or record exceeds retention bound");
         }
     }
