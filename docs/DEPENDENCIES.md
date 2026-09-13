@@ -104,9 +104,12 @@ in `.cargo/config.toml`, together with the removal of the unused direct
 license allowances. `cargo deny check` (cargo-deny
 0.20.2, RustSec advisory database cloned 2026-09-13, run offline because the
 sandbox proxy blocks cargo-deny's own fetch): advisories, bans, licenses and
-sources ok; duplicate-version warnings unchanged (`windows-sys` 0.59/0.60,
-`rand` 0.8/0.9/0.10, `thiserror` 1/2). Desktop (`desktop/Cargo.lock`, Tauri
-2.11.5 with the retained `tauri-utils` patch): `cargo fetch --locked`,
+sources ok; duplicate-version warnings unchanged. Backend `Cargo.lock`
+carries `windows-sys` 0.52.0/0.59.0/0.60.2/0.61.2, `rand` 0.8.8/0.9.5/0.10.2,
+and `thiserror` 2.0.20 only. Desktop (`desktop/Cargo.lock`, Tauri
+2.11.5 with the retained `tauri-utils` patch) additionally duplicates
+`thiserror` 1.0.69/2.0.20 and `windows-sys` 0.45.0/0.52.0/0.59.0/0.60.2/0.61.2.
+`cargo fetch --locked`,
 `cargo metadata --locked --offline` and `cargo deny check` with
 `desktop/deny.toml` exit 0. No dependency was added or updated; no native
 desktop build was run in this sweep.
