@@ -41,13 +41,22 @@ fn early_leader_exit_does_not_orphan_an_ordinary_background_child() {
     });
     assert!(result.is_err());
     let pid = std::fs::read_to_string(marker).unwrap().trim().parse::<i32>().unwrap();
-    std::thread::sleep(Duration::from_millis(30));
-    let state = std::process::Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-        .unwrap();
-    let state = String::from_utf8_lossy(&state.stdout);
-    let stopped = state.trim().is_empty() || state.trim().starts_with('Z');
+    // Group cleanup already ran before `run` returned; poll for the kernel to
+    // reflect it instead of trusting one fixed sleep on a loaded runner.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut state = String::new();
+    let mut stopped = false;
+    while !stopped && Instant::now() < deadline {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        stopped = state.is_empty() || state.starts_with('Z');
+        if !stopped {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     // Independent test-owned cleanup if the regression fails.
     if !stopped {
         unsafe {

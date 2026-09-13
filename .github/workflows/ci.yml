@@ -87,7 +87,7 @@ jobs:
           # Only main writes the cache: PR runs restore main's entry instead of
           # each branch saving its own and evicting the others (10 GB repo cap).
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -167,6 +167,13 @@ jobs:
           # each branch saving its own and evicting the others (10 GB repo cap).
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --test invariant_guard --locked
+        env:
+          # Same contract as the test job: the operator's real keys and the
+          # write kill-switch never reach a CI test process.
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
+          CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
 
   smoke-real-repo-run:
     name: real-repo-run smoke (${{ matrix.os }})

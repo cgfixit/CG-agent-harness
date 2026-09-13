@@ -11,6 +11,14 @@
 # Git hooks cannot intercept GitHub API / gh pr create bodies — agents and
 # humans should run this before opening a PR. CI runs the same headers as a
 # blocking check (.github/workflows/pr-template-check.yml).
+#
+# The core-path rule is mirrored from that workflow too: when the change
+# touches src/shim/, the guard or header layers, writer, sandbox, workspace,
+# or the shipped config, the body must mention an invariant. The changed-file
+# list comes from CGAGENTHARNESS_PR_FILES (newline-separated) when set,
+# otherwise from the working tree against the merge base with
+# CGAGENTHARNESS_PR_BASE (default origin/main). With neither source the rule
+# is reported as skipped rather than silently passed.
 set -euo pipefail
 
 input="${1:-${CGAGENTHARNESS_PR_BODY_FILE:-${CYCLAW_PR_BODY_FILE:-}}}"
@@ -57,9 +65,35 @@ require_header "Risks to monitor" \
 require_header "Checklist" \
   '^#{1,4}[[:space:]]*checklist\b'
 
-if [[ "${#body}" -lt 40 ]]; then
+# CI measures the trimmed body; a whitespace-padded stub must not pass here
+# and fail there.
+trimmed="${body#"${body%%[![:space:]]*}"}"
+trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+if [[ "${#trimmed}" -lt 40 ]]; then
   missing+=("Body too short (< 40 chars)")
   fail=1
+fi
+
+# Core-path rule (same file set as pr-template-check.yml).
+core_pattern='^(src/shim/|src/server/guards\.rs$|src/server/headers\.rs$|src/agentic/writer\.rs$|src/agentic/executor/sandbox\.rs$|src/agentic/workspace\.rs$|assets/config\.default\.yaml$)'
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+base="${CGAGENTHARNESS_PR_BASE:-origin/main}"
+changed=""
+files_source=""
+if [[ -n "${CGAGENTHARNESS_PR_FILES:-}" ]]; then
+  changed="$CGAGENTHARNESS_PR_FILES"
+  files_source="CGAGENTHARNESS_PR_FILES"
+elif merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null)"; then
+  changed="$(git -C "$repo_root" diff --name-only "$merge_base" 2>/dev/null || true)"
+  files_source="git diff against $base merge base"
+fi
+if [[ -z "$files_source" ]]; then
+  printf 'check-pr-template: core-path rule skipped (set CGAGENTHARNESS_PR_FILES or fetch %s)\n' "$base" >&2
+elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
+  if ! printf '%s' "$body" | grep -Eiq 'invariant'; then
+    missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
+    fail=1
+  fi
 fi
 
 if [[ "$fail" -ne 0 ]]; then
@@ -81,5 +115,5 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 
-printf 'check-pr-template: OK — required template sections present\n'
+printf 'check-pr-template: OK — required template sections present (%s)\n' "${files_source:-core-path rule skipped}"
 exit 0
