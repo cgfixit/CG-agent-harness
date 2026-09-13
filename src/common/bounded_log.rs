@@ -129,7 +129,9 @@ mod tests {
         });
         let start = Instant::now();
         let retry = Duration::from_millis(2);
-        append_until(&path, "{\"n\":1}", 1024, start + Duration::from_millis(50), retry).unwrap();
+        // Generous deadline: this case proves the wait happens, not its bound,
+        // and a loaded runner can delay the holder thread well past 20 ms.
+        append_until(&path, "{\"n\":1}", 1024, start + Duration::from_secs(10), retry).unwrap();
         assert!(
             start.elapsed() >= Duration::from_millis(15),
             "append did not wait for the lease"
