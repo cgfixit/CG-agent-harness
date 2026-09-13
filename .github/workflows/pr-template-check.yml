@@ -79,19 +79,27 @@ jobs:
             // The template itself says "invariant" in its headings and checklist, so
             // only contributor-written lines (not copied verbatim from the template)
             // can satisfy the statement requirement. Mirrors scripts/check-pr-template.sh.
-            // Ticking a template checkbox or nudging its whitespace is not a statement
-            // either: `- [x]` folds back to `- [ ]` and runs of whitespace collapse on
-            // both sides before the comparison.
+            // Ticking a template checkbox, nudging whitespace, or lightly editing a
+            // template line is not a statement either: `- [x]` folds back to `- [ ]`,
+            // runs of whitespace collapse, and a body line that starts with the first
+            // 24 characters of a template line while adding fewer than 9 characters is
+            // treated as that template line. Mirrors scripts/check-pr-template.sh.
+            // The template is required: without it boilerplate cannot be told apart
+            // from a statement, so a fetch failure fails the check rather than passing.
             const foldBoxes = l => l.replace(/^(\s*- \[)[xX](\])/, "$1 $2").replace(/\s+/g, " ").trim();
-            let templateLines = new Set();
+            let templateLines;
             try {
               const t = await github.rest.repos.getContent({ owner: context.repo.owner, repo: context.repo.repo,
                 path: ".github/PULL_REQUEST_TEMPLATE.md", ref: context.payload.pull_request.base.sha });
-              templateLines = new Set(Buffer.from(t.data.content, "base64").toString("utf8").split(/\r?\n/).map(foldBoxes));
+              templateLines = Buffer.from(t.data.content, "base64").toString("utf8").split(/\r?\n/).map(foldBoxes);
             } catch (e) {
-              core.warning(`PR template not readable (${e.message}); checking the whole body`);
+              core.setFailed(`PR template not readable (${e.message}); cannot evaluate the core-path rule`);
+              return;
             }
-            const contributed = body.split(/\r?\n/).map(foldBoxes).filter(l => !templateLines.has(l)).join("\n");
+            const exact = new Set(templateLines);
+            const prefixes = new Map(templateLines.filter(l => l.length >= 24).map(l => [l.slice(0, 24), l.length]));
+            const derived = l => exact.has(l) || (prefixes.has(l.slice(0, 24)) && l.length <= prefixes.get(l.slice(0, 24)) + 8);
+            const contributed = body.split(/\r?\n/).map(foldBoxes).filter(l => !derived(l)).join("\n");
             if (touchesCore && !/invariant/i.test(contributed)) {
               missing.push("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)");
             }

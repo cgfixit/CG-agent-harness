@@ -95,14 +95,20 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   # The template itself says "invariant" in its headings and checklist, so
   # only contributor-written lines (those not copied verbatim from the
   # template) can satisfy the statement requirement.
-  # Ticking a template checkbox or nudging its whitespace is not a statement
-  # either: `- [x]` folds back to `- [ ]` and runs of whitespace collapse on
-  # both sides before the comparison.
+  # Ticking a template checkbox, nudging whitespace, or lightly editing a
+  # template line is not a statement either: `- [x]` folds back to `- [ ]`,
+  # runs of whitespace collapse, and a body line that starts with the first
+  # 24 characters of a template line while adding fewer than 9 characters is
+  # treated as that template line. A real statement adds far more text.
   template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
   fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/; s/[[:space:]]+/ /g; s/^ //; s/ $//'; }
   contributed="$body"
   if [[ -f "$template" ]]; then
-    contributed="$(printf '%s\n' "$body" | fold_boxes | grep -Fxv -f <(fold_boxes < "$template") || true)"
+    contributed="$(awk '
+      NR == FNR { tmpl[$0] = 1; if (length($0) >= 24) pre[substr($0, 1, 24)] = length($0); next }
+      $0 in tmpl { next }
+      { p = substr($0, 1, 24); if (p in pre && length($0) <= pre[p] + 8) next; print }
+    ' <(fold_boxes < "$template") <(printf '%s\n' "$body" | fold_boxes))"
   fi
   if ! printf '%s' "$contributed" | grep -Eiq 'invariant'; then
     missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
