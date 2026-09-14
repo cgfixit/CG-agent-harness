@@ -569,6 +569,7 @@ explicit invariant statement in the PR body.
 | [docs/SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) | HTTPS trust/renewal, SQLite migration, roles, terminal commands, URL rules, research budgets and API Keys |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Toolchains, lockfiles, feature choices, retained pins and dependency drift checks |
 | [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging, and recovery |
+| [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator howto for pinned notes and structured memory (search ≠ inject) |
 | [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Issue #87 Phases 3–5: account-private facts/proposals/episodes, explicit recall, facts-only FTS |
 | [docs/BOUNDED_EDITS.md](docs/BOUNDED_EDITS.md) | Exact-content edit format, scope and budget limits |
 | [docs/GIT_APPROVAL.md](docs/GIT_APPROVAL.md) | Approval binding, commit/push/publish separation |

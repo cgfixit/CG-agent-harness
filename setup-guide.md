@@ -826,7 +826,8 @@ When only one source is present it may use the full 3000.
 fusion, or episode FTS. Status can report `retrieval: true` while fusion,
 consolidation, and RAG stay false.
 
-See [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). Use pinned notes for
+Day-to-day operator howto: [docs/USER_MANUAL.md](docs/USER_MANUAL.md). Contract:
+[docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). Use pinned notes for
 shared-home preferences; use structured facts only after explicit review.
 Clearing session history keeps derived episodes unless you confirm
 `delete_derived_episodes`.
