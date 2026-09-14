@@ -335,7 +335,13 @@ pub struct OperatorGates {
 
 impl OperatorGates {
     pub fn load(home: &crate::common::home::Home) -> Self {
-        let path = home.structured_memory_gates_path();
+        // Fail-closed: a traversal-shaped home must not be read as an overlay.
+        let Some(path) = refuse_parent_components(home.memory_dir())
+            .ok()
+            .and_then(|_| refuse_parent_components(home.structured_memory_gates_path()).ok())
+        else {
+            return Self::default();
+        };
         let Ok(text) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
@@ -351,9 +357,28 @@ impl OperatorGates {
     }
 
     pub fn save(&self, home: &crate::common::home::Home) -> Result<()> {
-        std::fs::create_dir_all(home.memory_dir())?;
+        // Same CodeQL rust/path-injection barrier as StructuredMemoryStore::open:
+        // home-relative, never an HTTP field, but `..` is still refused before
+        // create_dir_all / write_atomic so a tainted home cannot escape.
+        let dir_path = home.memory_dir();
+        let dir_raw = dir_path.to_string_lossy();
+        if dir_raw.contains("..") {
+            return Err(invalid(
+                "structured memory path must not contain parent-directory components",
+            ));
+        }
+        let dir = PathBuf::from(dir_raw.as_ref());
+        let gates_path = home.structured_memory_gates_path();
+        let path_raw = gates_path.to_string_lossy();
+        if path_raw.contains("..") {
+            return Err(invalid(
+                "structured memory path must not contain parent-directory components",
+            ));
+        }
+        let path = PathBuf::from(path_raw.as_ref());
+        std::fs::create_dir_all(&dir)?;
         write_atomic(
-            &home.structured_memory_gates_path(),
+            &path,
             serde_json::to_vec_pretty(&self.as_json())
                 .map_err(|e| invalid(format!("cannot encode structured memory gates: {e}")))?
                 .as_slice(),
@@ -578,6 +603,18 @@ impl std::fmt::Debug for StructuredMemoryStore {
 
 fn invalid(message: impl Into<String>) -> HarnessError {
     HarnessError::new("STRUCTURED_MEMORY_IO", message)
+}
+
+/// CodeQL rust/path-injection treats `contains("..") == false` as a sink barrier.
+/// Reconstruct the path from the checked string so the sanitized value reaches FS APIs.
+fn refuse_parent_components(path: PathBuf) -> Result<PathBuf> {
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        return Err(invalid(
+            "structured memory path must not contain parent-directory components",
+        ));
+    }
+    Ok(PathBuf::from(raw.as_ref()))
 }
 
 fn sql(error: rusqlite::Error) -> HarnessError {
@@ -2719,6 +2756,29 @@ mod tests {
         assert!(StructuredMemoryStore::open(&path, &cfg(dir.path())).is_err());
         assert!(!dir.path().join("memory").exists());
         assert!(!dir.path().join("structured.sqlite3").exists());
+    }
+
+    #[test]
+    fn traversal_home_does_not_write_or_load_operator_gates() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path().join("nested").join("..").join("escaped"));
+        let gates = OperatorGates {
+            retrieval: true,
+            ..OperatorGates::default()
+        };
+        assert!(gates.save(&home).is_err());
+        assert!(!dir.path().join("nested").join("memory").exists());
+        assert!(!dir.path().join("escaped").join("memory").exists());
+        let loaded = OperatorGates::load(&home);
+        assert_eq!(loaded, OperatorGates::default());
+
+        let safe = Home::at(dir.path().join("home"));
+        gates.save(&safe).unwrap();
+        let reloaded = OperatorGates::load(&safe);
+        assert!(reloaded.retrieval);
+        assert!(!reloaded.auto_retrieval);
+        assert!(!reloaded.episode_capture);
+        assert!(!reloaded.explicit_recall);
     }
 
     #[test]
