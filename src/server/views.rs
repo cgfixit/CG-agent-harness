@@ -675,10 +675,10 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 42);
+        assert_eq!(HARNESS_SURFACES.len(), 44);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], 44);
-        assert_eq!(report["wired"], 42, "a catalog surface is unwired");
+        assert_eq!(report["wired"], 44, "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }

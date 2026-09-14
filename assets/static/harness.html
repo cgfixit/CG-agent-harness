@@ -1177,18 +1177,19 @@ async function runSlash(line) {
           sys(table([
             ['gate', sub],
             ['enabled', flag],
-            ['episode_capture', r.episode_capture ? 'on' : 'off'],
-            ['explicit_recall', r.explicit_recall ? 'on' : 'off'],
-            ['retrieval', r.retrieval ? 'on' : 'off'],
-            ['auto_retrieval', r.auto_retrieval ? 'on' : 'off'],
+            ['episode_capture', r && r.episode_capture ? 'on' : 'off'],
+            ['explicit_recall', r && r.explicit_recall ? 'on' : 'off'],
+            ['retrieval', r && r.retrieval ? 'on' : 'off'],
+            ['auto_retrieval', r && r.auto_retrieval ? 'on' : 'off'],
             ['/memory on', 'unchanged (pinned notes only)']
           ]));
         } else if (sub === 'search') {
           const q = rest.slice(1).join(' ').trim();
           if (!q) { sys('usage: /memory search <query>'); break; }
           const r = await api('/api/structured-memory/search?q=' + encodeURIComponent(q));
-          sys(table([['hits', String(r.count)], ['fts', r.fts ? 'on' : 'off'], ['injected', 'no (search is not inject)']]));
-          if (r.hits && r.hits.length) sys(table(r.hits.map(h => [h.id, String(h.revision), h.category || '', String(h.score)]), ['id', 'rev', 'category', 'score']));
+          const hits = r && Array.isArray(r.hits) ? r.hits : [];
+          sys(table([['hits', String(r && r.count != null ? r.count : hits.length)], ['fts', r && r.fts ? 'on' : 'off'], ['injected', 'no (search is not inject)']]));
+          if (hits.length) sys(table(hits.map(h => [h.id || '', String(h.revision != null ? h.revision : ''), h.category || '', String(h.score != null ? h.score : '')]), ['id', 'rev', 'category', 'score']));
         } else if (sub === 'retrieve') {
           const q = rest.slice(1).join(' ').trim();
           if (!q) { sys('usage: /memory retrieve <query>'); break; }
@@ -1953,6 +1954,24 @@ window.addEventListener('beforeunload', function () {
   fetch('/api/chat/cancel', { method: 'POST', headers: headers, keepalive: true, credentials: 'same-origin' }).catch(function () {});
 });
 
+async function finishChat(r) {
+  if (r && r.session_id) {
+    currentSession = r.session_id;
+    $('sSession').textContent = currentSession;
+  }
+  const usage = (r && r.usage) || {};
+  const tally = (r && r.tally) || {};
+  if (loopState && r && r.usage) {
+    loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
+  }
+  renderChatWebTools(r && r.web_tools);
+  agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
+        ' tok · session total ' + (tally.total || 0));
+  await refreshStatus();
+  await refreshSessions();
+  return r && r.reply;
+}
+
 async function sendChat(text, asLoop, extra) {
   const revision = sessionRevision;
   user(text);
@@ -1972,17 +1991,7 @@ async function sendChat(text, asLoop, extra) {
   try {
     const r = await api('/api/chat', 'POST', body);
     if (revision !== sessionRevision) return null;
-    currentSession = r.session_id;
-    $('sSession').textContent = currentSession;
-    if (loopState && r.usage) {
-      loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
-    }
-    renderChatWebTools(r.web_tools);
-    agent(r.reply, r.model + ' · +' + r.usage.prompt_tokens + '/' + r.usage.completion_tokens +
-          ' tok · session total ' + r.tally.total);
-    await refreshStatus();
-    await refreshSessions();
-    return r.reply;
+    return finishChat(r);
   } catch (e) {
     if (revision !== sessionRevision) return null;
     if (e && e.name === 'AbortError') return null;
@@ -1995,16 +2004,7 @@ async function sendChat(text, asLoop, extra) {
       try {
         const retry = await api('/api/chat', 'POST', body);
         if (revision !== sessionRevision) return null;
-        currentSession = retry.session_id;
-        $('sSession').textContent = currentSession;
-        if (loopState && retry.usage) {
-          loopState.completionTokens += Number(retry.usage.completion_tokens) || 0;
-        }
-        agent(retry.reply, retry.model + ' · +' + retry.usage.prompt_tokens + '/' + retry.usage.completion_tokens +
-              ' tok · session total ' + retry.tally.total);
-        await refreshStatus();
-        await refreshSessions();
-        return retry.reply;
+        return finishChat(retry);
       } catch (e2) {
         if (revision !== sessionRevision) return null;
         if (e2 && e2.name === 'AbortError') return null;
