@@ -121,16 +121,17 @@ pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
     if let Some(store) = state.structured_memory.as_ref() {
         let (facts, pending) = store.counts(owner_id).map_err(|e| store_err(&e))?;
         let episodes = store.episode_count(owner_id).map_err(|e| store_err(&e))?;
-        Ok(enabled_status(
+        let mut payload = enabled_status(
             owner_id,
             &store.limits(),
             facts,
             pending,
             state.cfg.flag_is_true("structured_memory.episode_capture"),
-            crate::server::structured_memory::recall_available(&state.cfg, true),
             episodes,
             &store.episode_health(),
-        ))
+        );
+        payload["explicit_recall"] = json!(recall_available(&state.cfg, true));
+        Ok(payload)
     } else {
         Ok(disabled_status(owner_id, &limits))
     }

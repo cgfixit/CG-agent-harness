@@ -2054,7 +2054,6 @@ pub fn enabled_status(
     fact_count: usize,
     pending: usize,
     episode_capture: bool,
-    explicit_recall: bool,
     episode_count: usize,
     health: &EpisodeHealth,
 ) -> Value {
@@ -2064,7 +2063,6 @@ pub fn enabled_status(
     value["proposals"] = json!(true);
     value["episode_capture"] = json!(episode_capture);
     value["episodes"] = json!(episode_capture);
-    value["explicit_recall"] = json!(explicit_recall);
     value["fact_count"] = json!(fact_count);
     value["pending_proposal_count"] = json!(pending);
     value["episode_count"] = json!(episode_count);
