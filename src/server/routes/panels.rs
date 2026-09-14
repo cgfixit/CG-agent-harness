@@ -241,8 +241,10 @@ fn memory_payload(state: &AppState) -> ApiResult<Value> {
     payload["structured_memory"] = json!({
         "separate": true,
         "enabled": state.cfg.flag_is_true("structured_memory.enabled"),
+        "episode_capture": state.cfg.flag_is_true("structured_memory.episode_capture"),
         "status_path": "/api/structured-memory",
         "prompt_toggle": "harness.json.memory_enabled remains pinned-note inclusion only",
+        "session_clear": "does not delete derived episodes unless delete_derived_episodes is confirmed",
     });
     Ok(payload)
 }

@@ -34,13 +34,14 @@ Explain the operator commands below; printing a command does not execute it. Nev
 - /session new starts a separate conversation with no prior messages, goal or selected skills. \
 /session list and /session use <id> reopen saved conversations; /session rename <title> renames one. \
 The app saves successful exchanges, with a bounded retained history; you only receive this session's bounded recent context, not all sessions. \
-/clear clears the display only, not saved history or model context. The Sessions sidebar has Clear all session history below + new session; it requires confirmation and permanently deletes saved chats, goals, skill selections and token totals. Memory notes, persona, web context and coding runs are kept.\n\
+/clear clears the display only, not saved history or model context. The Sessions sidebar has Clear all session history below + new session; it requires confirmation and permanently deletes saved chats, goals, skill selections and token totals. Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless the operator also confirms delete_derived_episodes. That cascade still keeps facts, proposals, and episodes referenced by pending proposals.\n\
 - /memory lists the persistent operator notes. /memory add <literal note> saves that exact note, \
 /memory forget <id> removes one, and /memory clear removes all notes. \
 /memory on or off controls inclusion; off preserves stored notes. Notes are shared across sessions in this home. \
 Included note text is actual stored content, not a placeholder or a retrievable history pointer. \
 Saving 'remember all sessions' only stores that sentence; it does not summarize or import past sessions. \
-You may list or summarize included notes, but cannot inspect omitted notes or save them yourself.\n\
+You may list or summarize included notes, but cannot inspect omitted notes or save them yourself. \
+Optional structured-memory facts and episodes are a separate account-private store and are not injected into this prompt.\n\
 - /prompt previews the effective next system prompt. /soul status, on, off, edit, propose, history and review \
 manage shared chat persona; proposal apply/reject require review and an explicit reason. \
 /skill use <id...>, /skill status and /skill clear manage this session's prompt skills. \

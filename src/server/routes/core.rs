@@ -77,14 +77,39 @@ pub async fn create_session(
 
 pub async fn clear_sessions(
     State(state): State<Arc<AppState>>,
-    ValidJson(_req): ValidJson<SessionClearRequest>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<SessionClearRequest>,
 ) -> ApiResult<Json<Value>> {
     state.chat.abort_in_flight();
     let deleted = state
         .store
         .clear()
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    Ok(Json(json!({"deleted_sessions": deleted})))
+    let owner = super::auth::context_owner(user);
+    let mut derived_deleted = 0usize;
+    let mut derived_retained = 0usize;
+    if req.delete_derived_episodes {
+        if let Some(store) = state.structured_memory.as_ref() {
+            let (deleted_eps, retained) = store
+                .delete_unreferenced_episodes(&owner, &req.reason)
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+            derived_deleted = deleted_eps;
+            derived_retained = retained;
+        }
+    } else if let Some(store) = state.structured_memory.as_ref() {
+        derived_retained = store.episode_count(&owner).unwrap_or(0);
+    }
+    Ok(Json(json!({
+        "deleted_sessions": deleted,
+        "derived_episodes_deleted": derived_deleted,
+        "derived_episodes_retained": derived_retained,
+        "delete_derived_episodes": req.delete_derived_episodes,
+        "note": if req.delete_derived_episodes {
+            "Session history was cleared. This owner's unreferenced derived episodes were deleted. Facts, proposals, and episodes referenced by pending proposals were kept."
+        } else {
+            "Session history was cleared. Derived structured-memory episodes remain unless delete_derived_episodes is confirmed. Facts and proposals are never cleared here."
+        }
+    })))
 }
 
 pub async fn get_session(State(state): State<Arc<AppState>>, Path(session_id): Path<String>) -> ApiResult<Json<Value>> {
@@ -381,6 +406,22 @@ pub async fn chat(
             }).collect::<Vec<_>>(),
         )
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let sensitivity = {
+        let scanner = crate::common::injection::Scanner::core();
+        if scanner.count_matches(&req.message) > 0 || scanner.count_matches(&reply.body_text) > 0 {
+            "sensitive"
+        } else {
+            "normal"
+        }
+    };
+    let episode = super::structured_memory::stage_after_exchange(
+        &state,
+        &owner,
+        &reply.model,
+        req.message.chars().count(),
+        reply.body_text.chars().count(),
+        sensitivity,
+    );
     Ok(Json(json!({
         "session_id": session.session_id,
         "reply": reply.body_text,
@@ -388,6 +429,7 @@ pub async fn chat(
         "model": reply.model,
         "usage": {"prompt_tokens": reply.prompt_tokens, "completion_tokens": reply.completion_tokens},
         "tally": updated.tally.to_json(),
+        "episode": episode,
     })))
 }
 

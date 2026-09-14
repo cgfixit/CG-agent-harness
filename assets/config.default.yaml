@@ -253,14 +253,22 @@ unslop:
   enabled: false
   metrics_path: "logs/unslop.jsonl"
 
-# Account-private structured facts and governed proposals. Distinct from
-# harness.json.memory_enabled, which only includes pinned /memory notes in
-# the chat prompt. Missing, quoted, or non-boolean values evaluate false.
-# File mode 0600 is OS access control, not encryption.
+# Account-private structured facts, governed proposals, and optional episodes.
+# Distinct from harness.json.memory_enabled, which only includes pinned
+# /memory notes in the chat prompt. Missing, quoted, or non-boolean values
+# evaluate false. File mode 0600 is OS access control, not encryption.
+# episode_capture is a second gate: it never opens the store by itself, and
+# does not write when structured_memory.enabled is off.
 structured_memory:
   enabled: false
+  episode_capture: false
   max_facts_per_owner: 64
   max_fact_chars: 1000
   max_category_chars: 64
   max_proposals_per_owner: 32
   max_reason_chars: 1000
+  max_episodes_per_owner: 128
+  max_episode_summary_chars: 500
+  max_episode_bytes_per_owner: 65536
+  episode_ttl_secs: 2592000
+  max_export_bytes: 262144

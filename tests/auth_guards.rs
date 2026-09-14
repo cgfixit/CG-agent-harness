@@ -21,6 +21,8 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
             "/api/structured-memory/proposals",
             json!({"action": "add", "content": "suggested fact"}),
         ),
+        (Method::GET, "/api/structured-memory/episodes", json!(null)),
+        (Method::GET, "/api/structured-memory/export", json!(null)),
         (Method::POST, "/api/web/allow", json!({"url": "https://example.com"})),
         (Method::GET, "/api/keys", json!(null)),
         (

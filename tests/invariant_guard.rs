@@ -129,6 +129,7 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "agentic.deepagent_github.allow_git_write_tools",
         "unslop.enabled",
         "structured_memory.enabled",
+        "structured_memory.episode_capture",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }

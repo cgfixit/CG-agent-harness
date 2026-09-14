@@ -774,14 +774,19 @@ loaded. Back up before manual repair.
 Pinned-note capability flags (`rag.facts`, episodes, retrieval fusion) remain
 false. `/memory on` does not enable structured memory.
 
-A separate, default-off store implements issue #87 M1: account-private facts
-and governed proposals. Set `structured_memory.enabled: true` (literal YAML
-boolean) in `config.yaml` to open `<home>/memory/structured.sqlite3`. Models
-may POST a proposal; applying still requires `confirm` and `reason`. File mode
-is access control, not encryption. This is not episode capture, FTS, embeddings,
-or prompt injection. See [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md).
+A separate, default-off store implements issue #87 M1/M3/M5: account-private
+facts, governed proposals, and optional bounded episodes. Set
+`structured_memory.enabled: true` (literal YAML boolean) in `config.yaml` to
+open `<home>/memory/structured.sqlite3`. Set `structured_memory.episode_capture:
+true` to stage metadata-only episodes after a successful chat exchange. Models
+may POST a proposal; applying still requires `confirm` and `reason`. Episode
+staging never writes facts and never fails an already-successful chat. File
+mode is access control, not encryption. This is not FTS, embeddings,
+consolidation, or prompt injection. See
+[docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md).
 Use pinned notes for shared-home preferences; use structured facts only after
-explicit review.
+explicit review. Clearing session history keeps derived episodes unless you
+confirm `delete_derived_episodes`.
 
 ### 7.6 Google search, URL fetch and permitted-page research
 

@@ -260,7 +260,8 @@
 <dialog id="sessionClearDialog" aria-labelledby="sessionClearTitle" aria-describedby="sessionClearDescription">
   <h2 id="sessionClearTitle">Clear all session history?</h2>
   <p id="sessionClearDescription">Permanently delete every saved chat session, including messages, titles, goals, selected skills and token totals. This cannot be undone.</p>
-  <p>Memory notes, persona, web context and coding runs are kept. Active chat will stop.</p>
+  <p>Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless you also confirm the cascade below. Facts and proposals are never cleared here. Active chat will stop.</p>
+  <p><label><input type="checkbox" id="sessionClearDerivedEpisodes"> Also delete this account's derived episodes that are not referenced by a pending proposal</label></p>
   <button id="sessionClearCancel" autofocus>Cancel</button>
   <button id="sessionClearConfirm">Delete all session history</button>
   <p id="sessionClearFeedback" role="status"></p>
@@ -1034,7 +1035,12 @@ $('sessionClearConfirm').addEventListener('click', async () => {
   $('sessionClearCancel').disabled = true;
   try {
     if (inflightChat) await requestLoopStop(); else stopLoop();
-    await api('/api/sessions/clear', 'POST', {confirm:true, reason:'Operator confirmed Clear all session history'});
+    const deleteDerived = !!$('sessionClearDerivedEpisodes').checked;
+    const cleared = await api('/api/sessions/clear', 'POST', {
+      confirm:true,
+      reason:'Operator confirmed Clear all session history',
+      delete_derived_episodes: deleteDerived
+    });
     clearTranscript();
     currentSession = null; sessionGoal = ''; loopAuto = false;
     input.value = '';
@@ -1042,7 +1048,11 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     $('hTokens').textContent = '0';
     paintGoalLoop();
     $('sessionClearDialog').close();
-    sys('All saved session history deleted. Memory notes, persona, web context and coding runs are kept.');
+    $('sessionClearDerivedEpisodes').checked = false;
+    const kept = deleteDerived
+      ? (' Derived episodes deleted: ' + String(cleared.derived_episodes_deleted || 0) + '; retained because a pending proposal still references them: ' + String(cleared.derived_episodes_retained || 0) + '.')
+      : ' Derived structured-memory episodes remain unless you also confirm that cascade.';
+    sys('All saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept);
   } catch (e) {
     $('sessionClearFeedback').textContent = e.message || String(e);
   } finally {
@@ -1180,6 +1190,8 @@ async function runSlash(line) {
             ['notes', String(r.count) + ' / ' + String(r.max_notes)],
             ['RAG memory.enabled', rag.enabled ? 'on' : 'off'],
             ['RAG writable here', rag.writable_from_harness ? 'yes' : 'no'],
+            ['structured memory', (r.structured_memory && r.structured_memory.enabled) ? 'store on' : 'store off'],
+            ['episode capture', (r.structured_memory && r.structured_memory.episode_capture) ? 'on' : 'off'],
           ]));
           if (r.notes && r.notes.length) {
             sys(table(r.notes.map(n => [n.id, n.text]), ['id', 'note']));

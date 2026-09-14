@@ -63,8 +63,8 @@ for the acceptance boundaries.
 
 | Capability | How it works |
 |---|---|
-| Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. |
-| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. Optional structured facts and governed proposals (#87 M1) are a separate account-private store; models may suggest, not silently write. Chat explains these controls; the operator executes them. |
+| Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
+| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. Optional structured facts, governed proposals, and bounded episodes (#87 M1/M3/M5) are a separate account-private store; models may suggest, not silently write. Facts and episodes are not auto-injected into `/prompt`. Chat explains these controls; the operator executes them. |
 | Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
@@ -198,9 +198,11 @@ turns (default 3, ceiling 5). The console normally pauses for the operator betwe
 turns; `/loop auto` toggles auto-continue and `/loop stop` cancels it. Server-side
 budgets still apply. `/memory` manages optional pinned notes and `/soul` controls
 persona context; neither gives the model permission to mutate a repository.
-Structured memory (issue #87 M1) is a distinct, default-off, account-private
-facts+proposals API: suggest is not mutate, and confirm+reason is required to
-apply. See [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). A missing
+Structured memory (issue #87 M1/M3/M5) is a distinct, default-off, account-private
+facts+proposals API plus optional bounded episode capture: suggest is not mutate,
+confirm+reason is required to apply facts, and episode staging never writes
+canonical facts. `/prompt` still receives only pinned notes when `/memory on`.
+See [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). A missing
 `soul.md` is reported as missing rather than loaded. `GOAL_DONE` is an unverified
 model report, not evidence that coding work is complete.
 
@@ -215,7 +217,7 @@ skills.
 `/session new` clears the visible conversation and starts separate message/goal/skill
 context. Switching sessions restores only that session’s saved messages. Shared
 persona and enabled pinned-note memory remain shared; your account's permitted
-web selection and structured-memory facts remain account-private. `/prompt`
+web selection and structured-memory facts/episodes remain account-private. `/prompt`
 shows the resulting context. Chat knows the operator commands, but cannot
 execute them. `/memory` lists real saved notes; `/memory add <note>` saves
 literal text, not an instruction to archive every session.
@@ -232,7 +234,7 @@ Choose the reset that matches your intent:
 |---|---|
 | `/clear` | Clear visible output, the staged coding request, displayed-diff tracking and loop state; saved messages remain in this session's model context. |
 | **+ new session** or `/session new` | Start a separate conversation; retain old sessions and shared context. |
-| **Clear all session history** below **+ new session** | Open a confirmation dialog; confirming deletes saved chats, goals, skill selections and token totals. Shared memory/persona/web context and coding runs remain. |
+| **Clear all session history** below **+ new session** | Open a confirmation dialog; confirming deletes saved chats, goals, skill selections and token totals. Shared memory/persona/web context and coding runs remain. Derived episodes remain unless the operator also confirms that cascade. |
 
 Session directories, named `.CGagentHarness` homes and dotenv files are Git-ignored
 in this repository. Other files in an arbitrarily named custom home are not
@@ -549,7 +551,7 @@ explicit invariant statement in the PR body.
 | [docs/SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) | HTTPS trust/renewal, SQLite migration, roles, terminal commands, URL rules, research budgets and API Keys |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Toolchains, lockfiles, feature choices, retained pins and dependency drift checks |
 | [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging, and recovery |
-| [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Issue #87 M1: account-private facts, governed proposals, and relationship to pinned `/memory` notes |
+| [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Issue #87 M1/M3/M5: account-private facts, governed proposals, bounded episodes, retention/export |
 | [docs/BOUNDED_EDITS.md](docs/BOUNDED_EDITS.md) | Exact-content edit format, scope and budget limits |
 | [docs/GIT_APPROVAL.md](docs/GIT_APPROVAL.md) | Approval binding, commit/push/publish separation |
 | [docs/CONSOLE_JOBS.md](docs/CONSOLE_JOBS.md) | Asynchronous console runs and browser acceptance |

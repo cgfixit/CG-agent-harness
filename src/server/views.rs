@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 38] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 41] = [
     (
         "goal-stage",
         "/goal stage|task",
@@ -203,6 +203,27 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 38] = [
         "POST",
         "/api/memory/add",
         "pin one injection-scanned operator note",
+    ),
+    (
+        "structured-memory",
+        "/api/structured-memory",
+        "GET",
+        "/api/structured-memory",
+        "account-private facts/proposals; episodes only when capture is enabled",
+    ),
+    (
+        "structured-episodes",
+        "/api/structured-memory/episodes",
+        "GET",
+        "/api/structured-memory/episodes",
+        "list this owner's bounded episode metadata (not raw chat)",
+    ),
+    (
+        "structured-export",
+        "/api/structured-memory/export",
+        "GET",
+        "/api/structured-memory/export",
+        "bounded local HTML export; escaped; this owner only",
     ),
     ("model", "/model", "POST", "/api/model", "select the local chat model"),
     (
@@ -633,7 +654,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 38);
+        assert_eq!(HARNESS_SURFACES.len(), 41);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], 38);
         assert_eq!(report["wired"], 38, "a catalog surface is unwired");

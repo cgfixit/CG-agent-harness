@@ -31,7 +31,7 @@ old acceptance records are historical evidence, not current contracts.
   `SERPAPI_API_KEY` selects the fixed API. Path wildcards include queries on the
   same origin; listings never grant destination permissions.
 - SQLite is authoritative after transactional legacy JSON migration. Research
-  and web selections and structured memory are account scoped; sessions/jobs/persona/pinned notes are shared.
+  and web selections and structured memory (facts/proposals/episodes) are account scoped; sessions/jobs/persona/pinned notes are shared.
 - I6 remains server/common/LLM/shim to child only through the shim whitelist.
   Do not deduplicate deliberately separated constants across that boundary.
 - Preserve `__CYCLAW_CSRF_TOKEN__`, `__CYCLAW_CSP_NONCE__` and `X-CyClaw-CSRF`.

@@ -11,10 +11,10 @@ See [execution state](WORK.md) for baseline evidence and native acceptance block
 | ID | Phase | Implementation | Fixtures | Native | Capability |
 |---|---:|---|---|---|---|
 | M1 | 2 | needs-extension | fixture-verified | unavailable | Structured facts store: stable IDs, content, categories, tags, confidence, provenance, active/inactive state and timestamps. |
-| M2 | 2 | adapted | pending | unavailable | Governed add/update/deactivate proposals, pending/applied/rejected states, explicit reasons, injection validation and audit. |
-| M3 | 2 | missing | pending | unavailable | Episode records and retention: query hash, bounded answer summary, model, time and optional raw-query storage. |
+| M2 | 2 | adapted | fixture-verified | unavailable | Governed add/update/deactivate proposals, pending/applied/rejected states, explicit reasons, injection validation and audit. |
+| M3 | 2 | adapted | fixture-verified | unavailable | Episode records and retention: query hash, bounded answer summary, model, time and optional raw-query storage. |
 | M4 | 2 | needs-extension | pending | unavailable | Memory status/counts and fact/episode/proposal administration APIs or equivalent console controls. |
-| M5 | 2 | missing | pending | unavailable | Bounded, escaped, offline HTML export of facts and recent episodes. |
+| M5 | 2 | adapted | fixture-verified | unavailable | Bounded, escaped, offline HTML export of facts and recent episodes. |
 | C1 | 4 | missing | pending | unavailable | Filesystem read connector: status/list/read/stat/grep/glob/largest and bounded context extraction against operator-approved roots. |
 | C2 | 4 | missing | pending | unavailable | Filesystem writes: write/append/mkdir/move/delete with separate writable roots, reason/confirmation, dry run, protected destinations and audit. |
 | C3 | 4 | missing | pending | unavailable | Soft-delete trash, restore, explicit purge, retention, quota/rate controls and quota-status. |

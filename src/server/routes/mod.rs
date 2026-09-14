@@ -21,7 +21,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 62] = [
+pub const REGISTERED_PATHS: [&str; 69] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -49,6 +49,13 @@ pub const REGISTERED_PATHS: [&str; 62] = [
     "/api/structured-memory/facts/{id}/deactivate",
     "/api/structured-memory/proposals",
     "/api/structured-memory/proposals/{id}",
+    "/api/structured-memory/episodes",
+    "/api/structured-memory/episodes/purge",
+    "/api/structured-memory/episodes/{id}",
+    "/api/structured-memory/episodes/{id}/summary",
+    "/api/structured-memory/episodes/{id}/delete",
+    "/api/structured-memory/export",
+    "/api/structured-memory/purge",
     "/api/sessions",
     "/api/sessions/clear",
     "/api/sessions/{session_id}",
@@ -162,6 +169,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/structured-memory/proposals/{id}",
             get(structured_memory::review).post(structured_memory::decide),
         )
+        .route("/api/structured-memory/episodes", get(structured_memory::list_episodes))
+        .route(
+            "/api/structured-memory/episodes/purge",
+            post(structured_memory::purge_expired),
+        )
+        .route(
+            "/api/structured-memory/episodes/{id}",
+            get(structured_memory::get_episode),
+        )
+        .route(
+            "/api/structured-memory/episodes/{id}/summary",
+            post(structured_memory::summarize_episode),
+        )
+        .route(
+            "/api/structured-memory/episodes/{id}/delete",
+            post(structured_memory::delete_episode),
+        )
+        .route("/api/structured-memory/export", get(structured_memory::export_owner))
+        .route("/api/structured-memory/purge", post(structured_memory::purge_owner))
         .route("/api/sessions", post(core::create_session))
         .route("/api/sessions/clear", post(core::clear_sessions))
         .route("/api/sessions/{session_id}", get(core::get_session))
@@ -262,7 +288,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 62);
+        assert_eq!(REGISTERED_PATHS.len(), 69);
 
         let all = registered_paths();
         assert!(

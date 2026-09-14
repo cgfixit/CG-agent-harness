@@ -5,14 +5,18 @@ defines intended adaptations; it does not claim they are implemented. Current
 source pins and implementation/verification states belong to the ledger.
 
 Memory facts are explicitly reviewed operator data, separate from short notes.
-Issue #87 M1 implements account-private facts plus governed proposals behind
-`structured_memory.enabled` (literal boolean, ships false). Proposals bind an
-action, payload and expected fact version; application needs an operator reason,
-confirmation, and scan. Pinned `/memory` notes are unchanged. Episodes,
-retrieval fusion, FTS, embeddings, and automatic consolidation are not shipped;
-status flags for those remain false. Selected facts do not yet enter the prompt.
-There is no automatic FTS/vector injection; later recall must stay under an
-explicit operator action and the existing prompt budget.
+Issue #87 M1+M3+M5 implement account-private facts, governed proposals, and
+optional bounded episodes behind `structured_memory.enabled` and
+`structured_memory.episode_capture` (literal booleans, both ship false).
+Proposals bind an action, payload and expected fact version; application needs
+an operator reason, confirmation, and scan. Episode v1 stores opaque
+session/turn refs plus a privacy-filtered metadata summary — not a raw query,
+full answer, or query-content hash. Staging is post-success and non-fatal.
+Pinned `/memory` notes are unchanged. Retrieval fusion, FTS, embeddings,
+automatic consolidation, and prompt injection of facts/episodes are not
+shipped; status flags for those remain false. Selected facts do not enter the
+prompt. There is no automatic FTS/vector injection; later recall must stay
+under an explicit operator action and the existing prompt budget.
 
 Sync operates on approved non-RAG roots and one approved remote. It excludes
 credentials, soul and Git internals. Active managed coding workspaces cannot be
