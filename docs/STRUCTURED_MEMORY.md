@@ -1,4 +1,4 @@
-# Structured memory (issue #87, M1 + M3 + M5)
+# Structured memory (issue #87, M1 + M3 + M5 + Phase 4 explicit recall)
 
 This is the privacy-first structured-memory foundation. It is **not** the
 existing pinned-note `/memory` feature and it is **not** the web-research
@@ -11,7 +11,7 @@ Related issue: [#87](https://github.com/cgfixit/CG-agent-harness/issues/87).
 | Surface | Scope | Store | Who may write | Prompt inclusion |
 |---|---|---|---|---|
 | Pinned notes (`/memory`) | Shared home | `memory/notes.json` | Operator slash commands / `/api/memory/*` | `harness.json.memory_enabled` (`/memory on`) |
-| Structured memory (M1/M3/M5) | Account-private | `memory/structured.sqlite3` | Human confirm+reason for facts; optional post-success episode staging | **Not injected.** List/recall/export APIs only. Phase 4 is required before any `/prompt` inclusion. |
+| Structured memory (M1/M3/M5 + Phase 4) | Account-private | `memory/structured.sqlite3` | Human confirm+reason for facts; optional post-success episode staging | Facts enter `/prompt` only when `explicit_recall` is on **and** the operator selected them. Episodes are never injected. |
 
 M1/M3/M5 do **not** migrate, reinterpret, or weaken pinned notes. Session
 deletion continues to preserve notes. Structured facts and proposals are
@@ -41,16 +41,20 @@ episodes referenced by pending proposals.
 7. Owner list/get/delete, expired purge, owner purge, and bounded local HTML
    export (escaped against stored XSS).
 8. Tests and the `tests/fixtures/structured_memory/propose-confirm-recall.json`
-   fixture.
+   fixture (M1 list-after-apply; not prompt injection).
+9. Phase 4 **explicit recall**: bounded fact search/list, session/request
+   “include these facts” selection, reserved prompt budget, and assembly-time
+   revalidation. Prompt preview reports the exact injected/dropped set.
 
 ## What this slice does not ship
 
 Automatic consolidation, lexical/FTS retrieval, embeddings, vector databases,
-RAG fusion, **prompt injection of facts or episodes**, console slash commands
-that write facts, or any new cloud egress. Status flags for retrieval,
-consolidation, and RAG remain **false**. Episode availability is true only when
-`structured_memory.episode_capture` is the literal YAML boolean `true` and the
-store is open.
+RAG fusion, automatic recall, **episode prompt injection**, console slash
+commands that write facts, or any new cloud egress. Status flags for retrieval,
+consolidation, and RAG remain **false**. `explicit_recall` is true only when
+that independent gate is the literal YAML boolean `true` and the store is open.
+Episode availability is true only when `structured_memory.episode_capture` is
+the literal YAML boolean `true` and the store is open.
 
 Later phases in #87 remain independently gated.
 
@@ -62,6 +66,15 @@ Later phases in #87 remain independently gated.
 - Episode capture: `structured_memory.episode_capture`, also `flag_is_true`,
   ships **false**. Capture off performs no episode writes even if the store is
   open. Capture cannot open the store by itself.
+- Explicit recall: `structured_memory.explicit_recall`, also `flag_is_true`,
+  ships **false**. Recall off injects no facts even if IDs are selected.
+  `/memory on` still includes pinned notes only.
+- Prompt budget: combined pinned-note + selected-fact body is capped at 3000
+  characters. When both are present the reserved split is
+  `pinned_prompt_chars` / `selected_fact_prompt_chars` (default 1500/1500);
+  unused reserved capacity is not transferred. When only one source is present
+  it may use the full 3000. Headings sit outside that body cap, matching
+  existing note/web/goal sections.
 - `harness.json.memory_enabled` stays pinned-note prompt inclusion only.
 
 ## Ownership
@@ -98,6 +111,16 @@ Reuse persona review rules, not `soul-history/*.json`:
   revision + expected fact revision/digest, applies once, and writes
   non-content audit metadata.
 
+## Explicit recall (Phase 4)
+
+Selection binds stable `public_id` values plus `expected_revision` on a
+session (`POST /api/sessions/{id}/structured-facts`) or a single
+`/api/chat` / `/api/prompt/preview` request. At prompt assembly the store is
+re-read with the current owner filter. Missing, inactive, stale-revision, and
+cross-owner facts are dropped; only survivors are formatted as untrusted
+background context. Preview `structured_facts.injected` / `dropped` is the same
+set chat would send. Suggest still does not mutate canonical facts.
+
 ## Threat model (at rest)
 
 The database is a regular file under the harness home with owner-private mode
@@ -121,7 +144,8 @@ when they carry memory content:
 | Method | Path | Confirm? |
 |---|---|---|
 | GET | `/api/structured-memory` | n/a (truthful status) |
-| GET | `/api/structured-memory/facts` | n/a (active facts) |
+| GET | `/api/structured-memory/facts` | n/a (active facts; optional `q`/`category`/`limit` literal substring search, not FTS) |
+| GET/POST | `/api/sessions/{session_id}/structured-facts` | selection = explicit include; not a fact mutation |
 | GET | `/api/structured-memory/facts/{id}` | n/a (recall, including inactive) |
 | POST | `/api/structured-memory/facts` | required (direct human add) |
 | POST | `/api/structured-memory/facts/{id}/deactivate` | required |

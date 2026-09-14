@@ -38,6 +38,7 @@ pub const MAX_STRUCTURED_ID_LEN: usize = 32;
 pub const MAX_STRUCTURED_DIGEST_LEN: usize = 64;
 pub const MAX_STRUCTURED_SUMMARY_CHARS: usize = 4000;
 pub const MAX_STRUCTURED_EPISODE_SOURCES: usize = 16;
+pub const MAX_SELECTED_FACTS: usize = 32;
 pub const MAX_PLAN_CHARS: usize = 6_100;
 pub const MAX_ITERATIONS_CEILING: u32 = 10;
 pub const MAX_API_KEYS_PER_REQUEST: usize = 16;
@@ -61,6 +62,35 @@ fn len_ok(s: &str, min: usize, max: usize) -> bool {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct StructuredFactSelection {
+    pub id: String,
+    pub expected_revision: i64,
+}
+
+impl StructuredFactSelection {
+    pub fn invalid(&self) -> bool {
+        !len_ok(&self.id, MAX_STRUCTURED_ID_LEN, MAX_STRUCTURED_ID_LEN) || self.expected_revision < 1
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredFactSelectRequest {
+    pub facts: Vec<StructuredFactSelection>,
+}
+
+impl Validate for StructuredFactSelectRequest {
+    fn validate(&self) -> Vec<String> {
+        if self.facts.len() > MAX_SELECTED_FACTS || self.facts.iter().any(StructuredFactSelection::invalid) {
+            vec!["facts".into()]
+        } else {
+            vec![]
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChatRequest {
     pub message: String,
     #[serde(default)]
@@ -70,6 +100,9 @@ pub struct ChatRequest {
     /// True only for console /loop turns (JSON key `loop`).
     #[serde(default, rename = "loop")]
     pub loop_turn: bool,
+    /// Optional per-request explicit fact selection. Overrides session selection.
+    #[serde(default)]
+    pub selected_facts: Option<Vec<StructuredFactSelection>>,
 }
 
 impl Validate for ChatRequest {
@@ -82,6 +115,13 @@ impl Validate for ChatRequest {
             if !len_ok(m, 0, MAX_MODEL_LEN) {
                 bad.push("model".into());
             }
+        }
+        if self
+            .selected_facts
+            .as_ref()
+            .is_some_and(|facts| facts.len() > MAX_SELECTED_FACTS || facts.iter().any(StructuredFactSelection::invalid))
+        {
+            bad.push("selected_facts".into());
         }
         bad
     }

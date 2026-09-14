@@ -259,9 +259,13 @@ unslop:
 # evaluate false. File mode 0600 is OS access control, not encryption.
 # episode_capture is a second gate: it never opens the store by itself, and
 # does not write when structured_memory.enabled is off.
+# explicit_recall is a third independent gate: selected facts enter /prompt
+# only when this is the literal boolean true AND the store is open. It does
+# not enable FTS, automatic recall, consolidation, or episode injection.
 structured_memory:
   enabled: false
   episode_capture: false
+  explicit_recall: false
   max_facts_per_owner: 64
   max_fact_chars: 1000
   max_category_chars: 64
@@ -272,3 +276,8 @@ structured_memory:
   max_episode_bytes_per_owner: 65536
   episode_ttl_secs: 2592000
   max_export_bytes: 262144
+  max_selected_facts: 8
+  max_search_query_chars: 64
+  max_search_results: 32
+  pinned_prompt_chars: 1500
+  selected_fact_prompt_chars: 1500

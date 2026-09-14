@@ -1,0 +1,19 @@
+{
+  "name": "explicit-recall-selection",
+  "phase": 4,
+  "notes": "M1 propose-confirm-recall still means list-after-apply. This fixture is prompt injection of explicitly selected facts only.",
+  "gates": {
+    "structured_memory.enabled": true,
+    "structured_memory.explicit_recall": true,
+    "structured_memory.episode_capture": false,
+    "harness.json.memory_enabled": "pinned notes only"
+  },
+  "steps": [
+    {"action": "add_fact", "content": "Prefer metric units in examples."},
+    {"action": "preview_without_selection", "expect_injected": false},
+    {"action": "select", "bind": ["public_id", "expected_revision"]},
+    {"action": "revalidate_at_assembly", "drop": ["inactive", "stale_revision", "missing"]},
+    {"action": "preview_matches_chat"}
+  ],
+  "out_of_scope": ["fts", "bm25", "embeddings", "auto_recall", "consolidation", "episode_prompt_injection"]
+}

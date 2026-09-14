@@ -91,7 +91,7 @@
       "implementation": {
         "status": "needs-extension",
         "existing": "Account-private SQLite facts with stable IDs, content, category, digest, revision, active/inactive and timestamps. Pinned notes remain separate.",
-        "remaining": "Tags, confidence, provenance kinds, and explicit selected-fact prompt inclusion.",
+        "remaining": "Tags, confidence, and provenance kinds. Explicit selected-fact prompt inclusion is Phase 4.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -114,7 +114,7 @@
         "commands": [
           "cargo test --locked --test structured_memory"
         ],
-        "baseline_evidence": "WORK.md; tests/structured_memory.rs covers propose→confirm→recall."
+        "baseline_evidence": "WORK.md; tests/structured_memory.rs covers propose→confirm→recall and Phase 4 explicit selection."
       },
       "delivery": {
         "branch": null,
@@ -123,7 +123,7 @@
         "artifact": null
       },
       "limitations": [
-        "M1 does not ship tags, confidence, provenance, or prompt injection.",
+        "M1 does not ship tags, confidence, or provenance. Phase 4 ships explicit selected-fact prompt inclusion only.",
         "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
       ]
     },
@@ -447,7 +447,7 @@
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "Guarded status, fact list/recall, proposal administration, episode list/get/delete/purge, and owner export/purge. Pinned-note /api/memory remains separate.",
+        "existing": "Guarded status, fact list/search/recall, proposal administration, session/request fact selection, episode list/get/delete/purge, and owner export/purge. Pinned-note /api/memory remains separate.",
         "remaining": "Console slash commands for structured facts/episodes.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },

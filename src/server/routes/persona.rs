@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::prompts::{compose_system_prompt, load_text, PromptInputs};
-use crate::server::schemas::{ValidJson, Validate};
+use crate::server::schemas::{StructuredFactSelection, ValidJson, Validate, MAX_SELECTED_FACTS};
 use crate::server::state::AppState;
 
 static EDIT_LOCK: Mutex<()> = Mutex::new(());
@@ -291,14 +291,23 @@ pub async fn edit(
 pub struct PreviewRequest {
     session_id: Option<String>,
     soul_content: Option<String>,
+    #[serde(default)]
+    selected_facts: Option<Vec<StructuredFactSelection>>,
 }
 impl Validate for PreviewRequest {
     fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
         if self.soul_content.as_ref().is_some_and(|s| s.len() > MAX_BYTES) {
-            vec!["soul_content".into()]
-        } else {
-            vec![]
+            bad.push("soul_content".into());
         }
+        if self
+            .selected_facts
+            .as_ref()
+            .is_some_and(|facts| facts.len() > MAX_SELECTED_FACTS || facts.iter().any(StructuredFactSelection::invalid))
+        {
+            bad.push("selected_facts".into());
+        }
+        bad
     }
 }
 pub async fn preview(
@@ -316,14 +325,16 @@ pub async fn preview(
         validate_content(&state, content)?;
     }
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    let web = state
-        .web
-        .context_text(settings.web_enabled, &super::auth::context_owner(user));
-    let memory = if settings.memory_enabled {
-        state.notes.context_text()
-    } else {
-        String::new()
-    };
+    let owner = super::auth::context_owner(user);
+    let web = state.web.context_text(settings.web_enabled, &owner);
+    let selections = req
+        .selected_facts
+        .as_ref()
+        .map(|items| super::structured_memory::selections_from_items(items))
+        .unwrap_or_else(|| session.as_ref().map(|s| s.selected_facts.clone()).unwrap_or_default());
+    let (pinned, facts, memory_budget, recalled) =
+        super::structured_memory::prompt_memory(&state, &owner, settings.memory_enabled, &selections);
+    let assembled = crate::server::prompts::assemble_memory_sections(&pinned, &facts, memory_budget);
     let soul_path = state.home.soul_path();
     let selected = super::skills::resolve(
         &state,
@@ -337,10 +348,13 @@ pub async fn preview(
         soul_override: req.soul_content.as_deref(),
         goal: session.as_ref().map(|s| s.goal.as_str()),
         web_context: Some(&web),
-        memory_context: Some(&memory),
+        memory_context: Some(&pinned),
+        selected_facts_context: Some(&facts),
+        memory_budget,
         memory_enabled: settings.memory_enabled,
         web_enabled: settings.web_enabled,
     };
+    let prompt = compose_system_prompt(&inputs);
     let sections: Vec<Value> = selected
         .iter()
         .map(|(id, body)| {
@@ -349,10 +363,23 @@ pub async fn preview(
         })
         .collect();
     Ok(private(
-        json!({"prompt":compose_system_prompt(&inputs),"discipline_sections":[],"selected_skill_sections":sections,
+        json!({"prompt":prompt,"discipline_sections":[],"selected_skill_sections":sections,
         "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled, max_chars(&state)),"candidate":req.soul_content.is_some(),
-        "limits":{"goal":2000,"web":4000,"memory":3000,"soul":max_chars(&state)},
-        "scope":"Next chat system prompt snapshot; not the coding planner. Persona and goal never authorize execution."}),
+        "limits":{"goal":2000,"web":4000,"memory":3000,"pinned_reserved":memory_budget.pinned_reserved,"facts_reserved":memory_budget.facts_reserved,"soul":max_chars(&state)},
+        "structured_facts":{
+            "explicit_recall": crate::server::structured_memory::recall_available(&state.cfg, state.structured_memory.is_some()),
+            "requested": selections.iter().map(|f| json!({"id": f.id, "expected_revision": f.expected_revision})).collect::<Vec<_>>(),
+            "injected": recalled.preview_json()["injected"],
+            "dropped": recalled.preview_json()["dropped"],
+            "budget": {
+                "total": assembled.combined.chars().count(),
+                "pinned_used": assembled.pinned_chars,
+                "facts_used": assembled.fact_chars,
+                "pinned_reserved": memory_budget.pinned_reserved,
+                "facts_reserved": memory_budget.facts_reserved
+            }
+        },
+        "scope":"Next chat system prompt snapshot; not the coding planner. Persona, goal and selected facts never authorize execution."}),
     ))
 }
 

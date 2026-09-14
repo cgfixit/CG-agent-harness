@@ -310,11 +310,13 @@ pub async fn chat(
 
     let owner = super::auth::context_owner(user);
     let web_context = state.web.context_text(settings.web_enabled, &owner);
-    let memory_context = if settings.memory_enabled {
-        Some(state.notes.context_text())
-    } else {
-        None
-    };
+    let selections = req
+        .selected_facts
+        .as_ref()
+        .map(|items| super::structured_memory::selections_from_items(items))
+        .unwrap_or_else(|| session.selected_facts.clone());
+    let (pinned, facts, memory_budget, recalled) =
+        super::structured_memory::prompt_memory(&state, &owner, settings.memory_enabled, &selections);
     let system_prompt = compose_system_prompt(&PromptInputs {
         selected_skills: &selected_skills,
         soul_enabled: settings.soul_enabled,
@@ -325,7 +327,9 @@ pub async fn chat(
         ),
         goal: Some(&session.goal),
         web_context: Some(&web_context),
-        memory_context: memory_context.as_deref(),
+        memory_context: Some(&pinned),
+        selected_facts_context: Some(&facts),
+        memory_budget,
         memory_enabled: settings.memory_enabled,
         web_enabled: settings.web_enabled,
     });
@@ -430,6 +434,15 @@ pub async fn chat(
         "usage": {"prompt_tokens": reply.prompt_tokens, "completion_tokens": reply.completion_tokens},
         "tally": updated.tally.to_json(),
         "episode": episode,
+        "structured_facts": {
+            "explicit_recall": crate::server::structured_memory::recall_available(
+                &state.cfg,
+                state.structured_memory.is_some(),
+            ),
+            "requested": selections.iter().map(|f| json!({"id": f.id, "expected_revision": f.expected_revision})).collect::<Vec<_>>(),
+            "injected": recalled.preview_json()["injected"],
+            "dropped": recalled.preview_json()["dropped"],
+        },
     })))
 }
 

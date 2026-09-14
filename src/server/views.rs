@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 41] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 42] = [
     (
         "goal-stage",
         "/goal stage|task",
@@ -118,6 +118,13 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 41] = [
         "POST",
         "/api/sessions/{session_id}/skills",
         "explicit bounded chat context; never executes skill prose",
+    ),
+    (
+        "structured-fact-selection",
+        "/api/sessions/{id}/structured-facts",
+        "POST",
+        "/api/sessions/{session_id}/structured-facts",
+        "explicit selected-fact prompt inclusion; never authorizes tools",
     ),
     (
         "skill-check",
@@ -209,7 +216,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 41] = [
         "/api/structured-memory",
         "GET",
         "/api/structured-memory",
-        "account-private facts/proposals; episodes only when capture is enabled",
+        "account-private facts/proposals; episodes when capture is on; selected facts when explicit_recall is on",
     ),
     (
         "structured-episodes",
@@ -654,10 +661,10 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 41);
+        assert_eq!(HARNESS_SURFACES.len(), 42);
         let report = list_wired_tools(&registered);
-        assert_eq!(report["total"], 41);
-        assert_eq!(report["wired"], 41, "a catalog surface is unwired");
+        assert_eq!(report["total"], 42);
+        assert_eq!(report["wired"], 42, "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }
