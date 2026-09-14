@@ -1989,11 +1989,13 @@ mod tests {
             let tx = conn.transaction().unwrap();
             tx.execute_batch(FACTS_PROPOSALS_DDL).unwrap();
             tx.execute_batch("PRAGMA user_version=1;").unwrap();
+            // Runtime id — never embed a 32-hex token-shaped literal (GHAS DevSkim).
+            let fact_id = crate::common::random_hex(16);
             let digest = crate::common::sha256_hex("Prefer metric units");
             tx.execute(
                 "INSERT INTO facts(public_id,owner_id,content,category,content_digest,revision,active,created_ts,updated_ts)
-                 VALUES('a1b2c3d4e5f60718293a4b5c6d7e8f90','user_alice','Prefer metric units','pref',?1,1,1,1,1)",
-                params![digest],
+                 VALUES(?1,'user_alice','Prefer metric units','pref',?2,1,1,1,1)",
+                params![fact_id, digest],
             )
             .unwrap();
             tx.commit().unwrap();
