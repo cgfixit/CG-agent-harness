@@ -23,6 +23,7 @@ async fn disabled_gate_creates_no_database_and_refuses_writes() {
     assert_eq!(body["facts"], false);
     assert_eq!(body["proposals"], false);
     assert_eq!(body["episodes"], false);
+    assert_eq!(body["episode_capture"], false);
     assert_eq!(body["retrieval"], false);
     assert_eq!(body["retrieval_fusion"], false);
     assert_eq!(body["consolidation"], false);
@@ -263,4 +264,175 @@ async fn pinned_notes_remain_on_notes_json() {
     let notes_after: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(s.home.join("memory").join("notes.json")).unwrap()).unwrap();
     assert_eq!(notes_after, notes);
+}
+
+fn capture() -> ServerOptions {
+    enabled().with("structured_memory.episode_capture", "true")
+}
+
+#[tokio::test]
+async fn disabled_capture_writes_no_episode_and_failed_chat_writes_none() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), enabled()).await;
+    let unique = "UNIQUE_QUERY_alice_prefers_metric_units";
+    let (status, chat) = s.post_json("/api/chat", json!({"message": unique})).await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["episode"]["available"], false);
+    assert_eq!(chat["episode"]["staged"], false);
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 0);
+    assert_eq!(s.get_json("/api/structured-memory").await.1["episodes"], false);
+
+    let failing = start_mock_model().await;
+    failing.set_reply(json!({"__status": 500}));
+    let s = spawn_server(
+        &failing.base_url(),
+        capture().with("structured_memory.max_episodes_per_owner", "8"),
+    )
+    .await;
+    let (status, body) = s.post_json("/api/chat", json!({"message": unique})).await;
+    assert_ne!(status, 200, "{body}");
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 0);
+}
+
+#[tokio::test]
+async fn successful_exchange_stages_redacted_episode_without_raw_text() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let unique_query = "UNIQUE_QUERY_alice_prefers_metric_units";
+    let (status, chat) = s.post_json("/api/chat", json!({"message": unique_query})).await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["episode"]["available"], true);
+    assert_eq!(chat["episode"]["staged"], true);
+    let id = chat["episode"]["id"].as_str().unwrap();
+    let (status, episode) = s.get_json(&format!("/api/structured-memory/episodes/{id}")).await;
+    assert_eq!(status, 200, "{episode}");
+    let encoded = episode.to_string();
+    assert!(!encoded.contains(unique_query));
+    assert!(!encoded.contains("pong"));
+    assert_eq!(episode.get("query"), None);
+    assert_eq!(episode.get("answer"), None);
+    assert_eq!(episode.get("raw_query"), None);
+    assert_eq!(episode.get("full_answer"), None);
+    assert!(episode["privacy_summary"]
+        .as_str()
+        .unwrap()
+        .contains("Raw query and full answer omitted"));
+    let (status, preview) = s.post_json("/api/prompt/preview", json!({})).await;
+    assert_eq!(status, 200, "{preview}");
+    let prompt = preview["prompt"].as_str().unwrap_or_default();
+    assert!(!prompt.contains(unique_query));
+    assert!(!prompt.contains("Raw query and full answer omitted"));
+    assert!(prompt.contains("are not injected into this prompt"));
+}
+
+#[tokio::test]
+async fn staging_failure_does_not_fail_chat_and_preserves_referenced_episode() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        capture().with("structured_memory.max_episodes_per_owner", "1"),
+    )
+    .await;
+    let (status, first) = s.post_json("/api/chat", json!({"message": "first exchange"})).await;
+    assert_eq!(status, 200, "{first}");
+    let episode_id = first["episode"]["id"].as_str().unwrap().to_string();
+    let (status, proposal) = s
+        .post_json(
+            "/api/structured-memory/proposals",
+            json!({"action":"add","content":"Keep tabs","source_episode_ids":[episode_id]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{proposal}");
+    let (status, second) = s.post_json("/api/chat", json!({"message": "second exchange"})).await;
+    assert_eq!(status, 200, "{second}");
+    assert_eq!(second["reply"], "pong");
+    assert_eq!(second["episode"]["staged"], false);
+    assert_eq!(second["episode"]["health"]["ok"], false);
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 1);
+}
+
+#[tokio::test]
+async fn session_clear_keeps_episodes_unless_explicit_cascade() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let (status, chat) = s.post_json("/api/chat", json!({"message": "keep derived"})).await;
+    assert_eq!(status, 200, "{chat}");
+    let (status, cleared) = s
+        .post_json(
+            "/api/sessions/clear",
+            json!({"confirm":true,"reason":"Clear disposable test history"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{cleared}");
+    assert_eq!(cleared["derived_episodes_retained"], 1);
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 1);
+    let (status, cascaded) = s
+        .post_json(
+            "/api/sessions/clear",
+            json!({
+                "confirm":true,
+                "reason":"Clear disposable test history",
+                "delete_derived_episodes":true
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{cascaded}");
+    assert_eq!(cascaded["derived_episodes_deleted"], 1);
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 0);
+}
+
+#[tokio::test]
+async fn export_is_escaped_owner_local_and_owner_purge_is_atomic_from_http() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let (status, fact) = s
+        .post_json(
+            "/api/structured-memory/facts",
+            json!({"content":"<script>alert(1)</script>","reason":"xss fixture","confirm":true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{fact}");
+    s.post_json("/api/chat", json!({"message": "export fixture"})).await;
+    let resp = s
+        .req(reqwest::Method::GET, "/api/structured-memory/export")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    assert!(resp
+        .headers()
+        .get("cache-control")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("no-store"));
+    let html = resp.text().await.unwrap();
+    assert!(html.contains("&lt;script&gt;"));
+    assert!(!html.contains("<script>alert(1)</script>"));
+    assert!(!html.contains("export fixture"));
+    let (status, purged) = s
+        .post_json(
+            "/api/structured-memory/purge",
+            json!({"reason":"reset fixture","confirm":true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{purged}");
+    assert_eq!(purged["deleted"]["facts"], 1);
+    assert_eq!(purged["deleted"]["episodes"], 1);
+    assert_eq!(s.get_json("/api/structured-memory/facts").await.1["count"], 0);
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 0);
+}
+
+#[tokio::test]
+async fn quoted_episode_capture_remains_off() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        enabled().with("structured_memory.episode_capture", "\"true\""),
+    )
+    .await;
+    let (status, chat) = s.post_json("/api/chat", json!({"message": "quoted gate"})).await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["episode"]["available"], false);
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 0);
 }

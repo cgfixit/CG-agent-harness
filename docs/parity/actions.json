@@ -314,18 +314,19 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8bc95b03bf2a0b6af2d5e0c38fc2aaeb76391a3c",
         "paths": [
-          "src/server/memory_notes.rs",
-          "src/server/routes/panels.rs"
+          "src/server/structured_memory.rs",
+          "src/server/routes/structured_memory.rs",
+          "src/server/routes/core.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Post-success episode staging, retention/prune, and episode admin APIs are registered. Raw query/answer and query-content hashes are omitted by contract."
       },
       "implementation": {
-        "status": "missing",
-        "existing": "Operator notes exist; no structured fact, proposal, episode or HTML-export store.",
-        "remaining": "Episode records and retention: query hash, bounded answer summary, model, time and optional raw-query storage.",
-        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+        "status": "adapted",
+        "existing": "Bounded account-private episodes after successful exchange persistence: opaque session/turn refs, model, outcome, sensitivity, privacy-filtered metadata summary, TTL/row/byte quotas, oldest-first prune that preserves pending proposal refs.",
+        "remaining": "CyClaw query-hash and optional raw-query storage are intentionally excluded. Semantic consolidation remains Phase 6.",
+        "adaptation": "See CONTRACTS.md; harness episode v1 stores no raw query or full answer."
       },
       "dependencies": [
         "A1",
@@ -340,13 +341,16 @@
       "credentials_network_side_effects": "No external credentials; private local storage; bounded exports only.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
+        "fixtures": "fixture-verified",
         "integration_environment": "pending",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          "cargo test --locked --test structured_memory",
+          "cargo test --locked --lib structured_memory"
+        ],
+        "baseline_evidence": "WORK.md; tests/structured_memory.rs covers capture, retention, purge and export."
       },
       "delivery": {
         "branch": null,
@@ -355,7 +359,7 @@
         "artifact": null
       },
       "limitations": [
-        "This inventory does not close this action.",
+        "Episode v1 omits raw query, full answer, and query-content hashes.",
         "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
       ]
     },
@@ -439,12 +443,12 @@
           "src/server/routes/structured_memory.rs",
           "src/server/memory_notes.rs"
         ],
-        "entrypoint_evidence": "Status/list/recall/proposal APIs are registered; episode admin and console slash commands are not."
+        "entrypoint_evidence": "Status/list/recall/proposal/episode/export/purge APIs are registered; fact/episode slash commands are not."
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "Guarded status, fact list/recall, and proposal administration APIs. Pinned-note /api/memory remains separate. No episode admin or console slash commands.",
-        "remaining": "Episode administration APIs and equivalent console controls.",
+        "existing": "Guarded status, fact list/recall, proposal administration, episode list/get/delete/purge, and owner export/purge. Pinned-note /api/memory remains separate.",
+        "remaining": "Console slash commands for structured facts/episodes.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -548,18 +552,18 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8bc95b03bf2a0b6af2d5e0c38fc2aaeb76391a3c",
         "paths": [
-          "src/server/memory_notes.rs",
-          "src/server/routes/panels.rs"
+          "src/server/structured_memory.rs",
+          "src/server/routes/structured_memory.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "GET /api/structured-memory/export returns bounded owner-scoped HTML with escaped strings and no-store."
       },
       "implementation": {
-        "status": "missing",
-        "existing": "Operator notes exist; no structured fact, proposal, episode or HTML-export store.",
-        "remaining": "Bounded, escaped, offline HTML export of facts and recent episodes.",
-        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+        "status": "adapted",
+        "existing": "Bounded local HTML export of this owner's facts, episodes, and proposals. Strings are HTML-escaped. Other owners' rows are omitted. Export is not a prompt surface.",
+        "remaining": "Native save-as workflow remains desktop-pending. No cloud export.",
+        "adaptation": "See CONTRACTS.md; harness export is local HTML, not CyClaw mirror HTML layout."
       },
       "dependencies": [
         "A1",
@@ -574,13 +578,15 @@
       "credentials_network_side_effects": "No external credentials; private local storage; bounded exports only.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
+        "fixtures": "fixture-verified",
         "integration_environment": "pending",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          "cargo test --locked --test structured_memory"
+        ],
+        "baseline_evidence": "WORK.md; tests/structured_memory.rs covers escaped owner-scoped export."
       },
       "delivery": {
         "branch": null,
@@ -589,7 +595,7 @@
         "artifact": null
       },
       "limitations": [
-        "This inventory does not close this action.",
+        "Export is local HTML only; native save-as remains desktop-pending.",
         "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
       ]
     },

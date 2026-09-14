@@ -53,8 +53,10 @@ uses a separate `memory/structured.sqlite3` with the same class of open policy
 (owned parent, `SQLITE_OPEN_NOFOLLOW`, `foreign_keys=ON`, `trusted_schema=OFF`,
 rollback journal, `synchronous=FULL`). Missing initialized or corrupt files
 refuse startup rather than bootstrapping. Owner-private file mode is **not**
-encryption: anyone who can run as the home owner can read fact bytes. Models
-cannot create that database or apply facts. Pinned notes remain `memory/notes.json`.
+encryption: anyone who can run as the home owner can read fact and episode
+bytes. Models cannot create that database or apply facts. Episode capture is a
+second default-false gate and never writes facts. Pinned notes remain
+`memory/notes.json`.
 
 | Role | Allowed | Refused |
 |---|---|---|

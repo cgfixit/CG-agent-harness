@@ -36,6 +36,8 @@ pub const MAX_STRUCTURED_FACT_CHARS: usize = 4000;
 pub const MAX_STRUCTURED_CATEGORY_CHARS: usize = 64;
 pub const MAX_STRUCTURED_ID_LEN: usize = 32;
 pub const MAX_STRUCTURED_DIGEST_LEN: usize = 64;
+pub const MAX_STRUCTURED_SUMMARY_CHARS: usize = 4000;
+pub const MAX_STRUCTURED_EPISODE_SOURCES: usize = 16;
 pub const MAX_PLAN_CHARS: usize = 6_100;
 pub const MAX_ITERATIONS_CEILING: u32 = 10;
 pub const MAX_API_KEYS_PER_REQUEST: usize = 16;
@@ -107,6 +109,10 @@ impl Validate for SessionCreateRequest {
 pub struct SessionClearRequest {
     pub confirm: bool,
     pub reason: String,
+    /// Explicit cascade: delete this owner's unreferenced derived episodes.
+    /// Session clear never deletes facts or proposals.
+    #[serde(default)]
+    pub delete_derived_episodes: bool,
 }
 
 impl Validate for SessionClearRequest {
@@ -249,6 +255,8 @@ pub struct StructuredMemoryProposeRequest {
     pub expected_revision: Option<i64>,
     #[serde(default)]
     pub expected_digest: Option<String>,
+    #[serde(default)]
+    pub source_episode_ids: Vec<String>,
 }
 
 impl Validate for StructuredMemoryProposeRequest {
@@ -288,7 +296,55 @@ impl Validate for StructuredMemoryProposeRequest {
         {
             bad.push("expected_digest".into());
         }
+        if self.source_episode_ids.len() > MAX_STRUCTURED_EPISODE_SOURCES
+            || self
+                .source_episode_ids
+                .iter()
+                .any(|id| !len_ok(id, MAX_STRUCTURED_ID_LEN, MAX_STRUCTURED_ID_LEN))
+        {
+            bad.push("source_episode_ids".into());
+        }
         bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredEpisodeSummaryRequest {
+    pub summary: String,
+    pub reason: String,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl Validate for StructuredEpisodeSummaryRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if !len_ok(&self.summary, 1, MAX_STRUCTURED_SUMMARY_CHARS) {
+            bad.push("summary".into());
+        }
+        if !len_ok(&self.reason, 1, MAX_REASON_LEN) {
+            bad.push("reason".into());
+        }
+        bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredMemoryReasonRequest {
+    pub reason: String,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl Validate for StructuredMemoryReasonRequest {
+    fn validate(&self) -> Vec<String> {
+        if len_ok(&self.reason, 1, MAX_REASON_LEN) {
+            vec![]
+        } else {
+            vec!["reason".into()]
+        }
     }
 }
 

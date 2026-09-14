@@ -23,6 +23,8 @@ armed. New/switch actions preserve saved sessions. `/clear` clears the display o
 To delete saved chats, choose **Clear all session history** below **+ new session**
 in the Sessions sidebar and confirm. This stops chat and removes session files,
 goals, skill selections and token totals; shared notes/persona/web and coding runs remain.
+Derived structured-memory episodes remain unless you also confirm that cascade;
+facts and proposals are never cleared there.
 
 Shared persona and enabled memory survive new sessions. Web selection and injected
 context are account scoped and survive that account's session changes. Research
@@ -57,9 +59,10 @@ Chat is told which application features exist and how the operator invokes them.
 It still has no callable tools, including `gh`. A prose request to save or delete
 memory does not execute a command. `/memory` lists persistent pinned notes and
 `/memory add <note>` saves literal text; it does not archive or summarize sessions.
-Structured facts (#87 M1) are a separate account-private API: a model may
-propose, but confirm+reason is required to apply, and M1 does not inject those
-facts into `/prompt`. See [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
+Structured facts and optional episodes (#87 M1/M3/M5) are a separate
+account-private API: a model may propose, but confirm+reason is required to
+apply, episode capture never writes facts, and this slice does not inject
+facts or episodes into `/prompt`. See [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 Included notes are real stored content, not placeholders. Model answers can still
 be wrong; only actual command results establish successful execution.
 

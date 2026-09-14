@@ -10,12 +10,12 @@ use crate::common::auth_store::UserSummary;
 use crate::common::errors::HarnessError;
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::{
-    StructuredFactAddRequest, StructuredFactDeactivateRequest, StructuredMemoryDecisionRequest,
-    StructuredMemoryProposeRequest, ValidJson,
+    StructuredEpisodeSummaryRequest, StructuredFactAddRequest, StructuredFactDeactivateRequest,
+    StructuredMemoryDecisionRequest, StructuredMemoryProposeRequest, StructuredMemoryReasonRequest, ValidJson,
 };
 use crate::server::state::AppState;
 use crate::server::structured_memory::{
-    disabled_status, enabled_status, valid_public_id, Limits, ProposalDraft, StructuredMemoryStore,
+    disabled_status, enabled_status, valid_public_id, EpisodeDraft, Limits, ProposalDraft, StructuredMemoryStore,
 };
 
 type PrivateJson = ([(header::HeaderName, &'static str); 1], Json<Value>);
@@ -79,7 +79,16 @@ pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
     let limits = Limits::from_config(&state.cfg);
     if let Some(store) = state.structured_memory.as_ref() {
         let (facts, pending) = store.counts(owner_id).map_err(|e| store_err(&e))?;
-        Ok(enabled_status(owner_id, &store.limits(), facts, pending))
+        let episodes = store.episode_count(owner_id).map_err(|e| store_err(&e))?;
+        Ok(enabled_status(
+            owner_id,
+            &store.limits(),
+            facts,
+            pending,
+            state.cfg.flag_is_true("structured_memory.episode_capture"),
+            episodes,
+            &store.episode_health(),
+        ))
     } else {
         Ok(disabled_status(owner_id, &limits))
     }
@@ -203,6 +212,7 @@ pub async fn propose(
                 target_fact_id: req.target_fact_id.as_deref(),
                 expected_revision: req.expected_revision,
                 expected_digest: req.expected_digest.as_deref(),
+                source_episode_ids: &req.source_episode_ids,
             },
         )
         .map_err(|e| store_err(&e))?;
@@ -251,4 +261,194 @@ pub async fn decide(
         json!({"id": proposal.id, "status": proposal.status, "action": proposal.action}),
     );
     Ok(private(proposal.to_json()))
+}
+
+pub fn stage_after_exchange(
+    state: &AppState,
+    owner: &str,
+    model: &str,
+    user_chars: usize,
+    assistant_chars: usize,
+    sensitivity: &str,
+) -> Value {
+    if !state.cfg.flag_is_true("structured_memory.episode_capture") {
+        return json!({"available": false, "staged": false});
+    }
+    let Some(store) = state.structured_memory.as_ref() else {
+        return json!({"available": false, "staged": false});
+    };
+    match store.stage_episode(
+        owner,
+        EpisodeDraft {
+            model_id: if model.is_empty() { "unknown" } else { model },
+            outcome: "completed",
+            user_chars,
+            assistant_chars,
+            sensitivity,
+        },
+    ) {
+        Ok(episode) => {
+            audit(
+                state,
+                "structured_memory_episode_staged",
+                owner,
+                json!({
+                    "id": episode.id,
+                    "outcome": episode.outcome,
+                    "summary_chars": episode.privacy_summary.chars().count(),
+                    "byte_len": episode.byte_len
+                }),
+            );
+            json!({
+                "available": true,
+                "staged": true,
+                "id": episode.id,
+                "health": {"ok": true, "error_class": Value::Null}
+            })
+        }
+        Err(err) => {
+            audit(
+                state,
+                "structured_memory_episode_stage_failed",
+                owner,
+                json!({"error_class": err.code}),
+            );
+            json!({
+                "available": true,
+                "staged": false,
+                "health": {"ok": false, "error_class": err.code}
+            })
+        }
+    }
+}
+
+pub async fn list_episodes(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    let episodes: Vec<Value> = store
+        .list_episodes(&owner)
+        .map_err(|e| store_err(&e))?
+        .into_iter()
+        .map(|e| e.to_json())
+        .collect();
+    Ok(private(json!({
+        "owner_id": owner,
+        "episodes": episodes,
+        "count": episodes.len(),
+        "available": state.cfg.flag_is_true("structured_memory.episode_capture")
+    })))
+}
+
+pub async fn get_episode(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Path(id): Path<String>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    if !valid_public_id(&id) {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "STRUCTURED_MEMORY_NOT_FOUND",
+            "unknown episode",
+        ));
+    }
+    let store = require_store(&state)?;
+    Ok(private(
+        store.get_episode(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
+    ))
+}
+
+pub async fn summarize_episode(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Path(id): Path<String>,
+    ValidJson(req): ValidJson<StructuredEpisodeSummaryRequest>,
+) -> ApiResult<PrivateJson> {
+    require_confirm(req.confirm)?;
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    let episode = store
+        .set_episode_summary(&owner, &id, &req.summary, &req.reason)
+        .map_err(|e| store_err(&e))?;
+    audit(
+        &state,
+        "structured_memory_episode_summarized",
+        &owner,
+        json!({"id": episode.id, "summary_chars": episode.semantic_summary.as_ref().map(|s| s.chars().count()).unwrap_or(0)}),
+    );
+    Ok(private(episode.to_json()))
+}
+
+pub async fn delete_episode(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Path(id): Path<String>,
+    ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
+) -> ApiResult<PrivateJson> {
+    require_confirm(req.confirm)?;
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    store
+        .delete_episode(&owner, &id, &req.reason)
+        .map_err(|e| store_err(&e))?;
+    audit(&state, "structured_memory_episode_deleted", &owner, json!({"id": id}));
+    Ok(private(json!({"deleted": id, "owner_id": owner})))
+}
+
+pub async fn purge_expired(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
+) -> ApiResult<PrivateJson> {
+    require_confirm(req.confirm)?;
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    let deleted = store
+        .purge_expired_episodes(&owner, &req.reason)
+        .map_err(|e| store_err(&e))?;
+    audit(
+        &state,
+        "structured_memory_episodes_purged",
+        &owner,
+        json!({"deleted": deleted}),
+    );
+    Ok(private(json!({"owner_id": owner, "deleted": deleted})))
+}
+
+pub async fn purge_owner(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
+) -> ApiResult<PrivateJson> {
+    require_confirm(req.confirm)?;
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    let body = store.purge_owner(&owner, &req.reason).map_err(|e| store_err(&e))?;
+    audit(
+        &state,
+        "structured_memory_owner_purged",
+        &owner,
+        json!({"counts": body["deleted"]}),
+    );
+    Ok(private(body))
+}
+
+pub async fn export_owner(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+) -> ApiResult<axum::response::Response> {
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    let export = store.export_owner(&owner).map_err(|e| store_err(&e))?;
+    let html = export.html();
+    Ok(axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CACHE_CONTROL, crate::server::headers::NO_STORE)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .body(axum::body::Body::from(html))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty())))
 }

@@ -1,9 +1,11 @@
-//! Account-private structured facts and governed proposals.
+//! Account-private structured facts, governed proposals, and bounded episodes.
 //!
 //! Distinct from pinned `/memory` notes in [`super::memory_notes`]. This store
 //! is created only when `structured_memory.enabled` is the literal YAML boolean
-//! `true`. Models and jobs may suggest through proposals; they never write
-//! canonical facts. File mode 0600 is OS access control, not encryption.
+//! `true`. Episode rows are written only when `structured_memory.episode_capture`
+//! is also the literal boolean `true`. Models and jobs may suggest through
+//! proposals; they never write canonical facts, and episode capture never writes
+//! facts. File mode 0600 is OS access control, not encryption.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -17,7 +19,7 @@ use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 pub const PUBLIC_ID_LEN: usize = 32;
 const MARKER_BODY: &[u8] = b"sqlite3-v1\n";
 
@@ -26,8 +28,13 @@ const DEFAULT_MAX_FACT_CHARS: u64 = 1000;
 const DEFAULT_MAX_CATEGORY_CHARS: u64 = 64;
 const DEFAULT_MAX_PROPOSALS: u64 = 32;
 const DEFAULT_MAX_REASON_CHARS: u64 = 1000;
+const DEFAULT_MAX_EPISODES: u64 = 128;
+const DEFAULT_MAX_EPISODE_SUMMARY_CHARS: u64 = 500;
+const DEFAULT_MAX_EPISODE_BYTES: u64 = 65_536;
+const DEFAULT_EPISODE_TTL_SECS: u64 = 2_592_000;
+const DEFAULT_MAX_EXPORT_BYTES: u64 = 262_144;
 
-const SCHEMA: &str = "
+const FACTS_PROPOSALS_DDL: &str = "
 CREATE TABLE facts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   public_id TEXT UNIQUE NOT NULL,
@@ -65,7 +72,59 @@ CREATE TABLE proposals (
 ) STRICT;
 CREATE INDEX facts_owner_active ON facts(owner_id, active);
 CREATE INDEX proposals_owner_status ON proposals(owner_id, status);
-PRAGMA user_version=1;
+";
+
+const EPISODE_DDL: &str = "
+CREATE TABLE episodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  public_id TEXT UNIQUE NOT NULL,
+  owner_id TEXT NOT NULL,
+  session_ref TEXT NOT NULL,
+  turn_ref TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK(outcome IN ('completed','partial','failed','cancelled')),
+  sensitivity TEXT NOT NULL CHECK(sensitivity IN ('normal','sensitive','reject')),
+  privacy_summary TEXT NOT NULL,
+  semantic_summary TEXT,
+  consolidation_state TEXT NOT NULL DEFAULT 'none' CHECK(consolidation_state IN ('none','pending','done')),
+  created_ts REAL NOT NULL,
+  expires_ts REAL NOT NULL,
+  byte_len INTEGER NOT NULL CHECK(byte_len >= 0),
+  CHECK(length(public_id) = 32),
+  CHECK(length(owner_id) BETWEEN 1 AND 64),
+  CHECK(length(session_ref) = 32),
+  CHECK(length(turn_ref) = 32),
+  CHECK(length(model_id) BETWEEN 1 AND 200),
+  CHECK(length(privacy_summary) BETWEEN 1 AND 4000),
+  CHECK(semantic_summary IS NULL OR (length(semantic_summary) BETWEEN 1 AND 4000))
+) STRICT;
+CREATE TABLE proposal_episode_refs (
+  owner_id TEXT NOT NULL,
+  proposal_id TEXT NOT NULL,
+  episode_id TEXT NOT NULL,
+  PRIMARY KEY (proposal_id, episode_id),
+  CHECK(length(owner_id) BETWEEN 1 AND 64),
+  CHECK(length(proposal_id) = 32),
+  CHECK(length(episode_id) = 32)
+) STRICT;
+CREATE TABLE consolidation_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  public_id TEXT UNIQUE NOT NULL,
+  owner_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('idle','running','done','failed','cancelled')),
+  episode_ids TEXT NOT NULL DEFAULT '',
+  summarizer_version TEXT NOT NULL DEFAULT 'none',
+  created_ts REAL NOT NULL,
+  ended_ts REAL,
+  error_class TEXT,
+  CHECK(length(public_id) = 32),
+  CHECK(length(owner_id) BETWEEN 1 AND 64)
+) STRICT;
+CREATE INDEX episodes_owner_created ON episodes(owner_id, created_ts, public_id);
+CREATE INDEX episodes_owner_expires ON episodes(owner_id, expires_ts);
+CREATE INDEX proposal_episode_refs_episode ON proposal_episode_refs(owner_id, episode_id);
+CREATE INDEX consolidation_runs_owner ON consolidation_runs(owner_id);
+PRAGMA user_version=2;
 ";
 
 #[derive(Debug, Clone, Copy)]
@@ -75,6 +134,11 @@ pub struct Limits {
     pub max_category_chars: usize,
     pub max_proposals_per_owner: usize,
     pub max_reason_chars: usize,
+    pub max_episodes_per_owner: usize,
+    pub max_episode_summary_chars: usize,
+    pub max_episode_bytes_per_owner: usize,
+    pub episode_ttl_secs: i64,
+    pub max_export_bytes: usize,
 }
 
 impl Limits {
@@ -105,6 +169,37 @@ impl Limits {
                 1,
                 1000,
             ) as usize,
+            max_episodes_per_owner: clamp_u64(
+                cfg.u64_or("structured_memory.max_episodes_per_owner", DEFAULT_MAX_EPISODES),
+                1,
+                1024,
+            ) as usize,
+            max_episode_summary_chars: clamp_u64(
+                cfg.u64_or(
+                    "structured_memory.max_episode_summary_chars",
+                    DEFAULT_MAX_EPISODE_SUMMARY_CHARS,
+                ),
+                32,
+                4000,
+            ) as usize,
+            max_episode_bytes_per_owner: clamp_u64(
+                cfg.u64_or(
+                    "structured_memory.max_episode_bytes_per_owner",
+                    DEFAULT_MAX_EPISODE_BYTES,
+                ),
+                256,
+                8 * 1024 * 1024,
+            ) as usize,
+            episode_ttl_secs: clamp_u64(
+                cfg.u64_or("structured_memory.episode_ttl_secs", DEFAULT_EPISODE_TTL_SECS),
+                60,
+                366 * 24 * 3600,
+            ) as i64,
+            max_export_bytes: clamp_u64(
+                cfg.u64_or("structured_memory.max_export_bytes", DEFAULT_MAX_EXPORT_BYTES),
+                1024,
+                8 * 1024 * 1024,
+            ) as usize,
         }
     }
 
@@ -115,6 +210,11 @@ impl Limits {
             "max_category_chars": self.max_category_chars,
             "max_proposals_per_owner": self.max_proposals_per_owner,
             "max_reason_chars": self.max_reason_chars,
+            "max_episodes_per_owner": self.max_episodes_per_owner,
+            "max_episode_summary_chars": self.max_episode_summary_chars,
+            "max_episode_bytes_per_owner": self.max_episode_bytes_per_owner,
+            "episode_ttl_secs": self.episode_ttl_secs,
+            "max_export_bytes": self.max_export_bytes,
         })
     }
 }
@@ -156,6 +256,45 @@ pub struct Proposal {
     pub status: String,
     pub created_ts: f64,
     pub decided_ts: Option<f64>,
+    pub source_episode_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Episode {
+    pub id: String,
+    pub owner_id: String,
+    pub session_ref: String,
+    pub turn_ref: String,
+    pub model_id: String,
+    pub outcome: String,
+    pub sensitivity: String,
+    pub privacy_summary: String,
+    pub semantic_summary: Option<String>,
+    pub consolidation_state: String,
+    pub created_ts: f64,
+    pub expires_ts: f64,
+    pub byte_len: i64,
+}
+
+impl Episode {
+    pub fn to_json(&self) -> Value {
+        serde_json::to_value(self).unwrap_or_else(|_| json!({}))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EpisodeHealth {
+    pub last_stage_ok: Option<bool>,
+    pub last_error_class: Option<String>,
+}
+
+impl EpisodeHealth {
+    pub fn as_json(&self) -> Value {
+        json!({
+            "ok": self.last_stage_ok,
+            "error_class": self.last_error_class,
+        })
+    }
 }
 
 impl Proposal {
@@ -169,6 +308,7 @@ pub struct StructuredMemoryStore {
     conn: Mutex<Connection>,
     limits: Limits,
     scanner: Scanner,
+    health: Mutex<EpisodeHealth>,
 }
 
 impl std::fmt::Debug for StructuredMemoryStore {
@@ -253,11 +393,29 @@ fn connect(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+fn user_version(conn: &Connection) -> Result<i64> {
+    conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+        .map_err(sql)
+}
+
+fn migrate_schema(conn: &mut Connection) -> Result<()> {
+    let version = user_version(conn)?;
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    if version != 1 {
+        return Err(invalid("unsupported or corrupt structured memory database"));
+    }
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql)?;
+    tx.execute_batch(EPISODE_DDL).map_err(sql)?;
+    tx.commit().map_err(sql)?;
+    Ok(())
+}
+
 fn check_schema(conn: &Connection) -> Result<()> {
-    if conn
-        .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
-        .map_err(sql)?
-        != SCHEMA_VERSION
+    if user_version(conn)? != SCHEMA_VERSION
         || conn
             .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
             .map_err(sql)?
@@ -309,6 +467,15 @@ pub struct ProposalDraft<'a> {
     pub target_fact_id: Option<&'a str>,
     pub expected_revision: Option<i64>,
     pub expected_digest: Option<&'a str>,
+    pub source_episode_ids: &'a [String],
+}
+
+pub struct EpisodeDraft<'a> {
+    pub model_id: &'a str,
+    pub outcome: &'a str,
+    pub user_chars: usize,
+    pub assistant_chars: usize,
+    pub sensitivity: &'a str,
 }
 
 fn digest(content: &str) -> String {
@@ -350,7 +517,8 @@ impl StructuredMemoryStore {
             .ok_or_else(|| invalid("missing structured memory directory"))?;
         std::fs::create_dir_all(parent)?;
         let conn = if present(&path)? {
-            let conn = connect(&path)?;
+            let mut conn = connect(&path)?;
+            migrate_schema(&mut conn)?;
             check_schema(&conn)?;
             if !present(&marker)? {
                 write_atomic(&marker, MARKER_BODY, Some(0o600))?;
@@ -372,7 +540,8 @@ impl StructuredMemoryStore {
             }
             let mut conn = connect(staged.path())?;
             let tx = conn.transaction().map_err(sql)?;
-            tx.execute_batch(SCHEMA).map_err(sql)?;
+            tx.execute_batch(FACTS_PROPOSALS_DDL).map_err(sql)?;
+            tx.execute_batch(EPISODE_DDL).map_err(sql)?;
             tx.commit().map_err(sql)?;
             check_schema(&conn)?;
             conn.close().map_err(|(_, e)| sql(e))?;
@@ -388,6 +557,7 @@ impl StructuredMemoryStore {
             conn: Mutex::new(conn),
             limits: Limits::from_config(cfg),
             scanner: Scanner::core(),
+            health: Mutex::new(EpisodeHealth::default()),
         })
     }
 
@@ -488,7 +658,49 @@ impl StructuredMemoryStore {
             status: row.get(9)?,
             created_ts: row.get(10)?,
             decided_ts: row.get(11)?,
+            source_episode_ids: Vec::new(),
         })
+    }
+
+    fn map_episode(row: &rusqlite::Row<'_>) -> rusqlite::Result<Episode> {
+        Ok(Episode {
+            id: row.get(0)?,
+            owner_id: row.get(1)?,
+            session_ref: row.get(2)?,
+            turn_ref: row.get(3)?,
+            model_id: row.get(4)?,
+            outcome: row.get(5)?,
+            sensitivity: row.get(6)?,
+            privacy_summary: row.get(7)?,
+            semantic_summary: row.get(8)?,
+            consolidation_state: row.get(9)?,
+            created_ts: row.get(10)?,
+            expires_ts: row.get(11)?,
+            byte_len: row.get(12)?,
+        })
+    }
+
+    fn episode_select() -> &'static str {
+        "SELECT public_id,owner_id,session_ref,turn_ref,model_id,outcome,sensitivity,privacy_summary,semantic_summary,consolidation_state,created_ts,expires_ts,byte_len FROM episodes"
+    }
+
+    fn load_episode_refs(conn: &Connection, owner: &str, proposal_id: &str) -> Result<Vec<String>> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT episode_id FROM proposal_episode_refs WHERE owner_id=?1 AND proposal_id=?2 ORDER BY episode_id ASC",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![owner, proposal_id], |r| r.get(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<String>, _>>()
+            .map_err(sql)?;
+        Ok(rows)
+    }
+
+    fn attach_refs(conn: &Connection, owner: &str, mut proposal: Proposal) -> Result<Proposal> {
+        proposal.source_episode_ids = Self::load_episode_refs(conn, owner, &proposal.id)?;
+        Ok(proposal)
     }
 
     pub fn counts(&self, owner: &str) -> Result<(usize, usize)> {
@@ -681,6 +893,18 @@ impl StructuredMemoryStore {
             }
             let _ = self.get_fact(owner, target)?;
         }
+        let mut sources = Vec::new();
+        for id in draft.source_episode_ids {
+            if !valid_public_id(id) {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_PROPOSAL",
+                    "source episode ids must be opaque 32-hex identifiers",
+                ));
+            }
+            sources.push(id.clone());
+        }
+        sources.sort();
+        sources.dedup();
         let revision = proposal_revision(
             draft.action,
             content.as_deref(),
@@ -729,7 +953,7 @@ impl StructuredMemoryStore {
             ],
         )
         .map_err(sql)?;
-        let proposal = tx
+        let loaded = tx
             .query_row(
                 "SELECT public_id,owner_id,action,content,category,target_fact_id,expected_revision,expected_digest,proposal_revision,status,created_ts,decided_ts
                  FROM proposals WHERE public_id=?1",
@@ -737,6 +961,24 @@ impl StructuredMemoryStore {
                 Self::map_proposal,
             )
             .map_err(sql)?;
+        for episode_id in &sources {
+            let exists: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM episodes WHERE owner_id=?1 AND public_id=?2",
+                    params![owner, episode_id],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            if exists == 0 {
+                return Err(HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"));
+            }
+            tx.execute(
+                "INSERT INTO proposal_episode_refs(owner_id,proposal_id,episode_id) VALUES(?1,?2,?3)",
+                params![owner, id, episode_id],
+            )
+            .map_err(sql)?;
+        }
+        let proposal = Self::attach_refs(&tx, owner, loaded)?;
         tx.commit().map_err(sql)?;
         Ok(proposal)
     }
@@ -755,7 +997,7 @@ impl StructuredMemoryStore {
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
-        Ok(rows)
+        rows.into_iter().map(|p| Self::attach_refs(&conn, owner, p)).collect()
     }
 
     pub fn get_proposal(&self, owner: &str, id: &str) -> Result<Proposal> {
@@ -773,6 +1015,7 @@ impl StructuredMemoryStore {
         .optional()
         .map_err(sql)?
         .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_PROPOSAL", "unknown proposal"))
+        .and_then(|p| Self::attach_refs(&conn, owner, p))
     }
 
     pub fn decide_proposal(
@@ -837,6 +1080,7 @@ impl StructuredMemoryStore {
                 Self::map_proposal,
             )
             .map_err(sql)?;
+        let decided = Self::attach_refs(&tx, owner, decided)?;
         tx.commit().map_err(sql)?;
         Ok(decided)
     }
@@ -951,12 +1195,581 @@ impl StructuredMemoryStore {
         Ok(())
     }
 
+    pub fn episode_health(&self) -> EpisodeHealth {
+        self.health.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    fn record_stage_health(&self, result: &Result<Episode>) {
+        let mut health = self.health.lock().unwrap_or_else(|p| p.into_inner());
+        match result {
+            Ok(_) => {
+                health.last_stage_ok = Some(true);
+                health.last_error_class = None;
+            }
+            Err(err) => {
+                health.last_stage_ok = Some(false);
+                health.last_error_class = Some(err.code.clone());
+            }
+        }
+    }
+
+    pub fn episode_count(&self, owner: &str) -> Result<usize> {
+        Self::require_owner(owner)?;
+        let conn = self.lock();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM episodes WHERE owner_id=?1", params![owner], |r| {
+                r.get(0)
+            })
+            .map_err(sql)?;
+        Ok(count as usize)
+    }
+
+    pub fn list_episodes(&self, owner: &str) -> Result<Vec<Episode>> {
+        Self::require_owner(owner)?;
+        let conn = self.lock();
+        let mut stmt = conn
+            .prepare(&format!(
+                "{} WHERE owner_id=?1 ORDER BY created_ts DESC, public_id ASC LIMIT 256",
+                Self::episode_select()
+            ))
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![owner], Self::map_episode)
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        Ok(rows)
+    }
+
+    pub fn get_episode(&self, owner: &str, id: &str) -> Result<Episode> {
+        Self::require_owner(owner)?;
+        if !valid_public_id(id) {
+            return Err(HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"));
+        }
+        let conn = self.lock();
+        conn.query_row(
+            &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::episode_select()),
+            params![owner, id],
+            Self::map_episode,
+        )
+        .optional()
+        .map_err(sql)?
+        .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"))
+    }
+
+    fn privacy_summary(&self, draft: &EpisodeDraft<'_>) -> Result<String> {
+        if !matches!(draft.outcome, "completed" | "partial" | "failed" | "cancelled") {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_CONTENT",
+                "episode outcome must be completed, partial, failed, or cancelled",
+            ));
+        }
+        if !matches!(draft.sensitivity, "normal" | "sensitive" | "reject") {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_CONTENT",
+                "episode sensitivity must be normal, sensitive, or reject",
+            ));
+        }
+        let model = self.clean_text(draft.model_id, 200, false)?;
+        let summary = format!(
+            "Completed local chat exchange. Outcome: {}. Model: {}. Sensitivity: {}. User chars: {}. Assistant chars: {}. Tools unused. Hidden reasoning omitted. Raw query and full answer omitted.",
+            draft.outcome, model, draft.sensitivity, draft.user_chars, draft.assistant_chars
+        );
+        Ok(crate::common::clip_chars(
+            &summary,
+            self.limits.max_episode_summary_chars,
+        ))
+    }
+
+    fn episode_bytes(summary: &str, semantic: Option<&str>, model: &str) -> i64 {
+        (summary.len() + semantic.map(str::len).unwrap_or(0) + model.len() + 96) as i64
+    }
+
+    fn referenced_pending(tx: &rusqlite::Transaction<'_>, owner: &str, episode_id: &str) -> Result<bool> {
+        let count: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM proposal_episode_refs r
+                 INNER JOIN proposals p ON p.public_id=r.proposal_id AND p.owner_id=r.owner_id
+                 WHERE r.owner_id=?1 AND r.episode_id=?2 AND p.status='pending'",
+                params![owner, episode_id],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        Ok(count > 0)
+    }
+
+    fn prune_owner_episodes(tx: &rusqlite::Transaction<'_>, owner: &str, limits: Limits) -> Result<()> {
+        loop {
+            let rows: i64 = tx
+                .query_row("SELECT COUNT(*) FROM episodes WHERE owner_id=?1", params![owner], |r| {
+                    r.get(0)
+                })
+                .map_err(sql)?;
+            let bytes: i64 = tx
+                .query_row(
+                    "SELECT COALESCE(SUM(byte_len),0) FROM episodes WHERE owner_id=?1",
+                    params![owner],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            let now = crate::common::now_ts();
+            let over = rows > limits.max_episodes_per_owner as i64 || bytes > limits.max_episode_bytes_per_owner as i64;
+            let victim: Option<String> = tx
+                .query_row(
+                    "SELECT public_id FROM episodes e
+                     WHERE owner_id=?1
+                       AND NOT EXISTS (
+                         SELECT 1 FROM proposal_episode_refs r
+                         INNER JOIN proposals p ON p.public_id=r.proposal_id AND p.owner_id=r.owner_id
+                         WHERE r.owner_id=e.owner_id AND r.episode_id=e.public_id AND p.status='pending'
+                       )
+                       AND (expires_ts<=?2 OR ?3=1)
+                     ORDER BY created_ts ASC, public_id ASC LIMIT 1",
+                    params![owner, now, if over { 1 } else { 0 }],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(sql)?;
+            let Some(id) = victim else {
+                if over {
+                    return Err(HarnessError::new(
+                        "STRUCTURED_MEMORY_CAP",
+                        "episode retention cannot prune rows referenced by pending proposals",
+                    )
+                    .detail("max_episodes", limits.max_episodes_per_owner as u64));
+                }
+                break;
+            };
+            if !over {
+                let expired: i64 = tx
+                    .query_row(
+                        "SELECT COUNT(*) FROM episodes WHERE owner_id=?1 AND public_id=?2 AND expires_ts<=?3",
+                        params![owner, id, now],
+                        |r| r.get(0),
+                    )
+                    .map_err(sql)?;
+                if expired == 0 {
+                    break;
+                }
+            }
+            tx.execute(
+                "DELETE FROM proposal_episode_refs WHERE owner_id=?1 AND episode_id=?2",
+                params![owner, id],
+            )
+            .map_err(sql)?;
+            tx.execute(
+                "DELETE FROM episodes WHERE owner_id=?1 AND public_id=?2",
+                params![owner, id],
+            )
+            .map_err(sql)?;
+        }
+        Ok(())
+    }
+
+    pub fn stage_episode(&self, owner: &str, draft: EpisodeDraft<'_>) -> Result<Episode> {
+        Self::require_owner(owner)?;
+        let privacy_summary = self.privacy_summary(&draft)?;
+        let model = self.clean_text(draft.model_id, 200, false)?;
+        let byte_len = Self::episode_bytes(&privacy_summary, None, &model);
+        let mut conn = self.lock();
+        let staged = (|| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sql)?;
+            let id = crate::common::random_hex(16);
+            let session_ref = crate::common::random_hex(16);
+            let turn_ref = crate::common::random_hex(16);
+            let now = crate::common::now_ts();
+            let expires = now + self.limits.episode_ttl_secs as f64;
+            tx.execute(
+                "INSERT INTO episodes(public_id,owner_id,session_ref,turn_ref,model_id,outcome,sensitivity,privacy_summary,semantic_summary,consolidation_state,created_ts,expires_ts,byte_len)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,NULL,'none',?9,?10,?11)",
+                params![
+                    id,
+                    owner,
+                    session_ref,
+                    turn_ref,
+                    model,
+                    draft.outcome,
+                    draft.sensitivity,
+                    privacy_summary,
+                    now,
+                    expires,
+                    byte_len
+                ],
+            )
+            .map_err(sql)?;
+            Self::prune_owner_episodes(&tx, owner, self.limits)?;
+            let episode = tx
+                .query_row(
+                    &format!("{} WHERE public_id=?1", Self::episode_select()),
+                    params![id],
+                    Self::map_episode,
+                )
+                .map_err(sql)?;
+            tx.commit().map_err(sql)?;
+            Ok(episode)
+        })();
+        self.record_stage_health(&staged);
+        staged
+    }
+
+    pub fn set_episode_summary(&self, owner: &str, id: &str, summary: &str, reason: &str) -> Result<Episode> {
+        Self::require_owner(owner)?;
+        self.validate_reason(reason)?;
+        if !valid_public_id(id) {
+            return Err(HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"));
+        }
+        let summary = self.clean_text(summary, self.limits.max_episode_summary_chars, false)?;
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let current = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::episode_select()),
+                params![owner, id],
+                Self::map_episode,
+            )
+            .optional()
+            .map_err(sql)?
+            .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"))?;
+        let byte_len = Self::episode_bytes(&current.privacy_summary, Some(&summary), &current.model_id);
+        tx.execute(
+            "UPDATE episodes SET semantic_summary=?1, byte_len=?2 WHERE owner_id=?3 AND public_id=?4",
+            params![summary, byte_len, owner, id],
+        )
+        .map_err(sql)?;
+        Self::prune_owner_episodes(&tx, owner, self.limits)?;
+        let episode = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::episode_select()),
+                params![owner, id],
+                Self::map_episode,
+            )
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok(episode)
+    }
+
+    pub fn delete_episode(&self, owner: &str, id: &str, reason: &str) -> Result<()> {
+        Self::require_owner(owner)?;
+        self.validate_reason(reason)?;
+        if !valid_public_id(id) {
+            return Err(HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"));
+        }
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        if Self::referenced_pending(&tx, owner, id)? {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_CHANGED",
+                "episode is referenced by a pending proposal",
+            ));
+        }
+        tx.execute(
+            "DELETE FROM proposal_episode_refs WHERE owner_id=?1 AND episode_id=?2",
+            params![owner, id],
+        )
+        .map_err(sql)?;
+        let n = tx
+            .execute(
+                "DELETE FROM episodes WHERE owner_id=?1 AND public_id=?2",
+                params![owner, id],
+            )
+            .map_err(sql)?;
+        if n == 0 {
+            return Err(HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"));
+        }
+        tx.commit().map_err(sql)?;
+        Ok(())
+    }
+
+    pub fn purge_expired_episodes(&self, owner: &str, reason: &str) -> Result<usize> {
+        Self::require_owner(owner)?;
+        self.validate_reason(reason)?;
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let now = crate::common::now_ts();
+        let mut stmt = tx
+            .prepare(
+                "SELECT public_id FROM episodes e
+                 WHERE owner_id=?1 AND expires_ts<=?2
+                   AND NOT EXISTS (
+                     SELECT 1 FROM proposal_episode_refs r
+                     INNER JOIN proposals p ON p.public_id=r.proposal_id AND p.owner_id=r.owner_id
+                     WHERE r.owner_id=e.owner_id AND r.episode_id=e.public_id AND p.status='pending'
+                   )",
+            )
+            .map_err(sql)?;
+        let ids: Vec<String> = stmt
+            .query_map(params![owner, now], |r| r.get(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        drop(stmt);
+        for id in &ids {
+            tx.execute(
+                "DELETE FROM proposal_episode_refs WHERE owner_id=?1 AND episode_id=?2",
+                params![owner, id],
+            )
+            .map_err(sql)?;
+            tx.execute(
+                "DELETE FROM episodes WHERE owner_id=?1 AND public_id=?2",
+                params![owner, id],
+            )
+            .map_err(sql)?;
+        }
+        tx.commit().map_err(sql)?;
+        Ok(ids.len())
+    }
+
+    pub fn delete_unreferenced_episodes(&self, owner: &str, reason: &str) -> Result<(usize, usize)> {
+        Self::require_owner(owner)?;
+        self.validate_reason(reason)?;
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let deleted: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM episodes e
+                 WHERE owner_id=?1
+                   AND NOT EXISTS (
+                     SELECT 1 FROM proposal_episode_refs r
+                     INNER JOIN proposals p ON p.public_id=r.proposal_id AND p.owner_id=r.owner_id
+                     WHERE r.owner_id=e.owner_id AND r.episode_id=e.public_id AND p.status='pending'
+                   )",
+                params![owner],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        tx.execute(
+            "DELETE FROM proposal_episode_refs WHERE owner_id=?1 AND episode_id IN (
+               SELECT public_id FROM episodes e
+               WHERE e.owner_id=?1
+                 AND NOT EXISTS (
+                   SELECT 1 FROM proposal_episode_refs r
+                   INNER JOIN proposals p ON p.public_id=r.proposal_id AND p.owner_id=r.owner_id
+                   WHERE r.owner_id=e.owner_id AND r.episode_id=e.public_id AND p.status='pending'
+                 )
+             )",
+            params![owner],
+        )
+        .map_err(sql)?;
+        tx.execute(
+            "DELETE FROM episodes WHERE owner_id=?1 AND public_id NOT IN (
+               SELECT episode_id FROM proposal_episode_refs r
+               INNER JOIN proposals p ON p.public_id=r.proposal_id AND p.owner_id=r.owner_id
+               WHERE r.owner_id=?1 AND p.status='pending'
+             )",
+            params![owner],
+        )
+        .map_err(sql)?;
+        let retained: i64 = tx
+            .query_row("SELECT COUNT(*) FROM episodes WHERE owner_id=?1", params![owner], |r| {
+                r.get(0)
+            })
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok((deleted as usize, retained as usize))
+    }
+
+    pub fn purge_owner(&self, owner: &str, reason: &str) -> Result<Value> {
+        Self::require_owner(owner)?;
+        self.validate_reason(reason)?;
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let facts: i64 = tx
+            .query_row("SELECT COUNT(*) FROM facts WHERE owner_id=?1", params![owner], |r| {
+                r.get(0)
+            })
+            .map_err(sql)?;
+        let episodes: i64 = tx
+            .query_row("SELECT COUNT(*) FROM episodes WHERE owner_id=?1", params![owner], |r| {
+                r.get(0)
+            })
+            .map_err(sql)?;
+        let proposals: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM proposals WHERE owner_id=?1",
+                params![owner],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        let runs: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM consolidation_runs WHERE owner_id=?1",
+                params![owner],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        tx.execute("DELETE FROM proposal_episode_refs WHERE owner_id=?1", params![owner])
+            .map_err(sql)?;
+        tx.execute("DELETE FROM episodes WHERE owner_id=?1", params![owner])
+            .map_err(sql)?;
+        tx.execute("DELETE FROM proposals WHERE owner_id=?1", params![owner])
+            .map_err(sql)?;
+        tx.execute("DELETE FROM facts WHERE owner_id=?1", params![owner])
+            .map_err(sql)?;
+        tx.execute("DELETE FROM consolidation_runs WHERE owner_id=?1", params![owner])
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok(json!({
+            "owner_id": owner,
+            "deleted": {
+                "facts": facts,
+                "episodes": episodes,
+                "proposals": proposals,
+                "consolidation_runs": runs
+            }
+        }))
+    }
+
+    pub fn export_owner(&self, owner: &str) -> Result<OwnerExport> {
+        Self::require_owner(owner)?;
+        let facts = self.list_facts(owner)?;
+        let mut episodes = self.list_episodes(owner)?;
+        episodes.sort_by(|a, b| {
+            a.created_ts
+                .partial_cmp(&b.created_ts)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        let proposals = self.list_proposals(owner)?;
+        let mut export = OwnerExport {
+            owner_id: owner.to_string(),
+            fields: EXPORT_FIELDS.iter().map(|s| (*s).to_string()).collect(),
+            facts,
+            episodes,
+            proposals,
+            truncated: false,
+            note: "Episodes store privacy-filtered metadata summaries only. Raw query, full answer, hidden reasoning, and tool secrets are omitted. Strings are HTML-escaped against stored XSS.".to_string(),
+        };
+        while export.html().len() > self.limits.max_export_bytes {
+            if export.episodes.is_empty() {
+                return Err(
+                    HarnessError::new("STRUCTURED_MEMORY_CAP", "export exceeds the configured byte bound")
+                        .detail("max_export_bytes", self.limits.max_export_bytes as u64),
+                );
+            }
+            export.episodes.remove(0);
+            export.truncated = true;
+        }
+        Ok(export)
+    }
+
     #[cfg(test)]
     pub fn with_connection<F, T>(&self, f: F) -> T
     where
         F: FnOnce(&Connection) -> T,
     {
         f(&self.lock())
+    }
+
+    #[cfg(test)]
+    pub fn expire_episode(&self, owner: &str, id: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "UPDATE episodes SET expires_ts=1 WHERE owner_id=?1 AND public_id=?2",
+            params![owner, id],
+        )
+        .map_err(sql)?;
+        Ok(())
+    }
+}
+
+const EXPORT_FIELDS: [&str; 12] = [
+    "facts.id",
+    "facts.content",
+    "facts.category",
+    "facts.revision",
+    "episodes.id",
+    "episodes.privacy_summary",
+    "episodes.semantic_summary",
+    "episodes.model_id",
+    "episodes.outcome",
+    "proposals.id",
+    "proposals.action",
+    "proposals.status",
+];
+
+pub fn escape_export_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+pub struct OwnerExport {
+    pub owner_id: String,
+    pub fields: Vec<String>,
+    pub facts: Vec<Fact>,
+    pub episodes: Vec<Episode>,
+    pub proposals: Vec<Proposal>,
+    pub truncated: bool,
+    pub note: String,
+}
+
+impl OwnerExport {
+    pub fn html(&self) -> String {
+        let mut body = String::new();
+        body.push_str(
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Structured memory export</title></head><body>",
+        );
+        body.push_str(&format!(
+            "<p>Owner: {}</p><p>{}</p><p>Fields: {}</p><p>Truncated: {}</p>",
+            escape_export_text(&self.owner_id),
+            escape_export_text(&self.note),
+            escape_export_text(&self.fields.join(", ")),
+            self.truncated
+        ));
+        body.push_str("<h2>Facts</h2><ul>");
+        for fact in &self.facts {
+            body.push_str(&format!(
+                "<li>id={} revision={} category={} content={}</li>",
+                escape_export_text(&fact.id),
+                fact.revision,
+                escape_export_text(&fact.category),
+                escape_export_text(&fact.content)
+            ));
+        }
+        body.push_str("</ul><h2>Episodes</h2><ul>");
+        for episode in &self.episodes {
+            body.push_str(&format!(
+                "<li>id={} outcome={} model={} privacy={} semantic={}</li>",
+                escape_export_text(&episode.id),
+                escape_export_text(&episode.outcome),
+                escape_export_text(&episode.model_id),
+                escape_export_text(&episode.privacy_summary),
+                escape_export_text(episode.semantic_summary.as_deref().unwrap_or(""))
+            ));
+        }
+        body.push_str("</ul><h2>Proposals</h2><ul>");
+        for proposal in &self.proposals {
+            body.push_str(&format!(
+                "<li>id={} action={} status={}</li>",
+                escape_export_text(&proposal.id),
+                escape_export_text(&proposal.action),
+                escape_export_text(&proposal.status)
+            ));
+        }
+        body.push_str("</ul></body></html>");
+        body
     }
 }
 
@@ -967,6 +1780,7 @@ pub fn disabled_status(owner: &str, limits: &Limits) -> Value {
         "facts": false,
         "proposals": false,
         "episodes": false,
+        "episode_capture": false,
         "retrieval": false,
         "retrieval_fusion": false,
         "consolidation": false,
@@ -979,19 +1793,37 @@ pub fn disabled_status(owner: &str, limits: &Limits) -> Value {
             "prompt_toggle": "harness.json.memory_enabled",
             "store": "memory/notes.json"
         },
+        "session_clear": {
+            "deletes_derived_episodes": false,
+            "explicit_cascade": "delete_derived_episodes on POST /api/sessions/clear"
+        },
         "fact_count": 0,
         "pending_proposal_count": 0,
+        "episode_count": 0,
+        "episode_health": EpisodeHealth::default().as_json(),
         "limits": limits.as_json(),
     })
 }
 
-pub fn enabled_status(owner: &str, limits: &Limits, fact_count: usize, pending: usize) -> Value {
+pub fn enabled_status(
+    owner: &str,
+    limits: &Limits,
+    fact_count: usize,
+    pending: usize,
+    episode_capture: bool,
+    episode_count: usize,
+    health: &EpisodeHealth,
+) -> Value {
     let mut value = disabled_status(owner, limits);
     value["enabled"] = json!(true);
     value["facts"] = json!(true);
     value["proposals"] = json!(true);
+    value["episode_capture"] = json!(episode_capture);
+    value["episodes"] = json!(episode_capture);
     value["fact_count"] = json!(fact_count);
     value["pending_proposal_count"] = json!(pending);
+    value["episode_count"] = json!(episode_count);
+    value["episode_health"] = health.as_json();
     value
 }
 
@@ -1088,6 +1920,7 @@ mod tests {
                     target_fact_id: None,
                     expected_revision: None,
                     expected_digest: None,
+                    source_episode_ids: &[],
                 },
             )
             .unwrap();
@@ -1133,5 +1966,246 @@ mod tests {
         assert!(StructuredMemoryStore::open(&path, &cfg(dir.path())).is_err());
         assert!(!dir.path().join("memory").exists());
         assert!(!dir.path().join("structured.sqlite3").exists());
+    }
+
+    #[test]
+    fn schema_v1_upgrades_to_episodes_without_losing_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("structured.sqlite3");
+        {
+            let staged = tempfile::Builder::new()
+                .prefix(".structured.")
+                .tempfile_in(dir.path())
+                .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                staged
+                    .as_file()
+                    .set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .unwrap();
+            }
+            let mut conn = connect(staged.path()).unwrap();
+            let tx = conn.transaction().unwrap();
+            tx.execute_batch(FACTS_PROPOSALS_DDL).unwrap();
+            tx.execute_batch("PRAGMA user_version=1;").unwrap();
+            // Runtime id — never embed a 32-hex token-shaped literal (GHAS DevSkim).
+            let fact_id = crate::common::random_hex(16);
+            let digest = crate::common::sha256_hex("Prefer metric units");
+            tx.execute(
+                "INSERT INTO facts(public_id,owner_id,content,category,content_digest,revision,active,created_ts,updated_ts)
+                 VALUES(?1,'user_alice','Prefer metric units','pref',?2,1,1,1,1)",
+                params![fact_id, digest],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            conn.close().ok();
+            staged.persist_noclobber(&path).unwrap();
+        }
+        write_atomic(&marker_path(&path), MARKER_BODY, Some(0o600)).unwrap();
+        let store = StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
+        assert_eq!(store.list_facts("user_alice").unwrap().len(), 1);
+        let episode = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 12,
+                    assistant_chars: 40,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        assert!(!episode.privacy_summary.contains("Prefer metric units"));
+        assert_eq!(store.episode_count("user_alice").unwrap(), 1);
+    }
+
+    #[test]
+    fn staged_episode_omits_raw_query_and_full_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let unique_query = "UNIQUE_QUERY_alice_prefers_metric_units";
+        let unique_answer = "UNIQUE_ANSWER_full_hidden_reasoning_block";
+        let episode = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: unique_query.chars().count(),
+                    assistant_chars: unique_answer.chars().count(),
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let json = serde_json::to_value(&episode).unwrap();
+        let encoded = json.to_string();
+        assert!(!encoded.contains(unique_query));
+        assert!(!encoded.contains(unique_answer));
+        assert_eq!(json.get("query"), None);
+        assert_eq!(json.get("answer"), None);
+        assert!(episode.privacy_summary.contains("Raw query and full answer omitted"));
+        assert!(episode.privacy_summary.chars().count() <= store.limits().max_episode_summary_chars);
+    }
+
+    #[test]
+    fn pruning_is_oldest_first_and_preserves_pending_proposal_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("structured.sqlite3");
+        let text = AppConfig::embedded_default().replace("max_episodes_per_owner: 128", "max_episodes_per_owner: 2");
+        let cfg = AppConfig::from_str(&text, &dir.path().join("config.yaml")).unwrap();
+        let store = StructuredMemoryStore::open(&path, &cfg).unwrap();
+        let first = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 1,
+                    assistant_chars: 1,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let second = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 2,
+                    assistant_chars: 2,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        store
+            .create_proposal(
+                "user_alice",
+                ProposalDraft {
+                    action: "add",
+                    content: Some("Keep tabs"),
+                    category: Some("pref"),
+                    target_fact_id: None,
+                    expected_revision: None,
+                    expected_digest: None,
+                    source_episode_ids: std::slice::from_ref(&first.id),
+                },
+            )
+            .unwrap();
+        let third = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 3,
+                    assistant_chars: 3,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let listed = store.list_episodes("user_alice").unwrap();
+        let ids: Vec<_> = listed.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&first.id.as_str()));
+        assert!(!ids.contains(&second.id.as_str()));
+        assert!(ids.contains(&third.id.as_str()));
+        assert_eq!(listed.len(), 2);
+    }
+
+    #[test]
+    fn owner_purge_is_atomic_and_export_is_escaped_and_isolated() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        store
+            .add_fact("user_alice", "<script>alert(1)</script>", "pref", "operator entry")
+            .unwrap();
+        store
+            .add_fact("user_bob", "bob-only-secret-fact", "pref", "operator entry")
+            .unwrap();
+        store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 4,
+                    assistant_chars: 8,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let export = store.export_owner("user_alice").unwrap();
+        let html = export.html();
+        assert!(html.contains("&lt;script&gt;"));
+        assert!(!html.contains("<script>"));
+        assert!(!html.contains("bob-only-secret-fact"));
+        store.with_connection(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER refuse_purge BEFORE DELETE ON facts BEGIN SELECT RAISE(ABORT, 'simulated purge failure'); END;",
+            )
+            .unwrap();
+        });
+        assert!(store.purge_owner("user_alice", "reset").is_err());
+        store.with_connection(|conn| {
+            conn.execute_batch("DROP TRIGGER refuse_purge;").unwrap();
+        });
+        assert_eq!(store.list_facts("user_alice").unwrap().len(), 1);
+        assert_eq!(store.episode_count("user_alice").unwrap(), 1);
+        store.purge_owner("user_alice", "reset").unwrap();
+        assert!(store.list_facts("user_alice").unwrap().is_empty());
+        assert_eq!(store.episode_count("user_alice").unwrap(), 0);
+        assert_eq!(store.list_facts("user_bob").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn expired_purge_keeps_pending_referenced_episodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let kept = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 1,
+                    assistant_chars: 1,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let gone = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 2,
+                    assistant_chars: 2,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        store
+            .create_proposal(
+                "user_alice",
+                ProposalDraft {
+                    action: "add",
+                    content: Some("Keep tabs"),
+                    category: Some("pref"),
+                    target_fact_id: None,
+                    expected_revision: None,
+                    expected_digest: None,
+                    source_episode_ids: std::slice::from_ref(&kept.id),
+                },
+            )
+            .unwrap();
+        store.expire_episode("user_alice", &kept.id).unwrap();
+        store.expire_episode("user_alice", &gone.id).unwrap();
+        let purged = store.purge_expired_episodes("user_alice", "ttl").unwrap();
+        assert_eq!(purged, 1);
+        assert!(store.get_episode("user_alice", &kept.id).is_ok());
+        assert!(store.get_episode("user_alice", &gone.id).is_err());
     }
 }
