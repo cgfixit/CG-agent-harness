@@ -57,7 +57,10 @@ encryption: anyone who can run as the home owner can read fact and episode
 bytes. Models cannot create that database or apply facts. Episode capture is a
 second default-false gate and never writes facts. Explicit recall is a third
 default-false gate: selected facts enter `/prompt` only after operator selection
-and assembly-time owner/active/revision revalidation. Recalled text cannot
+and assembly-time owner/active/revision revalidation. Retrieval is a fourth
+default-false gate: FTS search is not injection. Per-request force-include is
+the explicit pick for that prompt; `auto_retrieval` is a fifth default-false
+silent path. FTS indexes facts only. Recalled text cannot
 authorize tools, coding, or network. Pinned notes remain
 `memory/notes.json`.
 

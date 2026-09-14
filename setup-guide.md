@@ -774,18 +774,21 @@ loaded. Back up before manual repair.
 Pinned-note capability flags (`rag.facts`, episodes, retrieval fusion) remain
 false. `/memory on` does not enable structured memory.
 
-A separate, default-off store implements issue #87 M1/M3/M5 + Phase 4: account-private
-facts, governed proposals, optional bounded episodes, and explicit selected-fact
-recall. Set
+A separate, default-off store implements issue #87 M1/M3/M5 + Phase 4 + Phase 5: account-private
+facts, governed proposals, optional bounded episodes, explicit selected-fact
+recall, and opt-in facts-only FTS5 retrieval. Set
 `structured_memory.enabled: true` (literal YAML boolean) in `config.yaml` to
 open `<home>/memory/structured.sqlite3`. Set `structured_memory.episode_capture:
-true` to stage metadata-only episodes after a successful chat exchange. Set
-`structured_memory.explicit_recall: true` to allow operator-selected facts into
-`/prompt` after assembly-time owner/active/revision revalidation. Models
+true` (or `/memory capture on`) to stage metadata-only episodes after a successful chat exchange. Set
+`structured_memory.explicit_recall: true` (or `/memory recall on`) to allow operator-selected facts into
+`/prompt` after assembly-time owner/active/revision revalidation. Set
+`structured_memory.retrieval: true` (or `/memory retrieval on`) to allow bounded FTS search and
+per-request force-include (`/memory retrieve <query>` or `retrieve: true`).
+`auto_retrieval` is a separate default-false silent path. Models
 may POST a proposal; applying still requires `confirm` and `reason`. Episode
 staging never writes facts and never fails an already-successful chat. File
-mode is access control, not encryption. This is not FTS, embeddings,
-consolidation, or automatic recall. `/memory on` remains pinned-note inclusion
+mode is access control, not encryption. This is not embeddings,
+consolidation, RAG fusion, or episode FTS. `/memory on` remains pinned-note inclusion
 only. See
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md).
 Use pinned notes for shared-home preferences; use structured facts only after
@@ -925,6 +928,8 @@ confirmation and persistence semantics.
 | `/soul status`, `on`, `off`, `edit`, `propose`, `history` | Inspect, toggle or open persona editing/proposal flows |
 | `/soul review <id>`, `apply <id> <reason>`, `reject <id> <reason>` | Review and explicitly decide a persona proposal |
 | `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; section 7.5 |
+| `/memory capture|recall|retrieval|auto-retrieve on|off` | Structured-memory gates; `/memory on` stays pinned notes |
+| `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include |
 | `/model`, `/model use <name>` | Inspect/select an available chat model |
 | `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |
 | `/skill use <id...>`, `clear`, `status` | Replace, clear or inspect session prompt-skill selection |

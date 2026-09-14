@@ -103,6 +103,12 @@ pub struct ChatRequest {
     /// Optional per-request explicit fact selection. Overrides session selection.
     #[serde(default)]
     pub selected_facts: Option<Vec<StructuredFactSelection>>,
+    /// Force FTS retrieval for this request only. Does not persist on the session.
+    #[serde(default)]
+    pub retrieve: bool,
+    /// Optional FTS query for `retrieve`. When empty, the user message is used.
+    #[serde(default)]
+    pub retrieve_query: Option<String>,
 }
 
 impl Validate for ChatRequest {
@@ -123,7 +129,34 @@ impl Validate for ChatRequest {
         {
             bad.push("selected_facts".into());
         }
+        if self
+            .retrieve_query
+            .as_ref()
+            .is_some_and(|q| q.chars().count() > MAX_STRUCTURED_FACT_CHARS)
+        {
+            bad.push("retrieve_query".into());
+        }
         bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredMemoryGateRequest {
+    pub gate: String,
+    pub enabled: bool,
+}
+
+impl Validate for StructuredMemoryGateRequest {
+    fn validate(&self) -> Vec<String> {
+        if matches!(
+            self.gate.as_str(),
+            "episode_capture" | "explicit_recall" | "retrieval" | "auto_retrieval"
+        ) {
+            vec![]
+        } else {
+            vec!["gate".into()]
+        }
     }
 }
 

@@ -262,10 +262,20 @@ unslop:
 # explicit_recall is a third independent gate: selected facts enter /prompt
 # only when this is the literal boolean true AND the store is open. It does
 # not enable FTS, automatic recall, consolidation, or episode injection.
+# retrieval is a fourth independent gate: FTS5 search and per-request
+# force-include. Search returns candidates only; prompt injection still
+# requires an explicit pick (selected_facts, /memory retrieve, or the
+# retrieve request flag) plus assembly-time owner/active/revision recheck.
+# auto_retrieval is a fifth independent gate (Advisor-sensitive silent path):
+# when true AND retrieval is true, chat may FTS the user message and inject
+# rechecked top-k without a per-request flag. Ships false. /memory on never
+# opens any of these gates.
 structured_memory:
   enabled: false
   episode_capture: false
   explicit_recall: false
+  retrieval: false
+  auto_retrieval: false
   max_facts_per_owner: 64
   max_fact_chars: 1000
   max_category_chars: 64
@@ -279,5 +289,9 @@ structured_memory:
   max_selected_facts: 8
   max_search_query_chars: 64
   max_search_results: 32
+  max_retrieval_results: 4
+  max_retrieval_tokens: 8
+  max_retrieval_token_chars: 32
+  max_search_time_ms: 250
   pinned_prompt_chars: 1500
   selected_fact_prompt_chars: 1500

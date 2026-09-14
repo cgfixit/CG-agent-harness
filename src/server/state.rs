@@ -47,6 +47,8 @@ pub struct AppState {
     pub notes: MemoryNotes,
     /// Present only when `structured_memory.enabled` is the literal boolean true.
     pub structured_memory: Option<StructuredMemoryStore>,
+    /// Home-local operator overlay for capture/recall/retrieval. Fail-closed.
+    pub structured_gates: Mutex<crate::server::structured_memory::OperatorGates>,
     /// Test hook: when set, replaces the closed tool allowlists (empty = deny all).
     pub tool_allowlist_override: Option<BTreeSet<String>>,
     /// The only server -> agentic edge (a child process).

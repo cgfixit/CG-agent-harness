@@ -1,4 +1,4 @@
-//! Structured facts, governed proposals, episodes, and Phase 4 explicit recall (#87).
+//! Structured facts, governed proposals, episodes, Phase 4 recall, and Phase 5 FTS (#87).
 //! Pinned `/memory` notes stay on their own JSON path and are not migrated.
 
 mod common;
@@ -697,4 +697,231 @@ async fn fact_search_is_bounded_literal_substring() {
     assert_eq!(operators["count"], 1);
     let fts = s.get_json("/api/structured-memory/facts?q=NEAR%2F3%20metric").await.1;
     assert_eq!(fts["count"], 0);
+}
+
+fn retrieval() -> ServerOptions {
+    enabled().with("structured_memory.retrieval", "true")
+}
+
+#[tokio::test]
+async fn retrieval_status_is_independent_of_recall_and_stays_off_by_default() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), enabled()).await;
+    let body = s.get_json("/api/structured-memory").await.1;
+    assert_eq!(body["retrieval"], false);
+    assert_eq!(body["auto_retrieval"], false);
+    assert_eq!(body["explicit_recall"], false);
+    let s = spawn_server(&model.base_url(), retrieval()).await;
+    let body = s.get_json("/api/structured-memory").await.1;
+    assert_eq!(body["retrieval"], true);
+    assert_eq!(body["auto_retrieval"], false);
+    assert_eq!(body["explicit_recall"], false);
+    assert_eq!(body["retrieval_fusion"], false);
+    assert_eq!(body["consolidation"], false);
+    assert_eq!(body["rag"], false);
+    let memory = s.get_json("/api/memory").await.1;
+    assert_eq!(memory["structured_memory"]["retrieval"], true);
+    assert_eq!(memory["enabled"], false);
+}
+
+#[tokio::test]
+async fn quoted_retrieval_and_auto_retrieval_remain_off() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        enabled()
+            .with("structured_memory.retrieval", "\"true\"")
+            .with("structured_memory.auto_retrieval", "\"true\""),
+    )
+    .await;
+    let body = s.get_json("/api/structured-memory").await.1;
+    assert_eq!(body["retrieval"], false);
+    assert_eq!(body["auto_retrieval"], false);
+}
+
+#[tokio::test]
+async fn fts_search_is_candidates_only_and_owner_isolated() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), retrieval()).await;
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    add_fact(&s, "Keep OR NEAR operators as data.", "style").await;
+    let (status, refused) = s.get_json("/api/structured-memory/search?q=metric").await;
+    assert_eq!(status, 200, "{refused}");
+    assert_eq!(refused["count"], 1);
+    assert_eq!(refused["fts"], true);
+    assert_eq!(refused["hits"][0]["provenance"], "fts5");
+    let operators = s
+        .get_json("/api/structured-memory/search?q=OR%20NEAR%20operators")
+        .await
+        .1;
+    assert_eq!(operators["count"], 1);
+    let (status, closed) = spawn_server(&model.base_url(), enabled())
+        .await
+        .get_json("/api/structured-memory/search?q=metric")
+        .await;
+    assert_eq!(status, 409, "{closed}");
+}
+
+#[tokio::test]
+async fn force_include_injects_only_with_flag_and_does_not_stick() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), retrieval()).await;
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    let session = s.post_json("/api/sessions", json!({})).await.1;
+    let sid = session["session_id"].as_str().unwrap();
+    let (status, preview) = s
+        .post_json("/api/prompt/preview", json!({"session_id": sid, "retrieve": false}))
+        .await;
+    assert_eq!(status, 200, "{preview}");
+    assert!(!preview["prompt"]
+        .as_str()
+        .unwrap()
+        .contains("Prefer metric units in examples."));
+    assert_eq!(preview["structured_facts"]["injected"].as_array().unwrap().len(), 0);
+
+    let (status, forced) = s
+        .post_json(
+            "/api/prompt/preview",
+            json!({"session_id": sid, "retrieve": true, "retrieve_query": "metric units"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{forced}");
+    assert!(forced["prompt"]
+        .as_str()
+        .unwrap()
+        .contains("Prefer metric units in examples."));
+    assert_eq!(forced["structured_facts"]["injected"][0]["source"], "fts");
+    assert!(forced["prompt"]
+        .as_str()
+        .unwrap()
+        .contains("untrusted read-only background context"));
+
+    let (status, chat) = s
+        .post_json(
+            "/api/chat",
+            json!({"session_id": sid, "message": "hello without retrieve"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["structured_facts"]["injected"].as_array().unwrap().len(), 0);
+    let system = model.last_request().unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!system.contains("Prefer metric units in examples."));
+    assert_eq!(
+        s.get_json(&format!("/api/sessions/{sid}/structured-facts")).await.1["selected"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn auto_retrieval_injects_without_flag_when_separately_on() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        retrieval().with("structured_memory.auto_retrieval", "true"),
+    )
+    .await;
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    let (status, preview) = s
+        .post_json(
+            "/api/prompt/preview",
+            json!({"retrieve": false, "retrieve_query": "metric"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{preview}");
+    assert!(preview["structured_facts"]["auto_retrieval"].as_bool().unwrap());
+    assert_eq!(preview["structured_facts"]["injected"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn memory_on_does_not_enable_structured_gates() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), enabled()).await;
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    s.post_json("/api/memory", json!({"enabled": true})).await;
+    s.post_json("/api/memory/add", json!({"text": "shared pinned note"}))
+        .await;
+    let preview = s
+        .post_json(
+            "/api/prompt/preview",
+            json!({"retrieve": true, "retrieve_query": "metric"}),
+        )
+        .await
+        .1;
+    assert!(preview["prompt"].as_str().unwrap().contains("shared pinned note"));
+    assert!(!preview["prompt"]
+        .as_str()
+        .unwrap()
+        .contains("Prefer metric units in examples."));
+    assert_eq!(preview["structured_facts"]["retrieval"], false);
+}
+
+#[tokio::test]
+async fn operator_gate_commands_are_independent_and_fail_closed() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), enabled()).await;
+    let (status, on) = s
+        .post_json(
+            "/api/structured-memory/gates",
+            json!({"gate": "retrieval", "enabled": true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{on}");
+    assert_eq!(on["retrieval"], true);
+    assert_eq!(on["explicit_recall"], false);
+    assert_eq!(on["episode_capture"], false);
+    assert_eq!(on["memory_on_unchanged"], true);
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    let search = s.get_json("/api/structured-memory/search?q=metric").await.1;
+    assert_eq!(search["count"], 1);
+    let (status, bad) = s
+        .post_json("/api/structured-memory/gates", json!({"gate": "rag", "enabled": true}))
+        .await;
+    assert_eq!(status, 422, "{bad}");
+}
+
+#[tokio::test]
+async fn chat_survives_unusable_fts_query() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), retrieval()).await;
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    let (status, chat) = s
+        .post_json(
+            "/api/chat",
+            json!({
+                "message": "hello after reserved-only query",
+                "retrieve": true,
+                "retrieve_query": "AND OR NOT NEAR * ^ +"
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["structured_facts"]["injected"].as_array().unwrap().len(), 0);
+    assert!(!chat["reply"].as_str().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn retrieval_respects_top_k_and_does_not_index_episodes() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        retrieval()
+            .with("structured_memory.episode_capture", "true")
+            .with("structured_memory.max_retrieval_results", "1"),
+    )
+    .await;
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    add_fact(&s, "Metric rulers stay in the drawer.", "pref").await;
+    let (status, chat) = s.post_json("/api/chat", json!({"message": "stage an episode"})).await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["episode"]["staged"], true);
+    let hits = s.get_json("/api/structured-memory/search?q=metric").await.1;
+    assert_eq!(hits["count"], 1);
+    let episodes = s.get_json("/api/structured-memory/search?q=Completed%20local").await.1;
+    assert_eq!(episodes["count"], 0);
 }

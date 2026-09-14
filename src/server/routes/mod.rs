@@ -21,7 +21,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 70] = [
+pub const REGISTERED_PATHS: [&str; 72] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -45,6 +45,8 @@ pub const REGISTERED_PATHS: [&str; 70] = [
     "/api/memory/forget",
     "/api/memory/clear",
     "/api/structured-memory",
+    "/api/structured-memory/gates",
+    "/api/structured-memory/search",
     "/api/structured-memory/facts",
     "/api/structured-memory/facts/{id}",
     "/api/structured-memory/facts/{id}/deactivate",
@@ -157,6 +159,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/memory/forget", post(panels::memory_forget))
         .route("/api/memory/clear", post(panels::memory_clear))
         .route("/api/structured-memory", get(structured_memory::status))
+        .route("/api/structured-memory/gates", post(structured_memory::set_gates))
+        .route("/api/structured-memory/search", get(structured_memory::search_facts))
         .route(
             "/api/structured-memory/facts",
             get(structured_memory::list_facts).post(structured_memory::add_fact),

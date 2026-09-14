@@ -16,8 +16,9 @@ use crate::server::schemas::{
 };
 use crate::server::state::AppState;
 use crate::server::structured_memory::{
-    assemble_selected_facts, disabled_status, enabled_status, recall_available, valid_public_id, EpisodeDraft,
-    FactSelection, Limits, ProposalDraft, StructuredMemoryStore,
+    assemble_retrieval_facts, assemble_selected_facts, auto_retrieval_available, capture_available, current_gates,
+    disabled_status, enabled_status, merge_recall, recall_available, retrieval_available, valid_public_id,
+    EpisodeDraft, FactSelection, Limits, ProposalDraft, RetrievalIntent, StructuredMemoryStore,
 };
 
 type PrivateJson = ([(header::HeaderName, &'static str); 1], Json<Value>);
@@ -82,11 +83,13 @@ pub fn prompt_memory(
     owner: &str,
     memory_enabled: bool,
     selections: &[FactSelection],
+    intent: RetrievalIntent<'_>,
 ) -> (
     String,
     String,
     crate::server::prompts::MemoryBudget,
     crate::server::structured_memory::RecallResult,
+    Option<String>,
 ) {
     let limits = match state.structured_memory.as_ref() {
         Some(store) => store.limits(),
@@ -97,13 +100,18 @@ pub fn prompt_memory(
     } else {
         String::new()
     };
-    let recalled = assemble_selected_facts(state.structured_memory.as_ref(), &state.cfg, owner, selections);
+    let gates = current_gates(state);
+    let selected = assemble_selected_facts(state.structured_memory.as_ref(), &state.cfg, owner, selections, &gates);
+    let (retrieved, retrieval_error) =
+        assemble_retrieval_facts(state.structured_memory.as_ref(), &state.cfg, owner, &intent, &gates);
+    let max = limits.max_selected_facts.max(limits.max_retrieval_results);
+    let recalled = merge_recall(selected, retrieved, max);
     let facts = crate::server::structured_memory::format_selected_facts(&recalled.injected);
     let budget = crate::server::prompts::MemoryBudget::from_limits(
         limits.pinned_prompt_chars,
         limits.selected_fact_prompt_chars,
     );
-    (pinned, facts, budget, recalled)
+    (pinned, facts, budget, recalled, retrieval_error)
 }
 
 pub fn selections_from_items(items: &[crate::server::schemas::StructuredFactSelection]) -> Vec<FactSelection> {
@@ -118,6 +126,7 @@ pub fn selections_from_items(items: &[crate::server::schemas::StructuredFactSele
 
 pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
     let limits = Limits::from_config(&state.cfg);
+    let gates = current_gates(state);
     if let Some(store) = state.structured_memory.as_ref() {
         let (facts, pending) = store.counts(owner_id).map_err(|e| store_err(&e))?;
         let episodes = store.episode_count(owner_id).map_err(|e| store_err(&e))?;
@@ -126,11 +135,15 @@ pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
             &store.limits(),
             facts,
             pending,
-            state.cfg.flag_is_true("structured_memory.episode_capture"),
+            capture_available(&state.cfg, true, &gates),
             episodes,
             &store.episode_health(),
         );
-        payload["explicit_recall"] = json!(recall_available(&state.cfg, true));
+        payload["explicit_recall"] = json!(recall_available(&state.cfg, true, &gates));
+        payload["retrieval"] = json!(retrieval_available(&state.cfg, true, &gates));
+        payload["auto_retrieval"] = json!(auto_retrieval_available(&state.cfg, true, &gates));
+        payload["retrieval_health"] = store.retrieval_health().as_json();
+        payload["operator_gates"] = gates.as_json();
         Ok(payload)
     } else {
         Ok(disabled_status(owner_id, &limits))
@@ -204,12 +217,14 @@ pub async fn selection(
         .store
         .get(&session_id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    let available = recall_available(&state.cfg, state.structured_memory.is_some());
+    let gates = current_gates(&state);
+    let available = recall_available(&state.cfg, state.structured_memory.is_some(), &gates);
     let recalled = assemble_selected_facts(
         state.structured_memory.as_ref(),
         &state.cfg,
         &owner,
         &session.selected_facts,
+        &gates,
     );
     Ok(private(json!({
         "session_id": session.session_id,
@@ -265,11 +280,12 @@ pub async fn select(
             "ids": selected.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
         }),
     );
-    let recalled = assemble_selected_facts(Some(store), &state.cfg, &owner, &selected);
+    let gates = current_gates(&state);
+    let recalled = assemble_selected_facts(Some(store), &state.cfg, &owner, &selected, &gates);
     Ok(private(json!({
         "session_id": session_id,
         "owner_id": owner,
-        "explicit_recall": recall_available(&state.cfg, true),
+        "explicit_recall": recall_available(&state.cfg, true, &gates),
         "selected": selected.iter().map(|f| json!({"id": f.id, "expected_revision": f.expected_revision})).collect::<Vec<_>>(),
         "injected": recalled.preview_json()["injected"],
         "dropped": recalled.preview_json()["dropped"],
@@ -430,7 +446,8 @@ pub fn stage_after_exchange(
     assistant_chars: usize,
     sensitivity: &str,
 ) -> Value {
-    if !state.cfg.flag_is_true("structured_memory.episode_capture") {
+    let gates = current_gates(state);
+    if !capture_available(&state.cfg, state.structured_memory.is_some(), &gates) {
         return json!({"available": false, "staged": false});
     }
     let Some(store) = state.structured_memory.as_ref() else {
@@ -497,7 +514,112 @@ pub async fn list_episodes(
         "owner_id": owner,
         "episodes": episodes,
         "count": episodes.len(),
-        "available": state.cfg.flag_is_true("structured_memory.episode_capture")
+        "available": capture_available(&state.cfg, true, &current_gates(&state))
+    })))
+}
+
+pub async fn search_facts(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Query(query): Query<FactListQuery>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    let gates = current_gates(&state);
+    if !retrieval_available(&state.cfg, true, &gates) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "STRUCTURED_MEMORY_RETRIEVAL_DISABLED",
+            "structured retrieval is disabled; FTS search requires the retrieval gate",
+        ));
+    }
+    let q = query.q.as_deref().unwrap_or("").trim();
+    if q.chars().count() > store.limits().max_search_query_chars {
+        return Err(error(
+            "STRUCTURED_MEMORY_SEARCH",
+            "search query exceeds the configured character bound",
+        ));
+    }
+    let limit = query
+        .limit
+        .map(|n| n as usize)
+        .unwrap_or(store.limits().max_retrieval_results)
+        .min(store.limits().max_search_results);
+    let hits = match store.search_facts_fts(&owner, q, limit) {
+        Ok(hits) => hits,
+        Err(err) if err.code == "STRUCTURED_MEMORY_FTS" => {
+            return Ok(private(json!({
+                "owner_id": owner,
+                "hits": [],
+                "count": 0,
+                "retrieval": true,
+                "fts": true,
+                "health": store.retrieval_health().as_json(),
+                "error_class": err.code,
+            })));
+        }
+        Err(err) => return Err(store_err(&err)),
+    };
+    let payload: Vec<Value> = hits.iter().map(|h| h.to_json()).collect();
+    audit(
+        &state,
+        "structured_memory_fts_search",
+        &owner,
+        json!({"count": payload.len(), "query_chars": q.chars().count()}),
+    );
+    Ok(private(json!({
+        "owner_id": owner,
+        "hits": payload,
+        "count": payload.len(),
+        "retrieval": true,
+        "fts": true,
+        "health": store.retrieval_health().as_json(),
+        "type": "untrusted_background_context",
+        "scope": "search candidates only; not injected unless retrieve/auto_retrieval picks them",
+    })))
+}
+
+pub async fn set_gates(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    ValidJson(req): ValidJson<crate::server::schemas::StructuredMemoryGateRequest>,
+) -> ApiResult<PrivateJson> {
+    let _store = require_store(&state)?;
+    let owner = owner(user);
+    let snapshot = {
+        let mut gates = state.structured_gates.lock().unwrap_or_else(|p| p.into_inner());
+        gates.set(&req.gate, req.enabled).map_err(|e| store_err(&e))?;
+        gates.clone()
+    };
+    snapshot
+        .save(&state.home)
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    if req.gate == "retrieval" && req.enabled {
+        if let Some(store) = state.structured_memory.as_ref() {
+            if let Err(err) = store.rebuild_facts_fts() {
+                audit(
+                    &state,
+                    "structured_memory_fts_backfill_failed",
+                    &owner,
+                    json!({"error_class": err.code}),
+                );
+            }
+        }
+    }
+    audit(
+        &state,
+        "structured_memory_gate_set",
+        &owner,
+        json!({"gate": req.gate, "enabled": req.enabled}),
+    );
+    Ok(private(json!({
+        "owner_id": owner,
+        "operator_gates": snapshot.as_json(),
+        "episode_capture": capture_available(&state.cfg, true, &snapshot),
+        "explicit_recall": recall_available(&state.cfg, true, &snapshot),
+        "retrieval": retrieval_available(&state.cfg, true, &snapshot),
+        "auto_retrieval": auto_retrieval_available(&state.cfg, true, &snapshot),
+        "memory_on_unchanged": true,
     })))
 }
 

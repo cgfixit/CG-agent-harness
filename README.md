@@ -64,7 +64,7 @@ for the acceptance boundaries.
 | Capability | How it works |
 |---|---|
 | Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
-| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. Optional structured facts, governed proposals, and bounded episodes (#87 M1/M3/M5) are a separate account-private store; models may suggest, not silently write. Facts and episodes are not auto-injected into `/prompt`. Chat explains these controls; the operator executes them. |
+| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. Optional structured facts, governed proposals, bounded episodes, and facts-only FTS (#87) are a separate account-private store; models may suggest, not silently write. Facts enter `/prompt` only after an explicit pick or the separately gated `auto_retrieval` path. Episodes are never injected. `/memory on` stays pinned notes. Chat explains these controls; the operator executes them. |
 | Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
@@ -198,13 +198,15 @@ turns (default 3, ceiling 5). The console normally pauses for the operator betwe
 turns; `/loop auto` toggles auto-continue and `/loop stop` cancels it. Server-side
 budgets still apply. `/memory` manages optional pinned notes and `/soul` controls
 persona context; neither gives the model permission to mutate a repository.
-Structured memory (issue #87 M1/M3/M5 + Phase 4) is a distinct, default-off, account-private
-facts+proposals API plus optional bounded episode capture and explicit fact
-recall: suggest is not mutate, confirm+reason is required to apply facts, and
-episode staging never writes canonical facts. `/memory on` still includes only
-pinned notes. Selected facts enter `/prompt` only when
-`structured_memory.explicit_recall` is the literal boolean true and the
-operator selected them; they are revalidated at assembly and cannot authorize
+Structured memory (issue #87 M1/M3/M5 + Phase 4 + Phase 5) is a distinct, default-off, account-private
+facts+proposals API plus optional bounded episode capture, explicit fact
+recall, and opt-in facts-only FTS retrieval: suggest is not mutate, confirm+reason is required to apply facts, and
+episode staging never writes facts. `/memory on` still includes only
+pinned notes. Selected facts enter `/prompt` when
+`structured_memory.explicit_recall` is on and the operator selected them.
+FTS hits enter `/prompt` only with `/memory retrieve` / the per-request
+`retrieve` flag (the explicit pick for that prompt) or the separately gated
+`auto_retrieval` silent path. They are revalidated at assembly and cannot authorize
 tools, coding, or network.
 See [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). A missing
 `soul.md` is reported as missing rather than loaded. `GOAL_DONE` is an unverified
