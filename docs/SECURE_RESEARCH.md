@@ -55,7 +55,10 @@ rollback journal, `synchronous=FULL`). Missing initialized or corrupt files
 refuse startup rather than bootstrapping. Owner-private file mode is **not**
 encryption: anyone who can run as the home owner can read fact and episode
 bytes. Models cannot create that database or apply facts. Episode capture is a
-second default-false gate and never writes facts. Pinned notes remain
+second default-false gate and never writes facts. Explicit recall is a third
+default-false gate: selected facts enter `/prompt` only after operator selection
+and assembly-time owner/active/revision revalidation. Recalled text cannot
+authorize tools, coding, or network. Pinned notes remain
 `memory/notes.json`.
 
 | Role | Allowed | Refused |

@@ -1,21 +1,23 @@
 //! Guarded structured-memory facts and proposals. Suggest ≠ mutate.
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::Json;
 use serde_json::{json, Value};
 
 use crate::common::auth_store::UserSummary;
 use crate::common::errors::HarnessError;
-use crate::server::errors::{ApiError, ApiResult};
+use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::schemas::{
     StructuredEpisodeSummaryRequest, StructuredFactAddRequest, StructuredFactDeactivateRequest,
-    StructuredMemoryDecisionRequest, StructuredMemoryProposeRequest, StructuredMemoryReasonRequest, ValidJson,
+    StructuredFactSelectRequest, StructuredMemoryDecisionRequest, StructuredMemoryProposeRequest,
+    StructuredMemoryReasonRequest, ValidJson,
 };
 use crate::server::state::AppState;
 use crate::server::structured_memory::{
-    disabled_status, enabled_status, valid_public_id, EpisodeDraft, Limits, ProposalDraft, StructuredMemoryStore,
+    assemble_selected_facts, disabled_status, enabled_status, recall_available, valid_public_id, EpisodeDraft,
+    FactSelection, Limits, ProposalDraft, StructuredMemoryStore,
 };
 
 type PrivateJson = ([(header::HeaderName, &'static str); 1], Json<Value>);
@@ -75,6 +77,45 @@ fn audit(state: &AppState, event: &str, owner: &str, extra: Value) {
     state.audit.log(payload);
 }
 
+pub fn prompt_memory(
+    state: &AppState,
+    owner: &str,
+    memory_enabled: bool,
+    selections: &[FactSelection],
+) -> (
+    String,
+    String,
+    crate::server::prompts::MemoryBudget,
+    crate::server::structured_memory::RecallResult,
+) {
+    let limits = match state.structured_memory.as_ref() {
+        Some(store) => store.limits(),
+        None => Limits::from_config(&state.cfg),
+    };
+    let pinned = if memory_enabled {
+        state.notes.context_text()
+    } else {
+        String::new()
+    };
+    let recalled = assemble_selected_facts(state.structured_memory.as_ref(), &state.cfg, owner, selections);
+    let facts = crate::server::structured_memory::format_selected_facts(&recalled.injected);
+    let budget = crate::server::prompts::MemoryBudget::from_limits(
+        limits.pinned_prompt_chars,
+        limits.selected_fact_prompt_chars,
+    );
+    (pinned, facts, budget, recalled)
+}
+
+pub fn selections_from_items(items: &[crate::server::schemas::StructuredFactSelection]) -> Vec<FactSelection> {
+    items
+        .iter()
+        .map(|item| FactSelection {
+            id: item.id.clone(),
+            expected_revision: item.expected_revision,
+        })
+        .collect()
+}
+
 pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
     let limits = Limits::from_config(&state.cfg);
     if let Some(store) = state.structured_memory.as_ref() {
@@ -86,6 +127,7 @@ pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
             facts,
             pending,
             state.cfg.flag_is_true("structured_memory.episode_capture"),
+            crate::server::structured_memory::recall_available(&state.cfg, true),
             episodes,
             &store.episode_health(),
         ))
@@ -101,21 +143,137 @@ pub async fn status(
     Ok(private(status_payload(&state, &owner(user))?))
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct FactListQuery {
+    q: Option<String>,
+    category: Option<String>,
+    limit: Option<u64>,
+}
+
 pub async fn list_facts(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
+    Query(query): Query<FactListQuery>,
 ) -> ApiResult<PrivateJson> {
     let owner = owner(user);
     let store = require_store(&state)?;
-    let facts: Vec<Value> = store
-        .list_facts(&owner)
-        .map_err(|e| store_err(&e))?
-        .into_iter()
-        .map(|f| f.to_json())
-        .collect();
-    Ok(private(
-        json!({"owner_id": owner, "facts": facts, "count": facts.len()}),
-    ))
+    let limits = store.limits();
+    if query
+        .q
+        .as_ref()
+        .is_some_and(|q| q.chars().count() > limits.max_search_query_chars)
+    {
+        return Err(error(
+            "STRUCTURED_MEMORY_SEARCH",
+            "search query exceeds the configured character bound",
+        ));
+    }
+    let limit = query
+        .limit
+        .map(|n| n as usize)
+        .unwrap_or(limits.max_search_results)
+        .min(limits.max_search_results);
+    let searching = query.q.as_ref().is_some_and(|q| !q.trim().is_empty())
+        || query.category.as_ref().is_some_and(|c| !c.trim().is_empty())
+        || query.limit.is_some();
+    let facts = if searching {
+        store.search_facts(&owner, query.q.as_deref(), query.category.as_deref(), limit)
+    } else {
+        store.list_facts(&owner)
+    }
+    .map_err(|e| store_err(&e))?;
+    let payload: Vec<Value> = facts.into_iter().map(|f| f.to_json()).collect();
+    Ok(private(json!({
+        "owner_id": owner,
+        "facts": payload,
+        "count": payload.len(),
+        "search": searching,
+        "retrieval": false,
+        "fts": false,
+    })))
+}
+
+pub async fn selection(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Path(session_id): Path<String>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    let session = state
+        .store
+        .get(&session_id)
+        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    let available = recall_available(&state.cfg, state.structured_memory.is_some());
+    let recalled = assemble_selected_facts(
+        state.structured_memory.as_ref(),
+        &state.cfg,
+        &owner,
+        &session.selected_facts,
+    );
+    Ok(private(json!({
+        "session_id": session.session_id,
+        "owner_id": owner,
+        "explicit_recall": available,
+        "selected": session.selected_facts.iter().map(|f| json!({"id": f.id, "expected_revision": f.expected_revision})).collect::<Vec<_>>(),
+        "injected": recalled.preview_json()["injected"],
+        "dropped": recalled.preview_json()["dropped"],
+        "type": "untrusted_background_context",
+        "scope": "explicit selection only; never authorizes tools, coding, or network",
+    })))
+}
+
+pub async fn select(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Path(session_id): Path<String>,
+    ValidJson(req): ValidJson<StructuredFactSelectRequest>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    let max = store.limits().max_selected_facts;
+    if req.facts.len() > max {
+        return Err(error(
+            "STRUCTURED_MEMORY_SELECTION",
+            "too many selected facts for this configuration",
+        ));
+    }
+    let mut selected = Vec::new();
+    for item in &req.facts {
+        if !valid_public_id(&item.id) || item.expected_revision < 1 {
+            return Err(error(
+                "STRUCTURED_MEMORY_SELECTION",
+                "each selected fact needs a stable public id and expected revision",
+            ));
+        }
+        selected.push(FactSelection {
+            id: item.id.clone(),
+            expected_revision: item.expected_revision,
+        });
+    }
+    state
+        .store
+        .select_facts(&session_id, &selected)
+        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    audit(
+        &state,
+        "structured_memory_facts_selected",
+        &owner,
+        json!({
+            "session_id": session_id,
+            "count": selected.len(),
+            "ids": selected.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
+        }),
+    );
+    let recalled = assemble_selected_facts(Some(store), &state.cfg, &owner, &selected);
+    Ok(private(json!({
+        "session_id": session_id,
+        "owner_id": owner,
+        "explicit_recall": recall_available(&state.cfg, true),
+        "selected": selected.iter().map(|f| json!({"id": f.id, "expected_revision": f.expected_revision})).collect::<Vec<_>>(),
+        "injected": recalled.preview_json()["injected"],
+        "dropped": recalled.preview_json()["dropped"],
+        "effect": "included in subsequent chat and /prompt preview only when explicit_recall is on; no canonical fact mutation",
+    })))
 }
 
 pub async fn get_fact(

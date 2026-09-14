@@ -198,10 +198,14 @@ turns (default 3, ceiling 5). The console normally pauses for the operator betwe
 turns; `/loop auto` toggles auto-continue and `/loop stop` cancels it. Server-side
 budgets still apply. `/memory` manages optional pinned notes and `/soul` controls
 persona context; neither gives the model permission to mutate a repository.
-Structured memory (issue #87 M1/M3/M5) is a distinct, default-off, account-private
-facts+proposals API plus optional bounded episode capture: suggest is not mutate,
-confirm+reason is required to apply facts, and episode staging never writes
-canonical facts. `/prompt` still receives only pinned notes when `/memory on`.
+Structured memory (issue #87 M1/M3/M5 + Phase 4) is a distinct, default-off, account-private
+facts+proposals API plus optional bounded episode capture and explicit fact
+recall: suggest is not mutate, confirm+reason is required to apply facts, and
+episode staging never writes canonical facts. `/memory on` still includes only
+pinned notes. Selected facts enter `/prompt` only when
+`structured_memory.explicit_recall` is the literal boolean true and the
+operator selected them; they are revalidated at assembly and cannot authorize
+tools, coding, or network.
 See [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). A missing
 `soul.md` is reported as missing rather than loaded. `GOAL_DONE` is an unverified
 model report, not evidence that coding work is complete.

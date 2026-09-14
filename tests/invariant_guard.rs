@@ -130,6 +130,7 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "unslop.enabled",
         "structured_memory.enabled",
         "structured_memory.episode_capture",
+        "structured_memory.explicit_recall",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }

@@ -41,10 +41,14 @@ sessions/jobs/pinned notes/persona remain explicitly shared. Structured memory
 uses authenticated `user_id`, the documented `local` namespace from
 `context_owner` when accounts are disabled, or labeled `user_*` fixture owners. Canonical facts change only through
 an explicit human confirm+reason path; proposals may suggest but never apply
-themselves. Episode capture never writes facts. `structured_memory.enabled` and
-`structured_memory.episode_capture` are independent literal-boolean admin gates
-(`flag_is_true`); capture off means no episode writes. `harness.json.memory_enabled` remains pinned-note prompt
-inclusion only and does not inject facts or episodes. The structured SQLite file uses owner-private mode as OS access
+themselves. Episode capture never writes facts. `structured_memory.enabled`,
+`structured_memory.episode_capture`, and `structured_memory.explicit_recall` are
+independent literal-boolean admin gates (`flag_is_true`); capture off means no
+episode writes; recall off means no selected-fact prompt injection. Selected
+facts are re-read at prompt assembly and dropped when missing, inactive,
+cross-owner, or stale-revision. `harness.json.memory_enabled` remains pinned-note prompt
+inclusion only and does not inject facts or episodes. Recalled text is untrusted
+background context and cannot authorize tools, coding, or network. The structured SQLite file uses owner-private mode as OS access
 control — that is not encryption at rest. Pinned `/memory` notes stay on
 `memory/notes.json` and are not migrated. Session clear keeps derived episodes
 unless the operator confirms `delete_derived_episodes`; that cascade still

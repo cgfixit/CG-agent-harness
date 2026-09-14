@@ -5,18 +5,20 @@ defines intended adaptations; it does not claim they are implemented. Current
 source pins and implementation/verification states belong to the ledger.
 
 Memory facts are explicitly reviewed operator data, separate from short notes.
-Issue #87 M1+M3+M5 implement account-private facts, governed proposals, and
-optional bounded episodes behind `structured_memory.enabled` and
-`structured_memory.episode_capture` (literal booleans, both ship false).
+Issue #87 M1+M3+M5+Phase 4 implement account-private facts, governed proposals,
+optional bounded episodes, and explicit selected-fact recall behind
+`structured_memory.enabled`, `structured_memory.episode_capture`, and
+`structured_memory.explicit_recall` (literal booleans, all ship false).
 Proposals bind an action, payload and expected fact version; application needs
 an operator reason, confirmation, and scan. Episode v1 stores opaque
 session/turn refs plus a privacy-filtered metadata summary — not a raw query,
 full answer, or query-content hash. Staging is post-success and non-fatal.
 Pinned `/memory` notes are unchanged. Retrieval fusion, FTS, embeddings,
-automatic consolidation, and prompt injection of facts/episodes are not
-shipped; status flags for those remain false. Selected facts do not enter the
-prompt. There is no automatic FTS/vector injection; later recall must stay
-under an explicit operator action and the existing prompt budget.
+automatic consolidation, automatic recall, and episode prompt injection are not
+shipped; status flags for those remain false. Selected facts enter the prompt
+only after an explicit operator selection and assembly-time owner/active/revision
+recheck, under the existing 3000-character memory budget (reserved 1500/1500
+when notes and facts both compete). There is no automatic FTS/vector injection.
 
 Sync operates on approved non-RAG roots and one approved remote. It excludes
 credentials, soul and Git internals. Active managed coding workspaces cannot be

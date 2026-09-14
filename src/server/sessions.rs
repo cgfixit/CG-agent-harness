@@ -72,6 +72,10 @@ pub struct Session {
     pub goal: String,
     #[serde(default)]
     pub selected_skills: Vec<String>,
+    /// Explicit structured-fact selection for this session. IDs only; content
+    /// is re-read and revalidated at prompt assembly.
+    #[serde(default)]
+    pub selected_facts: Vec<crate::server::structured_memory::FactSelection>,
     #[serde(default)]
     pub last_prompt_skills: Vec<Value>,
     #[serde(default)]
@@ -142,6 +146,7 @@ impl SessionStore {
             tally: TokenTally::default(),
             goal: String::new(),
             selected_skills: Vec::new(),
+            selected_facts: Vec::new(),
             last_prompt_skills: Vec::new(),
             goal_stage: None,
         };
@@ -291,6 +296,17 @@ impl SessionStore {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
         session.selected_skills = ids.to_vec();
+        self.write(&session)
+    }
+
+    pub fn select_facts(
+        &self,
+        session_id: &str,
+        facts: &[crate::server::structured_memory::FactSelection],
+    ) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        session.selected_facts = facts.to_vec();
         self.write(&session)
     }
 
