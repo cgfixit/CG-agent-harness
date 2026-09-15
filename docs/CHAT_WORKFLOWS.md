@@ -56,7 +56,7 @@ instructions for Codex. They are not automatically installed into the app's
 runtime skill directory.
 
 Chat is told which application features exist and how the operator invokes them.
-It still has no callable tools, including `gh`. A prose request to save or delete
+Its bounded web tools do not include a memory writer or `gh`. A prose request to save or delete
 memory does not execute a command. `/memory` lists persistent pinned notes and
 `/memory add <note>` saves literal text; it does not archive or summarize sessions.
 Structured facts and optional episodes (#87 M1/M3/M5 + Phase 4/5/6) are a separate
@@ -71,7 +71,13 @@ no facts and starts no consolidation. Auto-consolidation now requires a nonblank
 semantic summary. Run `/memory consolidate <id>` to queue suggestions, then
 `/memory proposals` (the Memory panel) to review and Apply/Reject with a reason
 for the displayed revision. This is not chat autosave. `/memory on` stays pinned
-notes. See [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
+notes. `/memory save <text> :: <reason>` explicitly writes a private fact using
+the existing confirmed API, even with automatic generation off. Config-only
+`auto_suggest_chat` / `auto_suggest_coding` can instead queue completed work for
+review (`suggestion_mode: summaries|insights|both`); they require store + capture,
+ship false, and never auto-approve. These summaries cover the current turn/run,
+not unseen session history. See [MEMORY_GUIDE.md](MEMORY_GUIDE.md) and
+[STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 Included notes are real stored content, not placeholders. Model answers can still
 be wrong; only actual command results establish successful execution.
 

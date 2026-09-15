@@ -738,9 +738,15 @@ See [the current probe](src/agentic/unslop.rs) and
 
 ### 7.5 Operator memory notes
 
+For the complete save/retrieve/config reference, see
+[Memory guide](docs/MEMORY_GUIDE.md). The `/memory save` and completion-suggestion
+controls described here require a build containing these changes; they are not
+a claim about an older installed release.
+
 There are two memory systems. Pinned notes are shared-home literals. Structured
 memory is a separate, default-off, account-private store. Neither is embeddings,
-a vector database, RAG fusion, or automatic learning from chat.
+a vector database or RAG fusion. Optional completion suggestions require human
+approval before they become canonical facts.
 
 ```text
 /memory
@@ -781,7 +787,8 @@ false. `/memory on` does not enable structured memory.
 Issue #87 through Phase 6 consolidators and Phase 7 eval: account-private
 facts, governed proposals, optional bounded episodes, explicit selected-fact
 recall, facts-only FTS5, operator-selected episode consolidation into pending
-proposals, and an optional idle auto-consolidator. Phase 7 is a local fixture
+proposals, an optional idle auto-consolidator, and separately opted-in
+completion suggestions for chat/coding. Phase 7 is a local fixture
 corpus for measuring those paths — not a reason to flip any gate. Models may
 POST a proposal; applying a fact still requires `confirm` and nonempty `reason`
 (same mutation rule as other API writes). Episode staging never writes facts,
@@ -798,8 +805,9 @@ only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
 1. Set `structured_memory.enabled: true` in the active home's `config.yaml` and
    restart. That creates `<home>/memory/structured.sqlite3`. Disabled startup
    does not create or open the database.
-2. Turn independent sub-gates on only as needed, in config **or** via slash
-   (store must already be open):
+2. Turn the following sub-gates on only as needed, in config **or** via slash
+   (store must already be open). The two completion-source switches described
+   below are config-only:
    - `structured_memory.episode_capture` / `/memory capture on` — stage
      metadata-only episodes after a successful chat exchange.
    - `structured_memory.explicit_recall` / `/memory recall on` — allow
@@ -848,8 +856,99 @@ The `consolidator-v2` confidence floor is
 omitted model confidence is still accepted. All gates still ship false.
 Automatic consolidation additionally needs
 `/memory auto-consolidate on` and is **AND**ed with `consolidation`. Feature-off
-starts no worker. Chat wins the generation gate. Latest v0.1.11 includes the
-manual command; auto-consolidate is tip `main` ([PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95)).
+starts no worker. It waits for the generation gate; already-running generation
+is not preempted. The installed binary must include the relevant commands.
+
+#### Automatic summaries and insights, with approval
+
+The new completion path is separate from the human-summary auto-consolidator.
+Merge these values into the active home's existing config block, then restart:
+
+```yaml
+structured_memory:
+  enabled: true
+  episode_capture: true
+  auto_suggest_chat: true
+  auto_suggest_coding: true
+  suggestion_mode: "both" # "summaries", "insights", or "both"
+  consolidation: false
+  auto_consolidation: false
+  explicit_recall: false
+  retrieval: false
+  auto_retrieval: false
+```
+
+Both new source booleans ship **false**, accept only literal booleans, and require
+store + capture. Enable either source alone if desired. Invalid modes, including
+non-string YAML values, disable suggestions. These switches have no slash overlay. Existing capture/other gate
+overlays still override their config keys: use `/memory capture on` if previously
+disabled, and close other overlays to match this recipe. `/memory on` enables none
+of them.
+
+After a successful Harness chat turn or coding run, bounded current evidence can
+produce pending `session_summary` and/or `insight` proposals. A summary covers
+that completed turn/run, not an unseen entire session. Coding uses the initiating
+account's instruction and a bounded projection of the completed child result,
+not raw tool logs, source files or scans of shared job history. External Codex
+chats and old sessions are not imported.
+
+Open **Memory** or `/memory proposals`, Refresh after generation, expand the
+full text and review its sources. **Apply and Reject both require your reason.**
+Apply saves a private canonical fact through the existing decide API; it never
+silently attaches a human episode summary. There is no auto-approval flag.
+Saving and later prompt retrieval remain separate operations.
+
+Defaults: `suggestion_max_input_chars: 8000` (shared input/output budget, split
+equally), `suggestion_max_queue: 8` waiting jobs plus one active generation,
+`suggestion_queue_ttl_secs: 300`, `suggestion_idle_ms: 2000`. Waiting evidence is
+redacted, scanned and held only in RAM; restart drops it. Full/expired queues,
+model errors, low confidence or store quotas can produce no suggestion without
+failing the original successful chat/run. Existing pending capacity defaults to
+32 per owner. An active suggestion holds the local generation gate; a concurrent
+chat may receive `CHAT_BUSY`. The local generator uses no tools/web/recalled
+facts, temperature 0 and max_tokens 1024. Review is still necessary: scanners
+and confidence cannot guarantee truth or detect every secret.
+
+#### Hard-save manually while automatic suggestions are off
+
+Leave `structured_memory.enabled: true`. Set `auto_suggest_chat`,
+`auto_suggest_coding` and `auto_consolidation` to `false`; restart after config
+changes and close an existing `/memory auto-consolidate` overlay. Capture can
+also stay off. Then use:
+
+```text
+/memory save For repository example, use metric examples. :: Reviewed standing preference
+```
+
+This command explicitly confirms the private fact write and requires the visible
+nonblank reason after `::`. It uses the existing facts API, with no model call,
+episode requirement or automatic consolidation. Natural language such as “save
+this to memory” does not execute a write. `/memory add <literal note>` is the
+existing shared-home pinned-note alternative; `/memory remember` only attaches
+a human episode summary and does not save a fact.
+
+To stop all derived capture while keeping manual facts, also close
+`/memory capture off`. To avoid opening structured storage entirely, set
+`enabled: false` and restart. Existing files are not deleted. **These settings do
+not disable ordinary chat-history saving:** successful exchanges still persist
+in shared `sessions/*.json` and bounded recent messages are used for the next
+chat in that session. There is no structured-memory flag for disabling that
+session persistence. `/clear` clears the display; Sessions Clear has its separate
+deletion flow. It cancels waiting/in-flight chat suggestions but keeps existing
+facts/proposals under the documented deletion rules.
+
+#### Memory types at a glance
+
+| Type | Saved by | Used by |
+|---|---|---|
+| Shared chat history | Successful exchanges | Selected session's bounded recent context |
+| Shared pinned notes | `/memory add` | `/memory on` prompt inclusion |
+| Shared persona | Soul editor / reviewed soul apply | `/soul on` prompt inclusion |
+| Private episodes | Capture; optional human `remember` summary | Provenance and episode consolidation, never prompt injection |
+| Private pending proposals | Explicit proposals or opted-in local generators | Human Memory-panel review; never recalled |
+| Private canonical facts | `/memory save`, fact API, or approved proposal | Separately enabled selection/FTS retrieval |
+| Facts-only FTS index | Derived transactionally from facts | Lexical candidate search; no embeddings |
+| Shared coding records | Existing job/run lifecycle | Operational evidence, not automatic memory injection |
 
 **Search ≠ inject.** `/memory search <query>` (or
 `GET /api/structured-memory/search`) returns a small top-k of candidates. It
@@ -871,6 +970,10 @@ Status can report `retrieval: true` or `consolidation: true` while fusion
 and RAG stay false. `auto_consolidation` ships false; enable it only with
 consolidation. Feature-off starts no worker.
 
+Complete type/flag/bounds overview: [docs/MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md).
+The next-task [memory benchmark plan](docs/MEMORY_BENCHMARK_PLAN.md) follows the
+existing web benchmark fixture/local-model split and scores summary faithfulness
+separately from durable-insight precision. It is a plan, not a live-model result.
 Day-to-day operator howto: [docs/USER_MANUAL.md](docs/USER_MANUAL.md). Contract,
 rollout order, and Phase 7 bars:
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). Use pinned notes for
@@ -1025,6 +1128,7 @@ confirmation and persistence semantics.
 | `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; section 7.5 |
 | `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` | Structured-memory gates; `/memory on` stays pinned notes |
 | `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include; search is not inject |
+| `/memory save <text> :: <reason>` | Confirm an immediate private fact write, even with automatic suggestions off |
 | `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on your latest completed episode; no fact write |
 | `/memory proposals` | Open the Memory panel; review then Apply/Reject with a reason |
 | `/memory consolidate <episode-id...>` | Manual selected-episode consolidation into pending proposals; requires `consolidation`; does not write facts |
@@ -1585,6 +1689,8 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 | `/memory search` reports retrieval disabled | `structured_memory.retrieval` (and the store) are off | Enable the store in `config.yaml`, restart, then `/memory retrieval on`. Search still does not inject; use `/memory retrieve` for one prompt |
 | `/memory consolidate` is unknown or omitted from `/help` | Installed build predates [PR #94](https://github.com/cgfixit/CG-agent-harness/pull/94) / v0.1.11 | Use Latest v0.1.11 or a newer main Bundle. The command writes pending proposals only |
 | `/memory auto-consolidate` is unknown | Installed build is Latest v0.1.11 (`e4c796e`) or older; the idle worker is [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95) on tip `main` | Build from tip `3f053b3` or a successful main Bundle after that SHA. The gate stays default-off and requires `consolidation` |
+| Automatic completion suggestions do not appear | Store/capture/source gate off, invalid mode, queue expiry/full, model/store error, or empty valid output | Inspect `GET /api/structured-memory` effective `automatic_suggestions`, run status and metadata audit events. Check config-only source switches, restart, and capture overlay; refresh Memory after generation. No result is guaranteed for every completion |
+| `/memory save` reports store closed | `structured_memory.enabled` is false or store failed to open | Enable the store and restart; automatic generation and capture may stay off. A prose request is not a save command |
 | `/memory consolidate` or auto-consolidator reports the gate off | `structured_memory.consolidation` (and for auto, also `auto_consolidation`) are off, or the store is closed | Enable the store in `config.yaml`, restart, then `/memory consolidation on`. Auto additionally needs `/memory auto-consolidate on`. Both ship false; measure Phase 7 on tip before considering ON |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
 | Model inventory says `tag_missing`, or fallback is selected unexpectedly | Exact configured ID is absent from a responding inventory | Compare section 4 inventories and config; verify persisted `/model` selection against the resolved endpoint, then restart to reevaluate fallback |

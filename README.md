@@ -206,14 +206,20 @@ holds account-private facts, governed proposals, and optional episodes
 `reason`. Episode capture never writes facts and never injects episode text.
 Independent `flag_is_true` gates all ship **false** (quoted `"true"` is off):
 `structured_memory.enabled`, `episode_capture`, `explicit_recall`,
-`retrieval`, `auto_retrieval`, `consolidation`, and `auto_consolidation`.
+`retrieval`, `auto_retrieval`, `consolidation`, `auto_consolidation`,
+`auto_suggest_chat`, and `auto_suggest_coding`.
 Slash overlays
 `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` persist
 `memory/structured_gates.json` once the store is open; they do not flip
 `/memory on`. `/memory remember <sentence> :: <reason>` confirms attaching your
 semantic summary to your latest completed episode; it writes no facts and starts
 no consolidation. `/memory proposals` opens the Memory panel for review and
-Apply/Reject with a reason. This is not chat autosave. Selected facts enter `/prompt`
+Apply/Reject with a reason. `/memory save <text> :: <reason>` confirms an immediate
+private fact write even with automation off. Config-only `auto_suggest_chat` and
+`auto_suggest_coding` can queue completed turns/runs for review when store + capture
+are on; `suggestion_mode` selects summaries, insights, or both. This never
+auto-approves facts or scans old chats. See the [memory guide](docs/MEMORY_GUIDE.md)
+for types, manual-only configuration and retrieval. Selected facts enter `/prompt`
 when `explicit_recall` is on and the operator picked them. Facts-only FTS (`/memory search`) returns candidates
 only. Force-include for one prompt: `/memory retrieve <query>` or `retrieve` /
 `retrieve_query` on `/api/chat` and `/api/prompt/preview`. Assembly rechecks

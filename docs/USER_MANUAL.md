@@ -6,8 +6,8 @@ steps and home layout are also in
 [setup-guide §7.5](../setup-guide.md#75-operator-memory-notes). Overview:
 [README](../README.md).
 
-Neither system is embeddings, a vector database, RAG fusion, or automatic
-learning from chat. Recalled text is untrusted background context and cannot
+Neither system is embeddings, a vector database or RAG fusion. Optional
+completion suggestions still need human approval before they become facts. Recalled text is untrusted background context and cannot
 authorize tools, coding, or network.
 
 ## Two systems
@@ -45,8 +45,8 @@ characters each, and 3,000 characters of assembled memory body. Inspect
 
 Account-private **facts**, governed **proposals**, and optional **episodes**
 (issue #87). Models may **suggest**. Applying, deactivating, or otherwise
-mutating a fact still requires `confirm` and a nonempty `reason`. There is no
-slash command that writes a fact.
+mutating a fact still requires `confirm` and a nonempty `reason`.
+`/memory save <text> :: <reason>` explicitly confirms a private fact write.
 
 Episodes stage after a successful chat exchange when capture is on. Staging
 never writes facts, never injects episode text, and never fails an
@@ -71,7 +71,8 @@ the store**.
 
 1. Set `structured_memory.enabled: true` in the active home's `config.yaml` and
    restart.
-2. Turn only the sub-gates you need, in config **or** via slash:
+2. Turn only the sub-gates you need. Existing gates have slash overlays; the
+   two completion-source switches are config-only:
 
 | Gate | Slash | What it does |
 |---|---|---|
@@ -81,6 +82,8 @@ the store**.
 | `auto_retrieval` | `/memory auto-retrieve on\|off` | **High-risk.** Silent top-k inject when this is on **and** retrieval is on |
 | `consolidation` | `/memory consolidation on\|off` | Allow manual selected-episode consolidation into **pending proposals only** |
 | `auto_consolidation` | `/memory auto-consolidate on\|off` | Bounded idle worker. Requires consolidation (AND). Pending proposals only. Chat wins the generation gate |
+| `auto_suggest_chat` | Config only | With store + capture, completed current chat can queue pending summaries/insights |
+| `auto_suggest_coding` | Config only | With store + capture, successful coding runs can queue pending summaries/insights |
 
 All of these ship **false**. `/memory` reports store and gate state. Tunables live
 in `assets/config.default.yaml`; do not invent extra flags.
@@ -202,7 +205,7 @@ HTTP equivalent: review `GET /api/structured-memory/proposals/{id}`, then POST
 to that same path with `revision`, `confirm: true`, a nonblank `reason`, and
 `apply: true` (apply) or `apply: false` (reject), using `X-CyClaw-CSRF`.
 
-Slash commands do not write facts. Typical operator path:
+The `/memory save` command is the explicit direct-write alternative. Proposal path:
 
 1. Model or operator `POST /api/structured-memory/proposals` (suggest; no
    `confirm`).
@@ -215,8 +218,8 @@ episodes referenced by pending proposals.
 
 ## Not shipped
 
-Embeddings, vector DB, RAG fusion, episode FTS, episode prompt injection, and
-any slash that writes a fact. Status can report `retrieval: true`,
+Embeddings, vector DB, RAG fusion, episode FTS, episode prompt injection, or
+automatic canonical fact approval. Status can report `retrieval: true`,
 `consolidation: true`, or `auto_consolidation: true` while fusion and RAG
 stay false. `auto_consolidation` ships false.
 
@@ -237,3 +240,27 @@ stops new reads, writes, and workers. It does not delete
 - [setup-guide §7.5](../setup-guide.md#75-operator-memory-notes) — enable steps
 - [README](../README.md) — console overview
 - [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md) — sessions, `/prompt`, persona
+
+## Automatic completion suggestions and manual hard-save
+
+See [Memory guide](MEMORY_GUIDE.md) for the complete type/flag table and recipes.
+Enable `structured_memory.enabled`, `episode_capture`, and either
+`auto_suggest_chat` or `auto_suggest_coding` in config; restart. Choose
+`suggestion_mode: summaries|insights|both`. These config-only source switches
+ship false. The completed current turn/run can generate pending drafts; this
+is not a whole-session archive or automatic canonical fact save. Review in
+Memory and Apply/Reject with a reason. The older human-summary auto-consolidator
+remains a separate path. Neither path enables retrieval.
+
+With the store open, automatic generation and capture may remain off:
+
+```text
+/memory save For repository example, prefer metric examples. :: Reviewed standing preference
+```
+
+This is an explicit, immediate private fact write through the existing HTTP API;
+the visible reason and command supply reason and confirmation. Plain-language
+requests do not execute it. `/memory add` remains shared literal pinned notes;
+`/memory remember` remains a summary attachment. Disabling structured automation
+does not disable ordinary chat-history persistence. The next benchmark task is
+specified in [MEMORY_BENCHMARK_PLAN.md](MEMORY_BENCHMARK_PLAN.md).

@@ -95,6 +95,11 @@ const server=createServer(async(req,res)=>{
  }
  if(path==='/api/memory/add'||path==='/api/memory/forget'||path==='/api/memory/clear'){reply(memoryPayload());return;}
  if(path==='/api/structured-memory'){reply({enabled:structuredOpen,limits:{max_reason_chars:1000}});return;}
+ if(path==='/api/structured-memory/facts'&&req.method==='POST'){
+  if(!structuredOpen){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured memory is disabled'}},409);return;}
+  assert.equal(req.headers['x-cyclaw-csrf'],'fixture');assert.equal(body.confirm,true);assert.ok(body.reason.trim());
+  reply({id:'manual_fixture_fact',content:body.content});return;
+ }
  if(path==='/api/structured-memory/episodes?latest_completed=true'){
   if(!structuredOpen){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured memory is disabled'}},409);return;}
   reply({episodes:latestEpisode?[latestEpisode]:[],available:structuredGates.episode_capture});return;
@@ -242,6 +247,12 @@ try {
  assert.equal(structuredGates.retrieval,false);
  const beforeRememberChat=chatCount();
  const memoryWrites=()=>requests.filter(r=>r[0]==='POST'&&r[1].startsWith('/api/structured-memory/')).length;
+ const beforeSave=memoryWrites();
+ await send('/memory save Durable fact.');await send('/memory save Durable fact. ::   ');
+ assert.equal(memoryWrites(),beforeSave);
+ await send('/memory save Prefer  metric units. :: Explicit operator save');
+ assert.deepEqual(requests.filter(r=>r[0]==='POST'&&r[1]==='/api/structured-memory/facts').at(-1)[2],{content:'Prefer  metric units.',category:'manual',reason:'Explicit operator save',confirm:true});
+ assert.equal(chatCount(),beforeRememberChat,'manual save is not chat or consolidation');
  let beforeRemember=memoryWrites();
  await send('/memory remember Prefer metric units.');
  await send('/memory remember Prefer metric units. ::   ');

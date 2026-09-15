@@ -28,6 +28,7 @@ pub mod structured_memory;
 pub mod structured_memory_auto;
 pub mod structured_memory_consolidate;
 pub mod structured_memory_fts;
+pub mod structured_memory_suggest;
 pub mod transport;
 pub mod views;
 mod web_google;
@@ -193,6 +194,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         jobs,
         request_log: cfg.flag_is_true("logging.request_log"),
         auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl::new(),
+        memory_suggestions: crate::server::structured_memory_suggest::Suggestions::default(),
     });
     routes::persona::recover_on_startup(&state)
         .map_err(|e| HarnessError::harness_config(format!("{}: {}", e.code, e.message)))?;

@@ -2115,7 +2115,7 @@ impl StructuredMemoryStore {
         .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"))
     }
 
-    fn privacy_summary(&self, draft: &EpisodeDraft<'_>) -> Result<String> {
+    fn privacy_summary(&self, draft: &EpisodeDraft<'_>, coding: bool) -> Result<String> {
         if !matches!(draft.outcome, "completed" | "partial" | "failed" | "cancelled") {
             return Err(HarnessError::new(
                 "STRUCTURED_MEMORY_CONTENT",
@@ -2130,8 +2130,10 @@ impl StructuredMemoryStore {
         }
         let model = self.clean_text(draft.model_id, 200, false)?;
         let summary = format!(
-            "Completed local chat exchange. Outcome: {}. Model: {}. Sensitivity: {}. User chars: {}. Assistant chars: {}. Tools unused. Hidden reasoning omitted. Raw query and full answer omitted.",
-            draft.outcome, model, draft.sensitivity, draft.user_chars, draft.assistant_chars
+            "{}. Outcome: {}. Model: {}. Sensitivity: {}. User chars: {}. Assistant chars: {}. {} Hidden reasoning omitted. Raw query and full answer omitted.",
+            if coding { "Completed coding run" } else { "Completed local chat exchange" },
+            draft.outcome, model, draft.sensitivity, draft.user_chars, draft.assistant_chars,
+            if coding { "Tool output omitted." } else { "Tools unused." }
         );
         Ok(crate::common::clip_chars(
             &summary,
@@ -2225,8 +2227,16 @@ impl StructuredMemoryStore {
     }
 
     pub fn stage_episode(&self, owner: &str, draft: EpisodeDraft<'_>) -> Result<Episode> {
+        self.stage_episode_kind(owner, draft, false)
+    }
+
+    pub fn stage_coding_episode(&self, owner: &str, draft: EpisodeDraft<'_>) -> Result<Episode> {
+        self.stage_episode_kind(owner, draft, true)
+    }
+
+    fn stage_episode_kind(&self, owner: &str, draft: EpisodeDraft<'_>, coding: bool) -> Result<Episode> {
         Self::require_owner(owner)?;
-        let privacy_summary = self.privacy_summary(&draft)?;
+        let privacy_summary = self.privacy_summary(&draft, coding)?;
         let model = self.clean_text(draft.model_id, 200, false)?;
         let byte_len = Self::episode_bytes(&privacy_summary, None, &model);
         let mut conn = self.lock();
