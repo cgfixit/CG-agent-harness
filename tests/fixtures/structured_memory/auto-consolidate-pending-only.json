@@ -1,0 +1,15 @@
+{
+  "name": "auto-consolidate-pending-only",
+  "gates": {
+    "structured_memory.enabled": true,
+    "episode_capture": true,
+    "consolidation": true,
+    "auto_consolidation": true
+  },
+  "expect": {
+    "silent_fact_apply": false,
+    "pending_proposals_only": true,
+    "feature_off_starts_no_worker": true,
+    "chat_wins_generation_gate": true
+  }
+}

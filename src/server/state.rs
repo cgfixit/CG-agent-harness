@@ -57,6 +57,8 @@ pub struct AppState {
     pub jobs: crate::server::agent_jobs::JobStore,
     /// `logging.request_log`: one structured tracing line per request.
     pub request_log: bool,
+    /// Idle auto-consolidator. Feature-off never spawns a worker.
+    pub auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl,
 }
 
 impl AppState {

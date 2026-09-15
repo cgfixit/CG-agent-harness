@@ -807,7 +807,11 @@ only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
      per-request flag. Ships false. Leave it off unless you intend that.
    - `structured_memory.consolidation` / `/memory consolidation on` — allow
      `/memory consolidate <episode-id...>` to turn selected episodes into
-     pending proposals only. Ships false. Automatic consolidation stays unused.
+     pending proposals only. Ships false.
+   - `structured_memory.auto_consolidation` / `/memory auto-consolidate on` —
+     bounded idle worker that reuses the manual consolidator. Requires
+     consolidation (AND). Ships false. Feature-off starts no worker. Chat
+     wins the generation gate. Pending proposals only.
 3. `/memory on` remains pinned-note inclusion only and never opens these gates.
 
 **Search ≠ inject.** `/memory search <query>` (or
@@ -825,9 +829,10 @@ inject under the Phase 4 budget. Hits do not stick on the shared session.
 1500/1500 when both are present). Unused reserved capacity is not transferred.
 When only one source is present it may use the full 3000.
 
-**Not in this tree:** embeddings, vector DB, automatic consolidation, RAG
-fusion, or episode FTS. Status can report `retrieval: true` or
-`consolidation: true` while fusion, auto-consolidation, and RAG stay false.
+**Not in this tree:** embeddings, vector DB, RAG fusion, or episode FTS.
+Status can report `retrieval: true` or `consolidation: true` while fusion
+and RAG stay false. `auto_consolidation` ships false; enable it only with
+consolidation. Feature-off starts no worker.
 
 Day-to-day operator howto: [docs/USER_MANUAL.md](docs/USER_MANUAL.md). Contract:
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). Use pinned notes for
@@ -968,7 +973,7 @@ confirmation and persistence semantics.
 | `/soul status`, `on`, `off`, `edit`, `propose`, `history` | Inspect, toggle or open persona editing/proposal flows |
 | `/soul review <id>`, `apply <id> <reason>`, `reject <id> <reason>` | Review and explicitly decide a persona proposal |
 | `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; section 7.5 |
-| `/memory capture|recall|retrieval|auto-retrieve on|off` | Structured-memory gates; `/memory on` stays pinned notes |
+| `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` | Structured-memory gates; `/memory on` stays pinned notes |
 | `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include |
 | `/model`, `/model use <name>` | Inspect/select an available chat model |
 | `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |
@@ -1074,7 +1079,7 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 | Goal and chat history | Saved session; goal maximum 2,000 characters | `/goal`, `/session list`, `/goal task` for coding linkage |
 | Loop counters and automatic continuation | Current page only; not an unattended scheduler | Visible loop state; restart does not resume it |
 | Memory notes and inclusion | Home-wide saved notes/toggle; next request | `/memory`, `/prompt` |
-| Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/memory consolidate`, `/prompt`; retrieval-off search is 409 |
+| Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/memory consolidate`, `/memory auto-consolidate`, `/prompt`; retrieval-off search is 409 |
 | Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
 | Managed credentials | Home `.env`, loaded at process startup on Unix; inherited values win | `/api` reports presence/masked tail, not proof of provider authentication |

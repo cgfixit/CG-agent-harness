@@ -60,7 +60,7 @@ Default home is `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`).
 |---|---|
 | `memory/notes.json` | Pinned notes |
 | `memory/structured.sqlite3` | Structured store (created only when the store gate is on) |
-| `memory/structured_gates.json` | Slash overlays for the capture/recall/retrieval/auto-retrieve/consolidation sub-gates |
+| `memory/structured_gates.json` | Slash overlays for the capture/recall/retrieval/auto-retrieve/consolidation/auto-consolidate sub-gates |
 
 ### Enable (fail-closed)
 
@@ -80,10 +80,10 @@ the store**.
 | `retrieval` | `/memory retrieval on\|off` | Allow facts-only FTS search and per-request force-include |
 | `auto_retrieval` | `/memory auto-retrieve on\|off` | **High-risk.** Silent top-k inject when this is on **and** retrieval is on |
 | `consolidation` | `/memory consolidation on\|off` | Allow manual selected-episode consolidation into **pending proposals only** |
+| `auto_consolidation` | `/memory auto-consolidate on\|off` | Bounded idle worker. Requires consolidation (AND). Pending proposals only. Chat wins the generation gate |
 
 All of these ship **false**. `/memory` reports store and gate state. Tunables live
-in `assets/config.default.yaml`; do not invent extra flags. There is no slash
-that enables automatic consolidation.
+in `assets/config.default.yaml`; do not invent extra flags.
 
 ## Explicit recall
 
@@ -150,8 +150,24 @@ Default **off**. After capture has staged episodes:
 That claims the local generation gate, sends only those episode summaries to
 the local model (no tools, no web, no recalled facts), and writes pending
 proposals. It does **not** create or update facts. Review and apply remain the
-proposal path below. `/memory on` does not open this gate. Status
-`auto_consolidation` stays false.
+proposal path below. `/memory on` does not open this gate.
+
+## Automatic consolidation
+
+Default **off**. Also requires `consolidation`. After capture has staged
+episodes:
+
+```text
+/memory consolidation on
+/memory auto-consolidate on
+```
+
+A bounded idle worker may pick eligible `none`/`pending` episodes (owner-scoped,
+capped by `max_consolidation_episodes`) and reuse the manual consolidator.
+It writes **pending proposals only**. It does not create, update, or delete
+facts. Feature-off starts no worker. Disabling stops new claims; leftover
+`running` rows recover like manual. Interactive chat wins the generation
+gate. Restart reuses the same idempotency key.
 
 ## Propose and apply (API)
 
@@ -168,10 +184,10 @@ episodes referenced by pending proposals.
 
 ## Not shipped
 
-Embeddings, vector DB, automatic consolidation, RAG fusion, episode FTS,
-episode prompt injection, and any slash that writes a fact. Status can report
-`retrieval: true` or `consolidation: true` while fusion, auto-consolidation,
-and RAG stay false.
+Embeddings, vector DB, RAG fusion, episode FTS, episode prompt injection, and
+any slash that writes a fact. Status can report `retrieval: true`,
+`consolidation: true`, or `auto_consolidation: true` while fusion and RAG
+stay false. `auto_consolidation` ships false.
 
 ## See also
 

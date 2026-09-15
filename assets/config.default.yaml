@@ -273,8 +273,10 @@ unslop:
 # consolidation is a sixth independent gate: manual selected-episode
 # consolidation into pending proposals only. It does not apply facts, does
 # not inject episodes, and does not enable auto_consolidation.
-# auto_consolidation is a seventh independent gate reserved for a later idle
-# worker. It ships false and is unused in this phase.
+# auto_consolidation is a seventh independent gate: a bounded idle worker
+# that reuses the manual consolidator. Requires consolidation (AND). Ships
+# false. Quoted "true" is OFF. Feature-off starts no worker. Output is
+# pending proposals only; chat wins the generation gate.
 structured_memory:
   enabled: false
   episode_capture: false
@@ -304,3 +306,4 @@ structured_memory:
   selected_fact_prompt_chars: 1500
   max_consolidation_episodes: 8
   max_consolidation_candidates: 8
+  auto_consolidation_idle_ms: 2000
