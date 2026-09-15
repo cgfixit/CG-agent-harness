@@ -4,7 +4,7 @@ Generated from [actions.json](actions.json) with `python3 scripts/parity-status.
 
 Implementation and validation are independent. This is a fixed action inventory, not a percentage of CyClaw ported. Missing actions remain requested work.
 
-Rust baseline: [pinned commit](https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1). CyClaw reference: [pinned commit](https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9).
+Rust baseline: [pinned commit](https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290). CyClaw reference: [pinned commit](https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9).
 
 See [execution state](WORK.md) for baseline evidence and native acceptance blockers, and [non-RAG contracts](CONTRACTS.md) for deliberate adaptations.
 
@@ -13,7 +13,7 @@ See [execution state](WORK.md) for baseline evidence and native acceptance block
 | M1 | 2 | needs-extension | fixture-verified | unavailable | Structured facts store: stable IDs, content, categories, tags, confidence, provenance, active/inactive state and timestamps. |
 | M2 | 2 | adapted | fixture-verified | unavailable | Governed add/update/deactivate proposals, pending/applied/rejected states, explicit reasons, injection validation and audit. |
 | M3 | 2 | adapted | fixture-verified | unavailable | Episode records and retention: query hash, bounded answer summary, model, time and optional raw-query storage. |
-| M4 | 2 | needs-extension | pending | unavailable | Memory status/counts and fact/episode/proposal administration APIs or equivalent console controls. |
+| M4 | 2 | adapted | fixture-verified | unavailable | Memory status/counts and fact/episode/proposal administration APIs or equivalent console controls. |
 | M5 | 2 | adapted | fixture-verified | unavailable | Bounded, escaped, offline HTML export of facts and recent episodes. |
 | C1 | 4 | missing | pending | unavailable | Filesystem read connector: status/list/read/stat/grep/glob/largest and bounded context extraction against operator-approved roots. |
 | C2 | 4 | missing | pending | unavailable | Filesystem writes: write/append/mkdir/move/delete with separate writable roots, reason/confirmation, dry run, protected destinations and audit. |
@@ -37,18 +37,18 @@ See [execution state](WORK.md) for baseline evidence and native acceptance block
 | A2 | 1 | missing | pending | unavailable | macOS Keychain secret setup and launch-time environment injection. |
 | A3 | 1 | implemented | fixture-verified | unavailable | Managed key-loading/startup flow, rather than requiring the user to manually source the console-written dotenv. |
 | A4 | 3 | missing | pending | unavailable | Named device bearer tokens: create/list/revoke, hashed storage, role association as implemented upstream, and authenticated identity resolution. |
-| A5 | 3 | needs-extension | pending | unavailable | Self-service password change; expose user enable/disable; identity CLI; role-restricted audit summary. |
+| A5 | 3 | needs-extension | fixture-verified | unavailable | Self-service password change; expose user enable/disable; identity CLI; role-restricted audit summary. |
 | A6 | 3 | needs-extension | pending | unavailable | Consistent session/device-token identity on the non-RAG conversation surface when authentication is enabled. |
-| A7 | 3 | missing | pending | unavailable | Optional SQLite/PostgreSQL auth and personality persistence and persistent rate-limit storage. |
-| A8 | 3 | needs-extension | pending | unavailable | Soul/personality versioning, file/DB shadow consistency and drift/hash checks, history/interaction maintenance, backups, reload and restore. |
-| A9 | 3 | missing | pending | unavailable | Soul propose/apply service with reason, scans, atomic update and recovery on partial failure. |
+| A7 | 3 | needs-extension | pending | unavailable | Optional SQLite/PostgreSQL auth and personality persistence and persistent rate-limit storage. |
+| A8 | 3 | adapted | fixture-verified | unavailable | Soul/personality versioning, file/DB shadow consistency and drift/hash checks, history/interaction maintenance, backups, reload and restore. |
+| A9 | 3 | adapted | fixture-verified | unavailable | Soul propose/apply service with reason, scans, atomic update and recovery on partial failure. |
 | L1 | 6 | needs-extension | pending | unavailable | Expose standalone `real-repo-run-plan` equivalent: bounded repo/issue/PR context → local or explicitly approved cloud model → reviewable plan text/file. |
 | L2 | 6 | needs-extension | pending | unavailable | Non-RAG conversational provider selection and explicitly consented external fallback. |
 | L3 | 6 | needs-extension | pending | unavailable | External provider pre-action hook with bounded structured input, allow/deny/error handling, timeout and audit. |
 | L4 | 6 | needs-extension | pending | unavailable | Explicitly trusted local-model hosts for an operator-owned container/LAN server. |
 | L5 | 1 | needs-extension | fixture-verified | unavailable | Broader health/readiness reporting with exact configured-model inventory checks, backend failures and safe optional provider probes. |
 | L6 | 6 | needs-extension | pending | unavailable | Full optional UNSLOP advisory scanner behavior: richer phrase/structure findings, surface-aware checks and comparable redacted metrics/feedback. |
-| L7 | 6 | needs-extension | pending | unavailable | Audit active non-RAG verification-skill coverage and port relevant checks, without copying Python-specific commands verbatim. |
+| L7 | 6 | needs-extension | fixture-verified | unavailable | Audit active non-RAG verification-skill coverage and port relevant checks, without copying Python-specific commands verbatim. |
 | O1 | 6 | needs-extension | pending | unavailable | Equivalent optional non-RAG input/output guardrails beyond the existing injection scanner: soul-mutation intent, applicable soul-leak checks and brokered checks around generation. |
 | O2 | 6 | missing | pending | unavailable | Guardrail status/self-test, profile reporting, metrics and verified call-site inventory. |
 | O3 | 7 | needs-extension | pending | unavailable | Audit summary API/CLI, aggregate operational metrics, provider spend estimation and price-freshness/cost comparison. |

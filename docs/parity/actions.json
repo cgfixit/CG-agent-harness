@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_pins": {
-    "rust": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+    "rust": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
     "python": "https://github.com/cgfixit/CyClaw/commit/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9"
   },
   "open_prs_at_fetch": {
@@ -80,18 +80,19 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/server/structured_memory.rs",
           "src/server/routes/structured_memory.rs",
+          "src/server/structured_memory_fts.rs",
           "src/server/memory_notes.rs"
         ],
-        "entrypoint_evidence": "M1 facts+proposals APIs are registered; tags/confidence/provenance/prompt selection remain unshipped."
+        "entrypoint_evidence": "CREATE TABLE facts has no tags/confidence/provenance. REGISTERED_PATHS includes /api/structured-memory/facts and search. Prompt inclusion is explicit_recall + assembly recheck."
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "Account-private SQLite facts with stable IDs, content, category, digest, revision, active/inactive and timestamps. Pinned notes remain separate.",
-        "remaining": "Tags, confidence, and provenance kinds. Explicit selected-fact prompt inclusion is Phase 4. Facts-only FTS is Phase 5.",
+        "existing": "Account-private SQLite facts with stable IDs, content, category, digest, revision, active/inactive and timestamps. Explicit selected-fact prompt inclusion (#91) and facts-only FTS5 (#92) ship behind default-off gates. Pinned /memory notes remain a separate JSON store.",
+        "remaining": "Fact rows still have no tags, confidence, or provenance columns (FTS tags column is empty; confidence exists on consolidator candidates, not stored facts). Native Memory-panel interaction remains unverified.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -112,19 +113,20 @@
         "real_model": "pending",
         "optional_live_service": "not-applicable",
         "commands": [
-          "cargo test --locked --test structured_memory"
+          "cargo test --locked --test structured_memory",
+          "cargo test --locked --test structured_memory_phase7"
         ],
-        "baseline_evidence": "WORK.md; tests/structured_memory.rs covers propose→confirm→recall, Phase 4 explicit selection, and Phase 5 FTS force-include."
+        "baseline_evidence": "tests/structured_memory.rs plus Phase 7 corpus; native UI unavailable."
       },
       "delivery": {
         "branch": null,
-        "pr": null,
-        "implementation_commit": null,
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/89",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "artifact": null
       },
       "limitations": [
-        "M1 does not ship tags, confidence, or provenance. Phase 4 ships explicit selected-fact prompt inclusion. Phase 5 ships facts-only FTS behind retrieval/auto_retrieval.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "M1 does not ship CyClaw-style tags/confidence/provenance on fact rows.",
+        "Implemented is not native-verified."
       ]
     },
     {
@@ -199,18 +201,19 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/server/structured_memory.rs",
           "src/server/routes/structured_memory.rs",
-          "src/server/memory_notes.rs"
+          "src/server/structured_memory_consolidate.rs",
+          "src/server/structured_memory_suggest.rs"
         ],
-        "entrypoint_evidence": "Governed proposal routes reuse persona confirm+reason semantics on a dedicated SQLite store."
+        "entrypoint_evidence": "Proposal routes plus /api/structured-memory/consolidation. Gates consolidation and auto_consolidation ship false."
       },
       "implementation": {
         "status": "adapted",
-        "existing": "SQLite proposals with add/update/deactivate, pending/applied/rejected, confirm+reason, injection scan and metadata-only audit. Persona JSON-file persistence is not reused.",
-        "remaining": "Proposal rebase/stale-state UX and consolidator-authored proposals (later phases).",
+        "existing": "SQLite proposals with add/update/deactivate, pending/applied/rejected/stale, confirm+reason, injection scan and metadata-only audit. Manual and idle auto-consolidators (#94/#95) and completion suggestions (#101) write pending proposals only; they never auto-apply facts.",
+        "remaining": "Operator rebase UX beyond the stale status. Native proposal-panel interaction unverified. Silent fact apply remains a non-goal.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters. Persona JSON-file store is not reused."
       },
       "dependencies": [
@@ -231,18 +234,21 @@
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          "cargo test --locked --test structured_memory",
+          "cargo test --locked --test structured_memory_suggestions"
+        ],
+        "baseline_evidence": "Proposal, consolidator, and suggestion fixtures on tip."
       },
       "delivery": {
         "branch": null,
-        "pr": null,
-        "implementation_commit": null,
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/101",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "artifact": null
       },
       "limitations": [
-        "This inventory does not close this action.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "Consolidators never apply facts.",
+        "Implemented is not native-verified."
       ]
     },
     {
@@ -314,18 +320,19 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8bc95b03bf2a0b6af2d5e0c38fc2aaeb76391a3c",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/server/structured_memory.rs",
           "src/server/routes/structured_memory.rs",
-          "src/server/routes/core.rs"
+          "src/server/routes/core.rs",
+          "src/server/structured_memory_consolidate.rs"
         ],
-        "entrypoint_evidence": "Post-success episode staging, retention/prune, and episode admin APIs are registered. Raw query/answer and query-content hashes are omitted by contract."
+        "entrypoint_evidence": "Post-success stage_after_exchange; episode admin APIs registered. Raw query/answer omitted by contract."
       },
       "implementation": {
         "status": "adapted",
-        "existing": "Bounded account-private episodes after successful exchange persistence: opaque session/turn refs, model, outcome, sensitivity, privacy-filtered metadata summary, TTL/row/byte quotas, oldest-first prune that preserves pending proposal refs.",
-        "remaining": "CyClaw query-hash and optional raw-query storage are intentionally excluded. Semantic consolidation remains Phase 6.",
+        "existing": "Bounded account-private episodes after successful exchange persistence: opaque session/turn refs, model, outcome, sensitivity, privacy-filtered metadata summary, TTL/row/byte quotas, oldest-first prune that preserves pending proposal refs. Manual/auto consolidation of selected episodes writes pending proposals only (#94/#95).",
+        "remaining": "CyClaw query-hash and optional raw-query storage remain excluded by CONTRACTS.md. Episode FTS and episode prompt injection are not shipped.",
         "adaptation": "See CONTRACTS.md; harness episode v1 stores no raw query or full answer."
       },
       "dependencies": [
@@ -347,20 +354,19 @@
         "real_model": "pending",
         "optional_live_service": "not-applicable",
         "commands": [
-          "cargo test --locked --test structured_memory",
-          "cargo test --locked --lib structured_memory"
+          "cargo test --locked --test structured_memory"
         ],
-        "baseline_evidence": "WORK.md; tests/structured_memory.rs covers capture, retention, purge and export."
+        "baseline_evidence": "Capture, retention, purge, export, and consolidation fixtures."
       },
       "delivery": {
         "branch": null,
-        "pr": null,
-        "implementation_commit": null,
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/90",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "artifact": null
       },
       "limitations": [
         "Episode v1 omits raw query, full answer, and query-content hashes.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "Implemented is not native-verified."
       ]
     },
     {
@@ -437,18 +443,19 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/server/structured_memory.rs",
           "src/server/routes/structured_memory.rs",
-          "src/server/memory_notes.rs"
+          "src/server/views.rs",
+          "assets/static/harness.html"
         ],
-        "entrypoint_evidence": "Status/list/recall/proposal/episode/export/purge APIs are registered; fact/episode slash commands are not."
+        "entrypoint_evidence": "REGISTERED_PATHS lists structured-memory admin routes; views.rs maps slash overlays; harness.html implements /memory search|retrieve|save."
       },
       "implementation": {
-        "status": "needs-extension",
-        "existing": "Guarded status, fact list/search/recall, proposal administration, session/request fact selection, episode list/get/delete/purge, and owner export/purge. Pinned-note /api/memory remains separate.",
-        "remaining": "Console slash commands for structured facts/episodes.",
+        "status": "adapted",
+        "existing": "Guarded status, fact list/search/recall, proposal administration, session/request fact selection, episode list/get/delete/purge, owner export/purge, consolidation, and slash overlays in views.rs and harness.html (/memory save, search, retrieve, capture/recall/retrieval gates, consolidate, proposals, remember). Pinned-note /api/memory remains separate.",
+        "remaining": "Native WKWebView Memory-panel interaction and save-as remain unverified. No /memory select slash; selection is API/session state.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -464,23 +471,24 @@
       "credentials_network_side_effects": "No external credentials; private local storage; bounded exports only.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
+        "fixtures": "fixture-verified",
         "integration_environment": "pending",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          "cargo test --locked --test structured_memory"
+        ],
+        "baseline_evidence": "HTTP fixtures cover admin APIs; Chrome slash matrix is not native proof."
       },
       "delivery": {
         "branch": null,
-        "pr": null,
-        "implementation_commit": null,
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/91",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "artifact": null
       },
       "limitations": [
-        "This inventory does not close this action.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "Slash overlays exist in the HTTP console; native desktop interaction is unavailable."
       ]
     },
     {
@@ -552,12 +560,12 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8bc95b03bf2a0b6af2d5e0c38fc2aaeb76391a3c",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/server/structured_memory.rs",
           "src/server/routes/structured_memory.rs"
         ],
-        "entrypoint_evidence": "GET /api/structured-memory/export returns bounded owner-scoped HTML with escaped strings and no-store."
+        "entrypoint_evidence": "GET /api/structured-memory/export returns bounded owner-scoped HTML with no-store."
       },
       "implementation": {
         "status": "adapted",
@@ -586,17 +594,16 @@
         "commands": [
           "cargo test --locked --test structured_memory"
         ],
-        "baseline_evidence": "WORK.md; tests/structured_memory.rs covers escaped owner-scoped export."
+        "baseline_evidence": "Escaped owner-scoped export tests."
       },
       "delivery": {
         "branch": null,
-        "pr": null,
-        "implementation_commit": null,
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/90",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "artifact": null
       },
       "limitations": [
-        "Export is local HTML only; native save-as remains desktop-pending.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "Export is local HTML only; native save-as remains desktop-pending."
       ]
     },
     {
@@ -679,13 +686,13 @@
         "test_inventory_count": 21
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/agentic/workspace.rs",
           "src/agentic/writer.rs",
           "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -804,13 +811,13 @@
         "test_inventory_count": 21
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/agentic/workspace.rs",
           "src/agentic/writer.rs",
           "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -929,13 +936,13 @@
         "test_inventory_count": 21
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/agentic/workspace.rs",
           "src/agentic/writer.rs",
           "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1054,13 +1061,13 @@
         "test_inventory_count": 21
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/agentic/workspace.rs",
           "src/agentic/writer.rs",
           "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1161,12 +1168,12 @@
         "test_inventory_count": 5
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/shim/mod.rs",
           "src/server/routes/panels.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1267,12 +1274,12 @@
         "test_inventory_count": 5
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/shim/mod.rs",
           "src/server/routes/panels.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1373,12 +1380,12 @@
         "test_inventory_count": 5
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/shim/mod.rs",
           "src/server/routes/panels.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1469,11 +1476,11 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1564,11 +1571,11 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1651,13 +1658,12 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/shim/mod.rs",
-          "src/server/views.rs",
-          "src/server/agent_jobs.rs"
+          "src/common/tool_broker.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1766,12 +1772,11 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/shim/mod.rs",
-          "src/server/agent_jobs.rs"
+          "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1887,12 +1892,11 @@
         "test_inventory_count": 8
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/shim/mod.rs",
-          "src/server/agent_jobs.rs"
+          "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -1999,12 +2003,11 @@
         "test_inventory_count": 9
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/shim/mod.rs",
-          "src/server/agent_jobs.rs"
+          "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -2108,12 +2111,11 @@
         "test_inventory_count": 9
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/shim/mod.rs",
-          "src/server/agent_jobs.rs"
+          "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -2217,12 +2219,11 @@
         "test_inventory_count": 9
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/shim/mod.rs",
-          "src/server/agent_jobs.rs"
+          "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -2329,12 +2330,11 @@
         "test_inventory_count": 9
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/shim/mod.rs",
-          "src/server/agent_jobs.rs"
+          "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -2376,7 +2376,7 @@
     },
     {
       "id": "I7",
-      "scope": "OpenTweet topic \u2192 local generation \u2192 validation \u2192 remote draft, with separately selected scheduling.",
+      "scope": "OpenTweet topic → local generation → validation → remote draft, with separately selected scheduling.",
       "original_classification": "adapt",
       "phase": 10,
       "python": {
@@ -2436,17 +2436,16 @@
         "test_inventory_count": 6
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/shim/mod.rs",
-          "src/llm/openai_chat.rs"
+          "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
         "existing": "No OpenTweet workflow; existing model client is not a remote draft adapter.",
-        "remaining": "OpenTweet topic \u2192 local generation \u2192 validation \u2192 remote draft, with separately selected scheduling.",
+        "remaining": "OpenTweet topic → local generation → validation → remote draft, with separately selected scheduling.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -2543,12 +2542,11 @@
         "test_inventory_count": 6
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/shim/mod.rs",
-          "src/llm/openai_chat.rs"
+          "src/shim/mod.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Inspected at 22520f3: no fsconnect/sqlconnect/netconnect/telegram/opentweet package and no connector shim actions. Clone jail is not a general filesystem connector."
       },
       "implementation": {
         "status": "missing",
@@ -2629,19 +2627,19 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/server/env_keys.rs",
-          "src/server/desktop.rs",
           "src/server/mod.rs",
+          "src/server/desktop.rs",
           "desktop/src/backend.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "server::mod loads env_keys::read_startup_keys before runtime; explicit env wins."
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "Four consumed keys and private literal dotenv loading exist for desktop. No Keychain backend; serve does not load managed dotenv.",
-        "remaining": "Extend credential management only for implemented subsystems.",
+        "existing": "Allowlisted private dotenv loading is used by Unix serve (A3) and desktop. No Keychain backend. New connector/integration consumers are not present.",
+        "remaining": "Extend credential management only when a new subsystem ships. Keychain is A2. Do not invent connector credential surfaces here.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [],
@@ -2713,7 +2711,7 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/server/env_keys.rs",
           "src/server/desktop.rs",
@@ -2797,14 +2795,13 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/server/env_keys.rs",
-          "src/server/desktop.rs",
           "src/server/mod.rs",
-          "desktop/src/backend.rs"
+          "src/server/desktop.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Unix serve loads the managed private dotenv before AppState; explicit environment wins."
       },
       "implementation": {
         "status": "implemented",
@@ -2844,7 +2841,7 @@
             "outcome": "All 10 tests passed against signed bundle built from implementation commit."
           }
         ],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only.",
+        "baseline_evidence": "PR #29 on main; dotenv load retained on tip 22520f3.",
         "native_backend": "native-verified",
         "native_desktop_interaction": "unavailable"
       },
@@ -2950,7 +2947,7 @@
         "test_inventory_count": 12
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/auth_store.rs",
           "src/common/authn.rs",
@@ -3088,20 +3085,19 @@
         "test_inventory_count": 12
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/auth_store.rs",
-          "src/common/authn.rs",
-          "src/common/ratelimit.rs",
           "src/server/routes/auth.rs",
-          "src/server/guards.rs"
+          "src/server/guards.rs",
+          "tests/auth_guards.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "REGISTERED_PATHS includes /api/auth/password and /api/auth/users/{username}/disabled."
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "JSON user/session auth and role management exist. Device-token, persistent optional DB, self-service and conversation identity extensions remain.",
-        "remaining": "Self-service password change; expose user enable/disable; identity CLI; role-restricted audit summary.",
+        "existing": "SQLite accounts with self-service /api/auth/password, admin user enable/disable at /api/auth/users/{username}/disabled, roles, and forced password replacement for fresh admin.",
+        "remaining": "Identity CLI and role-restricted audit-summary API/CLI still absent. Device tokens remain A4.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -3116,13 +3112,16 @@
       "credentials_network_side_effects": "Private local records; optional PostgreSQL credentials only when implemented; no production database.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
+        "fixtures": "fixture-verified",
         "integration_environment": "pending",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          "cargo test --locked --test auth_guards",
+          "cargo test --locked --test secure_portal"
+        ],
+        "baseline_evidence": "Account/password/disable fixtures; identity CLI not shipped."
       },
       "delivery": {
         "branch": null,
@@ -3131,8 +3130,7 @@
         "artifact": null
       },
       "limitations": [
-        "This inventory does not close this action.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "Self-service password and user disable exist; identity CLI and audit-summary CLI do not."
       ]
     },
     {
@@ -3226,20 +3224,18 @@
         "test_inventory_count": 12
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/common/auth_store.rs",
-          "src/common/authn.rs",
-          "src/common/ratelimit.rs",
           "src/server/routes/auth.rs",
+          "src/server/routes/core.rs",
           "src/server/guards.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "context_owner provides user_id or local; accounts are SQLite."
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "JSON user/session auth and role management exist. Device-token, persistent optional DB, self-service and conversation identity extensions remain.",
-        "remaining": "Consistent session/device-token identity on the non-RAG conversation surface when authentication is enabled.",
+        "existing": "Chat/web/structured-memory resolve an authenticated user_id (or documented local namespace). Sessions/jobs/pinned notes/persona remain shared portal resources.",
+        "remaining": "Named device-token identity (A4) is not on the conversation surface. Do not treat API keys as login authority.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -3364,20 +3360,18 @@
         "test_inventory_count": 12
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
+          "src/common/auth_sqlite.rs",
           "src/common/auth_store.rs",
-          "src/common/authn.rs",
-          "src/common/ratelimit.rs",
-          "src/server/routes/auth.rs",
-          "src/server/guards.rs"
+          "src/server/routes/persona.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "auth_sqlite opener + soul.md/persona routes. No postgres auth crate."
       },
       "implementation": {
-        "status": "missing",
-        "existing": "JSON user/session auth and role management exist. Device-token, persistent optional DB, self-service and conversation identity extensions remain.",
-        "remaining": "Optional SQLite/PostgreSQL auth and personality persistence and persistent rate-limit storage.",
+        "status": "needs-extension",
+        "existing": "SQLite is authoritative for accounts after transactional migration. Personality remains a governed soul.md file with JSON proposal records, not a DB.",
+        "remaining": "PostgreSQL auth/personality persistence and persistent rate-limit storage are not shipped. Do not add a second auth database unprompted.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -3456,17 +3450,19 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
+          "src/server/routes/persona.rs",
+          "src/server/routes/core.rs",
           "src/server/prompts.rs",
-          "src/server/routes/core.rs"
+          "tests/persona_controls.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "/api/soul/document GET/POST, history backups, revision binding. No personality SQLite."
       },
       "implementation": {
-        "status": "needs-extension",
-        "existing": "Bounded persona file read/toggle exists; no versioned governed operator apply/recovery workflow.",
-        "remaining": "Soul/personality versioning, file/DB shadow consistency and drift/hash checks, history/interaction maintenance, backups, reload and restore.",
+        "status": "adapted",
+        "existing": "File persona with SHA-256 revision, bounded history under soul-history/, atomic document edit, present/loaded/truncation status, and recovery from interrupted apply (soul-pending-apply.json). Chat vs planner persona scope is split.",
+        "remaining": "CyClaw file/DB shadow consistency is not ported; harness personality is file-only. Native soul-editor interaction unverified.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -3481,23 +3477,25 @@
       "credentials_network_side_effects": "Fixture soul only during development; hash/drift checks and recoverable cross-resource updates.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
+        "fixtures": "fixture-verified",
         "integration_environment": "pending",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          "cargo test --locked --test persona_controls"
+        ],
+        "baseline_evidence": "persona_controls.rs covers propose/apply/recovery; native UI unavailable."
       },
       "delivery": {
         "branch": null,
-        "pr": null,
-        "implementation_commit": null,
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/36",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "artifact": null
       },
       "limitations": [
-        "This inventory does not close this action.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "File persona, not CyClaw DB-shadow.",
+        "Implemented is not native-verified."
       ]
     },
     {
@@ -3545,17 +3543,17 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/server/prompts.rs",
-          "src/server/routes/core.rs"
+          "src/server/routes/persona.rs",
+          "tests/persona_controls.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "POST /api/soul/proposals and POST /api/soul/proposals/{id} with confirm+reason."
       },
       "implementation": {
-        "status": "missing",
-        "existing": "Bounded persona file read/toggle exists; no versioned governed operator apply/recovery workflow.",
-        "remaining": "Soul propose/apply service with reason, scans, atomic update and recovery on partial failure.",
+        "status": "adapted",
+        "existing": "Soul propose/review/apply/reject with reason, confirmation, content scan, base-revision binding, content-hash apply, atomic replacement, bounded backup history, and interrupted-apply recovery. Proposals never auto-apply.",
+        "remaining": "CyClaw personality DB service is not ported. Native editor interaction unverified.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -3570,28 +3568,30 @@
       "credentials_network_side_effects": "Fixture soul only during development; hash/drift checks and recoverable cross-resource updates.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
+        "fixtures": "fixture-verified",
         "integration_environment": "pending",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          "cargo test --locked --test persona_controls"
+        ],
+        "baseline_evidence": "Failed apply retains intent; recovery blocks later writes; confirm required."
       },
       "delivery": {
         "branch": null,
-        "pr": null,
-        "implementation_commit": null,
+        "pr": "https://github.com/cgfixit/CG-agent-harness/pull/36",
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "artifact": null
       },
       "limitations": [
-        "This inventory does not close this action.",
-        "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
+        "File-backed propose/apply, not a CyClaw DB apply service.",
+        "Implemented is not native-verified."
       ]
     },
     {
       "id": "L1",
-      "scope": "Expose standalone `real-repo-run-plan` equivalent: bounded repo/issue/PR context \u2192 local or explicitly approved cloud model \u2192 reviewable plan text/file.",
+      "scope": "Expose standalone `real-repo-run-plan` equivalent: bounded repo/issue/PR context → local or explicitly approved cloud model → reviewable plan text/file.",
       "original_classification": "partial",
       "phase": 6,
       "python": {
@@ -3623,7 +3623,7 @@
         "test_inventory_count": 1
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/agentic/commands.rs",
           "src/agentic/cloud_proposer.rs",
@@ -3635,7 +3635,7 @@
       "implementation": {
         "status": "needs-extension",
         "existing": "Internal plan helper and uploaded plan exist; standalone operator reviewable generation workflow is absent.",
-        "remaining": "Expose standalone `real-repo-run-plan` equivalent: bounded repo/issue/PR context \u2192 local or explicitly approved cloud model \u2192 reviewable plan text/file.",
+        "remaining": "Expose standalone `real-repo-run-plan` equivalent: bounded repo/issue/PR context → local or explicitly approved cloud model → reviewable plan text/file.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -3717,7 +3717,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/llm/backend.rs",
           "src/llm/openai_chat.rs",
@@ -3808,7 +3808,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/llm/backend.rs",
           "src/llm/openai_chat.rs",
@@ -3901,7 +3901,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/llm/backend.rs",
           "src/llm/openai_chat.rs",
@@ -3976,20 +3976,20 @@
         "test_inventory_count": 1
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/server/desktop.rs",
-          "src/llm/backend.rs",
-          "src/server/routes/core.rs",
           "src/llm/inventory.rs",
+          "src/llm/backend.rs",
+          "src/server/desktop.rs",
+          "src/server/routes/core.rs",
           "tests/model_readiness.rs"
         ],
-        "entrypoint_evidence": "resolve_local_backend -> inventory::model_readiness; desktop private models command -> same helper, separately for chat/planner. No probes from passive status."
+        "entrypoint_evidence": "inventory::model_readiness used by backend fallback and desktop private models command."
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "Existing desktop exact-tag inventory is now shared by fallback resolution; configured models must actually be listed. Disabled fallback makes zero requests.",
-        "remaining": "Optional explicitly selected provider diagnostics and full native desktop acceptance remain pending.",
+        "existing": "Exact configured-model inventory is on main: resolve_local_backend shares inventory::model_readiness with desktop. HTTP success without the selected tag is not readiness. Disabled fallback makes zero inventory requests. Passive /status does not probe optional remote providers.",
+        "remaining": "Optional explicitly selected provider diagnostics and full native desktop acceptance remain pending. PR #30 merged into codex/parity-foundations; the inventory helper is nevertheless present on tip (tests/model_readiness.rs).",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [],
@@ -4007,32 +4007,24 @@
         "real_model": "pending",
         "optional_live_service": "not-applicable",
         "commands": [
-          {
-            "command": "cargo test --test model_readiness --locked",
-            "exit_code": 0,
-            "outcome": "6 tests pass; predecessor reproduced 2 failing exact-model regressions."
-          },
-          {
-            "command": "CGAH_TEST_BINARY=../readiness-target/debug/cgagentharness python3 scripts/test-desktop-backend.py",
-            "exit_code": 0,
-            "outcome": "11 public process tests pass, including independent chat/planner inventory and no inference during readiness."
-          }
+          "cargo test --locked --test model_readiness"
         ],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only.",
+        "baseline_evidence": "Exact-tag fixture on tip; native UI and live-provider probes not claimed.",
         "native_backend": "native-verified",
         "native_desktop_interaction": "unavailable"
       },
       "delivery": {
         "branch": "codex/model-readiness",
         "pr": null,
-        "implementation_commit": null,
+        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "artifact": null,
         "base_branch": "codex/parity-foundations",
-        "merge_predecessor": "https://github.com/cgfixit/CG-agent-harness/pull/29"
+        "merge_predecessor": "https://github.com/cgfixit/CG-agent-harness/pull/29",
+        "note": "PR #30 itself targeted codex/parity-foundations; inventory code is on main at this SHA."
       },
       "limitations": [
-        "L5 remains needs-extension; provider diagnostics are not implemented.",
-        "Native backend processes verified on macOS; WKWebView interaction unverified."
+        "Optional remote provider diagnostics are not shipped.",
+        "Fixture-verified is not native-verified."
       ]
     },
     {
@@ -4059,7 +4051,7 @@
         "test_inventory_count": 2
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/agentic/unslop.rs"
         ],
@@ -4134,18 +4126,19 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
+          "src/server/routes/skills.rs",
+          "src/server/views.rs",
           "src/agentic/registry.rs",
-          "src/agentic/executor/runner.rs",
-          "src/server/views.rs"
+          "tests/runtime_skills.rs"
         ],
-        "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
+        "entrypoint_evidence": "Runtime skill routes and runtime_skills.rs fixtures on tip."
       },
       "implementation": {
         "status": "needs-extension",
-        "existing": "Fixed profiles and two prompt skills exist; remaining applicable upstream coverage requires mapping.",
-        "remaining": "Audit active non-RAG verification-skill coverage and port relevant checks, without copying Python-specific commands verbatim.",
+        "existing": "Fixed /agent check profiles plus bounded runtime prompt-skill selection (up to four optional skills, /skill use|status|clear) and check:<profile> adapter through the existing coding request path (#37).",
+        "remaining": "Audit remaining upstream verification-skill coverage and port only non-Python-specific checks. Do not execute SKILL.md as shell.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [
@@ -4160,13 +4153,15 @@
       "credentials_network_side_effects": "Native sandbox and installed verification tools; no cloud dependency.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
+        "fixtures": "fixture-verified",
         "integration_environment": "pending",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
-        "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
+        "commands": [
+          "cargo test --locked --test runtime_skills"
+        ],
+        "baseline_evidence": "Skill selection fixtures; full upstream skill audit remaining."
       },
       "delivery": {
         "branch": null,
@@ -4241,7 +4236,7 @@
         "test_inventory_count": 14
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/injection.rs",
           "src/common/tool_broker.rs",
@@ -4348,7 +4343,7 @@
         "test_inventory_count": 14
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/injection.rs",
           "src/common/tool_broker.rs",
@@ -4430,7 +4425,7 @@
         "test_inventory_count": 4
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/audit.rs",
           "src/common/bounded_log.rs",
@@ -4537,7 +4532,7 @@
         "test_inventory_count": 4
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/audit.rs",
           "src/common/bounded_log.rs"
@@ -4643,7 +4638,7 @@
         "test_inventory_count": 4
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/audit.rs",
           "src/common/bounded_log.rs"
@@ -4723,7 +4718,7 @@
         "test_inventory_count": 3
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/process.rs",
           "src/agentic/executor/runner.rs",
@@ -4820,7 +4815,7 @@
         "test_inventory_count": 7
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "desktop/src/backend.rs",
           "desktop/src/instance.rs",
@@ -4912,7 +4907,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/process.rs",
           "src/agentic/executor/sandbox.rs",
@@ -5007,7 +5002,7 @@
         "test_inventory_count": 0
       },
       "rust": {
-        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/8cf699a92ecbcce7cbfd8d774eff4aaa5975e3b1",
+        "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
           "src/common/process.rs",
           "src/agentic/executor/sandbox.rs",
@@ -5061,5 +5056,9 @@
     "desktop_ci": "passed",
     "next": "Finish source reachability details and native desktop baseline; independent Phase 1 backend work may proceed.",
     "desktop_build_checks": "Rust 1.90 formatting, Clippy and 2 policy tests passed; exact-main packaged CI passed."
+  },
+  "inspected_at": {
+    "rust_sha": "22520f3ba5981c361ceb57dddd7ff96234a69290",
+    "note": "Content audit 2026-09-15. Implementation status is code/fixture evidence, not native WKWebView acceptance. Connectors/integrations left missing."
   }
 }
