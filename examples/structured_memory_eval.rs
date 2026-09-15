@@ -260,7 +260,7 @@ fn main() -> anyhow::Result<()> {
         "name": corpus["name"],
         "mode": "deterministic-fixture-model",
         "cloud_egress": false,
-        "silent_fact_apply": silent == 0,
+        "silent_fact_apply": silent != 0,
         "metrics": {
             "candidate_precision": precision,
             "unsupported_hallucinated_rate": if retained == 0 { 0.0 } else { unsupported_retained as f64 / retained as f64 },

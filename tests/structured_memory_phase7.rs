@@ -117,7 +117,7 @@ fn cfg(dir: &Path) -> AppConfig {
     AppConfig::from_str(AppConfig::embedded_default(), &dir.join("config.yaml")).unwrap()
 }
 
-fn store(dir: &Path) -> StructuredMemoryStore {
+fn open_store(dir: &Path) -> StructuredMemoryStore {
     StructuredMemoryStore::open(&dir.join("structured.sqlite3"), &cfg(dir)).unwrap()
 }
 
@@ -233,9 +233,8 @@ fn evaluate_consolidation(store: &StructuredMemoryStore, corpus: &Corpus) -> Con
         let drafts = drafts_from_bound(&bound);
         let mut retained = 0usize;
         for draft in drafts {
-            match store.create_proposal(&case.owner, draft) {
-                Ok(_) => retained += 1,
-                Err(_) => {}
+            if store.create_proposal(&case.owner, draft).is_ok() {
+                retained += 1;
             }
         }
         assert_eq!(
@@ -409,7 +408,7 @@ fn phase7_corpus_covers_required_classes_and_shipped_gates_stay_off() {
 fn phase7_fixture_eval_meets_documented_baselines() {
     let corpus = load_corpus();
     let dir = tempfile::tempdir().unwrap();
-    let store = store(dir.path());
+    let store = open_store(dir.path());
     let consolidation = evaluate_consolidation(&store, &corpus);
     assert_eq!(
         consolidation.silent_fact_mutations, 0,
@@ -432,11 +431,11 @@ fn phase7_fixture_eval_meets_documented_baselines() {
     };
 
     let recall_dir = tempfile::tempdir().unwrap();
-    let recall_store = store(recall_dir.path());
+    let recall_store = open_store(recall_dir.path());
     let (useful, stale) = evaluate_recall(&recall_store, &corpus);
 
     let budget_dir = tempfile::tempdir().unwrap();
-    let budget_chars = evaluate_prompt_budget(&store(budget_dir.path()), &corpus.prompt_budget);
+    let budget_chars = evaluate_prompt_budget(&open_store(budget_dir.path()), &corpus.prompt_budget);
 
     let prune_dir = tempfile::tempdir().unwrap();
     let (prune_count, preserved) = evaluate_pruning(prune_dir.path(), &corpus.pruning);
@@ -496,7 +495,7 @@ fn phase7_fixture_eval_meets_documented_baselines() {
 #[test]
 fn phase7_direct_add_refuses_injection_and_does_not_scan_as_secret_store() {
     let dir = tempfile::tempdir().unwrap();
-    let store = store(dir.path());
+    let store = open_store(dir.path());
     let err = store
         .add_fact(
             "user_alice",
