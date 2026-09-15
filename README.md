@@ -34,7 +34,11 @@ separately staged and confirmed.
 remain disabled until explicitly configured, and commit, push, and draft PR
 publication each require a separate operator decision.
 
-**Version scope:** The [v0.1.8 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.8)
+**Version scope:** [Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest)
+is [v0.1.12](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.12)
+at `22520f3ba5981c361ceb57dddd7ff96234a69290`. See [setup](setup-guide.md) for
+what that release includes and how tip `main` relates. Historical notes: the
+[v0.1.8 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.8)
 targets `f47d41d` and includes [PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76)
 (`a93006d`, secure web research, SQLite accounts, API Keys and native HTTPS),
 [PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77) (`b53ef9d`, fresh
