@@ -566,7 +566,10 @@ a driver-prefixed branch, target `main`, open as drafts, and are validated with
 `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`,
 `src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`,
 `src/agentic/workspace.rs`, or `assets/config.default.yaml` additionally needs an
-explicit invariant statement in the PR body.
+explicit invariant statement in the PR body. The `review gate` check
+([`review-gate.yml`](.github/workflows/review-gate.yml)) stays red while any
+review thread is unresolved or a Codex review is still running, so review
+findings are applied or answered before a merge.
 
 | Document | Purpose |
 |---|---|
