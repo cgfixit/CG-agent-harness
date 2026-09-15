@@ -73,10 +73,14 @@ separate opt-in beside that list. They still write pending proposals only.
 
 ## Rollback
 
-Disable gates in `config.yaml` (literal `false`) and/or the matching
-`/memory … off` overlays. That stops new reads, writes, FTS inject,
-consolidator calls, suggestion workers, and the idle auto-consolidator. It does
-**not** delete `memory/structured.sqlite3`. Existing rows stay
+Availability is `store_open && (config_on || overlay_on)`. One remaining
+`true` keeps the feature. To stop capture, recall, retrieval, consolidation,
+or auto-workers, **both** the `config.yaml` literal and the matching
+`/memory … off` overlay must be false. Config edits need a process restart.
+The config-only suggestion flags (`auto_suggest_chat`, `auto_suggest_coding`)
+have no slash overlay: set them `false` and restart.
+
+That does **not** delete `memory/structured.sqlite3`. Existing rows stay
 listable/exportable/purgeable while the store remains open. Closing
 `structured_memory.enabled` refuses new structured-memory mutations and does not
 open the database on the next start; leftover files remain until the operator
