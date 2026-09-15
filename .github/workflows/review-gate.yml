@@ -1,0 +1,122 @@
+# Merge gate for review follow-through. Fails while a PR still has an
+# unresolved review thread (human or bot, Codex included) or while a Codex
+# review is still running on the head, so "marked ready, Codex reviewed,
+# merged before every finding was applied" cannot happen silently.
+#
+# The job polls for up to POLL_MINUTES so the usual sequence (fix pushed,
+# thread replied to, thread resolved a few seconds later; Codex finishing its
+# pass) turns the run green without another event. Resolving a thread on its
+# own fires no webhook: if the last thread is resolved without a push after
+# the poll window closed, re-run the failed job from the Actions tab.
+#
+# Make "review threads resolved" a required status check on main, and also
+# enable "Require conversation resolution before merging" in the branch
+# ruleset: that setting is the native, always-live version of the thread
+# rule; this job adds the Codex-in-progress rule and a summary of what is
+# still open.
+name: review gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, deleted]
+
+permissions: {}
+
+concurrency:
+  group: review-gate-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  threads:
+    name: review threads resolved
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      # Logins whose review-summary comment marks an in-progress review.
+      REVIEW_BOTS: chatgpt-codex-connector[bot]
+      POLL_MINUTES: "12"
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const bots = new Set(process.env.REVIEW_BOTS.split(",").map(s => s.trim()).filter(Boolean));
+            const deadline = Date.now() + Number(process.env.POLL_MINUTES) * 60_000;
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+            async function unresolvedThreads() {
+              const out = [];
+              let after = null;
+              for (;;) {
+                const q = await github.graphql(`
+                  query($owner: String!, $repo: String!, $num: Int!, $after: String) {
+                    repository(owner: $owner, name: $repo) {
+                      pullRequest(number: $num) {
+                        reviewThreads(first: 100, after: $after) {
+                          pageInfo { hasNextPage endCursor }
+                          nodes {
+                            isResolved isOutdated path line
+                            comments(first: 1) { nodes { author { login } url body } }
+                          }
+                        }
+                      }
+                    }
+                  }`, { owner, repo, num: pr.number, after });
+                const t = q.repository.pullRequest.reviewThreads;
+                for (const n of t.nodes) {
+                  if (n.isResolved) continue;
+                  const c = n.comments.nodes[0] || {};
+                  const title = (c.body || "").split("\n").find(l => l.trim()) || "";
+                  out.push({ path: n.path, line: n.line, outdated: n.isOutdated, author: c.author && c.author.login, url: c.url, title: title.replace(/<[^>]+>/g, "").replace(/[*_`]/g, "").trim().slice(0, 120) });
+                }
+                if (!t.pageInfo.hasNextPage) break;
+                after = t.pageInfo.endCursor;
+              }
+              return out;
+            }
+
+            // Codex edits one summary comment in place: "🔄 **Running**" while a
+            // review is in flight, "✅ **Completed**" afterwards. Any listed bot
+            // whose summary still says Running blocks the merge.
+            async function runningReviews() {
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 });
+              return comments
+                .filter(c => c.user && bots.has(c.user.login) && /<!--\s*codex-pull-request-review-summary\s*-->/.test(c.body || ""))
+                .filter(c => /\*\*Running\*\*/.test(c.body))
+                .map(c => ({ login: c.user.login, url: c.html_url }));
+            }
+
+            let threads, running, attempt = 0;
+            for (;;) {
+              attempt += 1;
+              [threads, running] = await Promise.all([unresolvedThreads(), runningReviews()]);
+              if (threads.length === 0 && running.length === 0) break;
+              if (Date.now() >= deadline) break;
+              core.info(`attempt ${attempt}: ${threads.length} unresolved thread(s), ${running.length} review(s) running; polling again in 20s`);
+              await sleep(20_000);
+            }
+
+            const lines = [`## Review gate for #${pr.number} @ \`${pr.head.sha.slice(0, 7)}\``, ""];
+            if (running.length) {
+              lines.push(`### Review still running`, "");
+              for (const r of running) lines.push(`- ${r.login}: ${r.url}`);
+              lines.push("");
+            }
+            if (threads.length) {
+              lines.push(`### Unresolved review threads (${threads.length})`, "");
+              for (const t of threads) lines.push(`- \`${t.path}${t.line ? ":" + t.line : ""}\`${t.outdated ? " (outdated)" : ""} by ${t.author || "unknown"}: ${t.title} ${t.url}`);
+              lines.push("", "Apply the fix and push, or reply with why not, then resolve the thread. Re-run this job if the last thread was resolved without a push.");
+            }
+            if (!running.length && !threads.length) lines.push("✅ No unresolved review threads and no review in progress.");
+            await core.summary.addRaw(lines.join("\n")).write();
+
+            if (running.length) core.setFailed(`${running.length} bot review(s) still running on this head`);
+            else if (threads.length) core.setFailed(`${threads.length} unresolved review thread(s)`);

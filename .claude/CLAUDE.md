@@ -156,4 +156,6 @@ over a new integration test.
 - Title `[prefix] - Short sentence`, prefixes: `[invariant] [security] [infra] [fix] [docs] [harness] [agentic] [test] [feat]`.
 - Draft PR, one concern, body from `.github/PULL_REQUEST_TEMPLATE.md`, validated with
   `scripts/check-pr-template.sh`. Touching a core path requires an explicit invariant statement in the body.
+- The `review threads resolved` check (`.github/workflows/review-gate.yml`) fails while any review
+  thread is unresolved or a Codex review is running: fix-and-push or reply-and-resolve every thread.
 - Quality bar before pushing: fmt, clippy `-D warnings`, `cargo test --all-targets`, `cargo deny check` all green.
