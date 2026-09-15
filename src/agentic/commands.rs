@@ -19,7 +19,10 @@ use super::executor::{manifest, Check};
 use super::gh_client::check_gh_version;
 use super::governance::inspect_candidate_text;
 use super::proposer::{LocalProposerClient, ProposerClient};
-use super::real_repo_loop::{finalize_real_repo_change, run_real_repo_loop, FinalizeParams, LoopParams};
+use super::real_repo_loop::{
+    cap_reject_detail, exhausted_reject_code, finalize_real_repo_change, run_real_repo_loop, FinalizeParams,
+    LoopParams, RealRepoLoopResult,
+};
 use super::registry::{SkillRegistry, SkillSpec};
 use super::run_store::{
     load_run, new_run_id, require_approved_for_push, require_pending_decision, require_pushed_for_publish, save_run,
@@ -46,6 +49,14 @@ fn kv(k: &str, v: impl std::fmt::Display) {
 
 fn print_json(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+}
+
+/// Persist closed exhausted-run diagnostics. `redacted_detail` is already redacted; this only caps it.
+pub fn apply_exhausted_diagnostics(record: &mut RealRepoRunRecord, result: &RealRepoLoopResult, redacted_detail: &str) {
+    record.status = "exhausted".into();
+    record.iterations = result.iterations.len() as u64;
+    record.reject_code = Some(exhausted_reject_code(result).to_string());
+    record.reject_detail = Some(cap_reject_detail(redacted_detail));
 }
 
 pub fn dispatch(action: &str, cfg: &AppConfig, config_path: &Path, opts: &Opts) -> Result<u8> {
@@ -522,8 +533,12 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         record.acceptance_base_head = Some(base_head);
         tools.release();
     } else {
-        record.status = "exhausted".into();
-        record.iterations = result.iterations.len() as u64;
+        let raw = result
+            .iterations
+            .last()
+            .map(|i| i.decision.reason.as_str())
+            .unwrap_or("exhausted");
+        apply_exhausted_diagnostics(&mut record, &result, &ctx.audit.redact(raw));
         tools.close();
     }
     save_run(&runs_dir, &mut record)?;
