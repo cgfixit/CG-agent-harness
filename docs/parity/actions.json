@@ -5056,9 +5056,5 @@
     "desktop_ci": "passed",
     "next": "Finish source reachability details and native desktop baseline; independent Phase 1 backend work may proceed.",
     "desktop_build_checks": "Rust 1.90 formatting, Clippy and 2 policy tests passed; exact-main packaged CI passed."
-  },
-  "inspected_at": {
-    "rust_sha": "22520f3ba5981c361ceb57dddd7ff96234a69290",
-    "note": "Content audit 2026-09-15. Implementation status is code/fixture evidence, not native WKWebView acceptance. Connectors/integrations left missing."
   }
 }
