@@ -1002,6 +1002,8 @@ function showAgentRecord(rec) {
     ['commit message', rec.commit_message || '—'],
     ['files', (rec.changed_files || []).join(', ') || '—'],
     ['iterations', String(rec.iterations)],
+    ['reject code', rec.reject_code || '—'],
+    ['reject detail', rec.reject_detail || '—'],
     ['pushed', rec.pushed ? 'yes' : 'no'],
     ['pull request', rec.pr_url || '—'],
     ['error', rec.error || '—'],
