@@ -736,9 +736,9 @@ See [the current probe](src/agentic/unslop.rs) and
 
 ### 7.5 Operator memory notes
 
-Memory here means explicit, home-wide operator notes. It is separate from soul,
-session history and web extracts. It does not automatically learn from chats,
-extract facts, index documents or provide structured RAG retrieval.
+There are two memory systems. Pinned notes are shared-home literals. Structured
+memory is a separate, default-off, account-private store. Neither is embeddings,
+a vector database, RAG fusion, or automatic learning from chat.
 
 ```text
 /memory
@@ -774,23 +774,63 @@ loaded. Back up before manual repair.
 Pinned-note capability flags (`rag.facts`, episodes, retrieval fusion) remain
 false. `/memory on` does not enable structured memory.
 
-A separate, default-off store implements issue #87 M1/M3/M5 + Phase 4: account-private
-facts, governed proposals, optional bounded episodes, and explicit selected-fact
-recall. Set
-`structured_memory.enabled: true` (literal YAML boolean) in `config.yaml` to
-open `<home>/memory/structured.sqlite3`. Set `structured_memory.episode_capture:
-true` to stage metadata-only episodes after a successful chat exchange. Set
-`structured_memory.explicit_recall: true` to allow operator-selected facts into
-`/prompt` after assembly-time owner/active/revision revalidation. Models
-may POST a proposal; applying still requires `confirm` and `reason`. Episode
-staging never writes facts and never fails an already-successful chat. File
-mode is access control, not encryption. This is not FTS, embeddings,
-consolidation, or automatic recall. `/memory on` remains pinned-note inclusion
-only. See
-[docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md).
-Use pinned notes for shared-home preferences; use structured facts only after
-explicit review. Clearing session history keeps derived episodes unless you
-confirm `delete_derived_episodes`.
+#### Structured memory (default-off)
+
+Issue #87 Phases 3–5: account-private facts, governed proposals, optional
+bounded episodes, explicit selected-fact recall, and facts-only FTS5. Models may
+POST a proposal; applying a fact still requires `confirm` and nonempty `reason`
+(same mutation rule as other API writes). Episode staging never writes facts,
+never injects episode text, and never fails an already-successful chat. File
+mode 0600 is access control, not encryption.
+
+**Enable (fail-closed).** Every gate uses `flag_is_true`: literal YAML `true`
+only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
+`<home>/memory/structured_gates.json`; they take effect immediately but
+**cannot open the store**. Config file changes need a full quit/relaunch or
+`serve` restart.
+
+1. Set `structured_memory.enabled: true` in the active home's `config.yaml` and
+   restart. That creates `<home>/memory/structured.sqlite3`. Disabled startup
+   does not create or open the database.
+2. Turn independent sub-gates on only as needed, in config **or** via slash
+   (store must already be open):
+   - `structured_memory.episode_capture` / `/memory capture on` — stage
+     metadata-only episodes after a successful chat exchange.
+   - `structured_memory.explicit_recall` / `/memory recall on` — allow
+     operator-selected facts into `/prompt` after owner/active/revision
+     revalidation.
+   - `structured_memory.retrieval` / `/memory retrieval on` — allow bounded
+     FTS search and per-request force-include.
+   - `structured_memory.auto_retrieval` / `/memory auto-retrieve on` —
+     **Advisor-sensitive silent path.** When this is on **and** retrieval is
+     on, chat may FTS the user message and inject rechecked top-k without a
+     per-request flag. Ships false. Leave it off unless you intend that.
+3. `/memory on` remains pinned-note inclusion only and never opens these gates.
+
+**Search ≠ inject.** `/memory search <query>` (or
+`GET /api/structured-memory/search`) returns a small top-k of candidates. It
+does not write session selection and does not inject. Retrieval off is a 409,
+not a silent empty inject.
+
+**Force-include one prompt.** `/memory retrieve <query>`, or `retrieve: true`
+with optional `retrieve_query` on `/api/chat` and `/api/prompt/preview`. That
+flag is the explicit pick for that request: bounded FTS, recheck survivors,
+inject under the Phase 4 budget. Hits do not stick on the shared session.
+
+**Prompt budget.** Combined pinned-note + selected-fact body is 3000 characters
+(`structured_memory.pinned_prompt_chars` / `selected_fact_prompt_chars`, default
+1500/1500 when both are present). Unused reserved capacity is not transferred.
+When only one source is present it may use the full 3000.
+
+**Not in this tree:** embeddings, vector DB, consolidation (later #87), RAG
+fusion, or episode FTS. Status can report `retrieval: true` while fusion,
+consolidation, and RAG stay false.
+
+Day-to-day operator howto: [docs/USER_MANUAL.md](docs/USER_MANUAL.md). Contract:
+[docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). Use pinned notes for
+shared-home preferences; use structured facts only after explicit review.
+Clearing session history keeps derived episodes unless you confirm
+`delete_derived_episodes`.
 
 ### 7.6 Google search, URL fetch and permitted-page research
 
@@ -925,6 +965,8 @@ confirmation and persistence semantics.
 | `/soul status`, `on`, `off`, `edit`, `propose`, `history` | Inspect, toggle or open persona editing/proposal flows |
 | `/soul review <id>`, `apply <id> <reason>`, `reject <id> <reason>` | Review and explicitly decide a persona proposal |
 | `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; section 7.5 |
+| `/memory capture|recall|retrieval|auto-retrieve on|off` | Structured-memory gates; `/memory on` stays pinned notes |
+| `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include |
 | `/model`, `/model use <name>` | Inspect/select an available chat model |
 | `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |
 | `/skill use <id...>`, `clear`, `status` | Replace, clear or inspect session prompt-skill selection |
@@ -997,7 +1039,7 @@ live outside the bundle, so replacing or uninstalling the app preserves them.
 | `soul.md`, `soul-history/`, `soul-pending-apply.json` | Optional persona, bounded backups/proposals, and temporary apply-recovery marker |
 | `skills/<id>/SKILL.md` | Runtime skill bodies; existing files are preserved |
 | `sessions/` | Chat history, goals, selected skills and current goal-stage linkage |
-| `memory/`, `tools/` | Operator notes and web context/allowlist state |
+| `memory/`, `tools/` | Pinned notes (`memory/notes.json`); optional structured store (`memory/structured.sqlite3`) and gate overlay (`memory/structured_gates.json`); web context/allowlist under `tools/` |
 | `.env`, `auth.sqlite3`, `auth.initialized` | Private provider credentials, transactional accounts and initialization marker; legacy JSON retained for recovery |
 | `tls/server.pem`, `cli-session.json` | Private persisted TLS material and optional CLI login bound to its origin/certificate |
 | `data/agentic/` | Registry, retained console jobs, workspaces and run evidence |
@@ -1029,6 +1071,7 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 | Goal and chat history | Saved session; goal maximum 2,000 characters | `/goal`, `/session list`, `/goal task` for coding linkage |
 | Loop counters and automatic continuation | Current page only; not an unattended scheduler | Visible loop state; restart does not resume it |
 | Memory notes and inclusion | Home-wide saved notes/toggle; next request | `/memory`, `/prompt` |
+| Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/prompt`; retrieval-off search is 409 |
 | Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
 | Managed credentials | Home `.env`, loaded at process startup on Unix; inherited values win | `/api` reports presence/masked tail, not proof of provider authentication |
@@ -1478,6 +1521,7 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 | Local coding loop never fetches a file the planner asked for | Cloud planner is in use, the selector failed the clone jail, the basename is on `denied_read_basenames` (`.env`, keys, credentials, …), the per-run model-read cap (6) was hit, or an unclosed FILE/EDITS block swallowed the `=== READ ===` line | Pre-stage needed ordinary files with `/agent read`. Denied basenames refuse operator and model READ alike (`sensitive_basename`). Cloud runs refuse every model-requested read. Local refusals are audit-logged as `agentic_real_repo_read_request_refused`. The deny-list is not a secret scanner; the jail is not a secrets control. |
 | New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona and your account's web selection are still included | Verify the running bundle includes `71eef11` or later; inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
 | Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify the app includes the capability-guide fix at `71eef11` or later |
+| `/memory search` reports retrieval disabled | `structured_memory.retrieval` (and the store) are off | Enable the store in `config.yaml`, restart, then `/memory retrieval on`. Search still does not inject; use `/memory retrieve` for one prompt |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
 | Model inventory says `tag_missing`, or fallback is selected unexpectedly | Exact configured ID is absent from a responding inventory | Compare section 4 inventories and config; verify persisted `/model` selection against the resolved endpoint, then restart to reevaluate fallback |
 | Soul says missing | No `soul.md` exists in this active home | Valid fresh-home state; use explicit `/soul edit` if you want persona, then `/soul on` and `/prompt` |

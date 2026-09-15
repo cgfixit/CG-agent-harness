@@ -63,8 +63,9 @@ The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
 ## Local authority and shared resources
 
 An administrator/operator can access shared portal chat sessions, jobs, persona
-and notes; these are not tenants. Research requests and web selections are account
-scoped. Auditors see designated redacted status/audit information. Filesystem
+and notes; these are not tenants. Research requests, web selections, and
+structured-memory facts/episodes/FTS hits are account scoped. Recalled facts
+are untrusted context and cannot grant tool, coding, or network authority. Auditors see designated redacted status/audit information. Filesystem
 owners can edit configuration, databases and binaries, and are outside the portal
 account boundary. No atomic guarantee against a malicious same-user filesystem
 race is claimed. Existing native execution-sandbox/platform limits remain in

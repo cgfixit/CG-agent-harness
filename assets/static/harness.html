@@ -805,6 +805,9 @@ const COMMANDS = [
   ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
   ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (off by default)'],
+  ['/memory capture|recall|retrieval|auto-retrieve [on|off]', 'structured-memory gates; /memory on stays pinned notes'],
+  ['/memory search <query>', 'FTS fact candidates (not injected)'],
+  ['/memory retrieve <query>', 'force FTS include for this prompt only'],
   ['/goal stage <branch>|task', 'explicitly stage the goal as a coding request; inspect durable progress'],
   ['/goal [text]|clear', 'set, show, or clear the session goal'],
   ['/loop [n]|stop|auto', 'chat continuation only; aggregate completion budget; per-turn budget set by server'],
@@ -1159,13 +1162,38 @@ async function runSlash(line) {
 
       case 'memory': {
         const sub = (rest[0] || '').toLowerCase();
+        const gateMap = { capture: 'episode_capture', recall: 'explicit_recall', retrieval: 'retrieval', 'auto-retrieve': 'auto_retrieval' };
         if (sub === 'on' || sub === 'off') {
           const r = await api('/api/memory', 'POST', { enabled: sub === 'on' });
           memoryEnabled = !!r.enabled; paintMemory();
           sys('memory ' + (r.enabled ? 'ON' : 'OFF') +
               ' — notes stay in <harness home>/memory; RAG memory/ is ' +
               ((r.rag && r.rag.enabled) ? 'on' : 'off') +
-              ' (read-only; this command cannot flip it)');
+              ' (read-only; this command cannot flip capture/recall/retrieval)');
+        } else if (gateMap[sub]) {
+          const flag = (rest[1] || '').toLowerCase();
+          if (flag !== 'on' && flag !== 'off') { sys('usage: /memory ' + sub + ' on|off'); break; }
+          const r = await api('/api/structured-memory/gates', 'POST', { gate: gateMap[sub], enabled: flag === 'on' });
+          sys(table([
+            ['gate', sub],
+            ['enabled', flag],
+            ['episode_capture', r && r.episode_capture ? 'on' : 'off'],
+            ['explicit_recall', r && r.explicit_recall ? 'on' : 'off'],
+            ['retrieval', r && r.retrieval ? 'on' : 'off'],
+            ['auto_retrieval', r && r.auto_retrieval ? 'on' : 'off'],
+            ['/memory on', 'unchanged (pinned notes only)']
+          ]));
+        } else if (sub === 'search') {
+          const q = rest.slice(1).join(' ').trim();
+          if (!q) { sys('usage: /memory search <query>'); break; }
+          const r = await api('/api/structured-memory/search?q=' + encodeURIComponent(q));
+          const hits = r && Array.isArray(r.hits) ? r.hits : [];
+          sys(table([['hits', String(r && r.count != null ? r.count : hits.length)], ['fts', r && r.fts ? 'on' : 'off'], ['injected', 'no (search is not inject)']]));
+          if (hits.length) sys(table(hits.map(h => [h.id || '', String(h.revision != null ? h.revision : ''), h.category || '', String(h.score != null ? h.score : '')]), ['id', 'rev', 'category', 'score']));
+        } else if (sub === 'retrieve') {
+          const q = rest.slice(1).join(' ').trim();
+          if (!q) { sys('usage: /memory retrieve <query>'); break; }
+          await sendChat(q, { retrieve: true, retrieve_query: q });
         } else if (sub === 'add') {
           const text = rest.slice(1).join(' ').trim();
           if (!text) { sys('usage: /memory add <note>'); break; }
@@ -1192,6 +1220,9 @@ async function runSlash(line) {
             ['RAG writable here', rag.writable_from_harness ? 'yes' : 'no'],
             ['structured memory', (r.structured_memory && r.structured_memory.enabled) ? 'store on' : 'store off'],
             ['episode capture', (r.structured_memory && r.structured_memory.episode_capture) ? 'on' : 'off'],
+            ['explicit recall', (r.structured_memory && r.structured_memory.explicit_recall) ? 'on' : 'off'],
+            ['retrieval', (r.structured_memory && r.structured_memory.retrieval) ? 'on' : 'off'],
+            ['auto_retrieval', (r.structured_memory && r.structured_memory.auto_retrieval) ? 'on' : 'off'],
           ]));
           if (r.notes && r.notes.length) {
             sys(table(r.notes.map(n => [n.id, n.text]), ['id', 'note']));
@@ -1923,28 +1954,44 @@ window.addEventListener('beforeunload', function () {
   fetch('/api/chat/cancel', { method: 'POST', headers: headers, keepalive: true, credentials: 'same-origin' }).catch(function () {});
 });
 
-async function sendChat(text, asLoop) {
+async function finishChat(r) {
+  if (r && r.session_id) {
+    currentSession = r.session_id;
+    $('sSession').textContent = currentSession;
+  }
+  const usage = (r && r.usage) || {};
+  const tally = (r && r.tally) || {};
+  if (loopState && r && r.usage) {
+    loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
+  }
+  renderChatWebTools(r && r.web_tools);
+  agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
+        ' tok · session total ' + (tally.total || 0));
+  await refreshStatus();
+  await refreshSessions();
+  return r && r.reply;
+}
+
+async function sendChat(text, asLoop, extra) {
   const revision = sessionRevision;
   user(text);
   sendBtn.disabled = true;
   const controller = new AbortController();
   inflightChat = controller;
+  if (asLoop && typeof asLoop === 'object') {
+    extra = asLoop;
+    asLoop = false;
+  }
   const body = { message: text, session_id: currentSession };
   if (asLoop) body.loop = true;
+  if (extra && extra.retrieve) {
+    body.retrieve = true;
+    if (extra.retrieve_query) body.retrieve_query = extra.retrieve_query;
+  }
   try {
     const r = await api('/api/chat', 'POST', body);
     if (revision !== sessionRevision) return null;
-    currentSession = r.session_id;
-    $('sSession').textContent = currentSession;
-    if (loopState && r.usage) {
-      loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
-    }
-    renderChatWebTools(r.web_tools);
-    agent(r.reply, r.model + ' · +' + r.usage.prompt_tokens + '/' + r.usage.completion_tokens +
-          ' tok · session total ' + r.tally.total);
-    await refreshStatus();
-    await refreshSessions();
-    return r.reply;
+    return finishChat(r);
   } catch (e) {
     if (revision !== sessionRevision) return null;
     if (e && e.name === 'AbortError') return null;
@@ -1957,16 +2004,7 @@ async function sendChat(text, asLoop) {
       try {
         const retry = await api('/api/chat', 'POST', body);
         if (revision !== sessionRevision) return null;
-        currentSession = retry.session_id;
-        $('sSession').textContent = currentSession;
-        if (loopState && retry.usage) {
-          loopState.completionTokens += Number(retry.usage.completion_tokens) || 0;
-        }
-        agent(retry.reply, retry.model + ' · +' + retry.usage.prompt_tokens + '/' + retry.usage.completion_tokens +
-              ' tok · session total ' + retry.tally.total);
-        await refreshStatus();
-        await refreshSessions();
-        return retry.reply;
+        return finishChat(retry);
       } catch (e2) {
         if (revision !== sessionRevision) return null;
         if (e2 && e2.name === 'AbortError') return null;

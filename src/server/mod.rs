@@ -25,6 +25,7 @@ pub mod schemas;
 pub mod sessions;
 pub mod state;
 pub mod structured_memory;
+pub mod structured_memory_fts;
 pub mod transport;
 pub mod views;
 mod web_google;
@@ -160,9 +161,11 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     } else {
         None
     };
+    let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
     let state = Arc::new(AppState {
         notes: MemoryNotes::new(&home.memory_dir()),
         structured_memory,
+        structured_gates: Mutex::new(structured_gates),
         web,
         home,
         cfg: cfg.clone(),

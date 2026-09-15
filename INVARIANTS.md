@@ -42,13 +42,19 @@ uses authenticated `user_id`, the documented `local` namespace from
 `context_owner` when accounts are disabled, or labeled `user_*` fixture owners. Canonical facts change only through
 an explicit human confirm+reason path; proposals may suggest but never apply
 themselves. Episode capture never writes facts. `structured_memory.enabled`,
-`structured_memory.episode_capture`, and `structured_memory.explicit_recall` are
-independent literal-boolean admin gates (`flag_is_true`); capture off means no
-episode writes; recall off means no selected-fact prompt injection. Selected
-facts are re-read at prompt assembly and dropped when missing, inactive,
-cross-owner, or stale-revision. `harness.json.memory_enabled` remains pinned-note prompt
-inclusion only and does not inject facts or episodes. Recalled text is untrusted
-background context and cannot authorize tools, coding, or network. The structured SQLite file uses owner-private mode as OS access
+`structured_memory.episode_capture`, `structured_memory.explicit_recall`,
+`structured_memory.retrieval`, and `structured_memory.auto_retrieval` are
+independent literal-boolean gates (`flag_is_true`); operator slash overlays use
+the same fail-closed rule. Capture off means no episode writes; recall off
+means no selected-fact prompt injection; retrieval off means no FTS search or
+force-include. Search returns candidates only — prompt injection still requires
+an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
+`retrieve` flag) plus assembly-time owner/active/revision recheck, unless the
+separately gated `auto_retrieval` silent path is on. FTS indexes facts only,
+never episode summaries. `/memory on` remains pinned-note prompt inclusion
+only and does not open capture, recall, or retrieval. Recalled text is
+untrusted background context and cannot authorize tools, coding, or network.
+The structured SQLite file uses owner-private mode as OS access
 control — that is not encryption at rest. Pinned `/memory` notes stay on
 `memory/notes.json` and are not migrated. Session clear keeps derived episodes
 unless the operator confirms `delete_derived_episodes`; that cascade still

@@ -241,9 +241,26 @@ fn memory_payload(state: &AppState) -> ApiResult<Value> {
     payload["structured_memory"] = json!({
         "separate": true,
         "enabled": state.cfg.flag_is_true("structured_memory.enabled"),
-        "episode_capture": state.cfg.flag_is_true("structured_memory.episode_capture"),
-        "explicit_recall": state.cfg.flag_is_true("structured_memory.explicit_recall")
-            && state.cfg.flag_is_true("structured_memory.enabled"),
+        "episode_capture": crate::server::structured_memory::capture_available(
+            &state.cfg,
+            state.cfg.flag_is_true("structured_memory.enabled"),
+            &crate::server::structured_memory::current_gates(state),
+        ),
+        "explicit_recall": crate::server::structured_memory::recall_available(
+            &state.cfg,
+            state.cfg.flag_is_true("structured_memory.enabled"),
+            &crate::server::structured_memory::current_gates(state),
+        ),
+        "retrieval": crate::server::structured_memory::retrieval_available(
+            &state.cfg,
+            state.cfg.flag_is_true("structured_memory.enabled"),
+            &crate::server::structured_memory::current_gates(state),
+        ),
+        "auto_retrieval": crate::server::structured_memory::auto_retrieval_available(
+            &state.cfg,
+            state.cfg.flag_is_true("structured_memory.enabled"),
+            &crate::server::structured_memory::current_gates(state),
+        ),
         "status_path": "/api/structured-memory",
         "prompt_toggle": "harness.json.memory_enabled remains pinned-note inclusion only",
         "session_clear": "does not delete derived episodes unless delete_derived_episodes is confirmed",

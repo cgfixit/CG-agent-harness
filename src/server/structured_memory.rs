@@ -6,6 +6,10 @@
 //! is also the literal boolean `true`. Models and jobs may suggest through
 //! proposals; they never write canonical facts, and episode capture never writes
 //! facts. File mode 0600 is OS access control, not encryption.
+//!
+//! Phase 5 adds a facts-only contentless FTS5 index. Search is not injection.
+//! Recalled FTS hits still require an explicit pick (or the separately gated
+//! `auto_retrieval` silent path) and assembly-time owner/active/revision recheck.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -19,7 +23,7 @@ use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 pub const PUBLIC_ID_LEN: usize = 32;
 const MARKER_BODY: &[u8] = b"sqlite3-v1\n";
 
@@ -36,6 +40,10 @@ const DEFAULT_MAX_EXPORT_BYTES: u64 = 262_144;
 const DEFAULT_MAX_SELECTED_FACTS: u64 = 8;
 const DEFAULT_MAX_SEARCH_QUERY_CHARS: u64 = 64;
 const DEFAULT_MAX_SEARCH_RESULTS: u64 = 32;
+const DEFAULT_MAX_RETRIEVAL_RESULTS: u64 = 4;
+const DEFAULT_MAX_RETRIEVAL_TOKENS: u64 = 8;
+const DEFAULT_MAX_RETRIEVAL_TOKEN_CHARS: u64 = 32;
+const DEFAULT_MAX_SEARCH_TIME_MS: u64 = 250;
 const DEFAULT_PINNED_PROMPT_CHARS: u64 = 1500;
 const DEFAULT_SELECTED_FACT_PROMPT_CHARS: u64 = 1500;
 
@@ -132,6 +140,22 @@ CREATE INDEX consolidation_runs_owner ON consolidation_runs(owner_id);
 PRAGMA user_version=2;
 ";
 
+const FTS_DDL: &str = "
+CREATE VIRTUAL TABLE facts_fts USING fts5(
+  title,
+  value,
+  tags,
+  tokenize='unicode61 remove_diacritics 2',
+  content=''
+);
+CREATE TABLE facts_fts_state (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  rebuilt_ts REAL NOT NULL,
+  indexed_facts INTEGER NOT NULL
+) STRICT;
+PRAGMA user_version=3;
+";
+
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     pub max_facts_per_owner: usize,
@@ -147,6 +171,10 @@ pub struct Limits {
     pub max_selected_facts: usize,
     pub max_search_query_chars: usize,
     pub max_search_results: usize,
+    pub max_retrieval_results: usize,
+    pub max_retrieval_tokens: usize,
+    pub max_retrieval_token_chars: usize,
+    pub max_search_time_ms: u64,
     pub pinned_prompt_chars: usize,
     pub selected_fact_prompt_chars: usize,
 }
@@ -228,6 +256,29 @@ impl Limits {
                 1,
                 64,
             ) as usize,
+            max_retrieval_results: clamp_u64(
+                cfg.u64_or("structured_memory.max_retrieval_results", DEFAULT_MAX_RETRIEVAL_RESULTS),
+                1,
+                16,
+            ) as usize,
+            max_retrieval_tokens: clamp_u64(
+                cfg.u64_or("structured_memory.max_retrieval_tokens", DEFAULT_MAX_RETRIEVAL_TOKENS),
+                1,
+                16,
+            ) as usize,
+            max_retrieval_token_chars: clamp_u64(
+                cfg.u64_or(
+                    "structured_memory.max_retrieval_token_chars",
+                    DEFAULT_MAX_RETRIEVAL_TOKEN_CHARS,
+                ),
+                1,
+                64,
+            ) as usize,
+            max_search_time_ms: clamp_u64(
+                cfg.u64_or("structured_memory.max_search_time_ms", DEFAULT_MAX_SEARCH_TIME_MS),
+                10,
+                5_000,
+            ),
             pinned_prompt_chars: clamp_u64(
                 cfg.u64_or("structured_memory.pinned_prompt_chars", DEFAULT_PINNED_PROMPT_CHARS),
                 1,
@@ -259,6 +310,10 @@ impl Limits {
             "max_selected_facts": self.max_selected_facts,
             "max_search_query_chars": self.max_search_query_chars,
             "max_search_results": self.max_search_results,
+            "max_retrieval_results": self.max_retrieval_results,
+            "max_retrieval_tokens": self.max_retrieval_tokens,
+            "max_retrieval_token_chars": self.max_retrieval_token_chars,
+            "max_search_time_ms": self.max_search_time_ms,
             "pinned_prompt_chars": self.pinned_prompt_chars,
             "selected_fact_prompt_chars": self.selected_fact_prompt_chars,
         })
@@ -267,6 +322,94 @@ impl Limits {
 
 fn clamp_u64(value: u64, min: u64, max: u64) -> u64 {
     value.clamp(min, max)
+}
+
+/// Home-local operator overlay. Missing, quoted, or non-boolean values are off.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OperatorGates {
+    pub episode_capture: bool,
+    pub explicit_recall: bool,
+    pub retrieval: bool,
+    pub auto_retrieval: bool,
+}
+
+impl OperatorGates {
+    pub fn load(home: &crate::common::home::Home) -> Self {
+        // Fail-closed: a traversal-shaped home must not be read as an overlay.
+        let Some(path) = refuse_parent_components(home.memory_dir())
+            .ok()
+            .and_then(|_| refuse_parent_components(home.structured_memory_gates_path()).ok())
+        else {
+            return Self::default();
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            return Self::default();
+        };
+        Self {
+            episode_capture: value.get("episode_capture") == Some(&json!(true)),
+            explicit_recall: value.get("explicit_recall") == Some(&json!(true)),
+            retrieval: value.get("retrieval") == Some(&json!(true)),
+            auto_retrieval: value.get("auto_retrieval") == Some(&json!(true)),
+        }
+    }
+
+    pub fn save(&self, home: &crate::common::home::Home) -> Result<()> {
+        // Same CodeQL rust/path-injection barrier as StructuredMemoryStore::open:
+        // home-relative, never an HTTP field, but `..` is still refused before
+        // create_dir_all / write_atomic so a tainted home cannot escape.
+        let dir_path = home.memory_dir();
+        let dir_raw = dir_path.to_string_lossy();
+        if dir_raw.contains("..") {
+            return Err(invalid(
+                "structured memory path must not contain parent-directory components",
+            ));
+        }
+        let dir = PathBuf::from(dir_raw.as_ref());
+        let gates_path = home.structured_memory_gates_path();
+        let path_raw = gates_path.to_string_lossy();
+        if path_raw.contains("..") {
+            return Err(invalid(
+                "structured memory path must not contain parent-directory components",
+            ));
+        }
+        let path = PathBuf::from(path_raw.as_ref());
+        std::fs::create_dir_all(&dir)?;
+        write_atomic(
+            &path,
+            serde_json::to_vec_pretty(&self.as_json())
+                .map_err(|e| invalid(format!("cannot encode structured memory gates: {e}")))?
+                .as_slice(),
+            Some(0o600),
+        )
+    }
+
+    pub fn as_json(&self) -> Value {
+        json!({
+            "episode_capture": self.episode_capture,
+            "explicit_recall": self.explicit_recall,
+            "retrieval": self.retrieval,
+            "auto_retrieval": self.auto_retrieval,
+        })
+    }
+
+    pub fn set(&mut self, gate: &str, enabled: bool) -> Result<()> {
+        match gate {
+            "episode_capture" => self.episode_capture = enabled,
+            "explicit_recall" => self.explicit_recall = enabled,
+            "retrieval" => self.retrieval = enabled,
+            "auto_retrieval" => self.auto_retrieval = enabled,
+            _ => {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_GATE",
+                    "gate must be episode_capture, explicit_recall, retrieval, or auto_retrieval",
+                ))
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -301,6 +444,29 @@ pub struct RecalledFact {
     pub revision: i64,
     pub category: String,
     pub content: String,
+    pub source: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchHit {
+    pub fact: Fact,
+    pub score: f64,
+    pub provenance: &'static str,
+}
+
+impl SearchHit {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "id": self.fact.id,
+            "revision": self.fact.revision,
+            "category": self.fact.category,
+            "content": self.fact.content,
+            "active": self.fact.active,
+            "score": self.score,
+            "provenance": self.provenance,
+            "type": "untrusted_background_context",
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -330,6 +496,7 @@ impl RecallResult {
                 "revision": f.revision,
                 "category": f.category,
                 "chars": f.content.chars().count(),
+                "source": f.source,
             })).collect::<Vec<_>>(),
             "dropped": self.dropped.iter().map(|d| json!({
                 "id": d.id,
@@ -385,6 +552,23 @@ pub struct EpisodeHealth {
     pub last_error_class: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RetrievalHealth {
+    pub last_ok: Option<bool>,
+    pub last_error_class: Option<String>,
+    pub index_ready: bool,
+}
+
+impl RetrievalHealth {
+    pub fn as_json(&self) -> Value {
+        json!({
+            "ok": self.last_ok,
+            "error_class": self.last_error_class,
+            "index_ready": self.index_ready,
+        })
+    }
+}
+
 impl EpisodeHealth {
     pub fn as_json(&self) -> Value {
         json!({
@@ -406,6 +590,7 @@ pub struct StructuredMemoryStore {
     limits: Limits,
     scanner: Scanner,
     health: Mutex<EpisodeHealth>,
+    retrieval_health: Mutex<RetrievalHealth>,
 }
 
 impl std::fmt::Debug for StructuredMemoryStore {
@@ -418,6 +603,18 @@ impl std::fmt::Debug for StructuredMemoryStore {
 
 fn invalid(message: impl Into<String>) -> HarnessError {
     HarnessError::new("STRUCTURED_MEMORY_IO", message)
+}
+
+/// CodeQL rust/path-injection treats `contains("..") == false` as a sink barrier.
+/// Reconstruct the path from the checked string so the sanitized value reaches FS APIs.
+fn refuse_parent_components(path: PathBuf) -> Result<PathBuf> {
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        return Err(invalid(
+            "structured memory path must not contain parent-directory components",
+        ));
+    }
+    Ok(PathBuf::from(raw.as_ref()))
 }
 
 fn sql(error: rusqlite::Error) -> HarnessError {
@@ -500,15 +697,92 @@ fn migrate_schema(conn: &mut Connection) -> Result<()> {
     if version == SCHEMA_VERSION {
         return Ok(());
     }
-    if version != 1 {
+    if version != 1 && version != 2 {
         return Err(invalid("unsupported or corrupt structured memory database"));
     }
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sql)?;
-    tx.execute_batch(EPISODE_DDL).map_err(sql)?;
+    if version == 1 {
+        tx.execute_batch(EPISODE_DDL).map_err(sql)?;
+    }
+    tx.execute_batch(FTS_DDL).map_err(sql)?;
+    backfill_facts_fts(&tx)?;
     tx.commit().map_err(sql)?;
     Ok(())
+}
+
+fn fts_table_exists(conn: &Connection) -> Result<bool> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','virtual') AND name='facts_fts'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    Ok(count > 0)
+}
+
+fn backfill_facts_fts(tx: &rusqlite::Transaction<'_>) -> Result<usize> {
+    // Contentless FTS5 cannot DELETE/UPDATE rows. Enable-time backfill is a
+    // bounded rewrite of the virtual table from current active facts.
+    tx.execute_batch("DROP TABLE IF EXISTS facts_fts;").map_err(sql)?;
+    tx.execute_batch(
+        "CREATE VIRTUAL TABLE facts_fts USING fts5(
+          title,
+          value,
+          tags,
+          tokenize='unicode61 remove_diacritics 2',
+          content=''
+        );",
+    )
+    .map_err(sql)?;
+    let mut stmt = tx
+        .prepare("SELECT id, category, content FROM facts WHERE active=1")
+        .map_err(sql)?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        })
+        .map_err(sql)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(sql)?;
+    drop(stmt);
+    for (id, category, content) in &rows {
+        fts_insert(tx, *id, category, content)?;
+    }
+    tx.execute("DELETE FROM facts_fts_state", []).ok();
+    tx.execute(
+        "INSERT OR REPLACE INTO facts_fts_state(id, rebuilt_ts, indexed_facts) VALUES(1, ?1, ?2)",
+        params![crate::common::now_ts(), rows.len() as i64],
+    )
+    .map_err(sql)?;
+    Ok(rows.len())
+}
+
+fn fts_insert(tx: &rusqlite::Transaction<'_>, rowid: i64, category: &str, content: &str) -> Result<()> {
+    tx.execute(
+        "INSERT INTO facts_fts(rowid, title, value, tags) VALUES(?1, ?2, ?3, '')",
+        params![rowid, category, content],
+    )
+    .map_err(sql)?;
+    Ok(())
+}
+
+fn fts_delete(tx: &rusqlite::Transaction<'_>, rowid: i64, category: &str, content: &str) -> Result<()> {
+    tx.execute(
+        "INSERT INTO facts_fts(facts_fts, rowid, title, value, tags) VALUES('delete', ?1, ?2, ?3, '')",
+        params![rowid, category, content],
+    )
+    .map_err(sql)?;
+    Ok(())
+}
+
+fn fact_rowid(tx: &rusqlite::Transaction<'_>, public_id: &str) -> Result<i64> {
+    tx.query_row("SELECT id FROM facts WHERE public_id=?1", params![public_id], |r| {
+        r.get(0)
+    })
+    .map_err(sql)
 }
 
 fn check_schema(conn: &Connection) -> Result<()> {
@@ -639,6 +913,8 @@ impl StructuredMemoryStore {
             let tx = conn.transaction().map_err(sql)?;
             tx.execute_batch(FACTS_PROPOSALS_DDL).map_err(sql)?;
             tx.execute_batch(EPISODE_DDL).map_err(sql)?;
+            tx.execute_batch(FTS_DDL).map_err(sql)?;
+            backfill_facts_fts(&tx)?;
             tx.commit().map_err(sql)?;
             check_schema(&conn)?;
             conn.close().map_err(|(_, e)| sql(e))?;
@@ -649,12 +925,17 @@ impl StructuredMemoryStore {
             write_atomic(&marker, MARKER_BODY, Some(0o600))?;
             connect(&path)?
         };
+        let index_ready = fts_table_exists(&conn).unwrap_or(false);
         Ok(Self {
             path,
             conn: Mutex::new(conn),
             limits: Limits::from_config(cfg),
             scanner: Scanner::core(),
             health: Mutex::new(EpisodeHealth::default()),
+            retrieval_health: Mutex::new(RetrievalHealth {
+                index_ready,
+                ..RetrievalHealth::default()
+            }),
         })
     }
 
@@ -859,6 +1140,121 @@ impl StructuredMemoryStore {
         Ok(facts)
     }
 
+    pub fn retrieval_health(&self) -> RetrievalHealth {
+        self.retrieval_health.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    fn record_retrieval_health(&self, result: &std::result::Result<usize, HarnessError>, index_ready: bool) {
+        let mut health = self.retrieval_health.lock().unwrap_or_else(|p| p.into_inner());
+        health.index_ready = index_ready;
+        match result {
+            Ok(_) => {
+                health.last_ok = Some(true);
+                health.last_error_class = None;
+            }
+            Err(err) => {
+                health.last_ok = Some(false);
+                health.last_error_class = Some(err.code.clone());
+            }
+        }
+    }
+
+    /// Rebuild the facts-only FTS index in one Immediate transaction.
+    /// Fail-soft callers treat busy/corrupt as a truthful health error.
+    pub fn rebuild_facts_fts(&self) -> Result<usize> {
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let rebuilt = backfill_facts_fts(&tx)?;
+        tx.commit().map_err(sql)?;
+        self.record_retrieval_health(&Ok(rebuilt), true);
+        Ok(rebuilt)
+    }
+
+    /// Bounded FTS5 search over this owner's active facts. Tokenize/quote first;
+    /// never pass raw MATCH syntax. Rechecks the live fact row (owner/active).
+    pub fn search_facts_fts(&self, owner: &str, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        Self::require_owner(owner)?;
+        if query.chars().count() > self.limits.max_search_query_chars {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_SEARCH",
+                "search query exceeds the configured character bound",
+            ));
+        }
+        let Some(expr) = crate::server::structured_memory_fts::safe_match(
+            query,
+            self.limits.max_retrieval_tokens,
+            self.limits.max_retrieval_token_chars,
+        ) else {
+            self.record_retrieval_health(&Ok(0), true);
+            return Ok(Vec::new());
+        };
+        let limit = limit.min(self.limits.max_search_results).max(1);
+        let started = std::time::Instant::now();
+        let searched = (|| {
+            let conn = self.lock();
+            if !fts_table_exists(&conn)? {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_FTS",
+                    "facts FTS index is unavailable",
+                ));
+            }
+            let mut stmt = conn
+                .prepare(
+                    "SELECT f.public_id, f.owner_id, f.content, f.category, f.content_digest, f.revision, f.active,
+                            f.created_ts, f.updated_ts, bm25(facts_fts) AS score
+                     FROM facts_fts
+                     JOIN facts f ON f.id = facts_fts.rowid
+                     WHERE facts_fts MATCH ?1 AND f.owner_id=?2 AND f.active=1
+                     ORDER BY score ASC, f.updated_ts DESC, f.public_id ASC
+                     LIMIT ?3",
+                )
+                .map_err(sql)?;
+            let rows = stmt
+                .query_map(params![expr, owner, limit as i64], |r| {
+                    Ok((Self::map_fact(r)?, r.get::<_, f64>(9)?))
+                })
+                .map_err(sql)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(sql)?;
+            if started.elapsed() > std::time::Duration::from_millis(self.limits.max_search_time_ms) {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_FTS",
+                    "facts FTS search exceeded the configured time bound",
+                ));
+            }
+            Ok(rows
+                .into_iter()
+                .map(|(fact, score)| SearchHit {
+                    fact,
+                    score,
+                    provenance: "fts5",
+                })
+                .collect::<Vec<_>>())
+        })();
+        match searched {
+            Ok(hits) => {
+                self.record_retrieval_health(&Ok(hits.len()), true);
+                Ok(hits)
+            }
+            Err(err) => {
+                self.record_retrieval_health(&Err(err.clone()), false);
+                Err(err)
+            }
+        }
+    }
+
+    /// Convert FTS hits into assembly selections bound to the current revision.
+    pub fn selections_from_hits(hits: &[SearchHit]) -> Vec<FactSelection> {
+        hits.iter()
+            .map(|hit| FactSelection {
+                id: hit.fact.id.clone(),
+                expected_revision: hit.fact.revision,
+            })
+            .collect()
+    }
+
     /// Re-read selected facts immediately before prompt assembly.
     /// Drops missing, inactive, stale-revision, invalid, duplicate, and
     /// over-limit ids. Cross-owner ids look like missing (SQL owner filter).
@@ -916,6 +1312,7 @@ impl StructuredMemoryStore {
                     revision: fact.revision,
                     category: fact.category,
                     content: fact.content,
+                    source: "selected",
                 }),
                 Err(_) => result.dropped.push(DroppedSelection {
                     id: selection.id.clone(),
@@ -975,6 +1372,8 @@ impl StructuredMemoryStore {
             params![id, owner, content, category, digest, now],
         )
         .map_err(sql)?;
+        let rowid = tx.last_insert_rowid();
+        fts_insert(&tx, rowid, &category, &content)?;
         let fact = tx
             .query_row(
                 "SELECT public_id,owner_id,content,category,content_digest,revision,active,created_ts,updated_ts
@@ -1020,6 +1419,8 @@ impl StructuredMemoryStore {
             ));
         }
         let now = crate::common::now_ts();
+        let rowid = fact_rowid(&tx, id)?;
+        fts_delete(&tx, rowid, &current.category, &current.content)?;
         tx.execute(
             "UPDATE facts SET active=0, revision=revision+1, updated_ts=?1 WHERE owner_id=?2 AND public_id=?3 AND revision=?4 AND active=1",
             params![now, owner, id, expected_revision],
@@ -1302,6 +1703,7 @@ impl StructuredMemoryStore {
                     params![id, owner, cleaned, category, digest(&cleaned), now],
                 )
                 .map_err(sql)?;
+                fts_insert(tx, tx.last_insert_rowid(), &category, &cleaned)?;
             }
             "update" => {
                 let target = record.target_fact_id.as_deref().unwrap_or("");
@@ -1317,6 +1719,15 @@ impl StructuredMemoryStore {
                 )?;
                 self.bind_target(tx, owner, record)?;
                 let now = crate::common::now_ts();
+                let rowid = fact_rowid(tx, target)?;
+                let previous = tx
+                    .query_row(
+                        "SELECT category, content FROM facts WHERE owner_id=?1 AND public_id=?2",
+                        params![owner, target],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                    )
+                    .map_err(sql)?;
+                fts_delete(tx, rowid, &previous.0, &previous.1)?;
                 tx.execute(
                     "UPDATE facts SET content=?1, category=?2, content_digest=?3, revision=revision+1, updated_ts=?4
                      WHERE owner_id=?5 AND public_id=?6 AND revision=?7 AND active=1",
@@ -1331,19 +1742,25 @@ impl StructuredMemoryStore {
                     ],
                 )
                 .map_err(sql)?;
+                fts_insert(tx, rowid, &category, &content)?;
             }
             "deactivate" => {
                 self.bind_target(tx, owner, record)?;
                 let now = crate::common::now_ts();
+                let target = record.target_fact_id.as_deref().unwrap_or("");
+                let rowid = fact_rowid(tx, target)?;
+                let previous = tx
+                    .query_row(
+                        "SELECT category, content FROM facts WHERE owner_id=?1 AND public_id=?2",
+                        params![owner, target],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                    )
+                    .map_err(sql)?;
+                fts_delete(tx, rowid, &previous.0, &previous.1)?;
                 tx.execute(
                     "UPDATE facts SET active=0, revision=revision+1, updated_ts=?1
                      WHERE owner_id=?2 AND public_id=?3 AND revision=?4 AND active=1",
-                    params![
-                        now,
-                        owner,
-                        record.target_fact_id.as_deref().unwrap_or(""),
-                        record.expected_revision.unwrap_or(0)
-                    ],
+                    params![now, owner, target, record.expected_revision.unwrap_or(0)],
                 )
                 .map_err(sql)?;
             }
@@ -1795,6 +2212,18 @@ impl StructuredMemoryStore {
                 |r| r.get(0),
             )
             .map_err(sql)?;
+        let mut fts_stmt = tx
+            .prepare("SELECT id, category, content FROM facts WHERE owner_id=?1")
+            .map_err(sql)?;
+        let fts_rows: Vec<(i64, String, String)> = fts_stmt
+            .query_map(params![owner], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        drop(fts_stmt);
+        for (rowid, category, content) in fts_rows {
+            fts_delete(&tx, rowid, &category, &content)?;
+        }
         tx.execute("DELETE FROM proposal_episode_refs WHERE owner_id=?1", params![owner])
             .map_err(sql)?;
         tx.execute("DELETE FROM episodes WHERE owner_id=?1", params![owner])
@@ -1959,10 +2388,69 @@ impl OwnerExport {
     }
 }
 
+pub fn current_gates(state: &crate::server::state::AppState) -> OperatorGates {
+    state.structured_gates.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+fn store_open_and(store_open: bool, config_on: bool, overlay_on: bool) -> bool {
+    store_open && (config_on || overlay_on)
+}
+
+/// Episode capture is on only when the store is open and the independent
+/// `structured_memory.episode_capture` gate or operator overlay is literal true.
+pub fn capture_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
+    store_open_and(
+        store_open,
+        cfg.flag_is_true("structured_memory.episode_capture"),
+        gates.episode_capture,
+    )
+}
+
 /// Explicit recall is available only when the store is open and the independent
-/// `structured_memory.explicit_recall` gate is the literal YAML boolean true.
-pub fn recall_available(cfg: &AppConfig, store_open: bool) -> bool {
-    store_open && cfg.flag_is_true("structured_memory.explicit_recall")
+/// `structured_memory.explicit_recall` gate or operator overlay is literal true.
+pub fn recall_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
+    store_open_and(
+        store_open,
+        cfg.flag_is_true("structured_memory.explicit_recall"),
+        gates.explicit_recall,
+    )
+}
+
+/// FTS search / force-include is available only when the store is open and the
+/// independent `structured_memory.retrieval` gate or operator overlay is true.
+/// Independent of `/memory on` and `explicit_recall`.
+pub fn retrieval_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
+    store_open_and(
+        store_open,
+        cfg.flag_is_true("structured_memory.retrieval"),
+        gates.retrieval,
+    )
+}
+
+/// Silent FTS inject on every chat. Requires retrieval AND auto_retrieval.
+/// Default-off; Advisor-sensitive silent path.
+pub fn auto_retrieval_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
+    retrieval_available(cfg, store_open, gates)
+        && store_open_and(
+            store_open,
+            cfg.flag_is_true("structured_memory.auto_retrieval"),
+            gates.auto_retrieval,
+        )
+}
+
+pub struct RetrievalIntent<'a> {
+    pub force: bool,
+    pub query: Option<&'a str>,
+    pub message: Option<&'a str>,
+}
+
+impl RetrievalIntent<'_> {
+    pub fn fts_query(&self) -> Option<&str> {
+        self.query
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .or_else(|| self.message.map(str::trim).filter(|q| !q.is_empty()))
+    }
 }
 
 /// Revalidate selected facts at prompt assembly. Missing store or a closed
@@ -1972,8 +2460,9 @@ pub fn assemble_selected_facts(
     cfg: &AppConfig,
     owner: &str,
     selections: &[FactSelection],
+    gates: &OperatorGates,
 ) -> RecallResult {
-    if !recall_available(cfg, store.is_some()) {
+    if !recall_available(cfg, store.is_some(), gates) {
         return RecallResult {
             injected: Vec::new(),
             dropped: selections
@@ -1989,6 +2478,62 @@ pub fn assemble_selected_facts(
         Some(store) => store.recall_selected(owner, selections),
         None => RecallResult::empty(),
     }
+}
+
+/// FTS candidates are rechecked against current fact rows. This path is the
+/// explicit pick for a force-include request (or auto_retrieval when that
+/// separate gate is on). Hits are not written to the shared session.
+pub fn assemble_retrieval_facts(
+    store: Option<&StructuredMemoryStore>,
+    cfg: &AppConfig,
+    owner: &str,
+    intent: &RetrievalIntent<'_>,
+    gates: &OperatorGates,
+) -> (RecallResult, Option<String>) {
+    let run = retrieval_available(cfg, store.is_some(), gates)
+        && (intent.force || auto_retrieval_available(cfg, store.is_some(), gates));
+    if !run {
+        return (RecallResult::empty(), None);
+    }
+    let Some(query) = intent.fts_query() else {
+        return (RecallResult::empty(), None);
+    };
+    let Some(store) = store else {
+        return (RecallResult::empty(), None);
+    };
+    let limit = store.limits().max_retrieval_results;
+    match store.search_facts_fts(owner, query, limit) {
+        Ok(hits) => {
+            let selections = StructuredMemoryStore::selections_from_hits(&hits);
+            let mut recalled = store.recall_selected(owner, &selections);
+            for fact in &mut recalled.injected {
+                fact.source = "fts";
+            }
+            (recalled, None)
+        }
+        Err(err) => (RecallResult::empty(), Some(err.code)),
+    }
+}
+
+pub fn merge_recall(selected: RecallResult, retrieved: RecallResult, max: usize) -> RecallResult {
+    let mut merged = RecallResult::empty();
+    let mut seen = std::collections::BTreeSet::new();
+    for fact in selected.injected.into_iter().chain(retrieved.injected) {
+        if merged.injected.len() >= max {
+            merged.dropped.push(DroppedSelection {
+                id: fact.id,
+                reason: "over_limit",
+            });
+            continue;
+        }
+        if !seen.insert(fact.id.clone()) {
+            continue;
+        }
+        merged.injected.push(fact);
+    }
+    merged.dropped.extend(selected.dropped);
+    merged.dropped.extend(retrieved.dropped);
+    merged
 }
 
 pub fn format_selected_facts(facts: &[RecalledFact]) -> String {
@@ -2025,6 +2570,7 @@ pub fn disabled_status(owner: &str, limits: &Limits) -> Value {
         "episode_capture": false,
         "explicit_recall": false,
         "retrieval": false,
+        "auto_retrieval": false,
         "retrieval_fusion": false,
         "consolidation": false,
         "rag": false,
@@ -2044,6 +2590,7 @@ pub fn disabled_status(owner: &str, limits: &Limits) -> Value {
         "pending_proposal_count": 0,
         "episode_count": 0,
         "episode_health": EpisodeHealth::default().as_json(),
+        "retrieval_health": RetrievalHealth::default().as_json(),
         "limits": limits.as_json(),
     })
 }
@@ -2209,6 +2756,29 @@ mod tests {
         assert!(StructuredMemoryStore::open(&path, &cfg(dir.path())).is_err());
         assert!(!dir.path().join("memory").exists());
         assert!(!dir.path().join("structured.sqlite3").exists());
+    }
+
+    #[test]
+    fn traversal_home_does_not_write_or_load_operator_gates() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path().join("nested").join("..").join("escaped"));
+        let gates = OperatorGates {
+            retrieval: true,
+            ..OperatorGates::default()
+        };
+        assert!(gates.save(&home).is_err());
+        assert!(!dir.path().join("nested").join("memory").exists());
+        assert!(!dir.path().join("escaped").join("memory").exists());
+        let loaded = OperatorGates::load(&home);
+        assert_eq!(loaded, OperatorGates::default());
+
+        let safe = Home::at(dir.path().join("home"));
+        gates.save(&safe).unwrap();
+        let reloaded = OperatorGates::load(&safe);
+        assert!(reloaded.retrieval);
+        assert!(!reloaded.auto_retrieval);
+        assert!(!reloaded.episode_capture);
+        assert!(!reloaded.explicit_recall);
     }
 
     #[test]
@@ -2555,8 +3125,107 @@ mod tests {
                 id: fact.id,
                 expected_revision: fact.revision,
             }],
+            &OperatorGates::default(),
         );
         assert!(recalled.injected.is_empty());
         assert_eq!(recalled.dropped[0].reason, "recall_disabled");
+    }
+
+    #[test]
+    fn fts_indexes_facts_not_episodes_and_quotes_operators() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        store
+            .add_fact("user_alice", "Prefer metric units in examples.", "pref", "add")
+            .unwrap();
+        store
+            .add_fact("user_alice", "Keep OR NEAR operators as data.", "style", "add")
+            .unwrap();
+        store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 12,
+                    assistant_chars: 40,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let metric = store.search_facts_fts("user_alice", "metric", 8).unwrap();
+        assert_eq!(metric.len(), 1);
+        assert!(metric[0].fact.content.contains("metric"));
+        assert_eq!(metric[0].provenance, "fts5");
+        let operators = store
+            .search_facts_fts("user_alice", r#"OR NEAR "operators""#, 8)
+            .unwrap();
+        assert_eq!(operators.len(), 1);
+        assert!(operators[0].fact.content.contains("OR NEAR"));
+        let glued = store.search_facts_fts("user_alice", "NEAR/3 metric", 8).unwrap();
+        assert!(glued.is_empty() || glued.iter().all(|h| h.fact.content.contains("metric")));
+        assert!(store.search_facts_fts("user_bob", "metric", 8).unwrap().is_empty());
+        assert!(store
+            .search_facts_fts("user_alice", "Completed local chat", 8)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn fts_rebuild_recovers_and_stays_with_fact_txn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let fact = store
+            .add_fact("user_alice", "Prefer metric units in examples.", "pref", "add")
+            .unwrap();
+        store.with_connection(|conn| {
+            conn.execute_batch("DROP TABLE facts_fts;").unwrap();
+        });
+        assert!(store.search_facts_fts("user_alice", "metric", 8).is_err());
+        assert_eq!(store.rebuild_facts_fts().unwrap(), 1);
+        assert_eq!(store.search_facts_fts("user_alice", "metric", 8).unwrap().len(), 1);
+        store
+            .deactivate_fact("user_alice", &fact.id, fact.revision, "retire")
+            .unwrap();
+        assert!(store.search_facts_fts("user_alice", "metric", 8).unwrap().is_empty());
+    }
+
+    #[test]
+    fn schema_v2_upgrades_to_fts_and_backfills_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("structured.sqlite3");
+        {
+            let staged = tempfile::Builder::new()
+                .prefix(".structured.")
+                .tempfile_in(dir.path())
+                .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                staged
+                    .as_file()
+                    .set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .unwrap();
+            }
+            let mut conn = connect(staged.path()).unwrap();
+            let tx = conn.transaction().unwrap();
+            tx.execute_batch(FACTS_PROPOSALS_DDL).unwrap();
+            tx.execute_batch(EPISODE_DDL).unwrap();
+            let fact_id = crate::common::random_hex(16);
+            let digest = crate::common::sha256_hex("Prefer metric units");
+            tx.execute(
+                "INSERT INTO facts(public_id,owner_id,content,category,content_digest,revision,active,created_ts,updated_ts)
+                 VALUES(?1,'user_alice','Prefer metric units','pref',?2,1,1,1,1)",
+                params![fact_id, digest],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            conn.close().ok();
+            staged.persist_noclobber(&path).unwrap();
+        }
+        write_atomic(&marker_path(&path), MARKER_BODY, Some(0o600)).unwrap();
+        let store = StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
+        assert_eq!(store.list_facts("user_alice").unwrap().len(), 1);
+        assert_eq!(store.search_facts_fts("user_alice", "metric", 8).unwrap().len(), 1);
     }
 }

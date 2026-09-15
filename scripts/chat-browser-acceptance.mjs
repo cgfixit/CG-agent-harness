@@ -11,6 +11,19 @@ const html = await readFile(new URL('../assets/static/harness.html', import.meta
 let persona=''; let clearFails=false;
 let authFixture=false, signedIn=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
+let memoryEnabled=false;
+const structuredGates={episode_capture:false,explicit_recall:false,retrieval:false,auto_retrieval:false};
+const ftsHit={id:'fact_labeled_alpha',revision:1,category:'pref',content:'Prefer metric units in examples.',active:true,score:1,provenance:'fts5',type:'untrusted_background_context'};
+const memoryPayload=()=>({
+ enabled:memoryEnabled,count:0,max_notes:8,max_chars:500,notes:[],
+ rag:{enabled:false,writable_from_harness:false},
+ structured_memory:{separate:true,enabled:true,episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.auto_retrieval,status_path:'/api/structured-memory',prompt_toggle:'harness.json.memory_enabled remains pinned-note inclusion only'}
+});
+const gatePayload=()=>({
+ owner_id:'user_fixture_owner',operator_gates:{...structuredGates},
+ episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,
+ retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.auto_retrieval,memory_on_unchanged:true
+});
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
  const body=data?JSON.parse(data):{}; const path=req.url; requests.push([req.method,path,body]);
@@ -70,11 +83,31 @@ const server=createServer(async(req,res)=>{
  }
  if(path==='/api/web/search'){reply(body.engine==='google'?{provider:'google-serpapi',results:[{rank:1,title:'Fixture Google result',url:'https://veeam.com/kb1',snippet:'Search listing only'}],notice:'Linked page not fetched'}:{hits:[],coverage:{searched:[],failed:[]}});return;}
  if(path==='/api/chat/cancel'){reply({cancelled:true});return;}
+ if(path==='/api/memory'||path.startsWith('/api/memory?')){
+  if(req.method==='POST')memoryEnabled=!!body.enabled;
+  reply(memoryPayload());return;
+ }
+ if(path==='/api/memory/add'||path==='/api/memory/forget'||path==='/api/memory/clear'){reply(memoryPayload());return;}
+ if(path==='/api/structured-memory/gates'){
+  if(req.method==='POST'){
+   if(!Object.hasOwn(structuredGates,body.gate)){reply({detail:{code:'STRUCTURED_MEMORY_GATE',message:'gate must be episode_capture, explicit_recall, retrieval, or auto_retrieval'}},422);return;}
+   structuredGates[body.gate]=!!body.enabled;
+  }
+  reply(gatePayload());return;
+ }
+ if(path.startsWith('/api/structured-memory/search')){
+  if(!structuredGates.retrieval){reply({detail:{code:'STRUCTURED_MEMORY_RETRIEVAL_DISABLED',message:'structured retrieval is disabled; FTS search requires the retrieval gate'}},409);return;}
+  const q=new URL(path,'http://fixture.invalid').searchParams.get('q')||'';
+  const hits=q.trim()?[ftsHit]:[];
+  reply({owner_id:'user_fixture_owner',hits,count:hits.length,retrieval:true,fts:true,type:'untrusted_background_context',scope:'search candidates only; not injected unless retrieve/auto_retrieval picks them'});return;
+ }
  if(path==='/api/chat'){
   if(mode==='delay'){setTimeout(()=>reply({reply:'LATE_OLD_REPLY',session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:2},tally:{total:3}}),500).unref();return;}
   if(mode==='rate'){reply({detail:{code:'LOOP_RATE_LIMIT',message:'rate fixture'}},429);return;}
   if(mode==='failure'){reply({detail:{code:'HARNESS_LLM_ERROR',message:'failure fixture'}},502);return;}
-  reply({reply:mode==='done'?'GOAL_DONE':mode==='repeat'?'same':'reply '+requests.length,session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:tokens},tally:{total:tokens}});return;
+  const chat={reply:mode==='done'?'GOAL_DONE':mode==='repeat'?'same':'reply '+requests.length,session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:tokens},tally:{total:tokens}};
+  if(body.retrieve)chat.structured_facts={injected:structuredGates.retrieval?[ftsHit]:[],source:'fts',retrieval:!!structuredGates.retrieval};
+  reply(chat);return;
  }
  reply({});
 });
@@ -131,14 +164,34 @@ const {chrome,profile}=launched;const port=launched.port;let ws;
 try {
  const targets=await(await fetch('http://127.0.0.1:'+port+'/json')).json();
  ws=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl);await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j;});
- let seq=0;const pending=new Map();
- ws.onmessage=e=>{const v=JSON.parse(e.data);if(v.id){const p=pending.get(v.id);pending.delete(v.id);v.error?p.reject(Error(JSON.stringify(v.error))):p.resolve(v.result);}};
+ let seq=0;const pending=new Map();let loadResolve=null;const pageErrors=[];
+ ws.onmessage=e=>{
+  const v=JSON.parse(e.data);
+  if(v.method==='Page.loadEventFired'&&loadResolve){const done=loadResolve;loadResolve=null;done();}
+  if(v.method==='Runtime.exceptionThrown')pageErrors.push((v.params&&v.params.exceptionDetails&&(v.params.exceptionDetails.text||v.params.exceptionDetails.exception&&v.params.exceptionDetails.exception.description))||'exception');
+  if(v.id){const p=pending.get(v.id);if(!p)return;pending.delete(v.id);v.error?p.reject(Error(JSON.stringify(v.error))):p.resolve(v.result);}
+ };
  const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});
- const evaluate=async expression=>{const v=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(v.exceptionDetails)throw Error(JSON.stringify(v.exceptionDetails));return v.result.value;};
+ const afterLoad=async work=>{const loaded=new Promise(r=>{loadResolve=r;});await work();await Promise.race([loaded,pause(8000)]);};
+ const evaluate=async expression=>{
+  for(let attempt=0;attempt<10;attempt++){
+   try{
+    const v=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
+    if(v.exceptionDetails)throw Error(JSON.stringify(v.exceptionDetails));
+    return v.result.value;
+   }catch(err){
+    const msg=String(err&&err.message||err);
+    if(attempt<9&&/Inspected target navigated or closed/.test(msg)){await pause(80);continue;}
+    throw err;
+   }
+  }
+ };
  const until=async expression=>{for(let i=0;i<150;i++){const v=await evaluate(expression);if(v)return v;await pause(50);}throw Error('Timed out: '+expression);};
  const send=command=>evaluate('document.getElementById("input").value='+JSON.stringify(command)+';onSend()');
  const chatCount=()=>requests.filter(r=>r[1]==='/api/chat').length;
- await call('Page.navigate',{url:base});await until('typeof onSend === "function"');
+ await call('Page.enable');await call('Runtime.enable');
+ await afterLoad(()=>call('Page.navigate',{url:base}));
+ await until('typeof onSend === "function"');
  await until('document.getElementById("sSoulV").textContent === "missing"');
  await until('document.getElementById("hAuthWho").textContent.includes("authentication disabled")');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'disabled-auth homes must not advertise a login');
@@ -156,6 +209,29 @@ try {
  await evaluate('document.getElementById("soulClose").click()');assert.equal(await evaluate('document.getElementById("soulContent").value'),'');
  await send('/prompt');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("BROWSER_PERSONA")'));
  await send('/goal Review a patch');assert.equal(sessions.size,1);assert.equal(await evaluate('sessionGoal'),'Review a patch');
+ const beforeMemoryOn=requests.filter(r=>r[1]==='/api/structured-memory/gates').length;
+ await send('/memory on');
+ assert.equal(requests.filter(r=>r[1]==='/api/structured-memory/gates').length,beforeMemoryOn,'/memory on must not flip structured gates');
+ assert.equal(structuredGates.retrieval,false);
+ const beforeDisabledSearch=chatCount();
+ await send('/memory search metric');
+ assert.equal(chatCount(),beforeDisabledSearch,'search is not inject when retrieval is off');
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("STRUCTURED_MEMORY_RETRIEVAL_DISABLED")'));
+ await send('/memory retrieval on');
+ assert.equal(structuredGates.retrieval,true);assert.equal(structuredGates.auto_retrieval,false);assert.equal(structuredGates.explicit_recall,false);
+ const beforeSearch=chatCount();
+ await send('/memory search metric');
+ assert.equal(chatCount(),beforeSearch,'FTS search stays candidates-only');
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("search is not inject")'));
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("fact_labeled_alpha")'));
+ const searchReq=requests.filter(r=>String(r[1]).startsWith('/api/structured-memory/search')).at(-1);
+ assert.equal(searchReq[0],'GET');assert.ok(String(searchReq[1]).includes('q=metric'));
+ const beforeRetrieve=chatCount();
+ await send('/memory retrieve metric');
+ assert.equal(chatCount(),beforeRetrieve+1);
+ const retrieveReq=requests.filter(r=>r[1]==='/api/chat').at(-1)[2];
+ assert.equal(retrieveReq.retrieve,true);assert.equal(retrieveReq.retrieve_query,'metric');assert.equal(retrieveReq.message,'metric');
+ assert.ok(retrieveReq.session_id,'force-include chat keeps the current session');
  await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal:")'));
  let before=chatCount();await send('/loop 2');assert.equal(chatCount(),before+1);assert.equal(await evaluate('loopState.remaining'),1);
  await send('/loop');assert.equal(chatCount(),before+2);assert.equal(await evaluate('loopState'),null);
@@ -225,7 +301,7 @@ try {
  await send('/goal Implement the fixture');await send('/goal stage codex/goal-fixture');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture');
  const goalSession=await evaluate('currentSession');assert.equal(await evaluate('pendingAgentRun.max_iterations'),1);
  await evaluate('window.__cgahLoaded=1');
- await call('Page.reload',{ignoreCache:true});
+ await afterLoad(()=>call('Page.reload',{ignoreCache:true}));
  await until('typeof onSend === "function" && window.__cgahLoaded!==1');
  await send('/session use '+goalSession);await send('/goal task');assert.equal(await evaluate('pendingAgentRun.goal_stage.session_id'),goalSession);
  await send('/agent confirm');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture','missing reason keeps request staged');
@@ -235,7 +311,7 @@ try {
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("WEB_GOOGLE_CHALLENGE")'));
  assert.ok(!requests.some(r=>r[0]==='POST' && ['/api/agent/jobs','/api/agent/run'].includes(r[1])),'chat and skill staging never execute coding work');
  // The real browser must execute the minimal-status login and key editor flows.
- authFixture=true;await call('Page.reload',{ignoreCache:true});
+ authFixture=true;await afterLoad(()=>call('Page.reload',{ignoreCache:true}));
  await until('!document.getElementById("hAuthLoginBox").hidden');
  assert.equal(await evaluate('document.getElementById("hAuthHint")?.hidden'),false,'show the fresh-install login hint before authentication');
  assert.match(await evaluate('document.getElementById("hAuthHint").innerText'),/Default login is User: admin \/ Password: admin/);
@@ -282,7 +358,8 @@ try {
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
- console.log(JSON.stringify({passed:true,coverage:['Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution']}));
+ assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
+ console.log(JSON.stringify({passed:true,coverage:['Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','memory search candidates only','memory retrieve force-include']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

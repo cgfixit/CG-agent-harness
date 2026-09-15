@@ -64,7 +64,7 @@ for the acceptance boundaries.
 | Capability | How it works |
 |---|---|
 | Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
-| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. Optional structured facts, governed proposals, and bounded episodes (#87 M1/M3/M5) are a separate account-private store; models may suggest, not silently write. Facts and episodes are not auto-injected into `/prompt`. Chat explains these controls; the operator executes them. |
+| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. `/memory on` includes those notes only. Optional structured facts, governed proposals, bounded episodes, and facts-only FTS (#87) are a separate account-private store behind default-off gates; models may suggest, not silently write. Search is not inject. Facts enter `/prompt` only after an explicit pick (`selected_facts`, `/memory retrieve`, or `retrieve`) or the separately gated `auto_retrieval` path. Episodes are never injected. Chat explains these controls; the operator executes them. |
 | Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
@@ -196,17 +196,31 @@ For a chat session:
 Send your question, then use `/loop 3` for a bounded sequence of continuation
 turns (default 3, ceiling 5). The console normally pauses for the operator between
 turns; `/loop auto` toggles auto-continue and `/loop stop` cancels it. Server-side
-budgets still apply. `/memory` manages optional pinned notes and `/soul` controls
-persona context; neither gives the model permission to mutate a repository.
-Structured memory (issue #87 M1/M3/M5 + Phase 4) is a distinct, default-off, account-private
-facts+proposals API plus optional bounded episode capture and explicit fact
-recall: suggest is not mutate, confirm+reason is required to apply facts, and
-episode staging never writes canonical facts. `/memory on` still includes only
-pinned notes. Selected facts enter `/prompt` only when
-`structured_memory.explicit_recall` is the literal boolean true and the
-operator selected them; they are revalidated at assembly and cannot authorize
-tools, coding, or network.
-See [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). A missing
+budgets still apply. `/memory` manages optional pinned notes (`memory/notes.json`)
+and `/soul` controls persona context; neither gives the model permission to
+mutate a repository. `/memory on|off` includes or excludes those notes only.
+
+A separate, default-off structured-memory store (`memory/structured.sqlite3`)
+holds account-private facts, governed proposals, and optional episodes
+(issue #87). Models may propose; applying a fact still requires `confirm` and
+`reason`. Episode capture never writes facts and never injects episode text.
+Independent `flag_is_true` gates all ship **false** (quoted `"true"` is off):
+`structured_memory.enabled`, `episode_capture`, `explicit_recall`,
+`retrieval`, and `auto_retrieval`. Slash overlays
+`/memory capture|recall|retrieval|auto-retrieve on|off` persist
+`memory/structured_gates.json` once the store is open; they do not flip
+`/memory on`. Selected facts enter `/prompt` when `explicit_recall` is on and
+the operator picked them. Facts-only FTS (`/memory search`) returns candidates
+only. Force-include for one prompt: `/memory retrieve <query>` or `retrieve` /
+`retrieve_query` on `/api/chat` and `/api/prompt/preview`. Assembly rechecks
+owner, active, and revision. When both notes and facts are present the reserved
+split is 1500/1500 of the 3000-character memory body. `auto_retrieval` ships
+false; when it is on **and** retrieval is on, chat may FTS the user message and
+inject rechecked top-k without a per-request flag. Recalled text cannot
+authorize tools, coding, or network. This tree does not ship embeddings, a
+vector database, consolidation, RAG fusion, or episode FTS. See
+[docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) and
+[setup-guide §7.5](setup-guide.md#75-operator-memory-notes). A missing
 `soul.md` is reported as missing rather than loaded. `GOAL_DONE` is an unverified
 model report, not evidence that coding work is complete.
 
@@ -555,7 +569,8 @@ explicit invariant statement in the PR body.
 | [docs/SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) | HTTPS trust/renewal, SQLite migration, roles, terminal commands, URL rules, research budgets and API Keys |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Toolchains, lockfiles, feature choices, retained pins and dependency drift checks |
 | [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging, and recovery |
-| [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Issue #87 M1/M3/M5: account-private facts, governed proposals, bounded episodes, retention/export |
+| [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator howto for pinned notes and structured memory (search ≠ inject) |
+| [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Issue #87 Phases 3–5: account-private facts/proposals/episodes, explicit recall, facts-only FTS |
 | [docs/BOUNDED_EDITS.md](docs/BOUNDED_EDITS.md) | Exact-content edit format, scope and budget limits |
 | [docs/GIT_APPROVAL.md](docs/GIT_APPROVAL.md) | Approval binding, commit/push/publish separation |
 | [docs/CONSOLE_JOBS.md](docs/CONSOLE_JOBS.md) | Asynchronous console runs and browser acceptance |

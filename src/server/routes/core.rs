@@ -315,8 +315,17 @@ pub async fn chat(
         .as_ref()
         .map(|items| super::structured_memory::selections_from_items(items))
         .unwrap_or_else(|| session.selected_facts.clone());
-    let (pinned, facts, memory_budget, recalled) =
-        super::structured_memory::prompt_memory(&state, &owner, settings.memory_enabled, &selections);
+    let (pinned, facts, memory_budget, recalled, retrieval_error) = super::structured_memory::prompt_memory(
+        &state,
+        &owner,
+        settings.memory_enabled,
+        &selections,
+        crate::server::structured_memory::RetrievalIntent {
+            force: req.retrieve,
+            query: req.retrieve_query.as_deref(),
+            message: Some(req.message.as_str()),
+        },
+    );
     let system_prompt = compose_system_prompt(&PromptInputs {
         selected_skills: &selected_skills,
         soul_enabled: settings.soul_enabled,
@@ -438,7 +447,20 @@ pub async fn chat(
             "explicit_recall": crate::server::structured_memory::recall_available(
                 &state.cfg,
                 state.structured_memory.is_some(),
+                &crate::server::structured_memory::current_gates(&state),
             ),
+            "retrieval": crate::server::structured_memory::retrieval_available(
+                &state.cfg,
+                state.structured_memory.is_some(),
+                &crate::server::structured_memory::current_gates(&state),
+            ),
+            "auto_retrieval": crate::server::structured_memory::auto_retrieval_available(
+                &state.cfg,
+                state.structured_memory.is_some(),
+                &crate::server::structured_memory::current_gates(&state),
+            ),
+            "retrieve": req.retrieve,
+            "retrieval_error": retrieval_error,
             "requested": selections.iter().map(|f| json!({"id": f.id, "expected_revision": f.expected_revision})).collect::<Vec<_>>(),
             "injected": recalled.preview_json()["injected"],
             "dropped": recalled.preview_json()["dropped"],
