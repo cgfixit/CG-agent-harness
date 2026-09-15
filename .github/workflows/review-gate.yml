@@ -55,6 +55,11 @@ jobs:
       # Logins whose review-summary comment marks an in-progress review.
       REVIEW_BOTS: chatgpt-codex-connector[bot]
       POLL_MINUTES: "12"
+      # Codex starts a review a few seconds after "opened" / "ready for
+      # review"; wait this long before the first look on those events so the
+      # gate sees the bot's Running marker instead of racing it (observed on
+      # #100: gate green at :44, Codex Running posted at :43).
+      GRACE_SECONDS: "45"
       CHECK_NAME: review gate
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -131,6 +136,13 @@ jobs:
             }
 
             await publish("in_progress", null, "Evaluating review threads and bot reviews", `Run started for #${pr.number} @ ${pr.head.sha.slice(0, 7)}`);
+
+            const action = context.payload.action;
+            if (bots.size && context.eventName === "pull_request" && (action === "opened" || action === "ready_for_review")) {
+              const grace = Number(process.env.GRACE_SECONDS) * 1000;
+              core.info(`${action}: waiting ${grace / 1000}s for a bot review to announce itself before the first look`);
+              await sleep(grace);
+            }
 
             let threads, running, attempt = 0;
             for (;;) {
