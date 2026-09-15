@@ -90,6 +90,21 @@ pub fn retrieve(
     group: Option<&str>,
     limit: usize,
 ) -> Result<Vec<Passage>> {
+    retrieve_many(pages, policy, &[query], group, limit).map(|mut results| results.pop().unwrap_or_default())
+}
+
+/// Rank each query independently against one request-local, policy-filtered index.
+/// Results retain query order; no index or authorization survives this lookup.
+pub fn retrieve_many(
+    pages: &[Page],
+    policy: &Policy,
+    queries: &[&str],
+    group: Option<&str>,
+    limit: usize,
+) -> Result<Vec<Vec<Passage>>> {
+    if queries.is_empty() {
+        return Ok(Vec::new());
+    }
     let failed = |_| error("WEB_INDEX_FAILED", "derived passage index failed; cache can be rebuilt");
     let mut schema = Schema::builder();
     let text_options = TextOptions::default().set_indexing_options(
@@ -101,7 +116,7 @@ pub fn retrieve(
     let heading = schema.add_text_field("heading", text_options.clone());
     let body = schema.add_text_field("text", text_options);
     let row = schema.add_u64_field("row", STORED);
-    // ponytail: rebuild from the bounded cache each query. A persistent reader
+    // ponytail: rebuild from the bounded cache each lookup. A persistent reader
     // is justified only if measured rebuild latency dominates interactive use.
     let index = Index::create_in_ram(schema.build());
     let mut writer = index
@@ -125,96 +140,102 @@ pub fn retrieve(
     let mut parser = QueryParser::for_index(&index, vec![title, heading, body]);
     parser.set_field_boost(title, 1.6);
     parser.set_field_boost(heading, 1.3);
-    // User input is data, never Tantivy query syntax. Split terms support BM25;
-    // the quoted full query adds a phrase boost without an operator escape.
-    let terms: Vec<_> = query
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|s| !s.is_empty())
-        .take(32)
-        .collect();
-    if terms.is_empty() {
-        return Ok(Vec::new());
-    }
-    let quoted = query.replace('\\', "\\\\").replace('"', "\\\"");
-    let expression = format!(
-        "\"{quoted}\"^2 {}",
-        terms.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(" ")
-    );
-    let query_expr = parser
-        .parse_query(&expression)
-        .map_err(|_| error("WEB_BAD_QUERY", "query cannot be indexed"))?;
-    let identifier = if query.contains('_') || query.contains("::") {
-        Some(
-            regex::RegexBuilder::new(&format!(
-                r"(?:^|[^\p{{L}}\p{{N}}_]){}(?:$|[^\p{{L}}\p{{N}}_])",
-                regex::escape(query)
-            ))
-            .case_insensitive(true)
-            .build()
-            .map_err(|_| error("WEB_BAD_QUERY", "invalid identifier"))?,
-        )
-    } else {
-        None
-    };
-    let mut candidates = Vec::new();
-    for (score, address) in searcher
-        .search(&query_expr, &TopDocs::with_limit(64).order_by_score())
-        .map_err(failed)?
-    {
-        let found: TantivyDocument = searcher.doc(address).map_err(failed)?;
-        let i = found
-            .get_first(row)
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| error("WEB_INDEX_FAILED", "invalid passage index row"))? as usize;
-        let mut p = evidence
-            .get(i)
-            .ok_or_else(|| error("WEB_INDEX_FAILED", "invalid passage index row"))?
-            .clone();
-        if identifier
-            .as_ref()
-            .is_some_and(|re| !re.is_match(&p.text) && !re.is_match(&p.title) && !re.is_match(&p.heading))
-        {
-            continue;
-        }
-        // Exact identifiers/phrases get a modest deterministic bonus.
-        p.score = score
-            + if p.text.to_lowercase().contains(&query.to_lowercase()) {
-                2.0
+    queries
+        .iter()
+        .map(|&query| {
+            // User input is data, never Tantivy query syntax. Split terms support BM25;
+            // the quoted full query adds a phrase boost without an operator escape.
+            let terms: Vec<_> = query
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|s| !s.is_empty())
+                .take(32)
+                .collect();
+            if terms.is_empty() {
+                return Ok(Vec::new());
+            }
+            let quoted = query.replace('\\', "\\\\").replace('"', "\\\"");
+            let expression = format!(
+                "\"{quoted}\"^2 {}",
+                terms.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(" ")
+            );
+            let query_expr = parser
+                .parse_query(&expression)
+                .map_err(|_| error("WEB_BAD_QUERY", "query cannot be indexed"))?;
+            let identifier = if query.contains('_') || query.contains("::") {
+                Some(
+                    regex::RegexBuilder::new(&format!(
+                        r"(?:^|[^\p{{L}}\p{{N}}_]){}(?:$|[^\p{{L}}\p{{N}}_])",
+                        regex::escape(query)
+                    ))
+                    .case_insensitive(true)
+                    .build()
+                    .map_err(|_| error("WEB_BAD_QUERY", "invalid identifier"))?,
+                )
             } else {
-                0.0
+                None
             };
-        candidates.push(p);
-    }
-    candidates.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
-    let mut output = Vec::new();
-    let mut seen_text = BTreeSet::new();
-    let mut source_counts: BTreeMap<String, usize> = BTreeMap::new();
-    // First pass keeps source diversity; second allows a neighboring passage.
-    for cap in [1, 2] {
-        for p in &candidates {
-            if output.len() >= limit.min(16) {
-                return Ok(output);
+            let mut candidates = Vec::new();
+            for (score, address) in searcher
+                .search(&query_expr, &TopDocs::with_limit(64).order_by_score())
+                .map_err(failed)?
+            {
+                let found: TantivyDocument = searcher.doc(address).map_err(failed)?;
+                let i = found
+                    .get_first(row)
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| error("WEB_INDEX_FAILED", "invalid passage index row"))?
+                    as usize;
+                let mut p = evidence
+                    .get(i)
+                    .ok_or_else(|| error("WEB_INDEX_FAILED", "invalid passage index row"))?
+                    .clone();
+                if identifier
+                    .as_ref()
+                    .is_some_and(|re| !re.is_match(&p.text) && !re.is_match(&p.title) && !re.is_match(&p.heading))
+                {
+                    continue;
+                }
+                // Exact identifiers/phrases get a modest deterministic bonus.
+                p.score = score
+                    + if p.text.to_lowercase().contains(&query.to_lowercase()) {
+                        2.0
+                    } else {
+                        0.0
+                    };
+                candidates.push(p);
             }
-            let normalized = p.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            let hash = crate::common::sha256_hex(&normalized);
-            if source_counts.get(&p.url).copied().unwrap_or(0) >= cap || seen_text.contains(&hash) {
-                continue;
+            candidates.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
+            let mut output = Vec::new();
+            let mut seen_text = BTreeSet::new();
+            let mut source_counts: BTreeMap<String, usize> = BTreeMap::new();
+            // First pass keeps source diversity; second allows a neighboring passage.
+            for cap in [1, 2] {
+                for p in &candidates {
+                    if output.len() >= limit.min(16) {
+                        return Ok(output);
+                    }
+                    let normalized = p.text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    let hash = crate::common::sha256_hex(&normalized);
+                    if source_counts.get(&p.url).copied().unwrap_or(0) >= cap || seen_text.contains(&hash) {
+                        continue;
+                    }
+                    // Substantially overlapping boilerplate: compare word sets for this
+                    // small top-64 candidate set, never the whole corpus pairwise.
+                    let words: BTreeSet<_> = normalized.split_whitespace().collect();
+                    if output.iter().any(|prior: &Passage| {
+                        let old: BTreeSet<_> = prior.text.split_whitespace().collect();
+                        !words.is_empty() && words.intersection(&old).count() * 10 > words.union(&old).count() * 9
+                    }) {
+                        continue;
+                    }
+                    seen_text.insert(hash);
+                    *source_counts.entry(p.url.clone()).or_default() += 1;
+                    output.push(p.clone());
+                }
             }
-            // Substantially overlapping boilerplate: compare word sets for this
-            // small top-64 candidate set, never the whole corpus pairwise.
-            let words: BTreeSet<_> = normalized.split_whitespace().collect();
-            if output.iter().any(|prior: &Passage| {
-                let old: BTreeSet<_> = prior.text.split_whitespace().collect();
-                !words.is_empty() && words.intersection(&old).count() * 10 > words.union(&old).count() * 9
-            }) {
-                continue;
-            }
-            seen_text.insert(hash);
-            *source_counts.entry(p.url.clone()).or_default() += 1;
-            output.push(p.clone());
-        }
-    }
-    Ok(output)
+            Ok(output)
+        })
+        .collect()
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -699,6 +720,43 @@ mod tests {
         .unwrap();
         assert_eq!(hit.len(), 1);
         assert!(hit[0].text.contains("WIDGET_RETRY_COUNT"));
+        // A mixed batch must retain independent rankings, empty result slots,
+        // query order, limits, and the same complete evidence as separate calls.
+        let queries = [
+            "WIDGET_RETRY_COUNT",
+            ".*",
+            "Widget",
+            "no_such_identifier",
+            "İK",
+            "Widget",
+        ];
+        let pages = std::slice::from_ref(&page);
+        for group in [None, Some("docs"), Some("other")] {
+            for limit in [0, 1, 3] {
+                let separate: Vec<_> = queries
+                    .iter()
+                    .map(|query| retrieve(pages, &policy, query, group, limit).unwrap())
+                    .collect();
+                let batch = retrieve_many(pages, &policy, &queries, group, limit).unwrap();
+                assert_eq!(
+                    serde_json::to_value(batch).unwrap(),
+                    serde_json::to_value(separate).unwrap()
+                );
+            }
+        }
+        assert!(retrieve_many(pages, &policy, &[], None, 3).unwrap().is_empty());
+        let mut revoked = policy.clone();
+        revoked.rules.clear();
+        assert!(retrieve_many(pages, &revoked, &queries, None, 3)
+            .unwrap()
+            .iter()
+            .all(Vec::is_empty));
+        let mut corrupt = page.clone();
+        corrupt.text.push_str(" changed after hashing");
+        assert!(retrieve_many(&[corrupt], &policy, &queries, None, 3)
+            .unwrap()
+            .iter()
+            .all(Vec::is_empty));
         assert!(retrieve(std::slice::from_ref(&page), &policy, ".*", None, 3)
             .unwrap()
             .is_empty());

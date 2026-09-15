@@ -254,10 +254,8 @@ async fn lookup(
         let policy = state.web.policy()?;
         let mut evidence = Vec::new();
         let mut seen = BTreeSet::new();
-        let ranked = queries
-            .iter()
-            .map(|query| super::web_index::retrieve(&pages, &policy, query, group.as_deref(), 8))
-            .collect::<Result<Vec<_>>>()?;
+        let queries: Vec<_> = queries.iter().map(String::as_str).collect();
+        let ranked = super::web_index::retrieve_many(&pages, &policy, &queries, group.as_deref(), 8)?;
         // Interleave query results before applying the shared evidence budget.
         for rank in 0..8 {
             for results in &ranked {
