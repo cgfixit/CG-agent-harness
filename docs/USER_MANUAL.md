@@ -140,7 +140,19 @@ to search and inject.
 
 ## Manual consolidation
 
-Default **off**. After capture has staged episodes:
+Default **off**. Capture stages metadata, not durable facts. After a successful
+captured turn, write the one durable sentence you want considered:
+
+```text
+/memory remember Prefer metric units in examples. :: My standing preference
+```
+
+This command explicitly confirms saving your summary on your latest completed
+episode. The visible reason is required. It prints the episode id; it does not
+start consolidation or write facts. This is **not chat autosave**. An open store
+and a completed episode are required; capture may be off if that episode exists.
+Summaries are bounded by `max_episode_summary_chars` (default 500) and scanned.
+Then queue suggestions:
 
 ```text
 /memory consolidation on
@@ -149,8 +161,10 @@ Default **off**. After capture has staged episodes:
 
 That claims the local generation gate, sends only those episode summaries to
 the local model (no tools, no web, no recalled facts), and writes pending
-proposals. It does **not** create or update facts. Review and apply remain the
-proposal path below. `/memory on` does not open this gate.
+proposals. It does **not** create or update facts. Review and apply use the
+Memory panel below. Manually selecting an episode without a semantic summary
+still runs, but has worse quality: metadata alone is not a source of facts.
+`/memory on` does not open this gate.
 
 ## Automatic consolidation
 
@@ -162,14 +176,31 @@ episodes:
 /memory auto-consolidate on
 ```
 
-A bounded idle worker may pick eligible `none`/`pending` episodes (owner-scoped,
+A bounded idle worker may pick unexpired `none`/`pending` episodes with a
+nonblank human semantic summary (owner-scoped,
 capped by `max_consolidation_episodes`) and reuse the manual consolidator.
 It writes **pending proposals only**. It does not create, update, or delete
 facts. Feature-off starts no worker. Disabling stops new claims; leftover
 `running` rows recover like manual. Interactive chat wins the generation
 gate. Restart reuses the same idempotency key.
 
-## Propose and apply (API)
+The `consolidator-v2` prompt prefers fewer durable, supported suggestions.
+`structured_memory.min_consolidation_confidence` defaults to 0.40 (clamped to
+0–1); supplied confidence below it is rejected, while omitted confidence remains
+accepted. All gates still ship false; confidence is not a review substitute.
+
+## Review and apply (console and API)
+
+Open **Memory** in the console sidebar or run `/memory proposals`. The panel
+shows pending action, category, content, source episode ids, and proposal id.
+Expand **Review full proposal**, enter your reason, then choose **Apply** or
+**Reject**. That button explicitly confirms your decision for the displayed
+revision through the existing API. Empty/blank reasons are refused. Refresh to
+reload after a stale-proposal error. A closed store has no decision controls.
+
+HTTP equivalent: review `GET /api/structured-memory/proposals/{id}`, then POST
+to that same path with `revision`, `confirm: true`, a nonblank `reason`, and
+`apply: true` (apply) or `apply: false` (reject), using `X-CyClaw-CSRF`.
 
 Slash commands do not write facts. Typical operator path:
 

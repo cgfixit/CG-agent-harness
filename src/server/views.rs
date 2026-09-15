@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 45] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 47] = [
     (
         "goal-stage",
         "/goal stage|task",
@@ -238,6 +238,20 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 45] = [
         "POST",
         "/api/structured-memory/consolidation",
         "manual selected-episode consolidation into pending proposals only",
+    ),
+    (
+        "structured-memory-remember",
+        "/memory remember <sentence> :: <reason>",
+        "POST",
+        "/api/structured-memory/episodes/{id}/summary",
+        "confirm a human summary on this owner's latest completed episode; no fact write",
+    ),
+    (
+        "structured-memory-proposals",
+        "/memory proposals",
+        "GET",
+        "/api/structured-memory/proposals",
+        "review pending proposals in Memory; Apply and Reject require a reason and reviewed revision",
     ),
     (
         "structured-episodes",
@@ -682,10 +696,10 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 45);
+        assert_eq!(HARNESS_SURFACES.len(), 47);
         let report = list_wired_tools(&registered);
-        assert_eq!(report["total"], 45);
-        assert_eq!(report["wired"], 45, "a catalog surface is unwired");
+        assert_eq!(report["total"], 47);
+        assert_eq!(report["wired"], 47, "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }

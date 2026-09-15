@@ -820,7 +820,15 @@ only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
      wins the generation gate. Pending proposals only.
 3. `/memory on` remains pinned-note inclusion only and never opens these gates.
 
-**Manual consolidation** (default-off; pending proposals only):
+**Summarize, consolidate, review** (default-off; no chat autosave):
+
+```text
+/memory remember Prefer metric units in examples. :: My standing preference
+```
+
+This explicitly confirms attaching your bounded, scanned sentence to your latest
+completed episode; it requires a visible reason and an open store. It writes no
+facts and starts no consolidation. Use the returned episode id:
 
 ```text
 /memory consolidation on
@@ -829,8 +837,16 @@ only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
 
 That claims the local generation gate, sends only those episode summaries to
 the local model (no tools, no web, no recalled facts), and writes pending
-proposals. It does **not** create or update facts. Review and apply remain the
-proposal path. Automatic consolidation additionally needs
+proposals. It does **not** create or update facts. Review and apply use the
+Memory panel: `/memory proposals`, expand the full proposal, then Apply or
+Reject with a nonblank reason. Each button confirms the displayed revision
+through the existing decide API. Manual selection of summary-less episodes is
+still allowed but has worse quality. Auto-consolidation requires an unexpired
+`none`/`pending` episode with a nonblank human semantic summary.
+The `consolidator-v2` confidence floor is
+`structured_memory.min_consolidation_confidence: 0.40` (clamped to 0–1);
+omitted model confidence is still accepted. All gates still ship false.
+Automatic consolidation additionally needs
 `/memory auto-consolidate on` and is **AND**ed with `consolidation`. Feature-off
 starts no worker. Chat wins the generation gate. Latest v0.1.11 includes the
 manual command; auto-consolidate is tip `main` ([PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95)).
@@ -1009,6 +1025,8 @@ confirmation and persistence semantics.
 | `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; section 7.5 |
 | `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` | Structured-memory gates; `/memory on` stays pinned notes |
 | `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include; search is not inject |
+| `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on your latest completed episode; no fact write |
+| `/memory proposals` | Open the Memory panel; review then Apply/Reject with a reason |
 | `/memory consolidate <episode-id...>` | Manual selected-episode consolidation into pending proposals; requires `consolidation`; does not write facts |
 | `/model`, `/model use <name>` | Inspect/select an available chat model |
 | `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |

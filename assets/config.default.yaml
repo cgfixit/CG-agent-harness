@@ -306,4 +306,6 @@ structured_memory:
   selected_fact_prompt_chars: 1500
   max_consolidation_episodes: 8
   max_consolidation_candidates: 8
+  # Drop lower-confidence candidates; omitted model confidence remains accepted.
+  min_consolidation_confidence: 0.40
   auto_consolidation_idle_ms: 2000

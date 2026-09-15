@@ -210,8 +210,11 @@ Independent `flag_is_true` gates all ship **false** (quoted `"true"` is off):
 Slash overlays
 `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` persist
 `memory/structured_gates.json` once the store is open; they do not flip
-`/memory on`. Selected facts enter `/prompt` when `explicit_recall` is on and
-the operator picked them. Facts-only FTS (`/memory search`) returns candidates
+`/memory on`. `/memory remember <sentence> :: <reason>` confirms attaching your
+semantic summary to your latest completed episode; it writes no facts and starts
+no consolidation. `/memory proposals` opens the Memory panel for review and
+Apply/Reject with a reason. This is not chat autosave. Selected facts enter `/prompt`
+when `explicit_recall` is on and the operator picked them. Facts-only FTS (`/memory search`) returns candidates
 only. Force-include for one prompt: `/memory retrieve <query>` or `retrieve` /
 `retrieve_query` on `/api/chat` and `/api/prompt/preview`. Assembly rechecks
 owner, active, and revision. When both notes and facts are present the reserved
@@ -220,7 +223,8 @@ false; when it is on **and** retrieval is on, chat may FTS the user message and
 inject rechecked top-k without a per-request flag. Manual consolidation
 (`/memory consolidate <episode-id...>`) writes pending proposals only and
 never applies facts. `auto_consolidation` ships false; when it is on **and**
-consolidation is on, a bounded idle worker may reuse that runner. Feature-off
+consolidation is on, a bounded idle worker may reuse that runner for unexpired
+episodes with a nonblank human semantic summary. Feature-off
 starts no worker. Chat wins generation-gate contention. Recalled text cannot
 authorize tools, coding, or network. This tree does not ship embeddings, a
 vector database, RAG fusion, or episode FTS. See

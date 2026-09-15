@@ -11,7 +11,13 @@ const html = await readFile(new URL('../assets/static/harness.html', import.meta
 let persona=''; let clearFails=false;
 let authFixture=false, signedIn=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
-let memoryEnabled=false;
+let memoryEnabled=false, structuredOpen=true;
+let latestEpisode={id:'episode_labeled_latest',outcome:'completed',semantic_summary:null};
+const memoryProposals=[
+ {id:'proposal_labeled_apply',revision:'revision_apply',action:'add',category:'pref',content:'Prefer metric units <script>throw new Error("unsafe")</script>',source_episode_ids:['episode_labeled_latest'],status:'pending'},
+ {id:'proposal_labeled_reject',revision:'revision_reject',action:'add',category:'pref',content:'Prefer concise answers.',source_episode_ids:['episode_labeled_latest'],status:'pending'},
+ {id:'proposal_labeled_old',revision:'revision_old',action:'add',content:'Already decided',status:'applied'}
+];
 const structuredGates={episode_capture:false,explicit_recall:false,retrieval:false,auto_retrieval:false,consolidation:false,auto_consolidation:false};
 const ftsHit={id:'fact_labeled_alpha',revision:1,category:'pref',content:'Prefer metric units in examples.',active:true,score:1,provenance:'fts5',type:'untrusted_background_context'};
 const memoryPayload=()=>({
@@ -88,6 +94,23 @@ const server=createServer(async(req,res)=>{
   reply(memoryPayload());return;
  }
  if(path==='/api/memory/add'||path==='/api/memory/forget'||path==='/api/memory/clear'){reply(memoryPayload());return;}
+ if(path==='/api/structured-memory'){reply({enabled:structuredOpen,limits:{max_reason_chars:1000}});return;}
+ if(path==='/api/structured-memory/episodes?latest_completed=true'){
+  if(!structuredOpen){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured memory is disabled'}},409);return;}
+  reply({episodes:latestEpisode?[latestEpisode]:[],available:structuredGates.episode_capture});return;
+ }
+ if(path==='/api/structured-memory/episodes/episode_labeled_latest/summary'){
+  assert.equal(req.method,'POST');assert.equal(req.headers['x-cyclaw-csrf'],'fixture');
+  assert.equal(body.confirm,true);assert.ok(body.reason.trim());
+  latestEpisode.semantic_summary=body.summary;reply(latestEpisode);return;
+ }
+ if(path==='/api/structured-memory/proposals?status=pending'){reply({proposals:memoryProposals.filter(p=>p.status==='pending')});return;}
+ if(path.startsWith('/api/structured-memory/proposals/')){
+  const proposal=memoryProposals.find(p=>p.id===path.split('/').at(-1));
+  assert.equal(req.method,'POST');assert.equal(req.headers['x-cyclaw-csrf'],'fixture');
+  assert.equal(body.confirm,true);assert.ok(body.reason.trim());assert.equal(body.revision,proposal.revision);
+  proposal.status=body.apply?'applied':'rejected';reply(proposal);return;
+ }
  if(path==='/api/structured-memory/gates'){
   if(req.method==='POST'){
    if(!Object.hasOwn(structuredGates,body.gate)){reply({detail:{code:'STRUCTURED_MEMORY_GATE',message:'gate must be episode_capture, explicit_recall, retrieval, auto_retrieval, consolidation, or auto_consolidation'}},422);return;}
@@ -217,6 +240,46 @@ try {
  await send('/memory on');
  assert.equal(requests.filter(r=>r[1]==='/api/structured-memory/gates').length,beforeMemoryOn,'/memory on must not flip structured gates');
  assert.equal(structuredGates.retrieval,false);
+ const beforeRememberChat=chatCount();
+ const memoryWrites=()=>requests.filter(r=>r[0]==='POST'&&r[1].startsWith('/api/structured-memory/')).length;
+ let beforeRemember=memoryWrites();
+ await send('/memory remember Prefer metric units.');
+ await send('/memory remember Prefer metric units. ::   ');
+ await send('/memory remember :: operator reason');
+ assert.equal(memoryWrites(),beforeRemember,'missing summary/reason must not write');
+ await send('/memory remember Prefer  metric units. :: operator reviewed');
+ assert.equal(latestEpisode.semantic_summary,'Prefer  metric units.','remember preserves the sentence remainder');
+ assert.equal(requests.filter(r=>r[1].endsWith('/summary')).at(-1)[2].reason,'operator reviewed');
+ assert.equal(chatCount(),beforeRememberChat,'remember must not send a chat or consolidate');
+ assert.equal(requests.filter(r=>r[1]==='/api/structured-memory/consolidation').length,0);
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("run /memory consolidate episode_labeled_latest")'));
+ beforeRemember=memoryWrites();latestEpisode=null;
+ await send('/memory remember Prefer metric units. :: operator reviewed');
+ assert.equal(memoryWrites(),beforeRemember);
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("Capture is off")'));
+ structuredOpen=false;
+ await send('/memory remember Prefer metric units. :: operator reviewed');
+ assert.equal(memoryWrites(),beforeRemember);
+ await send('/memory proposals');
+ await until('document.getElementById("pane-memory").textContent.includes("store is closed")');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory form").length'),0);
+ structuredOpen=true;
+ await send('/memory proposals');
+ await until('document.querySelectorAll("#pane-memory form").length === 2');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0,'proposal content must stay inert text');
+ const decisions=()=>requests.filter(r=>r[0]==='POST'&&r[1].startsWith('/api/structured-memory/proposals/'));
+ await evaluate('document.querySelector("#pane-memory form button").click()');
+ assert.equal(decisions().length,0,'empty reason cannot apply');
+ await evaluate('document.querySelector("#pane-memory form input").value=" ";document.querySelector("#pane-memory form button").click()');
+ assert.equal(decisions().length,0,'whitespace reason cannot apply');
+ await evaluate('document.querySelector("#pane-memory form input").value="Reviewed preference";document.querySelector("#pane-memory form button").click()');
+ await until('document.getElementById("pane-memory").textContent.includes("Proposal applied.")');
+ assert.equal(decisions().at(-1)[2].apply,true);
+ await evaluate('document.querySelectorAll("#pane-memory form")[1].querySelector("input").value="Not durable";document.querySelectorAll("#pane-memory form")[1].querySelectorAll("button")[1].click()');
+ await until('document.getElementById("pane-memory").textContent.includes("Proposal rejected.")');
+ assert.equal(decisions().at(-1)[2].apply,false);
+ assert.equal(chatCount(),beforeRememberChat);
+ await evaluate(`document.querySelector('[data-pane="commands"]').click()`);
  const beforeDisabledSearch=chatCount();
  await send('/memory search metric');
  assert.equal(chatCount(),beforeDisabledSearch,'search is not inject when retrieval is off');
@@ -363,7 +426,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','memory search candidates only','memory retrieve force-include']}));
+ console.log(JSON.stringify({passed:true,coverage:['Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

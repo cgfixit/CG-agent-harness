@@ -109,6 +109,7 @@ fn main() -> anyhow::Result<()> {
             &facts,
             limits.max_fact_chars,
             limits.max_category_chars,
+            limits.min_consolidation_confidence,
         );
         if case["sensitive"] == true {
             sensitive_candidates += parsed.candidates.len();

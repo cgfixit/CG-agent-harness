@@ -6,6 +6,9 @@
     "consolidation": true,
     "auto_consolidation": true
   },
+  "episode": {
+    "semantic_summary": "Prefer metric units in examples."
+  },
   "expect": {
     "silent_fact_apply": false,
     "pending_proposals_only": true,

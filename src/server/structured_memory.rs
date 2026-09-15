@@ -32,7 +32,7 @@ use crate::common::injection::Scanner;
 
 pub const SCHEMA_VERSION: i64 = 4;
 pub const PUBLIC_ID_LEN: usize = 32;
-pub const SUMMARIZER_VERSION: &str = "consolidator-v1";
+pub const SUMMARIZER_VERSION: &str = "consolidator-v2";
 const MARKER_BODY: &[u8] = b"sqlite3-v1\n";
 
 const DEFAULT_MAX_FACTS: u64 = 64;
@@ -56,6 +56,7 @@ const DEFAULT_PINNED_PROMPT_CHARS: u64 = 1500;
 const DEFAULT_SELECTED_FACT_PROMPT_CHARS: u64 = 1500;
 const DEFAULT_MAX_CONSOLIDATION_EPISODES: u64 = 8;
 const DEFAULT_MAX_CONSOLIDATION_CANDIDATES: u64 = 8;
+const DEFAULT_MIN_CONSOLIDATION_CONFIDENCE: f64 = 0.40;
 const DEFAULT_AUTO_CONSOLIDATION_IDLE_MS: u64 = 2_000;
 
 const FACTS_PROPOSALS_DDL: &str = "
@@ -202,11 +203,16 @@ pub struct Limits {
     pub selected_fact_prompt_chars: usize,
     pub max_consolidation_episodes: usize,
     pub max_consolidation_candidates: usize,
+    pub min_consolidation_confidence: f64,
     pub auto_consolidation_idle_ms: u64,
 }
 
 impl Limits {
     pub fn from_config(cfg: &AppConfig) -> Self {
+        let confidence = cfg.f64_or(
+            "structured_memory.min_consolidation_confidence",
+            DEFAULT_MIN_CONSOLIDATION_CONFIDENCE,
+        );
         Self {
             max_facts_per_owner: clamp_u64(
                 cfg.u64_or("structured_memory.max_facts_per_owner", DEFAULT_MAX_FACTS),
@@ -334,6 +340,11 @@ impl Limits {
                 1,
                 16,
             ) as usize,
+            min_consolidation_confidence: if confidence.is_finite() {
+                confidence.clamp(0.0, 1.0)
+            } else {
+                DEFAULT_MIN_CONSOLIDATION_CONFIDENCE
+            },
             auto_consolidation_idle_ms: clamp_u64(
                 cfg.u64_or(
                     "structured_memory.auto_consolidation_idle_ms",
@@ -368,6 +379,7 @@ impl Limits {
             "selected_fact_prompt_chars": self.selected_fact_prompt_chars,
             "max_consolidation_episodes": self.max_consolidation_episodes,
             "max_consolidation_candidates": self.max_consolidation_candidates,
+            "min_consolidation_confidence": self.min_consolidation_confidence,
             "auto_consolidation_idle_ms": self.auto_consolidation_idle_ms,
         })
     }
@@ -1713,16 +1725,25 @@ impl StructuredMemoryStore {
     }
 
     pub fn list_proposals(&self, owner: &str) -> Result<Vec<Proposal>> {
+        self.proposals_filtered(owner, false)
+    }
+
+    pub fn list_pending_proposals(&self, owner: &str) -> Result<Vec<Proposal>> {
+        self.proposals_filtered(owner, true)
+    }
+
+    fn proposals_filtered(&self, owner: &str, pending_only: bool) -> Result<Vec<Proposal>> {
         Self::require_owner(owner)?;
         let conn = self.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT public_id,owner_id,action,content,category,target_fact_id,expected_revision,expected_digest,proposal_revision,status,created_ts,decided_ts
-                 FROM proposals WHERE owner_id=?1 ORDER BY created_ts DESC, public_id ASC LIMIT 128",
+                 FROM proposals WHERE owner_id=?1 AND (?2=0 OR status='pending')
+                 ORDER BY created_ts DESC, public_id ASC LIMIT 128",
             )
             .map_err(sql)?;
         let rows = stmt
-            .query_map(params![owner], Self::map_proposal)
+            .query_map(params![owner, pending_only], Self::map_proposal)
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
@@ -1990,6 +2011,21 @@ impl StructuredMemoryStore {
         DEFAULT_AUTO_CONSOLIDATION_IDLE_MS
     }
 
+    pub fn latest_completed_episode(&self, owner: &str) -> Result<Option<Episode>> {
+        Self::require_owner(owner)?;
+        self.lock()
+            .query_row(
+                &format!(
+                    "{} WHERE owner_id=?1 AND outcome='completed' ORDER BY created_ts DESC, public_id ASC LIMIT 1",
+                    Self::episode_select()
+                ),
+                params![owner],
+                Self::map_episode,
+            )
+            .optional()
+            .map_err(sql)
+    }
+
     /// Owner-scoped eligible episode ids (`none`/`pending`), oldest first, capped.
     pub fn eligible_consolidation_ids(&self, owner: &str) -> Result<Vec<String>> {
         Self::require_owner(owner)?;
@@ -2012,14 +2048,17 @@ impl StructuredMemoryStore {
         Ok(rows)
     }
 
-    /// One owner-scoped batch for the idle worker. Skips owners that already
+    /// Unexpired, human-summarized episodes only. Skips owners that already
     /// have a `running` consolidation row.
     pub fn next_auto_consolidation_batch(&self) -> Result<Option<(String, Vec<String>)>> {
         let conn = self.lock();
+        let now = crate::common::now_ts();
         let owner: Option<String> = conn
             .query_row(
                 "SELECT e.owner_id FROM episodes e
                  WHERE e.consolidation_state IN ('none','pending')
+                   AND e.semantic_summary IS NOT NULL AND length(trim(e.semantic_summary)) >= 1
+                   AND e.expires_ts > ?1
                    AND NOT EXISTS (
                      SELECT 1 FROM consolidation_runs r
                      WHERE r.owner_id=e.owner_id AND r.state='running'
@@ -2027,7 +2066,7 @@ impl StructuredMemoryStore {
                  GROUP BY e.owner_id
                  ORDER BY e.owner_id
                  LIMIT 1",
-                [],
+                params![now],
                 |r| r.get(0),
             )
             .optional()
@@ -2039,14 +2078,17 @@ impl StructuredMemoryStore {
             .prepare(
                 "SELECT public_id FROM episodes
                  WHERE owner_id=?1 AND consolidation_state IN ('none','pending')
+                   AND semantic_summary IS NOT NULL AND length(trim(semantic_summary)) >= 1
+                   AND expires_ts > ?3
                  ORDER BY created_ts ASC, public_id ASC
                  LIMIT ?2",
             )
             .map_err(sql)?;
         let ids = stmt
-            .query_map(params![owner, self.limits.max_consolidation_episodes as i64], |r| {
-                r.get(0)
-            })
+            .query_map(
+                params![owner, self.limits.max_consolidation_episodes as i64, now],
+                |r| r.get(0),
+            )
             .map_err(sql)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
@@ -3597,7 +3639,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let _bob = store
+        let bob = store
             .stage_episode(
                 "user_bob",
                 EpisodeDraft {
@@ -3611,6 +3653,13 @@ mod tests {
             .unwrap();
         let alice_ids = store.eligible_consolidation_ids("user_alice").unwrap();
         assert_eq!(alice_ids, vec![alice.id.clone()]);
+        assert!(store.next_auto_consolidation_batch().unwrap().is_none());
+        store
+            .set_episode_summary("user_alice", &alice.id, "Prefer metric units.", "operator summary")
+            .unwrap();
+        store
+            .set_episode_summary("user_bob", &bob.id, "Prefer metric units.", "operator summary")
+            .unwrap();
         let batch = store.next_auto_consolidation_batch().unwrap().unwrap();
         assert_eq!(batch.0, "user_alice");
         assert_eq!(batch.1, vec![alice.id.clone()]);
@@ -3620,6 +3669,106 @@ mod tests {
         let next = store.next_auto_consolidation_batch().unwrap().unwrap();
         assert_eq!(next.0, "user_bob");
         assert!(!next.1.contains(&alice.id));
+    }
+
+    #[test]
+    fn auto_batch_requires_unexpired_nonblank_summary_and_none_or_pending_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let mut expected = Vec::new();
+        for (owner, summary, state, expired, eligible) in [
+            ("user_a", None, "none", false, false),
+            ("user_alice", None, "none", false, false),
+            ("user_alice", Some("   "), "none", false, false),
+            ("user_alice", Some("Prefer metric units."), "none", false, true),
+            ("user_alice", Some("Prefer concise answers."), "pending", false, true),
+            ("user_alice", Some("Prefer metric units."), "done", false, false),
+            ("user_alice", Some("Prefer metric units."), "none", true, false),
+        ] {
+            let episode = store
+                .stage_episode(
+                    owner,
+                    EpisodeDraft {
+                        model_id: "fixture",
+                        outcome: "completed",
+                        user_chars: 8,
+                        assistant_chars: 8,
+                        sensitivity: "normal",
+                    },
+                )
+                .unwrap();
+            // Legacy whitespace rows cannot be attached through the validated API.
+            store
+                .lock()
+                .execute(
+                    "UPDATE episodes SET semantic_summary=?1, consolidation_state=?2, expires_ts=?3 WHERE public_id=?4",
+                    params![
+                        summary,
+                        state,
+                        if expired { 0.0 } else { episode.expires_ts },
+                        episode.id
+                    ],
+                )
+                .unwrap();
+            if eligible {
+                expected.push(episode.id);
+            }
+        }
+        let (owner, ids) = store.next_auto_consolidation_batch().unwrap().unwrap();
+        assert_eq!(owner, "user_alice");
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn latest_completed_episode_is_owner_scoped_and_orders_ties_by_public_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        assert!(store.latest_completed_episode("user_alice").unwrap().is_none());
+        let mut completed = Vec::new();
+        for (owner, outcome, ts) in [
+            ("user_alice", "completed", 10.0),
+            ("user_alice", "completed", 10.0),
+            ("user_alice", "completed", 5.0),
+            ("user_alice", "failed", 20.0),
+            ("user_bob", "completed", 30.0),
+        ] {
+            let episode = store
+                .stage_episode(
+                    owner,
+                    EpisodeDraft {
+                        model_id: "fixture",
+                        outcome,
+                        user_chars: 8,
+                        assistant_chars: 8,
+                        sensitivity: "normal",
+                    },
+                )
+                .unwrap();
+            store
+                .lock()
+                .execute(
+                    "UPDATE episodes SET created_ts=?1 WHERE public_id=?2",
+                    params![ts, episode.id],
+                )
+                .unwrap();
+            if owner == "user_alice" && ts == 10.0 {
+                completed.push(episode.id);
+            }
+        }
+        completed.sort();
+        assert_eq!(
+            store.latest_completed_episode("user_alice").unwrap().unwrap().id,
+            completed[0]
+        );
+    }
+
+    #[test]
+    fn consolidation_confidence_is_bounded_and_invalid_config_uses_default() {
+        for (raw, expected) in [("-1", 0.0), ("2", 1.0), ("0.6", 0.6), (".nan", 0.4), ("\"true\"", 0.4)] {
+            let text = format!("structured_memory:\n  min_consolidation_confidence: {raw}\n");
+            let config = AppConfig::from_str(&text, Path::new("config.yaml")).unwrap();
+            assert_eq!(Limits::from_config(&config).min_consolidation_confidence, expected);
+        }
     }
 
     #[test]
@@ -4149,9 +4298,18 @@ mod tests {
                 },
             )
             .unwrap();
+        let old = store
+            .begin_consolidation_run("user_alice", std::slice::from_ref(&episode.id), "consolidator-v1")
+            .unwrap();
+        store
+            .finish_consolidation_run("user_alice", &old.id, "fixture-v1", 0, 0, &[])
+            .unwrap();
         let run = store
             .begin_consolidation_run("user_alice", std::slice::from_ref(&episode.id), SUMMARIZER_VERSION)
             .unwrap();
+        assert_ne!(run.id, old.id);
+        assert_ne!(run.idempotency_key, old.idempotency_key);
+        assert_eq!(run.summarizer_version, "consolidator-v2");
         let finished = store
             .finish_consolidation_run(
                 "user_alice",

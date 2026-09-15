@@ -206,6 +206,7 @@ fn evaluate_consolidation(store: &StructuredMemoryStore, corpus: &Corpus) -> Con
             &current_facts,
             limits.max_fact_chars,
             limits.max_category_chars,
+            limits.min_consolidation_confidence,
         );
         let bound_ok = !bound.is_empty();
         match case.expect.bind.as_str() {
