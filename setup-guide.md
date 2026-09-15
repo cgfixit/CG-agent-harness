@@ -16,20 +16,22 @@ has no outbound network access. The **console** is the same interface in the
 app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
-**Version scope:** this guide follows this source tree. The
-[v0.1.8 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.8)
-targets `f47d41d` and includes [PR #76](https://github.com/cgfixit/CG-agent-harness/pull/76)
-(`a93006d`, HTTPS, SQLite accounts, permitted research and API Keys),
-[PR #77](https://github.com/cgfixit/CG-agent-harness/pull/77) (`b53ef9d`, fresh
-web settings, login hint and role feedback), [PR #78](https://github.com/cgfixit/CG-agent-harness/pull/78)
-(`dbaa808`, chat web tools and Google keyword search), and the dark-console
-source-link fix at `f47d41d`. The September 12 [v0.1.7 release](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.7)
-targets `44a205e` and predates those features.
-Use a source build or successful Bundle artifact containing the desired changes;
-a PR artifact remains a candidate until merged. The Cargo package version remains
-`0.1.0`; identify the installed source using `Contents/Resources/COMMIT`, the
-workflow SHA, release notes and `/help`. Earlier acceptance records retain their
-dated results and do not certify a different source or bundle.
+**Version scope:** this guide follows this source tree (tip `main`).
+[Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest) is
+[v0.1.11](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.11)
+and targets `e4c796e` ([PR #94](https://github.com/cgfixit/CG-agent-harness/pull/94),
+Phase 6 manual consolidator). Tip `main` at `3f053b3` is newer: it also
+includes [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95)
+(`a132fd3`, optional idle auto-consolidator) and
+[PR #96](https://github.com/cgfixit/CG-agent-harness/pull/96) (`3f053b3`,
+Phase 7 fixture eval/rollback). A downloaded Latest app therefore has manual
+consolidation and not yet auto-consolidation or the Phase 7 corpus. Use a
+source build or successful Bundle artifact on `main` for tip behavior; a PR
+artifact remains a candidate until merged. Do not invent a release that GitHub
+has not published. The Cargo package version remains `0.1.0`; identify the
+installed source using `Contents/Resources/COMMIT`, the workflow SHA, release
+notes and `/help`. Earlier acceptance records retain their dated results and
+do not certify a different source or bundle.
 
 ## Quick route through this guide
 
@@ -776,12 +778,16 @@ false. `/memory on` does not enable structured memory.
 
 #### Structured memory (default-off)
 
-Issue #87 Phases 3–5: account-private facts, governed proposals, optional
-bounded episodes, explicit selected-fact recall, and facts-only FTS5. Models may
+Issue #87 through Phase 6 consolidators and Phase 7 eval: account-private
+facts, governed proposals, optional bounded episodes, explicit selected-fact
+recall, facts-only FTS5, operator-selected episode consolidation into pending
+proposals, and an optional idle auto-consolidator. Phase 7 is a local fixture
+corpus for measuring those paths — not a reason to flip any gate. Models may
 POST a proposal; applying a fact still requires `confirm` and nonempty `reason`
 (same mutation rule as other API writes). Episode staging never writes facts,
 never injects episode text, and never fails an already-successful chat. File
-mode 0600 is access control, not encryption.
+mode 0600 is access control, not encryption. Every structured-memory gate
+ships **false**; measure before considering ON.
 
 **Enable (fail-closed).** Every gate uses `flag_is_true`: literal YAML `true`
 only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
@@ -814,6 +820,21 @@ only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
      wins the generation gate. Pending proposals only.
 3. `/memory on` remains pinned-note inclusion only and never opens these gates.
 
+**Manual consolidation** (default-off; pending proposals only):
+
+```text
+/memory consolidation on
+/memory consolidate <episode-id> [episode-id...]
+```
+
+That claims the local generation gate, sends only those episode summaries to
+the local model (no tools, no web, no recalled facts), and writes pending
+proposals. It does **not** create or update facts. Review and apply remain the
+proposal path. Automatic consolidation additionally needs
+`/memory auto-consolidate on` and is **AND**ed with `consolidation`. Feature-off
+starts no worker. Chat wins the generation gate. Latest v0.1.11 includes the
+manual command; auto-consolidate is tip `main` ([PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95)).
+
 **Search ≠ inject.** `/memory search <query>` (or
 `GET /api/structured-memory/search`) returns a small top-k of candidates. It
 does not write session selection and does not inject. Retrieval off is a 409,
@@ -834,14 +855,24 @@ Status can report `retrieval: true` or `consolidation: true` while fusion
 and RAG stay false. `auto_consolidation` ships false; enable it only with
 consolidation. Feature-off starts no worker.
 
-Day-to-day operator howto: [docs/USER_MANUAL.md](docs/USER_MANUAL.md). Contract:
+Day-to-day operator howto: [docs/USER_MANUAL.md](docs/USER_MANUAL.md). Contract,
+rollout order, and Phase 7 bars:
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). Use pinned notes for
 shared-home preferences; use structured facts only after explicit review.
 Clearing session history keeps derived episodes unless you confirm
 `delete_derived_episodes`. Before flipping any later gate, re-run the Phase 7
-fixture corpus (`cargo test --locked --test structured_memory_phase7`). Disable
-stops new reads/writes/workers without deleting the database; export and purge
-remain.
+fixture corpus on tip `main` (not present in Latest v0.1.11):
+
+```text
+GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
+  cargo test --locked --test structured_memory_phase7 -- --nocapture
+cargo run --locked --example structured_memory_eval -- /tmp/phase7-report.json
+```
+
+Suggested order: store → capture → explicit recall → FTS → manual
+consolidation → auto consolidation. `/memory on` never opens these gates.
+Disable (`/memory … off` or config literal `false`) stops new
+reads/writes/workers without deleting the database; export and purge remain.
 
 ### 7.6 Google search, URL fetch and permitted-page research
 
@@ -977,7 +1008,8 @@ confirmation and persistence semantics.
 | `/soul review <id>`, `apply <id> <reason>`, `reject <id> <reason>` | Review and explicitly decide a persona proposal |
 | `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; section 7.5 |
 | `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` | Structured-memory gates; `/memory on` stays pinned notes |
-| `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include |
+| `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include; search is not inject |
+| `/memory consolidate <episode-id...>` | Manual selected-episode consolidation into pending proposals; requires `consolidation`; does not write facts |
 | `/model`, `/model use <name>` | Inspect/select an available chat model |
 | `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |
 | `/skill use <id...>`, `clear`, `status` | Replace, clear or inspect session prompt-skill selection |
@@ -1528,11 +1560,14 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain v0.1.4 or later, or a successful main Bundle artifact containing the required source |
+| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain [Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest) (v0.1.11) or a successful main Bundle artifact. Do not install v0.1.4–v0.1.8 as a current floor — tip has moved |
 | Local coding loop never fetches a file the planner asked for | Cloud planner is in use, the selector failed the clone jail, the basename is on `denied_read_basenames` (`.env`, keys, credentials, …), the per-run model-read cap (6) was hit, or an unclosed FILE/EDITS block swallowed the `=== READ ===` line | Pre-stage needed ordinary files with `/agent read`. Denied basenames refuse operator and model READ alike (`sensitive_basename`). Cloud runs refuse every model-requested read. Local refusals are audit-logged as `agentic_real_repo_read_request_refused`. The deny-list is not a secret scanner; the jail is not a secrets control. |
-| New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona and your account's web selection are still included | Verify the running bundle includes `71eef11` or later; inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
-| Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify the app includes the capability-guide fix at `71eef11` or later |
+| New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona and your account's web selection are still included | Verify the running bundle is Latest (v0.1.11) or tip `main`; the session-isolation fix landed at `71eef11`. Inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
+| Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify Latest (v0.1.11) or tip `main` (capability-guide fix landed at `71eef11`) |
 | `/memory search` reports retrieval disabled | `structured_memory.retrieval` (and the store) are off | Enable the store in `config.yaml`, restart, then `/memory retrieval on`. Search still does not inject; use `/memory retrieve` for one prompt |
+| `/memory consolidate` is unknown or omitted from `/help` | Installed build predates [PR #94](https://github.com/cgfixit/CG-agent-harness/pull/94) / v0.1.11 | Use Latest v0.1.11 or a newer main Bundle. The command writes pending proposals only |
+| `/memory auto-consolidate` is unknown | Installed build is Latest v0.1.11 (`e4c796e`) or older; the idle worker is [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95) on tip `main` | Build from tip `3f053b3` or a successful main Bundle after that SHA. The gate stays default-off and requires `consolidation` |
+| `/memory consolidate` or auto-consolidator reports the gate off | `structured_memory.consolidation` (and for auto, also `auto_consolidation`) are off, or the store is closed | Enable the store in `config.yaml`, restart, then `/memory consolidation on`. Auto additionally needs `/memory auto-consolidate on`. Both ship false; measure Phase 7 on tip before considering ON |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
 | Model inventory says `tag_missing`, or fallback is selected unexpectedly | Exact configured ID is absent from a responding inventory | Compare section 4 inventories and config; verify persisted `/model` selection against the resolved endpoint, then restart to reevaluate fallback |
 | Soul says missing | No `soul.md` exists in this active home | Valid fresh-home state; use explicit `/soul edit` if you want persona, then `/soul on` and `/prompt` |
@@ -1566,6 +1601,10 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 - **`AGENTS.md`** — the operating rules for anyone (human or AI agent) contributing code to this
   repository, including the quality bar every change is held to.
 
+- [Operator memory manual](docs/USER_MANUAL.md) — pinned notes vs structured
+  memory, gate on/off list, search vs retrieve, consolidators, rollback.
+- [Structured memory contract](docs/STRUCTURED_MEMORY.md) — ownership, HTTP
+  surfaces, Phase 6 consolidators, Phase 7 eval/rollback. Gates stay default-off.
 - [Chat workflow reference](docs/CHAT_WORKFLOWS.md) — persona proposals, skill
   bounds, goal completion evidence and remaining scope.
 - [Offline Cargo verification](docs/OFFLINE_CARGO.md) — dependency preparation
