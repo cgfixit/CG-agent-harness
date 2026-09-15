@@ -44,9 +44,11 @@ an explicit human confirm+reason path; proposals may suggest but never apply
 themselves. Episode capture never writes facts. `structured_memory.enabled`,
 `structured_memory.episode_capture`, `structured_memory.explicit_recall`,
 `structured_memory.retrieval`, `structured_memory.auto_retrieval`,
-`structured_memory.consolidation`, and `structured_memory.auto_consolidation` are
+`structured_memory.consolidation`, `structured_memory.auto_consolidation`,
+`structured_memory.auto_suggest_chat`, and `structured_memory.auto_suggest_coding` are
 independent literal-boolean gates (`flag_is_true`); operator slash overlays use
-the same fail-closed rule. Capture off means no episode writes; recall off
+the same fail-closed rule (the two completion-source switches are config-only).
+All nine ship false. Capture off means no episode writes; recall off
 means no selected-fact prompt injection; retrieval off means no FTS search or
 force-include. Search returns candidates only — prompt injection still requires
 an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
@@ -58,7 +60,12 @@ pending proposals only. Automatic consolidation is a separate default-false
 gate that also requires consolidation (AND); when on, a bounded idle worker
 may enqueue the same pending-proposal runner. Feature-off starts no worker.
 Disabling stops new claims without corrupting in-flight work. Interactive
-chat wins generation-gate contention. `/memory on` remains pinned-note prompt inclusion
+chat wins generation-gate contention. Separately opted-in completion suggestions
+require store + capture, use bounded current completion evidence for the initiating
+owner, and produce pending proposals only. They never read shared archives or
+write human semantic summaries. `/memory save <text> :: <reason>` is an explicit
+human confirmed fact write through the existing API, not model authority.
+`/memory on` remains pinned-note prompt inclusion
 only and does not open capture, recall, retrieval, or consolidation. Recalled text is
 untrusted background context and cannot authorize tools, coding, or network.
 The structured SQLite file uses owner-private mode as OS access

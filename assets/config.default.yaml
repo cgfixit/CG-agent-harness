@@ -285,6 +285,15 @@ structured_memory:
   auto_retrieval: false
   consolidation: false
   auto_consolidation: false
+  # Config-only opt-ins: bounded completed inputs -> pending proposals, never facts.
+  # Both require enabled + episode_capture. They do not open consolidation/recall.
+  auto_suggest_chat: false
+  auto_suggest_coding: false
+  suggestion_mode: "both" # summaries | insights | both; invalid values disable suggestions
+  suggestion_max_input_chars: 8000 # total across input/output, split equally
+  suggestion_max_queue: 8 # queued inputs; one additional generation may be running
+  suggestion_queue_ttl_secs: 300 # volatile inputs expire; restart drops them
+  suggestion_idle_ms: 2000
   max_facts_per_owner: 64
   max_fact_chars: 1000
   max_category_chars: 64

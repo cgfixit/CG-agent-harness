@@ -163,9 +163,12 @@ pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
             });
         }
         payload["operator_gates"] = gates.as_json();
+        payload["automatic_suggestions"] = crate::server::structured_memory_suggest::status(state, owner_id);
         Ok(payload)
     } else {
-        Ok(disabled_status(owner_id, &limits))
+        let mut payload = disabled_status(owner_id, &limits);
+        payload["automatic_suggestions"] = crate::server::structured_memory_suggest::status(state, owner_id);
+        Ok(payload)
     }
 }
 
@@ -897,9 +900,12 @@ pub async fn cancel_consolidation(
     Path(id): Path<String>,
 ) -> ApiResult<PrivateJson> {
     let owner = owner(user);
-    let store = require_consolidation(&state)?;
+    let store = require_store(&state)?;
     let run = store.cancel_consolidation_run(&owner, &id).map_err(|e| store_err(&e))?;
-    if state.generation_gate.owner() == "consolidation" {
+    if matches!(
+        state.generation_gate.owner().as_str(),
+        "consolidation" | "memory-suggestion"
+    ) {
         state.chat.abort_in_flight();
     }
     audit(

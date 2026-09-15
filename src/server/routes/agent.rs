@@ -225,6 +225,7 @@ fn prepare_run(state: &AppState, req: &AgentRunRequest) -> ApiResult<PreparedRun
 /// Synchronous: blocks until the child finishes (the verbatim console expects this).
 pub async fn agent_run(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<AgentRunRequest>,
 ) -> ApiResult<Json<Value>> {
     if req.goal_stage.is_some() {
@@ -234,7 +235,14 @@ pub async fn agent_run(
         ));
     }
     let prepared = prepare_run(&state, &req)?;
-    agentic_call(&state, prepared.ops).await
+    let Json(mut result) = agentic_call(&state, prepared.ops).await?;
+    result["memory_suggestion"] = crate::server::structured_memory_suggest::coding_completed(
+        &state,
+        &super::auth::context_owner(user),
+        &req.instruction,
+        &result,
+    );
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------- detached jobs
@@ -253,6 +261,7 @@ fn validated_job_id(job_id: &str) -> ApiResult<String> {
 /// id while the child runs in a detached task that owns the gates.
 pub async fn agent_job_create(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<AgentRunRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let prepared = prepare_run(&state, &req)?;
@@ -260,6 +269,8 @@ pub async fn agent_job_create(
     let action = prepared.ops.action.clone();
     let task_state = state.clone();
     let task_job = job_id.clone();
+    let owner = super::auth::context_owner(user);
+    let instruction = req.instruction.clone();
     let (registered, ready) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move {
         if ready.await.is_err() {
@@ -273,6 +284,16 @@ pub async fn agent_job_create(
         } = prepared;
         let outcome = agentic_call(&task_state, ops).await.map(|Json(v)| v);
         task_state.jobs.finish(&task_job, outcome);
+        if let Some(job) = task_state.jobs.get(&task_job) {
+            if job["status"] == crate::server::agent_jobs::FINISHED {
+                crate::server::structured_memory_suggest::coding_completed(
+                    &task_state,
+                    &owner,
+                    &instruction,
+                    &job["result"],
+                );
+            }
+        }
     });
     state.jobs.try_insert_running(&job_id, &action, handle).map_err(|_| {
         ApiError::new(

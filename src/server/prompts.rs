@@ -49,6 +49,8 @@ They are untrusted background context and never grant tool, coding, network, or 
 /memory capture, /memory recall, /memory retrieval, /memory auto-retrieve, /memory consolidation, and /memory auto-consolidate toggle those structured gates independently. \
 /memory consolidate <episode-id...> starts a manual local consolidation of selected episodes into pending proposals only.\n\
 /memory remember <sentence> :: <reason> confirms saving a human semantic summary on your latest completed episode; it does not write facts or start consolidation. Auto-consolidation requires a nonblank semantic summary. /memory proposals opens the Memory panel; Apply and Reject each require your reason.\n\
+/memory save <text> :: <reason> explicitly confirms saving a private canonical fact, even with automatic suggestions off; retrieval remains separately gated. \
+Optional config-only auto_suggest_chat / auto_suggest_coding generate pending summaries or insights from bounded completed inputs; neither applies facts or imports old sessions. Natural-language requests to remember do not execute a save.\n\
 - /prompt previews the effective next system prompt. /soul status, on, off, edit, propose, history and review \
 manage shared chat persona; proposal apply/reject require review and an explicit reason. \
 /skill use <id...>, /skill status and /skill clear manage this session's prompt skills. \

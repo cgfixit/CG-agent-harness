@@ -80,6 +80,7 @@ pub async fn clear_sessions(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<SessionClearRequest>,
 ) -> ApiResult<Json<Value>> {
+    crate::server::structured_memory_suggest::clear_chat_queue(&state);
     state.chat.abort_in_flight();
     let deleted = state
         .store
@@ -437,6 +438,14 @@ pub async fn chat(
         reply.body_text.chars().count(),
         sensitivity,
     );
+    let memory_suggestion = crate::server::structured_memory_suggest::enqueue(
+        &state,
+        &owner,
+        crate::server::structured_memory_suggest::Source::Chat,
+        episode["id"].as_str(),
+        &req.message,
+        &reply.body_text,
+    );
     Ok(Json(json!({
         "session_id": session.session_id,
         "reply": reply.body_text,
@@ -445,6 +454,7 @@ pub async fn chat(
         "usage": {"prompt_tokens": reply.prompt_tokens, "completion_tokens": reply.completion_tokens},
         "tally": updated.tally.to_json(),
         "episode": episode,
+        "memory_suggestion": memory_suggestion,
         "structured_facts": {
             "explicit_recall": crate::server::structured_memory::recall_available(
                 &state.cfg,

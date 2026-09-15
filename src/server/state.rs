@@ -59,6 +59,8 @@ pub struct AppState {
     pub request_log: bool,
     /// Idle auto-consolidator. Feature-off never spawns a worker.
     pub auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl,
+    /// Bounded volatile completion inputs. Only proposals are persisted automatically.
+    pub memory_suggestions: crate::server::structured_memory_suggest::Suggestions,
 }
 
 impl AppState {

@@ -35,7 +35,7 @@ episodes referenced by pending proposals.
    privacy-filtered summary only — no raw query, no full answer, no hidden
    reasoning, no tool secrets.
 5. Manual semantic-summary attach (`POST .../episodes/{id}/summary`) before any
-   automatic consolidator. Clipped assistant output is not labeled a summary.
+   episode auto-consolidator. Clipped assistant output is not labeled a summary.
 6. TTL, per-owner row/byte quotas, and deterministic oldest-first pruning that
    preserves episodes referenced by pending proposals.
 7. Owner list/get/delete, expired purge, owner purge, and bounded local HTML
@@ -68,10 +68,45 @@ episodes referenced by pending proposals.
     default-off gate is flipped. Live reviewer rates and latency percentiles
     stay documented-only.
 
+## Completion suggestions (separate opt-in)
+
+`auto_suggest_chat` and `auto_suggest_coding` are two additional default-false,
+config-only literal-boolean gates. Both require an open store and episode capture;
+neither requires or opens consolidation, recall or retrieval. `suggestion_mode`
+selects `summaries`, `insights`, or `both` (default); invalid values disable them.
+The `completion-suggestions-v1` worker reads only bounded redacted current
+completion evidence in RAM, using the initiating account captured by the chat or
+coding route. It does not scan shared archives or attach generated text as a
+human semantic summary. Successful synchronous and detached coding routes share
+the hook after the existing shim boundary; I6 is unchanged.
+
+The local model returns `session_summary` / `insight` candidates. Strict parsing,
+source membership, sensitivity rejection, the confidence floor and existing
+binding produce pending proposals through existing idempotent run records.
+Canonical facts remain unchanged until Apply with confirm+reason. There is no
+schema bump, tool/web access, recalled-fact payload or new cloud egress. Generation
+uses temperature 0 and max_tokens 1024. The episode consolidator remains
+`consolidator-v2` and its automatic path still requires human semantic summaries.
+
+Waiting input is capped (8 jobs, 8000 total characters each, 300-second TTL by
+default), lost on restart, and never backfilled from history. Failures do not
+fail completed chat/coding results. Session clear invalidates waiting/in-flight
+chat suggestions. Existing proposals/facts retain their existing deletion rules.
+The worker waits for the shared generation gate; it cannot interrupt active chat.
+A chat arriving during an active suggestion can receive `CHAT_BUSY`. Run cancellation
+requires the open store and owner match, even if manual consolidation is off.
+
+See [MEMORY_GUIDE.md](MEMORY_GUIDE.md) for all memory types, bounds, config recipes,
+manual hard-save with automation off, and retrieval behavior. See
+[MEMORY_BENCHMARK_PLAN.md](MEMORY_BENCHMARK_PLAN.md) for the next-task evaluation
+plan; live model quality is not established by deterministic fixtures. The
+rollout order and locked Phase 7 bars below are unchanged; no defaults flip.
+
 ## What this slice does not ship
 
 Embeddings, vector databases, RAG fusion, episode FTS, episode prompt
-injection, console slash commands that write facts, or any new cloud egress.
+injection, or any new cloud egress. `/memory save <text> :: <reason>` is an
+explicit human fact write through the existing API.
 Status flags for retrieval fusion and RAG remain **false**. `retrieval` or
 `consolidation` can be true while those stay false. `auto_consolidation`
 ships false and starts no worker unless it is on **and** consolidation is on.
@@ -103,7 +138,8 @@ Later phases in #87 remain independently gated.
   silent path. `/memory auto-retrieve on|off` is the overlay.
 - Consolidation: `structured_memory.consolidation`, also `flag_is_true`, ships
   **false**, independent of `/memory on`, capture, recall, retrieval, and
-  auto_retrieval. Off means no summarizer call and no consolidation-run writes.
+  auto_retrieval. Off means no selected-episode summarizer call. The separately
+  opted-in completion-suggestion path may still create its own run records.
   `/memory consolidation on|off` is the overlay. `/memory consolidate <id...>`
   starts a manual run on selected episode IDs.
 - Auto-consolidation: `structured_memory.auto_consolidation`, also
@@ -132,7 +168,9 @@ capability does not grant inspection of another owner's structured memory.
 
 ## Episode contract
 
-- Staging happens **after** successful exchange persistence only.
+- Chat staging happens **after** successful exchange persistence only. Coding
+  suggestion staging happens after a successful shim result and keeps only
+  metadata; detached jobs must also have persisted the finished result.
 - Storage, busy, and write errors become truthful `episode.health` on the
   successful chat response. They do not fail the chat.
 - `session_ref` / `turn_ref` are random opaque ids, not the raw session

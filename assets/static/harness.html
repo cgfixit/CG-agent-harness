@@ -819,6 +819,7 @@ const COMMANDS = [
   ['/memory search <query>', 'FTS fact candidates (not injected)'],
   ['/memory retrieve <query>', 'force FTS include for this prompt only'],
   ['/memory consolidate <id...>', 'manual selected-episode consolidation into pending proposals'],
+  ['/memory save <text> :: <reason>', 'confirm a private fact immediately; automation may remain off'],
   ['/memory remember <sentence> :: <reason>', 'confirm a semantic summary on your latest completed episode'],
   ['/memory proposals', 'open pending proposals; Apply or Reject requires your reason'],
   ['/goal stage <branch>|task', 'explicitly stage the goal as a coding request; inspect durable progress'],
@@ -1198,12 +1199,16 @@ async function runSlash(line) {
             ['auto_consolidation', r && r.auto_consolidation ? 'on' : 'off'],
             ['/memory on', 'unchanged (pinned notes only)']
           ]));
-        } else if (sub === 'remember') {
-          const text = line.replace(/^\/memory\s+remember\b/i, '').trim();
+        } else if (sub === 'remember' || sub === 'save') {
+          const text = line.replace(/^\/memory\s+(?:remember|save)\b/i, '').trim();
           const separator = text.lastIndexOf('::');
           const summary = separator < 0 ? '' : text.slice(0, separator).trim();
           const reason = separator < 0 ? '' : text.slice(separator + 2).trim();
-          if (!summary || !reason) { sys('usage: /memory remember <sentence> :: <reason> — this command confirms saving your summary'); break; }
+          if (!summary || !reason) { sys('usage: /memory ' + sub + ' <text> :: <reason> — this command confirms saving your text'); break; }
+          if (sub === 'save') {
+            const saved = await api('/api/structured-memory/facts', 'POST', {content:summary,category:'manual',reason:reason,confirm:true});
+            sys('Saved private fact ' + saved.id + '. Retrieval is controlled separately; /memory on is pinned notes only.'); break;
+          }
           const r = await api('/api/structured-memory/episodes?latest_completed=true');
           const episode = (r.episodes || [])[0];
           if (!episode) { sys('No completed episode for this account. Capture is ' + (r.available ? 'on; complete a chat turn first.' : 'off; enable capture and complete a chat turn first.')); break; }
@@ -2008,6 +2013,9 @@ async function finishChat(r) {
   renderChatWebTools(r && r.web_tools);
   agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
         ' tok · session total ' + (tally.total || 0));
+  if (r && r.memory_suggestion && r.memory_suggestion.queued) {
+    sys('Memory suggestions queued. Use /memory proposals and Refresh proposals to review after generation. Nothing is applied without your approval and reason.');
+  }
   await refreshStatus();
   await refreshSessions();
   return r && r.reply;
@@ -2283,6 +2291,12 @@ async function refreshMemoryProposals() {
     const status = await api('/api/structured-memory');
     if (!feedback.isConnected) return;
     if (!status.enabled) { feedback.textContent = 'Structured memory store is closed. /memory on includes pinned notes only.'; return; }
+    const automatic = status.automatic_suggestions;
+    if (automatic) {
+      const info = document.createElement('p');
+      info.textContent = 'Automatic suggestions: chat ' + (automatic.chat ? 'on' : 'off') + ', coding ' + (automatic.coding ? 'on' : 'off') + '; mode ' + automatic.mode + '. Queued: ' + automatic.queued + (automatic.running ? '; generating.' : '.') + ' Generated drafts need your approval before they become saved memory.';
+      panel.appendChild(info);
+    }
     const result = await api('/api/structured-memory/proposals?status=pending');
     if (!feedback.isConnected) return;
     const pending = (result.proposals || []).filter(p => p.status === 'pending');

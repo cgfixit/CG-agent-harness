@@ -104,6 +104,7 @@ pub struct TestServer {
 }
 
 pub struct ServerOptions {
+    pub shim_exe: Option<PathBuf>,
     pub overrides: Vec<(String, String)>,
     pub api_key: Option<String>,
     pub deny_all_tools: bool,
@@ -113,6 +114,7 @@ pub struct ServerOptions {
 impl Default for ServerOptions {
     fn default() -> Self {
         Self {
+            shim_exe: None,
             // Existing operation fixtures exercise their independent contracts
             // under the explicit legacy opt-out. Secure-default tests opt in
             // and authenticate through the actual account routes.
@@ -155,7 +157,7 @@ pub async fn spawn_server(model_url: &str, opts: ServerOptions) -> TestServer {
         app_opts.tool_allowlist_override = Some(BTreeSet::new());
     }
     app_opts.web_test_resolve = opts.web_resolve;
-    app_opts.shim_exe = Some(PathBuf::from(BIN));
+    app_opts.shim_exe = Some(opts.shim_exe.unwrap_or_else(|| PathBuf::from(BIN)));
     let (router, state) = build_app(app_opts).await.unwrap();
     let transport = cgagentharness::server::transport::Transport::load(&state.home, &state.cfg, "127.0.0.1").unwrap();
     let scheme = transport.scheme();
