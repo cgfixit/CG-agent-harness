@@ -108,7 +108,8 @@ fn oversize_reject_detail_is_truncated() {
     let id = new_run_id();
     let mut record = RealRepoRunRecord::new(&id, "o/r", "d", "running");
     apply_exhausted_diagnostics(&mut record, &result, &oversized);
-    let detail = record.to_json()["reject_detail"].as_str().expect("reject_detail");
+    let json = record.to_json();
+    let detail = json["reject_detail"].as_str().expect("reject_detail");
     assert_eq!(detail.len(), REJECT_DETAIL_MAX_BYTES);
     assert!(!detail.contains("prompt"));
 }
