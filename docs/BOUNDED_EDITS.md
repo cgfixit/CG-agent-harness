@@ -7,13 +7,15 @@ suffix is reserved for this interface. Select one window per file. Missing,
 unsafe, oversized and omitted selections are reported explicitly.
 
 After clone-jail canonicalization, both operator `--read-file` and local
-planner `=== READ ===` selectors are refused when the final path segment
-matches `agentic.deepagent_github.denied_read_basenames` (default `.env` /
+planner `=== READ ===` selectors are refused when any path segment is `.git`
+name-equivalent (`is_dotgit_name`). They are also refused when the final path
+segment matches `agentic.deepagent_github.denied_read_basenames` (default `.env` /
 `.env.*`, `*.pem`, `id_rsa` / `id_rsa*` / `id_ed25519*` / `id_ecdsa*`,
 `credentials*` / `credentials.json`, `.npmrc`, `.netrc`, `*.p12`;
 name-equivalence folded). Cloud proposers still refuse every model-requested
 read. The deny-list is not a secret scanner: secrets can use arbitrary names.
-The clone jail stops path escape; it is not a secrets control.
+The clone jail stops path escape and clone Git metadata reads. It is not a
+secrets control.
 
 The existing ceilings remain 4,000 characters per file and 12,000 total, with a
 256,000-byte internal file-read ceiling. The exact displayed span is retained

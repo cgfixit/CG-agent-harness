@@ -1,9 +1,10 @@
 //! Jailed clone: reads, path-validated writes, and four fixed git subcommands.
 //! Port of `agentic/deepagent_github/repo_workspace.py`.
 //!
-//! Reads: a capability `Dir` held open on the clone (`openat`-style component-wise
-//! resolution, so a symlink can never escape and there is no canonicalize-then-open
-//! window) plus `O_NOFOLLOW` on the leaf (unix). Writes:
+//! Reads: per-segment `.git` name-equivalence refusal, then a capability `Dir`
+//! held open on the clone (`openat`-style component-wise resolution, so a symlink
+//! can never escape and there is no canonicalize-then-open window) plus `O_NOFOLLOW`
+//! on the leaf (unix). Writes:
 //! canonical path -> per-segment `.git` name-equivalence refusal -> resolve
 //! (strict for `add`; dangling-leaf-aware for `write_file`) -> containment ->
 //! landed-path vs the real `.git` dir -> return the LANDED relative path.
@@ -348,9 +349,17 @@ impl<'a> RepoWorkspace<'a> {
 
     /// Validate a repo-relative read target (never "cleaned"; see `repo_paths`).
     fn read_target(&self, target: &str) -> Result<String> {
-        crate::common::repo_paths::canonical_repo_relative_path(target).ok_or_else(|| {
+        let rel = crate::common::repo_paths::canonical_repo_relative_path(target).ok_or_else(|| {
             HarnessError::agentic(format!("cannot read '{target}' from the cloned repository")).detail("target", target)
-        })
+        })?;
+        if rel.split('/').any(is_dotgit_name) {
+            return Err(
+                HarnessError::agentic(format!("cannot read '{target}' from the cloned repository"))
+                    .detail("target", target)
+                    .detail("error", "git path may not touch the clone's .git directory"),
+            );
+        }
+        Ok(rel)
     }
 
     fn read_denied(&self, target: &str, why: &str) -> HarnessError {
