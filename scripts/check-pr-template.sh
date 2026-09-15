@@ -78,12 +78,13 @@ fi
 core_pattern='^(src/shim/|src/server/guards\.rs$|src/server/headers\.rs$|src/agentic/writer\.rs$|src/agentic/executor/sandbox\.rs$|src/agentic/workspace\.rs$|assets/config\.default\.yaml$)'
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 base="${CGAGENTHARNESS_PR_BASE:-origin/main}"
+merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null || true)"
 changed=""
 files_source=""
 if [[ -n "${CGAGENTHARNESS_PR_FILES:-}" ]]; then
   changed="$CGAGENTHARNESS_PR_FILES"
   files_source="CGAGENTHARNESS_PR_FILES"
-elif merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null)"; then
+elif [[ -n "$merge_base" ]]; then
   # --no-renames: a core file moved elsewhere must still surface its source
   # path, not only the destination Git's rename detection would report.
   # Untracked, non-ignored files are appended: `git diff` omits a new core
@@ -114,13 +115,38 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   # Without that heading, any non-template line mentioning an invariant
   # counts. Light edits inside the template's instruction text are not
   # detected; a reviewer reads the section either way.
-  template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
+  template_path=".github/PULL_REQUEST_TEMPLATE.md"
   fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/; s/[[:space:]]+/ /g; s/^ //; s/ $//'; }
-  # Fail closed: without the template the whole body looks "contributed" and
-  # the stock invariant headings satisfy the guarantee regex. Mirrors
-  # pr-template-check.yml `core.setFailed` on a failed template fetch.
-  if [[ ! -f "$template" ]]; then
-    missing+=("PR template not readable; cannot evaluate the core-path rule")
+  # Compare against the template the BASE branch ships, as CI does
+  # (pr-template-check.yml fetches it at pull_request.base.sha): the tip of
+  # $base, not the merge base, so a template changed on main after the fork
+  # is still the one judged. A branch that edits the template itself must
+  # not be able to turn deleted boilerplate into "contributor-written"
+  # evidence. Only without $base is the working-tree copy used, and that is
+  # reported.
+  # A base ref that resolves but lacks the template is CI's own failure
+  # case (pr-template-check.yml `core.setFailed` on a failed fetch) and
+  # must fail closed here too, not fall back: without the base copy the
+  # whole body looks "contributed" and the stock invariant headings satisfy
+  # the guarantee regex. Only a base ref that does not resolve at all
+  # (shallow clone, unfetched remote) falls back to the working tree.
+  template_text=""
+  template_missing=""
+  if git -C "$repo_root" rev-parse --verify -q "$base^{commit}" >/dev/null; then
+    if template_text="$(git -C "$repo_root" show "$base:$template_path" 2>/dev/null)"; then
+      template_source="template at $base"
+    else
+      template_missing="$template_path is absent at $base; cannot evaluate the core-path rule (CI fails the same way)"
+    fi
+  elif [[ -f "$repo_root/$template_path" ]]; then
+    template_text="$(cat "$repo_root/$template_path")"
+    template_source="working-tree template"
+    printf 'check-pr-template: %s does not resolve; comparing against the working-tree template (CI uses the base branch copy)\n' "$base" >&2
+  else
+    template_missing="PR template not readable; cannot evaluate the core-path rule"
+  fi
+  if [[ -n "$template_missing" || -z "$template_text" ]]; then
+    missing+=("${template_missing:-PR template not readable; cannot evaluate the core-path rule}")
     fail=1
   else
     contributed="$(awk '
@@ -140,7 +166,7 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
         } else print line
       }
       END { if (!seen) for (i = 0; i < n; i++) print other[i] }
-    ' <(fold_boxes < "$template") <(printf '%s\n' "$body" | fold_boxes))"
+    ' <(printf '%s\n' "$template_text" | fold_boxes) <(printf '%s\n' "$body" | fold_boxes))"
     # The statement must name a guarantee from INVARIANTS.md (or say none),
     # not merely occupy the section. Wording beyond that is for the reviewer.
     guarantee='invariant|\bnone\b|\bi6\b|process isolation|guard chain|write[ -]gate|clone jail|judged|approval|secret|redact|detached|csrf|sandbox|loopback|weaker than'
@@ -170,5 +196,5 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 
-printf 'check-pr-template: OK — required template sections present (%s)\n' "${files_source:-core-path rule skipped}"
+printf 'check-pr-template: OK — required template sections present (%s; %s)\n' "${files_source:-core-path rule skipped}" "${template_source:-template not compared}"
 exit 0
