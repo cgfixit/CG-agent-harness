@@ -838,7 +838,10 @@ Day-to-day operator howto: [docs/USER_MANUAL.md](docs/USER_MANUAL.md). Contract:
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). Use pinned notes for
 shared-home preferences; use structured facts only after explicit review.
 Clearing session history keeps derived episodes unless you confirm
-`delete_derived_episodes`.
+`delete_derived_episodes`. Before flipping any later gate, re-run the Phase 7
+fixture corpus (`cargo test --locked --test structured_memory_phase7`). Disable
+stops new reads/writes/workers without deleting the database; export and purge
+remain.
 
 ### 7.6 Google search, URL fetch and permitted-page research
 
