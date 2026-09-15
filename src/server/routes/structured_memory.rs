@@ -372,18 +372,31 @@ pub async fn deactivate_fact(
     Ok(private(fact.to_json()))
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProposalListQuery {
+    status: Option<String>,
+}
+
 pub async fn list_proposals(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
+    Query(query): Query<ProposalListQuery>,
 ) -> ApiResult<PrivateJson> {
     let owner = owner(user);
     let store = require_store(&state)?;
-    let proposals: Vec<Value> = store
-        .list_proposals(&owner)
-        .map_err(|e| store_err(&e))?
-        .into_iter()
-        .map(|p| p.to_json())
-        .collect();
+    let proposals = match query.status.as_deref() {
+        None => store.list_proposals(&owner),
+        Some("pending") => store.list_pending_proposals(&owner),
+        Some(_) => {
+            return Err(error(
+                "STRUCTURED_MEMORY_PROPOSAL",
+                "status filter must be pending or omitted",
+            ))
+        }
+    }
+    .map_err(|e| store_err(&e))?;
+    let proposals: Vec<Value> = proposals.into_iter().map(|p| p.to_json()).collect();
     Ok(private(
         json!({"owner_id": owner, "proposals": proposals, "count": proposals.len()}),
     ))
@@ -517,18 +530,29 @@ pub fn stage_after_exchange(
     }
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EpisodeListQuery {
+    #[serde(default)]
+    latest_completed: bool,
+}
+
 pub async fn list_episodes(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
+    Query(query): Query<EpisodeListQuery>,
 ) -> ApiResult<PrivateJson> {
     let owner = owner(user);
     let store = require_store(&state)?;
-    let episodes: Vec<Value> = store
-        .list_episodes(&owner)
-        .map_err(|e| store_err(&e))?
-        .into_iter()
-        .map(|e| e.to_json())
-        .collect();
+    let episodes = if query.latest_completed {
+        store
+            .latest_completed_episode(&owner)
+            .map(|episode| episode.into_iter().collect())
+    } else {
+        store.list_episodes(&owner)
+    }
+    .map_err(|e| store_err(&e))?;
+    let episodes: Vec<Value> = episodes.into_iter().map(|e| e.to_json()).collect();
     Ok(private(json!({
         "owner_id": owner,
         "episodes": episodes,

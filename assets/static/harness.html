@@ -66,9 +66,9 @@
     width: 264px; flex-shrink: 0; background: var(--bg-secondary);
     border-right: 1px solid var(--border); display: flex; flex-direction: column;
   }
-  .side-tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .side-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
   .side-tab {
-    flex: 1; padding: 8px 0; text-align: center; font-family: var(--mono);
+    flex: 1 0 30%; padding: 8px 0; text-align: center; font-family: var(--mono);
     font-size: 10.5px; letter-spacing: .5px; text-transform: uppercase;
     color: var(--text-muted); background: none; border: none; cursor: pointer;
     border-bottom: 2px solid transparent;
@@ -77,6 +77,14 @@
   .side-body { flex: 1; overflow-y: auto; padding: 10px; }
   .side-pane { display: none; }
   .side-pane.active { display: block; }
+  #pane-memory { overflow-wrap: anywhere; }
+  #pane-memory form { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+  #pane-memory p, #pane-memory pre { white-space: pre-wrap; margin: 6px 0; }
+  #pane-memory pre { font-size: 11px; }
+  #pane-memory summary { cursor: pointer; color: var(--accent-blue); }
+  #pane-memory input { display: block; width: 100%; padding: 6px; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; }
+  #pane-memory button { cursor: pointer; margin: 6px 6px 0 0; padding: 6px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px; }
+  #pane-memory button:disabled { opacity: .5; cursor: default; }
 
   .cmd-item {
     display: block; width: 100%; text-align: left; background: none; border: none;
@@ -204,12 +212,14 @@
         <button class="side-tab active" data-pane="commands">Commands</button>
         <button class="side-tab" data-pane="sessions">Sessions</button>
         <button class="side-tab" data-pane="api-keys">API Keys</button>
+        <button class="side-tab" data-pane="memory">Memory</button>
         <button class="side-tab" data-pane="users">Users</button>
       </div>
       <div class="side-body">
         <div class="side-pane active" id="pane-commands"></div>
         <div class="side-pane" id="pane-sessions"></div>
         <div class="side-pane" id="pane-api-keys"><p>Sign in as an administrator to manage credentials.</p></div>
+        <div class="side-pane" id="pane-memory"><p>Open Memory to review this account's pending proposals.</p></div>
         <div class="side-pane" id="pane-users">
           <div id="usersPanelStatus" class="panel-status" hidden></div>
           <div id="usersPanelBody"></div>
@@ -809,6 +819,8 @@ const COMMANDS = [
   ['/memory search <query>', 'FTS fact candidates (not injected)'],
   ['/memory retrieve <query>', 'force FTS include for this prompt only'],
   ['/memory consolidate <id...>', 'manual selected-episode consolidation into pending proposals'],
+  ['/memory remember <sentence> :: <reason>', 'confirm a semantic summary on your latest completed episode'],
+  ['/memory proposals', 'open pending proposals; Apply or Reject requires your reason'],
   ['/goal stage <branch>|task', 'explicitly stage the goal as a coding request; inspect durable progress'],
   ['/goal [text]|clear', 'set, show, or clear the session goal'],
   ['/loop [n]|stop|auto', 'chat continuation only; aggregate completion budget; per-turn budget set by server'],
@@ -1186,6 +1198,19 @@ async function runSlash(line) {
             ['auto_consolidation', r && r.auto_consolidation ? 'on' : 'off'],
             ['/memory on', 'unchanged (pinned notes only)']
           ]));
+        } else if (sub === 'remember') {
+          const text = line.replace(/^\/memory\s+remember\b/i, '').trim();
+          const separator = text.lastIndexOf('::');
+          const summary = separator < 0 ? '' : text.slice(0, separator).trim();
+          const reason = separator < 0 ? '' : text.slice(separator + 2).trim();
+          if (!summary || !reason) { sys('usage: /memory remember <sentence> :: <reason> — this command confirms saving your summary'); break; }
+          const r = await api('/api/structured-memory/episodes?latest_completed=true');
+          const episode = (r.episodes || [])[0];
+          if (!episode) { sys('No completed episode for this account. Capture is ' + (r.available ? 'on; complete a chat turn first.' : 'off; enable capture and complete a chat turn first.')); break; }
+          const saved = await api('/api/structured-memory/episodes/' + encodeURIComponent(episode.id) + '/summary', 'POST', {summary:summary,reason:reason,confirm:true});
+          sys('Summary saved on episode ' + saved.id + '; run /memory consolidate ' + saved.id + ' to queue suggestions. No facts written.');
+        } else if (sub === 'proposals') {
+          document.querySelector('[data-pane="memory"]').click();
         } else if (sub === 'consolidate') {
           const ids = rest.slice(1).filter(Boolean);
           if (!ids.length) { sys('usage: /memory consolidate <episode-id> [episode-id...]'); break; }
@@ -2089,6 +2114,7 @@ document.querySelectorAll('.side-tab').forEach(tab => {
     $('pane-' + tab.dataset.pane).classList.add('active');
     if (tab.dataset.pane === 'users') runSlash('/users');
     if (tab.dataset.pane === 'api-keys') refreshKeys();
+    if (tab.dataset.pane === 'memory') refreshMemoryProposals();
   });
 });
 const hAuthLogin = document.getElementById('hAuthLogin');
@@ -2191,7 +2217,7 @@ if (hAuthLogout) {
         return;
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
-    $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('usersPanelBody').replaceChildren();
+    $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
     currentSession = null; sessionRevision++; window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
   });
@@ -2246,6 +2272,49 @@ $('passwordForm').addEventListener('submit', async event => {
   } catch (error) { $('passwordFeedback').textContent = error.message; }
 });
 refreshHarnessAuth();
+async function refreshMemoryProposals() {
+  const panel = $('pane-memory');
+  panel.replaceChildren();
+  const feedback = document.createElement('p'); feedback.setAttribute('role', 'status');
+  const refresh = document.createElement('button'); refresh.textContent = 'Refresh proposals';
+  refresh.addEventListener('click', refreshMemoryProposals);
+  panel.append(refresh, feedback);
+  try {
+    const status = await api('/api/structured-memory');
+    if (!feedback.isConnected) return;
+    if (!status.enabled) { feedback.textContent = 'Structured memory store is closed. /memory on includes pinned notes only.'; return; }
+    const result = await api('/api/structured-memory/proposals?status=pending');
+    if (!feedback.isConnected) return;
+    const pending = (result.proposals || []).filter(p => p.status === 'pending');
+    feedback.textContent = pending.length ? 'Review each proposal. Apply saves a canonical fact; Reject dismisses the suggestion. Both require your reason.' : 'No pending proposals.';
+    for (const proposal of pending) {
+      const form = document.createElement('form');
+      const summary = document.createElement('p');
+      summary.textContent = proposal.action + ' · ' + (proposal.category || 'uncategorized') + '\n' + Array.from(proposal.content || '').slice(0, 160).join('');
+      const detail = document.createElement('details'), title = document.createElement('summary'), content = document.createElement('pre');
+      title.textContent = 'Review full proposal';
+      content.textContent = JSON.stringify(proposal, null, 2); detail.append(title, content);
+      const source = document.createElement('p'); source.textContent = 'Proposal ' + proposal.id + '\nSource episodes: ' + (proposal.source_episode_ids || []).join(', ');
+      const label = document.createElement('label'); label.textContent = 'Reason ';
+      const reason = document.createElement('input'); reason.required = true; reason.maxLength = status.limits.max_reason_chars; label.appendChild(reason);
+      const apply = document.createElement('button'); apply.type = 'submit'; apply.textContent = 'Apply';
+      const reject = document.createElement('button'); reject.type = 'submit'; reject.textContent = 'Reject';
+      const resultText = document.createElement('p'); resultText.setAttribute('role', 'status');
+      form.append(summary, detail, source, label, apply, reject, resultText);
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!reason.value.trim() || ![apply, reject].includes(event.submitter)) { resultText.textContent = 'Enter a reason and choose Apply or Reject.'; return; }
+        apply.disabled = reject.disabled = true;
+        try {
+          const result = await api('/api/structured-memory/proposals/' + encodeURIComponent(proposal.id), 'POST', {revision:proposal.revision,reason:reason.value.trim(),confirm:true,apply:event.submitter === apply});
+          reason.disabled = true; resultText.textContent = 'Proposal ' + result.status + '.';
+        } catch (error) { resultText.textContent = error.message; apply.disabled = reject.disabled = false; }
+      });
+      panel.appendChild(form);
+    }
+  } catch (error) { feedback.textContent = error.message; }
+}
+
 let soulDocument = null, reviewedSoulProposal = null;
 async function openSoulEditor(proposalOnly) {
   soulDocument = await api('/api/soul/document');

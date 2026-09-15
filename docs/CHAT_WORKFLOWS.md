@@ -64,7 +64,14 @@ account-private API: a model may propose, but confirm+reason is required to
 apply, episode capture never writes facts, and facts enter `/prompt` only after
 an explicit pick (or the separately gated `auto_retrieval` path). Episodes are
 never injected. Manual consolidation of selected episodes writes pending
-proposals only. `/memory on` stays pinned notes. See [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
+proposals only. `/memory remember <sentence> :: <reason>` explicitly confirms a
+human semantic summary on your latest completed episode via the summary API;
+its visible reason and content checks match the governed HTTP path. It writes
+no facts and starts no consolidation. Auto-consolidation now requires a nonblank
+semantic summary. Run `/memory consolidate <id>` to queue suggestions, then
+`/memory proposals` (the Memory panel) to review and Apply/Reject with a reason
+for the displayed revision. This is not chat autosave. `/memory on` stays pinned
+notes. See [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 Included notes are real stored content, not placeholders. Model answers can still
 be wrong; only actual command results establish successful execution.
 

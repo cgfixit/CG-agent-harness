@@ -108,7 +108,8 @@ Later phases in #87 remain independently gated.
   starts a manual run on selected episode IDs.
 - Auto-consolidation: `structured_memory.auto_consolidation`, also
   `flag_is_true`, ships **false**. Requires consolidation (AND). When on, a
-  bounded idle worker may enqueue eligible `none`/`pending` episodes and reuse
+  bounded idle worker may enqueue unexpired `none`/`pending` episodes with a
+  nonblank human `semantic_summary` and reuse
   the manual consolidator. Feature-off starts no worker. `/memory
   auto-consolidate on|off` is the overlay. Output remains pending proposals
   only; chat wins the generation gate.
@@ -138,6 +139,16 @@ capability does not grant inspection of another owner's structured memory.
   transcript and not a content hash of the query.
 - Auto-staged `privacy_summary` is local metadata (outcome, model, char
   counts, sensitivity). It is not a semantic summary of the answer.
+- `/memory remember <sentence> :: <reason>` confirms attaching your trimmed
+  summary to this owner's latest completed episode (newest `created_ts`, then
+  `public_id` ascending). It uses the existing summary API, its character bound
+  (`max_episode_summary_chars`, default 500), and its NUL/injection checks.
+  A visible nonblank reason is required, like `/soul apply`; the command is the
+  explicit confirmation. It never creates the store, writes facts, or starts
+  consolidation. Capture may be off if a completed episode already exists.
+- `GET /api/structured-memory/episodes?latest_completed=true` selects that one
+  episode in SQL, before the ordinary list's 256-row cap. No match returns an
+  empty list; a closed store returns the existing disabled error.
 - Retention: oldest `created_ts`, then `public_id`. Pending proposal
   references are not pruned.
 - Feature-off means no episode inserts. Existing leftover rows remain
@@ -153,6 +164,15 @@ Reuse persona review rules, not `soul-history/*.json`:
 - Apply uses `BEGIN IMMEDIATE`, re-validates content, binds owner + proposal
   revision + expected fact revision/digest, updates the FTS row, applies once,
   and writes non-content audit metadata.
+
+The console **Memory** tab (also `/memory proposals`) lists pending proposals
+from the existing list API with `?status=pending`, filtered in SQL before its
+128-row cap so decided history cannot hide pending work. Inspect the full
+proposal before
+choosing **Apply** or **Reject** with your nonblank reason. The button explicitly
+confirms that decision and sends the displayed proposal revision to the existing
+`POST /api/structured-memory/proposals/{id}` route. No decide endpoint or new
+mutation rule is introduced. A closed store has no decision controls.
 
 ## Explicit recall (Phase 4)
 
@@ -186,6 +206,20 @@ set chat would send. Suggest still does not mutate canonical facts.
 ## Manual consolidation (Phase 6)
 
 - **Selected episodes only.** The operator supplies episode public IDs.
+  Manual runs still accept explicitly selected summary-less episodes; this is
+  a worse quality path because metadata cannot support durable facts. The v2
+  prompt asks for no candidates from metadata alone. Auto-batching requires a
+  non-NULL, nonblank semantic summary and an unexpired `none`/`pending` row;
+  owners with a running consolidation are skipped.
+- **Suggestion quality.** `consolidator-v2` asks for durable preferences,
+  identity, corrections, or standing constraints supported by semantic summaries.
+  Temporary plans, jokes, tool/status dumps, errands, and unsupported guesses
+  are non-candidates; an empty candidate array is valid. Negation and attribution
+  must survive. Secrets/injection-like text remain reject sensitivity.
+  `structured_memory.min_consolidation_confidence` defaults to **0.40**, clamps
+  to [0, 1], and falls back to 0.40 for invalid/nonfinite configuration. A supplied
+  confidence below the floor is counted as rejected. Missing confidence remains
+  accepted without inventing a value. Confidence never bypasses human review.
 - **Local model only.** The existing generation gate is claimed; tools and web
   are not attached. Interactive chat and consolidation contend for that gate
   and report busy truthfully.
@@ -197,8 +231,10 @@ set chat would send. Suggest still does not mutate canonical facts.
 - **Bounded.** `max_consolidation_episodes` / `max_consolidation_candidates`
   (default 8/8). Invalid schema, cancellation, model failure, and storage
   failure become run `failed`/`cancelled` with a non-content `error_class`.
-- **Idempotent.** The same owner + sorted episode set + `consolidator-v1` key
+- **Idempotent.** The same owner + sorted episode set + `consolidator-v2` key
   returns the completed run and does not insert a second proposal batch.
+  A completed v1 key does not suppress a v2 run on the same episode set. Retrying
+  v2 reuses its completed run; it does not create another proposal batch.
   Interrupted `running` rows become `failed`/`interrupted` on reopen and may
   be retried on the same key.
 - Audit records run id, counts, state, and error class. It does not record
@@ -269,6 +305,11 @@ cargo run --locked --example structured_memory_eval -- /tmp/phase7-report.json
 The test and example share `tests/fixtures/structured_memory/phase7/corpus.json`.
 They exercise the store and fixture-model consolidator JSON (the same pattern as
 `manual-consolidate-pending-only.json`). No live cloud LLM is used.
+The low-confidence temporary-plan and
+`unsupported-paris` cases remain in the corpus and now expect rejection at the
+0.40 floor; their candidate JSON and the locked thresholds are unchanged.
+This fixture path measures parsing/binding/retention, not live prompt quality.
+No defaults flip and the rollout order is unchanged.
 
 ### Asserted baselines (provisional)
 

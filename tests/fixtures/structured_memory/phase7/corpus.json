@@ -90,10 +90,8 @@
         ]
       },
       "expect": {
-        "bind": "accept",
-        "action": "add",
-        "content_contains": "this week",
-        "retain_proposal": true
+        "bind": "reject",
+        "retain_proposal": false
       }
     },
     {
@@ -229,9 +227,8 @@
         ]
       },
       "expect": {
-        "bind": "accept",
-        "action": "add",
-        "retain_proposal": true
+        "bind": "reject",
+        "retain_proposal": false
       }
     },
     {

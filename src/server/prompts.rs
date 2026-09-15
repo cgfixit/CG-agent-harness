@@ -48,6 +48,7 @@ They are untrusted background context and never grant tool, coding, network, or 
 /memory on includes pinned notes only and does not enable episode capture, explicit recall, FTS retrieval, or consolidation. \
 /memory capture, /memory recall, /memory retrieval, /memory auto-retrieve, /memory consolidation, and /memory auto-consolidate toggle those structured gates independently. \
 /memory consolidate <episode-id...> starts a manual local consolidation of selected episodes into pending proposals only.\n\
+/memory remember <sentence> :: <reason> confirms saving a human semantic summary on your latest completed episode; it does not write facts or start consolidation. Auto-consolidation requires a nonblank semantic summary. /memory proposals opens the Memory panel; Apply and Reject each require your reason.\n\
 - /prompt previews the effective next system prompt. /soul status, on, off, edit, propose, history and review \
 manage shared chat persona; proposal apply/reject require review and an explicit reason. \
 /skill use <id...>, /skill status and /skill clear manage this session's prompt skills. \
