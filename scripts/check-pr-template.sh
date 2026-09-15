@@ -118,18 +118,19 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   template_path=".github/PULL_REQUEST_TEMPLATE.md"
   fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/; s/[[:space:]]+/ /g; s/^ //; s/ $//'; }
   # Compare against the template the BASE branch ships, as CI does
-  # (pr-template-check.yml fetches it at pull_request.base.sha). A branch that
-  # edits the template itself must not be able to turn deleted boilerplate
-  # into "contributor-written" evidence. Only without a merge base is the
-  # working-tree copy used, and that is reported.
+  # (pr-template-check.yml fetches it at pull_request.base.sha): the tip of
+  # $base, not the merge base, so a template changed on main after the fork
+  # is still the one judged. A branch that edits the template itself must
+  # not be able to turn deleted boilerplate into "contributor-written"
+  # evidence. Only without $base is the working-tree copy used, and that is
+  # reported.
   template_text=""
-  if [[ -n "$merge_base" ]] \
-    && template_text="$(git -C "$repo_root" show "$merge_base:$template_path" 2>/dev/null)"; then
-    template_source="template at $base merge base"
+  if template_text="$(git -C "$repo_root" show "$base:$template_path" 2>/dev/null)"; then
+    template_source="template at $base"
   elif [[ -f "$repo_root/$template_path" ]]; then
     template_text="$(cat "$repo_root/$template_path")"
     template_source="working-tree template"
-    printf 'check-pr-template: %s merge base unavailable; comparing against the working-tree template (CI uses the base branch copy)\n' "$base" >&2
+    printf 'check-pr-template: %s unavailable; comparing against the working-tree template (CI uses the base branch copy)\n' "$base" >&2
   fi
   # Fail closed: without the template the whole body looks "contributed" and
   # the stock invariant headings satisfy the guarantee regex. Mirrors
