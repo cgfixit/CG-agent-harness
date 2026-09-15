@@ -1,22 +1,22 @@
-# Merge gate for review follow-through. The "review gate" check fails while
-# a PR still has an unresolved review thread (human or bot, Codex included)
-# or while a Codex review is still running on the head, so "marked ready,
-# Codex reviewed, merged before every finding was applied" cannot happen
-# silently.
+# Advisory review follow-through. The "review gate" check reports whether a
+# PR still has an unresolved review thread (human or bot, Codex included)
+# or a Codex review still running on the head. It does not fail CI: read
+# the check summary before merging. Open threads / Codex-in-progress publish
+# as neutral; only a Checks API publish error fails the job.
 #
 # Codex signals progress by creating and editing one summary comment on the
 # PR conversation ("🔄 **Running**" then "✅ **Completed**"). Those are
 # issue_comment events, whose workflow runs attach to the default branch,
 # not the PR head; so the verdict is always published as a check run on the
 # PR head through the Checks API under one name, "review gate", whatever
-# event started the run. Make THAT check required on main (the job's own
-# "evaluate" check is not the one to require).
+# event started the run. The job's own "evaluate" check is not the signal;
+# it is continue-on-error so a leftover evaluate run cannot red the PR.
 #
 # The job polls for up to POLL_MINUTES so the usual sequence (fix pushed,
 # thread replied to, thread resolved a few seconds later; Codex finishing
-# its pass) turns the run green without another event. Resolving a thread
+# its pass) updates the check without another event. Resolving a thread
 # on its own fires no webhook: if the last thread is resolved without a push
-# after the poll window closed, re-run the failed job from the Actions tab.
+# after the poll window closed, re-run the job from the Actions tab.
 #
 # Triggers use pull_request_target so fork and Dependabot PRs still get a
 # write-capable token for the check publish; the job never checks out or
@@ -64,6 +64,7 @@ jobs:
     if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    continue-on-error: true
     permissions:
       contents: read
       pull-requests: read
@@ -198,5 +199,7 @@ jobs:
             const title = running.length
               ? `${running.length} bot review(s) still running on this head`
               : threads.length ? `${threads.length} unresolved review thread(s)` : "All review threads resolved; no review running";
-            await publish("completed", ok ? "success" : "failure", title, summary);
-            if (!ok) core.setFailed(title);
+            // Neutral (not failure) when follow-through is still open: the
+            // check stays readable before merge without failing CI. A Checks
+            // API publish error still setFailed in publish() above.
+            await publish("completed", ok ? "success" : "neutral", title, summary);

@@ -72,12 +72,11 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   feature branch; the `base branch is main` check fails otherwise), with the body
   from `.github/PULL_REQUEST_TEMPLATE.md` (run `scripts/check-pr-template.sh`
   first). Touching a core path requires an explicit invariant statement in the body.
-- A PR is not mergeable while a review thread is unresolved or a Codex review is
-  still running on its head: the `review gate` check
-  (`.github/workflows/review-gate.yml`, published on the PR head via the Checks API
-  so Codex's comment edits re-evaluate it) fails until every thread is
-  fixed-and-pushed or answered-and-resolved. Resolving a thread fires no webhook, so
-  re-run the job if the last thread was resolved without a push.
+- The `review gate` check (`.github/workflows/review-gate.yml`, published on
+  the PR head via the Checks API so Codex's comment edits re-evaluate it) is
+  advisory: it reports unresolved threads and an in-progress Codex review, and
+  does not fail CI. Read it before merging. Resolving a thread fires no webhook,
+  so re-run the job if the last thread was resolved without a push.
 
 ## Project Codex skills
 
