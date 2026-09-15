@@ -36,15 +36,22 @@ on:
 
 permissions: {}
 
+# One canceling group per PR, so a superseded evaluation stops. A comment
+# from anyone but the review bot never enters that group: it would cancel a
+# polling run (leaving its in_progress "review gate" check stranded) and then
+# exit without publishing a verdict of its own. Such runs get a group of
+# their own and are skipped by the job's `if` below. Keep the bot login here
+# and in REVIEW_BOTS in sync.
 concurrency:
-  group: review-gate-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: ${{ (github.event_name == 'issue_comment' && github.event.comment.user.login != 'chatgpt-codex-connector[bot]') && format('review-gate-ignored-{0}', github.run_id) || format('review-gate-{0}-{1}', github.workflow, github.event.pull_request.number || github.event.issue.number) }}
   cancel-in-progress: true
 
 jobs:
   evaluate:
     name: evaluate
-    # issue_comment fires for plain issues too; only PR comments matter.
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    # issue_comment fires for plain issues and for humans too; only a PR
+    # comment from the review bot is worth a run.
+    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -52,7 +59,8 @@ jobs:
       pull-requests: read
       checks: write
     env:
-      # Logins whose review-summary comment marks an in-progress review.
+      # Logins whose review-summary comment marks an in-progress review
+      # (keep in sync with the concurrency group and job `if` above).
       REVIEW_BOTS: chatgpt-codex-connector[bot]
       POLL_MINUTES: "12"
       # Codex starts a review a few seconds after "opened" / "ready for
