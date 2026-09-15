@@ -189,9 +189,20 @@ any slash that writes a fact. Status can report `retrieval: true`,
 `consolidation: true`, or `auto_consolidation: true` while fusion and RAG
 stay false. `auto_consolidation` ships false.
 
+## Rollout and rollback
+
+Do not flip a later gate until the earlier one is useful and the Phase 7
+fixture bars in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md#phase-7-evaluation-rollout-and-rollback)
+are green: facts → episode capture → explicit recall → FTS → manual
+consolidation → auto consolidation. Each ships **false**.
+
+Rollback is disable-only. `/memory … off` or `config.yaml` literal `false`
+stops new reads, writes, and workers. It does not delete
+`memory/structured.sqlite3`. Export and purge remain.
+
 ## See also
 
-- [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md) — gates, HTTP surfaces, ownership
+- [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md) — gates, HTTP surfaces, ownership, Phase 7 eval
 - [setup-guide §7.5](../setup-guide.md#75-operator-memory-notes) — enable steps
 - [README](../README.md) — console overview
 - [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md) — sessions, `/prompt`, persona

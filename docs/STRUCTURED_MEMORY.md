@@ -1,4 +1,4 @@
-# Structured memory (issue #87, M1 + M3 + M5 + Phase 4 + Phase 5 FTS + Phase 6 manual consolidation)
+# Structured memory (issue #87, M1 + M3 + M5 + Phase 4 + Phase 5 FTS + Phase 6 + Phase 7 eval)
 
 This is the privacy-first structured-memory foundation. It is **not** the
 existing pinned-note `/memory` feature and it is **not** the web-research
@@ -60,6 +60,13 @@ episodes referenced by pending proposals.
     idle worker may enqueue eligible episodes and reuse the manual runner.
     Feature-off starts no worker. Chat wins the generation gate. Output remains
     pending proposals only.
+13. Phase 7 **evaluation corpus** under
+    `tests/fixtures/structured_memory/phase7/`: synthetic cases for stable
+    preferences, temporary statements, negation, corrections, secrets,
+    prompt injection, conflicting facts, and cross-owner attempts. A
+    fixture-model measurement path asserts provisional baselines before any
+    default-off gate is flipped. Live reviewer rates and latency percentiles
+    stay documented-only.
 
 ## What this slice does not ship
 
@@ -246,6 +253,85 @@ accepts optional `delete_derived_episodes`. `/api/chat` and
 `/api/prompt/preview` accept `retrieve` / `retrieve_query` for per-request
 force-include.
 
+## Phase 7 evaluation, rollout, and rollback
+
+The Phase 7 corpus is local and synthetic. It is **not** a reason to flip any
+`structured_memory.*` default. Quoted YAML `"true"` remains off.
+
+### How to re-run the corpus
+
+```text
+GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
+  cargo test --locked --test structured_memory_phase7 -- --nocapture
+cargo run --locked --example structured_memory_eval -- /tmp/phase7-report.json
+```
+
+The test and example share `tests/fixtures/structured_memory/phase7/corpus.json`.
+They exercise the store and fixture-model consolidator JSON (the same pattern as
+`manual-consolidate-pending-only.json`). No live cloud LLM is used.
+
+### Asserted baselines (provisional)
+
+These thresholds live in the corpus `thresholds` object and are locked by
+`tests/structured_memory_phase7.rs`. They describe this labeled fixture mix,
+not a live-model SLA.
+
+| Metric | How it is measured | Provisional bar |
+|---|---|---|
+| Candidate proposal precision | Supported retained pending proposals / all retained pending proposals | ≥ 0.80 |
+| Unsupported / hallucinated candidate rate | Unsupported retained / all retained | ≤ 0.20 |
+| Sensitive-content retention rate | Retained proposals from `secret` / `prompt_injection` cases | **0** |
+| Useful recall at small top-k | Labeled relevant facts in FTS hits / relevant | 1.0 on this corpus |
+| False / stale / conflicting recall | Deactivated or cross-owner facts in FTS hits | **0** |
+| Prompt-size overhead | `assemble_memory_sections` with reserved 1500/1500 | combined body ≤ 3000 |
+| Database growth / pruning | Oldest-first episode prune with `max_episodes_per_owner: 2` | unreferenced row dropped; pending-proposal refs kept |
+| Chat / feature-combination regression | Existing `tests/structured_memory.rs` + shipped-gate scan | extend those tests; do not add live E2E |
+
+The fixture mix **intentionally** includes one unsupported candidate
+(`unsupported-paris`) so the scorer is not tautological. A later live local
+model should aim for precision 1.0 and unsupported rate 0 on a reviewed set.
+
+Rejected-class retention is **zero** for consolidator `sensitivity: reject`
+and for core injection-scanner hits (`STRUCTURED_MEMORY_INJECTION`). There is
+still no secret scanner: an operator can confirm+reason add non-injection
+secret-shaped text. That is a human-governed write, not a rejected class.
+
+### Documented-only (do not invent numbers)
+
+| Metric | Measurement method |
+|---|---|
+| Reviewer accept / reject rate | Count apply vs reject on `POST /api/structured-memory/proposals/{id}` in an owned home over a review window. |
+| Prompt latency p50 / p95 | In an owned temp `CGAGENTHARNESS_HOME`, time `POST /api/chat` and `POST /api/prompt/preview` for the same selected-fact set (n≥30). Host-dependent. |
+| Live-model quality | Swap fixture-model JSON for a local OpenAI-compatible backend only after the fixture baseline is green. Do not send this corpus to a cloud provider. |
+
+### Rollout order
+
+Keep every later gate **false** until that row's acceptance threshold is met.
+`/memory on` never opens these gates. Overlays cannot open the store.
+
+1. Manual facts and governed proposals (`structured_memory.enabled`)
+2. Optional episode capture (`episode_capture`)
+3. Explicit recall (`explicit_recall`)
+4. Optional FTS5 recall (`retrieval`; `auto_retrieval` stays last among read paths)
+5. Manual consolidation (`consolidation`)
+6. Optional automatic pending-proposal generation (`auto_consolidation`, requires consolidation)
+
+Suggested fixture bars before considering a gate: sensitive retention 0,
+stale/cross-owner recall 0, prompt body ≤ 3000, no silent fact apply, and
+precision / unsupported rate at or better than the corpus thresholds. Human
+review rate and latency remain operator-owned.
+
+### Rollback
+
+Disable the gate in `config.yaml` (literal `false`) and/or the matching
+`/memory … off` overlay. That stops new reads, writes, FTS inject, consolidator
+calls, and the idle worker. It does **not** delete `memory/structured.sqlite3`.
+Existing rows stay listable/exportable/purgeable while the store remains open
+(`structured_memory.enabled` still true). Closing the store gate refuses new
+structured-memory mutations and does not open/create the database on the next
+start; leftover files remain until the operator exports or
+`POST /api/structured-memory/purge` with confirm+reason.
+
 ## Verify
 
 ```text
@@ -253,4 +339,6 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --locked --test structured_memory -- --nocapture
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --locked --lib structured_memory -- --nocapture
+GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
+  cargo test --locked --test structured_memory_phase7 -- --nocapture
 ```
