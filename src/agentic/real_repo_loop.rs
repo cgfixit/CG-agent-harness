@@ -29,6 +29,11 @@ pub const MAX_READ_FILE_CHARS: usize = 4_000;
 pub const MAX_TOTAL_READ_CHARS: usize = 12_000;
 pub const MAX_ITERATIONS: u64 = 25;
 pub const MAX_PLAN_CHARS: usize = 6_000;
+pub const REJECT_CODE_MAX_ITERATIONS: &str = "max_iterations";
+pub const REJECT_CODE_PLANNER_REFUSED: &str = "planner_refused";
+pub const REJECT_CODE_VERIFY_FAILED_LOOP: &str = "verify_failed_loop";
+pub const REJECT_DETAIL_MAX_BYTES: usize = 512;
+const _: () = assert!(REJECT_DETAIL_MAX_BYTES <= 2048);
 const MAX_FEEDBACK_CHECK_CHARS: usize = 1_500;
 const MAX_FEEDBACK_TOTAL_CHARS: usize = 4_000;
 /// Ceiling on planner-requested read selectors accepted per run (the per-file
@@ -473,6 +478,41 @@ impl RealRepoLoopResult {
     }
 }
 
+/// Closed exhausted-run code from the last iteration's gates.
+/// `max_iterations` is the fallback when the last rejection is not planner- or verify-shaped.
+pub fn exhausted_reject_code(result: &RealRepoLoopResult) -> &'static str {
+    reject_code_from_iterations(&result.iterations)
+}
+
+fn reject_code_from_iterations(iterations: &[RealRepoLoopIteration]) -> &'static str {
+    let Some(last) = iterations.last() else {
+        return REJECT_CODE_MAX_ITERATIONS;
+    };
+    let gates = &last.decision.rejected_gates;
+    if gates.iter().any(|g| g == "verification_failed") {
+        REJECT_CODE_VERIFY_FAILED_LOOP
+    } else if gates
+        .iter()
+        .any(|g| g == "no_files_changed" || g == "file_write_failed")
+    {
+        REJECT_CODE_PLANNER_REFUSED
+    } else {
+        REJECT_CODE_MAX_ITERATIONS
+    }
+}
+
+/// UTF-8-safe byte cap for persisted `reject_detail`. Never exceeds 2KiB.
+pub fn cap_reject_detail(text: &str) -> String {
+    if text.len() <= REJECT_DETAIL_MAX_BYTES {
+        return text.to_string();
+    }
+    let mut end = REJECT_DETAIL_MAX_BYTES;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
 fn require_run_gates(tools: &RepoWorkspace<'_>, reason: &str, confirm: bool) -> Result<()> {
     tools.require_write("run", reason, confirm)
 }
@@ -786,8 +826,11 @@ pub fn run_real_repo_loop(
             detailed
         );
     }
-    ctx.audit
-        .log(json!({"event": "agentic_real_repo_loop_exhausted", "max_iterations": p.max_iterations}));
+    ctx.audit.log(json!({
+        "event": "agentic_real_repo_loop_exhausted",
+        "max_iterations": p.max_iterations,
+        "reject_code": reject_code_from_iterations(&iterations),
+    }));
     Ok(RealRepoLoopResult {
         accepted: false,
         branch_name: None,

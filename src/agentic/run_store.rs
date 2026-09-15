@@ -48,6 +48,10 @@ pub struct RealRepoRunRecord {
     #[serde(default)]
     pub error: Option<String>,
     #[serde(default)]
+    pub reject_code: Option<String>,
+    #[serde(default)]
+    pub reject_detail: Option<String>,
+    #[serde(default)]
     pub pushed: bool,
     #[serde(default)]
     pub pr_url: Option<String>,
@@ -80,6 +84,8 @@ impl RealRepoRunRecord {
             changed_files: Vec::new(),
             iterations: 0,
             error: None,
+            reject_code: None,
+            reject_detail: None,
             pushed: false,
             pr_url: None,
             plan_sha256: None,
