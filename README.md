@@ -573,9 +573,9 @@ a driver-prefixed branch, target `main`, open as drafts, and are validated with
 `src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`,
 `src/agentic/workspace.rs`, or `assets/config.default.yaml` additionally needs an
 explicit invariant statement in the PR body. The `review gate` check
-([`review-gate.yml`](.github/workflows/review-gate.yml)) stays red while any
-review thread is unresolved or a Codex review is still running, so review
-findings are applied or answered before a merge.
+([`review-gate.yml`](.github/workflows/review-gate.yml)) is advisory: it
+reports unresolved threads and an in-progress Codex review without failing
+CI. Read the check summary before merging.
 
 | Document | Purpose |
 |---|---|
