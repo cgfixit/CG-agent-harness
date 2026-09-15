@@ -1,5 +1,33 @@
 # Desktop acceptance
 
+## Native exact-artifact matrix (tip `22520f3`)
+
+Tip under test: [`22520f3ba5981c361ceb57dddd7ff96234a69290`](https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290).
+Use that SHA (or the matching packaged bundle `Contents/Resources/COMMIT`) for
+native rows. This documentation program runs on Windows and cannot drive Darwin
+WebKit, so every native WKWebView result below is **unverified**.
+
+Scripts named in [`.claude/skills/run-cg-agent-harness/SKILL.md`](../.claude/skills/run-cg-agent-harness/SKILL.md)
+(`cargo build`, `python scripts/test-desktop-backend.py`,
+`node scripts/chat-browser-acceptance.mjs`) exercise HTTP and Chrome paths.
+They are not native WebKit proof.
+
+| scenario | required SHA or bundle | mechanism (native WKWebView / Chromium / HTTP) | result |
+|---|---|---|---|
+| chat send | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
+| CSRF | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
+| goal stage | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
+| skill use | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
+| external-link confirm | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
+| close/reopen | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
+
+## Historical Chromium / HTTP notes (non-native)
+
+The sections below keep earlier Chromium, Chrome, HTTP fixture, and mixed
+native-process records. They are **not** retitled as native WKWebView proof for
+tip `22520f3`. Treat Chrome/HTTP evidence as non-native unless a row explicitly
+names Darwin WKWebView interaction on a stated artifact.
+
 ## Chat web tools and Google search (2026-09-12)
 
 Native Computer Use tested an arm64 development bundle based on merged main
