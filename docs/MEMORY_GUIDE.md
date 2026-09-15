@@ -174,5 +174,6 @@ not a guarantee that arbitrary secrets or hallucinations are detected. Human
 review remains mandatory. Private SQLite permissions are not encryption at rest.
 
 See [the contract](STRUCTURED_MEMORY.md), [operator commands](USER_MANUAL.md),
-and [the next-task benchmark plan](MEMORY_BENCHMARK_PLAN.md). Phase 7 remains the
+[issue #87 close-out](memory/ISSUE_87_CLOSEOUT.md), and
+[the next-task benchmark plan](MEMORY_BENCHMARK_PLAN.md). Phase 7 remains the
 locked regression bar. No default flip or completion of issue #87 is implied.

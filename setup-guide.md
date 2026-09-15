@@ -18,20 +18,18 @@ separate child process and ships disarmed.
 
 **Version scope:** this guide follows this source tree (tip `main`).
 [Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest) is
-[v0.1.11](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.11)
-and targets `e4c796e` ([PR #94](https://github.com/cgfixit/CG-agent-harness/pull/94),
-Phase 6 manual consolidator). Tip `main` at `3f053b3` is newer: it also
-includes [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95)
-(`a132fd3`, optional idle auto-consolidator) and
-[PR #96](https://github.com/cgfixit/CG-agent-harness/pull/96) (`3f053b3`,
-Phase 7 fixture eval/rollback). A downloaded Latest app therefore has manual
-consolidation and not yet auto-consolidation or the Phase 7 corpus. Use a
-source build or successful Bundle artifact on `main` for tip behavior; a PR
-artifact remains a candidate until merged. Do not invent a release that GitHub
-has not published. The Cargo package version remains `0.1.0`; identify the
-installed source using `Contents/Resources/COMMIT`, the workflow SHA, release
-notes and `/help`. Earlier acceptance records retain their dated results and
-do not certify a different source or bundle.
+[v0.1.12](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.12)
+and targets `22520f3ba5981c361ceb57dddd7ff96234a69290` (issue #87 structured
+memory through Phase 7 fixture eval, including manual consolidation, optional
+idle auto-consolidator, and completion-suggestion gates). Tip `main` at that
+SHA matches Latest for structured memory; tip does not lag Latest for those
+surfaces. Use a source build or successful Bundle artifact when you need
+unreleased tip behavior beyond Latest; a PR artifact remains a candidate until
+merged. Do not invent a release that GitHub has not published. The Cargo
+package version remains `0.1.0`; identify the installed source using
+`Contents/Resources/COMMIT`, the workflow SHA, release notes and `/help`.
+Earlier acceptance records retain their dated results and do not certify a
+different source or bundle.
 
 ## Quick route through this guide
 
@@ -980,7 +978,8 @@ rollout order, and Phase 7 bars:
 shared-home preferences; use structured facts only after explicit review.
 Clearing session history keeps derived episodes unless you confirm
 `delete_derived_episodes`. Before flipping any later gate, re-run the Phase 7
-fixture corpus on tip `main` (not present in Latest v0.1.11):
+fixture corpus on Latest v0.1.12 / tip `main` (see
+[docs/memory/ISSUE_87_CLOSEOUT.md](docs/memory/ISSUE_87_CLOSEOUT.md)):
 
 ```text
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
@@ -1682,13 +1681,13 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain [Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest) (v0.1.11) or a successful main Bundle artifact. Do not install v0.1.4–v0.1.8 as a current floor — tip has moved |
+| `/prompt`, `/soul edit`, `/skill use` or `/goal stage` is unknown; Clear all session history is absent | Installed build predates those main changes (v0.1.1 and earlier) | Inspect `/help` and bundle `Resources/COMMIT`; obtain [Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest) (v0.1.12) or a successful main Bundle artifact. Do not install v0.1.4–v0.1.8 as a current floor — tip has moved |
 | Local coding loop never fetches a file the planner asked for | Cloud planner is in use, the selector failed the clone jail, the basename is on `denied_read_basenames` (`.env`, keys, credentials, …), the per-run model-read cap (6) was hit, or an unclosed FILE/EDITS block swallowed the `=== READ ===` line | Pre-stage needed ordinary files with `/agent read`. Denied basenames refuse operator and model READ alike (`sensitive_basename`). Cloud runs refuse every model-requested read. Local refusals are audit-logged as `agentic_real_repo_read_request_refused`. The deny-list is not a secret scanner; the jail is not a secrets control. |
-| New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona and your account's web selection are still included | Verify the running bundle is Latest (v0.1.11) or tip `main`; the session-isolation fix landed at `71eef11`. Inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
-| Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify Latest (v0.1.11) or tip `main` (capability-guide fix landed at `71eef11`) |
+| New sessions appear to share old context | Old app has the transcript regression, or shared notes/persona and your account's web selection are still included | Verify the running bundle is Latest (v0.1.12) or tip `main`; the session-isolation fix landed at `71eef11`. Inspect `/prompt`. `/session new` separates history; it intentionally retains shared context |
+| Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify Latest (v0.1.12) or tip `main` (capability-guide fix landed at `71eef11`) |
 | `/memory search` reports retrieval disabled | `structured_memory.retrieval` (and the store) are off | Enable the store in `config.yaml`, restart, then `/memory retrieval on`. Search still does not inject; use `/memory retrieve` for one prompt |
-| `/memory consolidate` is unknown or omitted from `/help` | Installed build predates [PR #94](https://github.com/cgfixit/CG-agent-harness/pull/94) / v0.1.11 | Use Latest v0.1.11 or a newer main Bundle. The command writes pending proposals only |
-| `/memory auto-consolidate` is unknown | Installed build is Latest v0.1.11 (`e4c796e`) or older; the idle worker is [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95) on tip `main` | Build from tip `3f053b3` or a successful main Bundle after that SHA. The gate stays default-off and requires `consolidation` |
+| `/memory consolidate` is unknown or omitted from `/help` | Installed build predates [PR #94](https://github.com/cgfixit/CG-agent-harness/pull/94) / v0.1.11 | Use Latest v0.1.12 or a newer main Bundle. The command writes pending proposals only |
+| `/memory auto-consolidate` is unknown | Installed build predates [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95) / is older than Latest v0.1.12 | Use Latest v0.1.12 (`22520f3`) or a newer main Bundle. The gate stays default-off and requires `consolidation` |
 | Automatic completion suggestions do not appear | Store/capture/source gate off, invalid mode, queue expiry/full, model/store error, or empty valid output | Inspect `GET /api/structured-memory` effective `automatic_suggestions`, run status and metadata audit events. Check config-only source switches, restart, and capture overlay; refresh Memory after generation. No result is guaranteed for every completion |
 | `/memory save` reports store closed | `structured_memory.enabled` is false or store failed to open | Enable the store and restart; automatic generation and capture may stay off. A prose request is not a save command |
 | `/memory consolidate` or auto-consolidator reports the gate off | `structured_memory.consolidation` (and for auto, also `auto_consolidation`) are off, or the store is closed | Enable the store in `config.yaml`, restart, then `/memory consolidation on`. Auto additionally needs `/memory auto-consolidate on`. Both ship false; measure Phase 7 on tip before considering ON |
@@ -1729,6 +1728,8 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
   memory, gate on/off list, search vs retrieve, consolidators, rollback.
 - [Structured memory contract](docs/STRUCTURED_MEMORY.md) — ownership, HTTP
   surfaces, Phase 6 consolidators, Phase 7 eval/rollback. Gates stay default-off.
+- [Issue #87 close-out](docs/memory/ISSUE_87_CLOSEOUT.md) — shipped gates, enable
+  order, rollback, and non-goals.
 - [Chat workflow reference](docs/CHAT_WORKFLOWS.md) — persona proposals, skill
   bounds, goal completion evidence and remaining scope.
 - [Offline Cargo verification](docs/OFFLINE_CARGO.md) — dependency preparation

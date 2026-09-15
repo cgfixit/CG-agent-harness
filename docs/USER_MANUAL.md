@@ -228,7 +228,14 @@ stay false. `auto_consolidation` ships false.
 Do not flip a later gate until the earlier one is useful and the Phase 7
 fixture bars in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md#phase-7-evaluation-rollout-and-rollback)
 are green: facts → episode capture → explicit recall → FTS → manual
-consolidation → auto consolidation. Each ships **false**.
+consolidation → auto consolidation. Each ships **false**. Measure Phase 7
+before recommending any gate ON:
+
+```text
+GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
+  cargo test --locked --test structured_memory_phase7 -- --nocapture
+cargo run --locked --example structured_memory_eval -- /tmp/phase7-report.json
+```
 
 Rollback is disable-only. `/memory … off` or `config.yaml` literal `false`
 stops new reads, writes, and workers. It does not delete
@@ -237,6 +244,7 @@ stops new reads, writes, and workers. It does not delete
 ## See also
 
 - [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md) — gates, HTTP surfaces, ownership, Phase 7 eval
+- [memory/ISSUE_87_CLOSEOUT.md](memory/ISSUE_87_CLOSEOUT.md) — issue #87 close-out
 - [setup-guide §7.5](../setup-guide.md#75-operator-memory-notes) — enable steps
 - [README](../README.md) — console overview
 - [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md) — sessions, `/prompt`, persona

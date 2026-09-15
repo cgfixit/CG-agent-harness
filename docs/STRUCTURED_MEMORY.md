@@ -5,6 +5,8 @@ existing pinned-note `/memory` feature and it is **not** the web-research
 allowlist/corpus benchmark.
 
 Related issue: [#87](https://github.com/cgfixit/CG-agent-harness/issues/87).
+Operator close-out (gates, enable order, rollback, non-goals):
+[memory/ISSUE_87_CLOSEOUT.md](memory/ISSUE_87_CLOSEOUT.md).
 
 ## Two memory systems
 
