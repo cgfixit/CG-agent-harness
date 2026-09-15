@@ -1,17 +1,25 @@
-# Merge gate for review follow-through. Fails while a PR still has an
-# unresolved review thread (human or bot, Codex included) or while a Codex
-# review is still running on the head, so "marked ready, Codex reviewed,
-# merged before every finding was applied" cannot happen silently.
+# Merge gate for review follow-through. The "review gate" check fails while
+# a PR still has an unresolved review thread (human or bot, Codex included)
+# or while a Codex review is still running on the head, so "marked ready,
+# Codex reviewed, merged before every finding was applied" cannot happen
+# silently.
+#
+# Codex signals progress by creating and editing one summary comment on the
+# PR conversation ("🔄 **Running**" then "✅ **Completed**"). Those are
+# issue_comment events, whose workflow runs attach to the default branch,
+# not the PR head; so the verdict is always published as a check run on the
+# PR head through the Checks API under one name, "review gate", whatever
+# event started the run. Make THAT check required on main (the job's own
+# "evaluate" check is not the one to require).
 #
 # The job polls for up to POLL_MINUTES so the usual sequence (fix pushed,
-# thread replied to, thread resolved a few seconds later; Codex finishing its
-# pass) turns the run green without another event. Resolving a thread on its
-# own fires no webhook: if the last thread is resolved without a push after
-# the poll window closed, re-run the failed job from the Actions tab.
+# thread replied to, thread resolved a few seconds later; Codex finishing
+# its pass) turns the run green without another event. Resolving a thread
+# on its own fires no webhook: if the last thread is resolved without a push
+# after the poll window closed, re-run the failed job from the Actions tab.
 #
-# Make "review threads resolved" a required status check on main, and also
-# enable "Require conversation resolution before merging" in the branch
-# ruleset: that setting is the native, always-live version of the thread
+# Also enable "Require conversation resolution before merging" in the main
+# ruleset: that native setting is the always-live version of the thread
 # rule; this job adds the Codex-in-progress rule and a summary of what is
 # still open.
 name: review gate
@@ -23,34 +31,53 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, deleted]
+  issue_comment:
+    types: [created, edited]
 
 permissions: {}
 
 concurrency:
-  group: review-gate-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: review-gate-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:
-  threads:
-    name: review threads resolved
+  evaluate:
+    name: evaluate
+    # issue_comment fires for plain issues too; only PR comments matter.
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read
+      checks: write
     env:
       # Logins whose review-summary comment marks an in-progress review.
       REVIEW_BOTS: chatgpt-codex-connector[bot]
       POLL_MINUTES: "12"
+      CHECK_NAME: review gate
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const pr = context.payload.pull_request;
             const { owner, repo } = context.repo;
             const bots = new Set(process.env.REVIEW_BOTS.split(",").map(s => s.trim()).filter(Boolean));
             const deadline = Date.now() + Number(process.env.POLL_MINUTES) * 60_000;
             const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+            // Resolve the PR for every trigger. On issue_comment only a comment
+            // from a listed review bot is worth a re-evaluation; anything else
+            // (a human "@codex review", chatter) exits without touching the check.
+            let pr = context.payload.pull_request;
+            if (!pr) {
+              const c = context.payload.comment;
+              if (!c || !c.user || !bots.has(c.user.login)) {
+                core.info("issue_comment not from a review bot; nothing to evaluate");
+                return;
+              }
+              pr = (await github.rest.pulls.get({ owner, repo, pull_number: context.payload.issue.number })).data;
+            }
+            if (pr.state !== "open") { core.info(`PR #${pr.number} is ${pr.state}; nothing to evaluate`); return; }
 
             async function unresolvedThreads() {
               const out = [];
@@ -94,6 +121,17 @@ jobs:
                 .map(c => ({ login: c.user.login, url: c.html_url }));
             }
 
+            // Publish the verdict on the PR head so every trigger, including
+            // issue_comment (whose own run attaches to the default branch),
+            // lands on the same required check.
+            async function publish(status, conclusion, title, summary) {
+              const body = { owner, repo, name: process.env.CHECK_NAME, head_sha: pr.head.sha, status, output: { title, summary } };
+              if (conclusion) body.conclusion = conclusion;
+              await github.rest.checks.create(body);
+            }
+
+            await publish("in_progress", null, "Evaluating review threads and bot reviews", `Run started for #${pr.number} @ ${pr.head.sha.slice(0, 7)}`);
+
             let threads, running, attempt = 0;
             for (;;) {
               attempt += 1;
@@ -115,8 +153,13 @@ jobs:
               for (const t of threads) lines.push(`- \`${t.path}${t.line ? ":" + t.line : ""}\`${t.outdated ? " (outdated)" : ""} by ${t.author || "unknown"}: ${t.title} ${t.url}`);
               lines.push("", "Apply the fix and push, or reply with why not, then resolve the thread. Re-run this job if the last thread was resolved without a push.");
             }
-            if (!running.length && !threads.length) lines.push("✅ No unresolved review threads and no review in progress.");
-            await core.summary.addRaw(lines.join("\n")).write();
+            const ok = !running.length && !threads.length;
+            if (ok) lines.push("✅ No unresolved review threads and no review in progress.");
+            const summary = lines.join("\n");
+            await core.summary.addRaw(summary).write();
 
-            if (running.length) core.setFailed(`${running.length} bot review(s) still running on this head`);
-            else if (threads.length) core.setFailed(`${threads.length} unresolved review thread(s)`);
+            const title = running.length
+              ? `${running.length} bot review(s) still running on this head`
+              : threads.length ? `${threads.length} unresolved review thread(s)` : "All review threads resolved; no review running";
+            await publish("completed", ok ? "success" : "failure", title, summary);
+            if (!ok) core.setFailed(title);
