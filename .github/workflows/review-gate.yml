@@ -18,6 +18,10 @@
 # on its own fires no webhook: if the last thread is resolved without a push
 # after the poll window closed, re-run the failed job from the Actions tab.
 #
+# Triggers use pull_request_target so fork and Dependabot PRs still get a
+# write-capable token for the check publish; the job never checks out or
+# runs PR content, which is what makes that trigger safe.
+#
 # Also enable "Require conversation resolution before merging" in the main
 # ruleset: that native setting is the always-live version of the thread
 # rule; this job adds the Codex-in-progress rule and a summary of what is
@@ -25,7 +29,13 @@
 name: review gate
 
 on:
-  pull_request:
+  # pull_request_target, not pull_request: a fork-origin PR and a
+  # Dependabot-actor event get a read-only GITHUB_TOKEN under pull_request,
+  # so the Checks API publish below would fail and the required check would
+  # never appear (or keep a stale verdict). This job runs no checkout and
+  # executes nothing from the PR; it only reads threads and comments and
+  # writes one check run, so the base-context token is safe here.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
     types: [submitted, dismissed]
@@ -137,16 +147,23 @@ jobs:
             // Publish the verdict on the PR head so every trigger, including
             // issue_comment (whose own run attaches to the default branch),
             // lands on the same required check.
+            // A publish failure must be loud: a silent one leaves the required
+            // check missing or stale, which reads as "nothing to do".
             async function publish(status, conclusion, title, summary) {
               const body = { owner, repo, name: process.env.CHECK_NAME, head_sha: pr.head.sha, status, output: { title, summary } };
               if (conclusion) body.conclusion = conclusion;
-              await github.rest.checks.create(body);
+              try {
+                await github.rest.checks.create(body);
+              } catch (e) {
+                core.setFailed(`could not publish the "${process.env.CHECK_NAME}" check on ${pr.head.sha.slice(0, 7)}: ${e.message} (read-only token? the trigger must run in the base-repository context)`);
+                throw e;
+              }
             }
 
             await publish("in_progress", null, "Evaluating review threads and bot reviews", `Run started for #${pr.number} @ ${pr.head.sha.slice(0, 7)}`);
 
             const action = context.payload.action;
-            if (bots.size && context.eventName === "pull_request" && (action === "opened" || action === "ready_for_review")) {
+            if (bots.size && context.eventName === "pull_request_target" && (action === "opened" || action === "ready_for_review")) {
               const grace = Number(process.env.GRACE_SECONDS) * 1000;
               core.info(`${action}: waiting ${grace / 1000}s for a bot review to announce itself before the first look`);
               await sleep(grace);
