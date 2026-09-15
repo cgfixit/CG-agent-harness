@@ -12,17 +12,17 @@ let persona=''; let clearFails=false;
 let authFixture=false, signedIn=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 let memoryEnabled=false;
-const structuredGates={episode_capture:false,explicit_recall:false,retrieval:false,auto_retrieval:false,consolidation:false};
+const structuredGates={episode_capture:false,explicit_recall:false,retrieval:false,auto_retrieval:false,consolidation:false,auto_consolidation:false};
 const ftsHit={id:'fact_labeled_alpha',revision:1,category:'pref',content:'Prefer metric units in examples.',active:true,score:1,provenance:'fts5',type:'untrusted_background_context'};
 const memoryPayload=()=>({
  enabled:memoryEnabled,count:0,max_notes:8,max_chars:500,notes:[],
  rag:{enabled:false,writable_from_harness:false},
- structured_memory:{separate:true,enabled:true,episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:false,status_path:'/api/structured-memory',prompt_toggle:'harness.json.memory_enabled remains pinned-note inclusion only'}
+ structured_memory:{separate:true,enabled:true,episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:structuredGates.auto_consolidation,status_path:'/api/structured-memory',prompt_toggle:'harness.json.memory_enabled remains pinned-note inclusion only'}
 });
 const gatePayload=()=>({
  owner_id:'user_fixture_owner',operator_gates:{...structuredGates},
  episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,
- retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:false,memory_on_unchanged:true
+ retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.retrieval&&structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:structuredGates.consolidation&&structuredGates.auto_consolidation,memory_on_unchanged:true
 });
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
@@ -90,7 +90,7 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/memory/add'||path==='/api/memory/forget'||path==='/api/memory/clear'){reply(memoryPayload());return;}
  if(path==='/api/structured-memory/gates'){
   if(req.method==='POST'){
-   if(!Object.hasOwn(structuredGates,body.gate)){reply({detail:{code:'STRUCTURED_MEMORY_GATE',message:'gate must be episode_capture, explicit_recall, retrieval, auto_retrieval, or consolidation'}},422);return;}
+   if(!Object.hasOwn(structuredGates,body.gate)){reply({detail:{code:'STRUCTURED_MEMORY_GATE',message:'gate must be episode_capture, explicit_recall, retrieval, auto_retrieval, consolidation, or auto_consolidation'}},422);return;}
    structuredGates[body.gate]=!!body.enabled;
   }
   reply(gatePayload());return;

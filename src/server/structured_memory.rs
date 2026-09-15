@@ -12,8 +12,10 @@
 //! `auto_retrieval` silent path) and assembly-time owner/active/revision recheck.
 //!
 //! Phase 6 adds a default-off manual consolidator: selected episodes become
-//! pending proposals only. It never auto-applies facts, never feeds recalled
-//! facts into the summarizer prompt, and never starts an idle worker.
+//! pending proposals only. It never auto-applies facts and never feeds recalled
+//! facts into the summarizer prompt. A seventh default-off
+//! `auto_consolidation` gate may start a bounded idle worker that reuses the
+//! same runner; it still never writes canonical facts.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -54,6 +56,7 @@ const DEFAULT_PINNED_PROMPT_CHARS: u64 = 1500;
 const DEFAULT_SELECTED_FACT_PROMPT_CHARS: u64 = 1500;
 const DEFAULT_MAX_CONSOLIDATION_EPISODES: u64 = 8;
 const DEFAULT_MAX_CONSOLIDATION_CANDIDATES: u64 = 8;
+const DEFAULT_AUTO_CONSOLIDATION_IDLE_MS: u64 = 2_000;
 
 const FACTS_PROPOSALS_DDL: &str = "
 CREATE TABLE facts (
@@ -199,6 +202,7 @@ pub struct Limits {
     pub selected_fact_prompt_chars: usize,
     pub max_consolidation_episodes: usize,
     pub max_consolidation_candidates: usize,
+    pub auto_consolidation_idle_ms: u64,
 }
 
 impl Limits {
@@ -330,6 +334,14 @@ impl Limits {
                 1,
                 16,
             ) as usize,
+            auto_consolidation_idle_ms: clamp_u64(
+                cfg.u64_or(
+                    "structured_memory.auto_consolidation_idle_ms",
+                    DEFAULT_AUTO_CONSOLIDATION_IDLE_MS,
+                ),
+                20,
+                60_000,
+            ),
         }
     }
 
@@ -356,6 +368,7 @@ impl Limits {
             "selected_fact_prompt_chars": self.selected_fact_prompt_chars,
             "max_consolidation_episodes": self.max_consolidation_episodes,
             "max_consolidation_candidates": self.max_consolidation_candidates,
+            "auto_consolidation_idle_ms": self.auto_consolidation_idle_ms,
         })
     }
 }
@@ -372,6 +385,7 @@ pub struct OperatorGates {
     pub retrieval: bool,
     pub auto_retrieval: bool,
     pub consolidation: bool,
+    pub auto_consolidation: bool,
 }
 
 impl OperatorGates {
@@ -395,6 +409,7 @@ impl OperatorGates {
             retrieval: value.get("retrieval") == Some(&json!(true)),
             auto_retrieval: value.get("auto_retrieval") == Some(&json!(true)),
             consolidation: value.get("consolidation") == Some(&json!(true)),
+            auto_consolidation: value.get("auto_consolidation") == Some(&json!(true)),
         }
     }
 
@@ -435,6 +450,7 @@ impl OperatorGates {
             "retrieval": self.retrieval,
             "auto_retrieval": self.auto_retrieval,
             "consolidation": self.consolidation,
+            "auto_consolidation": self.auto_consolidation,
         })
     }
 
@@ -445,10 +461,11 @@ impl OperatorGates {
             "retrieval" => self.retrieval = enabled,
             "auto_retrieval" => self.auto_retrieval = enabled,
             "consolidation" => self.consolidation = enabled,
+            "auto_consolidation" => self.auto_consolidation = enabled,
             _ => {
                 return Err(HarnessError::new(
                     "STRUCTURED_MEMORY_GATE",
-                    "gate must be episode_capture, explicit_recall, retrieval, auto_retrieval, or consolidation",
+                    "gate must be episode_capture, explicit_recall, retrieval, auto_retrieval, consolidation, or auto_consolidation",
                 ))
             }
         }
@@ -1969,6 +1986,77 @@ impl StructuredMemoryStore {
         Ok(rows)
     }
 
+    pub fn default_auto_idle_ms() -> u64 {
+        DEFAULT_AUTO_CONSOLIDATION_IDLE_MS
+    }
+
+    /// Owner-scoped eligible episode ids (`none`/`pending`), oldest first, capped.
+    pub fn eligible_consolidation_ids(&self, owner: &str) -> Result<Vec<String>> {
+        Self::require_owner(owner)?;
+        let conn = self.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT public_id FROM episodes
+                 WHERE owner_id=?1 AND consolidation_state IN ('none','pending')
+                 ORDER BY created_ts ASC, public_id ASC
+                 LIMIT ?2",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![owner, self.limits.max_consolidation_episodes as i64], |r| {
+                r.get(0)
+            })
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        Ok(rows)
+    }
+
+    /// One owner-scoped batch for the idle worker. Skips owners that already
+    /// have a `running` consolidation row.
+    pub fn next_auto_consolidation_batch(&self) -> Result<Option<(String, Vec<String>)>> {
+        let conn = self.lock();
+        let owner: Option<String> = conn
+            .query_row(
+                "SELECT e.owner_id FROM episodes e
+                 WHERE e.consolidation_state IN ('none','pending')
+                   AND NOT EXISTS (
+                     SELECT 1 FROM consolidation_runs r
+                     WHERE r.owner_id=e.owner_id AND r.state='running'
+                   )
+                 GROUP BY e.owner_id
+                 ORDER BY e.owner_id
+                 LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        let Some(owner) = owner else {
+            return Ok(None);
+        };
+        let mut stmt = conn
+            .prepare(
+                "SELECT public_id FROM episodes
+                 WHERE owner_id=?1 AND consolidation_state IN ('none','pending')
+                 ORDER BY created_ts ASC, public_id ASC
+                 LIMIT ?2",
+            )
+            .map_err(sql)?;
+        let ids = stmt
+            .query_map(params![owner, self.limits.max_consolidation_episodes as i64], |r| {
+                r.get(0)
+            })
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        if ids.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some((owner, ids)))
+        }
+    }
+
     pub fn get_episode(&self, owner: &str, id: &str) -> Result<Episode> {
         Self::require_owner(owner)?;
         if !valid_public_id(id) {
@@ -2924,6 +3012,22 @@ impl StructuredMemoryStore {
         f(&self.lock())
     }
 
+    /// Test hook: fail the next proposal insert so finish rolls back.
+    pub fn set_proposal_insert_failure(&self, enabled: bool) -> Result<()> {
+        let conn = self.lock();
+        if enabled {
+            conn.execute_batch(
+                "CREATE TRIGGER IF NOT EXISTS refuse_proposal_insert BEFORE INSERT ON proposals \
+                 BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;",
+            )
+            .map_err(sql)?;
+        } else {
+            conn.execute_batch("DROP TRIGGER IF EXISTS refuse_proposal_insert;")
+                .map_err(sql)?;
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn expire_episode(&self, owner: &str, id: &str) -> Result<()> {
         let conn = self.lock();
@@ -3086,10 +3190,16 @@ pub fn consolidation_available(cfg: &AppConfig, store_open: bool, gates: &Operat
     )
 }
 
-/// Automatic consolidation is not shipped in this phase. Status stays false
-/// even if a leftover overlay or yaml key is present.
-pub fn auto_consolidation_available(_cfg: &AppConfig, _store_open: bool, _gates: &OperatorGates) -> bool {
-    false
+/// Idle auto-consolidation. Requires the store, the independent
+/// `structured_memory.auto_consolidation` gate or overlay, **and**
+/// [`consolidation_available`]. Never bypasses the manual consolidation gate.
+pub fn auto_consolidation_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
+    consolidation_available(cfg, store_open, gates)
+        && store_open_and(
+            store_open,
+            cfg.flag_is_true("structured_memory.auto_consolidation"),
+            gates.auto_consolidation,
+        )
 }
 
 pub struct RetrievalIntent<'a> {
@@ -3435,6 +3545,81 @@ mod tests {
         assert!(!reloaded.episode_capture);
         assert!(!reloaded.explicit_recall);
         assert!(!reloaded.consolidation);
+        assert!(!reloaded.auto_consolidation);
+    }
+
+    #[test]
+    fn auto_consolidation_requires_consolidation_store_and_literal_or_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let off = cfg(dir.path());
+        assert!(!auto_consolidation_available(&off, true, &OperatorGates::default()));
+        assert!(!auto_consolidation_available(
+            &off,
+            true,
+            &OperatorGates {
+                auto_consolidation: true,
+                ..OperatorGates::default()
+            }
+        ));
+        assert!(auto_consolidation_available(
+            &off,
+            true,
+            &OperatorGates {
+                consolidation: true,
+                auto_consolidation: true,
+                ..OperatorGates::default()
+            }
+        ));
+        assert!(!auto_consolidation_available(
+            &off,
+            false,
+            &OperatorGates {
+                consolidation: true,
+                auto_consolidation: true,
+                ..OperatorGates::default()
+            }
+        ));
+    }
+
+    #[test]
+    fn eligible_consolidation_ids_are_owner_scoped_and_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let alice = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 8,
+                    assistant_chars: 8,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let _bob = store
+            .stage_episode(
+                "user_bob",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 8,
+                    assistant_chars: 8,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let alice_ids = store.eligible_consolidation_ids("user_alice").unwrap();
+        assert_eq!(alice_ids, vec![alice.id.clone()]);
+        let batch = store.next_auto_consolidation_batch().unwrap().unwrap();
+        assert_eq!(batch.0, "user_alice");
+        assert_eq!(batch.1, vec![alice.id.clone()]);
+        store
+            .begin_consolidation_run("user_alice", std::slice::from_ref(&alice.id), SUMMARIZER_VERSION)
+            .unwrap();
+        let next = store.next_auto_consolidation_batch().unwrap().unwrap();
+        assert_eq!(next.0, "user_bob");
+        assert!(!next.1.contains(&alice.id));
     }
 
     #[test]

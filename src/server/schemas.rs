@@ -151,7 +151,12 @@ impl Validate for StructuredMemoryGateRequest {
     fn validate(&self) -> Vec<String> {
         if matches!(
             self.gate.as_str(),
-            "episode_capture" | "explicit_recall" | "retrieval" | "auto_retrieval" | "consolidation"
+            "episode_capture"
+                | "explicit_recall"
+                | "retrieval"
+                | "auto_retrieval"
+                | "consolidation"
+                | "auto_consolidation"
         ) {
             vec![]
         } else {

@@ -25,6 +25,7 @@ pub mod schemas;
 pub mod sessions;
 pub mod state;
 pub mod structured_memory;
+pub mod structured_memory_auto;
 pub mod structured_memory_consolidate;
 pub mod structured_memory_fts;
 pub mod transport;
@@ -191,9 +192,11 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         shim,
         jobs,
         request_log: cfg.flag_is_true("logging.request_log"),
+        auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl::new(),
     });
     routes::persona::recover_on_startup(&state)
         .map_err(|e| HarnessError::harness_config(format!("{}: {}", e.code, e.message)))?;
+    crate::server::structured_memory_auto::sync_worker(&state);
     Ok((routes::build_router(state.clone()), state))
 }
 

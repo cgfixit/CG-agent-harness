@@ -55,14 +55,20 @@ episodes referenced by pending proposals.
     require confirm+reason. Runs are durable and idempotent over owner + ordered
     episode set + summarizer version. Restart recovers interrupted `running`
     rows without duplicating proposals.
+12. Phase 6 leftover **optional automatic consolidation**: when
+    `auto_consolidation` is on **and** consolidation is available, a bounded
+    idle worker may enqueue eligible episodes and reuse the manual runner.
+    Feature-off starts no worker. Chat wins the generation gate. Output remains
+    pending proposals only.
 
 ## What this slice does not ship
 
-Automatic consolidation, embeddings, vector databases, RAG fusion, episode FTS,
-episode prompt injection, console slash commands that write facts, or any new
-cloud egress. Status flags for retrieval fusion, automatic consolidation, and
-RAG remain **false**. `retrieval` or `consolidation` can be true while those stay
-false. `explicit_recall` is independent of `retrieval` and consolidation.
+Embeddings, vector databases, RAG fusion, episode FTS, episode prompt
+injection, console slash commands that write facts, or any new cloud egress.
+Status flags for retrieval fusion and RAG remain **false**. `retrieval` or
+`consolidation` can be true while those stay false. `auto_consolidation`
+ships false and starts no worker unless it is on **and** consolidation is on.
+`explicit_recall` is independent of `retrieval` and consolidation.
 Episode availability is true only when
 `structured_memory.episode_capture` is on and the store is open.
 
@@ -94,7 +100,11 @@ Later phases in #87 remain independently gated.
   `/memory consolidation on|off` is the overlay. `/memory consolidate <id...>`
   starts a manual run on selected episode IDs.
 - Auto-consolidation: `structured_memory.auto_consolidation`, also
-  `flag_is_true`, ships **false** and is unused. No idle worker is started.
+  `flag_is_true`, ships **false**. Requires consolidation (AND). When on, a
+  bounded idle worker may enqueue eligible `none`/`pending` episodes and reuse
+  the manual consolidator. Feature-off starts no worker. `/memory
+  auto-consolidate on|off` is the overlay. Output remains pending proposals
+  only; chat wins the generation gate.
 - Prompt budget: combined pinned-note + selected-fact body is capped at 3000
   characters. When both are present the reserved split is
   `pinned_prompt_chars` / `selected_fact_prompt_chars` (default 1500/1500);

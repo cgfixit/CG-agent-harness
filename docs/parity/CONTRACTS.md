@@ -19,8 +19,10 @@ Pinned `/memory` notes are unchanged. FTS search is not prompt injection:
 hits require `/memory retrieve` / the per-request `retrieve` flag, or the
 separately gated `auto_retrieval` silent path, plus assembly-time
 owner/active/revision recheck. Episode FTS, embeddings, retrieval fusion,
-automatic consolidation, and episode prompt injection are not shipped; those
-status flags remain false. Manual consolidation writes pending proposals only. The existing 3000-character memory budget
+and episode prompt injection are not shipped; those status flags remain
+false. Manual consolidation writes pending proposals only. Optional
+auto-consolidation is a harness-only default-off idle worker that reuses
+that runner and still never applies facts. The existing 3000-character memory budget
 (reserved 1500/1500 when notes and facts both compete) still applies.
 
 Sync operates on approved non-RAG roots and one approved remote. It excludes
@@ -60,9 +62,9 @@ New filesystem roots and optional network deployment deliberately extend the
 existing home/clone and loopback invariants only behind explicit configuration
 and their own enforcement/tests. They must not weaken the default boundaries.
 
-Automatic memory consolidation remains excluded (CyClaw
-`memory/consolidation.py` is still a no-op stub). Manual selected-episode
-consolidation is a harness-only Phase 6 surface and still never applies facts. Retired DeepAgents graph/optimizer
+CyClaw `memory/consolidation.py` is still a no-op stub. Harness Phase 6 adds
+manual selected-episode consolidation and a default-off idle auto worker;
+both still never apply facts. Retired DeepAgents graph/optimizer
 work stays excluded (`CLAUDE.md` describes its retirement; builder/scaffold
 presence does not make it an active parity requirement). RAG ingestion,
 retrieval-only MCP, retrieval fusion and RAG grounding remain excluded. Catalog

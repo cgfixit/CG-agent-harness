@@ -625,6 +625,7 @@ pub async fn set_gates(
             }
         }
     }
+    crate::server::structured_memory_auto::sync_worker(&state);
     audit(
         &state,
         "structured_memory_gate_set",
@@ -786,7 +787,7 @@ pub async fn list_consolidation(
         "runs": runs,
         "count": runs.len(),
         "consolidation": consolidation_available(&state.cfg, true, &gates),
-        "auto_consolidation": false,
+        "auto_consolidation": auto_consolidation_available(&state.cfg, true, &gates),
     })))
 }
 

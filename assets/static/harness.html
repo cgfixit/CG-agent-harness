@@ -805,7 +805,7 @@ const COMMANDS = [
   ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
   ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (off by default)'],
-  ['/memory capture|recall|retrieval|auto-retrieve|consolidation [on|off]', 'structured-memory gates; /memory on stays pinned notes'],
+  ['/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate [on|off]', 'structured-memory gates; /memory on stays pinned notes'],
   ['/memory search <query>', 'FTS fact candidates (not injected)'],
   ['/memory retrieve <query>', 'force FTS include for this prompt only'],
   ['/memory consolidate <id...>', 'manual selected-episode consolidation into pending proposals'],
@@ -1163,7 +1163,7 @@ async function runSlash(line) {
 
       case 'memory': {
         const sub = (rest[0] || '').toLowerCase();
-        const gateMap = { capture: 'episode_capture', recall: 'explicit_recall', retrieval: 'retrieval', 'auto-retrieve': 'auto_retrieval', consolidation: 'consolidation' };
+        const gateMap = { capture: 'episode_capture', recall: 'explicit_recall', retrieval: 'retrieval', 'auto-retrieve': 'auto_retrieval', consolidation: 'consolidation', 'auto-consolidate': 'auto_consolidation' };
         if (sub === 'on' || sub === 'off') {
           const r = await api('/api/memory', 'POST', { enabled: sub === 'on' });
           memoryEnabled = !!r.enabled; paintMemory();
@@ -1183,7 +1183,7 @@ async function runSlash(line) {
             ['retrieval', r && r.retrieval ? 'on' : 'off'],
             ['auto_retrieval', r && r.auto_retrieval ? 'on' : 'off'],
             ['consolidation', r && r.consolidation ? 'on' : 'off'],
-            ['auto_consolidation', 'off'],
+            ['auto_consolidation', r && r.auto_consolidation ? 'on' : 'off'],
             ['/memory on', 'unchanged (pinned notes only)']
           ]));
         } else if (sub === 'consolidate') {
@@ -1238,7 +1238,7 @@ async function runSlash(line) {
             ['retrieval', (r.structured_memory && r.structured_memory.retrieval) ? 'on' : 'off'],
             ['auto_retrieval', (r.structured_memory && r.structured_memory.auto_retrieval) ? 'on' : 'off'],
             ['consolidation', (r.structured_memory && r.structured_memory.consolidation) ? 'on' : 'off'],
-            ['auto_consolidation', 'off'],
+            ['auto_consolidation', (r.structured_memory && r.structured_memory.auto_consolidation) ? 'on' : 'off'],
           ]));
           if (r.notes && r.notes.length) {
             sys(table(r.notes.map(n => [n.id, n.text]), ['id', 'note']));

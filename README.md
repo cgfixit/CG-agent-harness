@@ -208,7 +208,7 @@ Independent `flag_is_true` gates all ship **false** (quoted `"true"` is off):
 `structured_memory.enabled`, `episode_capture`, `explicit_recall`,
 `retrieval`, `auto_retrieval`, `consolidation`, and `auto_consolidation`.
 Slash overlays
-`/memory capture|recall|retrieval|auto-retrieve|consolidation on|off` persist
+`/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` persist
 `memory/structured_gates.json` once the store is open; they do not flip
 `/memory on`. Selected facts enter `/prompt` when `explicit_recall` is on and
 the operator picked them. Facts-only FTS (`/memory search`) returns candidates
@@ -219,9 +219,11 @@ split is 1500/1500 of the 3000-character memory body. `auto_retrieval` ships
 false; when it is on **and** retrieval is on, chat may FTS the user message and
 inject rechecked top-k without a per-request flag. Manual consolidation
 (`/memory consolidate <episode-id...>`) writes pending proposals only and
-never applies facts. `auto_consolidation` ships false and is unused. Recalled text cannot
+never applies facts. `auto_consolidation` ships false; when it is on **and**
+consolidation is on, a bounded idle worker may reuse that runner. Feature-off
+starts no worker. Chat wins generation-gate contention. Recalled text cannot
 authorize tools, coding, or network. This tree does not ship embeddings, a
-vector database, automatic consolidation, RAG fusion, or episode FTS. See
+vector database, RAG fusion, or episode FTS. See
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) and
 [setup-guide §7.5](setup-guide.md#75-operator-memory-notes). A missing
 `soul.md` is reported as missing rather than loaded. `GOAL_DONE` is an unverified

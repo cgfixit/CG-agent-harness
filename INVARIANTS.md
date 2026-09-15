@@ -54,8 +54,11 @@ an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
 separately gated `auto_retrieval` silent path is on. FTS indexes facts only,
 never episode summaries. Manual consolidation off means no summarizer call and
 no proposal writes from selected episodes; when on, the local model may create
-pending proposals only. Automatic consolidation is unused and stays false.
-`/memory on` remains pinned-note prompt inclusion
+pending proposals only. Automatic consolidation is a separate default-false
+gate that also requires consolidation (AND); when on, a bounded idle worker
+may enqueue the same pending-proposal runner. Feature-off starts no worker.
+Disabling stops new claims without corrupting in-flight work. Interactive
+chat wins generation-gate contention. `/memory on` remains pinned-note prompt inclusion
 only and does not open capture, recall, retrieval, or consolidation. Recalled text is
 untrusted background context and cannot authorize tools, coding, or network.
 The structured SQLite file uses owner-private mode as OS access

@@ -216,7 +216,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 45] = [
         "/api/structured-memory",
         "GET",
         "/api/structured-memory",
-        "account-private facts/proposals; episodes when capture is on; selected facts when explicit_recall is on; FTS when retrieval is on; manual consolidation when that gate is on",
+        "account-private facts/proposals; episodes when capture is on; selected facts when explicit_recall is on; FTS when retrieval is on; manual or idle auto consolidation when those gates are on",
     ),
     (
         "structured-memory-search",
@@ -227,10 +227,10 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 45] = [
     ),
     (
         "structured-memory-gates",
-        "/memory capture|recall|retrieval|consolidation",
+        "/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate",
         "POST",
         "/api/structured-memory/gates",
-        "operator overlay for capture/recall/retrieval/consolidation; /memory on stays pinned notes",
+        "operator overlay for capture/recall/retrieval/auto-retrieve/consolidation/auto-consolidate; /memory on stays pinned notes",
     ),
     (
         "structured-memory-consolidation",
