@@ -121,7 +121,7 @@
       "delivery": {
         "branch": null,
         "pr": "https://github.com/cgfixit/CG-agent-harness/pull/89",
-        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
+        "implementation_commit": null,
         "artifact": null
       },
       "limitations": [
@@ -243,7 +243,7 @@
       "delivery": {
         "branch": null,
         "pr": "https://github.com/cgfixit/CG-agent-harness/pull/101",
-        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
+        "implementation_commit": null,
         "artifact": null
       },
       "limitations": [
@@ -361,7 +361,7 @@
       "delivery": {
         "branch": null,
         "pr": "https://github.com/cgfixit/CG-agent-harness/pull/90",
-        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
+        "implementation_commit": null,
         "artifact": null
       },
       "limitations": [
@@ -484,7 +484,7 @@
       "delivery": {
         "branch": null,
         "pr": "https://github.com/cgfixit/CG-agent-harness/pull/91",
-        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
+        "implementation_commit": null,
         "artifact": null
       },
       "limitations": [
@@ -599,7 +599,7 @@
       "delivery": {
         "branch": null,
         "pr": "https://github.com/cgfixit/CG-agent-harness/pull/90",
-        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
+        "implementation_commit": null,
         "artifact": null
       },
       "limitations": [
@@ -3490,7 +3490,7 @@
       "delivery": {
         "branch": null,
         "pr": "https://github.com/cgfixit/CG-agent-harness/pull/36",
-        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
+        "implementation_commit": null,
         "artifact": null
       },
       "limitations": [
@@ -3581,7 +3581,7 @@
       "delivery": {
         "branch": null,
         "pr": "https://github.com/cgfixit/CG-agent-harness/pull/36",
-        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
+        "implementation_commit": null,
         "artifact": null
       },
       "limitations": [
@@ -4016,7 +4016,7 @@
       "delivery": {
         "branch": "codex/model-readiness",
         "pr": null,
-        "implementation_commit": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
+        "implementation_commit": null,
         "artifact": null,
         "base_branch": "codex/parity-foundations",
         "merge_predecessor": "https://github.com/cgfixit/CG-agent-harness/pull/29",
