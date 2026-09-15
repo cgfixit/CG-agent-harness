@@ -124,19 +124,29 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
   # not be able to turn deleted boilerplate into "contributor-written"
   # evidence. Only without $base is the working-tree copy used, and that is
   # reported.
+  # A base ref that resolves but lacks the template is CI's own failure
+  # case (pr-template-check.yml `core.setFailed` on a failed fetch) and
+  # must fail closed here too, not fall back: without the base copy the
+  # whole body looks "contributed" and the stock invariant headings satisfy
+  # the guarantee regex. Only a base ref that does not resolve at all
+  # (shallow clone, unfetched remote) falls back to the working tree.
   template_text=""
-  if template_text="$(git -C "$repo_root" show "$base:$template_path" 2>/dev/null)"; then
-    template_source="template at $base"
+  template_missing=""
+  if git -C "$repo_root" rev-parse --verify -q "$base^{commit}" >/dev/null; then
+    if template_text="$(git -C "$repo_root" show "$base:$template_path" 2>/dev/null)"; then
+      template_source="template at $base"
+    else
+      template_missing="$template_path is absent at $base; cannot evaluate the core-path rule (CI fails the same way)"
+    fi
   elif [[ -f "$repo_root/$template_path" ]]; then
     template_text="$(cat "$repo_root/$template_path")"
     template_source="working-tree template"
-    printf 'check-pr-template: %s unavailable; comparing against the working-tree template (CI uses the base branch copy)\n' "$base" >&2
+    printf 'check-pr-template: %s does not resolve; comparing against the working-tree template (CI uses the base branch copy)\n' "$base" >&2
+  else
+    template_missing="PR template not readable; cannot evaluate the core-path rule"
   fi
-  # Fail closed: without the template the whole body looks "contributed" and
-  # the stock invariant headings satisfy the guarantee regex. Mirrors
-  # pr-template-check.yml `core.setFailed` on a failed template fetch.
-  if [[ -z "$template_text" ]]; then
-    missing+=("PR template not readable; cannot evaluate the core-path rule")
+  if [[ -n "$template_missing" || -z "$template_text" ]]; then
+    missing+=("${template_missing:-PR template not readable; cannot evaluate the core-path rule}")
     fail=1
   else
     contributed="$(awk '
