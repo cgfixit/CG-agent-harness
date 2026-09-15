@@ -174,13 +174,17 @@ Writes: canonical path -> per-segment `.git` name-equivalence refusal
 (trailing dot/space, NTFS `git~1`, HFS-ignored codepoints, case folding) ->
 resolve (dangling-leaf aware) -> containment -> landed-path vs the real
 `.git` dir -> report the LANDED path (so a symlink onto a protected file is
-judged by where it lands). Reads resolve inside a `cap_std::fs::Dir` capability
-held open on the clone: each path component is opened relative to the
-previous one (`openat` semantics), so a symlink pointing outside the clone
+judged by where it lands). Reads: after `canonical_repo_relative_path`
+succeeds, refuse if any path segment is `.git` name-equivalent (same
+`is_dotgit_name` helper as writes), then resolve inside a `cap_std::fs::Dir`
+capability held open on the clone: each path component is opened relative to
+the previous one (`openat` semantics), so a symlink pointing outside the clone
 fails to resolve rather than being followed; the leaf is additionally opened
 with `O_NOFOLLOW` (unix). 256 KB cap, UTF-8 required.
 
-- Locked by: `tests/agentic_foundations.rs::write_jail_refuses_escapes_and_reports_landed_paths`.
+- Locked by: `tests/agentic_foundations.rs::write_jail_refuses_escapes_and_reports_landed_paths`,
+  `read_jail_refuses_symlink_escapes_without_following_the_leaf`,
+  `read_jail_refuses_dotgit_metadata`.
 - This closes the canonicalize-then-open TOCTOU window the port previously
   carried as a documented residual: capability-based resolution has no window
   to race, because there is never a bare path handed to the OS a second time.
