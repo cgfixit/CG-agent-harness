@@ -10,7 +10,12 @@
 //! Phase 5 adds a facts-only contentless FTS5 index. Search is not injection.
 //! Recalled FTS hits still require an explicit pick (or the separately gated
 //! `auto_retrieval` silent path) and assembly-time owner/active/revision recheck.
+//!
+//! Phase 6 adds a default-off manual consolidator: selected episodes become
+//! pending proposals only. It never auto-applies facts, never feeds recalled
+//! facts into the summarizer prompt, and never starts an idle worker.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -23,8 +28,9 @@ use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 pub const PUBLIC_ID_LEN: usize = 32;
+pub const SUMMARIZER_VERSION: &str = "consolidator-v1";
 const MARKER_BODY: &[u8] = b"sqlite3-v1\n";
 
 const DEFAULT_MAX_FACTS: u64 = 64;
@@ -46,6 +52,8 @@ const DEFAULT_MAX_RETRIEVAL_TOKEN_CHARS: u64 = 32;
 const DEFAULT_MAX_SEARCH_TIME_MS: u64 = 250;
 const DEFAULT_PINNED_PROMPT_CHARS: u64 = 1500;
 const DEFAULT_SELECTED_FACT_PROMPT_CHARS: u64 = 1500;
+const DEFAULT_MAX_CONSOLIDATION_EPISODES: u64 = 8;
+const DEFAULT_MAX_CONSOLIDATION_CANDIDATES: u64 = 8;
 
 const FACTS_PROPOSALS_DDL: &str = "
 CREATE TABLE facts (
@@ -156,6 +164,18 @@ CREATE TABLE facts_fts_state (
 PRAGMA user_version=3;
 ";
 
+const CONSOLIDATION_V4_DDL: &str = "
+ALTER TABLE consolidation_runs ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE consolidation_runs ADD COLUMN model_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE consolidation_runs ADD COLUMN proposal_ids TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE consolidation_runs ADD COLUMN proposal_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE consolidation_runs ADD COLUMN candidate_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE consolidation_runs ADD COLUMN rejected_count INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS consolidation_runs_idempotency
+  ON consolidation_runs(owner_id, idempotency_key) WHERE length(idempotency_key) = 64;
+PRAGMA user_version=4;
+";
+
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     pub max_facts_per_owner: usize,
@@ -177,6 +197,8 @@ pub struct Limits {
     pub max_search_time_ms: u64,
     pub pinned_prompt_chars: usize,
     pub selected_fact_prompt_chars: usize,
+    pub max_consolidation_episodes: usize,
+    pub max_consolidation_candidates: usize,
 }
 
 impl Limits {
@@ -292,6 +314,22 @@ impl Limits {
                 1,
                 3000,
             ) as usize,
+            max_consolidation_episodes: clamp_u64(
+                cfg.u64_or(
+                    "structured_memory.max_consolidation_episodes",
+                    DEFAULT_MAX_CONSOLIDATION_EPISODES,
+                ),
+                1,
+                16,
+            ) as usize,
+            max_consolidation_candidates: clamp_u64(
+                cfg.u64_or(
+                    "structured_memory.max_consolidation_candidates",
+                    DEFAULT_MAX_CONSOLIDATION_CANDIDATES,
+                ),
+                1,
+                16,
+            ) as usize,
         }
     }
 
@@ -316,6 +354,8 @@ impl Limits {
             "max_search_time_ms": self.max_search_time_ms,
             "pinned_prompt_chars": self.pinned_prompt_chars,
             "selected_fact_prompt_chars": self.selected_fact_prompt_chars,
+            "max_consolidation_episodes": self.max_consolidation_episodes,
+            "max_consolidation_candidates": self.max_consolidation_candidates,
         })
     }
 }
@@ -331,6 +371,7 @@ pub struct OperatorGates {
     pub explicit_recall: bool,
     pub retrieval: bool,
     pub auto_retrieval: bool,
+    pub consolidation: bool,
 }
 
 impl OperatorGates {
@@ -353,6 +394,7 @@ impl OperatorGates {
             explicit_recall: value.get("explicit_recall") == Some(&json!(true)),
             retrieval: value.get("retrieval") == Some(&json!(true)),
             auto_retrieval: value.get("auto_retrieval") == Some(&json!(true)),
+            consolidation: value.get("consolidation") == Some(&json!(true)),
         }
     }
 
@@ -392,6 +434,7 @@ impl OperatorGates {
             "explicit_recall": self.explicit_recall,
             "retrieval": self.retrieval,
             "auto_retrieval": self.auto_retrieval,
+            "consolidation": self.consolidation,
         })
     }
 
@@ -401,10 +444,11 @@ impl OperatorGates {
             "explicit_recall" => self.explicit_recall = enabled,
             "retrieval" => self.retrieval = enabled,
             "auto_retrieval" => self.auto_retrieval = enabled,
+            "consolidation" => self.consolidation = enabled,
             _ => {
                 return Err(HarnessError::new(
                     "STRUCTURED_MEMORY_GATE",
-                    "gate must be episode_capture, explicit_recall, retrieval, or auto_retrieval",
+                    "gate must be episode_capture, explicit_recall, retrieval, auto_retrieval, or consolidation",
                 ))
             }
         }
@@ -546,6 +590,46 @@ impl Episode {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ConsolidationRun {
+    pub id: String,
+    pub owner_id: String,
+    pub state: String,
+    pub episode_ids: Vec<String>,
+    pub summarizer_version: String,
+    pub idempotency_key: String,
+    pub model_id: String,
+    pub proposal_ids: Vec<String>,
+    pub proposal_count: i64,
+    pub candidate_count: i64,
+    pub rejected_count: i64,
+    pub created_ts: f64,
+    pub ended_ts: Option<f64>,
+    pub error_class: Option<String>,
+}
+
+impl ConsolidationRun {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "id": self.id,
+            "owner_id": self.owner_id,
+            "state": self.state,
+            "episode_ids": self.episode_ids,
+            "summarizer_version": self.summarizer_version,
+            "idempotency_key": self.idempotency_key,
+            "model_id": self.model_id,
+            "proposal_ids": self.proposal_ids,
+            "proposal_count": self.proposal_count,
+            "candidate_count": self.candidate_count,
+            "rejected_count": self.rejected_count,
+            "created_ts": self.created_ts,
+            "ended_ts": self.ended_ts,
+            "error_class": self.error_class,
+            "auto": false,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct EpisodeHealth {
     pub last_stage_ok: Option<bool>,
@@ -591,6 +675,7 @@ pub struct StructuredMemoryStore {
     scanner: Scanner,
     health: Mutex<EpisodeHealth>,
     retrieval_health: Mutex<RetrievalHealth>,
+    cancelled_runs: Mutex<BTreeSet<String>>,
 }
 
 impl std::fmt::Debug for StructuredMemoryStore {
@@ -697,7 +782,7 @@ fn migrate_schema(conn: &mut Connection) -> Result<()> {
     if version == SCHEMA_VERSION {
         return Ok(());
     }
-    if version != 1 && version != 2 {
+    if version != 1 && version != 2 && version != 3 {
         return Err(invalid("unsupported or corrupt structured memory database"));
     }
     let tx = conn
@@ -706,9 +791,29 @@ fn migrate_schema(conn: &mut Connection) -> Result<()> {
     if version == 1 {
         tx.execute_batch(EPISODE_DDL).map_err(sql)?;
     }
-    tx.execute_batch(FTS_DDL).map_err(sql)?;
-    backfill_facts_fts(&tx)?;
+    if version <= 2 {
+        tx.execute_batch(FTS_DDL).map_err(sql)?;
+        backfill_facts_fts(&tx)?;
+    }
+    if version <= 3 {
+        tx.execute_batch(CONSOLIDATION_V4_DDL).map_err(sql)?;
+    }
     tx.commit().map_err(sql)?;
+    Ok(())
+}
+
+fn recover_interrupted_runs(conn: &Connection) -> Result<()> {
+    let now = crate::common::now_ts();
+    conn.execute(
+        "UPDATE consolidation_runs SET state='failed', error_class='interrupted', ended_ts=?1 WHERE state='running'",
+        params![now],
+    )
+    .map_err(sql)?;
+    conn.execute(
+        "UPDATE episodes SET consolidation_state='none' WHERE consolidation_state='pending'",
+        [],
+    )
+    .map_err(sql)?;
     Ok(())
 }
 
@@ -853,6 +958,23 @@ fn digest(content: &str) -> String {
     crate::common::sha256_hex(content)
 }
 
+fn encode_ids(ids: &[String]) -> String {
+    serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn decode_ids(raw: &str) -> Vec<String> {
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    serde_json::from_str(raw).unwrap_or_else(|_| {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|id| valid_public_id(id))
+            .map(ToString::to_string)
+            .collect()
+    })
+}
+
 fn proposal_revision(
     action: &str,
     content: Option<&str>,
@@ -915,6 +1037,7 @@ impl StructuredMemoryStore {
             tx.execute_batch(EPISODE_DDL).map_err(sql)?;
             tx.execute_batch(FTS_DDL).map_err(sql)?;
             backfill_facts_fts(&tx)?;
+            tx.execute_batch(CONSOLIDATION_V4_DDL).map_err(sql)?;
             tx.commit().map_err(sql)?;
             check_schema(&conn)?;
             conn.close().map_err(|(_, e)| sql(e))?;
@@ -925,6 +1048,7 @@ impl StructuredMemoryStore {
             write_atomic(&marker, MARKER_BODY, Some(0o600))?;
             connect(&path)?
         };
+        recover_interrupted_runs(&conn)?;
         let index_ready = fts_table_exists(&conn).unwrap_or(false);
         Ok(Self {
             path,
@@ -936,6 +1060,7 @@ impl StructuredMemoryStore {
                 index_ready,
                 ..RetrievalHealth::default()
             }),
+            cancelled_runs: Mutex::new(BTreeSet::new()),
         })
     }
 
@@ -2246,6 +2371,518 @@ impl StructuredMemoryStore {
         }))
     }
 
+    pub fn normalize_episode_ids(ids: &[String]) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        for id in ids {
+            let id = id.trim();
+            if !valid_public_id(id) {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_CONTENT",
+                    "consolidation episode ids must be opaque 32-hex identifiers",
+                ));
+            }
+            out.push(id.to_string());
+        }
+        out.sort();
+        out.dedup();
+        if out.is_empty() {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_CONTENT",
+                "consolidation requires at least one selected episode",
+            ));
+        }
+        Ok(out)
+    }
+
+    pub fn consolidation_idempotency_key(owner: &str, episode_ids: &[String], version: &str) -> String {
+        crate::common::sha256_hex(&format!("{owner}\n{}\n{version}", episode_ids.join(",")))
+    }
+
+    pub fn episodes_for_ids(&self, owner: &str, ids: &[String]) -> Result<Vec<Episode>> {
+        Self::require_owner(owner)?;
+        let mut episodes = Vec::with_capacity(ids.len());
+        for id in ids {
+            episodes.push(self.get_episode(owner, id)?);
+        }
+        Ok(episodes)
+    }
+
+    pub fn is_cancel_requested(&self, id: &str) -> bool {
+        self.cancelled_runs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(id)
+    }
+
+    pub fn running_consolidation(&self, owner: &str) -> Result<Option<ConsolidationRun>> {
+        Self::require_owner(owner)?;
+        let conn = self.lock();
+        conn.query_row(
+            &format!(
+                "{} WHERE owner_id=?1 AND state='running' ORDER BY created_ts DESC LIMIT 1",
+                Self::run_select()
+            ),
+            params![owner],
+            Self::map_run,
+        )
+        .optional()
+        .map_err(sql)
+    }
+
+    pub fn list_consolidation_runs(&self, owner: &str) -> Result<Vec<ConsolidationRun>> {
+        Self::require_owner(owner)?;
+        let conn = self.lock();
+        let mut stmt = conn
+            .prepare(&format!(
+                "{} WHERE owner_id=?1 ORDER BY created_ts DESC, public_id ASC LIMIT 32",
+                Self::run_select()
+            ))
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![owner], Self::map_run)
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        Ok(rows)
+    }
+
+    pub fn get_consolidation_run(&self, owner: &str, id: &str) -> Result<ConsolidationRun> {
+        Self::require_owner(owner)?;
+        if !valid_public_id(id) {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_NOT_FOUND",
+                "unknown consolidation run",
+            ));
+        }
+        let conn = self.lock();
+        conn.query_row(
+            &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+            params![owner, id],
+            Self::map_run,
+        )
+        .optional()
+        .map_err(sql)?
+        .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown consolidation run"))
+    }
+
+    pub fn begin_consolidation_run(
+        &self,
+        owner: &str,
+        episode_ids: &[String],
+        summarizer_version: &str,
+    ) -> Result<ConsolidationRun> {
+        Self::require_owner(owner)?;
+        let key = Self::consolidation_idempotency_key(owner, episode_ids, summarizer_version);
+        let encoded = encode_ids(episode_ids);
+        let now = crate::common::now_ts();
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let existing = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND idempotency_key=?2", Self::run_select()),
+                params![owner, key],
+                Self::map_run,
+            )
+            .optional()
+            .map_err(sql)?;
+        if let Some(run) = existing {
+            if run.state == "done" {
+                return Ok(run);
+            }
+            if run.state == "running" {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_BUSY",
+                    "a consolidation run is already using the local model",
+                ));
+            }
+            tx.execute(
+                "UPDATE consolidation_runs SET state='running', error_class=NULL, ended_ts=NULL, model_id='', proposal_ids='[]', proposal_count=0, candidate_count=0, rejected_count=0, created_ts=?1
+                 WHERE owner_id=?2 AND public_id=?3 AND state IN ('failed','cancelled')",
+                params![now, owner, run.id],
+            )
+            .map_err(sql)?;
+            Self::mark_episodes_state(&tx, owner, episode_ids, "pending")?;
+            let started = tx
+                .query_row(
+                    &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                    params![owner, run.id],
+                    Self::map_run,
+                )
+                .map_err(sql)?;
+            tx.commit().map_err(sql)?;
+            self.cancelled_runs
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&started.id);
+            return Ok(started);
+        }
+        if Self::owner_has_running(&tx, owner)? {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_BUSY",
+                "a consolidation run is already using the local model",
+            ));
+        }
+        let id = crate::common::random_hex(16);
+        tx.execute(
+            "INSERT INTO consolidation_runs(public_id,owner_id,state,episode_ids,summarizer_version,created_ts,idempotency_key,model_id,proposal_ids,proposal_count,candidate_count,rejected_count)
+             VALUES(?1,?2,'running',?3,?4,?5,?6,'','[]',0,0,0)",
+            params![id, owner, encoded, summarizer_version, now, key],
+        )
+        .map_err(sql)?;
+        Self::mark_episodes_state(&tx, owner, episode_ids, "pending")?;
+        let started = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                params![owner, id],
+                Self::map_run,
+            )
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok(started)
+    }
+
+    pub fn cancel_consolidation_run(&self, owner: &str, id: &str) -> Result<ConsolidationRun> {
+        Self::require_owner(owner)?;
+        if !valid_public_id(id) {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_NOT_FOUND",
+                "unknown consolidation run",
+            ));
+        }
+        let now = crate::common::now_ts();
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let current = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                params![owner, id],
+                Self::map_run,
+            )
+            .optional()
+            .map_err(sql)?
+            .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown consolidation run"))?;
+        if current.state == "cancelled" {
+            return Ok(current);
+        }
+        if current.state != "running" {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_CHANGED",
+                "consolidation run is not running",
+            ));
+        }
+        tx.execute(
+            "UPDATE consolidation_runs SET state='cancelled', error_class='cancelled', ended_ts=?1 WHERE owner_id=?2 AND public_id=?3 AND state='running'",
+            params![now, owner, id],
+        )
+        .map_err(sql)?;
+        Self::mark_episodes_state(&tx, owner, &current.episode_ids, "none")?;
+        let run = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                params![owner, id],
+                Self::map_run,
+            )
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        self.cancelled_runs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id.to_string());
+        Ok(run)
+    }
+
+    pub fn fail_consolidation_run(&self, owner: &str, id: &str, error_class: &str) -> Result<ConsolidationRun> {
+        Self::require_owner(owner)?;
+        let now = crate::common::now_ts();
+        let state = if error_class == "cancelled" {
+            "cancelled"
+        } else {
+            "failed"
+        };
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let current = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                params![owner, id],
+                Self::map_run,
+            )
+            .optional()
+            .map_err(sql)?
+            .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown consolidation run"))?;
+        if current.state != "running" {
+            return Ok(current);
+        }
+        tx.execute(
+            "UPDATE consolidation_runs SET state=?1, error_class=?2, ended_ts=?3 WHERE owner_id=?4 AND public_id=?5 AND state='running'",
+            params![state, error_class, now, owner, id],
+        )
+        .map_err(sql)?;
+        Self::mark_episodes_state(&tx, owner, &current.episode_ids, "none")?;
+        let run = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                params![owner, id],
+                Self::map_run,
+            )
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok(run)
+    }
+
+    pub fn finish_consolidation_run(
+        &self,
+        owner: &str,
+        id: &str,
+        model_id: &str,
+        candidate_count: usize,
+        rejected_count: usize,
+        drafts: &[ProposalDraft<'_>],
+    ) -> Result<ConsolidationRun> {
+        Self::require_owner(owner)?;
+        if self.is_cancel_requested(id) {
+            return self.fail_consolidation_run(owner, id, "cancelled");
+        }
+        let model_id = self.clean_text(model_id, 200, true)?;
+        let now = crate::common::now_ts();
+        let mut conn = self.lock();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql)?;
+        let current = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                params![owner, id],
+                Self::map_run,
+            )
+            .optional()
+            .map_err(sql)?
+            .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown consolidation run"))?;
+        if current.state != "running" {
+            return Ok(current);
+        }
+        let pending: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM proposals WHERE owner_id=?1 AND status='pending'",
+                params![owner],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        if pending + drafts.len() as i64 > self.limits.max_proposals_per_owner as i64 {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_CAP",
+                format!(
+                    "at most {} pending proposals per owner",
+                    self.limits.max_proposals_per_owner
+                ),
+            )
+            .detail("max_proposals", self.limits.max_proposals_per_owner as u64));
+        }
+        let mut proposal_ids = Vec::new();
+        for draft in drafts {
+            let proposal = self.insert_proposal_in_tx(&tx, owner, draft)?;
+            proposal_ids.push(proposal.id);
+        }
+        tx.execute(
+            "UPDATE consolidation_runs SET state='done', model_id=?1, proposal_ids=?2, proposal_count=?3, candidate_count=?4, rejected_count=?5, ended_ts=?6, error_class=NULL
+             WHERE owner_id=?7 AND public_id=?8 AND state='running'",
+            params![
+                model_id,
+                encode_ids(&proposal_ids),
+                proposal_ids.len() as i64,
+                candidate_count as i64,
+                rejected_count as i64,
+                now,
+                owner,
+                id
+            ],
+        )
+        .map_err(sql)?;
+        Self::mark_episodes_state(&tx, owner, &current.episode_ids, "done")?;
+        let run = tx
+            .query_row(
+                &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                params![owner, id],
+                Self::map_run,
+            )
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok(run)
+    }
+
+    fn run_select() -> &'static str {
+        "SELECT public_id,owner_id,state,episode_ids,summarizer_version,created_ts,ended_ts,error_class,idempotency_key,model_id,proposal_ids,proposal_count,candidate_count,rejected_count FROM consolidation_runs"
+    }
+
+    fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConsolidationRun> {
+        Ok(ConsolidationRun {
+            id: row.get(0)?,
+            owner_id: row.get(1)?,
+            state: row.get(2)?,
+            episode_ids: decode_ids(&row.get::<_, String>(3)?),
+            summarizer_version: row.get(4)?,
+            created_ts: row.get(5)?,
+            ended_ts: row.get(6)?,
+            error_class: row.get(7)?,
+            idempotency_key: row.get(8)?,
+            model_id: row.get(9)?,
+            proposal_ids: decode_ids(&row.get::<_, String>(10)?),
+            proposal_count: row.get(11)?,
+            candidate_count: row.get(12)?,
+            rejected_count: row.get(13)?,
+        })
+    }
+
+    fn owner_has_running(tx: &rusqlite::Transaction<'_>, owner: &str) -> Result<bool> {
+        let count: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM consolidation_runs WHERE owner_id=?1 AND state='running'",
+                params![owner],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        Ok(count > 0)
+    }
+
+    fn mark_episodes_state(tx: &rusqlite::Transaction<'_>, owner: &str, ids: &[String], state: &str) -> Result<()> {
+        for id in ids {
+            tx.execute(
+                "UPDATE episodes SET consolidation_state=?1 WHERE owner_id=?2 AND public_id=?3",
+                params![state, owner, id],
+            )
+            .map_err(sql)?;
+        }
+        Ok(())
+    }
+
+    fn insert_proposal_in_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        owner: &str,
+        draft: &ProposalDraft<'_>,
+    ) -> Result<Proposal> {
+        if !valid_action(draft.action) {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_ACTION",
+                "proposal action must be add, update, or deactivate",
+            ));
+        }
+        let content = match draft.content {
+            Some(text) if draft.action != "deactivate" => {
+                Some(self.clean_text(text, self.limits.max_fact_chars, false)?)
+            }
+            Some(_) => None,
+            None if draft.action == "add" || draft.action == "update" => {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_CONTENT",
+                    "add and update proposals require content",
+                ))
+            }
+            None => None,
+        };
+        let category = match draft.category {
+            Some(text) => Some(self.clean_text(text, self.limits.max_category_chars, true)?),
+            None => None,
+        };
+        if matches!(draft.action, "update" | "deactivate") {
+            let target = draft.target_fact_id.unwrap_or("");
+            if !valid_public_id(target) || draft.expected_revision.unwrap_or(0) < 1 {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_PROPOSAL",
+                    "update and deactivate proposals must bind a fact id and revision",
+                ));
+            }
+            let digest = draft.expected_digest.unwrap_or("");
+            if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_PROPOSAL",
+                    "update and deactivate proposals must bind the expected content digest",
+                ));
+            }
+            let exists: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM facts WHERE owner_id=?1 AND public_id=?2",
+                    params![owner, target],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            if exists == 0 {
+                return Err(HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown fact"));
+            }
+        }
+        let mut sources = Vec::new();
+        for id in draft.source_episode_ids {
+            if !valid_public_id(id) {
+                return Err(HarnessError::new(
+                    "STRUCTURED_MEMORY_PROPOSAL",
+                    "source episode ids must be opaque 32-hex identifiers",
+                ));
+            }
+            sources.push(id.clone());
+        }
+        sources.sort();
+        sources.dedup();
+        let revision = proposal_revision(
+            draft.action,
+            content.as_deref(),
+            category.as_deref(),
+            draft.target_fact_id,
+            draft.expected_revision,
+            draft.expected_digest,
+        );
+        let id = crate::common::random_hex(16);
+        let now = crate::common::now_ts();
+        tx.execute(
+            "INSERT INTO proposals(public_id,owner_id,action,content,category,target_fact_id,expected_revision,expected_digest,proposal_revision,status,created_ts)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'pending',?10)",
+            params![
+                id,
+                owner,
+                draft.action,
+                content,
+                category,
+                draft.target_fact_id,
+                draft.expected_revision,
+                draft.expected_digest,
+                revision,
+                now
+            ],
+        )
+        .map_err(sql)?;
+        let loaded = tx
+            .query_row(
+                "SELECT public_id,owner_id,action,content,category,target_fact_id,expected_revision,expected_digest,proposal_revision,status,created_ts,decided_ts
+                 FROM proposals WHERE public_id=?1",
+                params![id],
+                Self::map_proposal,
+            )
+            .map_err(sql)?;
+        for episode_id in &sources {
+            let exists: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM episodes WHERE owner_id=?1 AND public_id=?2",
+                    params![owner, episode_id],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            if exists == 0 {
+                return Err(HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown episode"));
+            }
+            tx.execute(
+                "INSERT INTO proposal_episode_refs(owner_id,proposal_id,episode_id) VALUES(?1,?2,?3)",
+                params![owner, id, episode_id],
+            )
+            .map_err(sql)?;
+        }
+        Self::attach_refs(tx, owner, loaded)
+    }
+
     pub fn export_owner(&self, owner: &str) -> Result<OwnerExport> {
         Self::require_owner(owner)?;
         let facts = self.list_facts(owner)?;
@@ -2438,6 +3075,23 @@ pub fn auto_retrieval_available(cfg: &AppConfig, store_open: bool, gates: &Opera
         )
 }
 
+/// Manual consolidation is available only when the store is open and the
+/// independent `structured_memory.consolidation` gate or overlay is true.
+/// Independent of `/memory on`, capture, recall, retrieval, and auto_retrieval.
+pub fn consolidation_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
+    store_open_and(
+        store_open,
+        cfg.flag_is_true("structured_memory.consolidation"),
+        gates.consolidation,
+    )
+}
+
+/// Automatic consolidation is not shipped in this phase. Status stays false
+/// even if a leftover overlay or yaml key is present.
+pub fn auto_consolidation_available(_cfg: &AppConfig, _store_open: bool, _gates: &OperatorGates) -> bool {
+    false
+}
+
 pub struct RetrievalIntent<'a> {
     pub force: bool,
     pub query: Option<&'a str>,
@@ -2573,6 +3227,7 @@ pub fn disabled_status(owner: &str, limits: &Limits) -> Value {
         "auto_retrieval": false,
         "retrieval_fusion": false,
         "consolidation": false,
+        "auto_consolidation": false,
         "rag": false,
         "writable_from_model": false,
         "at_rest_encryption": false,
@@ -2779,6 +3434,7 @@ mod tests {
         assert!(!reloaded.auto_retrieval);
         assert!(!reloaded.episode_capture);
         assert!(!reloaded.explicit_recall);
+        assert!(!reloaded.consolidation);
     }
 
     #[test]
@@ -3227,5 +3883,163 @@ mod tests {
         let store = StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
         assert_eq!(store.list_facts("user_alice").unwrap().len(), 1);
         assert_eq!(store.search_facts_fts("user_alice", "metric", 8).unwrap().len(), 1);
+        store.with_connection(|conn| {
+            let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+            assert_eq!(version, SCHEMA_VERSION);
+            let cols: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('consolidation_runs') WHERE name='idempotency_key'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(cols, 1);
+        });
+    }
+
+    #[test]
+    fn schema_v3_upgrades_consolidation_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("structured.sqlite3");
+        {
+            let staged = tempfile::Builder::new()
+                .prefix(".structured.")
+                .tempfile_in(dir.path())
+                .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                staged
+                    .as_file()
+                    .set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .unwrap();
+            }
+            let mut conn = connect(staged.path()).unwrap();
+            let tx = conn.transaction().unwrap();
+            tx.execute_batch(FACTS_PROPOSALS_DDL).unwrap();
+            tx.execute_batch(EPISODE_DDL).unwrap();
+            tx.execute_batch(FTS_DDL).unwrap();
+            tx.commit().unwrap();
+            conn.close().ok();
+            staged.persist_noclobber(&path).unwrap();
+        }
+        write_atomic(&marker_path(&path), MARKER_BODY, Some(0o600)).unwrap();
+        let store = StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
+        let episode = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 8,
+                    assistant_chars: 8,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let run = store
+            .begin_consolidation_run("user_alice", std::slice::from_ref(&episode.id), SUMMARIZER_VERSION)
+            .unwrap();
+        assert_eq!(run.state, "running");
+        assert_eq!(run.episode_ids, vec![episode.id.clone()]);
+        let again = store
+            .begin_consolidation_run("user_alice", std::slice::from_ref(&episode.id), SUMMARIZER_VERSION)
+            .unwrap_err();
+        assert_eq!(again.code, "STRUCTURED_MEMORY_BUSY");
+    }
+
+    #[test]
+    fn finish_creates_pending_proposals_only_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let episode = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 8,
+                    assistant_chars: 8,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let run = store
+            .begin_consolidation_run("user_alice", std::slice::from_ref(&episode.id), SUMMARIZER_VERSION)
+            .unwrap();
+        let finished = store
+            .finish_consolidation_run(
+                "user_alice",
+                &run.id,
+                "local-test-model",
+                1,
+                0,
+                &[ProposalDraft {
+                    action: "add",
+                    content: Some("Prefer metric units"),
+                    category: Some("pref"),
+                    target_fact_id: None,
+                    expected_revision: None,
+                    expected_digest: None,
+                    source_episode_ids: std::slice::from_ref(&episode.id),
+                }],
+            )
+            .unwrap();
+        assert_eq!(finished.state, "done");
+        assert_eq!(finished.proposal_count, 1);
+        assert_eq!(store.list_facts("user_alice").unwrap().len(), 0);
+        let proposals = store.list_proposals("user_alice").unwrap();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].status, "pending");
+        let replay = store
+            .begin_consolidation_run("user_alice", std::slice::from_ref(&episode.id), SUMMARIZER_VERSION)
+            .unwrap();
+        assert_eq!(replay.id, finished.id);
+        assert_eq!(replay.state, "done");
+        assert_eq!(store.list_proposals("user_alice").unwrap().len(), 1);
+        assert!(store.get_consolidation_run("user_bob", &finished.id).is_err());
+    }
+
+    #[test]
+    fn open_recovers_interrupted_running_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("structured.sqlite3");
+        let episode_id;
+        {
+            let store = StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
+            let episode = store
+                .stage_episode(
+                    "user_alice",
+                    EpisodeDraft {
+                        model_id: "local-test-model",
+                        outcome: "completed",
+                        user_chars: 8,
+                        assistant_chars: 8,
+                        sensitivity: "normal",
+                    },
+                )
+                .unwrap();
+            episode_id = episode.id.clone();
+            store
+                .begin_consolidation_run("user_alice", std::slice::from_ref(&episode.id), SUMMARIZER_VERSION)
+                .unwrap();
+        }
+        let store = StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
+        let runs = store.list_consolidation_runs("user_alice").unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].state, "failed");
+        assert_eq!(runs[0].error_class.as_deref(), Some("interrupted"));
+        assert_eq!(
+            store
+                .get_episode("user_alice", &episode_id)
+                .unwrap()
+                .consolidation_state,
+            "none"
+        );
+        let retry = store
+            .begin_consolidation_run("user_alice", std::slice::from_ref(&episode_id), SUMMARIZER_VERSION)
+            .unwrap();
+        assert_eq!(retry.state, "running");
+        assert_eq!(retry.id, runs[0].id);
     }
 }

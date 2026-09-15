@@ -25,6 +25,7 @@ pub mod schemas;
 pub mod sessions;
 pub mod state;
 pub mod structured_memory;
+pub mod structured_memory_consolidate;
 pub mod structured_memory_fts;
 pub mod transport;
 pub mod views;

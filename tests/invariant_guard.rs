@@ -133,6 +133,8 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "structured_memory.explicit_recall",
         "structured_memory.retrieval",
         "structured_memory.auto_retrieval",
+        "structured_memory.consolidation",
+        "structured_memory.auto_consolidation",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }

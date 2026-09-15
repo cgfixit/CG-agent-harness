@@ -805,6 +805,9 @@ only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
      **Advisor-sensitive silent path.** When this is on **and** retrieval is
      on, chat may FTS the user message and inject rechecked top-k without a
      per-request flag. Ships false. Leave it off unless you intend that.
+   - `structured_memory.consolidation` / `/memory consolidation on` — allow
+     `/memory consolidate <episode-id...>` to turn selected episodes into
+     pending proposals only. Ships false. Automatic consolidation stays unused.
 3. `/memory on` remains pinned-note inclusion only and never opens these gates.
 
 **Search ≠ inject.** `/memory search <query>` (or
@@ -822,9 +825,9 @@ inject under the Phase 4 budget. Hits do not stick on the shared session.
 1500/1500 when both are present). Unused reserved capacity is not transferred.
 When only one source is present it may use the full 3000.
 
-**Not in this tree:** embeddings, vector DB, consolidation (later #87), RAG
-fusion, or episode FTS. Status can report `retrieval: true` while fusion,
-consolidation, and RAG stay false.
+**Not in this tree:** embeddings, vector DB, automatic consolidation, RAG
+fusion, or episode FTS. Status can report `retrieval: true` or
+`consolidation: true` while fusion, auto-consolidation, and RAG stay false.
 
 Day-to-day operator howto: [docs/USER_MANUAL.md](docs/USER_MANUAL.md). Contract:
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md). Use pinned notes for
@@ -1071,7 +1074,7 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 | Goal and chat history | Saved session; goal maximum 2,000 characters | `/goal`, `/session list`, `/goal task` for coding linkage |
 | Loop counters and automatic continuation | Current page only; not an unattended scheduler | Visible loop state; restart does not resume it |
 | Memory notes and inclusion | Home-wide saved notes/toggle; next request | `/memory`, `/prompt` |
-| Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/prompt`; retrieval-off search is 409 |
+| Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/memory consolidate`, `/prompt`; retrieval-off search is 409 |
 | Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
 | Managed credentials | Home `.env`, loaded at process startup on Unix; inherited values win | `/api` reports presence/masked tail, not proof of provider authentication |

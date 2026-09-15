@@ -805,9 +805,10 @@ const COMMANDS = [
   ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
   ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (off by default)'],
-  ['/memory capture|recall|retrieval|auto-retrieve [on|off]', 'structured-memory gates; /memory on stays pinned notes'],
+  ['/memory capture|recall|retrieval|auto-retrieve|consolidation [on|off]', 'structured-memory gates; /memory on stays pinned notes'],
   ['/memory search <query>', 'FTS fact candidates (not injected)'],
   ['/memory retrieve <query>', 'force FTS include for this prompt only'],
+  ['/memory consolidate <id...>', 'manual selected-episode consolidation into pending proposals'],
   ['/goal stage <branch>|task', 'explicitly stage the goal as a coding request; inspect durable progress'],
   ['/goal [text]|clear', 'set, show, or clear the session goal'],
   ['/loop [n]|stop|auto', 'chat continuation only; aggregate completion budget; per-turn budget set by server'],
@@ -1162,7 +1163,7 @@ async function runSlash(line) {
 
       case 'memory': {
         const sub = (rest[0] || '').toLowerCase();
-        const gateMap = { capture: 'episode_capture', recall: 'explicit_recall', retrieval: 'retrieval', 'auto-retrieve': 'auto_retrieval' };
+        const gateMap = { capture: 'episode_capture', recall: 'explicit_recall', retrieval: 'retrieval', 'auto-retrieve': 'auto_retrieval', consolidation: 'consolidation' };
         if (sub === 'on' || sub === 'off') {
           const r = await api('/api/memory', 'POST', { enabled: sub === 'on' });
           memoryEnabled = !!r.enabled; paintMemory();
@@ -1181,7 +1182,20 @@ async function runSlash(line) {
             ['explicit_recall', r && r.explicit_recall ? 'on' : 'off'],
             ['retrieval', r && r.retrieval ? 'on' : 'off'],
             ['auto_retrieval', r && r.auto_retrieval ? 'on' : 'off'],
+            ['consolidation', r && r.consolidation ? 'on' : 'off'],
+            ['auto_consolidation', 'off'],
             ['/memory on', 'unchanged (pinned notes only)']
+          ]));
+        } else if (sub === 'consolidate') {
+          const ids = rest.slice(1).filter(Boolean);
+          if (!ids.length) { sys('usage: /memory consolidate <episode-id> [episode-id...]'); break; }
+          const r = await api('/api/structured-memory/consolidation', 'POST', { episode_ids: ids });
+          sys(table([
+            ['run', r && r.id],
+            ['state', r && r.state],
+            ['proposals', String(r && r.proposal_count != null ? r.proposal_count : 0)],
+            ['facts written', 'no (pending proposals only)'],
+            ['auto', 'off']
           ]));
         } else if (sub === 'search') {
           const q = rest.slice(1).join(' ').trim();
@@ -1223,6 +1237,8 @@ async function runSlash(line) {
             ['explicit recall', (r.structured_memory && r.structured_memory.explicit_recall) ? 'on' : 'off'],
             ['retrieval', (r.structured_memory && r.structured_memory.retrieval) ? 'on' : 'off'],
             ['auto_retrieval', (r.structured_memory && r.structured_memory.auto_retrieval) ? 'on' : 'off'],
+            ['consolidation', (r.structured_memory && r.structured_memory.consolidation) ? 'on' : 'off'],
+            ['auto_consolidation', 'off'],
           ]));
           if (r.notes && r.notes.length) {
             sys(table(r.notes.map(n => [n.id, n.text]), ['id', 'note']));

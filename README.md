@@ -64,7 +64,7 @@ for the acceptance boundaries.
 | Capability | How it works |
 |---|---|
 | Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
-| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. `/memory on` includes those notes only. Optional structured facts, governed proposals, bounded episodes, and facts-only FTS (#87) are a separate account-private store behind default-off gates; models may suggest, not silently write. Search is not inject. Facts enter `/prompt` only after an explicit pick (`selected_facts`, `/memory retrieve`, or `retrieve`) or the separately gated `auto_retrieval` path. Episodes are never injected. Chat explains these controls; the operator executes them. |
+| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. `/memory on` includes those notes only. Optional structured facts, governed proposals, bounded episodes, facts-only FTS, and manual consolidation (#87) are a separate account-private store behind default-off gates; models may suggest, not silently write. Search is not inject. Facts enter `/prompt` only after an explicit pick (`selected_facts`, `/memory retrieve`, or `retrieve`) or the separately gated `auto_retrieval` path. Episodes are never injected. Manual consolidation writes pending proposals only. Chat explains these controls; the operator executes them. |
 | Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
@@ -206,8 +206,9 @@ holds account-private facts, governed proposals, and optional episodes
 `reason`. Episode capture never writes facts and never injects episode text.
 Independent `flag_is_true` gates all ship **false** (quoted `"true"` is off):
 `structured_memory.enabled`, `episode_capture`, `explicit_recall`,
-`retrieval`, and `auto_retrieval`. Slash overlays
-`/memory capture|recall|retrieval|auto-retrieve on|off` persist
+`retrieval`, `auto_retrieval`, `consolidation`, and `auto_consolidation`.
+Slash overlays
+`/memory capture|recall|retrieval|auto-retrieve|consolidation on|off` persist
 `memory/structured_gates.json` once the store is open; they do not flip
 `/memory on`. Selected facts enter `/prompt` when `explicit_recall` is on and
 the operator picked them. Facts-only FTS (`/memory search`) returns candidates
@@ -216,9 +217,11 @@ only. Force-include for one prompt: `/memory retrieve <query>` or `retrieve` /
 owner, active, and revision. When both notes and facts are present the reserved
 split is 1500/1500 of the 3000-character memory body. `auto_retrieval` ships
 false; when it is on **and** retrieval is on, chat may FTS the user message and
-inject rechecked top-k without a per-request flag. Recalled text cannot
+inject rechecked top-k without a per-request flag. Manual consolidation
+(`/memory consolidate <episode-id...>`) writes pending proposals only and
+never applies facts. `auto_consolidation` ships false and is unused. Recalled text cannot
 authorize tools, coding, or network. This tree does not ship embeddings, a
-vector database, consolidation, RAG fusion, or episode FTS. See
+vector database, automatic consolidation, RAG fusion, or episode FTS. See
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) and
 [setup-guide §7.5](setup-guide.md#75-operator-memory-notes). A missing
 `soul.md` is reported as missing rather than loaded. `GOAL_DONE` is an unverified
