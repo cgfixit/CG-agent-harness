@@ -366,6 +366,47 @@ fn read_jail_refuses_symlink_escapes_without_following_the_leaf() {
 }
 
 #[test]
+fn read_jail_refuses_dotgit_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let clone = seeded_clone(dir.path());
+    let ctx = enabled_ctx(dir.path(), &[]);
+    let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+
+    let config_bytes = std::fs::read_to_string(clone.join(".git").join("config")).unwrap();
+    assert!(
+        !config_bytes.is_empty(),
+        "fixture clone must have Git metadata to prove the deny is not a missing-file miss"
+    );
+
+    assert!(
+        is_dotgit_name(".GIT"),
+        "extra case must use a name the helper already folds"
+    );
+    for target in [".git/config", "sub/.git/config", ".GIT/config"] {
+        let err = ws.read_file(target).unwrap_err();
+        assert_eq!(err.code, "AGENTIC_ERROR", "{target}");
+        assert!(err.message.contains("cannot read"), "{target}: {}", err.message);
+        assert!(
+            !err.message.contains(config_bytes.trim()),
+            "{target} returned clone Git metadata"
+        );
+        let reason = err.details.get("error").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            reason.contains("git path may not touch the clone's .git directory"),
+            "{target}: expected write-path deny reason, got {reason:?} / {}",
+            err.message
+        );
+    }
+
+    assert_eq!(ws.stat_file(".git/config").unwrap_err().code, "AGENTIC_ERROR");
+    assert!(
+        ws.stat_file(".git/objects").is_err(),
+        "stat of .git/objects must refuse"
+    );
+    assert!(!ws.read_file("README.md").unwrap().is_empty());
+}
+
+#[test]
 fn attach_requires_a_clone_output_under_workspace_root() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = enabled_ctx(dir.path(), &[]);
