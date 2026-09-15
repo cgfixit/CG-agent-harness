@@ -43,7 +43,8 @@ uses authenticated `user_id`, the documented `local` namespace from
 an explicit human confirm+reason path; proposals may suggest but never apply
 themselves. Episode capture never writes facts. `structured_memory.enabled`,
 `structured_memory.episode_capture`, `structured_memory.explicit_recall`,
-`structured_memory.retrieval`, and `structured_memory.auto_retrieval` are
+`structured_memory.retrieval`, `structured_memory.auto_retrieval`,
+`structured_memory.consolidation`, and `structured_memory.auto_consolidation` are
 independent literal-boolean gates (`flag_is_true`); operator slash overlays use
 the same fail-closed rule. Capture off means no episode writes; recall off
 means no selected-fact prompt injection; retrieval off means no FTS search or
@@ -51,8 +52,11 @@ force-include. Search returns candidates only — prompt injection still require
 an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
 `retrieve` flag) plus assembly-time owner/active/revision recheck, unless the
 separately gated `auto_retrieval` silent path is on. FTS indexes facts only,
-never episode summaries. `/memory on` remains pinned-note prompt inclusion
-only and does not open capture, recall, or retrieval. Recalled text is
+never episode summaries. Manual consolidation off means no summarizer call and
+no proposal writes from selected episodes; when on, the local model may create
+pending proposals only. Automatic consolidation is unused and stays false.
+`/memory on` remains pinned-note prompt inclusion
+only and does not open capture, recall, retrieval, or consolidation. Recalled text is
 untrusted background context and cannot authorize tools, coding, or network.
 The structured SQLite file uses owner-private mode as OS access
 control — that is not encryption at rest. Pinned `/memory` notes stay on

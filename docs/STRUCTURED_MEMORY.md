@@ -1,4 +1,4 @@
-# Structured memory (issue #87, M1 + M3 + M5 + Phase 4 + Phase 5 FTS)
+# Structured memory (issue #87, M1 + M3 + M5 + Phase 4 + Phase 5 FTS + Phase 6 manual consolidation)
 
 This is the privacy-first structured-memory foundation. It is **not** the
 existing pinned-note `/memory` feature and it is **not** the web-research
@@ -11,7 +11,7 @@ Related issue: [#87](https://github.com/cgfixit/CG-agent-harness/issues/87).
 | Surface | Scope | Store | Who may write | Prompt inclusion |
 |---|---|---|---|---|
 | Pinned notes (`/memory`) | Shared home | `memory/notes.json` | Operator slash commands / `/api/memory/*` | `harness.json.memory_enabled` (`/memory on`) |
-| Structured memory (M1/M3/M5 + Phase 4 + Phase 5) | Account-private | `memory/structured.sqlite3` | Human confirm+reason for facts; optional post-success episode staging | Facts enter `/prompt` only after an explicit pick (selected facts, `/memory retrieve`, or the per-request `retrieve` flag) **or** the separately gated `auto_retrieval` path, plus assembly recheck. Episodes are never injected. |
+| Structured memory (M1/M3/M5 + Phase 4 + Phase 5 + Phase 6) | Account-private | `memory/structured.sqlite3` | Human confirm+reason for facts; optional post-success episode staging; optional manual consolidation into pending proposals | Facts enter `/prompt` only after an explicit pick (selected facts, `/memory retrieve`, or the per-request `retrieve` flag) **or** the separately gated `auto_retrieval` path, plus assembly recheck. Episodes are never injected. |
 
 M1/M3/M5 do **not** migrate, reinterpret, or weaken pinned notes. Session
 deletion continues to preserve notes. Structured facts and proposals are
@@ -49,14 +49,21 @@ episodes referenced by pending proposals.
     on fact title/value/tags, safe MATCH (tokenize/bound/quote, field-prefixed),
     search API with stable ids/revisions/provenance/lexical score, enable-time
     backfill, fail-soft when the index is busy or missing. Search ≠ inject.
+11. Phase 6 **manual consolidation**: operator-selected episode IDs are sent to
+    the local model (tools/web disabled, no recalled-fact prompt input). Strict
+    JSON candidates become **pending proposals only**. Apply/deactivate still
+    require confirm+reason. Runs are durable and idempotent over owner + ordered
+    episode set + summarizer version. Restart recovers interrupted `running`
+    rows without duplicating proposals.
 
 ## What this slice does not ship
 
 Automatic consolidation, embeddings, vector databases, RAG fusion, episode FTS,
 episode prompt injection, console slash commands that write facts, or any new
-cloud egress. Status flags for retrieval fusion, consolidation, and RAG remain
-**false**. `retrieval` can be true while those stay false. `explicit_recall` is
-independent of `retrieval`. Episode availability is true only when
+cloud egress. Status flags for retrieval fusion, automatic consolidation, and
+RAG remain **false**. `retrieval` or `consolidation` can be true while those stay
+false. `explicit_recall` is independent of `retrieval` and consolidation.
+Episode availability is true only when
 `structured_memory.episode_capture` is on and the store is open.
 
 Later phases in #87 remain independently gated.
@@ -81,6 +88,13 @@ Later phases in #87 remain independently gated.
   **false**. Requires retrieval. When on, chat may FTS the user message and
   inject rechecked top-k without a per-request flag. This is the Advisor-sensitive
   silent path. `/memory auto-retrieve on|off` is the overlay.
+- Consolidation: `structured_memory.consolidation`, also `flag_is_true`, ships
+  **false**, independent of `/memory on`, capture, recall, retrieval, and
+  auto_retrieval. Off means no summarizer call and no consolidation-run writes.
+  `/memory consolidation on|off` is the overlay. `/memory consolidate <id...>`
+  starts a manual run on selected episode IDs.
+- Auto-consolidation: `structured_memory.auto_consolidation`, also
+  `flag_is_true`, ships **false** and is unused. No idle worker is started.
 - Prompt budget: combined pinned-note + selected-fact body is capped at 3000
   characters. When both are present the reserved split is
   `pinned_prompt_chars` / `selected_fact_prompt_chars` (default 1500/1500);
@@ -152,6 +166,27 @@ set chat would send. Suggest still does not mutate canonical facts.
   transaction. Busy/corrupt index is fail-soft for chat.
 - Audit records counts and error class, never raw query or fact text.
 
+## Manual consolidation (Phase 6)
+
+- **Selected episodes only.** The operator supplies episode public IDs.
+- **Local model only.** The existing generation gate is claimed; tools and web
+  are not attached. Interactive chat and consolidation contend for that gate
+  and report busy truthfully.
+- **No recalled-memory feedback.** Current facts are loaded only after
+  extraction, to bind update/deactivate revision+digest or convert an exact
+  content match from add → update.
+- **Pending proposals only.** A successful run never creates, updates, or
+  deletes canonical facts. Confirm+reason apply is unchanged.
+- **Bounded.** `max_consolidation_episodes` / `max_consolidation_candidates`
+  (default 8/8). Invalid schema, cancellation, model failure, and storage
+  failure become run `failed`/`cancelled` with a non-content `error_class`.
+- **Idempotent.** The same owner + sorted episode set + `consolidator-v1` key
+  returns the completed run and does not insert a second proposal batch.
+  Interrupted `running` rows become `failed`/`interrupted` on reopen and may
+  be retried on the same key.
+- Audit records run id, counts, state, and error class. It does not record
+  episode summaries, proposal payloads, or raw model output.
+
 ## Threat model (at rest)
 
 The database is a regular file under the harness home with owner-private mode
@@ -191,6 +226,10 @@ when they carry memory content:
 | POST | `/api/structured-memory/episodes/purge` | required (expired only) |
 | GET | `/api/structured-memory/export` | n/a (escaped HTML) |
 | POST | `/api/structured-memory/purge` | required (owner facts+episodes+proposals+run metadata) |
+| GET | `/api/structured-memory/consolidation` | n/a (this owner's run metadata) |
+| POST | `/api/structured-memory/consolidation` | start = suggest; selected episode IDs |
+| GET | `/api/structured-memory/consolidation/{id}` | n/a |
+| POST | `/api/structured-memory/consolidation/{id}/cancel` | abort in-flight generation |
 
 Existing `/api/memory*` routes are unchanged. `POST /api/sessions/clear`
 accepts optional `delete_derived_episodes`. `/api/chat` and

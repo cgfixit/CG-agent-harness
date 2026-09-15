@@ -10,15 +10,16 @@ use crate::common::auth_store::UserSummary;
 use crate::common::errors::HarnessError;
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::schemas::{
-    StructuredEpisodeSummaryRequest, StructuredFactAddRequest, StructuredFactDeactivateRequest,
-    StructuredFactSelectRequest, StructuredMemoryDecisionRequest, StructuredMemoryProposeRequest,
-    StructuredMemoryReasonRequest, ValidJson,
+    StructuredConsolidationStartRequest, StructuredEpisodeSummaryRequest, StructuredFactAddRequest,
+    StructuredFactDeactivateRequest, StructuredFactSelectRequest, StructuredMemoryDecisionRequest,
+    StructuredMemoryProposeRequest, StructuredMemoryReasonRequest, ValidJson,
 };
 use crate::server::state::AppState;
 use crate::server::structured_memory::{
-    assemble_retrieval_facts, assemble_selected_facts, auto_retrieval_available, capture_available, current_gates,
-    disabled_status, enabled_status, merge_recall, recall_available, retrieval_available, valid_public_id,
-    EpisodeDraft, FactSelection, Limits, ProposalDraft, RetrievalIntent, StructuredMemoryStore,
+    assemble_retrieval_facts, assemble_selected_facts, auto_consolidation_available, auto_retrieval_available,
+    capture_available, consolidation_available, current_gates, disabled_status, enabled_status, merge_recall,
+    recall_available, retrieval_available, valid_public_id, EpisodeDraft, FactSelection, Limits, ProposalDraft,
+    RetrievalIntent, StructuredMemoryStore,
 };
 
 type PrivateJson = ([(header::HeaderName, &'static str); 1], Json<Value>);
@@ -34,9 +35,10 @@ fn error(code: &str, message: &str) -> ApiError {
 fn store_err(err: &HarnessError) -> ApiError {
     let status = match err.code.as_str() {
         "STRUCTURED_MEMORY_IO" => StatusCode::BAD_GATEWAY,
-        "STRUCTURED_MEMORY_CHANGED" | "STRUCTURED_MEMORY_PROPOSAL_CHANGED" | "STRUCTURED_MEMORY_DISABLED" => {
-            StatusCode::CONFLICT
-        }
+        "STRUCTURED_MEMORY_CHANGED"
+        | "STRUCTURED_MEMORY_PROPOSAL_CHANGED"
+        | "STRUCTURED_MEMORY_DISABLED"
+        | "STRUCTURED_MEMORY_BUSY" => StatusCode::CONFLICT,
         "STRUCTURED_MEMORY_NOT_FOUND" | "STRUCTURED_MEMORY_PROPOSAL" => StatusCode::NOT_FOUND,
         _ => StatusCode::BAD_REQUEST,
     };
@@ -142,7 +144,24 @@ pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
         payload["explicit_recall"] = json!(recall_available(&state.cfg, true, &gates));
         payload["retrieval"] = json!(retrieval_available(&state.cfg, true, &gates));
         payload["auto_retrieval"] = json!(auto_retrieval_available(&state.cfg, true, &gates));
+        payload["consolidation"] = json!(consolidation_available(&state.cfg, true, &gates));
+        payload["auto_consolidation"] = json!(auto_consolidation_available(&state.cfg, true, &gates));
         payload["retrieval_health"] = store.retrieval_health().as_json();
+        if let Ok(Some(run)) = store.running_consolidation(owner_id) {
+            payload["consolidation_health"] = json!({
+                "running": true,
+                "run_id": run.id,
+                "state": run.state,
+                "error_class": Value::Null,
+            });
+        } else if let Ok(runs) = store.list_consolidation_runs(owner_id) {
+            payload["consolidation_health"] = json!({
+                "running": false,
+                "run_id": runs.first().map(|r| r.id.clone()),
+                "state": runs.first().map(|r| r.state.clone()),
+                "error_class": runs.first().and_then(|r| r.error_class.clone()),
+            });
+        }
         payload["operator_gates"] = gates.as_json();
         Ok(payload)
     } else {
@@ -619,6 +638,8 @@ pub async fn set_gates(
         "explicit_recall": recall_available(&state.cfg, true, &snapshot),
         "retrieval": retrieval_available(&state.cfg, true, &snapshot),
         "auto_retrieval": auto_retrieval_available(&state.cfg, true, &snapshot),
+        "consolidation": consolidation_available(&state.cfg, true, &snapshot),
+        "auto_consolidation": auto_consolidation_available(&state.cfg, true, &snapshot),
         "memory_on_unchanged": true,
     })))
 }
@@ -732,4 +753,135 @@ pub async fn export_owner(
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
         .body(axum::body::Body::from(html))
         .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty())))
+}
+
+fn require_consolidation(state: &AppState) -> ApiResult<&StructuredMemoryStore> {
+    let store = require_store(state)?;
+    let gates = current_gates(state);
+    if !consolidation_available(&state.cfg, true, &gates) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "STRUCTURED_MEMORY_DISABLED",
+            "structured consolidation is disabled; selected episodes are not summarized",
+        ));
+    }
+    Ok(store)
+}
+
+pub async fn list_consolidation(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    let store = require_store(&state)?;
+    let gates = current_gates(&state);
+    let runs: Vec<Value> = store
+        .list_consolidation_runs(&owner)
+        .map_err(|e| store_err(&e))?
+        .into_iter()
+        .map(|r| r.to_json())
+        .collect();
+    Ok(private(json!({
+        "owner_id": owner,
+        "runs": runs,
+        "count": runs.len(),
+        "consolidation": consolidation_available(&state.cfg, true, &gates),
+        "auto_consolidation": false,
+    })))
+}
+
+pub async fn get_consolidation(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Path(id): Path<String>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    if !valid_public_id(&id) {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "STRUCTURED_MEMORY_NOT_FOUND",
+            "unknown consolidation run",
+        ));
+    }
+    let store = require_store(&state)?;
+    Ok(private(
+        store
+            .get_consolidation_run(&owner, &id)
+            .map_err(|e| store_err(&e))?
+            .to_json(),
+    ))
+}
+
+pub async fn start_consolidation(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    ValidJson(req): ValidJson<StructuredConsolidationStartRequest>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    let store = require_consolidation(&state)?;
+    if req.episode_ids.len() > store.limits().max_consolidation_episodes {
+        return Err(error(
+            "STRUCTURED_MEMORY_CAP",
+            "too many episodes for this consolidation configuration",
+        ));
+    }
+    let Some(_gate) = state.generation_gate.claim("consolidation") else {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "STRUCTURED_MEMORY_BUSY",
+            "a local model turn is already running",
+        )
+        .details(json!({
+            "owner": state.generation_gate.owner(),
+            "cancel": "/api/structured-memory/consolidation/{id}/cancel",
+        })));
+    };
+    let run = crate::server::structured_memory_consolidate::run_manual(&state, store, &owner, &req.episode_ids)
+        .await
+        .map_err(|e| {
+            let mut api = store_err(&e);
+            if e.code == "STRUCTURED_MEMORY_BUSY" {
+                api = ApiError::from_err(StatusCode::CONFLICT, &e);
+            }
+            if e.code == crate::llm::openai_chat::LLM_ERROR_CODE {
+                api = ApiError::from_err(StatusCode::BAD_GATEWAY, &e);
+            }
+            api
+        })?;
+    audit(
+        &state,
+        "structured_memory_consolidation",
+        &owner,
+        json!({
+            "id": run.id,
+            "state": run.state,
+            "episode_count": run.episode_ids.len(),
+            "proposal_count": run.proposal_count,
+            "candidate_count": run.candidate_count,
+            "rejected_count": run.rejected_count,
+            "error_class": run.error_class,
+            "summarizer_version": run.summarizer_version,
+        }),
+    );
+    Ok(private(run.to_json()))
+}
+
+pub async fn cancel_consolidation(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Path(id): Path<String>,
+) -> ApiResult<PrivateJson> {
+    let owner = owner(user);
+    let store = require_consolidation(&state)?;
+    let run = store.cancel_consolidation_run(&owner, &id).map_err(|e| store_err(&e))?;
+    if state.generation_gate.owner() == "consolidation" {
+        state.chat.abort_in_flight();
+    }
+    audit(
+        &state,
+        "structured_memory_consolidation_cancelled",
+        &owner,
+        json!({"id": run.id, "state": run.state, "error_class": run.error_class}),
+    );
+    Ok(private(run.to_json()))
 }

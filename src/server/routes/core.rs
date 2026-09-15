@@ -299,6 +299,8 @@ pub async fn chat(
         let mut details = json!({"session_id": session.session_id, "timeout_sec": state.chat.timeout_sec as u64});
         if state.generation_gate.owner() == "chat" {
             details["cancel"] = json!("/api/chat/cancel");
+        } else if state.generation_gate.owner() == "consolidation" {
+            details["busy"] = json!("consolidation");
         }
         return Err(ApiError::new(
             StatusCode::CONFLICT,

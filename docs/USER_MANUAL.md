@@ -60,7 +60,7 @@ Default home is `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`).
 |---|---|
 | `memory/notes.json` | Pinned notes |
 | `memory/structured.sqlite3` | Structured store (created only when the store gate is on) |
-| `memory/structured_gates.json` | Slash overlays for the four sub-gates |
+| `memory/structured_gates.json` | Slash overlays for the capture/recall/retrieval/auto-retrieve/consolidation sub-gates |
 
 ### Enable (fail-closed)
 
@@ -79,9 +79,11 @@ the store**.
 | `explicit_recall` | `/memory recall on\|off` | Allow operator-selected facts into `/prompt` after recheck |
 | `retrieval` | `/memory retrieval on\|off` | Allow facts-only FTS search and per-request force-include |
 | `auto_retrieval` | `/memory auto-retrieve on\|off` | **High-risk.** Silent top-k inject when this is on **and** retrieval is on |
+| `consolidation` | `/memory consolidation on\|off` | Allow manual selected-episode consolidation into **pending proposals only** |
 
-All four ship **false**. `/memory` reports store and gate state. Tunables live
-in `assets/config.default.yaml`; do not invent extra flags.
+All of these ship **false**. `/memory` reports store and gate state. Tunables live
+in `assets/config.default.yaml`; do not invent extra flags. There is no slash
+that enables automatic consolidation.
 
 ## Explicit recall
 
@@ -136,6 +138,21 @@ to search and inject.
 `/memory auto-retrieve off` (or the config literal `false`) closes it. Turning
 `/memory on` does not enable it.
 
+## Manual consolidation
+
+Default **off**. After capture has staged episodes:
+
+```text
+/memory consolidation on
+/memory consolidate <episode-id> [episode-id...]
+```
+
+That claims the local generation gate, sends only those episode summaries to
+the local model (no tools, no web, no recalled facts), and writes pending
+proposals. It does **not** create or update facts. Review and apply remain the
+proposal path below. `/memory on` does not open this gate. Status
+`auto_consolidation` stays false.
+
 ## Propose and apply (API)
 
 Slash commands do not write facts. Typical operator path:
@@ -151,9 +168,10 @@ episodes referenced by pending proposals.
 
 ## Not shipped
 
-Embeddings, vector DB, consolidation (later #87), RAG fusion, episode FTS,
+Embeddings, vector DB, automatic consolidation, RAG fusion, episode FTS,
 episode prompt injection, and any slash that writes a fact. Status can report
-`retrieval: true` while fusion, consolidation, and RAG stay false.
+`retrieval: true` or `consolidation: true` while fusion, auto-consolidation,
+and RAG stay false.
 
 ## See also
 

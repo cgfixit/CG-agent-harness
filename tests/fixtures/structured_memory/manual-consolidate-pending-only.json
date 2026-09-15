@@ -1,0 +1,11 @@
+{
+  "name": "manual-consolidate-pending-only",
+  "issue": 87,
+  "phase": "6",
+  "expect": {
+    "silent_fact_apply": false,
+    "confirm_required": true,
+    "auto_consolidation": false,
+    "recalled_facts_in_prompt": false
+  }
+}

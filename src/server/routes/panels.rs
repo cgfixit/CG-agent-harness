@@ -261,6 +261,16 @@ fn memory_payload(state: &AppState) -> ApiResult<Value> {
             state.cfg.flag_is_true("structured_memory.enabled"),
             &crate::server::structured_memory::current_gates(state),
         ),
+        "consolidation": crate::server::structured_memory::consolidation_available(
+            &state.cfg,
+            state.cfg.flag_is_true("structured_memory.enabled"),
+            &crate::server::structured_memory::current_gates(state),
+        ),
+        "auto_consolidation": crate::server::structured_memory::auto_consolidation_available(
+            &state.cfg,
+            state.cfg.flag_is_true("structured_memory.enabled"),
+            &crate::server::structured_memory::current_gates(state),
+        ),
         "status_path": "/api/structured-memory",
         "prompt_toggle": "harness.json.memory_enabled remains pinned-note inclusion only",
         "session_clear": "does not delete derived episodes unless delete_derived_episodes is confirmed",

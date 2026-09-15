@@ -925,3 +925,214 @@ async fn retrieval_respects_top_k_and_does_not_index_episodes() {
     let episodes = s.get_json("/api/structured-memory/search?q=Completed%20local").await.1;
     assert_eq!(episodes["count"], 0);
 }
+
+fn consolidation() -> ServerOptions {
+    enabled()
+        .with("structured_memory.episode_capture", "true")
+        .with("structured_memory.consolidation", "true")
+}
+
+fn consolidator_reply(episode_id: &str, content: &str) -> serde_json::Value {
+    ok_reply(
+        &format!(
+            r#"{{"candidates":[{{"action":"add","content":"{content}","category":"pref","confidence":0.4,"uncertainty":"","sensitivity":"normal","source_refs":["{episode_id}"]}}]}}"#
+        ),
+        12,
+        8,
+    )
+}
+
+async fn stage_episode(s: &TestServer) -> String {
+    let (status, chat) = s
+        .post_json("/api/chat", json!({"message": "stage a bounded episode"}))
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["episode"]["staged"], true);
+    chat["episode"]["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn disabled_and_quoted_consolidation_do_nothing() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let episode_id = stage_episode(&s).await;
+    model.set_reply(consolidator_reply(&episode_id, "Prefer metric units"));
+    let before = model.last_request();
+    let (status, body) = s
+        .post_json(
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids": [episode_id]}),
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(code(&body), "STRUCTURED_MEMORY_DISABLED");
+    assert_eq!(model.last_request(), before);
+    assert_eq!(s.get_json("/api/structured-memory/facts").await.1["count"], 0);
+    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
+    assert_eq!(s.get_json("/api/structured-memory").await.1["consolidation"], false);
+    assert_eq!(
+        s.get_json("/api/structured-memory").await.1["auto_consolidation"],
+        false
+    );
+
+    let s = spawn_server(
+        &model.base_url(),
+        enabled()
+            .with("structured_memory.episode_capture", "true")
+            .with("structured_memory.consolidation", "\"true\"")
+            .with("structured_memory.auto_consolidation", "true"),
+    )
+    .await;
+    let body = s.get_json("/api/structured-memory").await.1;
+    assert_eq!(body["consolidation"], false);
+    assert_eq!(body["auto_consolidation"], false);
+}
+
+#[tokio::test]
+async fn manual_consolidation_creates_pending_proposals_only() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/structured_memory/manual-consolidate-pending-only.json"
+    ))
+    .unwrap();
+    assert_eq!(fixture["name"], "manual-consolidate-pending-only");
+    assert_eq!(fixture["expect"]["silent_fact_apply"], false);
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), consolidation()).await;
+    let _ = add_fact(&s, "Keep existing reviewed fact", "pref").await;
+    let episode_id = stage_episode(&s).await;
+    model.set_reply(consolidator_reply(&episode_id, "Prefer metric units in examples."));
+    let (status, run) = s
+        .post_json(
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids": [episode_id]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{run}");
+    assert_eq!(run["state"], "done");
+    assert_eq!(run["auto"], false);
+    assert_eq!(run["proposal_count"], 1);
+    assert_eq!(s.get_json("/api/structured-memory").await.1["consolidation"], true);
+    assert_eq!(
+        s.get_json("/api/structured-memory").await.1["auto_consolidation"],
+        false
+    );
+    let facts = s.get_json("/api/structured-memory/facts").await.1;
+    assert_eq!(facts["count"], 1);
+    assert_eq!(facts["facts"][0]["content"], "Keep existing reviewed fact");
+    let proposals = s.get_json("/api/structured-memory/proposals").await.1;
+    assert_eq!(proposals["count"], 1);
+    assert_eq!(proposals["proposals"][0]["status"], "pending");
+    let proposal_id = proposals["proposals"][0]["id"].as_str().unwrap();
+    let revision = proposals["proposals"][0]["revision"].as_str().unwrap();
+    let (status, refused) = s
+        .post_json(
+            &format!("/api/structured-memory/proposals/{proposal_id}"),
+            json!({"revision": revision, "reason": "looks good", "apply": true}),
+        )
+        .await;
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(code(&refused), "STRUCTURED_MEMORY_CONFIRM");
+    assert_eq!(s.get_json("/api/structured-memory/facts").await.1["count"], 1);
+    let request = model.last_request().expect("consolidator called the local model");
+    let blob = request.to_string();
+    assert!(!blob.contains("Keep existing reviewed fact"), "{blob}");
+    assert_eq!(request.get("tools"), None);
+    let replay = s
+        .post_json(
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids": [episode_id]}),
+        )
+        .await
+        .1;
+    assert_eq!(replay["id"], run["id"]);
+    assert_eq!(replay["state"], "done");
+    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 1);
+}
+
+#[tokio::test]
+async fn invalid_schema_busy_cancel_and_bounds_are_truthful() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        consolidation().with("structured_memory.max_consolidation_episodes", "1"),
+    )
+    .await;
+    let first = stage_episode(&s).await;
+    let second = stage_episode(&s).await;
+    let (status, over) = s
+        .post_json(
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids": [first, second]}),
+        )
+        .await;
+    assert_eq!(status, 400, "{over}");
+    assert_eq!(code(&over), "STRUCTURED_MEMORY_CAP");
+
+    model.set_reply(ok_reply("not-json", 3, 3));
+    let (status, invalid) = s
+        .post_json("/api/structured-memory/consolidation", json!({"episode_ids": [first]}))
+        .await;
+    assert_eq!(status, 400, "{invalid}");
+    assert_eq!(code(&invalid), "STRUCTURED_MEMORY_SCHEMA");
+    assert_eq!(s.get_json("/api/structured-memory/facts").await.1["count"], 0);
+    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
+    let listed = s.get_json("/api/structured-memory/consolidation").await.1;
+    assert_eq!(listed["runs"][0]["state"], "failed");
+    assert_eq!(listed["runs"][0]["error_class"], "invalid_schema");
+    assert_eq!(listed["auto_consolidation"], false);
+
+    model.set_delay_ms(800);
+    model.set_reply(ok_reply("pong", 1, 1));
+    let chat = s.post_json("/api/chat", json!({"message": "hold the gate"}));
+    let consolidate = async {
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        s.post_json("/api/structured-memory/consolidation", json!({"episode_ids": [second]}))
+            .await
+    };
+    let (_chat, (status, busy)) = tokio::join!(chat, consolidate);
+    assert_eq!(status, 409, "{busy}");
+    assert_eq!(code(&busy), "STRUCTURED_MEMORY_BUSY");
+    model.set_delay_ms(0);
+
+    model.set_delay_ms(1500);
+    model.set_reply(consolidator_reply(&second, "Should not land after cancel"));
+    let start = s.post_json("/api/structured-memory/consolidation", json!({"episode_ids": [second]}));
+    let cancel = async {
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        let running = s.get_json("/api/structured-memory/consolidation").await.1;
+        let run_id = running["runs"][0]["id"].as_str().unwrap().to_string();
+        let cancelled = s
+            .post_json(
+                &format!("/api/structured-memory/consolidation/{run_id}/cancel"),
+                json!({}),
+            )
+            .await;
+        (run_id, cancelled)
+    };
+    let (finished, (run_id, cancelled)) = tokio::join!(start, cancel);
+    assert_eq!(cancelled.0, 200, "{}", cancelled.1);
+    assert_eq!(cancelled.1["state"], "cancelled");
+    assert!(finished.0 == 200 || finished.0 == 400, "{finished:?}");
+    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
+    let viewed = s
+        .get_json(&format!("/api/structured-memory/consolidation/{run_id}"))
+        .await
+        .1;
+    assert_eq!(viewed["state"], "cancelled");
+}
+
+#[tokio::test]
+async fn foreign_episode_ids_are_owner_isolated() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), consolidation()).await;
+    let unknown = cgagentharness::common::random_hex(16);
+    let (status, missing) = s
+        .post_json(
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids": [unknown]}),
+        )
+        .await;
+    assert_eq!(status, 404, "{missing}");
+    assert_eq!(code(&missing), "STRUCTURED_MEMORY_NOT_FOUND");
+    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
+}

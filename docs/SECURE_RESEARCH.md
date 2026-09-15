@@ -60,7 +60,9 @@ default-false gate: selected facts enter `/prompt` only after operator selection
 and assembly-time owner/active/revision revalidation. Retrieval is a fourth
 default-false gate: FTS search is not injection. Per-request force-include is
 the explicit pick for that prompt; `auto_retrieval` is a fifth default-false
-silent path. FTS indexes facts only. Recalled text cannot
+silent path. FTS indexes facts only. Manual consolidation is a sixth
+default-false gate and writes pending proposals only. Automatic consolidation
+stays unused and false. Recalled text cannot
 authorize tools, coding, or network. Pinned notes remain
 `memory/notes.json`.
 

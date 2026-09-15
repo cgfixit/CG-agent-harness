@@ -7,8 +7,9 @@ source pins and implementation/verification states belong to the ledger.
 Memory facts are explicitly reviewed operator data, separate from short notes.
 Issue #87 M1+M3+M5+Phase 4+Phase 5 implement account-private facts, governed
 proposals, optional bounded episodes, explicit selected-fact recall, and
-opt-in facts-only FTS5 retrieval behind `structured_memory.enabled`,
-`episode_capture`, `explicit_recall`, `retrieval`, and `auto_retrieval`
+opt-in facts-only FTS5 retrieval, and manual consolidation behind `structured_memory.enabled`,
+`episode_capture`, `explicit_recall`, `retrieval`, `auto_retrieval`,
+`consolidation`, and `auto_consolidation`
 (literal booleans, all ship false).
 Proposals bind an action, payload and expected fact version; application needs
 an operator reason, confirmation, and scan. Episode v1 stores opaque
@@ -19,7 +20,7 @@ hits require `/memory retrieve` / the per-request `retrieve` flag, or the
 separately gated `auto_retrieval` silent path, plus assembly-time
 owner/active/revision recheck. Episode FTS, embeddings, retrieval fusion,
 automatic consolidation, and episode prompt injection are not shipped; those
-status flags remain false. The existing 3000-character memory budget
+status flags remain false. Manual consolidation writes pending proposals only. The existing 3000-character memory budget
 (reserved 1500/1500 when notes and facts both compete) still applies.
 
 Sync operates on approved non-RAG roots and one approved remote. It excludes
@@ -59,8 +60,9 @@ New filesystem roots and optional network deployment deliberately extend the
 existing home/clone and loopback invariants only behind explicit configuration
 and their own enforcement/tests. They must not weaken the default boundaries.
 
-Automatic memory consolidation is a stub at the pinned source
-(`memory/consolidation.py:8`); it is excluded. Retired DeepAgents graph/optimizer
+Automatic memory consolidation remains excluded (CyClaw
+`memory/consolidation.py` is still a no-op stub). Manual selected-episode
+consolidation is a harness-only Phase 6 surface and still never applies facts. Retired DeepAgents graph/optimizer
 work stays excluded (`CLAUDE.md` describes its retirement; builder/scaffold
 presence does not make it an active parity requirement). RAG ingestion,
 retrieval-only MCP, retrieval fusion and RAG grounding remain excluded. Catalog

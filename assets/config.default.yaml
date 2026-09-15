@@ -270,12 +270,19 @@ unslop:
 # when true AND retrieval is true, chat may FTS the user message and inject
 # rechecked top-k without a per-request flag. Ships false. /memory on never
 # opens any of these gates.
+# consolidation is a sixth independent gate: manual selected-episode
+# consolidation into pending proposals only. It does not apply facts, does
+# not inject episodes, and does not enable auto_consolidation.
+# auto_consolidation is a seventh independent gate reserved for a later idle
+# worker. It ships false and is unused in this phase.
 structured_memory:
   enabled: false
   episode_capture: false
   explicit_recall: false
   retrieval: false
   auto_retrieval: false
+  consolidation: false
+  auto_consolidation: false
   max_facts_per_owner: 64
   max_fact_chars: 1000
   max_category_chars: 64
@@ -295,3 +302,5 @@ structured_memory:
   max_search_time_ms: 250
   pinned_prompt_chars: 1500
   selected_fact_prompt_chars: 1500
+  max_consolidation_episodes: 8
+  max_consolidation_candidates: 8

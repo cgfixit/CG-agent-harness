@@ -21,7 +21,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 72] = [
+pub const REGISTERED_PATHS: [&str; 75] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -59,6 +59,9 @@ pub const REGISTERED_PATHS: [&str; 72] = [
     "/api/structured-memory/episodes/{id}/delete",
     "/api/structured-memory/export",
     "/api/structured-memory/purge",
+    "/api/structured-memory/consolidation",
+    "/api/structured-memory/consolidation/{id}",
+    "/api/structured-memory/consolidation/{id}/cancel",
     "/api/sessions",
     "/api/sessions/clear",
     "/api/sessions/{session_id}",
@@ -197,6 +200,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/structured-memory/export", get(structured_memory::export_owner))
         .route("/api/structured-memory/purge", post(structured_memory::purge_owner))
+        .route(
+            "/api/structured-memory/consolidation",
+            get(structured_memory::list_consolidation).post(structured_memory::start_consolidation),
+        )
+        .route(
+            "/api/structured-memory/consolidation/{id}",
+            get(structured_memory::get_consolidation),
+        )
+        .route(
+            "/api/structured-memory/consolidation/{id}/cancel",
+            post(structured_memory::cancel_consolidation),
+        )
         .route("/api/sessions", post(core::create_session))
         .route("/api/sessions/clear", post(core::clear_sessions))
         .route("/api/sessions/{session_id}", get(core::get_session))
@@ -297,7 +312,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 72);
+        assert_eq!(REGISTERED_PATHS.len(), 75);
 
         let all = registered_paths();
         assert!(

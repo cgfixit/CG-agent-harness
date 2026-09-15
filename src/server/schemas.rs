@@ -151,7 +151,7 @@ impl Validate for StructuredMemoryGateRequest {
     fn validate(&self) -> Vec<String> {
         if matches!(
             self.gate.as_str(),
-            "episode_capture" | "explicit_recall" | "retrieval" | "auto_retrieval"
+            "episode_capture" | "explicit_recall" | "retrieval" | "auto_retrieval" | "consolidation"
         ) {
             vec![]
         } else {
@@ -417,6 +417,28 @@ impl Validate for StructuredMemoryReasonRequest {
             vec![]
         } else {
             vec!["reason".into()]
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredConsolidationStartRequest {
+    pub episode_ids: Vec<String>,
+}
+
+impl Validate for StructuredConsolidationStartRequest {
+    fn validate(&self) -> Vec<String> {
+        if self.episode_ids.is_empty()
+            || self.episode_ids.len() > MAX_STRUCTURED_EPISODE_SOURCES
+            || self
+                .episode_ids
+                .iter()
+                .any(|id| !len_ok(id, MAX_STRUCTURED_ID_LEN, MAX_STRUCTURED_ID_LEN))
+        {
+            vec!["episode_ids".into()]
+        } else {
+            vec![]
         }
     }
 }

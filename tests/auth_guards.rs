@@ -34,6 +34,12 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
         ),
         (Method::GET, "/api/structured-memory/episodes", json!(null)),
         (Method::GET, "/api/structured-memory/export", json!(null)),
+        (Method::GET, "/api/structured-memory/consolidation", json!(null)),
+        (
+            Method::POST,
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids": ["labeled_not_a_token_id_32ch_xx"]}),
+        ),
         (Method::POST, "/api/web/allow", json!({"url": "https://example.com"})),
         (Method::GET, "/api/keys", json!(null)),
         (

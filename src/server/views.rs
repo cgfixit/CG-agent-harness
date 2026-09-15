@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 44] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 45] = [
     (
         "goal-stage",
         "/goal stage|task",
@@ -216,7 +216,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 44] = [
         "/api/structured-memory",
         "GET",
         "/api/structured-memory",
-        "account-private facts/proposals; episodes when capture is on; selected facts when explicit_recall is on; FTS when retrieval is on",
+        "account-private facts/proposals; episodes when capture is on; selected facts when explicit_recall is on; FTS when retrieval is on; manual consolidation when that gate is on",
     ),
     (
         "structured-memory-search",
@@ -227,10 +227,17 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 44] = [
     ),
     (
         "structured-memory-gates",
-        "/memory capture|recall|retrieval",
+        "/memory capture|recall|retrieval|consolidation",
         "POST",
         "/api/structured-memory/gates",
-        "operator overlay for capture/recall/retrieval; /memory on stays pinned notes",
+        "operator overlay for capture/recall/retrieval/consolidation; /memory on stays pinned notes",
+    ),
+    (
+        "structured-memory-consolidation",
+        "/memory consolidate",
+        "POST",
+        "/api/structured-memory/consolidation",
+        "manual selected-episode consolidation into pending proposals only",
     ),
     (
         "structured-episodes",
@@ -675,10 +682,10 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 44);
+        assert_eq!(HARNESS_SURFACES.len(), 45);
         let report = list_wired_tools(&registered);
-        assert_eq!(report["total"], 44);
-        assert_eq!(report["wired"], 44, "a catalog surface is unwired");
+        assert_eq!(report["total"], 45);
+        assert_eq!(report["wired"], 45, "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }

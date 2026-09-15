@@ -59,11 +59,12 @@ Chat is told which application features exist and how the operator invokes them.
 It still has no callable tools, including `gh`. A prose request to save or delete
 memory does not execute a command. `/memory` lists persistent pinned notes and
 `/memory add <note>` saves literal text; it does not archive or summarize sessions.
-Structured facts and optional episodes (#87 M1/M3/M5 + Phase 4/5) are a separate
+Structured facts and optional episodes (#87 M1/M3/M5 + Phase 4/5/6) are a separate
 account-private API: a model may propose, but confirm+reason is required to
 apply, episode capture never writes facts, and facts enter `/prompt` only after
 an explicit pick (or the separately gated `auto_retrieval` path). Episodes are
-never injected. `/memory on` stays pinned notes. See [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
+never injected. Manual consolidation of selected episodes writes pending
+proposals only. `/memory on` stays pinned notes. See [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 Included notes are real stored content, not placeholders. Model answers can still
 be wrong; only actual command results establish successful execution.
 
