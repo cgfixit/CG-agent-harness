@@ -1144,13 +1144,12 @@ fn auto_consolidation() -> ServerOptions {
 }
 
 fn retire_episode(s: &TestServer, id: &str) {
-    s.state.structured_memory.as_ref().unwrap().with_connection(|conn| {
-        conn.execute(
-            "UPDATE episodes SET consolidation_state='done' WHERE public_id=?1",
-            [id],
-        )
+    s.state
+        .structured_memory
+        .as_ref()
+        .unwrap()
+        .delete_episode("local", id, "retire after fixture outcome")
         .unwrap();
-    });
 }
 
 fn stage_store_episode(s: &TestServer, owner: &str) -> String {
@@ -1173,21 +1172,24 @@ fn stage_store_episode(s: &TestServer, owner: &str) -> String {
         .id
 }
 
-async fn wait_json<F>(s: &TestServer, path: &str, mut pred: F) -> serde_json::Value
+async fn wait_until<F>(mut pred: F, label: &str)
 where
-    F: FnMut(&serde_json::Value) -> bool,
+    F: FnMut() -> bool,
 {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let body = s.get_json(path).await.1;
-        if pred(&body) {
-            return body;
+        if pred() {
+            return;
         }
         if std::time::Instant::now() > deadline {
-            panic!("timed out waiting on {path}: {body}");
+            panic!("timed out waiting for {label}");
         }
-        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
+}
+
+fn store_of(s: &TestServer) -> &cgagentharness::server::structured_memory::StructuredMemoryStore {
+    s.state.structured_memory.as_ref().unwrap()
 }
 
 #[tokio::test]
@@ -1249,7 +1251,12 @@ async fn auto_consolidation_creates_pending_proposals_only() {
     let _ = add_fact(&s, "Keep existing reviewed fact", "pref").await;
     let episode_id = stage_store_episode(&s, "local");
     model.set_reply(consolidator_reply(&episode_id, "Prefer metric units in examples."));
-    let proposals = wait_json(&s, "/api/structured-memory/proposals", |body| body["count"] == 1).await;
+    wait_until(
+        || store_of(&s).list_proposals("local").unwrap().len() == 1,
+        "pending auto proposal",
+    )
+    .await;
+    let proposals = s.get_json("/api/structured-memory/proposals").await.1;
     assert_eq!(proposals["proposals"][0]["status"], "pending");
     let facts = s.get_json("/api/structured-memory/facts").await.1;
     assert_eq!(facts["count"], 1);
@@ -1284,19 +1291,23 @@ async fn auto_consolidation_creates_pending_proposals_only() {
 }
 
 #[tokio::test]
-async fn auto_invalid_timeout_unavailable_cancel_and_storage_are_truthful() {
+async fn auto_invalid_timeout_unavailable_and_cancel_are_truthful() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), auto_consolidation()).await;
     let invalid_id = stage_store_episode(&s, "local");
     model.set_reply(ok_reply("not-json", 3, 3));
-    let failed = wait_json(&s, "/api/structured-memory/consolidation", |body| {
-        body["runs"].as_array().is_some_and(|runs| {
-            runs.iter()
-                .any(|run| run["state"] == "failed" && run["error_class"] == "invalid_schema")
-        })
-    })
+    wait_until(
+        || {
+            store_of(&s)
+                .list_consolidation_runs("local")
+                .unwrap()
+                .iter()
+                .any(|run| run.state == "failed" && run.error_class.as_deref() == Some("invalid_schema"))
+        },
+        "invalid_schema auto run",
+    )
     .await;
-    assert_eq!(failed["auto_consolidation"], true);
+    assert_eq!(s.get_json("/api/structured-memory").await.1["auto_consolidation"], true);
     assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
     retire_episode(&s, &invalid_id);
 
@@ -1305,23 +1316,31 @@ async fn auto_invalid_timeout_unavailable_cancel_and_storage_are_truthful() {
         "choices": [{"finish_reason": "length", "message": {"content": "partial"}}],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1}
     }));
-    wait_json(&s, "/api/structured-memory/consolidation", |body| {
-        body["runs"].as_array().is_some_and(|runs| {
-            runs.iter()
-                .any(|run| run["error_class"] == "timeout" && run["state"] == "failed")
-        })
-    })
+    wait_until(
+        || {
+            store_of(&s)
+                .list_consolidation_runs("local")
+                .unwrap()
+                .iter()
+                .any(|run| run.state == "failed" && run.error_class.as_deref() == Some("timeout"))
+        },
+        "timeout auto run",
+    )
     .await;
     retire_episode(&s, &timeout_id);
 
     let unavailable_id = stage_store_episode(&s, "local");
     model.set_reply(json!({"__status": 500}));
-    wait_json(&s, "/api/structured-memory/consolidation", |body| {
-        body["runs"].as_array().is_some_and(|runs| {
-            runs.iter()
-                .any(|run| run["error_class"] == "model_unavailable" && run["state"] == "failed")
-        })
-    })
+    wait_until(
+        || {
+            store_of(&s)
+                .list_consolidation_runs("local")
+                .unwrap()
+                .iter()
+                .any(|run| run.state == "failed" && run.error_class.as_deref() == Some("model_unavailable"))
+        },
+        "model_unavailable auto run",
+    )
     .await;
     retire_episode(&s, &unavailable_id);
 
@@ -1329,21 +1348,24 @@ async fn auto_invalid_timeout_unavailable_cancel_and_storage_are_truthful() {
     model.set_delay_ms(1500);
     let cancel_id = stage_store_episode(&s, "local");
     model.set_reply(consolidator_reply(&cancel_id, "Should not land after cancel"));
-    let running = wait_json(&s, "/api/structured-memory/consolidation", |body| {
-        body["runs"]
-            .as_array()
-            .is_some_and(|runs| runs.iter().any(|run| run["state"] == "running"))
-    })
+    wait_until(
+        || {
+            store_of(&s)
+                .list_consolidation_runs("local")
+                .unwrap()
+                .iter()
+                .any(|run| run.state == "running")
+        },
+        "running auto run",
+    )
     .await;
-    let run_id = running["runs"]
-        .as_array()
+    let run_id = store_of(&s)
+        .list_consolidation_runs("local")
         .unwrap()
-        .iter()
-        .find(|run| run["state"] == "running")
-        .unwrap()["id"]
-        .as_str()
+        .into_iter()
+        .find(|run| run.state == "running")
         .unwrap()
-        .to_string();
+        .id;
     let (status, cancelled) = s
         .post_json(
             &format!("/api/structured-memory/consolidation/{run_id}/cancel"),
@@ -1353,34 +1375,38 @@ async fn auto_invalid_timeout_unavailable_cancel_and_storage_are_truthful() {
     assert_eq!(status, 200, "{cancelled}");
     assert_eq!(cancelled["state"], "cancelled");
     model.set_delay_ms(0);
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
+    wait_until(
+        || store_of(&s).get_consolidation_run("local", &run_id).unwrap().state == "cancelled",
+        "cancel persisted",
+    )
+    .await;
+    assert_eq!(store_of(&s).list_proposals("local").unwrap().len(), 0);
     retire_episode(&s, &cancel_id);
+}
 
-    s.state.structured_memory.as_ref().unwrap().with_connection(|conn| {
-        conn.execute_batch(
-            "CREATE TRIGGER refuse_auto BEFORE INSERT ON proposals BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;",
-        )
-        .unwrap();
-    });
+#[tokio::test]
+async fn auto_storage_failure_creates_no_proposals() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), auto_consolidation()).await;
+    store_of(&s).set_proposal_insert_failure(true).unwrap();
     let storage_id = stage_store_episode(&s, "local");
     model.set_reply(consolidator_reply(
         &storage_id,
         "Must not persist after storage failure",
     ));
-    wait_json(&s, "/api/structured-memory/consolidation", |body| {
-        body["runs"].as_array().is_some_and(|runs| {
-            runs.iter().any(|run| {
-                run["state"] == "failed"
-                    && run["episode_ids"]
-                        .as_array()
-                        .is_some_and(|ids| ids.iter().any(|id| id == storage_id))
-            })
-        })
-    })
+    wait_until(
+        || {
+            store_of(&s)
+                .list_consolidation_runs("local")
+                .unwrap()
+                .iter()
+                .any(|run| run.state == "failed" && run.episode_ids.iter().any(|id| id == &storage_id))
+        },
+        "storage-failure auto run",
+    )
     .await;
-    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
-    assert_eq!(s.get_json("/api/structured-memory/facts").await.1["count"], 0);
+    assert_eq!(store_of(&s).list_proposals("local").unwrap().len(), 0);
+    assert_eq!(store_of(&s).list_facts("local").unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -1390,18 +1416,21 @@ async fn auto_source_refs_are_owner_scoped_and_foreign_ids_are_rejected() {
     let local = stage_store_episode(&s, "local");
     let foreign = cgagentharness::common::random_hex(16);
     model.set_reply(consolidator_reply(&foreign, "Should not bind a foreign source"));
-    wait_json(&s, "/api/structured-memory/consolidation", |body| {
-        body["runs"].as_array().is_some_and(|runs| {
-            runs.iter().any(|run| {
-                run["state"] == "done"
-                    && run["proposal_count"] == 0
-                    && run["rejected_count"] == 1
-                    && run["episode_ids"]
-                        .as_array()
-                        .is_some_and(|ids| ids.iter().any(|id| id == local))
-            })
-        })
-    })
+    wait_until(
+        || {
+            store_of(&s)
+                .list_consolidation_runs("local")
+                .unwrap()
+                .iter()
+                .any(|run| {
+                    run.state == "done"
+                        && run.proposal_count == 0
+                        && run.rejected_count == 1
+                        && run.episode_ids.iter().any(|id| id == &local)
+                })
+        },
+        "foreign-source auto run",
+    )
     .await;
     assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
 }
@@ -1409,42 +1438,68 @@ async fn auto_source_refs_are_owner_scoped_and_foreign_ids_are_rejected() {
 #[tokio::test]
 async fn chat_wins_auto_contention_and_disable_stops_new_claims() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), auto_consolidation()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        consolidation().with("structured_memory.auto_consolidation_idle_ms", "40"),
+    )
+    .await;
+    let (status, on) = s
+        .post_json(
+            "/api/structured-memory/gates",
+            json!({"gate": "auto_consolidation", "enabled": true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{on}");
+    assert_eq!(on["auto_consolidation"], true);
+    assert!(s.state.auto_consolidation.is_spawned());
     model.set_delay_ms(700);
     model.set_reply(ok_reply("pong", 1, 1));
     let chat = s.post_json("/api/chat", json!({"message": "hold the gate"}));
-    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-    assert!(s.state.generation_gate.is_held());
-    let blocked = stage_store_episode(&s, "local");
-    let (status, chat_body) = chat.await;
-    assert_eq!(status, 200, "{chat_body}");
-    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
+    let stage = async {
+        wait_until(|| s.state.generation_gate.is_held(), "chat holds generation gate").await;
+        assert_eq!(s.state.generation_gate.owner(), "chat");
+        stage_store_episode(&s, "local")
+    };
+    let (chat_result, blocked) = tokio::join!(chat, stage);
+    assert_eq!(chat_result.0, 200, "{}", chat_result.1);
+    wait_until(|| !s.state.generation_gate.is_held(), "gate released after first chat").await;
     model.set_delay_ms(0);
+    let _ = blocked;
 
     model.set_delay_ms(800);
     model.set_reply(ok_reply("still holding", 1, 1));
     let chat = s.post_json("/api/chat", json!({"message": "hold again"}));
-    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-    let later = stage_store_episode(&s, "local");
-    let (status, off) = s
-        .post_json(
-            "/api/structured-memory/gates",
-            json!({"gate": "auto_consolidation", "enabled": false}),
+    let disable = async {
+        wait_until(
+            || s.state.generation_gate.is_held() && s.state.generation_gate.owner() == "chat",
+            "chat holds generation gate again",
         )
         .await;
-    assert_eq!(status, 200, "{off}");
-    assert_eq!(off["auto_consolidation"], false);
-    assert!(!s.state.auto_consolidation.claims_allowed());
-    let (status, _) = chat.await;
-    assert_eq!(status, 200);
+        let later = stage_store_episode(&s, "local");
+        let (status, off) = s
+            .post_json(
+                "/api/structured-memory/gates",
+                json!({"gate": "auto_consolidation", "enabled": false}),
+            )
+            .await;
+        assert_eq!(status, 200, "{off}");
+        assert_eq!(off["auto_consolidation"], false);
+        assert!(!s.state.auto_consolidation.claims_allowed());
+        later
+    };
+    let (chat_result, later) = tokio::join!(chat, disable);
+    assert_eq!(chat_result.0, 200, "{}", chat_result.1);
     model.set_delay_ms(0);
     model.set_reply(consolidator_reply(&later, "Must not be claimed after disable"));
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    let store = s.state.structured_memory.as_ref().unwrap();
-    assert_eq!(store.get_episode("local", &later).unwrap().consolidation_state, "none");
-    let _ = blocked;
-    let listed = s.get_json("/api/structured-memory/consolidation").await.1;
-    assert_eq!(listed["auto_consolidation"], false);
+    assert_eq!(
+        store_of(&s).get_episode("local", &later).unwrap().consolidation_state,
+        "none"
+    );
+    assert_eq!(
+        s.get_json("/api/structured-memory").await.1["auto_consolidation"],
+        false
+    );
 }
 
 #[tokio::test]
@@ -1468,7 +1523,11 @@ async fn overlay_auto_consolidate_starts_the_worker() {
     assert!(s.state.auto_consolidation.is_spawned());
     let episode_id = stage_store_episode(&s, "local");
     model.set_reply(consolidator_reply(&episode_id, "Prefer overlay auto units."));
-    wait_json(&s, "/api/structured-memory/proposals", |body| body["count"] == 1).await;
+    wait_until(
+        || store_of(&s).list_proposals("local").unwrap().len() == 1,
+        "overlay auto proposal",
+    )
+    .await;
     assert_eq!(
         s.get_json("/api/structured-memory/proposals").await.1["proposals"][0]["status"],
         "pending"

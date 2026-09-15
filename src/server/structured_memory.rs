@@ -3012,6 +3012,22 @@ impl StructuredMemoryStore {
         f(&self.lock())
     }
 
+    /// Test hook: fail the next proposal insert so finish rolls back.
+    pub fn set_proposal_insert_failure(&self, enabled: bool) -> Result<()> {
+        let conn = self.lock();
+        if enabled {
+            conn.execute_batch(
+                "CREATE TRIGGER IF NOT EXISTS refuse_proposal_insert BEFORE INSERT ON proposals \
+                 BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;",
+            )
+            .map_err(sql)?;
+        } else {
+            conn.execute_batch("DROP TRIGGER IF EXISTS refuse_proposal_insert;")
+                .map_err(sql)?;
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn expire_episode(&self, owner: &str, id: &str) -> Result<()> {
         let conn = self.lock();
