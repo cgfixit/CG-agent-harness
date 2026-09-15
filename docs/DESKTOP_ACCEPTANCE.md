@@ -3,8 +3,11 @@
 ## Native exact-artifact matrix (tip `22520f3`)
 
 Tip under test: [`22520f3ba5981c361ceb57dddd7ff96234a69290`](https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290).
-Use that SHA (or the matching packaged bundle `Contents/Resources/COMMIT`) for
-native rows. This documentation program runs on Windows and cannot drive Darwin
+A `COMMIT` file is not enough to call a native row passed: rebuilds of the same
+SHA are not byte-identical. Record the ZIP/app SHA-256 (or immutable workflow
+artifact id) in the checksum column **before** changing a result off unverified.
+
+This documentation program runs on Windows and cannot drive Darwin
 WebKit, so every native WKWebView result below is **unverified**.
 
 Scripts named in [`.claude/skills/run-cg-agent-harness/SKILL.md`](../.claude/skills/run-cg-agent-harness/SKILL.md)
@@ -12,14 +15,14 @@ Scripts named in [`.claude/skills/run-cg-agent-harness/SKILL.md`](../.claude/ski
 `node scripts/chat-browser-acceptance.mjs`) exercise HTTP and Chrome paths.
 They are not native WebKit proof.
 
-| scenario | required SHA or bundle | mechanism (native WKWebView / Chromium / HTTP) | result |
-|---|---|---|---|
-| chat send | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
-| CSRF | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
-| goal stage | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
-| skill use | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
-| external-link confirm | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
-| close/reopen | tip `22520f3ba5981c361ceb57dddd7ff96234a69290` / matching bundle COMMIT | native WKWebView | unverified |
+| scenario | source SHA | ZIP/app SHA-256 or artifact id | mechanism | result |
+|---|---|---|---|---|
+| chat send | `22520f3` | unverified | native WKWebView | unverified |
+| CSRF | `22520f3` | unverified | native WKWebView | unverified |
+| goal stage | `22520f3` | unverified | native WKWebView | unverified |
+| skill use | `22520f3` | unverified | native WKWebView | unverified |
+| external-link confirm | `22520f3` | unverified | native WKWebView | unverified |
+| close/reopen | `22520f3` | unverified | native WKWebView | unverified |
 
 ## Historical Chromium / HTTP notes (non-native)
 
