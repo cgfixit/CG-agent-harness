@@ -132,7 +132,7 @@ jobs:
             // page 1 of 30, so on a long PR the marker scrolls off and this job
             // posts a new comment on every synchronize instead of editing in place.
             const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: context.payload.pull_request.number });
-            const mine = comments.data.find(c => c.body && c.body.startsWith(marker));
+            const mine = comments.find(c => c.body && c.body.startsWith(marker));
             if (mine) {
               await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: mine.id, body: text });
             } else {
