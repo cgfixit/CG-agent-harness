@@ -424,6 +424,36 @@ async fn chat_inner(
     } else {
         state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_MAX_TOKENS)
     };
+    let (turns, chars) = if req.loop_turn {
+        (LOOP_HISTORY_TURNS, LOOP_HISTORY_CHARS)
+    } else {
+        (HISTORY_TURNS, CHAT_HISTORY_CHARS)
+    };
+    // The next prompt only ever carries this bounded window, so the compaction
+    // estimate must be built from it rather than from every stored message;
+    // turns that cannot enter the prompt must not trigger a session rewrite.
+    let bounded_history = |session: &crate::server::sessions::Session| -> Vec<ChatMessage> {
+        let prior: Vec<ChatMessage> = session
+            .messages
+            .iter()
+            .rev()
+            .take(turns)
+            .filter(|m| m.role == "user" || m.role == "assistant")
+            .map(|m| ChatMessage {
+                role: m.role.clone(),
+                content: m.text.clone(),
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        clip_history(&prior, chars)
+    };
+    let mut history = if cloud_selected {
+        Vec::new()
+    } else {
+        bounded_history(&session)
+    };
     if !cloud_selected {
         let threshold = state
             .cfg
@@ -439,12 +469,8 @@ async fn chat_inner(
                 crate::server::compaction::DEFAULT_KEEP_MESSAGES,
             )
             .clamp(2, 40) as usize;
-        let projected = crate::server::compaction::projected_prompt_tokens(
-            &system_prompt,
-            &session.messages,
-            &req.message,
-            max_tokens,
-        );
+        let projected =
+            crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, &req.message, max_tokens);
         if projected > threshold {
             let before = session.messages.len();
             let goal = session.goal.clone();
@@ -460,32 +486,9 @@ async fn chat_inner(
                 "after": session.messages.len(),
                 "projected": projected,
             }));
+            history = bounded_history(&session);
         }
     }
-    let (turns, chars) = if req.loop_turn {
-        (LOOP_HISTORY_TURNS, LOOP_HISTORY_CHARS)
-    } else {
-        (HISTORY_TURNS, CHAT_HISTORY_CHARS)
-    };
-    let prior: Vec<ChatMessage> = session
-        .messages
-        .iter()
-        .rev()
-        .take(turns)
-        .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| ChatMessage {
-            role: m.role.clone(),
-            content: m.text.clone(),
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    let mut history = if cloud_selected {
-        Vec::new()
-    } else {
-        clip_history(&prior, chars)
-    };
     history.push(ChatMessage {
         role: "user".into(),
         content: req.message.clone(),

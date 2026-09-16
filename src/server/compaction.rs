@@ -6,6 +6,7 @@
 //! be compacted. The first user message is kept verbatim.
 
 use crate::common::now_ts;
+use crate::llm::openai_chat::ChatMessage;
 use crate::server::sessions::Message;
 
 pub const COMPACT_PREFIX: &str = "[session-compacted]\n";
@@ -16,9 +17,12 @@ pub fn estimate_tokens(text: &str) -> u64 {
     (text.len() as u64).div_ceil(4)
 }
 
-pub fn projected_prompt_tokens(system: &str, messages: &[Message], user: &str, max_tokens: u64) -> u64 {
+/// Estimate the next prompt from the same bounded history that will be sent,
+/// never the full persisted session: stored turns outside the send window must
+/// not drive the compaction decision.
+pub fn projected_prompt_tokens(system: &str, history: &[ChatMessage], user: &str, max_tokens: u64) -> u64 {
     estimate_tokens(system)
-        + messages.iter().map(|m| estimate_tokens(&m.text)).sum::<u64>()
+        + history.iter().map(|m| estimate_tokens(&m.content)).sum::<u64>()
         + estimate_tokens(user)
         + max_tokens
 }
@@ -109,8 +113,11 @@ mod tests {
 
     #[test]
     fn projection_uses_next_prompt_not_lifetime_tally() {
-        let messages = vec![msg("user", "abcd")];
-        let projected = projected_prompt_tokens("sys", &messages, "efgh", 10);
+        let history = vec![ChatMessage {
+            role: "user".into(),
+            content: "abcd".into(),
+        }];
+        let projected = projected_prompt_tokens("sys", &history, "efgh", 10);
         assert_eq!(projected, 1 + 1 + 1 + 10);
     }
 }
