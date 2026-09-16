@@ -42,7 +42,8 @@ fn check_evidence(state: &AppState, owner: &str, sources: &[String]) -> Result<(
 }
 
 /// Cancellation covers model calls AND reads. The caller owns the generation gate.
-pub async fn run(
+#[allow(clippy::too_many_arguments)]
+pub async fn run_stream(
     state: &AppState,
     owner: &str,
     system: &str,
@@ -50,15 +51,18 @@ pub async fn run(
     model: &str,
     cap: u64,
     temperature: f64,
+    output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = state.web.chat_turn.start(owner)?;
     tokio::select! {
+        biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
-        result = tokio::time::timeout(Duration::from_secs_f64(state.chat.timeout_sec.max(1.0)), run_inner(state, owner, system, history, model, cap, temperature)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.chat.timeout_sec.max(1.0)), run_inner(state, owner, system, history, model, cap, temperature, output)) =>
             result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_inner(
     state: &AppState,
     owner: &str,
@@ -67,6 +71,7 @@ async fn run_inner(
     model: &str,
     cap: u64,
     temperature: f64,
+    output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
         .iter()
@@ -92,9 +97,21 @@ async fn run_inner(
         } else {
             definitions.as_slice()
         };
+        let validate = || check_evidence(state, owner, &sources);
         let response = state
             .chat
-            .chat_with_tools(system, &messages, model, cap, temperature, available)
+            .chat_with_tools_stream(
+                system,
+                &messages,
+                model,
+                cap,
+                temperature,
+                available,
+                output.map(|sender| crate::llm::openai_stream::Output {
+                    sender,
+                    validate: &validate,
+                }),
+            )
             .await?;
         let usage = &response["usage"];
         reported &= usage["prompt_tokens"].is_u64() && usage["completion_tokens"].is_u64();

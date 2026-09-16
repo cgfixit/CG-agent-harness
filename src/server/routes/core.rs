@@ -3,7 +3,11 @@
 use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{
+    sse::{Event, KeepAlive},
+    IntoResponse, Response, Sse,
+};
 use axum::Json;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -235,7 +239,50 @@ pub async fn chat(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    headers: HeaderMap,
     ValidJson(req): ValidJson<ChatRequest>,
+) -> Response {
+    let streaming = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|part| part.trim() == "text/event-stream"));
+    if !streaming {
+        return chat_inner(state, peer, user, req, None).await.into_response();
+    }
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Value>(16);
+    let task = tokio::spawn(async move {
+        let result = chat_inner(state, peer, user, req, Some(&sender)).await;
+        let event = match result {
+            Ok(Json(data)) => json!({"type":"done","data":data}),
+            Err(error) => {
+                json!({"type":"error","status":error.status.as_u16(),"error":error.body(),"headers":error.headers})
+            }
+        };
+        let _ = sender.send(event).await;
+    });
+    struct AbortOnDrop(tokio::task::AbortHandle);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let abort = AbortOnDrop(task.abort_handle());
+    let stream = futures_util::stream::unfold((receiver, abort), |(mut receiver, abort)| async move {
+        let event = receiver.recv().await?;
+        Some((
+            Ok::<_, std::convert::Infallible>(Event::default().data(event.to_string())),
+            (receiver, abort),
+        ))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+async fn chat_inner(
+    state: Arc<AppState>,
+    peer: SocketAddr,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    req: ChatRequest,
+    output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> ApiResult<Json<Value>> {
     if req.loop_turn && req.session_id.as_deref().unwrap_or("").is_empty() {
         return Err(loop_error(
@@ -381,7 +428,7 @@ pub async fn chat(
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| state.current_model());
     let (reply, web_tools) = if settings.web_enabled && !req.loop_turn {
-        crate::server::chat_web::run(
+        crate::server::chat_web::run_stream(
             &state,
             &owner,
             &system_prompt,
@@ -389,6 +436,7 @@ pub async fn chat(
             &model,
             max_tokens,
             temperature,
+            output,
         )
         .await
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?
@@ -396,7 +444,17 @@ pub async fn chat(
         (
             state
                 .chat
-                .chat(&system_prompt, &history, Some(&model), max_tokens, temperature)
+                .chat_stream(
+                    &system_prompt,
+                    &history,
+                    Some(&model),
+                    max_tokens,
+                    temperature,
+                    output.map(|sender| crate::llm::openai_stream::Output {
+                        sender,
+                        validate: &|| Ok(()),
+                    }),
+                )
                 .await
                 .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
             Vec::new(),

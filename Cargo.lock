@@ -406,6 +406,7 @@ dependencies = [
  "cap-std",
  "clap",
  "dunce",
+ "futures-util",
  "hex",
  "http",
  "libc",
