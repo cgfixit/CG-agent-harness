@@ -496,6 +496,7 @@ fn home_layout_seeds_config_registry_and_skills_once() {
 
     let mut s = HarnessSettings::load(&home).unwrap();
     assert!(s.soul_enabled);
+    assert!(s.memory_enabled);
     assert!(s.web_enabled);
     assert!(HarnessSettings::load(&home).unwrap().web_enabled);
     s.selected_model = "m".into();
@@ -615,6 +616,26 @@ fn security_switches_require_boolean_values() {
                 std::path::Path::new("fixture.yaml")
             )
             .is_err());
+        }
+    }
+}
+
+#[test]
+fn pinned_memory_default_comes_from_config_and_preserves_saved_choices() {
+    for value in ["true", "false", "\"true\""] {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path().join("home"));
+        home.ensure_layout().unwrap();
+        std::fs::write(home.config_path(), format!("memory:\n  enabled: {value}\n")).unwrap();
+        let mut settings = HarnessSettings::load(&home).unwrap();
+        assert_eq!(settings.memory_enabled, value == "true");
+        settings.memory_enabled = false;
+        settings.save(&home).unwrap();
+        std::fs::write(home.config_path(), "memory:\n  enabled: true\n").unwrap();
+        assert!(!HarnessSettings::load(&home).unwrap().memory_enabled);
+        for legacy in ["{}", "{\"memory_enabled\":\"true\"}"] {
+            std::fs::write(home.settings_path(), legacy).unwrap();
+            assert!(!HarnessSettings::load(&home).unwrap().memory_enabled);
         }
     }
 }

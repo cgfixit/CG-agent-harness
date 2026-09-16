@@ -25,6 +25,14 @@ async fn model() -> Model {
     let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
         let (seen, invalid, latency) = (seen.clone(), invalid.clone(), latency.clone());
         async move {
+            if body["messages"][0]["content"].as_str().unwrap_or("").contains("local structured-memory consolidator") {
+                let input: Value = serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+                let episode = &input["episodes"][0];
+                return axum::Json(ok_reply(&json!({"candidates":[{
+                    "action":"add", "category":"pref", "content":episode["semantic_summary"],
+                    "confidence":0.9, "sensitivity":"normal", "source_refs":[episode["id"]]
+                }]}).to_string(), 10, 5));
+            }
             if body["messages"][0]["content"] != suggest::SYSTEM_PROMPT {
                 return axum::Json(ok_reply("Acknowledged the operator's metric preference.", 10, 5));
             }
@@ -374,4 +382,121 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
         "run_not_successful"
     );
     assert_eq!(store.episode_count("local").unwrap(), before);
+}
+
+#[tokio::test]
+async fn shipped_defaults_capture_suggest_consolidate_and_retrieve_reviewed_facts() {
+    let model = model().await;
+    let mut opts = ServerOptions::default();
+    opts.overrides
+        .retain(|(key, _)| !key.starts_with("structured_memory.") && key != "memory.enabled");
+    let s = spawn_server(&model.base, opts).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let status = s.get_json("/api/structured-memory").await.1;
+    for gate in [
+        "enabled",
+        "episode_capture",
+        "explicit_recall",
+        "retrieval",
+        "auto_retrieval",
+        "consolidation",
+        "auto_consolidation",
+    ] {
+        assert_eq!(status[gate], true, "{gate}: {status}");
+    }
+    assert!(suggest::available(&s.state, Source::Chat));
+    assert!(suggest::available(&s.state, Source::Coding));
+    assert!(s.state.auto_consolidation.is_spawned());
+    assert_eq!(s.get_json("/api/memory").await.1["enabled"], true);
+    store
+        .add_fact("user_bob", "FOREIGN_METRIC_FACT", "pref", "fixture")
+        .unwrap();
+    let (status, chat) = s
+        .post_json("/api/chat", json!({"message":"I prefer metric units."}))
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["episode"]["staged"], true);
+    assert_eq!(chat["memory_suggestion"]["queued"], true);
+    settled(&s, "local").await;
+    let proposals = store.list_pending_proposals("local").unwrap();
+    assert_eq!(proposals.len(), 2);
+    assert!(store.list_facts("local").unwrap().is_empty());
+    let before = s
+        .post_json("/api/prompt/preview", json!({"retrieve_query":"metric"}))
+        .await
+        .1;
+    assert!(before["structured_facts"]["injected"].as_array().unwrap().is_empty());
+    let proposal = proposals
+        .iter()
+        .find(|p| p.category.as_deref() == Some("insight"))
+        .unwrap();
+    let route = format!("/api/structured-memory/proposals/{}", proposal.id);
+    assert_eq!(
+        s.post_json(
+            &route,
+            json!({"revision":proposal.revision,"apply":true,"reason":"reviewed"})
+        )
+        .await
+        .0,
+        400
+    );
+    assert_eq!(
+        s.post_json(
+            &route,
+            json!({"revision":proposal.revision,"apply":true,"confirm":true,"reason":"reviewed"})
+        )
+        .await
+        .0,
+        200
+    );
+    let preview = s
+        .post_json("/api/prompt/preview", json!({"retrieve_query":"metric"}))
+        .await
+        .1;
+    assert_eq!(preview["structured_facts"]["injected"].as_array().unwrap().len(), 1);
+    assert!(!preview["prompt"].as_str().unwrap().contains("FOREIGN_METRIC_FACT"));
+    // A distinct eligible human summary exercises the idle consolidator while both automations are enabled.
+    let episode = stage(store, "local");
+    store
+        .set_episode_summary("local", &episode, "Prefer concise release notes.", "reviewed summary")
+        .unwrap();
+    for _ in 0..250 {
+        if store
+            .list_pending_proposals("local")
+            .unwrap()
+            .iter()
+            .any(|p| p.content.as_deref() == Some("Prefer concise release notes."))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(store
+        .list_pending_proposals("local")
+        .unwrap()
+        .iter()
+        .any(|p| p.content.as_deref() == Some("Prefer concise release notes.")));
+    assert_eq!(
+        store.list_facts("local").unwrap().len(),
+        1,
+        "consolidation never applies a fact"
+    );
+    assert_eq!(
+        s.post_json(
+            "/api/structured-memory/gates",
+            json!({"gate":"auto_retrieval","enabled":false})
+        )
+        .await
+        .0,
+        200
+    );
+    let preview = s
+        .post_json("/api/prompt/preview", json!({"retrieve_query":"metric"}))
+        .await
+        .1;
+    assert!(preview["structured_facts"]["injected"].as_array().unwrap().is_empty());
+    assert_eq!(
+        cgagentharness::server::structured_memory::OperatorGates::load(&s.state.home).resolve("auto_retrieval", true),
+        false
+    );
 }

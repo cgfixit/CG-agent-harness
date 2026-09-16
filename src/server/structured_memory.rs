@@ -11,9 +11,9 @@
 //! Recalled FTS hits still require an explicit pick (or the separately gated
 //! `auto_retrieval` silent path) and assembly-time owner/active/revision recheck.
 //!
-//! Phase 6 adds a default-off manual consolidator: selected episodes become
+//! Phase 6 adds a separately gated manual consolidator: selected episodes become
 //! pending proposals only. It never auto-applies facts and never feeds recalled
-//! facts into the summarizer prompt. A seventh default-off
+//! facts into the summarizer prompt. A seventh independent
 //! `auto_consolidation` gate may start a bounded idle worker that reuses the
 //! same runner; it still never writes canonical facts.
 
@@ -3272,7 +3272,7 @@ pub fn retrieval_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGa
 }
 
 /// Silent FTS inject on every chat. Requires retrieval AND auto_retrieval.
-/// Default-off; Advisor-sensitive silent path.
+/// Enabled by fresh config; explicit off overrides still win.
 pub fn auto_retrieval_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
     retrieval_available(cfg, store_open, gates)
         && store_open_and(
@@ -3684,7 +3684,11 @@ mod tests {
     #[test]
     fn auto_consolidation_requires_consolidation_store_and_literal_or_overlay() {
         let dir = tempfile::tempdir().unwrap();
-        let off = cfg(dir.path());
+        let off = AppConfig::from_str(
+            "structured_memory:\n  consolidation: false\n  auto_consolidation: false\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
         let mut only_auto = OperatorGates::default();
         only_auto.set("auto_consolidation", true).unwrap();
         let mut both = only_auto.clone();
@@ -4177,7 +4181,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = store(dir.path());
         let fact = store.add_fact("user_alice", "Should stay out", "pref", "add").unwrap();
-        let cfg = cfg(dir.path());
+        let cfg = AppConfig::from_str(
+            "structured_memory:\n  explicit_recall: false\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
         assert!(!cfg.flag_is_true("structured_memory.explicit_recall"));
         let recalled = assemble_selected_facts(
             Some(&store),

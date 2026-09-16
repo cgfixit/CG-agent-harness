@@ -241,7 +241,10 @@ impl HarnessSettings {
     pub fn load(home: &Home) -> Result<Self> {
         let path = home.settings_path();
         if !path.exists() {
-            let s = Self::default();
+            let s = Self {
+                memory_enabled: home.load_config()?.flag_is_true("memory.enabled"),
+                ..Self::default()
+            };
             s.save(home)?;
             return Ok(s);
         }

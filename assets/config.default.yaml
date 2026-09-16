@@ -294,27 +294,31 @@ unslop:
 # retrieve request flag) plus assembly-time owner/active/revision recheck.
 # auto_retrieval is a fifth independent gate (Advisor-sensitive silent path):
 # when true AND retrieval is true, chat may FTS the user message and inject
-# rechecked top-k without a per-request flag. Ships false. /memory on never
+# rechecked top-k without a per-request flag. Ships true. /memory on never
 # opens any of these gates.
 # consolidation is a sixth independent gate: manual selected-episode
 # consolidation into pending proposals only. It does not apply facts, does
 # not inject episodes, and does not enable auto_consolidation.
 # auto_consolidation is a seventh independent gate: a bounded idle worker
 # that reuses the manual consolidator. Requires consolidation (AND). Ships
-# false. Quoted "true" is OFF. Feature-off starts no worker. Output is
+# true. Quoted "true" is OFF. Feature-off starts no worker. Output is
 # pending proposals only; chat wins the generation gate.
+memory:
+  # Initial pinned-note inclusion; existing harness.json choices win.
+  enabled: true
+
 structured_memory:
-  enabled: false
-  episode_capture: false
-  explicit_recall: false
-  retrieval: false
-  auto_retrieval: false
-  consolidation: false
-  auto_consolidation: false
-  # Config-only opt-ins: bounded completed inputs -> pending proposals, never facts.
+  enabled: true
+  episode_capture: true
+  explicit_recall: true
+  retrieval: true
+  auto_retrieval: true
+  consolidation: true
+  auto_consolidation: true
+  # Config defaults and administrator overrides: bounded completed inputs -> pending proposals, never facts.
   # Both require enabled + episode_capture. They do not open consolidation/recall.
-  auto_suggest_chat: false
-  auto_suggest_coding: false
+  auto_suggest_chat: true
+  auto_suggest_coding: true
   suggestion_mode: "both" # summaries | insights | both; invalid values disable suggestions
   suggestion_max_input_chars: 8000 # total across input/output, split equally
   suggestion_max_queue: 8 # queued inputs; one additional generation may be running

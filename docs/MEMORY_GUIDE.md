@@ -1,9 +1,11 @@
 # Memory: save, suggest, review and retrieve
 
 The Harness can suggest **summaries, durable insights, or both** from completed
-Harness chat turns and coding runs. These opt-in suggestions persist as pending
+Harness chat turns and coding runs. These suggestions persist as pending
 proposals. **Only your Apply action with a reason saves a canonical fact.**
-Every structured-memory boolean ships false. Ordinary chat-history persistence
+Every structured-memory boolean ships true in fresh configuration. Existing
+config files and explicit administrator off overrides are preserved. Fresh pinned
+notes use `memory.enabled: true`; saved `harness.json` choices take precedence. Ordinary chat-history persistence
 is separate and already happens without these flags.
 
 ## What counts as memory
@@ -36,7 +38,7 @@ quoted `"true"` remains off. Administrator-only slash overrides persist in
 including explicit `off` over config `true`.
 Inspect `GET /api/structured-memory` for effective gates and queue status.
 
-| Key (all default `false`) | Effect / dependency | Live slash overlay |
+| Key (all default `true`) | Effect / dependency | Live slash overlay |
 |---|---|---|
 | `enabled` | Opens the private store at startup; required by every structured feature | None; restart required |
 | `episode_capture` | Allows episode staging; required by automatic completion suggestions | `/memory capture on|off` |
@@ -50,11 +52,12 @@ Inspect `GET /api/structured-memory` for effective gates and queue status.
 
 `/memory on` only enables pinned-note inclusion. It opens none of these gates.
 `auto_retrieval` controls use of saved facts, not suggestion quality; it remains
-independent and off by default.
+independent and on in fresh configuration.
 
-### Automatic suggestions, approval before saving
+### Fresh defaults: automatic suggestions, approval before saving
 
-Merge this into the existing block; do not create duplicate YAML keys:
+Fresh homes already have these defaults. To enable them in an existing home,
+merge this into its existing block; do not create duplicate YAML keys:
 
 ```yaml
 structured_memory:
@@ -63,15 +66,15 @@ structured_memory:
   auto_suggest_chat: true
   auto_suggest_coding: true
   suggestion_mode: "both" # "summaries", "insights", or "both"
-  consolidation: false
-  auto_consolidation: false
-  explicit_recall: false
-  retrieval: false
-  auto_retrieval: false
+  consolidation: true
+  auto_consolidation: true
+  explicit_recall: true
+  retrieval: true
+  auto_retrieval: true
 ```
 
 If an existing `/memory capture off` overlay is present, use `/memory capture on`
-after restart. Close any existing consolidation/recall/retrieval overlays if you
+after restart. Enable existing consolidation/recall/retrieval off overrides too if you
 want the exact recipe above. Either source switch can be enabled alone. Invalid
 mode values disable suggestions. No setting auto-approves them.
 

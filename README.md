@@ -68,7 +68,7 @@ for the acceptance boundaries.
 | Capability | How it works |
 |---|---|
 | Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
-| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. `/memory on` includes those notes only. Optional structured facts, governed proposals, bounded episodes, facts-only FTS, and manual consolidation (#87) are a separate account-private store behind default-off gates; models may suggest, not silently write. Search is not inject. Facts enter `/prompt` only after an explicit pick (`selected_facts`, `/memory retrieve`, or `retrieve`) or the separately gated `auto_retrieval` path. Episodes are never injected. Manual consolidation writes pending proposals only. Chat explains these controls; the operator executes them. |
+| Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. `/memory on` includes those notes only. Optional structured facts, governed proposals, bounded episodes, facts-only FTS, and manual consolidation (#87) are a separate account-private store with gates on in fresh configuration; models may suggest, not silently write. Search is not inject. Facts enter `/prompt` only after an explicit pick (`selected_facts`, `/memory retrieve`, or `retrieve`) or the separately gated `auto_retrieval` path. Episodes are never injected. Manual consolidation writes pending proposals only. Chat explains these controls; the operator executes them. |
 | Chat model selection | Select an exact installed local model tag, or explicitly select `grok` / `claude` after an administrator saves the matching provider key and restarts. Cloud chat sends only the newly typed message; local history, memory, skills and web context stay local. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
@@ -213,14 +213,16 @@ budgets still apply. `/memory` manages optional pinned notes (`memory/notes.json
 and `/soul` controls persona context; neither gives the model permission to
 mutate a repository. `/memory on|off` includes or excludes those notes only.
 
-A separate, default-off structured-memory store (`memory/structured.sqlite3`)
+A separate, enabled-by-default structured-memory store (`memory/structured.sqlite3`)
 holds account-private facts, governed proposals, and optional episodes
 (issue #87). Models may propose; applying a fact still requires `confirm` and
 `reason`. Episode capture never writes facts and never injects episode text.
-Independent `flag_is_true` gates all ship **false** (quoted `"true"` is off):
+Independent `flag_is_true` gates all ship **true** (quoted `"true"` is off):
 `structured_memory.enabled`, `episode_capture`, `explicit_recall`,
 `retrieval`, `auto_retrieval`, `consolidation`, `auto_consolidation`,
 `auto_suggest_chat`, and `auto_suggest_coding`.
+Existing configuration and explicit off overrides are preserved. Fresh pinned-note
+inclusion is seeded from `memory.enabled: true`; saved settings still win.
 Administrator-only slash overrides
 `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding on|off`
 persist `memory/structured_gates.json` once the store is open; explicit `off`
@@ -239,10 +241,10 @@ only. Force-include for one prompt: `/memory retrieve <query>` or `retrieve` /
 `retrieve_query` on `/api/chat` and `/api/prompt/preview`. Assembly rechecks
 owner, active, and revision. When both notes and facts are present the reserved
 split is 1500/1500 of the 3000-character memory body. `auto_retrieval` ships
-false; when it is on **and** retrieval is on, chat may FTS the user message and
+true; when it is on **and** retrieval is on, chat may FTS the user message and
 inject rechecked top-k without a per-request flag. Manual consolidation
 (`/memory consolidate <episode-id...>`) writes pending proposals only and
-never applies facts. `auto_consolidation` ships false; when it is on **and**
+never applies facts. `auto_consolidation` ships true; when it is on **and**
 consolidation is on, a bounded idle worker may reuse that runner for unexpired
 episodes with a nonblank human semantic summary. Feature-off
 starts no worker. Chat wins generation-gate contention. Recalled text cannot
