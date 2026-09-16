@@ -55,14 +55,16 @@ different source or bundle.
 | Existing macOS app bundle | Apple Silicon or Intel Mac; working local model service for chat | Native app; owned loopback port chosen at launch |
 | Build the macOS app | Apple Silicon build host, Git, Xcode Command Line Tools, rustup with Rust 1.88 and 1.90 | Native app after packaging in section 5.2 |
 | Standalone server (macOS) | Git, Xcode Command Line Tools and Rust 1.88 | Browser at `https://127.0.0.1:8790/` by default |
-| Standalone server (Linux) | Git, a C toolchain, Rust 1.88 and `unshare` for sandboxed checks | Browser at `https://127.0.0.1:8790/` by default |
+| Standalone server (Linux) | Git, a C toolchain, Rust 1.88, and `bwrap` (preferred) or `unshare` for sandboxed checks | Browser at `https://127.0.0.1:8790/` by default |
 
 This guide is written for macOS. The backend itself is also built and tested on
 Linux in CI, and Bundle runs attach a `cgagentharness-linux-x86_64` binary. On
 Linux, skip the Xcode and app-bundle steps (sections 2.2, 5.2, 6's app path and
-the packaging parts of section 8) and note that the hard sandbox is
-`unshare --net`: it isolates the network but does not give checks the read-only
-input confinement that Seatbelt does on macOS. Windows CI and release legs are
+the packaging parts of section 8) and note that the hard sandbox prefers
+bubblewrap (allowlisted read-only inputs and writable scratch) and falls back to
+`unshare --net` when `bwrap` is missing: that fallback isolates the network but
+does not give checks the read-only input confinement that Seatbelt does on macOS.
+Windows CI and release legs are
 parked. `serve` also accepts `--host` and `--port` (1024-65535); any non-loopback
 bind host is refused.
 

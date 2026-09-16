@@ -219,7 +219,8 @@ replacement rather than blindly replaced. Exact
 edits require a fresh full-file hash and unique original text in the displayed
 excerpt. Every attempt takes new snapshots; earlier writes grant no exemption.
 Verification runs only inside a
-hard sandbox (Seatbelt / `unshare --net` / Job Object); no backend means exit 3.
+hard sandbox (Seatbelt / bubblewrap or `unshare --net` / Job Object); no backend
+means exit 3.
 
 - Locked by: `tests/real_repo_loop.rs`, `tests/exact_edits.rs`, workspace transaction tests,
   `tests/agentic_foundations.rs::sandbox_*`.
@@ -237,9 +238,16 @@ that formerly wrote into the candidate; use the provided temporary directory.
 
 Metadata discovery remains allowed. Seatbelt is not a memory/disk quota, and the
 current process group implementation does not contain every escaped descendant.
-Linux namespace and Windows Job Object backends do not establish equivalent
-filesystem or network confinement. See `docs/OFFLINE_CARGO.md` for preparation,
-required native tests, and remaining process/resource limitations.
+Linux prefers bubblewrap with an allowlisted read-only filesystem, writable
+scratch, tmpfs `/tmp`, and `--unshare-net`. Binding the host root (`--ro-bind / /`)
+is forbidden because it still exposes SSH keys and the harness env credential
+file. When `bwrap` is missing or its probe fails, Linux falls back to
+`unshare --net` only (`name()` is `linux-netns`): network isolation without
+filesystem confinement. That fallback is explicit in the backend name, the
+self-test line, and the audit `sandbox` field. Windows Job Object remains a
+process-tree kill boundary without network or filesystem isolation. See
+`docs/OFFLINE_CARGO.md` for preparation, required native tests, and remaining
+process/resource limitations.
 
 - Locked by: `tests/macos_cargo.rs` (no sandbox capability skip).
 
@@ -300,6 +308,10 @@ already killed.
 - `agentic/context` injection findings are advisory on reads; only the
   model-feeding commands refuse on them (selected by CODE, not severity).
 - The Windows sandbox is a process-tree kill boundary, not a network namespace.
+  A stronger Windows backend (for example AppContainer) is deferred.
+- Linux `linux-netns` is network isolation only. Treat `linux-bwrap` as the
+  filesystem-confined backend; do not claim Seatbelt parity when the fallback
+  is selected.
 - `security.api_key_optional` on a host fronted by a header-stripping proxy is
   indistinguishable from no proxy: explicitly set it false there.
 

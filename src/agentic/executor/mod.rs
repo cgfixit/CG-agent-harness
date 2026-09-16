@@ -1,5 +1,5 @@
 //! Sandboxed verification: checks run as argv lists against a jailed worktree
-//! inside a hard sandbox (Darwin Seatbelt, Linux netns, Windows Job Object).
+//! inside a hard sandbox (Darwin Seatbelt, Linux bwrap-or-netns, Windows Job Object).
 
 pub mod apply;
 pub mod manifest;
