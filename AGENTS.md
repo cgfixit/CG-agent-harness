@@ -112,13 +112,17 @@ The eight Codex twins above that are not optimize/release/verify
 `verification-specialist`, `cgagentharness-config-guard`, `cgagentharness-parity`)
 are mirrored under `.claude/skills/<slug>/SKILL.md`, plus a Claude-depth
 `cgagentharness-optimize/SKILL.md` playbook (the `.codex` twin stays the short
-runtime). Claude Code also has three verification skills that Codex does not:
-`cgagentharness-doc-sync`, `cgagentharness-verify-deps`, and
-`cgagentharness-runtime-invariant-check`. A separate `run-cg-agent-harness`
+runtime). Claude Code also has three read-only verification/report skills that
+Codex does not: `cgagentharness-doc-sync`, `cgagentharness-verify-deps`, and
+`cgagentharness-runtime-invariant-check`. Two further Claude-only skills
+actively write fixes instead of only reporting drift: `doc-sync` (README,
+AGENTS.md, setup-guide.md, `docs/*.md`) and `dep-sync` (Cargo manifests/locks,
+`rust-toolchain.toml`, `deny.toml`, CI/release YAML), each diffing against
+`origin/main` or the branch's upstream. A separate `run-cg-agent-harness`
 skill drives a local fake-model console smoke and has no slash command. Every
 other Claude skill above is registered as `.claude/commands/<slug>.md`
-(`/fable-protocol`, `/cgagentharness-doc-sync`, etc.) and loads the matching
-`SKILL.md`.
+(`/fable-protocol`, `/cgagentharness-doc-sync`, `/doc-sync`, `/dep-sync`, etc.)
+and loads the matching `SKILL.md`.
 
 These are repository guidance, not application `/api/skills` runtime plugins.
 Existing user authorization governs publication; selecting a skill adds none.
