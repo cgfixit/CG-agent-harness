@@ -292,7 +292,7 @@ async fn chat_inner(
             "loop turns require an existing session",
         ));
     }
-    let session = match req.session_id.as_deref().filter(|s| !s.is_empty()) {
+    let mut session = match req.session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => state
             .store
             .get(id)
@@ -419,6 +419,49 @@ async fn chat_inner(
             web_enabled: settings.web_enabled,
         })
     };
+    let max_tokens = if req.loop_turn {
+        state.loop_max_tokens
+    } else {
+        state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_MAX_TOKENS)
+    };
+    if !cloud_selected {
+        let threshold = state
+            .cfg
+            .u64_or(
+                "chat.compact_prompt_tokens",
+                crate::server::compaction::DEFAULT_PROMPT_TOKENS,
+            )
+            .clamp(4096, 30_000);
+        let keep = state
+            .cfg
+            .u64_or(
+                "chat.compact_keep_messages",
+                crate::server::compaction::DEFAULT_KEEP_MESSAGES,
+            )
+            .clamp(2, 40) as usize;
+        let projected = crate::server::compaction::projected_prompt_tokens(
+            &system_prompt,
+            &session.messages,
+            &req.message,
+            max_tokens,
+        );
+        if projected > threshold {
+            let before = session.messages.len();
+            let goal = session.goal.clone();
+            session = state
+                .store
+                .compact(&session.session_id, keep)
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+            debug_assert_eq!(session.goal, goal);
+            state.audit.log(json!({
+                "event": "chat_session_compacted",
+                "session_id": session.session_id,
+                "before": before,
+                "after": session.messages.len(),
+                "projected": projected,
+            }));
+        }
+    }
     let (turns, chars) = if req.loop_turn {
         (LOOP_HISTORY_TURNS, LOOP_HISTORY_CHARS)
     } else {
@@ -447,11 +490,6 @@ async fn chat_inner(
         role: "user".into(),
         content: req.message.clone(),
     });
-    let max_tokens = if req.loop_turn {
-        state.loop_max_tokens
-    } else {
-        state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_MAX_TOKENS)
-    };
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
     let (reply, web_tools) = if cloud_selected {
         (

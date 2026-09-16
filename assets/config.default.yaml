@@ -50,6 +50,12 @@ models:
       model: "qwen3.8-27b-instruct"
       probe_timeout_sec: 1.5
 
+# Local chat prompt compaction. Trigger is estimated next-prompt size, not
+# lifetime TokenTally.total. System prompt and session.goal are never compacted.
+chat:
+  compact_prompt_tokens: 24000 # 4096–30000; sized for a verified 32768 window
+  compact_keep_messages: 8 # 2–40 most recent messages kept verbatim
+
 api:
   rate_limit:
     max_requests: 60       # per-IP request ceiling within the window
