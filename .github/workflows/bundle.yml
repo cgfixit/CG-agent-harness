@@ -71,13 +71,31 @@ jobs:
       - name: Stage, checksum, extract-verify
         shell: bash
         run: scripts/package-release.sh "${{ matrix.bin }}" "${{ matrix.artifact }}"
-      - name: Smoke the staged binary
+      - name: Smoke the staged binary (loopback-only bind guard, exit-code contract)
         shell: bash
         run: |
           set -euo pipefail
           BIN="dist/${{ matrix.artifact }}"
           "$BIN" --help | grep -q serve
-          if "$BIN" serve --host 0.0.0.0 --port 8790; then echo "non-loopback bind must be refused"; exit 1; fi
+          # A bare `if "$BIN" serve --host 0.0.0.0` asserts "this must exit
+          # non-zero", so a regression that actually starts serving never
+          # returns: the step idles until timeout-minutes and briefly exposes a
+          # real listener on 0.0.0.0. Watch it instead. BSD userland has no
+          # coreutils `timeout`, so this is a plain background watchdog.
+          "$BIN" serve --host 0.0.0.0 --port 8790 & probe=$!
+          ( sleep 20; kill -9 "$probe" 2>/dev/null ) & watchdog=$!
+          code=0; wait "$probe" || code=$?
+          kill "$watchdog" 2>/dev/null || true
+          case "$code" in
+            0)   echo "non-loopback bind must be refused, but serve exited 0"; exit 1 ;;
+            137) echo "non-loopback bind must be refused, but serve kept listening"; exit 1 ;;
+          esac
+          # Ported from ci.yml's deleted release-build job: a missing config is
+          # exit 3 (env/config), not a generic failure.
+          set +e
+          "$BIN" agentic --config /nonexistent/config.yaml status; config_code=$?
+          set -e
+          [ "$config_code" -eq 3 ] || { echo "expected exit 3 for a missing config, got $config_code"; exit 1; }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}
