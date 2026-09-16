@@ -3,7 +3,7 @@
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
-![CG Agent Harness running on macOS](assets/app-ss.png)
+![CG Agent Harness running on macOS](docs/screenshots/CG-Agent-1.png)
 
 A local harness for **chat, permitted web research, and reviewed coding**. Keep
 conversations and working context with a local model, retrieve evidence from
