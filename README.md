@@ -262,7 +262,12 @@ inclusion hashes; `/skill clear` clears it. Repository `.codex/skills` and
 skills.
 
 `/session new` clears the visible conversation and starts separate message/goal/skill
-context. Switching sessions restores only that session’s saved messages. Shared
+context. Switching sessions restores only that session’s saved messages.
+Use **Up/Down** in the chat input to recall the last **50 saved prompts** in the
+selected session; Down past the newest restores your unsent draft. This history
+lives in the same local session log, survives restart and model-context
+compaction, and is deleted with session history. Failed sends and unsaved slash
+commands are not added. Shared
 persona and enabled pinned-note memory remain shared; your account's permitted
 web selection and structured-memory facts/episodes remain account-private. `/prompt`
 shows the resulting context. Chat knows the operator commands, but cannot

@@ -14,6 +14,7 @@ use crate::common::errors::{HarnessError, Result};
 pub const SESSION_ERROR_CODE: &str = "HARNESS_SESSION_ERROR";
 pub const PERSIST_ERROR_CODE: &str = "HARNESS_SESSION_PERSIST_ERROR";
 pub const MAX_MESSAGES: usize = 500;
+pub const PROMPT_HISTORY_LIMIT: usize = 50;
 const SESSION_ID_CHARS: usize = 12;
 
 fn id_re() -> &'static regex::Regex {
@@ -66,6 +67,9 @@ pub struct Session {
     pub model: String,
     #[serde(default)]
     pub messages: Vec<Message>,
+    /// Recent submitted prompts survive model-context compaction, in the same private session log.
+    #[serde(default)]
+    pub prompt_history: Vec<String>,
     #[serde(default)]
     pub tally: TokenTally,
     /// Operator /goal. Never in `summary()` because GET /api/sessions is open.
@@ -148,6 +152,7 @@ impl SessionStore {
             created_ts: crate::common::now_ts(),
             model: model.to_string(),
             messages: Vec::new(),
+            prompt_history: Vec::new(),
             tally: TokenTally::default(),
             goal: String::new(),
             selected_skills: Vec::new(),
@@ -176,6 +181,19 @@ impl SessionStore {
                 format!("unreadable session file: {session_id}.json"),
             )
         })?;
+        if session.prompt_history.is_empty() {
+            session.prompt_history = session
+                .messages
+                .iter()
+                .rev()
+                .filter(|m| m.role == "user")
+                .take(PROMPT_HISTORY_LIMIT)
+                .map(|m| m.text.clone())
+                .collect();
+            session.prompt_history.reverse();
+        }
+        let excess = session.prompt_history.len().saturating_sub(PROMPT_HISTORY_LIMIT);
+        session.prompt_history.drain(..excess);
         session.goal = session.goal.trim().to_string();
         Ok(session)
     }
@@ -281,6 +299,9 @@ impl SessionStore {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
         let now = crate::common::now_ts();
+        session.prompt_history.push(user_text.to_string());
+        let excess = session.prompt_history.len().saturating_sub(PROMPT_HISTORY_LIMIT);
+        session.prompt_history.drain(..excess);
         session.messages.push(Message {
             role: "user".into(),
             text: user_text.to_string(),
@@ -567,5 +588,62 @@ mod list_cache_tests {
         let list = store.list();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0]["title"], "fixed");
+    }
+}
+
+#[cfg(test)]
+mod prompt_history_tests {
+    use super::*;
+    #[test]
+    fn last_fifty_prompts_persist_independently_and_legacy_logs_restore_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let session = store.create("fixture", "history").unwrap();
+        for i in 0..55 {
+            store
+                .record_exchange(
+                    &session.session_id,
+                    &format!("prompt {i}"),
+                    "reply",
+                    "fixture",
+                    &TokenTally::default(),
+                    &[],
+                )
+                .unwrap();
+        }
+        let mut saved = store.get(&session.session_id).unwrap();
+        assert_eq!(saved.prompt_history.len(), 50);
+        assert_eq!(saved.prompt_history.first().unwrap(), "prompt 5");
+        assert_eq!(saved.prompt_history.last().unwrap(), "prompt 54");
+        // Model-context compaction may replace messages but must not erase keyboard history.
+        saved.messages.clear();
+        store.write(&saved).unwrap();
+        let reopened = SessionStore::new(dir.path()).unwrap();
+        assert_eq!(
+            reopened.get(&session.session_id).unwrap().prompt_history,
+            saved.prompt_history
+        );
+        let legacy = store.create("fixture", "legacy").unwrap();
+        let saved = store
+            .record_exchange(
+                &legacy.session_id,
+                "old prompt",
+                "old reply",
+                "fixture",
+                &TokenTally::default(),
+                &[],
+            )
+            .unwrap();
+        let mut value = serde_json::to_value(saved).unwrap();
+        value.as_object_mut().unwrap().remove("prompt_history");
+        std::fs::write(store.path_for(&legacy.session_id).unwrap(), value.to_string()).unwrap();
+        assert_eq!(
+            store.get(&legacy.session_id).unwrap().prompt_history,
+            vec!["old prompt"]
+        );
+        assert!(store.create("fixture", "new").unwrap().prompt_history.is_empty());
+        assert!(!store.list().iter().any(|row| row.get("prompt_history").is_some()));
+        store.clear().unwrap();
+        assert!(store.get(&session.session_id).is_err());
     }
 }

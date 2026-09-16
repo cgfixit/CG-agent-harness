@@ -353,6 +353,34 @@ try {
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'switch renders the selected session, including its older messages');
  await send('/session use '+firstSession.session_id);
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'reselecting a session must not duplicate its transcript');
+ // Keyboard recall loads saved prompts, restores drafts, and never crosses session boundaries.
+ const arrow=async key=>{
+   await evaluate('document.getElementById("input").focus()');
+   await call('Input.dispatchKeyEvent',{type:'keyDown',key,code:key});
+   await call('Input.dispatchKeyEvent',{type:'keyUp',key,code:key});
+   await until('!promptHistory.loading');
+ };
+ await evaluate('input.value="unsent draft"');
+ await arrow('ArrowUp');assert.equal(await evaluate('input.value'),'OLD_MESSAGE_10');
+ await arrow('ArrowUp');assert.equal(await evaluate('input.value'),'OLD_MESSAGE_8');
+ await arrow('ArrowDown');await arrow('ArrowDown');assert.equal(await evaluate('input.value'),'unsent draft');
+ firstSession.prompt_history=Array.from({length:55},(_,i)=>'SAVED_PROMPT_'+i);
+ await send('/session use '+firstSession.session_id);
+ await evaluate('input.value="draft retained"');
+ await arrow('ArrowUp');assert.equal(await evaluate('input.value'),'SAVED_PROMPT_54');
+ for(let i=0;i<55;i++)await arrow('ArrowUp');
+ assert.equal(await evaluate('input.value'),'SAVED_PROMPT_5','recall is capped at fifty');
+ for(let i=0;i<50;i++)await arrow('ArrowDown');
+ assert.equal(await evaluate('input.value'),'draft retained');
+ await arrow('ArrowUp');
+ await evaluate('input.value="edited draft";input.dispatchEvent(new Event("input"))');
+ await arrow('ArrowUp');await arrow('ArrowDown');assert.equal(await evaluate('input.value'),'edited draft');
+ await send('/session new');await arrow('ArrowUp');assert.equal(await evaluate('input.value'),'','new session cannot recall old prompts');
+ await send('/session use '+firstSession.session_id);
+ await afterLoad(()=>call('Page.reload',{ignoreCache:true}));
+ await until('!!document.getElementById("input")');
+ await send('/session use '+firstSession.session_id);await arrow('ArrowUp');
+ assert.equal(await evaluate('input.value'),'SAVED_PROMPT_54','recall survives a page reload');
  await send('/agent run codex/old Old staged work');
  await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}');
  await evaluate('document.querySelector("#pane-sessions .cmd-item").click()');
