@@ -4,7 +4,9 @@ Chat continuation and executable coding jobs are separate operations. A goal,
 skill, persona, or model reply never grants permission to execute commands,
 commit, push, or publish.
 
-Chat starts without an assigned repository and has no model tool dispatcher.
+Chat starts without an assigned repository. The only model tools it can
+dispatch are the bounded `web_search` and `web_fetch` functions, and only while
+web is enabled; `/loop` turns stay tool-free.
 `/skill use ponytail karpathy-guidelines` deliberately adds coding context for a
 coding discussion; it does not connect a repository or execute a review. A fresh
 home leaves `agentic.repo` empty and refuses coding enablement until an explicit
@@ -73,7 +75,11 @@ semantic summary. Run `/memory consolidate <id>` to queue suggestions, then
 for the displayed revision. This is not chat autosave. `/memory on` stays pinned
 notes. `/memory save <text> :: <reason>` explicitly writes a private fact using
 the existing confirmed API, even with automatic generation off.
-`/memory auto-suggest-chat|auto-suggest-coding on|off` can instead control whether completed work is queued for
+`/memory <gate> on|off` (administrator only) overrides one structured-memory
+gate for the running process: `capture`, `recall`, `retrieval`,
+`auto-retrieve`, `consolidation`, `auto-consolidate`, `auto-suggest-chat`,
+`auto-suggest-coding`. `/memory auto-suggest-chat|auto-suggest-coding on|off`
+control whether completed work is queued for
 review (`suggestion_mode: summaries|insights|both`); they require store + capture,
 ship false, and never auto-approve. These summaries cover the current turn/run,
 not unseen session history. See [MEMORY_GUIDE.md](MEMORY_GUIDE.md) and
@@ -218,3 +224,19 @@ Phase 5 remains separate: reconcile #30/shared model readiness and implement
 connectors/integrations from the canonical [parity ledger](parity/STATUS.md).
 Native WKWebView evidence is recorded independently from browser/API tests in
 the candidate handoff; see [desktop acceptance](DESKTOP_ACCEPTANCE.md).
+
+## Cloud chat providers and streaming
+
+Chat defaults to the configured local model. `/model use grok` or
+`/model use claude` selects an explicit cloud provider for later turns; the
+selection persists as a name without validation, and the provider still needs
+its key (`GROK_API_KEY`, `ANTHROPIC_API_KEY`) present at process start.
+Defaults ship in `models.cloud_chat` (`grok-4.6`, `claude-sonnet-5`,
+`max_tokens: 4096`, `timeout_sec: 90`; boot refuses `timeout_sec` outside 1–720
+or `max_tokens` outside 1–32768). A cloud turn sends only the newly typed
+message: no local history, skills, memory, or web context. Cloud selections are
+refused for `/loop` turns (`CLOUD_CHAT_LOOP`), which always run locally.
+
+Replies stream as server-sent events and `/loop stop` cancels the active turn;
+see [CHAT_STREAMING.md](CHAT_STREAMING.md).
+

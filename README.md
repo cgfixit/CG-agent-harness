@@ -270,7 +270,8 @@ literal text, not an instruction to archive every session.
 
 `/tokens` reports the current session tally, `/api` inspects managed-key presence
 (`CGAGENTHARNESS_API_KEY`, `GROK_API_KEY`, `ANTHROPIC_API_KEY`,
-`DEEPAGENT_API_KEY` — presence and a masked tail only, never a stored secret),
+`DEEPAGENT_API_KEY`, `SERPAPI_API_KEY` — presence and a masked tail only, never
+a stored secret),
 `/users` opens administrator-only account management, and `/harness` lists
 retained harness-optimizer runs.
 
@@ -599,7 +600,9 @@ CI. Read the check summary before merging.
 | [assets/config.default.yaml](assets/config.default.yaml) | Shipped settings and configurable budgets |
 | [docs/SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) | HTTPS trust/renewal, SQLite migration, roles, terminal commands, URL rules, research budgets and API Keys |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Toolchains, lockfiles, feature choices, retained pins and dependency drift checks |
-| [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging, and recovery |
+| [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, cloud providers, persona/skill commands, goal staging, and recovery |
+| [docs/CHAT_STREAMING.md](docs/CHAT_STREAMING.md) | SSE chat streaming, `/loop stop` cancellation, and what cancellation does not guarantee |
+| [docs/API_ROUTES.md](docs/API_ROUTES.md) | Registered HTTP route inventory grouped by console feature |
 | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator howto for pinned notes and structured memory (search ≠ inject) |
 | [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Issue #87 Phases 3–5: account-private facts/proposals/episodes, explicit recall, facts-only FTS |
 | [docs/BOUNDED_EDITS.md](docs/BOUNDED_EDITS.md) | Exact-content edit format, scope and budget limits |

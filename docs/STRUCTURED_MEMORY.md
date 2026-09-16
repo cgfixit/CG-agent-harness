@@ -303,7 +303,7 @@ when they carry memory content:
 | Method | Path | Confirm? |
 |---|---|---|
 | GET | `/api/structured-memory` | n/a (truthful status) |
-| POST | `/api/structured-memory/gates` | administrator-only gate override; not a fact mutation |
+| POST | `/api/structured-memory/gates` | administrator-only gate override; body `{"gate": "<config name>", "enabled": bool}` where the name is one of `episode_capture`, `explicit_recall`, `retrieval`, `auto_retrieval`, `consolidation`, `auto_consolidation`, `auto_suggest_chat`, `auto_suggest_coding`; not a fact mutation |
 | GET | `/api/structured-memory/search` | n/a (FTS candidates; retrieval gate required) |
 | GET | `/api/structured-memory/facts` | n/a (active facts; optional `q`/`category`/`limit` literal substring search, not FTS) |
 | GET/POST | `/api/sessions/{session_id}/structured-facts` | selection = explicit include; not a fact mutation |

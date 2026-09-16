@@ -454,8 +454,11 @@ https://127.0.0.1:8790/
 The native app verifies its owned local certificate. External browsers need
 explicit operator-controlled trust or an operator certificate already trusted by
 the browser; see the secure setup guide. After login and password replacement,
-leave the optional metadata key field empty and send a message. Chat waits for a
-complete non-streaming reply, so latency depends on the selected local model.
+leave the optional metadata key field empty and send a message. The console
+requests `POST /api/chat` with `Accept: text/event-stream`, so text arrives as
+`delta` events until a final `done`; `/loop stop` (`POST /api/chat/cancel`)
+aborts the turn. Time to first token still depends on the selected local model.
+See [docs/CHAT_STREAMING.md](docs/CHAT_STREAMING.md).
 
 If the browser page hangs and never responds, double-check that Ollama (section 4) is still
 available at its configured local endpoint.
@@ -1133,13 +1136,13 @@ confirmation and persistence semantics.
 | `/soul status`, `on`, `off`, `edit`, `propose`, `history` | Inspect, toggle or open persona editing/proposal flows |
 | `/soul review <id>`, `apply <id> <reason>`, `reject <id> <reason>` | Review and explicitly decide a persona proposal |
 | `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; section 7.5 |
-| `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` | Structured-memory gates; `/memory on` stays pinned notes |
+| `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding on|off` | Administrator-only structured-memory gate overrides for the running process; `/memory on` stays pinned notes |
 | `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include; search is not inject |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write, even with automatic suggestions off |
 | `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on your latest completed episode; no fact write |
 | `/memory proposals` | Open the Memory panel; review then Apply/Reject with a reason |
 | `/memory consolidate <episode-id...>` | Manual selected-episode consolidation into pending proposals; requires `consolidation`; does not write facts |
-| `/model`, `/model use <name>` | Inspect/select an available chat model |
+| `/model`, `/model use <name>`, `/model use grok|claude` | Inspect/select a local chat model, or an explicit cloud provider (key required; refused for `/loop`) |
 | `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |
 | `/skill use <id...>`, `clear`, `status` | Replace, clear or inspect session prompt-skill selection |
 | `/skill check:<profile>` | Replace the check selection for an already staged coding request |
@@ -1148,7 +1151,7 @@ confirmation and persistence semantics.
 | `/web inject`, `forget` | Include your last fetched/page-search selection in chat, or clear it |
 | `/web research [group=name] <question>`, `cancel` | Run/cancel your bounded local-model research; return citations, usage and coverage |
 | `/goal`, `/goal <text>`, `/goal clear` | Inspect, set or clear the saved session goal |
-| `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; section 7.1 |
+| `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `/loop stop` also cancels a streaming chat turn; section 7.1 |
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
 | `/connectors`, `/registry`, `/github`, `/harness` | Inventory, GitHub status, or retained harness-run listing; not connector activation or optimizer execution |
 | `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields for secret entry; section 8 |
@@ -1255,6 +1258,29 @@ For output style, use section 7.4 before tuning generation parameters.
 also have the separate `api.harness_loop_rate_limit` budget. Keep persona and
 selected skills concise enough to leave useful room for the question and context.
 
+### Tunables you may want to know about
+
+Every tunable lives in `assets/config.default.yaml` and is copied into your
+home `config.yaml` on first run; there are no hidden hardcoded budgets. The
+ones operators most often ask about:
+
+| Key | Default | Effect |
+|---|---|---|
+| `app.agent_job_poll_ms` | 1500 | Browser job polling interval, clamped to 1–30 s |
+| `api.rate_limit.max_requests` / `window_seconds` | 60 / 60 | Per-IP sliding-window ceiling on every route |
+| `api.harness_loop_rate_limit.*` | 8 / 300 s / 2048 tokens | Separate, tighter `/loop` budget |
+| `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
+| `models.cloud_chat.max_tokens` / `timeout_sec` | 4096 / 90 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
+| `models.local_llm.reasoning_effort` | `none` | Sent only to a resolved Ollama backend: `none`, `low`, `medium`, `high`, `max` |
+| `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
+| `auth.max_concurrent_operations` | 2 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
+| `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use, and regardless of use |
+| `structured_memory.*` | see file | Per-owner caps (facts, proposals, episodes, bytes), search/retrieval limits, suggestion queue and consolidation thresholds |
+
+Quoted YAML strings such as `"true"` never arm a gate. See section 9 for the
+coding-pipeline gates and [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md)
+for every memory key.
+
 ### Supported managed keys
 
 `/api` displays configured-key presence. `/api set <KEY> <value>` saves one of
@@ -1267,6 +1293,7 @@ not a general environment-variable editor or connector credential vault.
 | `GROK_API_KEY` | Optional explicit Grok chat and governed cloud coding planner |
 | `ANTHROPIC_API_KEY` | Optional explicit Claude chat and governed cloud coding planner |
 | `DEEPAGENT_API_KEY` | Bearer credential for a configured non-Ollama compatible local planner |
+| `SERPAPI_API_KEY` | Optional fixed search API for chat web search; public Google is the no-key fallback |
 
 Saving a key does not select it for chat, open coding gates or install a
 connector. After restart, `/model use grok` or `/model use claude` explicitly
@@ -1741,6 +1768,10 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
   order, rollback, and non-goals.
 - [Chat workflow reference](docs/CHAT_WORKFLOWS.md) — persona proposals, skill
   bounds, goal completion evidence and remaining scope.
+- [Chat streaming](docs/CHAT_STREAMING.md) — SSE events, `/loop stop`
+  cancellation and what it does not guarantee.
+- [HTTP route inventory](docs/API_ROUTES.md) — every registered route grouped
+  by feature.
 - [Offline Cargo verification](docs/OFFLINE_CARGO.md) — dependency preparation
   versus sandboxed execution.
 - [Canonical parity ledger](docs/parity/STATUS.md) — remaining connectors,

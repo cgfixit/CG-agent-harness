@@ -21,7 +21,7 @@ malformed responses fail. Usage is collected from the final usage event. A model
 that ignores streaming and returns valid JSON remains compatible, with one final
 answer instead of incremental text.
 
-`/loop stop` cancels an ordinary chat or loop turn. Closing the streaming response
+`/loop stop` (`POST /api/chat/cancel`) cancels an ordinary chat or loop turn. Closing the streaming response
 also aborts its task, releases generation/loop claims, and drops the model HTTP
 request and any web read. Each direct ChatClient call has its own cancellation
 record; completing one cannot clear another's handle. The model's actual GPU

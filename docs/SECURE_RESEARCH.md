@@ -36,6 +36,14 @@ cannot run chat, research, coding, account administration, or key management.
 Replacement checks the current password and CSRF token and invalidates all old
 sessions. Normal administrative resets retain the ordinary password policy.
 
+Each scrypt derivation uses about 128 MiB, so login and password operations
+are bounded by `auth.max_concurrent_operations` (default 2, accepted range 1–4);
+extra concurrent attempts wait for a permit rather than exhausting memory.
+Sessions expire after `auth.session.idle_timeout_sec` (default 43200) without
+use and `auth.session.absolute_timeout_sec` (default 604800) regardless. Chat
+session files under `sessions/` are written atomically with mode 0600 because
+history can carry pasted secrets.
+
 Accounts and hashed session tokens live in versioned SQLite `auth.sqlite3` under
 the home, with transactional updates. Private `auth.initialized` prevents a
 missing initialized database from becoming a fresh default-password bootstrap.
