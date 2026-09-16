@@ -83,6 +83,13 @@ not runtime `/api/skills` plugins.
 - **Right fix:** Treat as known flake class (issue **#43** — Start Chrome
   reliably). Retry/quarantine with tracking; fix the starter, don't hollow the
   test.
+- **Also seen:** a *non*-startup flake at `chat-browser-acceptance.mjs:418`,
+  where `saved-DEEPAGENT_API_KEY` still held a typed value after a refresh.
+  Observed once in eleven local runs; the same commit then passed ten straight,
+  so do not attribute it to your diff on n=1. Mechanism unconfirmed. The one
+  candidate worth checking first: the script launches Chrome without
+  `--password-store=basic` or any autofill-disabling flag, and the field is
+  `type="password"`. Confirm before "fixing" it.
 - **Evidence:** CI gotcha / #43.
 
 ## 9. Desktop packaging: lipo / sign / embed-SHA256 order
@@ -136,6 +143,72 @@ not runtime `/api/skills` plugins.
   AND-ed only (`CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`). Debug which gate refused
   with the exit-code API (`4` = write refused).
 - **Evidence:** `INVARIANTS.md` write gates; `writer_gates_in_order_and_plan_integrity`.
+
+## 14. `github.paginate` result consumed as `{data}`
+
+- **Symptom:** A workflow step dies with
+  `TypeError: Cannot read properties of undefined (reading 'find')`, and the
+  check fails on *every* PR rather than intermittently.
+- **Wrong fix:** Wrap the access in `?.` and move on, or revert to the
+  unpaginated call that only ever saw page 1 of 30.
+- **Right fix:** `github.rest.issues.listComments(...)` resolves to `{data: [...]}`;
+  `github.paginate(github.rest.issues.listComments, ...)` resolves to the **array
+  itself**. When switching to `paginate`, change the consumer too —
+  `comments.find(...)`, not `comments.data.find(...)`. Audit every
+  `await github.paginate` call site in `.github/workflows/` at once; there are
+  four, and they must all read the array directly.
+- **How to check before pushing:** the `github-script` block can be extracted
+  from the YAML and run under stubs (`github`, `context`, `core` are just
+  arguments), with `listComments` honouring the 30-per-page default and a marker
+  planted on page 2. Cheaper than a CI round trip, and it reproduces both the
+  original duplicate-comment bug and the `TypeError`.
+- **Evidence:** `.github/workflows/pr-template-check.yml` — its two jobs
+  disagreed on this for a while; the `base-branch` job was always correct.
+
+## 15. Ephemeral port handed to a child, and `serve` exits **0** when it is taken
+
+- **Symptom:** Intermittent red in `scripts/test-desktop-backend.py` with
+  `AssertionError: 0 is not None : headless startup exited`, or
+  `AssertionError: 0 == 0` — neither of which mentions ports.
+- **Wrong fix:** Widen a timeout, retry the whole job, or call it a runner
+  problem.
+- **Right fix:** Binding `:0`, reading the port back and closing the socket is
+  inherently advisory — the reservation *must* be released before the child can
+  bind, so anything on the runner can take it in between. Retry on a fresh port.
+  Two traps make this worse than it looks:
+  - **`serve` exits 0 on port-in-use**, printing "CGagentHarness may already be
+    running on 127.0.0.1:PORT" to **stdout** (stderr empty), because
+    `port_in_use` is checked *before* `.env` is read. So a test asserting a
+    non-zero refusal fails, and the path it meant to exercise never runs.
+  - **Do not truncate captured output between attempts** if a later assertion
+    reads that file. The credential-disclosure `assertNotIn` checks in that
+    suite read the child's captured stdout/stderr; truncating means a leak on a
+    failed attempt is erased and the check passes on a clean retry.
+- **Related discipline:** when you fix one instance of a race, re-audit every
+  site you *refactored* as well as the one that was failing. Converting a second
+  site to the shared helper without its retry leaves the bug live at a site your
+  own commit touched.
+- **Evidence:** `scripts/test-desktop-backend.py` (`free_port`,
+  `await_headless`, `serve_expecting_refusal`); `ModelFixture` and
+  `test_unrelated_listener_is_never_adopted` show the keep-the-listener-open
+  variant where that is possible.
+
+## 16. A push does **not** re-trigger the Codex review
+
+- **Symptom:** You address review findings, push, see the PR go green, and merge
+  — with the fixes themselves never reviewed.
+- **Wrong fix:** Assume the green check covers the new commits, or read a stale
+  "Completed" summary row as a verdict on the current head.
+- **Right fix:** Codex reviews trigger on *open for review*, *mark draft ready*,
+  and an explicit `@codex review` comment — **not** on a push. After pushing a
+  fix, comment `@codex review` and check the **Reviewed commit** SHA in the
+  result matches your head. Note also that a superseded run can be reported as
+  `cancelled` by `cancel-in-progress` concurrency; that is not a failure, but it
+  is also not a verdict.
+- **Why it matters here:** fixes to review findings are exactly the diffs most
+  worth a second pass — they are written fast, under the assumption the problem
+  is already understood.
+- **Evidence:** the Codex "About Codex in GitHub" block on any PR in this repo.
 
 ## Related skills
 
