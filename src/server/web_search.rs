@@ -169,15 +169,33 @@ pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, Stri
         )
     };
     for node in html.tree.root().descendants() {
-        if node.ancestors().any(|a| {
-            a.value().as_element().is_some_and(|e| {
-                matches!(
-                    e.name(),
+        // One ancestor walk supplies every inherited property for this node.
+        let mut hidden = false;
+        let mut in_title = false;
+        let mut in_head = false;
+        let mut in_pre = false;
+        let mut current_block = None;
+        for ancestor in node.ancestors() {
+            if let Some(element) = ancestor.value().as_element() {
+                let name = element.name();
+                if matches!(
+                    name,
                     "script" | "style" | "noscript" | "template" | "nav" | "header" | "footer" | "form" | "svg"
-                ) || e.attr("hidden").is_some()
-                    || e.attr("aria-hidden") == Some("true")
-            })
-        }) {
+                ) || element.attr("hidden").is_some()
+                    || element.attr("aria-hidden") == Some("true")
+                {
+                    hidden = true;
+                    break;
+                }
+                in_title |= name == "title";
+                in_head |= name == "head";
+                in_pre |= name == "pre";
+                if current_block.is_none() && block(name) {
+                    current_block = Some(ancestor.id());
+                }
+            }
+        }
+        if hidden {
             continue;
         }
         if let Some(element) = node.value().as_element() {
@@ -204,27 +222,14 @@ pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, Stri
             }
         }
         if let Some(value) = node.value().as_text() {
-            if node
-                .ancestors()
-                .any(|a| a.value().as_element().is_some_and(|e| e.name() == "title"))
-            {
+            if in_title {
                 title.push_str(value);
-            } else if !node
-                .ancestors()
-                .any(|a| a.value().as_element().is_some_and(|e| e.name() == "head"))
-            {
-                let current = node
-                    .ancestors()
-                    .find(|n| n.value().as_element().is_some_and(|e| block(e.name())))
-                    .map(|n| n.id());
-                if current != previous_block {
+            } else if !in_head {
+                if current_block != previous_block {
                     text.push('\n');
-                    previous_block = current;
+                    previous_block = current_block;
                 }
-                if node
-                    .ancestors()
-                    .any(|a| a.value().as_element().is_some_and(|e| e.name() == "pre"))
-                {
+                if in_pre {
                     text.push_str(value);
                 } else {
                     text.push_str(&value.split_whitespace().collect::<Vec<_>>().join(" "));
@@ -744,6 +749,17 @@ mod tests {
         assert!(web.context_text(true, "local").is_empty());
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
         server.abort();
+    }
+
+    #[test]
+    fn extraction_preserves_nested_blocks_hidden_ancestors_and_preformatted_text() {
+        let base = canonical_url("https://example.com/").unwrap();
+        let (title, text, links) = extract(
+            "<title>A &amp; B</title><main><h2>Heading</h2><p>one <b>two</b></p><div hidden><p>hidden</p><a href='/secret'>bad</a></div><div aria-hidden='true'><span>invisible</span></div><pre> x\n  y</pre><p>three <a href='/ok'>link</a></p></main>",
+            "text/html", &base);
+        assert_eq!(title, "A & B");
+        assert_eq!(text, "# Heading \none two \n\n\n x\n  y\nthree link");
+        assert_eq!(links, vec!["https://example.com/ok"]);
     }
 
     #[test]
