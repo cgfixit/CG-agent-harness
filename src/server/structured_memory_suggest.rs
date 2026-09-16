@@ -76,9 +76,12 @@ fn mode(state: &AppState) -> &str {
 }
 
 pub fn available(state: &AppState, source: Source) -> bool {
-    state.cfg.flag_is_true(source.flag())
-        && matches!(mode(state), "summaries" | "insights" | "both")
-        && capture_available(&state.cfg, state.structured_memory.is_some(), &current_gates(state))
+    let gates = current_gates(state);
+    gates.resolve(
+        source.flag().trim_start_matches("structured_memory."),
+        state.cfg.flag_is_true(source.flag()),
+    ) && matches!(mode(state), "summaries" | "insights" | "both")
+        && capture_available(&state.cfg, state.structured_memory.is_some(), &gates)
 }
 
 pub fn status(state: &AppState, owner: &str) -> Value {

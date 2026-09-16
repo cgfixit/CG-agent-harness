@@ -795,8 +795,9 @@ mode 0600 is access control, not encryption. Every structured-memory gate
 ships **false**; measure before considering ON.
 
 **Enable (fail-closed).** Every gate uses `flag_is_true`: literal YAML `true`
-only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
-`<home>/memory/structured_gates.json`; they take effect immediately but
+only. Quoted `"true"` stays off. Administrator-only slash overrides persist
+versioned booleans in `<home>/memory/structured_gates.json`; explicit `off`
+overrides config `true`. They take effect immediately but
 **cannot open the store**. Config file changes need a full quit/relaunch or
 `serve` restart.
 
@@ -804,8 +805,7 @@ only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
    restart. That creates `<home>/memory/structured.sqlite3`. Disabled startup
    does not create or open the database.
 2. Turn the following sub-gates on only as needed, in config **or** via slash
-   (store must already be open). The two completion-source switches described
-   below are config-only:
+   (store must already be open):
    - `structured_memory.episode_capture` / `/memory capture on` — stage
      metadata-only episodes after a successful chat exchange.
    - `structured_memory.explicit_recall` / `/memory recall on` — allow
@@ -824,6 +824,10 @@ only. Quoted `"true"` stays off. Slash overlays use the same rule and persist
      bounded idle worker that reuses the manual consolidator. Requires
      consolidation (AND). Ships false. Feature-off starts no worker. Chat
      wins the generation gate. Pending proposals only.
+   - `structured_memory.auto_suggest_chat` / `/memory auto-suggest-chat on` —
+     queue the completed current chat turn for pending suggestions. Requires capture.
+   - `structured_memory.auto_suggest_coding` / `/memory auto-suggest-coding on` —
+     queue successful coding runs for pending suggestions. Requires capture.
 3. `/memory on` remains pinned-note inclusion only and never opens these gates.
 
 **Summarize, consolidate, review** (default-off; no chat autosave):
@@ -876,11 +880,12 @@ structured_memory:
   auto_retrieval: false
 ```
 
-Both new source booleans ship **false**, accept only literal booleans, and require
-store + capture. Enable either source alone if desired. Invalid modes, including
-non-string YAML values, disable suggestions. These switches have no slash overlay. Existing capture/other gate
-overlays still override their config keys: use `/memory capture on` if previously
-disabled, and close other overlays to match this recipe. `/memory on` enables none
+Both new source booleans ship **false**, accept only literal config booleans, and
+require store + capture. Enable either source alone in config or with
+`/memory auto-suggest-chat|auto-suggest-coding on`. Invalid modes, including
+non-string YAML values, disable suggestions. Existing slash overrides take
+precedence over config: use `/memory capture on` if previously disabled, and set
+other overrides to match this recipe. `/memory on` enables none
 of them.
 
 After a successful Harness chat turn or coding run, bounded current evidence can
@@ -909,9 +914,9 @@ and confidence cannot guarantee truth or detect every secret.
 
 #### Hard-save manually while automatic suggestions are off
 
-Leave `structured_memory.enabled: true`. Set `auto_suggest_chat`,
-`auto_suggest_coding` and `auto_consolidation` to `false`; restart after config
-changes and close an existing `/memory auto-consolidate` overlay. Capture can
+Leave `structured_memory.enabled: true`. Use `/memory auto-suggest-chat off`,
+`/memory auto-suggest-coding off`, and `/memory auto-consolidate off` (or set the
+config values false and restart). Capture can
 also stay off. Then use:
 
 ```text
@@ -1688,7 +1693,7 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 | `/memory search` reports retrieval disabled | `structured_memory.retrieval` (and the store) are off | Enable the store in `config.yaml`, restart, then `/memory retrieval on`. Search still does not inject; use `/memory retrieve` for one prompt |
 | `/memory consolidate` is unknown or omitted from `/help` | Installed build predates [PR #94](https://github.com/cgfixit/CG-agent-harness/pull/94) / v0.1.11 | Use Latest v0.1.12 or a newer main Bundle. The command writes pending proposals only |
 | `/memory auto-consolidate` is unknown | Installed build predates [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95) / is older than Latest v0.1.12 | Use Latest v0.1.12 (`22520f3`) or a newer main Bundle. The gate stays default-off and requires `consolidation` |
-| Automatic completion suggestions do not appear | Store/capture/source gate off, invalid mode, queue expiry/full, model/store error, or empty valid output | Inspect `GET /api/structured-memory` effective `automatic_suggestions`, run status and metadata audit events. Check config-only source switches, restart, and capture overlay; refresh Memory after generation. No result is guaranteed for every completion |
+| Automatic completion suggestions do not appear | Store/capture/source gate off, invalid mode, queue expiry/full, model/store error, or empty valid output | Inspect `GET /api/structured-memory` effective `automatic_suggestions`, run status and metadata audit events. Check `/memory capture` and `/memory auto-suggest-chat|auto-suggest-coding`; refresh Memory after generation. No result is guaranteed for every completion |
 | `/memory save` reports store closed | `structured_memory.enabled` is false or store failed to open | Enable the store and restart; automatic generation and capture may stay off. A prose request is not a save command |
 | `/memory consolidate` or auto-consolidator reports the gate off | `structured_memory.consolidation` (and for auto, also `auto_consolidation`) are off, or the store is closed | Enable the store in `config.yaml`, restart, then `/memory consolidation on`. Auto additionally needs `/memory auto-consolidate on`. Both ship false; measure Phase 7 on tip before considering ON |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |

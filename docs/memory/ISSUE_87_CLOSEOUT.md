@@ -40,8 +40,8 @@ pinned-note inclusion only and never opens these gates.
 | Silent FTS inject | `structured_memory.auto_retrieval` | `/memory auto-retrieve on\|off` | `false` |
 | Manual consolidation | `structured_memory.consolidation` | `/memory consolidation on\|off` | `false` |
 | Idle auto-consolidator | `structured_memory.auto_consolidation` | `/memory auto-consolidate on\|off` | `false` |
-| Chat completion suggestions | `structured_memory.auto_suggest_chat` | *(config-only)* | `false` |
-| Coding completion suggestions | `structured_memory.auto_suggest_coding` | *(config-only)* | `false` |
+| Chat completion suggestions | `structured_memory.auto_suggest_chat` | `/memory auto-suggest-chat on\|off` | `false` |
+| Coding completion suggestions | `structured_memory.auto_suggest_coding` | `/memory auto-suggest-coding on\|off` | `false` |
 
 `auto_retrieval` requires `retrieval`. `auto_consolidation` requires
 `consolidation`. Both suggestion sources require an open store and
@@ -73,12 +73,10 @@ separate opt-in beside that list. They still write pending proposals only.
 
 ## Rollback
 
-Availability is `store_open && (config_on || overlay_on)`. One remaining
-`true` keeps the feature. To stop capture, recall, retrieval, consolidation,
-or auto-workers, **both** the `config.yaml` literal and the matching
-`/memory … off` overlay must be false. Config edits need a process restart.
-The config-only suggestion flags (`auto_suggest_chat`, `auto_suggest_coding`)
-have no slash overlay: set them `false` and restart.
+Availability is `store_open && override.unwrap_or(config_on)`. An administrator's
+explicit slash `off` therefore disables a config-true sub-gate immediately;
+explicit `on` enables it. Config edits still need a process restart. The store
+opening gate has no slash override.
 
 That does **not** delete `memory/structured.sqlite3`. Existing rows stay
 listable/exportable/purgeable while the store remains open. Closing

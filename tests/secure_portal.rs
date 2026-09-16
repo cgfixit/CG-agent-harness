@@ -79,6 +79,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
     .with("auth.enabled", "true")
     .with("tls.enabled", "true")
     .with("security.api_key_optional", "false")
+    .with("structured_memory.enabled", "true")
     .with("api.rate_limit.max_requests", "1000");
     let server = spawn_server(&model.base_url(), options).await;
     assert!(
@@ -236,6 +237,11 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
                 json!({"username":"evil","role":"operator","password":"cannot-create-account"}),
             ),
             (Method::POST, "/api/web/allow", json!({"url":"https://example.com"})),
+            (
+                Method::POST,
+                "/api/structured-memory/gates",
+                json!({"gate":"retrieval","enabled":true}),
+            ),
         ] {
             assert_eq!(
                 request(&server, session, method.clone(), path, body).await.status(),
@@ -266,6 +272,18 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         request(&server, &op, Method::POST, "/api/chat", json!({"message":"hello"}))
             .await
             .status(),
+        200
+    );
+    assert_eq!(
+        request(
+            &server,
+            &admin,
+            Method::POST,
+            "/api/structured-memory/gates",
+            json!({"gate":"retrieval","enabled":true})
+        )
+        .await
+        .status(),
         200
     );
     assert_eq!(

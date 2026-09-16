@@ -389,7 +389,8 @@ fn clamp_u64(value: u64, min: u64, max: u64) -> u64 {
     value.clamp(min, max)
 }
 
-/// Home-local operator overlay. Missing, quoted, or non-boolean values are off.
+/// Home-local administrator override. Version 2 records explicit true/false;
+/// legacy false values remain unset so upgrades preserve the old OR semantics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OperatorGates {
     pub episode_capture: bool,
@@ -398,6 +399,9 @@ pub struct OperatorGates {
     pub auto_retrieval: bool,
     pub consolidation: bool,
     pub auto_consolidation: bool,
+    pub auto_suggest_chat: bool,
+    pub auto_suggest_coding: bool,
+    overrides: BTreeSet<String>,
 }
 
 impl OperatorGates {
@@ -415,14 +419,26 @@ impl OperatorGates {
         let Ok(value) = serde_json::from_str::<Value>(&text) else {
             return Self::default();
         };
-        Self {
-            episode_capture: value.get("episode_capture") == Some(&json!(true)),
-            explicit_recall: value.get("explicit_recall") == Some(&json!(true)),
-            retrieval: value.get("retrieval") == Some(&json!(true)),
-            auto_retrieval: value.get("auto_retrieval") == Some(&json!(true)),
-            consolidation: value.get("consolidation") == Some(&json!(true)),
-            auto_consolidation: value.get("auto_consolidation") == Some(&json!(true)),
+        let v2 = value.get("version").and_then(Value::as_u64) == Some(2);
+        let mut gates = Self::default();
+        for gate in [
+            "episode_capture",
+            "explicit_recall",
+            "retrieval",
+            "auto_retrieval",
+            "consolidation",
+            "auto_consolidation",
+            "auto_suggest_chat",
+            "auto_suggest_coding",
+        ] {
+            if let Some(enabled) = value.get(gate).and_then(Value::as_bool) {
+                let _ = gates.set(gate, enabled);
+                if !v2 && !enabled {
+                    gates.overrides.remove(gate);
+                }
+            }
         }
+        gates
     }
 
     pub fn save(&self, home: &crate::common::home::Home) -> Result<()> {
@@ -446,9 +462,13 @@ impl OperatorGates {
         }
         let path = PathBuf::from(path_raw.as_ref());
         std::fs::create_dir_all(&dir)?;
+        let mut saved = serde_json::Map::from_iter([("version".to_string(), json!(2))]);
+        for gate in &self.overrides {
+            saved.insert(gate.clone(), json!(self.raw(gate).unwrap_or(false)));
+        }
         write_atomic(
             &path,
-            serde_json::to_vec_pretty(&self.as_json())
+            serde_json::to_vec_pretty(&Value::Object(saved))
                 .map_err(|e| invalid(format!("cannot encode structured memory gates: {e}")))?
                 .as_slice(),
             Some(0o600),
@@ -463,7 +483,32 @@ impl OperatorGates {
             "auto_retrieval": self.auto_retrieval,
             "consolidation": self.consolidation,
             "auto_consolidation": self.auto_consolidation,
+            "auto_suggest_chat": self.auto_suggest_chat,
+            "auto_suggest_coding": self.auto_suggest_coding,
+            "overrides": self.overrides,
         })
+    }
+
+    fn raw(&self, gate: &str) -> Option<bool> {
+        match gate {
+            "episode_capture" => Some(self.episode_capture),
+            "explicit_recall" => Some(self.explicit_recall),
+            "retrieval" => Some(self.retrieval),
+            "auto_retrieval" => Some(self.auto_retrieval),
+            "consolidation" => Some(self.consolidation),
+            "auto_consolidation" => Some(self.auto_consolidation),
+            "auto_suggest_chat" => Some(self.auto_suggest_chat),
+            "auto_suggest_coding" => Some(self.auto_suggest_coding),
+            _ => None,
+        }
+    }
+
+    pub fn resolve(&self, gate: &str, configured: bool) -> bool {
+        if self.overrides.contains(gate) {
+            self.raw(gate).unwrap_or(false)
+        } else {
+            configured
+        }
     }
 
     pub fn set(&mut self, gate: &str, enabled: bool) -> Result<()> {
@@ -474,13 +519,16 @@ impl OperatorGates {
             "auto_retrieval" => self.auto_retrieval = enabled,
             "consolidation" => self.consolidation = enabled,
             "auto_consolidation" => self.auto_consolidation = enabled,
+            "auto_suggest_chat" => self.auto_suggest_chat = enabled,
+            "auto_suggest_coding" => self.auto_suggest_coding = enabled,
             _ => {
                 return Err(HarnessError::new(
                     "STRUCTURED_MEMORY_GATE",
-                    "gate must be episode_capture, explicit_recall, retrieval, auto_retrieval, consolidation, or auto_consolidation",
+                    "unknown structured-memory gate",
                 ))
             }
         }
+        self.overrides.insert(gate.to_string());
         Ok(())
     }
 }
@@ -3185,38 +3233,41 @@ pub fn current_gates(state: &crate::server::state::AppState) -> OperatorGates {
     state.structured_gates.lock().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
-fn store_open_and(store_open: bool, config_on: bool, overlay_on: bool) -> bool {
-    store_open && (config_on || overlay_on)
+fn store_open_and(store_open: bool, config_on: bool, gates: &OperatorGates, gate: &str) -> bool {
+    store_open && gates.resolve(gate, config_on)
 }
 
 /// Episode capture is on only when the store is open and the independent
-/// `structured_memory.episode_capture` gate or operator overlay is literal true.
+/// `structured_memory.episode_capture` gate or administrator override resolves true.
 pub fn capture_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
     store_open_and(
         store_open,
         cfg.flag_is_true("structured_memory.episode_capture"),
-        gates.episode_capture,
+        gates,
+        "episode_capture",
     )
 }
 
 /// Explicit recall is available only when the store is open and the independent
-/// `structured_memory.explicit_recall` gate or operator overlay is literal true.
+/// `structured_memory.explicit_recall` gate or administrator override resolves true.
 pub fn recall_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
     store_open_and(
         store_open,
         cfg.flag_is_true("structured_memory.explicit_recall"),
-        gates.explicit_recall,
+        gates,
+        "explicit_recall",
     )
 }
 
 /// FTS search / force-include is available only when the store is open and the
-/// independent `structured_memory.retrieval` gate or operator overlay is true.
+/// independent `structured_memory.retrieval` gate or administrator override is true.
 /// Independent of `/memory on` and `explicit_recall`.
 pub fn retrieval_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
     store_open_and(
         store_open,
         cfg.flag_is_true("structured_memory.retrieval"),
-        gates.retrieval,
+        gates,
+        "retrieval",
     )
 }
 
@@ -3227,7 +3278,8 @@ pub fn auto_retrieval_available(cfg: &AppConfig, store_open: bool, gates: &Opera
         && store_open_and(
             store_open,
             cfg.flag_is_true("structured_memory.auto_retrieval"),
-            gates.auto_retrieval,
+            gates,
+            "auto_retrieval",
         )
 }
 
@@ -3238,7 +3290,8 @@ pub fn consolidation_available(cfg: &AppConfig, store_open: bool, gates: &Operat
     store_open_and(
         store_open,
         cfg.flag_is_true("structured_memory.consolidation"),
-        gates.consolidation,
+        gates,
+        "consolidation",
     )
 }
 
@@ -3250,7 +3303,8 @@ pub fn auto_consolidation_available(cfg: &AppConfig, store_open: bool, gates: &O
         && store_open_and(
             store_open,
             cfg.flag_is_true("structured_memory.auto_consolidation"),
-            gates.auto_consolidation,
+            gates,
+            "auto_consolidation",
         )
 }
 
@@ -3579,10 +3633,8 @@ mod tests {
     fn traversal_home_does_not_write_or_load_operator_gates() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::at(dir.path().join("nested").join("..").join("escaped"));
-        let gates = OperatorGates {
-            retrieval: true,
-            ..OperatorGates::default()
-        };
+        let mut gates = OperatorGates::default();
+        gates.set("retrieval", true).unwrap();
         assert!(gates.save(&home).is_err());
         assert!(!dir.path().join("nested").join("memory").exists());
         assert!(!dir.path().join("escaped").join("memory").exists());
@@ -3601,36 +3653,46 @@ mod tests {
     }
 
     #[test]
+    fn versioned_operator_gates_persist_explicit_off_and_preserve_legacy_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path().join("home"));
+        let mut gates = OperatorGates::default();
+        gates.set("retrieval", false).unwrap();
+        gates.set("auto_suggest_chat", true).unwrap();
+        gates.save(&home).unwrap();
+
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(home.structured_memory_gates_path()).unwrap()).unwrap();
+        assert_eq!(saved["version"], 2);
+        assert_eq!(saved["retrieval"], false);
+        assert_eq!(saved["auto_suggest_chat"], true);
+        let reloaded = OperatorGates::load(&home);
+        assert!(!reloaded.resolve("retrieval", true));
+        assert!(reloaded.resolve("auto_suggest_chat", false));
+
+        write_atomic(
+            &home.structured_memory_gates_path(),
+            br#"{"retrieval":false,"explicit_recall":true}"#,
+            Some(0o600),
+        )
+        .unwrap();
+        let legacy = OperatorGates::load(&home);
+        assert!(legacy.resolve("retrieval", true));
+        assert!(legacy.resolve("explicit_recall", false));
+    }
+
+    #[test]
     fn auto_consolidation_requires_consolidation_store_and_literal_or_overlay() {
         let dir = tempfile::tempdir().unwrap();
         let off = cfg(dir.path());
+        let mut only_auto = OperatorGates::default();
+        only_auto.set("auto_consolidation", true).unwrap();
+        let mut both = only_auto.clone();
+        both.set("consolidation", true).unwrap();
         assert!(!auto_consolidation_available(&off, true, &OperatorGates::default()));
-        assert!(!auto_consolidation_available(
-            &off,
-            true,
-            &OperatorGates {
-                auto_consolidation: true,
-                ..OperatorGates::default()
-            }
-        ));
-        assert!(auto_consolidation_available(
-            &off,
-            true,
-            &OperatorGates {
-                consolidation: true,
-                auto_consolidation: true,
-                ..OperatorGates::default()
-            }
-        ));
-        assert!(!auto_consolidation_available(
-            &off,
-            false,
-            &OperatorGates {
-                consolidation: true,
-                auto_consolidation: true,
-                ..OperatorGates::default()
-            }
-        ));
+        assert!(!auto_consolidation_available(&off, true, &only_auto));
+        assert!(auto_consolidation_available(&off, true, &both));
+        assert!(!auto_consolidation_available(&off, false, &both));
     }
 
     #[test]

@@ -71,8 +71,8 @@ the store**.
 
 1. Set `structured_memory.enabled: true` in the active home's `config.yaml` and
    restart.
-2. Turn only the sub-gates you need. Existing gates have slash overlays; the
-   two completion-source switches are config-only:
+2. Turn only the sub-gates you need. Administrator accounts can persist an
+   explicit slash override for every sub-gate:
 
 | Gate | Slash | What it does |
 |---|---|---|
@@ -82,8 +82,8 @@ the store**.
 | `auto_retrieval` | `/memory auto-retrieve on\|off` | **High-risk.** Silent top-k inject when this is on **and** retrieval is on |
 | `consolidation` | `/memory consolidation on\|off` | Allow manual selected-episode consolidation into **pending proposals only** |
 | `auto_consolidation` | `/memory auto-consolidate on\|off` | Bounded idle worker. Requires consolidation (AND). Pending proposals only. Chat wins the generation gate |
-| `auto_suggest_chat` | Config only | With store + capture, completed current chat can queue pending summaries/insights |
-| `auto_suggest_coding` | Config only | With store + capture, successful coding runs can queue pending summaries/insights |
+| `auto_suggest_chat` | `/memory auto-suggest-chat on\|off` | With store + capture, completed current chat can queue pending summaries/insights |
+| `auto_suggest_coding` | `/memory auto-suggest-coding on\|off` | With store + capture, successful coding runs can queue pending summaries/insights |
 
 All of these ship **false**. `/memory` reports store and gate state. Tunables live
 in `assets/config.default.yaml`; do not invent extra flags.
@@ -252,9 +252,9 @@ stops new reads, writes, and workers. It does not delete
 ## Automatic completion suggestions and manual hard-save
 
 See [Memory guide](MEMORY_GUIDE.md) for the complete type/flag table and recipes.
-Enable `structured_memory.enabled`, `episode_capture`, and either
-`auto_suggest_chat` or `auto_suggest_coding` in config; restart. Choose
-`suggestion_mode: summaries|insights|both`. These config-only source switches
+Enable `structured_memory.enabled` in config and restart, then enable capture
+and either suggestion source in config or with the administrator slash controls. Choose
+`suggestion_mode: summaries|insights|both`. These source switches
 ship false. The completed current turn/run can generate pending drafts; this
 is not a whole-session archive or automatic canonical fact save. Review in
 Memory and Apply/Reject with a reason. The older human-summary auto-consolidator
