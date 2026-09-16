@@ -150,12 +150,13 @@ bundled sidecar. Prebuilt CLI binaries for `linux-x86_64` and `macos-arm64` are 
 to Bundle runs; Windows CI and release legs are parked. The desktop shell is a
 separate package that bundles this same backend.
 
-On macOS the verification sandbox is Seatbelt; on Linux it is
-`unshare --net` (network isolation only, no read-only input confinement); on
-Windows it is a Job Object process-tree boundary. A missing or unprobeable backend
-fails closed with exit 3 rather than running checks unconfined. The
+On macOS the verification sandbox is Seatbelt; on Linux it prefers bubblewrap
+(allowlisted read-only inputs, writable scratch, `--unshare-net`) and falls back
+to `unshare --net` (network isolation only) when `bwrap` is missing or unprobeable;
+on Windows it is a Job Object process-tree boundary. A missing or unprobeable
+backend fails closed with exit 3 rather than running checks unconfined. The
 [setup guide](setup-guide.md) is written for macOS; a Linux standalone server
-needs Git, Rust 1.88, and `unshare` instead of the Xcode and app-bundle steps.
+needs Git, Rust 1.88, and `bwrap` or `unshare` instead of the Xcode and app-bundle steps.
 
 ### Connect a local model
 
@@ -562,7 +563,7 @@ account, HTTPS and an optional empty harness key.
 |---|---|
 | [Backend CI](.github/workflows/ci.yml) | PRs, `main`, and reusable release verification: rustfmt, Clippy with warnings denied, `cargo deny`, an MSRV check against `rust-version`, the I6 invariant source scan, a Chrome slash-command browser acceptance job, Rust/public-backend tests on Linux and macOS, and a real-repo-run smoke. Release builds and CLI packaging are not part of this gate: Bundle covers them on PRs and `main`, and Release builds its own before publishing. |
 | Coding and chat regression tests | Write-policy revocation, exact edits, clone jail, reviewed Git trees, detached-job cancellation, session/goal gates, loop budgets, and release of failed/cancelled chat claims. See [`tests/`](tests/). |
-| Native Cargo acceptance | Required macOS tests prepare locked dependencies, then exercise real Seatbelt restrictions and fixed Cargo checks. Linux (`unshare --net`) and Windows (Job Object) backends do not establish equivalent confinement. |
+| Native Cargo acceptance | Required macOS tests prepare locked dependencies, then exercise real Seatbelt restrictions and fixed Cargo checks. Linux bubblewrap is the filesystem-confined backend when present; `unshare --net` fallback and Windows Job Object do not establish equivalent confinement. |
 | [Desktop CI](.github/workflows/desktop.yml) | Bundle PRs/`main`, tag releases, and manual runs reuse this job to build the universal app on Rust 1.90, run desktop policy and packaged-backend tests, verify signatures/checksums and the extracted bundle, then retain the universal ZIP and checksums as artifacts. |
 | [Bundle](.github/workflows/bundle.yml) | Packages the loopback CLI for `linux-x86_64` and `macos-arm64` alongside the universal desktop job, checksums each artifact, re-verifies it after extraction, and smokes the staged binary for the loopback-only bind guard and the exit-3 missing-config contract. |
 | Workflow and source checks | CodeQL, DevSkim, Gitleaks secret scanning, and PR-template/base-branch checks are separate workflows. Workflow changes additionally trigger actionlint/zizmor. |

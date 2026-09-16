@@ -243,8 +243,228 @@ impl HardSandbox for LinuxNetnsSandbox {
         ArgvListSandbox.run(&wrapped, cwd, env, timeout_sec)
     }
 
+    fn run_prepared(
+        &self,
+        argv: &[String],
+        cwd: &Path,
+        env: &BTreeMap<String, String>,
+        timeout_sec: u64,
+        scratch: &Path,
+        read_roots: &[PathBuf],
+    ) -> SandboxOutcome {
+        // netns cannot honor FS mounts; the gap is the linux-netns name.
+        let _ = (scratch, read_roots);
+        self.run(argv, cwd, env, timeout_sec)
+    }
+
     fn name(&self) -> &'static str {
         "linux-netns"
+    }
+}
+
+/// Allowlisted Linux FS + net jail via bubblewrap. Never binds host root.
+const LINUX_OS_RO_DIRS: &[&str] = &[
+    "/usr", "/bin", "/lib", "/lib64", "/lib32", "/sbin", "/etc/ssl", "/etc/pki",
+];
+const LINUX_OS_RO_FILES: &[&str] = &[
+    "/etc/passwd",
+    "/etc/group",
+    "/etc/nsswitch.conf",
+    "/etc/ld.so.cache",
+    "/etc/os-release",
+    "/etc/localtime",
+    "/etc/hosts",
+];
+
+fn canonical_existing(path: &Path) -> std::result::Result<PathBuf, String> {
+    let resolved = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if resolved == Path::new("/") {
+        return Err("refusing to mount host root".into());
+    }
+    Ok(resolved)
+}
+
+fn argv_binds_host_root(argv: &[String]) -> bool {
+    argv.windows(3)
+        .any(|w| matches!(w[0].as_str(), "--ro-bind" | "--bind" | "--ro-bind-try") && w[1] == "/" && w[2] == "/")
+}
+
+/// Single source of bwrap mount flags. Testable without executing bwrap.
+pub fn bwrap_argv(
+    bwrap: &Path,
+    argv: &[String],
+    cwd: &Path,
+    scratch: &Path,
+    read_roots: &[PathBuf],
+) -> std::result::Result<Vec<String>, String> {
+    let candidate = canonical_existing(cwd)?;
+    if !candidate.is_dir() {
+        return Err(format!("{} is not a directory", candidate.display()));
+    }
+    let scratch_dir = canonical_existing(scratch)?;
+    if !scratch_dir.is_dir() {
+        return Err(format!("{} is not a directory", scratch_dir.display()));
+    }
+    if scratch_dir == candidate {
+        return Err("scratch must differ from candidate".into());
+    }
+    let probe = scratch_dir.join(".cgah-bwrap-write");
+    std::fs::write(&probe, b"ok").map_err(|e| format!("scratch is not writable: {e}"))?;
+    let _ = std::fs::remove_file(&probe);
+
+    let mut out = vec![
+        bwrap.display().to_string(),
+        "--die-with-parent".into(),
+        "--unshare-net".into(),
+        "--unshare-pid".into(),
+        "--tmpfs".into(),
+        "/tmp".into(),
+    ];
+    if Path::new("/proc").exists() {
+        out.extend(["--proc".into(), "/proc".into()]);
+    }
+    if Path::new("/dev").exists() {
+        out.extend(["--dev".into(), "/dev".into()]);
+    }
+    for dir in LINUX_OS_RO_DIRS {
+        if Path::new(dir).exists() {
+            out.extend(["--ro-bind".into(), (*dir).into(), (*dir).into()]);
+        }
+    }
+    for file in LINUX_OS_RO_FILES {
+        if Path::new(file).exists() {
+            out.extend(["--ro-bind".into(), (*file).into(), (*file).into()]);
+        }
+    }
+    out.extend([
+        "--ro-bind".into(),
+        candidate.display().to_string(),
+        candidate.display().to_string(),
+    ]);
+    for root in read_roots {
+        let resolved = canonical_existing(root)?;
+        out.extend([
+            "--ro-bind".into(),
+            resolved.display().to_string(),
+            resolved.display().to_string(),
+        ]);
+    }
+    out.extend([
+        "--bind".into(),
+        scratch_dir.display().to_string(),
+        scratch_dir.display().to_string(),
+        "--chdir".into(),
+        candidate.display().to_string(),
+        "--".into(),
+    ]);
+    out.extend(argv.iter().cloned());
+    if argv_binds_host_root(&out) {
+        return Err("bwrap argv would bind host root".into());
+    }
+    Ok(out)
+}
+
+pub struct LinuxBubblewrapSandbox {
+    bwrap: PathBuf,
+}
+
+impl LinuxBubblewrapSandbox {
+    pub fn new() -> Result<Self> {
+        let path = process::which("bwrap")
+            .ok_or_else(|| HarnessError::sandbox_unavailable("bwrap not found; Linux bubblewrap fails closed"))?;
+        let tmp = tempfile::Builder::new()
+            .prefix("cgah-bwrap-probe-")
+            .tempdir()
+            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap probe tempdir: {e}")))?;
+        let candidate = tmp.path().join("candidate");
+        let scratch = tmp.path().join("scratch");
+        std::fs::create_dir(&candidate)
+            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap probe candidate: {e}")))?;
+        std::fs::create_dir(&scratch)
+            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap probe scratch: {e}")))?;
+        let wrapped = bwrap_argv(&path, &["/bin/true".into()], &candidate, &scratch, &[])
+            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap argv: {e}")))?;
+        match process::run(RunSpec {
+            argv: &wrapped,
+            cwd: None,
+            env: None,
+            timeout: Duration::from_secs(5),
+            stdin: None,
+        }) {
+            Ok(out) if out.status == Some(0) => Ok(Self { bwrap: path }),
+            Ok(out) => Err(HarnessError::sandbox_unavailable(format!(
+                "bwrap probe failed (status {:?}): {}",
+                out.status, out.stderr
+            ))),
+            Err(e) => Err(HarnessError::sandbox_unavailable(format!("bwrap probe: {e}"))),
+        }
+    }
+}
+
+impl HardSandbox for LinuxBubblewrapSandbox {
+    fn run(&self, argv: &[String], cwd: &Path, env: &BTreeMap<String, String>, timeout_sec: u64) -> SandboxOutcome {
+        let tmp = match tempfile::Builder::new().prefix("cgah-bwrap-").tempdir() {
+            Ok(t) => t,
+            Err(e) => {
+                return SandboxOutcome {
+                    exit_code: -2,
+                    stdout: String::new(),
+                    stderr: format!("could not create sandbox temp dir: {e}"),
+                    timed_out: false,
+                }
+            }
+        };
+        let mut env_with_tmp = env.clone();
+        for k in ["HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP"] {
+            env_with_tmp.insert(k.into(), tmp.path().display().to_string());
+        }
+        self.run_prepared(argv, cwd, &env_with_tmp, timeout_sec, tmp.path(), &[])
+    }
+
+    fn run_prepared(
+        &self,
+        argv: &[String],
+        cwd: &Path,
+        env: &BTreeMap<String, String>,
+        timeout_sec: u64,
+        scratch: &Path,
+        read_roots: &[PathBuf],
+    ) -> SandboxOutcome {
+        let wrapped = match bwrap_argv(&self.bwrap, argv, cwd, scratch, read_roots) {
+            Ok(v) => v,
+            Err(e) => {
+                return SandboxOutcome {
+                    exit_code: -2,
+                    stdout: String::new(),
+                    stderr: e,
+                    timed_out: false,
+                }
+            }
+        };
+        ArgvListSandbox.run(&wrapped, cwd, env, timeout_sec)
+    }
+
+    fn name(&self) -> &'static str {
+        "linux-bwrap"
+    }
+}
+
+fn prefer_linux_sandbox() -> Result<Box<dyn HardSandbox>> {
+    match LinuxBubblewrapSandbox::new() {
+        Ok(sb) => Ok(Box::new(sb)),
+        Err(bwrap_err) => match LinuxNetnsSandbox::new() {
+            Ok(sb) => {
+                tracing::warn!(
+                    bwrap = bwrap_err.message.as_str(),
+                    "linux-bwrap unavailable; falling back to linux-netns (network isolation only, host filesystem visible)"
+                );
+                Ok(Box::new(sb))
+            }
+            Err(netns_err) => Err(HarnessError::sandbox_unavailable(format!(
+                "linux hard sandbox unavailable: bwrap: {}; netns: {}",
+                bwrap_err.message, netns_err.message
+            ))),
+        },
     }
 }
 
@@ -411,10 +631,60 @@ pub fn production_sandbox() -> Result<Box<dyn HardSandbox>> {
         return Ok(Box::new(DarwinSeatbeltSandbox::new()?));
     }
     if cfg!(target_os = "linux") {
-        return Ok(Box::new(LinuxNetnsSandbox::new()?));
+        return prefer_linux_sandbox();
     }
     Err(HarnessError::sandbox_unavailable(format!(
         "no hard-sandbox backend for platform {}; agentic verification fails closed",
         std::env::consts::OS
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_argv(cwd: &Path, scratch: &Path, read_roots: &[PathBuf]) -> Vec<String> {
+        bwrap_argv(
+            Path::new("/usr/bin/bwrap"),
+            &["/bin/true".into()],
+            cwd,
+            scratch,
+            read_roots,
+        )
+        .expect("bwrap argv")
+    }
+
+    #[test]
+    fn bwrap_argv_never_binds_host_root() {
+        let candidate = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let argv = sample_argv(candidate.path(), scratch.path(), &[]);
+        assert!(!argv_binds_host_root(&argv));
+        assert!(argv.contains(&"--unshare-net".into()));
+        assert!(argv.contains(&"--tmpfs".into()));
+        assert!(argv.contains(&"--die-with-parent".into()));
+        let cand = dunce::canonicalize(candidate.path()).unwrap();
+        let scratch_p = dunce::canonicalize(scratch.path()).unwrap();
+        let ro = argv.windows(3).any(|w| w[0] == "--ro-bind" && Path::new(&w[1]) == cand);
+        let rw = argv
+            .windows(3)
+            .any(|w| w[0] == "--bind" && Path::new(&w[1]) == scratch_p);
+        assert!(ro, "{argv:?}");
+        assert!(rw, "{argv:?}");
+    }
+
+    #[test]
+    fn bwrap_argv_refuses_host_root_read_root() {
+        let candidate = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let err = bwrap_argv(
+            Path::new("/usr/bin/bwrap"),
+            &["/bin/true".into()],
+            candidate.path(),
+            scratch.path(),
+            &[PathBuf::from("/")],
+        )
+        .unwrap_err();
+        assert!(err.contains("host root"), "{err}");
+    }
 }

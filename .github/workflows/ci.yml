@@ -132,6 +132,9 @@ jobs:
         run: |
           git config --global user.email "ci@example.invalid"
           git config --global user.name "CI"
+      - name: Install bubblewrap on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Build (all targets)
         run: cargo build --all-targets --locked
       - name: Prepare dependency inventory for required native Cargo fixture
