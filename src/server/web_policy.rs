@@ -497,6 +497,11 @@ mod tests {
             assert!(canonical_url(bad).is_err(), "{bad}");
         }
         assert!(Rule::new("https://example.com/docs/*?q=1", "docs", &[]).is_err());
+        assert!(
+            Rule::new("https://*/*", "docs", &[]).is_err(),
+            "bare host wildcard is invalid grammar"
+        );
+        assert!(Rule::new("https://*.com/*", "docs", &[]).is_err());
         let query = canonical_url("https://example.com/search?q=TCP%2fIP%20%2520").unwrap();
         assert_eq!(query.host_str(), Some("example.com"));
         assert_eq!(query.path(), "/search");
