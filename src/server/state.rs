@@ -51,7 +51,10 @@ pub struct AppState {
     pub generation_gate: GenerationGate,
     pub agent_run_gate: GenerationGate,
     pub csrf_token: String,
-    pub console_html: String,
+    /// `HARNESS_HTML` (CSRF already substituted) split around every
+    /// `CSP_NONCE_PLACEHOLDER` occurrence, so each request joins segments with a
+    /// fresh nonce instead of re-scanning and reallocating the full ~130KB page.
+    pub console_html_segments: Vec<String>,
     pub api_key_optional: bool,
     /// Snapshot of `CGAGENTHARNESS_API_KEY` at build time (tests inject it).
     pub api_key: Option<String>,
