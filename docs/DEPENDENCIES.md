@@ -115,3 +115,44 @@ and `thiserror` 2.0.20 only. Desktop (`desktop/Cargo.lock`, Tauri
 `cargo metadata --locked --offline` and `cargo deny check` with
 `desktop/deny.toml` exit 0. No dependency was added or updated; no native
 desktop build was run in this sweep.
+
+## Compatibility audit (2026-09-16)
+
+Applied all available updates within the existing manifest and Rust-version
+constraints: 13 backend and 12 desktop lock entries changed. Shared updates
+include `cc` 1.4.6, `cfg-if` 1.0.5, `lru-slab` 0.1.3, `quinn` 0.11.12,
+`quinn-proto` 0.11.18, `tinyvec` 1.13.3, `yoke-derive` 0.8.3 and
+`zerofrom-derive` 0.1.8. The backend also uses Clap 4.6.7; desktop updates
+`camino` 1.2.6, `redox_users` 0.5.3 and `zlib-rs` 0.6.8. Cargo introduces
+`synstructure` 0.14 and removes `tinyvec_macros` through those upstream updates.
+
+Both crates resolve and build independently under their existing pinned Rust
+versions. Duplicate transitive versions remain visible in `cargo tree -d`;
+they are separate upstream compatibility lines, not a failed resolution. The
+backend and desktop remain separate processes and do not exchange Rust crate
+types across an ABI. The exact Serde sandbox fixture lock remains intentional
+reproducibility data rather than the product dependency graph.
+
+Retained constraints remain as documented above: `ordered-float` 5.5 exceeds
+the backend MSRV, and newer incompatible lines of base64, rand, reqwest,
+scrypt, sha2 and windows-sys require separate API migrations. Upstream
+transitive pins retain generic-array/matchit and desktop TOML compatibility
+lines. The crates.io registry confirms Tauri 2.11.5, clippy-sarif 0.8.0 and
+sarif-fmt 0.8.0 are current stable releases. Tauri's immutable security patch
+is still required; no advisory exception or toolchain bump was added.
+
+CI action pins were checked against official release commits. CodeQL advances
+to [v4.38.0](https://github.com/github/codeql-action/releases/tag/v4.38.0),
+zizmor-action to [v0.6.4](https://github.com/zizmorcore/zizmor-action/releases/tag/v0.6.4)
+(zizmor 1.30.1), and the official actionlint container to
+[v1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12), retaining a
+verified multi-architecture index digest. The stable rust-toolchain action
+commit and all other action releases, Gitleaks 8.30.1 and SARIF tool versions
+were already current. CodeQL bundle tags are not action-release tags; the
+pin is the peeled action release commit, not the bundle release commit.
+
+Verification uses both crates' formatting, all-target/all-feature Clippy,
+all-target tests, cargo-deny policies, fresh compatible-update previews,
+release packaging, and isolated native/backend acceptance. Workflow checks use
+checksum-verified actionlint 1.7.12 and zizmor 1.30.1. Remaining incompatible
+releases are recorded explicitly rather than claimed to be installed.
