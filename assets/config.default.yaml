@@ -83,6 +83,8 @@ auth:
   # Fresh admin/admin can only inspect its identity, change its password or log
   # out. Password replacement requires 12 characters and revokes old sessions.
   enabled: true
+  # scrypt uses about 128 MiB per derivation; bound a burst to 1–4 operations.
+  max_concurrent_operations: 2
   session:
     idle_timeout_sec: 43200
     absolute_timeout_sec: 604800

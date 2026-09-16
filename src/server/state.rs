@@ -1,11 +1,12 @@
 //! Shared application state for the console.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::common::audit::Audit;
 use crate::common::auth_store::AuthManager;
-use crate::common::config::SharedConfig;
+use crate::common::config::{AppConfig, SharedConfig};
+use crate::common::errors::{HarnessError, Result};
 use crate::common::home::{HarnessSettings, Home};
 use crate::common::ratelimit::RateLimiter;
 use crate::llm::backend::ResolvedLocalBackend;
@@ -21,6 +22,17 @@ pub const HARNESS_LOOP_TOOL: &str = "harness_loop";
 pub const AGENT_RUN_TOOL: &str = "agent_run";
 /// A 27b turn can sit in the model server for minutes; the in-flight lock must outlast it.
 pub const LOOP_INFLIGHT_TTL_SEC: f64 = 900.0;
+
+pub fn auth_operation_concurrency(cfg: &AppConfig) -> Result<usize> {
+    match cfg.get("auth.max_concurrent_operations") {
+        None => Ok(2),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| (1..=4).contains(value))
+            .map(|value| value as usize)
+            .ok_or_else(|| HarnessError::config("auth.max_concurrent_operations must be an integer from 1 to 4")),
+    }
+}
 
 pub struct AppState {
     pub home: Home,
@@ -43,6 +55,8 @@ pub struct AppState {
     pub api_key: Option<String>,
     pub key_file_sources: BTreeSet<String>,
     pub auth: Option<AuthManager>,
+    /// Limits concurrent memory-hard scrypt derivations for this app instance.
+    pub auth_operation_permits: Arc<tokio::sync::Semaphore>,
     pub web: WebTool,
     pub notes: MemoryNotes,
     /// Present only when `structured_memory.enabled` is the literal boolean true.
