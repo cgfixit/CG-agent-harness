@@ -308,8 +308,21 @@ pub fn bwrap_argv(
     if scratch_dir == candidate {
         return Err("scratch must differ from candidate".into());
     }
+    // Scratch is shared across a request's checks and is writable by sandboxed
+    // code, so an earlier check may have planted this name. create_new (O_EXCL)
+    // refuses any existing entry instead of following a symlink and truncating
+    // its target on the host.
     let probe = scratch_dir.join(".cgah-bwrap-write");
-    std::fs::write(&probe, b"ok").map_err(|e| format!("scratch is not writable: {e}"))?;
+    let mut probe_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|e| format!("scratch probe {}: {e}", probe.display()))?;
+    use std::io::Write;
+    probe_file
+        .write_all(b"ok")
+        .map_err(|e| format!("scratch is not writable: {e}"))?;
+    drop(probe_file);
     let _ = std::fs::remove_file(&probe);
 
     let mut out = vec![
@@ -372,6 +385,11 @@ impl LinuxBubblewrapSandbox {
     pub fn new() -> Result<Self> {
         let path = process::which("bwrap")
             .ok_or_else(|| HarnessError::sandbox_unavailable("bwrap not found; Linux bubblewrap fails closed"))?;
+        // `which` can return a relative path when PATH holds a relative entry,
+        // and the sandboxed run later sets cwd to the untrusted worktree; pin
+        // an absolute executable so a repo-local `tools/bwrap` cannot replace it.
+        let path = dunce::canonicalize(&path)
+            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap path {}: {e}", path.display())))?;
         let tmp = tempfile::Builder::new()
             .prefix("cgah-bwrap-probe-")
             .tempdir()
@@ -671,6 +689,25 @@ mod tests {
             .any(|w| w[0] == "--bind" && Path::new(&w[1]) == scratch_p);
         assert!(ro, "{argv:?}");
         assert!(rw, "{argv:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bwrap_probe_refuses_planted_symlink() {
+        let candidate = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let target = tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(target.path(), scratch.path().join(".cgah-bwrap-write")).unwrap();
+        let err = bwrap_argv(
+            Path::new("/usr/bin/bwrap"),
+            &["/bin/true".into()],
+            candidate.path(),
+            scratch.path(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(err.contains("scratch probe"), "{err}");
+        assert_eq!(std::fs::read(target.path()).unwrap(), b"");
     }
 
     #[test]
