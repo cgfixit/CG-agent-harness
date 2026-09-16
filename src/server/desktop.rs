@@ -186,7 +186,7 @@ fn start() -> anyhow::Result<()> {
                 }
             }
         }
-        state.chat.abort_in_flight();
+        state.abort_chat();
         for job in state.jobs.list() {
             if let Some(id) = job["job_id"].as_str() {
                 state.jobs.cancel(id);

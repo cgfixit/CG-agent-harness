@@ -906,7 +906,7 @@ pub async fn cancel_consolidation(
         state.generation_gate.owner().as_str(),
         "consolidation" | "memory-suggestion"
     ) {
-        state.chat.abort_in_flight();
+        state.abort_chat();
     }
     audit(
         &state,

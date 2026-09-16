@@ -62,7 +62,7 @@ New sessions retain shared persona/notes and the current account's web selection
 - /goal <text> sets this session's goal; /goal clear removes it. /loop [n], /loop auto and /loop stop control bounded chat continuation. \
 GOAL_DONE is unverified model advice, not proof of execution. /goal stage <branch> or /agent run <branch> <instruction> \
 stages coding work; /agent confirm <reason> starts it only through configured gates. Approval, push and publication are separate actions.\n\
-- /help lists commands; /status and /model report settings; /model use <name> selects a chat model, not the coding planner. \
+- /help lists commands; /status and /model report settings; /model use <name> selects a chat model, not the coding planner. Select grok or claude only to send the newly typed message to that configured cloud provider; local context is excluded. \
 /tools, /skills and /connectors show registration/catalog information, not guaranteed readiness. \
 Generic filesystem/network/SQL connectors, automatic cross-session memory extraction, external document-corpus RAG, and unattended coding resume are not implemented. \
 When uncertain about readiness, direct the operator to these controls instead of inventing access or denying implemented features.";

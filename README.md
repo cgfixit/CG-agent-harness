@@ -69,7 +69,7 @@ for the acceptance boundaries.
 |---|---|
 | Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
 | Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. `/memory on` includes those notes only. Optional structured facts, governed proposals, bounded episodes, facts-only FTS, and manual consolidation (#87) are a separate account-private store behind default-off gates; models may suggest, not silently write. Search is not inject. Facts enter `/prompt` only after an explicit pick (`selected_facts`, `/memory retrieve`, or `retrieve`) or the separately gated `auto_retrieval` path. Episodes are never injected. Manual consolidation writes pending proposals only. Chat explains these controls; the operator executes them. |
-| Local model readiness | Select an exact installed model tag. Desktop Setup checks chat and planner inventories; optional chat fallback requires the configured model to be listed, not just a reachable endpoint. |
+| Chat model selection | Select an exact installed local model tag, or explicitly select `grok` / `claude` after an administrator saves the matching provider key and restarts. Cloud chat sends only the newly typed message; local history, memory, skills and web context stay local. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
 | Chat web tools | Natural-language Google search and permitted URL fetch. API Keys accepts `SERPAPI_API_KEY`; no active key selects public Google. Actual tool outcomes and source links appear in chat. No web tools run in `/loop`. |
@@ -98,6 +98,10 @@ loopback port; ordinary launch needs no Terminal, external browser, Rust, or Pyt
 Fresh login, roles, TLS and web controls need no config-file edit. An installed
 `qwen3.8:27b-mlx` on the default loopback model service works with the shipped
 selection; otherwise use `/model list` and `/model use <exact-tag>` for chat.
+Administrators may instead save a Grok or Anthropic key in **API Keys**, restart,
+and explicitly select `/model use grok` (`grok-4.6`) or `/model use claude`
+(`claude-sonnet-5`). Cloud selection never changes the separately configured
+coding planner.
 Check the home shown in the console footer or Setup before comparing app copies:
 source revision identifies the program, while its home holds accounts and data.
 
@@ -170,6 +174,10 @@ respectively. `/model use <name>` changes the console's selected chat model and
 leaves the planner model alone. A configurable loopback fallback supports another
 OpenAI-compatible server (`models.local_llm.fallback`, ships disabled).
 Fallback is selected at backend startup, not retried after a failed chat turn.
+Cloud chat is also never a fallback: it runs only after `/model use grok` or
+`/model use claude`, requires the matching saved key to be active after restart,
+and sends only that turn's user message. `/loop`, local prompt context and chat
+web tools remain unavailable on cloud turns.
 Desktop **Harness → Setup and recovery → Check installed chat and planner models**
 distinguishes an installed tag, missing tag, unavailable inventory, and an endpoint
 that was not probed. Inventory is not an inference test; send a short chat after

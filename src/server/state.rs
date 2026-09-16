@@ -10,6 +10,7 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::home::{HarnessSettings, Home};
 use crate::common::ratelimit::RateLimiter;
 use crate::llm::backend::ResolvedLocalBackend;
+use crate::llm::cloud_chat::CloudChat;
 use crate::llm::openai_chat::ChatClient;
 
 use super::generation_gate::GenerationGate;
@@ -41,6 +42,7 @@ pub struct AppState {
     pub store: SessionStore,
     pub backend: ResolvedLocalBackend,
     pub chat: ChatClient,
+    pub cloud_chat: CloudChat,
     pub audit: Audit,
     pub rate_limiter: RateLimiter,
     pub loop_rate_limiter: RateLimiter,
@@ -90,6 +92,26 @@ impl AppState {
         } else {
             selected
         }
+    }
+
+    pub fn current_provider(&self) -> String {
+        self.cloud_chat
+            .provider_name(&self.current_model())
+            .unwrap_or(&self.backend.provider)
+            .to_string()
+    }
+
+    pub fn chat_timeout_sec(&self, model: &str) -> f64 {
+        if self.cloud_chat.is_cloud_selection(model) {
+            self.cloud_chat.timeout_sec()
+        } else {
+            self.chat.timeout_sec
+        }
+    }
+
+    pub fn abort_chat(&self) {
+        self.chat.abort_in_flight();
+        self.cloud_chat.abort_in_flight();
     }
 
     pub fn loop_tool_allowlist(&self) -> BTreeSet<String> {

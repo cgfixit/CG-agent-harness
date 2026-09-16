@@ -270,8 +270,11 @@ these results:
 
 `/model` reports selection; `/model use <tag>` persists a name without checking or
 downloading it. The selection is shared across sessions and can override the tag
-chosen from configuration, including the fallback tag. Check the selected name
-against the endpoint actually in use.
+chosen from configuration, including the fallback tag. For local chat, check the
+selected name against the endpoint actually in use. For explicit cloud chat, use
+`/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only
+after an administrator saves the matching key and restarts. Cloud selection sends
+only the newly typed message and does not change the coding planner.
 
 Optional chat fallback ships disabled. If you already run another compatible
 local server, merge its real endpoint and exact inventory ID into these existing
@@ -1256,14 +1259,15 @@ not a general environment-variable editor or connector credential vault.
 | Key | Purpose |
 |---|---|
 | `CGAGENTHARNESS_API_KEY` | Optional compatibility metadata; never grants account access |
-| `GROK_API_KEY` | Optional explicitly governed cloud coding planner |
-| `ANTHROPIC_API_KEY` | Optional explicitly governed cloud coding planner |
+| `GROK_API_KEY` | Optional explicit Grok chat and governed cloud coding planner |
+| `ANTHROPIC_API_KEY` | Optional explicit Claude chat and governed cloud coding planner |
 | `DEEPAGENT_API_KEY` | Bearer credential for a configured non-Ollama compatible local planner |
 
-Saving a key does not enable a provider, select it for chat, open coding gates or
-install a connector. Provider and per-run online approvals are separate from key
-storage. The slash-command workflow does not expose arbitrary cloud-provider
-selection flags; review the separate provider controls in
+Saving a key does not select it for chat, open coding gates or install a
+connector. After restart, `/model use grok` or `/model use claude` explicitly
+selects cloud chat; provider and per-run online approvals for coding remain
+separate from key storage. The slash-command workflow does not expose arbitrary
+cloud-provider configuration flags; review the separate provider controls in
 [the configuration reference](assets/config.default.yaml) before considering
 a cloud coding run. Values must be nonempty, no more than 4,096 characters
 and contain no newline, carriage return or NUL. `/api clear <KEY>` removes only
