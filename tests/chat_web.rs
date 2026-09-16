@@ -184,3 +184,175 @@ async fn revoked_source_discards_inflight_answer() {
     assert!(!reply.to_string().contains("Answer with revoked evidence"));
     server.abort();
 }
+
+/// Fresh homes enable web with an empty URL policy. Chat tools must fail closed
+/// the same way dedicated `/api/web/*` routes do (`WEB_ALLOWLIST_EMPTY`).
+#[tokio::test]
+async fn chat_empty_allowlist_refuses_fetch_and_search() {
+    let model = common::start_mock_model().await;
+    model.set_reply(tool_call_reply(
+        "web_fetch",
+        r#"{"url":"http://docs.example/docs/item"}"#,
+        "empty_fetch",
+    ));
+    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let (status, web) = s.get_json("/api/web").await;
+    assert_eq!(status, 200);
+    assert_eq!(web["enabled"], true);
+    assert!(
+        web["allowlist"].as_array().map(|rows| rows.is_empty()).unwrap_or(false),
+        "{web}"
+    );
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message": "Read http://docs.example/docs/item"}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][0]["ok"], false, "{reply}");
+    assert_eq!(reply["web_tools"][0]["code"], "WEB_ALLOWLIST_EMPTY", "{reply}");
+    assert!(
+        reply["reply"].as_str().unwrap_or("").contains("WEB_ALLOWLIST_EMPTY"),
+        "{reply}"
+    );
+    assert_no_serpapi_secret(&reply, &s.home);
+
+    model.set_reply(tool_call_reply(
+        "web_search",
+        r#"{"query":"docs.example"}"#,
+        "empty_search",
+    ));
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message": "Search Google for docs.example"}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][0]["ok"], false, "{reply}");
+    assert_eq!(
+        reply["web_tools"][0]["code"], "WEB_ALLOWLIST_EMPTY",
+        "empty policy fails closed before Google-pattern matching: {reply}"
+    );
+    assert_no_serpapi_secret(&reply, &s.home);
+}
+
+/// After an administrator grants a fixture-origin rule, `web_fetch` succeeds
+/// within `web.chat_tool_calls` (default 3). The N+1 model tool request is
+/// refused with `WEB_TOOL_LIMIT` and the generation gate is released.
+#[tokio::test]
+async fn chat_origin_grant_fetches_within_bound_and_refuses_n_plus_one() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let read_count = reads.clone();
+    let router = Router::new().route(
+        "/page",
+        get(move || {
+            let reads = read_count.clone();
+            async move {
+                reads.fetch_add(1, Ordering::SeqCst);
+                ([("content-type", "text/plain")], "PHASE2_FETCH_OK")
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let page_server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let model = common::start_mock_model().await;
+    model.set_reply(tool_call_reply(
+        "web_fetch",
+        r#"{"url":"http://docs.example/page"}"#,
+        "bound_fetch",
+    ));
+    let s = common::spawn_server(
+        &model.base_url(),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default().with("web.pace_ms", "100")
+        },
+    )
+    .await;
+    assert_eq!(s.state.web.limits.chat_tool_calls, 3, "shipped default N");
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url": "http://docs.example/*"}))
+            .await
+            .0,
+        200
+    );
+    let (status, web) = s.get_json("/api/web").await;
+    assert_eq!(status, 200, "{web}");
+    assert_eq!(web["allowlist"], json!(["http://docs.example/*"]), "{web}");
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message": "Read the granted origin repeatedly"}))
+        .await;
+    assert_eq!(status, 502, "{reply}");
+    assert_eq!(common::code(&reply), "WEB_TOOL_LIMIT", "{reply}");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        s.state.web.limits.chat_tool_calls,
+        "exactly N fetches; the extra tool call must not hit the network"
+    );
+    assert_no_serpapi_secret(&reply, &s.home);
+    model.set_reply(common::ok_reply("ready after tool-limit", 10, 2));
+    let (status, next) = s.post_json("/api/chat", json!({"message": "hello"})).await;
+    assert_eq!(status, 200, "{next}");
+    assert_eq!(next["reply"], "ready after tool-limit");
+    page_server.abort();
+}
+
+/// A non-empty allowlist that is not a Google search grant still refuses
+/// `web_search`. Tip returns `WEB_GOOGLE_PERMISSION` after `require_enabled`
+/// succeeds (empty policy is the `WEB_ALLOWLIST_EMPTY` case above).
+#[tokio::test]
+async fn chat_search_without_google_pattern_returns_google_permission() {
+    let model = common::start_mock_model().await;
+    model.set_reply(tool_call_reply(
+        "web_search",
+        r#"{"query":"veeam software cve"}"#,
+        "google_denied",
+    ));
+    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url": "http://docs.example/*"}))
+            .await
+            .0,
+        200
+    );
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message": "Search Google for veeam software cve"}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][0]["ok"], false, "{reply}");
+    assert_eq!(reply["web_tools"][0]["code"], "WEB_GOOGLE_PERMISSION", "{reply}");
+    assert!(
+        reply["reply"].as_str().unwrap_or("").contains("WEB_GOOGLE_PERMISSION"),
+        "{reply}"
+    );
+    assert_no_serpapi_secret(&reply, &s.home);
+
+    let (status, body) = s
+        .post_json(
+            "/api/web/search",
+            json!({"query": "veeam software cve", "engine": "google"}),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(common::code(&body), "WEB_GOOGLE_PERMISSION", "{body}");
+    assert!(common::message(&body).contains("https://www.google.com/*"), "{body}");
+    assert_no_serpapi_secret(&body, &s.home);
+}
+
+fn tool_call_reply(name: &str, arguments: &str, id: &str) -> Value {
+    json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+        "tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":arguments}}]}}],
+        "usage":{"prompt_tokens":10,"completion_tokens":2}})
+}
+
+fn assert_no_serpapi_secret(body: &Value, home: &std::path::Path) {
+    let dumped = body.to_string();
+    let audit = std::fs::read_to_string(home.join("logs").join("audit.jsonl")).unwrap_or_default();
+    for (label, text) in [("HTTP JSON", dumped.as_str()), ("audit", audit.as_str())] {
+        assert!(
+            !text.contains("fixture-secret-key"),
+            "{label} echoed the synthetic SerpAPI fixture key: {text}"
+        );
+        assert!(
+            !text.contains("SERPAPI_API_KEY"),
+            "{label} named SERPAPI_API_KEY: {text}"
+        );
+    }
+}
