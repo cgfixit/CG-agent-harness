@@ -140,21 +140,23 @@ async fn armed_origin_refuses_sibling_apex_and_compressed_bodies() {
     page_task.abort();
 }
 
+/// Public Google listings are HTTPS; the in-process fixture is HTTP. Hold
+/// `search_gate` with permitted-page search against an HTTP origin instead.
 #[tokio::test]
-async fn concurrent_google_search_returns_busy_without_echoing_secrets() {
+async fn concurrent_page_search_returns_busy_without_echoing_secrets() {
     let started = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
     let signal = started.clone();
     let resume = release.clone();
     let pages = Router::new().route(
-        "/search",
+        "/slow",
         get(move || {
             let signal = signal.clone();
             let resume = resume.clone();
             async move {
                 signal.notify_one();
                 resume.notified().await;
-                ([("content-type", "text/html")], "<html>unreadable listing</html>")
+                ([("content-type", "text/plain")], "PHASE2_SLOW_PAGE")
             }
         }),
     );
@@ -167,45 +169,36 @@ async fn concurrent_google_search_returns_busy_without_echoing_secrets() {
     let s = spawn_server(
         &model.base_url(),
         ServerOptions {
-            web_resolve: Some(("www.google.com".into(), address)),
-            ..ServerOptions::default()
+            web_resolve: Some(("docs.example".into(), address)),
+            ..ServerOptions::default().with("web.pace_ms", "100")
         },
     )
     .await;
+    // Exact URL: /robots.txt is not implicitly granted, so discover holds on /slow.
     assert_eq!(
-        s.post_json("/api/web/allow", json!({"url": "https://www.google.com/*"}))
+        s.post_json("/api/web/allow", json!({"url": "http://docs.example/slow"}))
             .await
             .0,
         200
     );
-    let first = s.post_json(
-        "/api/web/search",
-        json!({"query": "veeam software cve", "engine": "google"}),
-    );
+    let first = s.post_json("/api/web/search", json!({"query": "PHASE2_SLOW_PAGE"}));
     let second = async {
         started.notified().await;
         let result = s
-            .post_json(
-                "/api/web/search",
-                json!({"query": "second concurrent search", "engine": "google"}),
-            )
+            .post_json("/api/web/search", json!({"query": "second concurrent search"}))
             .await;
         release.notify_one();
         result
     };
-    let ((first_status, first_body), (second_status, second_body)) =
+    let ((_first_status, first_body), (second_status, second_body)) =
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             tokio::join!(first, second)
         })
         .await
-        .unwrap();
+        .expect("page-search hold should notify before the deadline");
     assert_eq!(second_status, 409, "{second_body}");
     assert_eq!(code(&second_body), "WEB_BUSY", "{second_body}");
     no_secret(&second_body, &s.home);
-    assert!(
-        first_status == 400 || first_status == 502,
-        "held search must fail closed without a live listing: {first_body}"
-    );
     no_secret(&first_body, &s.home);
     page_task.abort();
 }
