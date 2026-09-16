@@ -154,6 +154,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         .api_key
         .or_else(|| std::env::var(crate::common::apikey::API_KEY_ENV).ok());
     let mut web = WebTool::new(&home.tools_dir(), &cfg)?;
+    web.search_key_from_file = opts.key_file_sources.contains("SERPAPI_API_KEY");
     web.test_resolve = opts.web_test_resolve;
     web.test_resolve_extra = opts.web_test_resolve_extra;
     let planner = cfg.u64_or(

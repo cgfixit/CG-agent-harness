@@ -9,7 +9,7 @@ use crate::llm::openai_chat::{parse_chat_response, ChatMessage, ChatResult};
 
 pub fn tools() -> Vec<Value> {
     vec![
-        json!({"type":"function","function":{"name":"web_search","description":"Search Google for current ranked links and snippets. Listings are not fetched destination pages. Use for explicit search or current-web questions.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
+        json!({"type":"function","function":{"name":"web_search","description":"Search Google for current ranked links and snippets. Listings are not fetched destination pages. Use for explicit search or current-web questions. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Reuse evidence, avoid repeated queries, and stop once you can answer. Search again only for a specific unresolved gap. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
         json!({"type":"function","function":{"name":"web_fetch","description":"Read an exact public URL permitted by the administrator. Use when asked to read, retrieve, fetch or summarize a URL. Never grants permission or follows redirects.","parameters":{"type":"object","properties":{"url":{"type":"string","maxLength":2048}},"required":["url"],"additionalProperties":false}}}),
     ]
 }
@@ -79,6 +79,7 @@ async fn run_inner(
         .collect();
     let mut events = Vec::new();
     let mut sources = Vec::new();
+    let mut searches = std::collections::BTreeMap::new();
     let mut prompt_tokens = 0u64;
     let mut completion_tokens = 0u64;
     let mut reported = true;
@@ -169,10 +170,17 @@ async fn run_inner(
             "web_search" => {
                 let args: SearchArgs =
                     serde_json::from_str(args).map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
-                state
-                    .web
-                    .google_search(&args.query, args.count, true, &state.audit)
-                    .await
+                let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
+                let key = (query.to_lowercase(), args.count);
+                if let Some(result) = searches.get(&key) {
+                    Ok(Value::clone(result))
+                } else {
+                    let result = state.web.google_search(&query, args.count, true, &state.audit).await;
+                    if let Ok(value) = &result {
+                        searches.insert(key, value.clone());
+                    }
+                    result
+                }
             }
             "web_fetch" => {
                 let args: FetchArgs =
@@ -204,12 +212,14 @@ async fn run_inner(
                 ));
             }
         };
-        if let Some(source) = result
-            .get("search_url")
-            .or_else(|| result.get("url"))
-            .and_then(Value::as_str)
-        {
-            sources.push(source.to_string());
+        if result["provider"] != "google-serpapi" {
+            if let Some(source) = result
+                .get("search_url")
+                .or_else(|| result.get("url"))
+                .and_then(Value::as_str)
+            {
+                sources.push(source.to_string());
+            }
         }
         check_evidence(state, owner, &sources)?;
         events.push(json!({"tool":name,"ok":true,"result":result}));

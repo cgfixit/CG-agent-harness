@@ -119,7 +119,10 @@ delivery. It cannot mutate policy, credentials, accounts or repositories, and
 `/loop` exposes no tools. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
 configured SerpAPI key selects the fixed Google-results API transport, while no
-active key selects public Google. Challenges and provider failures never become
+active key selects public Google. SerpAPI listings require enabled web and current
+account authority, independently of page URL grants; public Google and linked-page
+fetches retain URL policy checks. Saved SerpAPI changes apply on the next search;
+explicit environment values retain precedence. Challenges and provider failures never become
 fabricated results. Keys remain server-side and never enter model context.
 
 Content permission grants neither account authority nor provider configuration

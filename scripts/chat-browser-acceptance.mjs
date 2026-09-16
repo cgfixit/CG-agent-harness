@@ -436,6 +436,8 @@ try {
  await evaluate('document.getElementById("saved-SERPAPI_API_KEY").value="fixture-search-key-5678";document.getElementById("saved-SERPAPI_API_KEY").form.requestSubmit()');
  await until('document.getElementById("pane-api-keys").textContent.includes("••••••••5678")');
  assert.equal(savedSearchKey,'fixture-search-key-5678');
+ await evaluate('Array.from(document.getElementById("saved-SERPAPI_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Test Google search").click()');
+ await until('document.getElementById("pane-api-keys").textContent.includes("Connected via google-serpapi")');
  assert.equal(await evaluate('document.body.textContent.includes("fixture-search-key-5678")'),false);
  await evaluate('Array.from(document.getElementById("saved-SERPAPI_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
  await until('document.getElementById("saved-SERPAPI_API_KEY") && !document.getElementById("pane-api-keys").textContent.includes("••••••••5678")');assert.equal(savedSearchKey,'');

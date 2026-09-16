@@ -1043,8 +1043,10 @@ Fresh web settings are on, with an empty URL allowlist. Existing settings remain
 unchanged. Administrators grant URLs; operators can use granted reads. Enter
 slash commands as plain text starting with `/`, without Markdown backticks.
 
+For the keyless Google fallback only, also allow `https://www.google.com/*`.
+SerpAPI search needs no page grant. To fetch the example page:
+
 ```text
-/web allow https://www.google.com/*
 /web allow https://doc.rust-lang.org/book/ch01-01-installation.html
 ```
 
@@ -1061,7 +1063,8 @@ outcomes; failures are shown explicitly. The tools cannot grant URLs, change
 accounts or keys, run a shell, or write a repository. `/loop` has no web tools.
 
 **Google API setup:** open **API Keys** in the left pane, paste a **SerpAPI** key
-into **Google results (SerpAPI)**, save and restart the app. This is a SerpAPI
+into **Google results (SerpAPI)**, save, then click **Test Google search**.
+The saved key applies immediately; SerpAPI listings need no Google URL grant. This is a SerpAPI
 Google-results key, not a Google Cloud/Custom Search key. Obtain it through
 [SerpAPI](https://serpapi.com/search-api). Saved/active masks and restart status
 are displayed separately. Existing process environment values take precedence.
@@ -1072,8 +1075,7 @@ That fallback has no API key requirement, but can return a JavaScript challenge,
 CAPTCHA, redirect or unreadable page. The app reports the failure; it does not
 solve challenges, execute the page's JavaScript or manufacture five results.
 A configured key's authentication/quota/network error stays an API error; it
-does not silently switch to public Google. Clearing a saved key requires another
-restart before fallback becomes active.
+does not silently switch to public Google. Clearing a saved SerpAPI key applies immediately before fallback becomes active.
 
 Grant `https://www.google.com/*` for the generated Google search URLs. A grant
 for the exact homepage is insufficient. `https://google.com/*` does not grant

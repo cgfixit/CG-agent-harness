@@ -948,7 +948,7 @@ async function refreshSessions() {
 async function refreshKeys() {
   const pane = $('pane-api-keys'); pane.replaceChildren();
   const note = document.createElement('p');
-  note.textContent = 'Administrator access required. Saved values load after restart. Explicit process environment values take precedence. Harness metadata never grants account access.';
+  note.textContent = 'Administrator access required. SerpAPI changes apply immediately; other saved values load after restart. Explicit process environment values take precedence. Harness metadata never grants account access.';
   pane.appendChild(note);
   const registry = document.createElement('button'); registry.textContent = 'View registry';
   registry.addEventListener('click', () => runSlash('/registry')); pane.appendChild(registry);
@@ -979,7 +979,21 @@ async function refreshKeys() {
       if (value.trim()) change({keys: {[key.name]: value}});
     });
     clear.addEventListener('click', () => { field.value = ''; change({clear: [key.name]}); });
-    form.append(label, detail, status, field, save, clear, feedback); pane.appendChild(form);
+    form.append(label, detail, status, field, save, clear, feedback);
+    if (key.name === 'SERPAPI_API_KEY') {
+      const test = document.createElement('button'); test.type = 'button'; test.textContent = 'Test Google search';
+      test.addEventListener('click', async () => {
+        test.disabled = true; feedback.textContent = 'Searching Google…';
+        try {
+          const result = await api('/api/web/search', 'POST', {engine:'google',query:'SerpAPI Google Search API',count:3});
+          feedback.textContent = 'Connected via ' + result.provider + ': ' + result.results.length + ' results. Use /web search <query> or ask in chat.';
+          sys(renderSearchResults(result));
+        } catch (error) { feedback.textContent = error.message; }
+        finally { test.disabled = false; }
+      });
+      form.appendChild(test);
+    }
+    pane.appendChild(form);
   }
 }
 

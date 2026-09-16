@@ -270,7 +270,7 @@ literal text, not an instruction to archive every session.
 
 `/tokens` reports the current session tally, `/api` inspects managed-key presence
 (`CGAGENTHARNESS_API_KEY`, `GROK_API_KEY`, `ANTHROPIC_API_KEY`,
-`DEEPAGENT_API_KEY`, `SERPAPI_API_KEY` — presence and a masked tail only, never
+`DEEPAGENT_API_KEY`, `SERPAPI_API_KEY`, `GH_TOKEN` — presence and a masked tail only, never
 a stored secret),
 `/users` opens administrator-only account management, and `/harness` lists
 retained harness-optimizer runs.
@@ -450,7 +450,8 @@ chat shows actual tool outcomes, ranked search links and fetched-source URLs.
 A model must support the OpenAI-compatible tool-call protocol.
 
 For API-backed Google listings, save a **SerpAPI** key in the left **API Keys →
-Google results (SerpAPI)** field and restart. The key stays server-side. With no
+Google results (SerpAPI)** field, then click **Test Google search**. Saving applies
+immediately; SerpAPI listings do not require a Google URL grant. The key stays server-side. With no
 active key, the app attempts public Google HTML. JavaScript/CAPTCHA, unreadable
 responses and network failures are explicit failures, never invented results.
 A configured key's rejection/quota/network failure does not silently fall back.

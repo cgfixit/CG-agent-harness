@@ -36,11 +36,17 @@ pub struct KeySpec {
 }
 
 /// Every entry is an env var this binary actually reads.
-pub const MANAGED_KEYS: [KeySpec; 5] = [
+pub const MANAGED_KEYS: [KeySpec; 6] = [
     KeySpec {
         name: "SERPAPI_API_KEY",
         label: "Google results (SerpAPI)",
-        detail: "Optional SerpAPI key for Google keyword results. Restart after saving. With no active key, public Google is attempted and may require JavaScript or CAPTCHA.",
+        detail: "SerpAPI key (not a Google Cloud key). Save to use Google keyword search immediately; no Google URL permission is needed. Linked pages still need URL permission.",
+        self_auth: false,
+    },
+    KeySpec {
+        name: "GH_TOKEN",
+        label: "GitHub personal access token",
+        detail: "Used by GitHub CLI and its Git credential helper after restart. Leave unset to use existing gh login. Token permissions and repository write approvals still apply.",
         self_auth: false,
     },
     KeySpec {
@@ -205,7 +211,13 @@ pub fn read_status(path: &Path, loaded_from_file: &BTreeSet<String>) -> Result<V
     Ok(MANAGED_KEYS
         .iter()
         .map(|spec| {
-            let live = std::env::var(spec.name).unwrap_or_default().trim().to_string();
+            let hot_reload = spec.name == "SERPAPI_API_KEY";
+            let from_file = loaded_from_file.contains(spec.name) || std::env::var_os(spec.name).is_none();
+            let live = if hot_reload && from_file {
+                stored.get(spec.name).cloned().unwrap_or_default()
+            } else {
+                std::env::var(spec.name).unwrap_or_default().trim().to_string()
+            };
             let in_file = stored.get(spec.name).cloned().unwrap_or_default();
             let value_for_mask = if live.is_empty() { in_file.clone() } else { live.clone() };
             let source = if !live.is_empty() {
@@ -227,9 +239,9 @@ pub fn read_status(path: &Path, loaded_from_file: &BTreeSet<String>) -> Result<V
                 "saved_masked": if in_file.is_empty() { String::new() } else { mask(&in_file) },
                 "active_configured": !live.is_empty(),
                 "active_masked": if live.is_empty() { String::new() } else { mask(&live) },
-                "active_source": if loaded_from_file.contains(spec.name) { "startup_file" } else if std::env::var_os(spec.name).is_some() { "environment" } else { "unset" },
+                "active_source": if hot_reload && from_file { "saved_file" } else if loaded_from_file.contains(spec.name) { "startup_file" } else if std::env::var_os(spec.name).is_some() { "environment" } else { "unset" },
                 "environment_override": !loaded_from_file.contains(spec.name) && std::env::var_os(spec.name).is_some(),
-                "pending_restart": in_file != live,
+                "pending_restart": !hot_reload && in_file != live,
             })
         })
         .collect())
@@ -303,7 +315,7 @@ pub fn update_keys(path: &Path, updates: &BTreeMap<String, String>, clear: &[Str
         "written": written,
         "cleared": clear,
         "path": path.display().to_string(),
-        "restart_required": true,
+        "restart_required": cleaned.keys().any(|name| name != "SERPAPI_API_KEY"),
         "self_auth_written": self_auth,
     }))
 }

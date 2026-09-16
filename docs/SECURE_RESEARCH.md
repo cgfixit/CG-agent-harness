@@ -217,7 +217,8 @@ Reported usage sums all completed model calls; absent upstream usage remains
 marked unreported internally rather than being invented as actual token counts.
 Cancellation aborts the whole turn, including an outstanding content request.
 
-An administrator grants the generated search destination, normally:
+With a SerpAPI key saved, use `/web search <query>` directly. For the keyless
+public-Google fallback only, an administrator first grants the Google page:
 
 ```text
 /web allow https://www.google.com/*
@@ -243,8 +244,11 @@ that API, never in user-facing URLs, model context, returned metadata or error
 messages. Responses reflecting the credential in extracted listings are refused.
 Returned destination URLs never receive the key. The API client retains public
 DNS pinning, shared concurrency, no proxy/redirect/retry/pooling, and finite
-header/body/time bounds. Provider-key configuration and Google URL permission
-are both required for this path; neither authorizes arbitrary destinations.
+header/body/time bounds. A saved SerpAPI key applies immediately. With web enabled,
+SerpAPI listings need no Google URL grant; linked page fetches still require their
+own URL permission. Use **Test Google search** in API Keys to check setup.
+Chat starts with a focused contextual query, reuses duplicate searches, and stops
+when the evidence answers the question; the configured call/time/token caps remain enforced.
 
 With no active key, the app requests the permitted public Google search URL and
 parses recognizable organic result links in their returned order. It does not
@@ -362,10 +366,13 @@ unsafe or unreadable files are refused. Values are never stored in SQLite.
 
 Saved and active masks are separate. Explicit process environment values override
 saved credentials, including after restart. Clearing a saved key does not erase
-an inherited value or change a running provider. Restart to reload stored values;
+an inherited value. SerpAPI saves and clears apply to the next search immediately;
+other providers require a restart to reload stored values;
 remove an external environment override separately if that is the intent. Missing
 provider credentials affect only the selected provider's operation. The optional
-harness metadata key is never an account credential.
+harness metadata key is never an account credential. `GH_TOKEN` supplies the
+GitHub CLI and its Git credential helper after restart. Leave it unset to use
+existing `gh auth login`; token scopes never bypass repository write approvals.
 
 ## Reproducible evidence
 

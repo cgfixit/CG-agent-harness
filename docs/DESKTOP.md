@@ -21,8 +21,8 @@ exact tested sources and broader window/coding limits are recorded in
    The native webview verifies its owned certificate without system trust changes.
    Existing home configuration is preserved. Use **Harness → Setup and recovery**
    (Cmd-,) for diagnostics.
-4. Administrators manage optional provider credentials in **API Keys**. Restart
-   to activate saved values; inherited environment values take precedence. A
+4. Administrators manage optional provider credentials in **API Keys**. SerpAPI saves apply immediately; restart
+   to activate other saved values; inherited environment values take precedence. A
    harness metadata key never grants account access. See [migration, roles and
    TLS recovery](SECURE_RESEARCH.md). After restart, `/model use grok` or
    `/model use claude` explicitly selects that cloud chat provider; local prompt
@@ -70,8 +70,9 @@ No desktop session elevation exists.
 
 Headless `serve` uses the same private-file validation before starting its async
 runtime; a missing file is allowed and an unsafe/unreadable file refuses startup.
-Restart after using the key panel. A SerpAPI key selects API-backed Google results
-when web and Google URL permission are enabled; no active key selects public
+SerpAPI key changes in the panel apply immediately; other keys need a restart.
+A SerpAPI key selects API-backed Google results when web is enabled, without a
+Google page grant; linked pages still require URL permission; no active key selects public
 Google, which may be blocked by JavaScript/CAPTCHA. Other provider gates remain
 independent. Loading a key never grants content, account or repository-write access. This is dotenv support, not macOS Keychain
 integration. Windows headless startup still uses explicitly supplied environment
