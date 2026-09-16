@@ -33,6 +33,8 @@ CSRF names, YAML `"true"`, Seatbelt), load `cgagentharness-gotchas` (`/cgagentha
 - `cgagentharness-doc-sync` (`/cgagentharness-doc-sync`) — verify docs stay in sync with code; check shim actions, config gates, routes, guard chain, CSRF contracts, and hardcoded values
 - `cgagentharness-verify-deps` (`/cgagentharness-verify-deps`) — verify Cargo dependencies, advisories, licenses, locked versions, unsafe code, and toolchain match
 - `cgagentharness-runtime-invariant-check` (`/cgagentharness-runtime-invariant-check`) — verify core security invariants (I6, guard chain, CSRF, write gates, RUN_ID_PATTERN sync, clone jail)
+- `doc-sync` (`/doc-sync`) — actively fix doc drift (README/AGENTS/setup-guide/docs) against `origin/main` or the active branch's upstream; writes edits (companion to the read-only `cgagentharness-doc-sync`)
+- `dep-sync` (`/dep-sync`) — actively fix Rust dependency/toolchain/build/deploy drift (Cargo manifests/locks, `rust-toolchain.toml`, `deny.toml`, CI/release YAML) against `origin/main` or the active branch's upstream; writes edits (companion to the read-only `cgagentharness-verify-deps`)
 
 Authoritative contracts: `INVARIANTS.md`, `AGENTS.md`, `assets/config.default.yaml`.
 Existing: `.codex/skills/cgagentharness-{optimize,release,verify}/`.
