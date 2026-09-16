@@ -134,6 +134,17 @@ const server=createServer(async(req,res)=>{
   reply({owner_id:'user_fixture_owner',hits,count:hits.length,retrieval:true,fts:true,type:'untrusted_background_context',scope:'search candidates only; not injected unless retrieve/auto_retrieval picks them'});return;
  }
  if(path==='/api/chat'){
+  if(mode==='stream' || mode==='stream-error'){
+   assert.equal(req.headers.accept,'text/event-stream');
+   const fail=mode==='stream-error';
+   res.writeHead(200,{'Content-Type':'text/event-stream'});
+   const first=Buffer.from('data: '+JSON.stringify({type:'delta',text:'STREAM_PARTIAL hé'})+'\n\n');
+   const split=first.indexOf(Buffer.from('é'))+1;
+   res.write(first.subarray(0,split));
+   setTimeout(()=>res.write(first.subarray(split)),20).unref();
+   setTimeout(()=>res.end('data: '+JSON.stringify(fail?{type:'error',error:{detail:{code:'HARNESS_LLM_ERROR',message:'stream failure',details:{}}},headers:[]}:{type:'done',data:{reply:'STREAM_COMPLETE',session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:2},tally:{total:3}}})+'\n\n'),500).unref();
+   return;
+  }
   if(mode==='delay'){setTimeout(()=>reply({reply:'LATE_OLD_REPLY',session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:2},tally:{total:3}}),500).unref();return;}
   if(mode==='rate'){reply({detail:{code:'LOOP_RATE_LIMIT',message:'rate fixture'}},429);return;}
   if(mode==='failure'){reply({detail:{code:'HARNESS_LLM_ERROR',message:'failure fixture'}},502);return;}
@@ -232,6 +243,17 @@ try {
  await evaluate('agent("Branding fixture")');
  assert.ok(await evaluate('document.body.innerText.includes("CG Agent Harness")'));
  assert.equal(await evaluate('document.body.innerText.toLowerCase().includes("cyclaw")'),false);
+
+ mode='stream';const streamed=send('stream fixture');
+ await until('document.getElementById("stream").innerText.includes("STREAM_PARTIAL hé")');
+ assert.ok(await evaluate('!!inflightChat'));
+ await streamed;
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("STREAM_COMPLETE")'));
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("STREAM_PARTIAL")'),false);
+ mode='stream-error';await send('stream error fixture');
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("stream failure")'));
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("STREAM_PARTIAL")'),false);
+ mode='normal';
 
  await send('/soul edit');assert.equal(await evaluate('document.getElementById("soulEditor").open'),true);
  await evaluate('document.getElementById("soulContent").value="BROWSER_PERSONA";document.getElementById("soulReason").value="Reviewed UI edit";document.getElementById("soulPreview").click()');
@@ -437,7 +459,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
+ console.log(JSON.stringify({passed:true,coverage:['incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

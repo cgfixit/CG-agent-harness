@@ -3,3 +3,4 @@
 pub mod backend;
 pub mod inventory;
 pub mod openai_chat;
+pub mod openai_stream;

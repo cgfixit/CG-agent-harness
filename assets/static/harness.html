@@ -707,8 +707,9 @@ function renderWebStatus(data) {
    regex, so every call would silently record as GET). Changing only this body is
    invisible to it. The parser also has no comment handling, so this comment must
    avoid writing the helper's name followed by an open paren. */
-async function api(path, method, body, timeoutMs) {
+async function api(path, method, body, timeoutMs, onDelta) {
   const opts = { method: method || 'GET', headers: {} };
+  if (onDelta) opts.headers.Accept = 'text/event-stream';
   /* Attach the in-flight chat AbortController here (body only) so the
      contract parser that hand-reads call sites stays valid. */
   if (inflightChat && path === '/api/chat' && (method || 'GET') === 'POST') {
@@ -756,6 +757,9 @@ async function api(path, method, body, timeoutMs) {
     err.details = { path: path, target: target };
     throw err;
   }
+  if (resp.ok && onDelta && (resp.headers.get('Content-Type') || '').startsWith('text/event-stream')) {
+    return readChatStream(resp, onDelta);
+  }
   let data = null;
   try {
     data = await resp.json();
@@ -792,6 +796,43 @@ async function api(path, method, body, timeoutMs) {
     throw err;
   }
   return data;
+}
+
+async function readChatStream(resp, onDelta) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let pending = '';
+  let bytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error('Chat stream ended before completion; partial reply was not saved.');
+      bytes += chunk.value.byteLength;
+      if (bytes > 8 * 1024 * 1024) throw new Error('Chat stream exceeds limit');
+      pending += decoder.decode(chunk.value, { stream: true });
+      let end;
+      while ((end = pending.indexOf('\n\n')) !== -1) {
+        const frame = pending.slice(0, end);
+        pending = pending.slice(end + 2);
+        const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+        if (!data) continue;
+        const event = JSON.parse(data);
+        if (event.type === 'delta') onDelta(event.text);
+        else if (event.type === 'done') return event.data;
+        else if (event.type === 'error') {
+          const detail = event.error.detail;
+          const err = new Error(detail.code + ': ' + detail.message);
+          err.code = detail.code;
+          err.details = detail.details;
+          err.retryAfter = Number(new Headers(event.headers).get('Retry-After')) || 0;
+          throw err;
+        }
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 /* ── status / statusbar ── */
@@ -2168,6 +2209,13 @@ async function sendChat(text, asLoop, extra) {
     extra = asLoop;
     asLoop = false;
   }
+  let preview = null;
+  const onDelta = delta => {
+    if (revision !== sessionRevision || controller.signal.aborted) return;
+    if (!preview) preview = agent('', 'Generating · partial reply not saved');
+    preview.querySelector('.body').appendChild(document.createTextNode(delta));
+    stream.scrollTop = stream.scrollHeight;
+  };
   const body = { message: text, session_id: currentSession };
   if (asLoop) body.loop = true;
   if (extra && extra.retrieve) {
@@ -2175,8 +2223,9 @@ async function sendChat(text, asLoop, extra) {
     if (extra.retrieve_query) body.retrieve_query = extra.retrieve_query;
   }
   try {
-    const r = await api('/api/chat', 'POST', body);
+    const r = await api('/api/chat', 'POST', body, undefined, onDelta);
     if (revision !== sessionRevision) return null;
+    if (preview) { preview.remove(); preview = null; }
     return finishChat(r);
   } catch (e) {
     if (revision !== sessionRevision) return null;
@@ -2188,8 +2237,9 @@ async function sendChat(text, asLoop, extra) {
       await sleepMs(wait * 1000);
       if (revision !== sessionRevision || !loopState || loopState.stop) return null;
       try {
-        const retry = await api('/api/chat', 'POST', body);
+        const retry = await api('/api/chat', 'POST', body, undefined, onDelta);
         if (revision !== sessionRevision) return null;
+        if (preview) { preview.remove(); preview = null; }
         return finishChat(retry);
       } catch (e2) {
         if (revision !== sessionRevision) return null;
@@ -2207,6 +2257,7 @@ async function sendChat(text, asLoop, extra) {
     sys('error: ' + e.message);
     return null;
   } finally {
+    if (preview) preview.remove();
     if (inflightChat === controller) inflightChat = null;
     if (revision === sessionRevision) { sendBtn.disabled = false; input.focus(); }
   }

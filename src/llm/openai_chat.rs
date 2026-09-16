@@ -1,13 +1,12 @@
-//! OpenAI-compatible chat client with token-usage extraction and in-flight
-//! abort. Port of `harness/ollama.py` (+ `harness/chat_cancel.py`, which is
-//! unnecessary here: the request runs in its own tokio task, and aborting that
-//! task drops the connection).
+//! OpenAI-compatible chat with bounded JSON/SSE and per-call cancellation.
+//! Dropping the caller drops its HTTP future; no detached model task survives.
 
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::task::AbortHandle;
+use std::collections::BTreeMap;
+use tokio_util::sync::CancellationToken;
 
 use crate::common::errors::{HarnessError, Result};
 use crate::llm::backend::is_loopback_url;
@@ -37,7 +36,7 @@ pub struct ChatClient {
     pub reasoning_effort: Option<String>,
     pub timeout_sec: f64,
     http: reqwest::Client,
-    inflight: Mutex<Option<AbortHandle>>,
+    inflight: Mutex<BTreeMap<String, CancellationToken>>,
 }
 
 impl std::fmt::Debug for ChatClient {
@@ -132,14 +131,15 @@ impl ChatClient {
             reasoning_effort,
             timeout_sec,
             http,
-            inflight: Mutex::new(None),
+            inflight: Mutex::new(BTreeMap::new()),
         })
     }
 
-    /// Abort the in-flight POST (if any). Idempotent.
+    /// Abort every registered POST. Production single-flights via GenerationGate;
+    /// per-call records also keep independent direct callers from orphaning handles.
     pub fn abort_in_flight(&self) {
-        if let Some(handle) = self.inflight.lock().unwrap_or_else(|p| p.into_inner()).take() {
-            handle.abort();
+        for (_, token) in std::mem::take(&mut *self.inflight.lock().unwrap_or_else(|p| p.into_inner())) {
+            token.cancel();
         }
     }
 
@@ -151,6 +151,19 @@ impl ChatClient {
         model: Option<&str>,
         max_tokens: u64,
         temperature: f64,
+    ) -> Result<ChatResult> {
+        self.chat_stream(system_prompt, messages, model, max_tokens, temperature, None)
+            .await
+    }
+
+    pub async fn chat_stream(
+        &self,
+        system_prompt: &str,
+        messages: &[ChatMessage],
+        model: Option<&str>,
+        max_tokens: u64,
+        temperature: f64,
+        output: Option<super::openai_stream::Output<'_>>,
     ) -> Result<ChatResult> {
         let use_model = model
             .map(|m| m.trim())
@@ -174,7 +187,7 @@ impl ChatClient {
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = Value::String(effort.clone());
         }
-        let parsed = self.send_payload(payload).await?;
+        let parsed = self.send_payload(payload, output).await?;
         parse_chat_response(&parsed, &use_model)
     }
 
@@ -189,6 +202,21 @@ impl ChatClient {
         temperature: f64,
         tools: &[Value],
     ) -> Result<Value> {
+        self.chat_with_tools_stream(system, messages, model, max_tokens, temperature, tools, None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn chat_with_tools_stream(
+        &self,
+        system: &str,
+        messages: &[Value],
+        model: &str,
+        max_tokens: u64,
+        temperature: f64,
+        tools: &[Value],
+        output: Option<super::openai_stream::Output<'_>>,
+    ) -> Result<Value> {
         let mut all = vec![json!({"role":"system","content":system})];
         all.extend_from_slice(messages);
         let mut payload = json!({"model":model,"messages":all,"max_tokens":max_tokens,
@@ -201,10 +229,46 @@ impl ChatClient {
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = json!(effort);
         }
-        self.send_payload(payload).await
+        self.send_payload(payload, output).await
     }
 
-    async fn send_payload(&self, payload: Value) -> Result<Value> {
+    async fn send_payload(
+        &self,
+        mut payload: Value,
+        output: Option<super::openai_stream::Output<'_>>,
+    ) -> Result<Value> {
+        if output.is_some() {
+            payload["stream"] = json!(true);
+            payload["stream_options"] = json!({"include_usage":true});
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let token = CancellationToken::new();
+        self.inflight
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id.clone(), token.clone());
+        struct Call<'a> {
+            client: &'a ChatClient,
+            id: String,
+        }
+        impl Drop for Call<'_> {
+            fn drop(&mut self) {
+                self.client
+                    .inflight
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&self.id);
+            }
+        }
+        let _call = Call { client: self, id };
+        tokio::select! {
+            _ = token.cancelled() => Err(llm_err("cancelled").detail("cancelled", true)),
+            result = tokio::time::timeout(Duration::from_secs_f64(self.timeout_sec.max(1.0)), self.send_request(payload, output)) =>
+                result.map_err(|_| llm_err("model request deadline exceeded"))?,
+        }
+    }
+
+    async fn send_request(&self, payload: Value, output: Option<super::openai_stream::Output<'_>>) -> Result<Value> {
         let mut req = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
@@ -213,7 +277,7 @@ impl ChatClient {
             req = req.bearer_auth(&self.api_key);
         }
         let base_url = self.base_url.clone();
-        let task = tokio::spawn(async move {
+        async {
             let resp = req.send().await.map_err(|e| {
                 let kind = if e.is_timeout() {
                     "ReadTimeout"
@@ -232,6 +296,16 @@ impl ChatClient {
                 tracing::debug!("harness chat upstream HTTP {status}");
                 return Err(llm_err(format!("model server returned HTTP {}", status.as_u16())));
             }
+            if let Some(output) = output {
+                if resp
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|v| v.split(';').next().unwrap_or("").trim() == "text/event-stream")
+                {
+                    return super::openai_stream::read(resp, output).await;
+                }
+            }
             // Bound model-controlled JSON independently of the requested tokens.
             const MAX_RESPONSE_BYTES: usize = 4_194_304;
             let mut resp = resp;
@@ -249,23 +323,7 @@ impl ChatClient {
             let parsed: Value =
                 serde_json::from_slice(&body).map_err(|_| llm_err("malformed response from model server"))?;
             Ok::<Value, HarnessError>(parsed)
-        });
-        *self.inflight.lock().unwrap_or_else(|p| p.into_inner()) = Some(task.abort_handle());
-        // Dropping a research/chat request must also abort its spawned HTTP task.
-        struct AbortOnDrop(AbortHandle);
-        impl Drop for AbortOnDrop {
-            fn drop(&mut self) {
-                self.0.abort();
-            }
         }
-        let _abort_on_drop = AbortOnDrop(task.abort_handle());
-        let outcome = task.await;
-        *self.inflight.lock().unwrap_or_else(|p| p.into_inner()) = None;
-        match outcome {
-            Ok(Ok(parsed)) => Ok(parsed),
-            Ok(Err(e)) => Err(e),
-            Err(join) if join.is_cancelled() => Err(llm_err("cancelled").detail("cancelled", true)),
-            Err(_) => Err(llm_err("model call failed")),
-        }
+        .await
     }
 }
