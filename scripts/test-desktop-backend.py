@@ -53,6 +53,28 @@ def await_headless(child, http, base):
     return None
 
 
+def serve_expecting_refusal(home):
+    """Run `serve` on a fresh port until the port is actually ours.
+
+    serve checks port_in_use *before* it reads .env and then exits 0 with an
+    "already running" notice, so a lost port race looks like a refusal that
+    never happened -- the caller's `assertNotEqual(returncode, 0)` fails and the
+    credential path under test is never exercised.
+
+    Exit 0 is precisely the collision signal here: a successful start would
+    block until the timeout rather than return, and a genuine refusal is
+    non-zero. Retrying it cannot mask a real failure, because the last result is
+    returned either way and still gets asserted on.
+    """
+    for _ in range(PORT_ATTEMPTS):
+        result = subprocess.run([str(BIN), 'serve', '--port', str(free_port())],
+            env={'PATH': '/usr/bin:/bin', 'CGAGENTHARNESS_HOME': str(home)},
+            cwd='/', capture_output=True, timeout=STARTUP_TIMEOUT)
+        if result.returncode != 0:
+            break
+    return result
+
+
 BIN = Path(os.environ.get("CGAH_TEST_BINARY", "target/release/cgagentharness")).resolve()
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -336,9 +358,7 @@ class DesktopBoundary(unittest.TestCase):
                     dotenv.write_bytes(payload)
                     dotenv.chmod(0o644 if case == 'public' else 0o600)
                 try:
-                    result = subprocess.run([str(BIN), 'serve', '--port', str(free_port())],
-                        env={'PATH': '/usr/bin:/bin', 'CGAGENTHARNESS_HOME': str(self.home)},
-                        cwd='/', capture_output=True, timeout=STARTUP_TIMEOUT)
+                    result = serve_expecting_refusal(self.home)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(b'credential file', result.stderr)
                     self.assertNotIn(value.encode(), result.stdout + result.stderr)
