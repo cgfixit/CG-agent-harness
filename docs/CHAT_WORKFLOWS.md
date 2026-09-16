@@ -240,3 +240,13 @@ refused for `/loop` turns (`CLOUD_CHAT_LOOP`), which always run locally.
 Replies stream as server-sent events and `/loop stop` cancels the active turn;
 see [CHAT_STREAMING.md](CHAT_STREAMING.md).
 
+
+## Recall saved prompts
+
+In the single-line composer, Up recalls older saved prompts in the active
+session; Down moves forward and restores the unsent draft. The latest 50
+successfully persisted prompts come from that session's local JSON log,
+including after restart. Legacy logs seed the list from user messages;
+chat-context compaction does not erase it. Session switches and logout reset
+navigation state. No browser persistent storage is used. Failed submissions and
+unsaved slash commands are not part of prompt history.
