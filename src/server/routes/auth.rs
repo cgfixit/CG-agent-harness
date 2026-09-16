@@ -23,6 +23,20 @@ const ROLE_ADMIN: &str = "admin";
 const ROLE_OPERATOR: &str = "operator";
 const PERM_DENIED: &str = "AUTH_PERMISSION_DENIED";
 
+/// scrypt at n=2^17 allocates ~128 MiB per derivation, and tokio's blocking
+/// pool would otherwise run hundreds of them concurrently on a login burst.
+/// Two parallel password operations are plenty for a single-operator console.
+static AUTH_OP_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+/// Held across the blocking password operation. A closed semaphore is
+/// unreachable here; fail closed rather than run unbounded.
+async fn auth_op_permit() -> ApiResult<tokio::sync::SemaphorePermit<'static>> {
+    AUTH_OP_PERMITS
+        .acquire()
+        .await
+        .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))
+}
+
 fn manager(state: &AppState) -> ApiResult<&AuthManager> {
     state.auth.as_ref().ok_or_else(|| {
         ApiError::new(
@@ -149,6 +163,7 @@ pub async fn bootstrap_password(State(state): State<Arc<AppState>>, req: Request
         ));
     }
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
+    let _permit = auth_op_permit().await?;
     let st = state.clone();
     let result = tokio::task::spawn_blocking(move || {
         manager(&st).and_then(|m| m.bootstrap_set_password(&body.password).map_err(|e| map_auth_error(&e)))
@@ -167,6 +182,7 @@ pub async fn login(
     ValidJson(req): ValidJson<AuthLoginRequest>,
 ) -> ApiResult<Response> {
     manager(&state)?;
+    let _permit = auth_op_permit().await?;
     let st = state.clone();
     let result = tokio::task::spawn_blocking(move || {
         manager(&st).and_then(|m| m.login(&req.username, &req.password).map_err(|e| map_auth_error(&e)))
@@ -209,6 +225,7 @@ pub async fn change_password(State(state): State<Arc<AppState>>, req: Request<Bo
     let account = actor(&state, &req)?;
     let secure = crate::server::guards::request_scheme(&req) == "https";
     let ValidJson(body) = ValidJson::<AuthChangePasswordRequest>::from_request(req, &()).await?;
+    let _permit = auth_op_permit().await?;
     let st = state.clone();
     let result = tokio::task::spawn_blocking(move || {
         manager(&st)?
@@ -307,6 +324,7 @@ pub async fn create_user(State(state): State<Arc<AppState>>, req: Request<Body>)
     if account.role == ROLE_OPERATOR && role == ROLE_ADMIN {
         return Err(denied());
     }
+    let _permit = auth_op_permit().await?;
     let st = state.clone();
     let created = tokio::task::spawn_blocking(move || {
         manager(&st).and_then(|m| {
@@ -337,6 +355,7 @@ pub async fn set_password(
     }
     require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
+    let _permit = auth_op_permit().await?;
     let st = state.clone();
     tokio::task::spawn_blocking(move || {
         manager(&st).and_then(|m| {
@@ -423,6 +442,16 @@ mod tests {
         assert_eq!(with_cookie("other=1; nameless"), None);
         let bare = Request::builder().body(Body::empty()).unwrap();
         assert_eq!(cookie_value(&bare), None);
+    }
+
+    #[test]
+    fn password_operations_are_concurrency_bounded() {
+        let first = AUTH_OP_PERMITS.try_acquire().unwrap();
+        let second = AUTH_OP_PERMITS.try_acquire().unwrap();
+        assert!(AUTH_OP_PERMITS.try_acquire().is_err());
+        drop(first);
+        assert!(AUTH_OP_PERMITS.try_acquire().is_ok());
+        drop(second);
     }
 
     #[test]
