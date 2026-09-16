@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::common::atomic::write_json_atomic;
+use crate::common::atomic::write_json_atomic_mode;
 use crate::common::errors::{HarnessError, Result};
 
 pub const SESSION_ERROR_CODE: &str = "HARNESS_SESSION_ERROR";
@@ -369,7 +369,9 @@ impl SessionStore {
     fn write(&self, session: &Session) -> Result<()> {
         let path = self.path_for(&session.session_id)?;
         let payload = serde_json::to_value(session)?;
-        write_json_atomic(&path, &payload)
+        // Chat history can carry pasted secrets; pin 0600 explicitly instead of
+        // depending on the staging temp file's default permissions.
+        write_json_atomic_mode(&path, &payload, 0o600)
             .map_err(|_| HarnessError::new(PERSIST_ERROR_CODE, "could not persist session"))
     }
 }
@@ -397,5 +399,19 @@ mod tests {
         symlink(outside.path(), &dir).unwrap();
         assert!(store.clear().is_err());
         assert_eq!(std::fs::read_to_string(private).unwrap(), "keep");
+    }
+
+    #[test]
+    fn session_files_are_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let session = store.create("m", "alpha").unwrap();
+        let mode = std::fs::metadata(store.path_for(&session.session_id).unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
