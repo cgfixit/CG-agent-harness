@@ -17,7 +17,7 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 - Public `account` and `web` CLI operations call the same protected service; `tls` exports/renews local certificate material. See `docs/SECURE_RESEARCH.md`.
 - Fresh auth/TLS switches are true; existing explicit choices survive upgrades. SQLite accounts protect operational reads and writes. Harness API keys are optional metadata, never login authority.
 - Fresh web settings start enabled with an empty URL allowlist; existing choices and absent/invalid legacy fields remain unchanged/off. Exact/wildcard content permission is distinct from account and provider authority. Research/web selection and structured memory (facts/proposals/episodes) are account scoped (`user_id`, documented `local` via `context_owner`, or labeled `user_*` fixture owners); sessions/jobs/pinned notes/persona are shared portal resources. Episode capture is a separate default-false gate and is not prompt injection. Explicit recall is a third default-false gate: selected facts enter `/prompt` only after operator selection and assembly-time owner/active/revision revalidation. Retrieval/FTS is a fourth default-false gate, independent of `/memory on` and `explicit_recall`: search is not inject. Per-request `retrieve` / `/memory retrieve` is the explicit pick for that prompt; `auto_retrieval` is a fifth default-false silent path. FTS indexes facts only. Manual consolidation is a sixth default-false gate: selected episodes become pending proposals only and never auto-apply facts. Automatic consolidation is a seventh default-false gate that also requires consolidation (AND): a bounded idle worker may reuse the same pending-proposal runner. Feature-off starts no worker; chat wins the generation gate. Two further default-false config-only switches, `auto_suggest_chat` and `auto_suggest_coding`, require store + capture and may turn bounded current completion evidence into pending summaries/insights for the initiating owner. They never scan shared archives, fill human semantic summaries or auto-apply facts. See `docs/MEMORY_GUIDE.md`.
-- Chat exposes only bounded `web_search` (Google listings) and `web_fetch` (permitted URL content) tools when web is enabled; `/loop` stays tool-free. `SERPAPI_API_KEY` selects the fixed Google-results API, activates immediately when saved, and does not require a page URL grant; explicit process environment values override the saved file. No active key selects public Google, whose URL permissions and challenge failures remain explicit. Listings never grant destination permissions.
+- Chat exposes only bounded `web_search` (Google listings) and `web_fetch` (permitted URL content) tools when web is enabled; `/loop` stays tool-free. `SERPAPI_API_KEY` selects the fixed Google-results API; no active key selects public Google, whose challenges are explicit failures. Listings never grant destination permissions.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim`, never called in-process from the server).
 - Exit codes are an API: `0` ok, `2` failed, `3` env/config, `4` write refused.
@@ -28,6 +28,10 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 - Local planner `=== READ ===` and operator `--read-file` refuse a small
   default basename deny-list (`agentic.deepagent_github.denied_read_basenames`)
   after clone-jail canonicalization. Deny-list ≠ secret scanner; jail ≠ secrets.
+
+Saved `SERPAPI_API_KEY` changes activate immediately; explicit process environment
+values take precedence. The fixed SerpAPI search endpoint needs no page URL grant.
+Public Google fallback and destination page fetching retain URL permission checks.
 
 ## Traps
 
