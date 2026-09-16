@@ -46,8 +46,8 @@ async fn model() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
             Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_millis(20)))
         }
     }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+    let base = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
