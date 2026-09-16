@@ -270,15 +270,17 @@ cache and current-account selection. Previously recorded chat cannot be erased
 by later revocation. Model answers are not validated research citations; use
 dedicated `/web research` when checked quote references are required.
 
-### Phase 2 residual (issue #86)
+### Search and page permission boundaries (issue #86)
 
 A non-empty allowlist is an armed content surface: every granted origin or path
 is reachable by chat `web_fetch`, still bounded by `web.chat_tool_calls`
-(default 3). Fresh homes stay fail-closed (`WEB_ALLOWLIST_EMPTY` on both
-`web_fetch` and `web_search`). A non-empty policy that is not a Google search
-grant refuses listings with `WEB_GOOGLE_PERMISSION` — allow
-`https://www.google.com/*` or the exact generated search URL; an exact homepage
-grant is not enough. The console already lists current rules through
+(default 3). Fresh homes refuse page fetching with `WEB_ALLOWLIST_EMPTY`.
+Configured SerpAPI search uses its fixed provider endpoint without a page URL
+grant; listings do not authorize fetching their destinations. With no active
+SerpAPI key, public Google retains the URL-policy checks: an empty policy gives
+`WEB_ALLOWLIST_EMPTY`, and a non-Google policy gives `WEB_GOOGLE_PERMISSION`.
+That fallback needs `https://www.google.com/*` or the exact generated search URL;
+an exact homepage grant is not enough. The console already lists current rules through
 `renderWebStatus`. Session W0 of [#86](https://github.com/cgfixit/CG-agent-harness/issues/86)
 pins these contracts in `tests/chat_web.rs`; the disposable-home red-team
 matrix and any later hardening stay on that open issue.
