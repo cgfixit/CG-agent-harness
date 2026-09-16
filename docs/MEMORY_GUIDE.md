@@ -138,6 +138,11 @@ disables saving successful chat exchanges to the session store.
 - `/prompt` previews actual selected facts, pinned notes and persona. To preview
   retrieval, use `POST /api/prompt/preview` with `retrieve`/`retrieve_query`.
 
+Automatic chat retrieval matches any meaningful word in the bounded prompt prefix and ranks
+candidates with FTS5/BM25. Common question words are ignored; explicit keyword queries
+remain all-terms matches. This is lexical retrieval, so unrelated synonyms may not match.
+Owner, active status, revision and prompt-budget checks still apply before inclusion.
+
 The combined notes/facts body budget is 3000 characters (reserved 1500/1500 when
 both are present). Pending proposals and episode summaries never enter that
 budget. A saved fact can therefore exist without appearing in a particular prompt.

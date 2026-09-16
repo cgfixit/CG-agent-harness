@@ -1407,7 +1407,7 @@ async function runSlash(line) {
           const episode = (r.episodes || [])[0];
           if (!episode) { sys('No completed episode for this account. Capture is ' + (r.available ? 'on; complete a chat turn first.' : 'off; enable capture and complete a chat turn first.')); break; }
           const saved = await api('/api/structured-memory/episodes/' + encodeURIComponent(episode.id) + '/summary', 'POST', {summary:summary,reason:reason,confirm:true});
-          sys('Summary saved on episode ' + saved.id + '; run /memory consolidate ' + saved.id + ' to queue suggestions. No facts written.');
+          sys('Summary saved on episode ' + saved.id + '; eligible for automatic consolidation when enabled, or run /memory consolidate ' + saved.id + '. Review results with /memory proposals. No facts written.');
         } else if (sub === 'proposals') {
           document.querySelector('[data-pane="memory"]').click();
         } else if (sub === 'consolidate') {

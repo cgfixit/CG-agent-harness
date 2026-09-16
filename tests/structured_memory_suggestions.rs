@@ -455,6 +455,20 @@ async fn shipped_defaults_capture_suggest_consolidate_and_retrieve_reviewed_fact
         .1;
     assert_eq!(preview["structured_facts"]["injected"].as_array().unwrap().len(), 1);
     assert!(!preview["prompt"].as_str().unwrap().contains("FOREIGN_METRIC_FACT"));
+    // A fresh conversation must retrieve from the question, without an explicit keyword query.
+    let recalled_chat = s
+        .post_json(
+            "/api/chat",
+            json!({"message":"What are my preferences for units and answers?"}),
+        )
+        .await
+        .1;
+    assert_eq!(
+        recalled_chat["structured_facts"]["injected"].as_array().unwrap().len(),
+        1
+    );
+    assert!(recalled_chat["structured_facts"]["retrieval_error"].is_null());
+    settled(&s, "local").await;
     // A distinct eligible human summary exercises the idle consolidator while both automations are enabled.
     let episode = stage(store, "local");
     store
@@ -495,8 +509,7 @@ async fn shipped_defaults_capture_suggest_consolidate_and_retrieve_reviewed_fact
         .await
         .1;
     assert!(preview["structured_facts"]["injected"].as_array().unwrap().is_empty());
-    assert_eq!(
-        cgagentharness::server::structured_memory::OperatorGates::load(&s.state.home).resolve("auto_retrieval", true),
-        false
+    assert!(
+        !cgagentharness::server::structured_memory::OperatorGates::load(&s.state.home).resolve("auto_retrieval", true)
     );
 }
