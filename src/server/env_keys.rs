@@ -52,13 +52,13 @@ pub const MANAGED_KEYS: [KeySpec; 5] = [
     KeySpec {
         name: "GROK_API_KEY",
         label: "Grok (xAI)",
-        detail: "Optional cloud planner for the agentic real-repo loop (six-gate, per-run --confirm-online).",
+        detail: "Optional explicit Grok chat and cloud planner key. Chat sends a message only after selecting Grok; the coding loop retains its six gates.",
         self_auth: false,
     },
     KeySpec {
         name: "ANTHROPIC_API_KEY",
         label: "Claude (Anthropic)",
-        detail: "Optional cloud planner for the agentic real-repo loop (same six-gate).",
+        detail: "Optional explicit Claude chat and cloud planner key. Chat sends a message only after selecting Claude; the coding loop retains its six gates.",
         self_auth: false,
     },
     KeySpec {

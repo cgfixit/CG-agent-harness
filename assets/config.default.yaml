@@ -12,6 +12,19 @@ app:
   agent_job_poll_ms: 1500  # browser job polling, clamped to 1–30 seconds
 
 models:
+  # Remote chat is opt-in per model selection. A cloud turn sends only its newly
+  # typed message, never local history, skills, memory, or web context. Saving a
+  # provider key still requires restart.
+  cloud_chat:
+    enabled: true
+    max_tokens: 4096
+    timeout_sec: 90
+    grok:
+      enabled: true
+      model: "grok-4.6"
+    claude:
+      enabled: true
+      model: "claude-sonnet-5"
   local_llm:
     provider: "ollama"
     base_url: "http://127.0.0.1:11434/v1"  # loopback only; a non-loopback URL is refused

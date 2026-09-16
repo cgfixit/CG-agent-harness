@@ -51,6 +51,7 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::home::{is_loopback_host, validate_port, HarnessSettings, Home, DEFAULT_HOST};
 use crate::common::ratelimit::RateLimiter;
 use crate::llm::backend::resolve_local_backend;
+use crate::llm::cloud_chat::CloudChat;
 use crate::llm::openai_chat::{ChatClient, DEFAULT_CHAT_TIMEOUT_SEC};
 use crate::shim::ShimContext;
 
@@ -128,6 +129,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         &backend.api_key,
         backend.reasoning_effort.clone(),
     )?;
+    let cloud_chat = CloudChat::from_config(&cfg)?;
     let rate_limiter = RateLimiter::new(
         cfg.u64_or("api.rate_limit.max_requests", 60) as usize,
         cfg.f64_or("api.rate_limit.window_seconds", 60.0).max(0.001),
@@ -177,6 +179,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         store,
         backend,
         chat,
+        cloud_chat,
         audit,
         rate_limiter,
         loop_rate_limiter,

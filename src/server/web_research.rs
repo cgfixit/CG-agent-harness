@@ -186,6 +186,12 @@ async fn model_call(
     usage: &mut Vec<Usage>,
 ) -> Result<String> {
     authorize_owner(state, owner)?;
+    if state.cloud_chat.is_cloud_selection(&state.current_model()) {
+        return Err(error(
+            "CLOUD_CHAT_CONTEXT",
+            "web research requires a locally selected chat model",
+        ));
+    }
     let user = serde_json::to_string(body)?;
     let prompt = estimate(system).saturating_add(estimate(&user)).saturating_add(16);
     if spent(usage).saturating_add(prompt).saturating_add(cap) > state.web.limits.total_tokens {

@@ -43,9 +43,9 @@ pub async fn status(
     Json(json!({
         "version": crate::VERSION,
         "model": state.current_model(),
-        "provider": state.backend.provider,
+        "provider": state.current_provider(),
         "api_key_optional": state.api_key_optional,
-        "base_url": state.backend.base_url,
+        "base_url": if state.cloud_chat.is_cloud_selection(&state.current_model()) { Value::Null } else { json!(state.backend.base_url) },
         "soul_enabled": settings.soul_enabled,
         "soul": soul_status(&state, settings.soul_enabled),
         "memory_enabled": settings.memory_enabled,
@@ -85,7 +85,7 @@ pub async fn clear_sessions(
     ValidJson(req): ValidJson<SessionClearRequest>,
 ) -> ApiResult<Json<Value>> {
     crate::server::structured_memory_suggest::clear_chat_queue(&state);
-    state.chat.abort_in_flight();
+    state.abort_chat();
     let deleted = state
         .store
         .clear()
@@ -200,7 +200,9 @@ pub async fn model_select(
     snapshot
         .save(&state.home)
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    Ok(Json(json!({"model": state.current_model()})))
+    Ok(Json(
+        json!({"model": state.current_model(), "provider": state.current_provider()}),
+    ))
 }
 
 /// Keep the newest prior turns that fit `max_chars`; the newest message's tail survives.
@@ -300,8 +302,24 @@ async fn chat_inner(
             .create(&state.current_model(), "")
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
     };
+    let model = req
+        .model
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| state.current_model());
+    let cloud_selected = state.cloud_chat.is_cloud_selection(&model);
+    if cloud_selected && req.loop_turn {
+        return Err(loop_error(
+            "CLOUD_CHAT_LOOP",
+            "cloud chat is unavailable for /loop turns",
+        ));
+    }
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    let selected_skills = super::skills::resolve(&state, &session.selected_skills)?;
+    let selected_skills = if cloud_selected {
+        Vec::new()
+    } else {
+        super::skills::resolve(&state, &session.selected_skills)?
+    };
 
     let mut loop_claimed = false;
     if req.loop_turn {
@@ -344,7 +362,8 @@ async fn chat_inner(
 
     let Some(_gate) = state.generation_gate.claim("chat") else {
         drop(release);
-        let mut details = json!({"session_id": session.session_id, "timeout_sec": state.chat.timeout_sec as u64});
+        let mut details =
+            json!({"session_id": session.session_id, "timeout_sec": state.chat_timeout_sec(&model) as u64});
         if state.generation_gate.owner() == "chat" {
             details["cancel"] = json!("/api/chat/cancel");
         } else if state.generation_gate.owner() == "consolidation" {
@@ -359,7 +378,11 @@ async fn chat_inner(
     };
 
     let owner = super::auth::context_owner(user);
-    let web_context = state.web.context_text(settings.web_enabled, &owner);
+    let web_context = if cloud_selected {
+        String::new()
+    } else {
+        state.web.context_text(settings.web_enabled, &owner)
+    };
     let selections = req
         .selected_facts
         .as_ref()
@@ -376,22 +399,26 @@ async fn chat_inner(
             message: Some(req.message.as_str()),
         },
     );
-    let system_prompt = compose_system_prompt(&PromptInputs {
-        selected_skills: &selected_skills,
-        soul_enabled: settings.soul_enabled,
-        soul_override: None,
-        soul_path: &state.home.soul_path(),
-        soul_max_chars: crate::server::prompts::effective_soul_max_chars(
-            state.cfg.u64_or("personality.soul_max_chars", 8000),
-        ),
-        goal: Some(&session.goal),
-        web_context: Some(&web_context),
-        memory_context: Some(&pinned),
-        selected_facts_context: Some(&facts),
-        memory_budget,
-        memory_enabled: settings.memory_enabled,
-        web_enabled: settings.web_enabled,
-    });
+    let system_prompt = if cloud_selected {
+        String::new()
+    } else {
+        compose_system_prompt(&PromptInputs {
+            selected_skills: &selected_skills,
+            soul_enabled: settings.soul_enabled,
+            soul_override: None,
+            soul_path: &state.home.soul_path(),
+            soul_max_chars: crate::server::prompts::effective_soul_max_chars(
+                state.cfg.u64_or("personality.soul_max_chars", 8000),
+            ),
+            goal: Some(&session.goal),
+            web_context: Some(&web_context),
+            memory_context: Some(&pinned),
+            selected_facts_context: Some(&facts),
+            memory_budget,
+            memory_enabled: settings.memory_enabled,
+            web_enabled: settings.web_enabled,
+        })
+    };
     let (turns, chars) = if req.loop_turn {
         (LOOP_HISTORY_TURNS, LOOP_HISTORY_CHARS)
     } else {
@@ -411,7 +438,11 @@ async fn chat_inner(
         .into_iter()
         .rev()
         .collect();
-    let mut history = clip_history(&prior, chars);
+    let mut history = if cloud_selected {
+        Vec::new()
+    } else {
+        clip_history(&prior, chars)
+    };
     history.push(ChatMessage {
         role: "user".into(),
         content: req.message.clone(),
@@ -422,12 +453,16 @@ async fn chat_inner(
         state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_MAX_TOKENS)
     };
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
-    let model = req
-        .model
-        .clone()
-        .filter(|m| !m.trim().is_empty())
-        .unwrap_or_else(|| state.current_model());
-    let (reply, web_tools) = if settings.web_enabled && !req.loop_turn {
+    let (reply, web_tools) = if cloud_selected {
+        (
+            state
+                .cloud_chat
+                .chat(&model, &req.message)
+                .await
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
+            Vec::new(),
+        )
+    } else if settings.web_enabled && !req.loop_turn {
         crate::server::chat_web::run_stream(
             &state,
             &owner,
@@ -562,6 +597,6 @@ pub async fn cancel_chat(
         .chat_turn
         .cancel(&super::auth::context_owner(user))
         .map_err(|e| ApiError::from_err(StatusCode::FORBIDDEN, &e))?;
-    state.chat.abort_in_flight();
+    state.abort_chat();
     Ok(Json(json!({"cancelled": true})))
 }

@@ -1486,7 +1486,7 @@ async function runSlash(line) {
         if (rest[0] === 'use' && rest[1]) {
           const r = await api('/api/model', 'POST', { model: rest.slice(1).join(' ') });
           const planner = await api('/api/agent/checks');
-          sys('chat model selected: ' + r.model + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
+          sys('chat model selected: ' + r.model + ' via ' + r.provider + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
           await refreshStatus();
         } else {
           const s = await api('/api/status');

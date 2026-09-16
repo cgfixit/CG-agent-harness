@@ -24,7 +24,9 @@ exact tested sources and broader window/coding limits are recorded in
 4. Administrators manage optional provider credentials in **API Keys**. Restart
    to activate saved values; inherited environment values take precedence. A
    harness metadata key never grants account access. See [migration, roles and
-   TLS recovery](SECURE_RESEARCH.md).
+   TLS recovery](SECURE_RESEARCH.md). After restart, `/model use grok` or
+   `/model use claude` explicitly selects that cloud chat provider; local prompt
+   context is not sent and the coding planner remains separate.
 5. Web starts enabled with an empty URL allowlist. An administrator grants sources
    with `/web allow`; operators can then ask chat to fetch permitted URLs or search
    Google. `/web pages` and `/web research` retain permitted-page retrieval. No
