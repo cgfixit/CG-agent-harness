@@ -252,6 +252,7 @@ pub struct WebTool {
     pub test_resolve: Option<(String, SocketAddr)>,
     /// Additional exact hosts for bounded multi-site fixtures, never runtime configuration.
     pub test_resolve_extra: Vec<(String, SocketAddr)>,
+    pub(super) search_key_from_file: bool,
     pub limits: Limits,
     pub(super) permits: Semaphore,
     pub(super) mutation: Mutex<()>,
@@ -269,6 +270,7 @@ impl WebTool {
             test_resolve_extra: Vec::new(),
             permits: Semaphore::new(limits.concurrency),
             limits,
+            search_key_from_file: false,
             mutation: Mutex::new(()),
             search_gate: Arc::new(Semaphore::new(1)),
             research: super::web_research::ResearchState::default(),
@@ -322,7 +324,7 @@ impl WebTool {
         Ok(
             json!({"enabled": enabled, "allowlist": policy.rules.iter().map(|r| &r.pattern).collect::<Vec<_>>(),
             "rules": policy.rules, "policy_revision": policy.revision,
-            "search_provider": if std::env::var("SERPAPI_API_KEY").unwrap_or_default().trim().is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
+            "search_provider": if self.search_key()?.is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": MAX_ALLOW}),
         )

@@ -29,6 +29,10 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   default basename deny-list (`agentic.deepagent_github.denied_read_basenames`)
   after clone-jail canonicalization. Deny-list ≠ secret scanner; jail ≠ secrets.
 
+Saved `SERPAPI_API_KEY` changes activate immediately; explicit process environment
+values take precedence. The fixed SerpAPI search endpoint needs no page URL grant.
+Public Google fallback and destination page fetching retain URL permission checks.
+
 ## Traps
 
 - **Never** make the server reference `crate::agentic`; `tests/invariant_guard.rs`

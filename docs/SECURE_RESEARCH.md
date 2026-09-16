@@ -217,7 +217,8 @@ Reported usage sums all completed model calls; absent upstream usage remains
 marked unreported internally rather than being invented as actual token counts.
 Cancellation aborts the whole turn, including an outstanding content request.
 
-An administrator grants the generated search destination, normally:
+With a SerpAPI key saved, use `/web search <query>` directly. For the keyless
+public-Google fallback only, an administrator first grants the Google page:
 
 ```text
 /web allow https://www.google.com/*
@@ -243,8 +244,11 @@ that API, never in user-facing URLs, model context, returned metadata or error
 messages. Responses reflecting the credential in extracted listings are refused.
 Returned destination URLs never receive the key. The API client retains public
 DNS pinning, shared concurrency, no proxy/redirect/retry/pooling, and finite
-header/body/time bounds. Provider-key configuration and Google URL permission
-are both required for this path; neither authorizes arbitrary destinations.
+header/body/time bounds. A saved SerpAPI key applies immediately. With web enabled,
+SerpAPI listings need no Google URL grant; linked page fetches still require their
+own URL permission. Use **Test Google search** in API Keys to check setup.
+Chat starts with a focused contextual query, reuses duplicate searches, and stops
+when the evidence answers the question; the configured call/time/token caps remain enforced.
 
 With no active key, the app requests the permitted public Google search URL and
 parses recognizable organic result links in their returned order. It does not
@@ -266,15 +270,17 @@ cache and current-account selection. Previously recorded chat cannot be erased
 by later revocation. Model answers are not validated research citations; use
 dedicated `/web research` when checked quote references are required.
 
-### Phase 2 residual (issue #86)
+### Search and page permission boundaries (issue #86)
 
 A non-empty allowlist is an armed content surface: every granted origin or path
 is reachable by chat `web_fetch`, still bounded by `web.chat_tool_calls`
-(default 3). Fresh homes stay fail-closed (`WEB_ALLOWLIST_EMPTY` on both
-`web_fetch` and `web_search`). A non-empty policy that is not a Google search
-grant refuses listings with `WEB_GOOGLE_PERMISSION` — allow
-`https://www.google.com/*` or the exact generated search URL; an exact homepage
-grant is not enough. The console already lists current rules through
+(default 3). Fresh homes refuse page fetching with `WEB_ALLOWLIST_EMPTY`.
+Configured SerpAPI search uses its fixed provider endpoint without a page URL
+grant; listings do not authorize fetching their destinations. With no active
+SerpAPI key, public Google retains the URL-policy checks: an empty policy gives
+`WEB_ALLOWLIST_EMPTY`, and a non-Google policy gives `WEB_GOOGLE_PERMISSION`.
+That fallback needs `https://www.google.com/*` or the exact generated search URL;
+an exact homepage grant is not enough. The console already lists current rules through
 `renderWebStatus`. Session W0 of [#86](https://github.com/cgfixit/CG-agent-harness/issues/86)
 pins these contracts in `tests/chat_web.rs`; the disposable-home red-team
 matrix and any later hardening stay on that open issue.
@@ -362,10 +368,13 @@ unsafe or unreadable files are refused. Values are never stored in SQLite.
 
 Saved and active masks are separate. Explicit process environment values override
 saved credentials, including after restart. Clearing a saved key does not erase
-an inherited value or change a running provider. Restart to reload stored values;
+an inherited value. SerpAPI saves and clears apply to the next search immediately;
+other providers require a restart to reload stored values;
 remove an external environment override separately if that is the intent. Missing
 provider credentials affect only the selected provider's operation. The optional
-harness metadata key is never an account credential.
+harness metadata key is never an account credential. `GH_TOKEN` supplies the
+GitHub CLI and its Git credential helper after restart. Leave it unset to use
+existing `gh auth login`; token scopes never bypass repository write approvals.
 
 ## Reproducible evidence
 

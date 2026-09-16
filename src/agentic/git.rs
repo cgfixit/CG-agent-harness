@@ -7,7 +7,7 @@ use crate::common::{
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
 fn environment(extra: &[(&str, &str)]) -> BTreeMap<String, String> {
-    let mut env: BTreeMap<String, String> = ["PATH", "HOME", "LANG", "LC_ALL"]
+    let mut env: BTreeMap<String, String> = ["PATH", "HOME", "LANG", "LC_ALL", "GH_TOKEN", "GITHUB_TOKEN"]
         .iter()
         .filter_map(|key| std::env::var(key).ok().map(|v| (key.to_string(), v)))
         .collect();
@@ -205,4 +205,18 @@ pub fn isolate_clone_environment(env: &mut BTreeMap<String, String>, template: &
         "GIT_CONFIG_VALUE_0".into(),
         if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn credential_helper_receives_only_supported_tokens_and_no_git_overrides() {
+        let env = super::environment(&[]);
+        for key in ["GH_TOKEN", "GITHUB_TOKEN"] {
+            assert_eq!(env.get(key), std::env::var(key).ok().as_ref());
+        }
+        assert!(!env.contains_key("SERPAPI_API_KEY"));
+        assert!(!env.contains_key("GIT_CONFIG_COUNT"));
+        assert_eq!(env.get("GIT_CONFIG_NOSYSTEM").map(String::as_str), Some("1"));
+    }
 }

@@ -128,16 +128,63 @@ fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
 }
 
 impl WebTool {
+    /// Read the private saved key on demand; an explicit process environment still wins.
+    pub(super) fn search_key(&self) -> Result<String> {
+        if !self.search_key_from_file {
+            if let Ok(key) = std::env::var("SERPAPI_API_KEY") {
+                return Ok(key.trim().to_string());
+            }
+        }
+        let path = self.tools_dir.parent().unwrap_or(&self.tools_dir).join(".env");
+        super::env_keys::read_startup_keys(&path)
+            .map(|mut keys| keys.remove("SERPAPI_API_KEY").unwrap_or_default())
+            .map_err(|_| {
+                error(
+                    "WEB_SEARCH_KEY_UNAVAILABLE",
+                    "Cannot read the saved search key; check API Keys and credential-file permissions",
+                )
+            })
+    }
+
     /// A key chooses the fixed SerpAPI Google backend. It is never sent to Google
     /// or a returned result URL. No fallback on a configured provider's failure.
     pub async fn google_search(&self, query: &str, count: usize, enabled: bool, audit: &Audit) -> Result<Value> {
+        self.google_search_at(
+            query,
+            count,
+            enabled,
+            audit,
+            url::Url::parse("https://serpapi.com/search.json").unwrap(),
+        )
+        .await
+    }
+
+    // Only the fixed endpoint above is reachable in production; fixtures supply a loopback server.
+    async fn google_search_at(
+        &self,
+        query: &str,
+        count: usize,
+        enabled: bool,
+        audit: &Audit,
+        endpoint: url::Url,
+    ) -> Result<Value> {
         if query.trim().is_empty() || query.chars().count() > 200 || !(1..=10).contains(&count) {
             return Err(error(
                 "WEB_BAD_QUERY",
                 "search needs a query of 1–200 characters and 1–10 results",
             ));
         }
-        let policy = self.require_enabled(enabled)?;
+        if !enabled {
+            return Err(error("WEB_DISABLED", "web access is disabled"));
+        }
+        let key = self.search_key()?;
+        // Provider listings require web/account authority, not page-content permission.
+        // Public Google is a page fetch and retains the original URL policy checks.
+        let policy = if key.is_empty() {
+            Some(self.require_enabled(enabled)?)
+        } else {
+            None
+        };
         let target = ["https://www.google.com/search", "https://google.com/search"]
             .into_iter()
             .find_map(|base| {
@@ -145,7 +192,10 @@ impl WebTool {
                 url.query_pairs_mut()
                     .append_pair("q", query)
                     .append_pair("num", &count.to_string());
-                policy.authorize(url.as_str(), None).ok()
+                match &policy {
+                    Some(policy) => policy.authorize(url.as_str(), None).ok(),
+                    None => Some(url),
+                }
             })
             .ok_or_else(|| {
                 error(
@@ -159,7 +209,6 @@ impl WebTool {
             .clone()
             .try_acquire_owned()
             .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
-        let key = std::env::var("SERPAPI_API_KEY").unwrap_or_default();
         let provider = if key.trim().is_empty() {
             "google-public"
         } else {
@@ -178,21 +227,20 @@ impl WebTool {
             })?;
             public_results(&body, count)?
         } else {
-            self.api_search(
-                url::Url::parse("https://serpapi.com/search.json").unwrap(),
-                query,
-                count,
-                key.trim(),
-            )
-            .await?
+            self.api_search(endpoint, query, count, key.trim()).await?
         };
-        let current = self.policy()?;
-        current.authorize(target.as_str(), None)?;
-        if current.revision != policy.revision {
-            return Err(error(
-                "WEB_POLICY_CHANGED",
-                "search permission changed; results discarded",
-            ));
+        if let Some(policy) = policy {
+            let current = self.policy()?;
+            current.authorize(target.as_str(), None)?;
+            if current.revision != policy.revision {
+                return Err(error(
+                    "WEB_POLICY_CHANGED",
+                    "search permission changed; results discarded",
+                ));
+            }
+        }
+        if self.search_key()? != key {
+            return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
         }
         Ok(
             json!({"query":query,"provider":provider,"search_url":target.as_str(),"results":rows,
@@ -291,10 +339,53 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
+        crate::common::home::Home::at(dir.path().to_path_buf())
+            .ensure_layout()
+            .unwrap();
         let cfg = crate::common::config::AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
-        let mut web = WebTool::new(dir.path(), &cfg).unwrap();
+        let mut web = WebTool::new(&dir.path().join("tools"), &cfg).unwrap();
+        web.search_key_from_file = true;
         web.test_resolve = Some(("provider.example".into(), address));
         let endpoint = url::Url::parse("http://provider.example/search").unwrap();
+        let audit = crate::common::audit::Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        let path = dir.path().join(".env");
+        let save = super::super::env_keys::write_keys(
+            &path,
+            &std::collections::BTreeMap::from([("SERPAPI_API_KEY".into(), "fixture-secret-key".into())]),
+        )
+        .unwrap();
+        assert_eq!(save["restart_required"], false);
+        let status = super::super::env_keys::read_status(&path, &BTreeSet::from(["SERPAPI_API_KEY".into()])).unwrap();
+        let row = status.iter().find(|row| row["name"] == "SERPAPI_API_KEY").unwrap();
+        assert_eq!(row["active_configured"], true);
+        assert_eq!(row["pending_restart"], false);
+        let result = web
+            .google_search_at("veeam", 5, true, &audit, endpoint.clone())
+            .await
+            .unwrap();
+        assert_eq!(result["provider"], "google-serpapi");
+        assert_eq!(result["results"][0]["title"], "Actual API result");
+        assert_eq!(
+            web.require_enabled(true).unwrap_err().code,
+            "WEB_ALLOWLIST_EMPTY",
+            "search must not grant page permissions"
+        );
+        assert_eq!(
+            web.google_search_at("veeam", 5, false, &audit, endpoint.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "WEB_DISABLED"
+        );
+        super::super::env_keys::update_keys(&path, &Default::default(), &["SERPAPI_API_KEY".into()]).unwrap();
+        assert!(web.search_key().unwrap().is_empty());
+        assert_eq!(
+            web.google_search_at("veeam", 5, true, &audit, endpoint.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "WEB_ALLOWLIST_EMPTY"
+        );
         let rows = web
             .api_search(endpoint.clone(), "veeam", 5, "fixture-secret-key")
             .await

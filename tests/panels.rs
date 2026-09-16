@@ -26,6 +26,7 @@ async fn api_keys_panel_writes_dotenv_and_never_returns_values() {
         .collect();
     assert!(names.contains(&"CGAGENTHARNESS_API_KEY"));
     assert!(names.contains(&"GROK_API_KEY"));
+    assert!(names.contains(&"GH_TOKEN"));
     let resp = s.req(Method::GET, "/api/keys").send().await.unwrap();
     assert_eq!(
         resp.headers()["cache-control"].to_str().unwrap(),
