@@ -66,13 +66,13 @@ episodes referenced by pending proposals.
     `tests/fixtures/structured_memory/phase7/`: synthetic cases for stable
     preferences, temporary statements, negation, corrections, secrets,
     prompt injection, conflicting facts, and cross-owner attempts. A
-    fixture-model measurement path asserts provisional baselines before any
-    default-off gate is flipped. Live reviewer rates and latency percentiles
+    fixture-model measurement path asserts provisional baselines and shipped
+    enabled memory defaults. Live reviewer rates and latency percentiles
     stay documented-only.
 
-## Completion suggestions (separate opt-in)
+## Completion suggestions (independent gates)
 
-`auto_suggest_chat` and `auto_suggest_coding` are two additional default-false
+`auto_suggest_chat` and `auto_suggest_coding` are two additional default-true
 gates with administrator-only slash overrides. Both require an open store and episode capture;
 neither requires or opens consolidation, recall or retrieval. `suggestion_mode`
 selects `summaries`, `insights`, or `both` (default); invalid values disable them.

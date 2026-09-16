@@ -77,6 +77,7 @@ async fn interrupted_persona_apply_reconciles_without_replaying_writes() {
             (Some("EXTERNAL"), "interrupted", false),
         ] {
             let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+            std::fs::remove_file(s.home.join("soul.md")).unwrap(); // Explicit missing-persona recovery fixture.
             let (_, proposal) = s
                 .post_json(
                     "/api/soul/proposals",
@@ -175,18 +176,26 @@ async fn prompt_preview_is_guarded_private_and_matches_the_model() {
         preview["prompt"],
         model.last_request().unwrap()["messages"][0]["content"]
     );
-    assert_eq!(preview["soul"]["loaded"], false);
+    assert_eq!(preview["soul"]["loaded"], true);
+    assert!(preview["prompt"]
+        .as_str()
+        .unwrap()
+        .contains(cgagentharness::common::home::DEFAULT_SOUL.trim()));
     let (_, candidate) = s
         .post_json("/api/prompt/preview", json!({"soul_content":"CANDIDATE_PERSONA"}))
         .await;
     assert!(candidate["prompt"].as_str().unwrap().contains("CANDIDATE_PERSONA"));
-    assert!(!s.home.join("soul.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(s.home.join("soul.md")).unwrap(),
+        cgagentharness::common::home::DEFAULT_SOUL
+    );
 }
 
 #[tokio::test]
 async fn edits_require_confirmation_preserve_backups_and_reject_stale_or_invalid_content() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    std::fs::remove_file(s.home.join("soul.md")).unwrap(); // Exercise the explicit missing-persona branch.
     let mut edit = json!({"content":"PERSONA_ONE","base_revision":"missing","reason":"Human edit","confirm":false});
     assert_eq!(s.post_json("/api/soul/document", edit.clone()).await.0, 400);
     assert!(!s.home.join("soul.md").exists());
@@ -219,6 +228,7 @@ async fn edits_require_confirmation_preserve_backups_and_reject_stale_or_invalid
 async fn proposals_need_reviewed_revision_and_explicit_apply_and_rejection_preserves_persona() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    std::fs::remove_file(s.home.join("soul.md")).unwrap(); // Exercise the explicit missing-persona branch.
     let (_, proposal) = s
         .post_json(
             "/api/soul/proposals",

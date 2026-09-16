@@ -183,7 +183,9 @@ impl ScriptedProposer {
 
 #[cfg(unix)]
 impl ProposerClient for ScriptedProposer {
-    fn invoke(&self, _system: &str, user: &str, _max_tokens: u64, _temperature: Option<f64>) -> Result<String> {
+    fn invoke(&self, system: &str, user: &str, _max_tokens: u64, _temperature: Option<f64>) -> Result<String> {
+        assert!(system.contains(cgagentharness::common::home::DEFAULT_SOUL));
+        assert!(!system.contains("PRIVATE_LOCAL_PERSONA"));
         self.prompts.borrow_mut().push(user.to_string());
         Ok(self.replies.borrow_mut().pop().unwrap_or_default())
     }
@@ -203,6 +205,20 @@ fn loop_ctx(dir: &Path) -> AgenticCtx {
         ],
     );
     AgenticCtx::new(cfg, &dir.join("config.yaml")).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn generated_plan_receives_default_soul_without_private_persona_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = loop_ctx(dir.path());
+    std::fs::write(dir.path().join("soul.md"), "PRIVATE_LOCAL_PERSONA").unwrap();
+    let proposer = ScriptedProposer::new(&["Approach: inspect the supplied file."]);
+    assert_eq!(
+        generate_plan(&ctx, &proposer, "Inspect the fixture", "", 256).unwrap(),
+        "Approach: inspect the supplied file."
+    );
+    assert!(!proposer.prompts.borrow()[0].contains("PRIVATE_LOCAL_PERSONA"));
 }
 
 #[cfg(unix)]

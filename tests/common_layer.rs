@@ -479,6 +479,20 @@ fn home_layout_seeds_config_registry_and_skills_once() {
     let home = Home::at(dir.path().join("h"));
     home.ensure_layout().unwrap();
     assert!(home.config_path().exists());
+    let default_soul = cgagentharness::common::home::DEFAULT_SOUL;
+    assert_eq!(std::fs::read_to_string(home.soul_path()).unwrap(), default_soul);
+    assert!(
+        default_soul.chars().count() <= home.load_config().unwrap().u64_or("personality.soul_max_chars", 8000) as usize
+    );
+    std::fs::write(home.soul_path(), "CUSTOM_PERSONA").unwrap();
+    home.ensure_layout().unwrap();
+    assert_eq!(std::fs::read_to_string(home.soul_path()).unwrap(), "CUSTOM_PERSONA");
+    std::fs::remove_file(home.soul_path()).unwrap();
+    home.ensure_layout().unwrap();
+    assert!(
+        !home.soul_path().exists(),
+        "a deleted persona is not silently recreated"
+    );
     assert!(home.registry_path().exists());
     assert!(home.skills_dir().join("ponytail").join("SKILL.md").exists());
     std::fs::write(home.skills_dir().join("ponytail").join("SKILL.md"), "edited").unwrap();

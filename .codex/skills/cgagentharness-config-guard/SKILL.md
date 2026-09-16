@@ -1,6 +1,6 @@
 ---
 name: cgagentharness-config-guard
-description: Statically assert assets/config.default.yaml still honors harness security contracts — flag_is_true semantics, confirm never defaulted, shipped gates closed, loopback posture. Use before merging config.default.yaml changes or when asked to check config.
+description: Statically assert assets/config.default.yaml still honors harness security contracts — flag_is_true semantics, confirm never defaulted, shipped execution gates closed, loopback posture. Use before merging config.default.yaml changes or when asked to check config.
 ---
 
 # Config Guard (CG-agent-harness)
@@ -22,6 +22,7 @@ INFERENCE only if labeled as such and never replaces cargo evidence.
 |---|---|---|
 | H1 | FAIL | `flag_is_true`: unquoted YAML `true` only; quoted `"true"` / `"false"` / other strings are **OFF** |
 | H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `unslop.enabled`. Fresh web settings start enabled with an empty URL allowlist; existing choices and missing/invalid legacy web values stay unchanged/off. Fresh `auth.enabled` and `tls.enabled` must be true. Config gates are locked by `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; web seeding and legacy preservation by the home/settings tests in `tests/common_layer.rs`. `security.api_key_optional` remains true but is deprecated metadata, not an account bypass |
+| H11 | FAIL | Fresh `memory.enabled` and all nine `structured_memory` feature gates are true; persisted explicit off choices still win. Proposals never auto-apply facts. Memory defaults do not arm repository execution/write gates |
 | H10 | FAIL | Invalid auth/TLS switch types refuse configuration; missing legacy fields remain off. Do not apply the generic quoted-gate OFF behavior to these security switches |
 | H3 | FAIL | Literal YAML needles: `api_key_optional: true` and `allow_git_write_tools: false`; shipped YAML must not contain `allow_git_write_tools: true` (string forms hide mistakes) |
 | H4 | FAIL | Write path still requires human `reason` + per-call `confirm` (never defaulted) — behavior locked in writer + `real_repo_loop` / shim routes; config must not document or enable a bypass |
@@ -60,7 +61,7 @@ When the change is semantically load-bearing for writes/jails, also run
 ```text
 Config Guard: PASS|FAIL
 Evidence: <test names + results>
-Gates: <each H1–H10 one line>
+Gates: <each H1–H11 one line>
 Re-tune: <none | list>
 Verdict: safe to merge / fix required: ...
 ```

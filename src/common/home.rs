@@ -9,7 +9,7 @@
 //!   harness.json       {soul_enabled, selected_model, web_enabled, memory_enabled, port}
 //!   .env               managed API keys (written by env_keys)
 //!   auth.sqlite3       users + hashed sessions; legacy auth.json is migration input
-//!   soul.md            optional read-only operator persona
+//!   soul.md            seeded default, editable operator persona
 //!   sessions/          one JSON per chat session
 //!   skills/<name>/SKILL.md
 //!   tools/             web allowlist + last extract
@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 use super::atomic::write_json_atomic;
 use super::config::AppConfig;
 use super::errors::{HarnessError, Result};
+
+pub const DEFAULT_SOUL: &str = include_str!("../../assets/soul.default.md");
 
 pub const HOME_ENV: &str = "CGAGENTHARNESS_HOME";
 pub const HOME_DIRNAME: &str = ".CGagentHarness";
@@ -162,12 +164,31 @@ impl Home {
             if std::fs::symlink_metadata(&policy).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
                 write_json_atomic(&policy, &serde_json::json!({"version": 1, "rules": []}))?;
             }
+            self.seed_default_soul()?;
             std::fs::write(self.config_path(), AppConfig::embedded_default())?;
         }
         if !self.registry_path().exists() {
             std::fs::write(self.registry_path(), include_str!("../../assets/skills_registry.json"))?;
         }
         self.seed_skills();
+        Ok(())
+    }
+
+    /// Seed only during fresh-home initialization; never replace an existing path.
+    fn seed_default_soul(&self) -> Result<()> {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(self.soul_path()) {
+            Ok(mut file) => file.write_all(DEFAULT_SOUL.as_bytes())?,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err.into()),
+        }
         Ok(())
     }
 

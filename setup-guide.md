@@ -474,8 +474,8 @@ agentic:
 Restart only after editing configuration; `/model use` applies to chat without
 a restart and does not change the coding planner. Existing homes are not
 overwritten with new configuration defaults; review new fields when upgrading.
-A missing `soul.md` is a valid starting state; section 7.2 explains optional
-explicit creation.
+Fresh homes seed the bundled default `soul.md`; section 7.2 explains editing
+and existing-home behavior.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
 (Cmd-,) shows its owned endpoint and model/tool diagnostics. Use **Check installed
@@ -594,10 +594,14 @@ The goal persists, while continuation counters and auto state are page state.
 Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
 an explicit separate workflow in section 9.4.
 
-### 7.2 Missing soul, effective prompt and persona editing
+### 7.2 Default soul, effective prompt and persona editing
 
-**Missing soul means no persona file loaded, not a broken installation.** Fresh
-homes enable the soul toggle but do not create `soul.md`. The base general-chat prompt still operates. The two seeded coding skills are
+**Fresh homes seed the bundled CG Agent persona and enable the soul toggle.**
+Existing homes, custom files and deliberate deletions are preserved. Missing soul
+means no persona file loaded; the base general-chat prompt still operates.
+Planning and coding use the same public shipped communication guidance, beneath
+their governed output contracts. Private local persona edits are not implicitly
+sent to a cloud coding provider. The two seeded coding skills are
 optional context and are not injected automatically. A missing persona is not fetched
 from CyClaw or Codex automatically.
 
@@ -857,15 +861,15 @@ overrides config `true`. They take effect immediately but
    - `structured_memory.retrieval` / `/memory retrieval on` — allow bounded
      FTS search and per-request force-include.
    - `structured_memory.auto_retrieval` / `/memory auto-retrieve on` —
-     **Advisor-sensitive silent path.** When this is on **and** retrieval is
+     Automatic path. When this is on **and** retrieval is
      on, chat may FTS the user message and inject rechecked top-k without a
      per-request flag. Ships true for fresh homes; turn it off to require explicit retrieval.
    - `structured_memory.consolidation` / `/memory consolidation on` — allow
      `/memory consolidate <episode-id...>` to turn selected episodes into
-     pending proposals only. Ships false.
+     pending proposals only. Ships true for fresh homes.
    - `structured_memory.auto_consolidation` / `/memory auto-consolidate on` —
      bounded idle worker that reuses the manual consolidator. Requires
-     consolidation (AND). Ships false. Feature-off starts no worker. Chat
+     consolidation (AND). Ships true for fresh homes. Feature-off starts no worker. Chat
      wins the generation gate. Pending proposals only.
    - `structured_memory.auto_suggest_chat` / `/memory auto-suggest-chat on` —
      queue the completed current chat turn for pending suggestions. Requires capture.
@@ -1013,8 +1017,8 @@ When only one source is present it may use the full 3000.
 
 **Not in this tree:** embeddings, vector DB, RAG fusion, or episode FTS.
 Status can report `retrieval: true` or `consolidation: true` while fusion
-and RAG stay false. `auto_consolidation` ships false; enable it only with
-consolidation. Feature-off starts no worker.
+and RAG stay false. `auto_consolidation` ships true for fresh homes and still
+requires consolidation. Feature-off starts no worker.
 
 Complete type/flag/bounds overview: [docs/MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md).
 The next-task [memory benchmark plan](docs/MEMORY_BENCHMARK_PLAN.md) follows the
@@ -1782,7 +1786,7 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 | `/memory consolidate` or auto-consolidator reports the gate off | `structured_memory.consolidation` (and for auto, also `auto_consolidation`) are off, or the store is closed | Enable the store in `config.yaml`, restart, then `/memory consolidation on`. Auto additionally needs `/memory auto-consolidate on`. Fresh defaults are on; existing off choices are preserved |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
 | Model inventory says `tag_missing`, or fallback is selected unexpectedly | Exact configured ID is absent from a responding inventory | Compare section 4 inventories and config; verify persisted `/model` selection against the resolved endpoint, then restart to reevaluate fallback |
-| Soul says missing | No `soul.md` exists in this active home | Valid fresh-home state; use explicit `/soul edit` if you want persona, then `/soul on` and `/prompt` |
+| Soul says missing | No `soul.md` exists in this active home | Valid existing-home state; use `/soul edit` to create persona, then `/soul on` and `/prompt` |
 | Soul saved but is not in chat | Toggle off, wrong home or rejected/stale save | Confirm Setup home, `/soul status`, editor result and `/prompt`; reload a stale editor before saving again |
 | Persona/proposal save conflicts or history is full | Base revision changed or 32-record store reached | Review current content/history; preserve and deliberately archive records if needed; do not retry blindly or delete the active persona |
 | Selected skill prevents chat | Missing, empty, unreadable or unsafe file; wrong directory ID | Check `<home>/skills/<id>/SKILL.md`; restore it or `/skill clear`, then inspect `/prompt` |

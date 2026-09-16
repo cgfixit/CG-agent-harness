@@ -33,8 +33,8 @@ you touch the behavior.
 | Console asset | `assets/static/harness.html` (CSRF placeholders contractual) |
 | Sync vs detached agent | `/api/agent/run` and `/api/agent/jobs` both via `prepare_run` |
 
-This is **not** CyClaw. No RAG, soul, LangGraph I1–I5, or triple-gate product
-surface. Defer CyClaw policy questions to Advisor. Preserve harness posture:
+This is **not** CyClaw. Harness has its own persona and structured-memory
+surfaces; no external-corpus RAG, LangGraph I1–I5, or CyClaw triple-gate topology. Defer CyClaw policy questions to Advisor. Preserve harness posture:
 I6 isolation, guard chain, write gates, clone jail, judged-before-land,
 approval binding, secrets redaction, detached-run gates.
 

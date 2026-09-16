@@ -2,15 +2,17 @@
 
 The fixed 48 actions are tracked in [actions.json](actions.json). This document
 defines intended adaptations; it does not claim they are implemented. Current
-source pins and implementation/verification states belong to the ledger.
+source pins and implementation/verification states belong to the ledger. Its
+validation entries describe the pinned baseline, not current release acceptance.
+For current memory defaults and controls see [MEMORY_GUIDE.md](../MEMORY_GUIDE.md).
 
 Memory facts are explicitly reviewed operator data, separate from short notes.
 Issue #87 M1+M3+M5+Phase 4+Phase 5 implement account-private facts, governed
 proposals, optional bounded episodes, explicit selected-fact recall, and
-opt-in facts-only FTS5 retrieval, and manual consolidation behind `structured_memory.enabled`,
+facts-only FTS5 retrieval, and manual consolidation behind `structured_memory.enabled`,
 `episode_capture`, `explicit_recall`, `retrieval`, `auto_retrieval`,
 `consolidation`, and `auto_consolidation`
-(literal booleans, all ship false).
+(literal booleans, all ship true for fresh homes; existing explicit off choices survive).
 Proposals bind an action, payload and expected fact version; application needs
 an operator reason, confirmation, and scan. Episode v1 stores opaque
 session/turn refs plus a privacy-filtered metadata summary — not a raw query,
@@ -21,7 +23,7 @@ separately gated `auto_retrieval` silent path, plus assembly-time
 owner/active/revision recheck. Episode FTS, embeddings, retrieval fusion,
 and episode prompt injection are not shipped; those status flags remain
 false. Manual consolidation writes pending proposals only. Optional
-auto-consolidation is a harness-only default-off idle worker that reuses
+auto-consolidation is a harness-only default-on idle worker that reuses
 that runner and still never applies facts. The existing 3000-character memory budget
 (reserved 1500/1500 when notes and facts both compete) still applies.
 
@@ -63,7 +65,7 @@ existing home/clone and loopback invariants only behind explicit configuration
 and their own enforcement/tests. They must not weaken the default boundaries.
 
 CyClaw `memory/consolidation.py` is still a no-op stub. Harness Phase 6 adds
-manual selected-episode consolidation and a default-off idle auto worker;
+manual selected-episode consolidation and a default-on idle auto worker;
 both still never apply facts. Retired DeepAgents graph/optimizer
 work stays excluded (`CLAUDE.md` describes its retirement; builder/scaffold
 presence does not make it an active parity requirement). RAG ingestion,

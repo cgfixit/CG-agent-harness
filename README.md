@@ -251,8 +251,11 @@ starts no worker. Chat wins generation-gate contention. Recalled text cannot
 authorize tools, coding, or network. This tree does not ship embeddings, a
 vector database, RAG fusion, or episode FTS. See
 [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) and
-[setup-guide §7.5](setup-guide.md#75-operator-memory-notes). A missing
-`soul.md` is reported as missing rather than loaded. `GOAL_DONE` is an unverified
+[setup-guide §7.5](setup-guide.md#75-operator-memory-notes). Fresh homes seed `soul.md` from the public [default persona](assets/soul.default.md).
+The same shipped communication guidance is included in planning and coding prompts;
+their exact output and approval contracts take precedence. Existing local persona
+edits or deletions are preserved; private edits are not sent to coding providers.
+A missing `soul.md` in an existing home is reported honestly as missing. `GOAL_DONE` is an unverified
 model report, not evidence that coding work is complete.
 
 Use `/prompt` to inspect the next chat's system prompt, `/soul edit` for the
