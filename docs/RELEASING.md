@@ -16,7 +16,8 @@ version: `v0.1.0` becomes `v0.1.1`. Changes to documentation or workflows also
 count as source changes. The application/Cargo version is not automatically
 edited; the release tag and bundled `Resources/COMMIT` identify the build.
 
-Backend CI must pass before clean CLI packaging and the reusable universal
+Both Bundle and release stage CLI artifacts through `scripts/package-release.sh`
+(release build, named artifact, sha256, extract-verify). Backend CI must pass before clean CLI packaging and the reusable universal
 macOS desktop build. Both packaging jobs must pass, then downloaded checksums
 are verified. The workflow rechecks the version, creates a draft with all
 assets, and publishes it as a regular Latest release (`gh release edit --latest`).

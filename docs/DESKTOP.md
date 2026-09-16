@@ -98,6 +98,12 @@ path from `/`, and verifies protocol, child PID and a fresh challenge through
 inherited stdin/stdout plus certificate-pinned HTTPS readiness. The backend binds port
 zero before reporting its address; there is no port-probe/rebind race and no
 adoption of an existing listener. The local HTTPS endpoint applies account roles, origin, CSRF and rate checks.
+
+The WebView reaches the shell only through four Tauri commands in
+`desktop/src/main.rs`: `desktop_status` (current backend state), `retry_backend`
+(relaunch the sidecar), `check_models` (re-probe the local model inventory) and
+`prepare_cargo` (stage the offline Cargo set). None of them accept a command
+line; the backend's HTTP API remains the only operational surface.
 Explicit legacy HTTP configuration is preserved. A readiness
 challenge provides no operator API authority. `serve --port …` and worker CLI
 behavior remain available independently.
