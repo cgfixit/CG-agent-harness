@@ -27,7 +27,7 @@ models:
       model: "claude-sonnet-5"
   local_llm:
     provider: "ollama"
-    base_url: "http://127.0.0.1:11434/v1"  # loopback only; a non-loopback URL is refused
+    base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
     model: "qwen3.8:27b-mlx"
     # Sent only for a resolved Ollama backend. none | low | medium | high | max;
     # absent/empty omits the field, an invalid value fails at boot.
@@ -46,7 +46,7 @@ models:
     fallback:
       enabled: false
       provider: "lmstudio"
-      base_url: "http://127.0.0.1:1234/v1"
+      base_url: "http://127.0.0.1:1234/v1"  # DevSkim: ignore DS162092 - LM Studio loopback only; non-loopback refused at runtime
       model: "qwen3.8-27b-instruct"
       probe_timeout_sec: 1.5
 
@@ -213,7 +213,7 @@ agentic:
   deepagent_github:
     enabled: false
     provider: "ollama"
-    base_url: "http://127.0.0.1:11434/v1"
+    base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
     model: "qwen3.8:27b-mlx"
     planner_timeout_sec: 720
     # ~24k-char planner prompt + planner_max_tokens 3072 now fits comfortably in 32k (previously tight against a 16k window).
