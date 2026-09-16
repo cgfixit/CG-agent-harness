@@ -180,6 +180,10 @@ endpoint in section 4. If the CLI is unavailable, follow the official
 [Ollama quickstart](https://docs.ollama.com/quickstart). The harness does not
 install Ollama or download a model automatically.
 
+Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
+`OLLAMA_CONTEXT_LENGTH=32768` is set **before** the Ollama process starts.
+Section 4 is the set-and-verify step. The harness sends no `num_ctx`.
+
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
 If you plan to use the optional real-repo coding pipeline in section 9, you'll also need the
@@ -231,6 +235,33 @@ curl --fail --silent --show-error http://127.0.0.1:11434/v1/models
 If the endpoint is unavailable, start the existing Ollama app or `ollama serve`.
 Do not start a second daemon on an occupied port. Leave a terminal-started daemon
 running in its terminal while you use another terminal for the harness.
+
+Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 require a
+**32768-token** Ollama window. The harness sends no `num_ctx`; it inherits
+whatever window the Ollama process started with. Set the env **before** that
+process starts. Changing it later needs a full quit and relaunch, not a second
+daemon on an occupied port.
+
+```bash
+OLLAMA_CONTEXT_LENGTH=32768 ollama serve
+```
+
+For the Ollama.app GUI, set the same variable on the app's process (for example
+`launchctl setenv OLLAMA_CONTEXT_LENGTH 32768`), then fully quit and relaunch
+the app. Do not import a CyClaw Ollama env file into this repository.
+
+After you choose a tag (below) and send a short generate, confirm the loaded
+window. Do not send `num_ctx` in the generate body:
+
+```bash
+curl --fail --silent --show-error http://127.0.0.1:11434/api/generate \
+  -d '{"model":"REPLACE-WITH-EXACT-TAG","prompt":"hi","stream":false,"options":{"num_predict":1}}'
+curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
+```
+
+`/api/ps` must report `context_length` **32768**. If you cannot raise the
+window, keep `web.total_tokens: 16000` and `web.evidence_tokens: 3000` in the
+home `config.yaml` instead of the seed values.
 
 Choose the **exact installed identifier**. On the acceptance Mac it was
 `qwen3.8:27b`; the separately installed `qwen3.8:27b-mlx` had a different digest.
@@ -303,10 +334,12 @@ under `models.local_llm.inventory`; fallback uses `probe_timeout_sec` with the s
 byte limit. Probes use no proxies or redirects. See the
 [resolver](src/llm/backend.rs) and [inventory checks](src/llm/inventory.rs).
 
-Keep historical model measurements separate from current settings. The native
-CLI and desktop runs used different recorded contexts; neither is a recommended
-context value for every machine. Refer to [native CLI acceptance](docs/MAC_ACCEPTANCE.md)
-and [desktop acceptance](docs/DESKTOP_ACCEPTANCE.md) for each run's exact evidence.
+Keep historical model measurements separate from current settings. Native CLI
+acceptance recorded context 8192 as a conservative fixture; desktop acceptance
+recorded 32768. Neither is a copy-paste default. The seeded 28000/6000 web
+budgets require a verified `OLLAMA_CONTEXT_LENGTH=32768` as above, not those
+records. Refer to [native CLI acceptance](docs/MAC_ACCEPTANCE.md) and
+[desktop acceptance](docs/DESKTOP_ACCEPTANCE.md) for each run's exact evidence.
 Do not infer an execution backend from a tag suffix or change the running model
 service just to match a historical measurement.
 
@@ -1239,7 +1272,7 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 
 | Setting | Scope / persistence | How to verify |
 |---|---|---|
-| Model endpoint, provider, timeout, temperature and token ceiling | `config.yaml`, home-wide; restart after edits. Local context is the Ollama server window (32768 via `OLLAMA_CONTEXT_LENGTH`), not a harness `num_ctx`. `max_tokens` is still the output ceiling. | `/model`, Setup diagnostics and an actual reply |
+| Model endpoint, provider, timeout, temperature and token ceiling | `config.yaml`, home-wide; restart after edits. Local context is the Ollama server window (32768 via `OLLAMA_CONTEXT_LENGTH`, verified in section 4), not a harness `num_ctx`. `max_tokens` is still the output ceiling. | `/model`, Setup diagnostics, `/api/ps` `context_length`, and an actual reply |
 | `/model use <name>` | Persisted console model selection; subsequent requests | `/model`; it can differ from the seeded YAML tag |
 | Persona and soul toggle | `soul.md` plus `harness.json`, shared across sessions; next request | `/soul status`, `/prompt` |
 | Runtime skill file | `<home>/skills/<id>/SKILL.md`; selection is per session | `/skill status` and next `/prompt`; last successful snapshot may be older |
@@ -1254,11 +1287,11 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 
 For output style, use section 7.4 before tuning generation parameters.
 `models.local_llm.max_tokens` is an output ceiling and can truncate a reply.
-Local context is the Ollama server window (32768 via `OLLAMA_CONTEXT_LENGTH`);
-the harness sends no `num_ctx`. `temperature` changes sampling, not a
-deterministic filler filter. Loop requests also have the separate
-`api.harness_loop_rate_limit` budget. Keep persona and selected skills concise
-enough to leave useful room for the question and context.
+Local context is the Ollama server window (32768 via `OLLAMA_CONTEXT_LENGTH`,
+verified in section 4); the harness sends no `num_ctx`. `temperature` changes
+sampling, not a deterministic filler filter. Loop requests also have the
+separate `api.harness_loop_rate_limit` budget. Keep persona and selected skills
+concise enough to leave useful room for the question and context.
 
 ### Tunables you may want to know about
 
@@ -1278,9 +1311,9 @@ ones operators most often ask about:
 | `auth.max_concurrent_operations` | 2 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
 | `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use, and regardless of use |
 | `structured_memory.*` | see file | Per-owner caps (facts, proposals, episodes, bytes), search/retrieval limits, suggestion queue and consolidation thresholds |
-| `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, clamped 256–6000 |
+| `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, clamped 256–6000. Keep 3000 if the Ollama window is smaller than 32768 or unverified |
 | `web.model_tokens` | 1024 | Maximum synthesis completion, clamped 256–2048 |
-| `web.total_tokens` | 28000 | Planning and synthesis budget, clamped 2048–32000. Stay under 32000 so an over-budget estimate does not hard-fail |
+| `web.total_tokens` | 28000 | Planning and synthesis budget, clamped 2048–32000, sized for a **verified** 32768-token Ollama window (section 4). Stay under 32000 so an over-budget estimate does not hard-fail. Keep 16000 if `/api/ps` shows a smaller `context_length` |
 
 `assets/config.default.yaml` is seed-only. Existing homes keep their seeded
 `config.yaml` until you copy the new `web.*` values.
@@ -1644,9 +1677,15 @@ command -v rustc cargo git gh ollama
 rustc --version
 cargo --version
 ollama list
+# After a one-token generate against the chosen tag (section 4):
+curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 gh auth status
 git remote get-url origin
 ```
+
+`/api/ps` must report `context_length` 32768 before using the seeded
+`web.total_tokens` 28000 and `web.evidence_tokens` 6000. If it does not, keep
+16000 and 3000 in the home `config.yaml`.
 
 Check both configured model tags, the selected repository and write gates. The
 existing hidden `agentic test` command checks some configuration/tools, but is
