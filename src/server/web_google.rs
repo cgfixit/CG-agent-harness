@@ -300,6 +300,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows[0].title, "Actual API result");
+        let serialized = serde_json::to_string(&rows).unwrap();
+        assert!(
+            !serialized.contains("fixture-secret-key"),
+            "HTTP-shaped listing JSON must not echo the provider key: {serialized}"
+        );
+        let audit = crate::common::audit::Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        crate::common::tool_broker::assert_allowed(
+            "web_search",
+            &["veeam".into()],
+            &std::collections::BTreeSet::from(["web_search".to_string()]),
+            &audit,
+        )
+        .unwrap();
+        let audit_text = std::fs::read_to_string(dir.path().join("audit.jsonl")).unwrap();
+        assert!(audit_text.contains("tool_broker_decision"), "{audit_text}");
+        assert!(audit_text.contains("argv_digest"), "{audit_text}");
+        assert!(!audit_text.contains("fixture-secret-key"), "{audit_text}");
+        assert!(!audit_text.contains("api_key"), "{audit_text}");
         for (query, code) in [("quota", "WEB_SEARCH_QUOTA"), ("reflect", "WEB_SEARCH_RESPONSE")] {
             let failure = web
                 .api_search(endpoint.clone(), query, 5, "fixture-secret-key")
@@ -307,6 +325,11 @@ mod tests {
                 .unwrap_err();
             assert_eq!(failure.code, code);
             assert!(!failure.to_string().contains("fixture-secret-key"));
+            let http_shaped = json!({"detail":{"code":failure.code,"message":failure.message}});
+            assert!(
+                !http_shaped.to_string().contains("fixture-secret-key"),
+                "HTTP error envelope echoed the provider key: {http_shaped}"
+            );
         }
         server.abort();
     }
