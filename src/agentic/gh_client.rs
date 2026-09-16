@@ -76,7 +76,32 @@ pub fn resolve_gh() -> Result<PathBuf> {
 }
 
 /// Confirm `gh` is installed and at/above `min_version`.
+///
+/// The installed `gh` binary cannot change mid-process, so the detected
+/// version is cached after the first successful spawn: callers like
+/// `fetch_pr_context` and `fetch_repo_context` can invoke `run_read` several
+/// times per `agentic` action, and each call previously re-spawned
+/// `gh --version` (with its own retry/timeout) before doing the real read.
+/// Failures are never cached, so a transient spawn/timeout error still
+/// retries on the next call.
 pub fn check_gh_version(min_version: (u32, u32, u32)) -> Result<(u32, u32, u32)> {
+    static CACHED: OnceLock<(u32, u32, u32)> = OnceLock::new();
+    if let Some(&found) = CACHED.get() {
+        return if found < min_version {
+            Err(HarnessError::gh_version(format!(
+                "gh {}.{}.{} is too old; need >= {}.{}.{}",
+                found.0, found.1, found.2, min_version.0, min_version.1, min_version.2
+            )))
+        } else {
+            Ok(found)
+        };
+    }
+    let found = check_gh_version_uncached(min_version)?;
+    let _ = CACHED.set(found);
+    Ok(found)
+}
+
+fn check_gh_version_uncached(min_version: (u32, u32, u32)) -> Result<(u32, u32, u32)> {
     let binary = resolve_gh()?;
     let argv = vec![binary.display().to_string(), "--version".into()];
     let env = gh_env();

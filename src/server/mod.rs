@@ -146,6 +146,10 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     };
     let csrf_token = crate::common::random_urlsafe(32);
     let console_html = console::HARNESS_HTML.replace(console::CSRF_PLACEHOLDER, &csrf_token);
+    let console_html_segments: Vec<String> = console_html
+        .split(console::CSP_NONCE_PLACEHOLDER)
+        .map(str::to_string)
+        .collect();
     let api_key = opts
         .api_key
         .or_else(|| std::env::var(crate::common::apikey::API_KEY_ENV).ok());
@@ -188,7 +192,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         generation_gate: GenerationGate::new(),
         agent_run_gate: GenerationGate::new(),
         csrf_token,
-        console_html,
+        console_html_segments,
         api_key_optional: true,
         api_key,
         key_file_sources: opts.key_file_sources,

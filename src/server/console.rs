@@ -22,7 +22,19 @@ pub async fn console(State(state): State<Arc<AppState>>) -> Response {
     // Minted per request: a nonce reused across responses is replayable by any
     // markup an XSS bug injects.
     let nonce = crate::common::random_urlsafe(16);
-    let html = state.console_html.replace(CSP_NONCE_PLACEHOLDER, &nonce);
+    // The page is pre-split around the nonce placeholder at startup (see
+    // `console_html_segments`), so each request joins segments with the fresh
+    // nonce instead of rescanning and reallocating the whole ~130KB page.
+    let segments = &state.console_html_segments;
+    let mut html = String::with_capacity(
+        segments.iter().map(String::len).sum::<usize>() + nonce.len() * segments.len().saturating_sub(1),
+    );
+    for (i, segment) in segments.iter().enumerate() {
+        if i > 0 {
+            html.push_str(&nonce);
+        }
+        html.push_str(segment);
+    }
     let csp = format!(
         "default-src 'none'; script-src 'self' 'nonce-{nonce}'; style-src 'nonce-{nonce}'; \
          connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
