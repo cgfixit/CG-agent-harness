@@ -1,6 +1,7 @@
 //! JSON-backed chat session store with per-session token tallies.
 //! Port of `harness/sessions.py`; on-disk shape unchanged.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -103,6 +104,9 @@ fn session_error(message: &str, session_id: &str) -> HarnessError {
 pub struct SessionStore {
     dir: PathBuf,
     lock: Mutex<()>,
+    /// `list()` summaries keyed by path. Store writes explicitly invalidate
+    /// their row; ordinary out-of-band changes use the (mtime, len) stamp.
+    summaries: Mutex<HashMap<PathBuf, (std::time::SystemTime, u64, Value)>>,
 }
 
 impl std::fmt::Debug for SessionStore {
@@ -117,6 +121,7 @@ impl SessionStore {
         Ok(Self {
             dir: dir.to_path_buf(),
             lock: Mutex::new(()),
+            summaries: Mutex::new(HashMap::new()),
         })
     }
 
@@ -175,9 +180,12 @@ impl SessionStore {
         Ok(session)
     }
 
-    /// Summaries newest-first; corrupt or stray files are skipped.
+    /// Summaries newest-first; corrupt or stray files are skipped. Summaries
+    /// are cached per path and re-parsed only when the file's (mtime, len)
+    /// stamp changes, so the open list route does not re-read every session
+    /// body on each poll.
     pub fn list(&self) -> Vec<Value> {
-        let mut entries: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+        let mut entries: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
         if let Ok(rd) = std::fs::read_dir(&self.dir) {
             for e in rd.flatten() {
                 let p = e.path();
@@ -185,21 +193,41 @@ impl SessionStore {
                 if p.extension().and_then(|s| s.to_str()) != Some("json") || !id_re().is_match(stem) {
                     continue;
                 }
-                let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-                entries.push((mtime, p));
+                let (mtime, len) = e
+                    .metadata()
+                    .map(|m| (m.modified().unwrap_or(std::time::UNIX_EPOCH), m.len()))
+                    .unwrap_or((std::time::UNIX_EPOCH, 0));
+                entries.push((mtime, len, p));
             }
         }
         entries.sort_by_key(|a| std::cmp::Reverse(a.0));
-        let mut out = Vec::new();
-        for (_, p) in entries {
-            let Ok(text) = std::fs::read_to_string(&p) else {
-                continue;
-            };
-            let Ok(session) = serde_json::from_str::<Session>(&text) else {
-                continue;
-            };
-            out.push(session.summary());
+        let mut cache = self.summaries.lock().unwrap_or_else(|p| p.into_inner());
+        let mut live = std::collections::HashSet::new();
+        let mut out = Vec::with_capacity(entries.len());
+        for (mtime, len, p) in entries {
+            live.insert(p.clone());
+            if let Some((cached_mtime, cached_len, summary)) = cache.get(&p) {
+                if *cached_mtime == mtime && *cached_len == len {
+                    out.push(summary.clone());
+                    continue;
+                }
+            }
+            let summary = std::fs::read_to_string(&p)
+                .ok()
+                .and_then(|text| serde_json::from_str::<Session>(&text).ok())
+                .map(|session| session.summary());
+            match summary {
+                Some(summary) => {
+                    cache.insert(p, (mtime, len, summary.clone()));
+                    out.push(summary);
+                }
+                None => {
+                    cache.remove(&p);
+                }
+            }
         }
+        // Drop rows for deleted sessions so the cache cannot grow unbounded.
+        cache.retain(|p, _| live.contains(p));
         out
     }
 
@@ -372,7 +400,9 @@ impl SessionStore {
         // Chat history can carry pasted secrets; pin 0600 explicitly instead of
         // depending on the staging temp file's default permissions.
         write_json_atomic_mode(&path, &payload, 0o600)
-            .map_err(|_| HarnessError::new(PERSIST_ERROR_CODE, "could not persist session"))
+            .map_err(|_| HarnessError::new(PERSIST_ERROR_CODE, "could not persist session"))?;
+        self.summaries.lock().unwrap_or_else(|p| p.into_inner()).remove(&path);
+        Ok(())
     }
 }
 
@@ -413,5 +443,66 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+}
+
+#[cfg(test)]
+mod list_cache_tests {
+    use super::*;
+
+    #[test]
+    fn summaries_are_cached_and_re_parsed_only_after_a_rewrite() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let a = store.create("m", "alpha").unwrap();
+        let b = store.create("m", "beta").unwrap();
+        assert_eq!(store.list().len(), 2);
+        assert_eq!(store.summaries.lock().unwrap().len(), 2);
+        // A store-level rewrite must invalidate even if the filesystem stamp
+        // is restored and the new title has the same length.
+        let a_path = store.path_for(&a.session_id).unwrap();
+        let a_metadata = std::fs::metadata(&a_path).unwrap();
+        store.rename(&a.session_id, Some("bravo"), None).unwrap();
+        assert_eq!(a_metadata.len(), std::fs::metadata(&a_path).unwrap().len());
+        std::fs::File::open(&a_path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(a_metadata.modified().unwrap()))
+            .unwrap();
+        let listed = store.list();
+        let titles: Vec<&str> = listed.iter().filter_map(|s| s["title"].as_str()).collect();
+        assert!(titles.contains(&"bravo"), "titles={titles:?}");
+        // An out-of-band rewrite of different length must also invalidate.
+        let path = store.path_for(&b.session_id).unwrap();
+        let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        raw["title"] = json!("external edit with a longer title");
+        std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
+        assert!(store
+            .list()
+            .iter()
+            .any(|s| s["title"] == "external edit with a longer title"));
+        // Deleting a file drops its cache row.
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(store.summaries.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_corrupt_session_file_is_skipped_and_not_cached() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let a = store.create("m", "alpha").unwrap();
+        let path = store.path_for(&a.session_id).unwrap();
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(store.list().is_empty());
+        assert!(store.summaries.lock().unwrap().is_empty());
+        // Repairing the file out-of-band is picked up on the next list.
+        std::fs::write(
+            &path,
+            format!("{{\"session_id\":\"{}\",\"title\":\"fixed\"}}", a.session_id),
+        )
+        .unwrap();
+        let list = store.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["title"], "fixed");
     }
 }
