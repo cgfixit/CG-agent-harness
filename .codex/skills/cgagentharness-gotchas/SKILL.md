@@ -210,6 +210,47 @@ not runtime `/api/skills` plugins.
   is already understood.
 - **Evidence:** the Codex "About Codex in GitHub" block on any PR in this repo.
 
+## 17. The docs audit agent can cite lines that do not exist
+
+- **Symptom:** A drift report says "USER_MANUAL.md line 15 says sessions are
+  written to `sessions/*.json`"; the file has no such line. Applying the edit
+  blindly fails, or worse, inserts prose at a guessed location.
+- **Wrong fix:** Trust a subagent's line numbers or quoted text as evidence.
+- **Right fix:** Every audited claim is a *hypothesis*. Before editing, `grep`
+  the quoted anchor in the named file; skip the finding if it does not match.
+  Quote code values (config defaults, ranges, alias spellings) from `rg`, never
+  from the report. The `doc-sync` skill's "grep it" rule exists for this.
+- **Evidence:** 2026-09-16 docs refresh (PR #131): 1 of ~20 findings was
+  fabricated; the other 19 were verbatim-verifiable.
+
+## 18. Memory gate slash aliases are not the config key names
+
+- **Symptom:** Docs (or a doc fix) write `/memory auto-retrieval on` or
+  `/memory auto-consolidation on`; the console rejects them.
+- **Wrong fix:** Derive the alias from the `structured_memory.*` key.
+- **Right fix:** The console alias map is `gateMap` in
+  `assets/static/harness.html` and the help line in `src/server/views.rs`:
+  `capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|
+  auto-suggest-chat|auto-suggest-coding`. The HTTP body for
+  `POST /api/structured-memory/gates` takes the *config* name
+  (`episode_capture`, `explicit_recall`, `auto_retrieval`, ...) instead.
+  Two spellings, two surfaces; grep the one you are documenting.
+
+## 19. Do not cut a release the maintainer already cut
+
+- **Symptom:** Asked to "cut a release after the PR", you dispatch
+  `release.yml` with `publish=true`; it fails with
+  "Candidate tag already exists" or "Release already exists (including drafts)".
+- **Wrong fix:** Retry, delete the draft, or push a tag by hand.
+- **Right fix:** Before any dispatch, list `release.yml` runs and releases. A
+  tag push (`push` event, `head_branch: vX.Y.Z`) or a pending
+  `workflow_dispatch` on the same SHA means the release is already in flight;
+  watch that run instead. The planner (`scripts/release-plan.py`) fails closed
+  on collisions by design. Also note: a green `Bundle` run on the exact main
+  SHA is a hard precondition for `schedule`/`workflow_dispatch` releases.
+- **Evidence:** 2026-09-16, `v0.1.14` tag push started run 26 while the docs
+  PR was being drafted; dispatch run 27 queued behind it.
+
 ## Related skills
 
 Load `cgagentharness-project-guidance` for read order;
