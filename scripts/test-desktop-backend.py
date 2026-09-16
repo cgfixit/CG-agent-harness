@@ -20,6 +20,39 @@ import unittest
 import urllib.error
 import urllib.request
 
+# A cold macOS runner can spend seconds in first-process-launch before the
+# binary's own main() runs, so these budget for the launch, not for the work.
+STARTUP_TIMEOUT = 20
+PORT_ATTEMPTS = 3
+
+
+def free_port():
+    """An ephemeral port the OS just handed out.
+
+    Advisory only: the reservation must close before a child can bind the port,
+    so anything else on the runner may take it in between. Callers that start a
+    server retry on a fresh port rather than read one collision as a failure of
+    the thing under test.
+    """
+    with contextlib.closing(socket.socket()) as reservation:
+        reservation.bind(('127.0.0.1', 0))
+        return reservation.getsockname()[1]
+
+
+def await_headless(child, http, base):
+    """The served page once the child answers, or None if it never does."""
+    deadline = time.monotonic() + STARTUP_TIMEOUT
+    while time.monotonic() < deadline:
+        if child.poll() is not None:
+            return None
+        try:
+            with http.open(base + '/', timeout=.2) as response:
+                return response.read()
+        except (urllib.error.URLError, TimeoutError):
+            time.sleep(.02)
+    return None
+
+
 BIN = Path(os.environ.get("CGAH_TEST_BINARY", "target/release/cgagentharness")).resolve()
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -212,31 +245,34 @@ class DesktopBoundary(unittest.TestCase):
             with self.subTest(explicit_environment=override is not None, file_present=file_present):
                 if not file_present:
                     dotenv.unlink()
-                with socket.socket() as reservation:
-                    reservation.bind(('127.0.0.1', 0))
-                    port = reservation.getsockname()[1]
                 # Model startup probes are disabled in the shipped config.
                 env = {'PATH': '/usr/bin:/bin', 'CGAGENTHARNESS_HOME': str(self.home)}
                 if override is not None:
                     env['CGAGENTHARNESS_API_KEY'] = override
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                context.load_verify_locations(cafile=str(self.home / 'tls/server.pem'))
+                http = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
                 with tempfile.TemporaryFile() as output:
-                    child = subprocess.Popen([str(BIN), 'serve', '--port', str(port)],
-                        env=env, cwd='/', stdout=output, stderr=output)
-                    base = f'https://127.0.0.1:{port}'
-                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                    context.load_verify_locations(cafile=str(self.home / 'tls/server.pem'))
-                    http = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
+                    # A lost race for the port is a runner collision, not a
+                    # product failure. Retry on a fresh one, and if the child
+                    # keeps dying, say why instead of 'headless startup exited'.
+                    for attempt in range(1, PORT_ATTEMPTS + 1):
+                        output.seek(0)
+                        output.truncate()
+                        port = free_port()
+                        base = f'https://127.0.0.1:{port}'
+                        child = subprocess.Popen([str(BIN), 'serve', '--port', str(port)],
+                            env=env, cwd='/', stdout=output, stderr=output)
+                        html = await_headless(child, http, base)
+                        if html is not None:
+                            break
+                        child.kill()
+                        child.wait(timeout=STARTUP_TIMEOUT)
+                        output.seek(0)
+                        self.assertLess(attempt, PORT_ATTEMPTS,
+                            f'headless startup never answered on {PORT_ATTEMPTS} ports; '
+                            f'last child output: {output.read()!r}')
                     try:
-                        deadline = time.monotonic() + 5
-                        while True:
-                            self.assertIsNone(child.poll(), 'headless startup exited')
-                            try:
-                                with http.open(base + '/', timeout=.2) as response:
-                                    html = response.read()
-                                break
-                            except (urllib.error.URLError, TimeoutError):
-                                self.assertLess(time.monotonic(), deadline, 'headless startup deadline')
-                                time.sleep(.02)
                         csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
                         def request(path, headers, body=None):
                             req = urllib.request.Request(base + path, headers=headers, data=None if body is None else json.dumps(body).encode())
@@ -295,12 +331,9 @@ class DesktopBoundary(unittest.TestCase):
                     dotenv.write_bytes(payload)
                     dotenv.chmod(0o644 if case == 'public' else 0o600)
                 try:
-                    with socket.socket() as reservation:
-                        reservation.bind(('127.0.0.1', 0))
-                        port = reservation.getsockname()[1]
-                    result = subprocess.run([str(BIN), 'serve', '--port', str(port)],
+                    result = subprocess.run([str(BIN), 'serve', '--port', str(free_port())],
                         env={'PATH': '/usr/bin:/bin', 'CGAGENTHARNESS_HOME': str(self.home)},
-                        cwd='/', capture_output=True, timeout=5)
+                        cwd='/', capture_output=True, timeout=STARTUP_TIMEOUT)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(b'credential file', result.stderr)
                     self.assertNotIn(value.encode(), result.stdout + result.stderr)

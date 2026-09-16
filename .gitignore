@@ -16,3 +16,7 @@ sessions/
 .env
 .env.*
 !.env.example
+
+# Running the in-tree python scripts (scripts/*.py) byte-compiles them here.
+__pycache__/
+*.pyc
