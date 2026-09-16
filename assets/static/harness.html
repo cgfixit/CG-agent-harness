@@ -29,11 +29,16 @@
     --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* Rules below set `display` at ID specificity, which outranks the UA sheet's
+     `[hidden]`. Keep the attribute authoritative so every toggled node stays
+     collapsed. */
+  [hidden] { display: none !important; }
   button, input { font: inherit; }
   body {
     background: var(--bg-primary); color: var(--text-primary);
     font-family: var(--sans); font-size: 13px; line-height: 1.5;
-    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    height: 100vh; height: 100dvh;
+    display: flex; flex-direction: column; overflow: hidden;
   }
 
   /* ── HEADER ── */
@@ -58,12 +63,34 @@
   .pill.model b { color: var(--accent-amber); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-green); }
 
+  /* ── HEADER AUTH ── */
+  #harnessAuth { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  #hAuthSetup, #hAuthLoginBox { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  #hAuthWho { font-family: var(--mono); font-size: 10.5px; color: var(--text-secondary); }
+  /* An empty status span would still draw a flex gap. */
+  #hAuthWho:empty { display: none; }
+  #harnessAuth .toggle {
+    padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-tertiary); color: var(--text-secondary);
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .5px;
+    text-transform: uppercase; line-height: 1.45; white-space: nowrap;
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+  }
+  #harnessAuth .toggle:hover { background: var(--border); color: var(--text-primary); }
+  #harnessAuth #hAuthLogin, #harnessAuth #hAuthSetupBtn {
+    background: var(--accent-amber); border-color: var(--accent-amber);
+    color: #000; font-weight: 700;
+  }
+  #harnessAuth #hAuthLogin:hover, #harnessAuth #hAuthSetupBtn:hover {
+    background: #e8a31c; border-color: #e8a31c; color: #000;
+  }
+
   /* ── LAYOUT ── */
   .main { display: flex; flex: 1; min-height: 0; }
 
   /* sidebar */
   .sidebar {
-    width: 264px; flex-shrink: 0; background: var(--bg-secondary);
+    width: clamp(208px, 22vw, 288px); flex-shrink: 0; background: var(--bg-secondary);
     border-right: 1px solid var(--border); display: flex; flex-direction: column;
   }
   .side-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
@@ -112,6 +139,61 @@
   .reg-head {
     font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
     color: var(--text-muted); margin: 10px 4px 4px;
+  }
+
+  /* ── API KEYS pane ── styling only; refreshKeys() owns the markup ── */
+  #pane-api-keys > p { font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; }
+  #pane-api-keys > button {
+    width: 100%; margin-bottom: 12px; padding: 7px 10px; cursor: pointer;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .5px; text-transform: uppercase;
+    color: var(--text-primary); background: var(--bg-tertiary);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #pane-api-keys > button:hover { border-color: var(--border-focus); color: var(--accent-amber); }
+  /* One card per credential. Two columns so the save/clear pair shares a row;
+     every other child spans both. */
+  #pane-api-keys form {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    padding: 12px; margin-bottom: 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  #pane-api-keys form > * { grid-column: 1 / -1; min-width: 0; }
+  #pane-api-keys form > label {
+    font-family: var(--mono); font-size: 11.5px; color: var(--accent-green);
+    overflow-wrap: anywhere;
+  }
+  #pane-api-keys form > p {
+    font-family: var(--mono); font-size: 10px; color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+  /* The feedback paragraph is empty until a request fails. */
+  #pane-api-keys form > p:empty { display: none; }
+  #pane-api-keys form > p[role="status"] { color: var(--accent-red); }
+  #pane-api-keys form > input {
+    width: 100%; padding: 7px 9px; font: inherit; outline: none;
+    color: var(--text-primary); background: var(--bg-input);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #pane-api-keys form > input::placeholder { color: var(--text-muted); }
+  #pane-api-keys form > input:focus {
+    border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(212, 146, 11, .18);
+  }
+  #pane-api-keys form > button {
+    grid-column: auto; padding: 7px 10px; cursor: pointer;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .4px; text-transform: uppercase;
+    font-weight: 700; color: #000;
+    background: var(--accent-amber); border: 1px solid var(--accent-amber); border-radius: 6px;
+  }
+  /* Save is the submit button; clear is type="button" and stays secondary. */
+  #pane-api-keys form > button[type="button"] {
+    font-weight: 400; color: var(--text-secondary);
+    background: transparent; border-color: var(--border);
+  }
+  #pane-api-keys form > button:disabled { opacity: .45; cursor: default; }
+  #pane-api-keys form > button:not(:disabled):hover { background: #e8a31c; border-color: #e8a31c; }
+  #pane-api-keys form > button[type="button"]:not(:disabled):hover {
+    background: var(--border); border-color: var(--border); color: var(--text-primary);
   }
 
   /* console */
@@ -169,15 +251,68 @@
   .toggle .v.on { color: var(--accent-green); }
   .toggle .v.off { color: var(--accent-red); }
   .apikey {
-    font: inherit; color: var(--text-primary); background: none; width: 130px;
-    border: none; border-bottom: 1px solid var(--text-muted); padding: 0 2px; outline: none;
+    font: inherit; color: var(--text-primary); background: var(--bg-input);
+    width: 130px; max-width: 100%;
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; outline: none;
+    transition: border-color .15s ease, box-shadow .15s ease;
   }
+  .apikey::placeholder { color: var(--text-muted); }
+  .apikey:focus { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(212, 146, 11, .18); }
+  /* The status bar row stays dense; the header fields get room for their labels. */
+  .statusbar .apikey { padding: 3px 8px; }
+  #harnessAuth .apikey { width: 160px; }
 #soulEditor, #sessionClearDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
 #sessionClearDialog { max-width:520px; }
 #sessionClearDialog button { padding:8px 12px; margin-right:8px; }
 #sessionClearConfirm { color:var(--accent-red); }
 #soulContent { width:100%;height:200px; }
 #soulFeedback { white-space:pre-wrap;max-height:250px;overflow:auto; }
+
+  /* ── KEYBOARD FOCUS ── several controls set `outline: none`, which left
+     keyboard navigation with no visible focus at all. ── */
+  #harnessAuth .toggle:focus-visible, .apikey:focus-visible, #send:focus-visible,
+  .side-tab:focus-visible, .cmd-item:focus-visible, #pane-api-keys :focus-visible,
+  #pane-memory :focus-visible {
+    outline: 2px solid var(--accent-amber); outline-offset: 2px;
+  }
+
+  /* ── RESPONSIVE ── the console is loopback-only, but it still gets opened in
+     a split pane, on a laptop, or over a forwarded port from a phone. ── */
+  @media (max-width: 860px) {
+    .header { gap: 8px; padding: 8px 12px; }
+    .header-right { width: 100%; margin-left: 0; gap: 8px; }
+    .login-hint { order: 3; width: 100%; max-width: none; }
+    .main { flex-direction: column; }
+    .sidebar {
+      width: auto; max-height: 38vh;
+      border-right: none; border-bottom: 1px solid var(--border);
+    }
+    /* A column flex item defaults to min-height:auto and would refuse to
+       shrink below the stream's content height. */
+    .console { min-height: 0; }
+    .stream { padding: 12px; }
+    .inputbar, .statusbar { padding-left: 12px; padding-right: 12px; }
+    .statusbar { flex-wrap: wrap; gap: 8px 12px; }
+    .statusbar .spacer { display: none; }
+  }
+  @media (max-width: 520px) {
+    .sidebar { max-height: 34vh; }
+    /* The default 30% basis keeps five tabs on two rows; a wider basis would
+       push them onto three and eat the pane. */
+    .side-tab { padding: 7px 4px; }
+    .header-right { gap: 6px; }
+    #harnessAuth { width: 100%; }
+    #hAuthSetup, #hAuthLoginBox { width: 100%; }
+    #harnessAuth .apikey { flex: 1 1 120px; width: auto; }
+    #send { padding: 9px 14px; }
+    #sGoal { max-width: 90px; }
+    #soulEditor, #sessionClearDialog { width: 94%; padding: 16px; }
+    #pane-api-keys form { grid-template-columns: 1fr; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 0.01ms !important; }
+  }
 </style>
 </head>
 <body>
