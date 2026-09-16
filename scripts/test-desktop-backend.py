@@ -256,9 +256,14 @@ class DesktopBoundary(unittest.TestCase):
                     # A lost race for the port is a runner collision, not a
                     # product failure. Retry on a fresh one, and if the child
                     # keeps dying, say why instead of 'headless startup exited'.
+                    #
+                    # Every attempt's output is kept. The credential-disclosure
+                    # assertion in the finally below reads this same file, so
+                    # truncating between attempts would discard a leak that
+                    # happened on a failed startup and let the check pass on a
+                    # later clean one. Each child inherits the fd and so appends
+                    # from the offset the read below leaves at EOF.
                     for attempt in range(1, PORT_ATTEMPTS + 1):
-                        output.seek(0)
-                        output.truncate()
                         port = free_port()
                         base = f'https://127.0.0.1:{port}'
                         child = subprocess.Popen([str(BIN), 'serve', '--port', str(port)],
@@ -271,7 +276,7 @@ class DesktopBoundary(unittest.TestCase):
                         output.seek(0)
                         self.assertLess(attempt, PORT_ATTEMPTS,
                             f'headless startup never answered on {PORT_ATTEMPTS} ports; '
-                            f'last child output: {output.read()!r}')
+                            f'child output across all attempts: {output.read()!r}')
                     try:
                         csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
                         def request(path, headers, body=None):
