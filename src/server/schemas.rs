@@ -157,6 +157,8 @@ impl Validate for StructuredMemoryGateRequest {
                 | "auto_retrieval"
                 | "consolidation"
                 | "auto_consolidation"
+                | "auto_suggest_chat"
+                | "auto_suggest_coding"
         ) {
             vec![]
         } else {

@@ -31,8 +31,9 @@ are not scanned or imported.
 
 Set keys under `structured_memory:` in the active `config.yaml`. File changes
 require a server restart/full app relaunch. Literal YAML `true` is required;
-quoted `"true"` remains off. Existing slash overlays persist in
-`memory/structured_gates.json` and override their corresponding config values.
+quoted `"true"` remains off. Administrator-only slash overrides persist in
+`memory/structured_gates.json` and override their corresponding config values,
+including explicit `off` over config `true`.
 Inspect `GET /api/structured-memory` for effective gates and queue status.
 
 | Key (all default `false`) | Effect / dependency | Live slash overlay |
@@ -44,8 +45,8 @@ Inspect `GET /api/structured-memory` for effective gates and queue status.
 | `auto_retrieval` | With retrieval, searches/injects for chat without a per-request pick | `/memory auto-retrieve on|off` |
 | `consolidation` | Allows the existing selected-episode consolidator | `/memory consolidation on|off` |
 | `auto_consolidation` | With consolidation, processes eligible human-summarized episodes when idle | `/memory auto-consolidate on|off` |
-| `auto_suggest_chat` | With store + capture, queues the completed current chat turn for proposals | Config only |
-| `auto_suggest_coding` | With store + capture, queues successful synchronous/detached coding runs for proposals | Config only |
+| `auto_suggest_chat` | With store + capture, queues the completed current chat turn for proposals | `/memory auto-suggest-chat on\|off` |
+| `auto_suggest_coding` | With store + capture, queues successful synchronous/detached coding runs for proposals | `/memory auto-suggest-coding on\|off` |
 
 `/memory on` only enables pinned-note inclusion. It opens none of these gates.
 `auto_retrieval` controls use of saved facts, not suggestion quality; it remains
@@ -82,9 +83,9 @@ model confidence does not establish correctness.
 
 ### Manual hard-save with automation disabled
 
-Keep `enabled: true`; set `auto_suggest_chat`, `auto_suggest_coding`, and
-`auto_consolidation` to `false`. Use `/memory auto-consolidate off` to close an
-existing overlay. Capture may also be off. Then:
+Keep `enabled: true`; run `/memory auto-suggest-chat off`,
+`/memory auto-suggest-coding off`, and `/memory auto-consolidate off`. Capture
+may also be off. Then:
 
 ```text
 /memory save For repository example, use metric units in examples. :: My reviewed standing preference

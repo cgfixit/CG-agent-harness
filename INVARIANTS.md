@@ -46,8 +46,10 @@ themselves. Episode capture never writes facts. `structured_memory.enabled`,
 `structured_memory.retrieval`, `structured_memory.auto_retrieval`,
 `structured_memory.consolidation`, `structured_memory.auto_consolidation`,
 `structured_memory.auto_suggest_chat`, and `structured_memory.auto_suggest_coding` are
-independent literal-boolean gates (`flag_is_true`); operator slash overlays use
-the same fail-closed rule (the two completion-source switches are config-only).
+independent literal-boolean gates (`flag_is_true`); slash overrides use
+versioned explicit booleans and are administrator-only when accounts are enabled.
+An explicit override `false` wins over config `true`; legacy override `false`
+keeps its prior unset meaning. The store-opening gate remains config + restart only.
 All nine ship false. Capture off means no episode writes; recall off
 means no selected-fact prompt injection; retrieval off means no FTS search or
 force-include. Search returns candidates only — prompt injection still requires

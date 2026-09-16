@@ -72,8 +72,8 @@ semantic summary. Run `/memory consolidate <id>` to queue suggestions, then
 `/memory proposals` (the Memory panel) to review and Apply/Reject with a reason
 for the displayed revision. This is not chat autosave. `/memory on` stays pinned
 notes. `/memory save <text> :: <reason>` explicitly writes a private fact using
-the existing confirmed API, even with automatic generation off. Config-only
-`auto_suggest_chat` / `auto_suggest_coding` can instead queue completed work for
+the existing confirmed API, even with automatic generation off.
+`/memory auto-suggest-chat|auto-suggest-coding on|off` can instead control whether completed work is queued for
 review (`suggestion_mode: summaries|insights|both`); they require store + capture,
 ship false, and never auto-approve. These summaries cover the current turn/run,
 not unseen session history. See [MEMORY_GUIDE.md](MEMORY_GUIDE.md) and

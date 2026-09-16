@@ -119,8 +119,8 @@ impl Home {
     pub fn structured_memory_path(&self) -> PathBuf {
         self.memory_dir().join("structured.sqlite3")
     }
-    /// Operator overlay for structured-memory sub-gates. Literal JSON true only;
-    /// created on first command save, never by a disabled startup.
+    /// Administrator override for structured-memory sub-gates. Versioned literal
+    /// JSON booleans; created on first command save, never by a disabled startup.
     pub fn structured_memory_gates_path(&self) -> PathBuf {
         self.memory_dir().join("structured_gates.json")
     }

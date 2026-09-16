@@ -186,6 +186,7 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
             );
             let admin = path.starts_with("/api/auth/users")
                 || path == "/api/keys"
+                || path == "/api/structured-memory/gates"
                 || matches!(path.as_str(), "/api/web/allow" | "/api/web/deny")
                 || (path == "/api/web" && req.method() != axum::http::Method::GET);
             if account.must_change_password && !own {

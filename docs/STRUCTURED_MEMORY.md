@@ -72,8 +72,8 @@ episodes referenced by pending proposals.
 
 ## Completion suggestions (separate opt-in)
 
-`auto_suggest_chat` and `auto_suggest_coding` are two additional default-false,
-config-only literal-boolean gates. Both require an open store and episode capture;
+`auto_suggest_chat` and `auto_suggest_coding` are two additional default-false
+gates with administrator-only slash overrides. Both require an open store and episode capture;
 neither requires or opens consolidation, recall or retrieval. `suggestion_mode`
 selects `summaries`, `insights`, or `both` (default); invalid values disable them.
 The `completion-suggestions-v1` worker reads only bounded redacted current
@@ -126,14 +126,14 @@ Later phases in #87 remain independently gated.
 - Episode capture: `structured_memory.episode_capture`, also `flag_is_true`,
   ships **false**. Capture off performs no episode writes even if the store is
   open. Capture cannot open the store by itself. `/memory capture on|off`
-  persists an operator overlay with the same fail-closed rule.
+  persists an administrator override.
 - Explicit recall: `structured_memory.explicit_recall`, also `flag_is_true`,
   ships **false**. Recall off injects no selected facts even if IDs are selected.
-  `/memory recall on|off` is the operator overlay. `/memory on` still includes
+  `/memory recall on|off` is the administrator override. `/memory on` still includes
   pinned notes only.
 - Retrieval: `structured_memory.retrieval`, also `flag_is_true`, ships **false**,
   independent of `/memory on` and `explicit_recall`. Off means no FTS search and
-  no force-include. `/memory retrieval on|off` is the operator overlay.
+  no force-include. `/memory retrieval on|off` is the administrator override.
 - Auto-retrieval: `structured_memory.auto_retrieval`, also `flag_is_true`, ships
   **false**. Requires retrieval. When on, chat may FTS the user message and
   inject rechecked top-k without a per-request flag. This is the Advisor-sensitive
@@ -303,7 +303,7 @@ when they carry memory content:
 | Method | Path | Confirm? |
 |---|---|---|
 | GET | `/api/structured-memory` | n/a (truthful status) |
-| POST | `/api/structured-memory/gates` | operator overlay; not a fact mutation |
+| POST | `/api/structured-memory/gates` | administrator-only gate override; not a fact mutation |
 | GET | `/api/structured-memory/search` | n/a (FTS candidates; retrieval gate required) |
 | GET | `/api/structured-memory/facts` | n/a (active facts; optional `q`/`category`/`limit` literal substring search, not FTS) |
 | GET/POST | `/api/sessions/{session_id}/structured-facts` | selection = explicit include; not a fact mutation |

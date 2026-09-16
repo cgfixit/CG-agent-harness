@@ -227,10 +227,10 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 48] = [
     ),
     (
         "structured-memory-gates",
-        "/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate",
+        "/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding",
         "POST",
         "/api/structured-memory/gates",
-        "operator overlay for capture/recall/retrieval/auto-retrieve/consolidation/auto-consolidate; /memory on stays pinned notes",
+        "administrator-only structured-memory gate overrides; /memory on stays pinned notes",
     ),
     (
         "structured-memory-consolidation",

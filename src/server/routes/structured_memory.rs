@@ -668,6 +668,14 @@ pub async fn set_gates(
         "auto_retrieval": auto_retrieval_available(&state.cfg, true, &snapshot),
         "consolidation": consolidation_available(&state.cfg, true, &snapshot),
         "auto_consolidation": auto_consolidation_available(&state.cfg, true, &snapshot),
+        "auto_suggest_chat": crate::server::structured_memory_suggest::available(
+            &state,
+            crate::server::structured_memory_suggest::Source::Chat,
+        ),
+        "auto_suggest_coding": crate::server::structured_memory_suggest::available(
+            &state,
+            crate::server::structured_memory_suggest::Source::Coding,
+        ),
         "memory_on_unchanged": true,
     })))
 }

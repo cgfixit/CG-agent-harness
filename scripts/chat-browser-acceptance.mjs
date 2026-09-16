@@ -18,17 +18,17 @@ const memoryProposals=[
  {id:'proposal_labeled_reject',revision:'revision_reject',action:'add',category:'pref',content:'Prefer concise answers.',source_episode_ids:['episode_labeled_latest'],status:'pending'},
  {id:'proposal_labeled_old',revision:'revision_old',action:'add',content:'Already decided',status:'applied'}
 ];
-const structuredGates={episode_capture:false,explicit_recall:false,retrieval:false,auto_retrieval:false,consolidation:false,auto_consolidation:false};
+const structuredGates={episode_capture:false,explicit_recall:false,retrieval:false,auto_retrieval:false,consolidation:false,auto_consolidation:false,auto_suggest_chat:false,auto_suggest_coding:false};
 const ftsHit={id:'fact_labeled_alpha',revision:1,category:'pref',content:'Prefer metric units in examples.',active:true,score:1,provenance:'fts5',type:'untrusted_background_context'};
 const memoryPayload=()=>({
  enabled:memoryEnabled,count:0,max_notes:8,max_chars:500,notes:[],
  rag:{enabled:false,writable_from_harness:false},
- structured_memory:{separate:true,enabled:true,episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:structuredGates.auto_consolidation,status_path:'/api/structured-memory',prompt_toggle:'harness.json.memory_enabled remains pinned-note inclusion only'}
+ structured_memory:{separate:true,enabled:true,episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:structuredGates.auto_consolidation,auto_suggest_chat:structuredGates.episode_capture&&structuredGates.auto_suggest_chat,auto_suggest_coding:structuredGates.episode_capture&&structuredGates.auto_suggest_coding,status_path:'/api/structured-memory',prompt_toggle:'harness.json.memory_enabled remains pinned-note inclusion only'}
 });
 const gatePayload=()=>({
  owner_id:'user_fixture_owner',operator_gates:{...structuredGates},
  episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,
- retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.retrieval&&structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:structuredGates.consolidation&&structuredGates.auto_consolidation,memory_on_unchanged:true
+ retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.retrieval&&structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:structuredGates.consolidation&&structuredGates.auto_consolidation,auto_suggest_chat:structuredGates.episode_capture&&structuredGates.auto_suggest_chat,auto_suggest_coding:structuredGates.episode_capture&&structuredGates.auto_suggest_coding,memory_on_unchanged:true
 });
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
@@ -267,6 +267,9 @@ try {
  await send('/memory on');
  assert.equal(requests.filter(r=>r[1]==='/api/structured-memory/gates').length,beforeMemoryOn,'/memory on must not flip structured gates');
  assert.equal(structuredGates.retrieval,false);
+ const gateCommands=[['capture','episode_capture'],['recall','explicit_recall'],['retrieval','retrieval'],['auto-retrieve','auto_retrieval'],['consolidation','consolidation'],['auto-consolidate','auto_consolidation'],['auto-suggest-chat','auto_suggest_chat'],['auto-suggest-coding','auto_suggest_coding']];
+ for(const [command,gate] of gateCommands){await send('/memory '+command+' on');assert.equal(structuredGates[gate],true,command+' on must persist the mapped gate');}
+ for(const [command,gate] of gateCommands.toReversed()){await send('/memory '+command+' off');assert.equal(structuredGates[gate],false,command+' off must persist the mapped gate');}
  const beforeRememberChat=chatCount();
  const memoryWrites=()=>requests.filter(r=>r[0]==='POST'&&r[1].startsWith('/api/structured-memory/')).length;
  const beforeSave=memoryWrites();
@@ -459,7 +462,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
+ console.log(JSON.stringify({passed:true,coverage:['incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

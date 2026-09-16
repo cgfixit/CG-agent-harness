@@ -220,14 +220,15 @@ Independent `flag_is_true` gates all ship **false** (quoted `"true"` is off):
 `structured_memory.enabled`, `episode_capture`, `explicit_recall`,
 `retrieval`, `auto_retrieval`, `consolidation`, `auto_consolidation`,
 `auto_suggest_chat`, and `auto_suggest_coding`.
-Slash overlays
-`/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate on|off` persist
-`memory/structured_gates.json` once the store is open; they do not flip
+Administrator-only slash overrides
+`/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding on|off`
+persist `memory/structured_gates.json` once the store is open; explicit `off`
+overrides config `true`, and they do not flip
 `/memory on`. `/memory remember <sentence> :: <reason>` confirms attaching your
 semantic summary to your latest completed episode; it writes no facts and starts
 no consolidation. `/memory proposals` opens the Memory panel for review and
 Apply/Reject with a reason. `/memory save <text> :: <reason>` confirms an immediate
-private fact write even with automation off. Config-only `auto_suggest_chat` and
+private fact write even with automation off. `auto_suggest_chat` and
 `auto_suggest_coding` can queue completed turns/runs for review when store + capture
 are on; `suggestion_mode` selects summaries, insights, or both. This never
 auto-approves facts or scans old chats. See the [memory guide](docs/MEMORY_GUIDE.md)

@@ -994,9 +994,43 @@ async fn memory_on_does_not_enable_structured_gates() {
 }
 
 #[tokio::test]
-async fn operator_gate_commands_are_independent_and_fail_closed() {
+async fn administrator_gate_overrides_are_independent_and_fail_closed() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), enabled()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        enabled()
+            .with("structured_memory.episode_capture", "true")
+            .with("structured_memory.retrieval", "true"),
+    )
+    .await;
+    let (status, off) = s
+        .post_json(
+            "/api/structured-memory/gates",
+            json!({"gate": "retrieval", "enabled": false}),
+        )
+        .await;
+    assert_eq!(status, 200, "{off}");
+    assert_eq!(off["retrieval"], false, "explicit off must override config true");
+    assert_eq!(off["episode_capture"], true);
+    assert_eq!(off["auto_suggest_chat"], false);
+    assert_eq!(off["auto_suggest_coding"], false);
+    assert_eq!(off["memory_on_unchanged"], true);
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    let (status, disabled) = s.get_json("/api/structured-memory/search?q=metric").await;
+    assert_eq!(status, 409, "{disabled}");
+
+    for gate in ["auto_suggest_chat", "auto_suggest_coding"] {
+        let (status, value) = s
+            .post_json("/api/structured-memory/gates", json!({"gate": gate, "enabled": true}))
+            .await;
+        assert_eq!(status, 200, "{value}");
+        assert_eq!(value[gate], true, "{gate} on must override config false");
+        let (status, value) = s
+            .post_json("/api/structured-memory/gates", json!({"gate": gate, "enabled": false}))
+            .await;
+        assert_eq!(status, 200, "{value}");
+        assert_eq!(value[gate], false, "{gate} off must persist");
+    }
     let (status, on) = s
         .post_json(
             "/api/structured-memory/gates",
@@ -1005,12 +1039,28 @@ async fn operator_gate_commands_are_independent_and_fail_closed() {
         .await;
     assert_eq!(status, 200, "{on}");
     assert_eq!(on["retrieval"], true);
-    assert_eq!(on["explicit_recall"], false);
-    assert_eq!(on["episode_capture"], false);
-    assert_eq!(on["memory_on_unchanged"], true);
-    add_fact(&s, "Prefer metric units in examples.", "pref").await;
     let search = s.get_json("/api/structured-memory/search?q=metric").await.1;
     assert_eq!(search["count"], 1);
+
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(s.home.join("memory").join("structured_gates.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["version"], 2);
+    assert_eq!(saved["retrieval"], true);
+    assert_eq!(saved["auto_suggest_chat"], false);
+    assert_eq!(saved["auto_suggest_coding"], false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(s.home.join("memory").join("structured_gates.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
     let (status, bad) = s
         .post_json("/api/structured-memory/gates", json!({"gate": "rag", "enabled": true}))
         .await;
