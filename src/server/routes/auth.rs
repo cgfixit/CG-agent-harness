@@ -36,7 +36,14 @@ fn manager(state: &AppState) -> ApiResult<&AuthManager> {
 fn cookie_value(req: &Request<Body>) -> Option<String> {
     let raw = req.headers().get(header::COOKIE)?.to_str().ok()?;
     for part in raw.split(';') {
-        let (k, v) = part.trim().split_once('=')?;
+        // A segment with no `=` is skipped, not fatal. `?` here would return
+        // from the whole function, so one nameless cookie ahead of ours -- a
+        // trailing `;`, or `document.cookie = "v"` from any other app on
+        // 127.0.0.1, since cookies are not port-scoped -- would hide a valid
+        // session and lock the operator out of the console.
+        let Some((k, v)) = part.trim().split_once('=') else {
+            continue;
+        };
         if k.trim() == SESSION_COOKIE {
             return Some(v.trim().to_string());
         }
@@ -374,3 +381,53 @@ pub async fn delete_user(
 }
 
 use axum::extract::FromRequest;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_cookie(raw: &str) -> Option<String> {
+        let req = Request::builder()
+            .header(header::COOKIE, raw)
+            .body(Body::empty())
+            .unwrap();
+        cookie_value(&req)
+    }
+
+    #[test]
+    fn reads_the_session_cookie_alone() {
+        assert_eq!(with_cookie("cgagentharness_session=abc"), Some("abc".into()));
+    }
+
+    #[test]
+    fn a_segment_without_an_equals_does_not_end_the_scan() {
+        // Cookies are not port-scoped: any other loopback app can set a
+        // nameless cookie that the browser sends ahead of ours.
+        for raw in [
+            "nameless; cgagentharness_session=abc",
+            "; cgagentharness_session=abc",
+            "cgagentharness_session=abc;",
+            "a=1; nameless; cgagentharness_session=abc; b=2",
+        ] {
+            assert_eq!(with_cookie(raw), Some("abc".into()), "raw={raw}");
+        }
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_trimmed() {
+        assert_eq!(with_cookie("  cgagentharness_session = abc  "), Some("abc".into()));
+    }
+
+    #[test]
+    fn absent_or_unparseable_yields_none() {
+        assert_eq!(with_cookie("other=1; nameless"), None);
+        let bare = Request::builder().body(Body::empty()).unwrap();
+        assert_eq!(cookie_value(&bare), None);
+    }
+
+    #[test]
+    fn only_the_first_equals_splits_the_value() {
+        // Session tokens are opaque; an `=` inside one must survive.
+        assert_eq!(with_cookie("cgagentharness_session=a=b=c"), Some("a=b=c".into()));
+    }
+}
