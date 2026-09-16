@@ -1,0 +1,100 @@
+# Clippy → GitHub code scanning (SARIF).
+# Merge gate stays in ci.yml (`cargo clippy --all-targets --all-features --locked -- -D warnings`).
+# This workflow does not replace that job. It publishes the same invocation as
+# SARIF so findings land in the Security tab next to CodeQL / DevSkim.
+#
+# Do not restore actions-rs/toolchain. Do not `cargo install` unpinned
+# clippy-sarif / sarif-fmt. Do not persist checkout credentials.
+name: rust-clippy analyze
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Offset from gitleaks.yml (23 9 * * 5) so Friday scanners do not stampede.
+    - cron: "41 9 * * 5"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: rust-clippy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  # Same contract as ci.yml test / invariant-guard: operator keys never reach CI.
+  GROK_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  DEEPAGENT_API_KEY: ""
+  CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
+
+jobs:
+  rust-clippy-analyze:
+    name: clippy SARIF
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+      # upload-sarif needs actions:read only on private repos; keep for parity
+      # with codeql.yml / devskim.yml.
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain (clippy)
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          # Only main writes the cache. PR runs restore main's entry instead of
+          # each branch saving its own and evicting the others (10 GB repo cap).
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: true
+
+      - name: Install pinned SARIF converters
+        # 0.8.0 is the current crates.io release of both CLIs (psastras/sarif-rs).
+        # --locked pins their own lockfiles at publish time. Do not drop --version.
+        run: |
+          set -euo pipefail
+          cargo install clippy-sarif --version 0.8.0 --locked --force
+          cargo install sarif-fmt --version 0.8.0 --locked --force
+
+      - name: Run clippy
+        id: clippy
+        # pipefail keeps cargo's exit. continue-on-error lets upload-sarif run
+        # on a red clippy; the last step fails the job so this is not advisory.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cargo clippy --all-targets --all-features --locked --message-format=json -- -D warnings \
+            | clippy-sarif \
+            | tee rust-clippy-results.sarif \
+            | sarif-fmt
+
+      - name: Upload clippy SARIF
+        if: hashFiles('rust-clippy-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          sarif_file: rust-clippy-results.sarif
+          # Distinct from codeql.yml category "/language:rust".
+          category: clippy
+          wait-for-processing: false
+
+      - name: Fail the job when clippy failed
+        if: steps.clippy.outcome != 'success'
+        run: |
+          echo "clippy exited non-zero (see the Run clippy step). SARIF was still uploaded." >&2
+          exit 1
