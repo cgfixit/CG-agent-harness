@@ -62,6 +62,27 @@ fn str_param(params: &Value, key: &str, default: &str) -> String {
     params.get(key).and_then(|v| v.as_str()).unwrap_or(default).to_string()
 }
 
+/// Index of the `--body` FLAG in an argv built by `build_write_argv`.
+///
+/// Located by walking flag positions, never by value. `position(|a| a ==
+/// "--body")` matches a caller-controlled VALUE just as happily as the flag:
+/// `pr_create` puts the title at index 10 and `--body` at 11, and the title is
+/// free text the operator supplies. A title of literally `--body` would make
+/// the naive search rewrite the TITLE slot, leaving the reviewed body behind as
+/// a plain argv element -- readable by any local user through `ps`, which is
+/// exactly what writing it to a temp file exists to prevent.
+///
+/// `build_write_argv` emits the subcommand followed by strict `--flag value`
+/// pairs, so every flag sits at an odd index from 3 onward.
+fn body_flag_index(argv: &[String]) -> Option<usize> {
+    argv.iter()
+        .enumerate()
+        .skip(3)
+        .step_by(2)
+        .find(|(_, arg)| arg.as_str() == "--body")
+        .map(|(index, _)| index)
+}
+
 /// The argv a write WOULD use (display and drift comparison).
 pub fn build_write_argv(op: &str, repo: &str, params: &Value, gh_bin: &str) -> Result<Vec<String>> {
     let s = |v: Vec<String>| v;
@@ -316,10 +337,19 @@ pub fn execute_write(ctx: &super::ctx::AgenticCtx, plan: &Value, confirm: bool, 
     let mut body_file = tempfile::NamedTempFile::new()?;
     body_file.write_all(body.as_bytes())?;
     body_file.flush()?;
-    if let Some(index) = argv.iter().position(|arg| arg == "--body") {
-        argv[index] = "--body-file".into();
-        argv[index + 1] = body_file.path().display().to_string();
-    }
+    let Some(index) = body_flag_index(&argv) else {
+        // Unreachable for today's only executable op, which always emits
+        // --body. Refuse rather than run: falling through would leave the
+        // reviewed body on the command line, which is the thing the temp file
+        // exists to prevent.
+        return Err(
+            HarnessError::write_refused("write argv has no --body flag to retarget onto a temp file")
+                .detail("failed_gate", "body_file_retarget")
+                .detail("op", op),
+        );
+    };
+    argv[index] = "--body-file".into();
+    argv[index + 1] = body_file.path().display().to_string();
     let binary =
         resolve_gh().map_err(|_| HarnessError::agentic("gh binary not found on PATH").detail("op", op.clone()))?;
     argv[0] = binary.display().to_string();
@@ -372,4 +402,61 @@ pub fn execute_write(ctx: &super::ctx::AgenticCtx, plan: &Value, confirm: bool, 
     Ok(
         json!({"status": "executed", "op": op, "repo": cfg.repo, "reason": reason, "executed": true, "exit_code": 0, "stdout": out.stdout.trim()}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pr_create_argv(title: &str) -> Vec<String> {
+        build_write_argv(
+            "pr_create",
+            "owner/repo",
+            &json!({"head": "claude/x", "title": title, "body": "reviewed body"}),
+            "gh",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn finds_the_body_flag_not_a_value_that_looks_like_it() {
+        let argv = pr_create_argv("ordinary title");
+        let index = body_flag_index(&argv).unwrap();
+        assert_eq!(argv[index], "--body");
+        assert_eq!(argv[index + 1], "reviewed body");
+
+        // The regression: the title is caller-controlled free text.
+        let hostile = pr_create_argv("--body");
+        let index = body_flag_index(&hostile).unwrap();
+        assert_eq!(index, 11, "must skip the title slot at 10");
+        assert_eq!(hostile[index], "--body");
+        assert_eq!(hostile[index + 1], "reviewed body");
+    }
+
+    #[test]
+    fn retargeting_a_hostile_title_keeps_the_body_off_the_command_line() {
+        let mut argv = pr_create_argv("--body");
+        let index = body_flag_index(&argv).unwrap();
+        argv[index] = "--body-file".into();
+        argv[index + 1] = "/tmp/body".into();
+
+        assert!(
+            !argv.iter().any(|a| a == "reviewed body"),
+            "the reviewed body must not survive as an argv element: {argv:?}"
+        );
+        // The title the operator chose is still the title.
+        assert_eq!(argv[9], "--title");
+        assert_eq!(argv[10], "--body");
+        assert_eq!(argv[argv.len() - 1], "--draft");
+    }
+
+    #[test]
+    fn reports_no_flag_when_the_shape_has_none() {
+        assert_eq!(body_flag_index(&[]), None);
+        let no_body: Vec<String> = ["gh", "pr", "create", "--repo", "owner/repo"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        assert_eq!(body_flag_index(&no_body), None);
+    }
 }
