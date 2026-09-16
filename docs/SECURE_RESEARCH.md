@@ -409,3 +409,7 @@ Search made 98 fixture requests across seven queries; research expansion made
 The root literal baseline measured matching only and counted two hypothetical
 root requests per query; it did not measure old-network latency or model usage.
 No speedup, token-saving or broad accuracy claim follows from this sample.
+
+The loopback HTTPS listener accepts TLS 1.3 only. This policy is explicit on the
+server configuration, independent of dependency feature unification. Outbound
+public-web clients retain their existing verified TLS compatibility.

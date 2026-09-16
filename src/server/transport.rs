@@ -205,7 +205,7 @@ impl Transport {
         let key = PrivateKeyDer::from_pem_slice(key).map_err(|_| tls_error("private key PEM is invalid"))?;
         let mut config =
             rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-                .with_safe_default_protocol_versions()
+                .with_protocol_versions(&[&rustls::version::TLS13]) // DevSkim: ignore DS440000 because this listener deliberately enforces the minimum supported TLS policy.
                 .map_err(|_| tls_error("TLS protocol setup failed"))?
                 .with_no_client_auth()
                 .with_single_cert(certs, key)
@@ -249,6 +249,33 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn listener_accepts_tls13_and_refuses_tls12() {
+        let (cert, key) = generate(1).unwrap();
+        let transport = Transport::from_material(cert.as_bytes(), key.as_bytes(), "127.0.0.1").unwrap(); // DevSkim: ignore DS162092 because the handshake test uses a local server name.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("https://{}/", listener.local_addr().unwrap());
+        let task = tokio::spawn(transport.serve(
+            listener,
+            Router::new().route("/", axum::routing::get(|| async { "ok" })),
+        ));
+        for (version, accepted) in [
+            (reqwest::tls::Version::TLS_1_3, true), // DevSkim: ignore DS440000 because this test must prove both version outcomes.
+            (reqwest::tls::Version::TLS_1_2, false), // DevSkim: ignore DS440000 because this test must prove both version outcomes.
+        ] {
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .add_root_certificate(reqwest::Certificate::from_pem(cert.as_bytes()).unwrap())
+                .min_tls_version(version)
+                .max_tls_version(version)
+                .build()
+                .unwrap();
+            let result = client.get(&url).send().await;
+            assert_eq!(result.is_ok(), accepted, "{version:?}: {result:?}");
+        }
+        task.abort();
+    }
+
     #[tokio::test]
     async fn owned_client_accepts_operator_issued_leaf_and_refuses_substitution_before_http() {
         use std::sync::atomic::{AtomicUsize, Ordering};

@@ -461,9 +461,21 @@ mod list_cache_tests {
         // A store-level rewrite must invalidate even if the filesystem stamp
         // is restored and the new title has the same length.
         let a_path = store.path_for(&a.session_id).unwrap();
+        let original = std::fs::read_to_string(&a_path).unwrap();
         let a_metadata = std::fs::metadata(&a_path).unwrap();
         store.rename(&a.session_id, Some("bravo"), None).unwrap();
-        assert_eq!(a_metadata.len(), std::fs::metadata(&a_path).unwrap().len());
+        // `rename` re-serializes `created_ts`. A JSON f64 round-trip can shift
+        // the file by a byte even when the title length is unchanged. Rebuild
+        // from the original payload so the restored mtime is the only remaining
+        // stamp cue.
+        let rewritten = original.replacen("\"title\": \"alpha\"", "\"title\": \"bravo\"", 1);
+        assert_ne!(rewritten, original, "title substitution must change the payload");
+        assert_eq!(
+            original.len(),
+            rewritten.len(),
+            "same-length titles must keep the JSON size"
+        );
+        std::fs::write(&a_path, rewritten).unwrap();
         std::fs::File::open(&a_path)
             .unwrap()
             .set_times(std::fs::FileTimes::new().set_modified(a_metadata.modified().unwrap()))
