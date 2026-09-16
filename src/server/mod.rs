@@ -9,6 +9,7 @@ pub mod agent_jobs;
 pub mod agent_policy;
 mod chat_web;
 pub mod client;
+pub mod compaction;
 pub mod console;
 #[cfg(unix)]
 pub mod desktop;

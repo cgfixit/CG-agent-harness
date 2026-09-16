@@ -302,6 +302,18 @@ already killed.
   `::a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy`,
   `src/server/agent_jobs.rs` unit tests.
 
+## Local chat compaction preserves goal and the first user turn
+
+When estimated next-prompt size exceeds `chat.compact_prompt_tokens`, older
+session messages are replaced by a structured summary written with
+`write_json_atomic_mode` at `0o600`. The system prompt is composed each turn and
+is never stored in `messages`. `Session.goal` is copied through the rewrite.
+The first user message is kept verbatim. Compaction is audited as
+`chat_session_compacted` without message bodies.
+
+- Locked by: `src/server/compaction.rs`, `src/server/sessions.rs::compact`,
+  `src/server/routes/core.rs`.
+
 ## Signals weaker than their name
 
 - `unslop.enabled` is a prose nudge, never a gate.

@@ -304,6 +304,18 @@ impl SessionStore {
         Ok(session)
     }
 
+    /// Replace older dialogue with a structured summary. Goal and system prompt
+    /// are not stored in `messages` and are left untouched.
+    pub fn compact(&self, session_id: &str, keep_recent: usize) -> Result<Session> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        let goal = session.goal.clone();
+        session.messages = crate::server::compaction::compact_messages(&session.messages, keep_recent);
+        session.goal = goal;
+        self.write(&session)?;
+        Ok(session)
+    }
+
     /// `title=None` leaves the title alone; `goal=Some("")` clears the goal.
     pub fn rename(&self, session_id: &str, title: Option<&str>, goal: Option<&str>) -> Result<Session> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
@@ -409,7 +421,7 @@ impl SessionStore {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{symlink, PermissionsExt};
 
     #[test]
     fn clearing_never_follows_links_or_recurses_into_unrelated_data() {
@@ -433,10 +445,49 @@ mod tests {
 
     #[test]
     fn session_files_are_written_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
         let home = tempfile::tempdir().unwrap();
         let store = SessionStore::new(&home.path().join("sessions")).unwrap();
         let session = store.create("m", "alpha").unwrap();
+        let mode = std::fs::metadata(store.path_for(&session.session_id).unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn compact_keeps_goal_and_first_user_message() {
+        let home = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let mut session = store.create("m", "alpha").unwrap();
+        store
+            .rename(&session.session_id, None, Some("ship the parser"))
+            .unwrap();
+        let usage = TokenTally {
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            exchanges: 0,
+        };
+        for i in 0..6 {
+            store
+                .record_exchange(
+                    &session.session_id,
+                    &format!("user-{i}"),
+                    &format!("asst-{i}"),
+                    "m",
+                    &usage,
+                    &[],
+                )
+                .unwrap();
+        }
+        session = store.compact(&session.session_id, 2).unwrap();
+        assert_eq!(session.goal, "ship the parser");
+        assert_eq!(session.messages[0].text, "user-0");
+        assert!(session
+            .messages
+            .iter()
+            .any(|m| m.text.starts_with(crate::server::compaction::COMPACT_PREFIX)));
         let mode = std::fs::metadata(store.path_for(&session.session_id).unwrap())
             .unwrap()
             .permissions()
