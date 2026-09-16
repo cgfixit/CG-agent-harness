@@ -1239,7 +1239,7 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 
 | Setting | Scope / persistence | How to verify |
 |---|---|---|
-| Model endpoint, provider, timeout, temperature and token ceiling | `config.yaml`, home-wide; restart after edits | `/model`, Setup diagnostics and an actual reply |
+| Model endpoint, provider, timeout, temperature and token ceiling | `config.yaml`, home-wide; restart after edits. Local context is the Ollama server window (32768 via `OLLAMA_CONTEXT_LENGTH`), not a harness `num_ctx`. `max_tokens` is still the output ceiling. | `/model`, Setup diagnostics and an actual reply |
 | `/model use <name>` | Persisted console model selection; subsequent requests | `/model`; it can differ from the seeded YAML tag |
 | Persona and soul toggle | `soul.md` plus `harness.json`, shared across sessions; next request | `/soul status`, `/prompt` |
 | Runtime skill file | `<home>/skills/<id>/SKILL.md`; selection is per session | `/skill status` and next `/prompt`; last successful snapshot may be older |
@@ -1253,10 +1253,12 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 | Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |
 
 For output style, use section 7.4 before tuning generation parameters.
-`models.local_llm.max_tokens` is an output ceiling and can truncate a reply;
-`temperature` changes sampling, not a deterministic filler filter. Loop requests
-also have the separate `api.harness_loop_rate_limit` budget. Keep persona and
-selected skills concise enough to leave useful room for the question and context.
+`models.local_llm.max_tokens` is an output ceiling and can truncate a reply.
+Local context is the Ollama server window (32768 via `OLLAMA_CONTEXT_LENGTH`);
+the harness sends no `num_ctx`. `temperature` changes sampling, not a
+deterministic filler filter. Loop requests also have the separate
+`api.harness_loop_rate_limit` budget. Keep persona and selected skills concise
+enough to leave useful room for the question and context.
 
 ### Tunables you may want to know about
 
@@ -1276,6 +1278,12 @@ ones operators most often ask about:
 | `auth.max_concurrent_operations` | 2 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
 | `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use, and regardless of use |
 | `structured_memory.*` | see file | Per-owner caps (facts, proposals, episodes, bytes), search/retrieval limits, suggestion queue and consolidation thresholds |
+| `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, clamped 256–6000 |
+| `web.model_tokens` | 1024 | Maximum synthesis completion, clamped 256–2048 |
+| `web.total_tokens` | 28000 | Planning and synthesis budget, clamped 2048–32000. Stay under 32000 so an over-budget estimate does not hard-fail |
+
+`assets/config.default.yaml` is seed-only. Existing homes keep their seeded
+`config.yaml` until you copy the new `web.*` values.
 
 Quoted YAML strings such as `"true"` never arm a gate. See section 9 for the
 coding-pipeline gates and [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md)

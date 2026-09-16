@@ -32,6 +32,8 @@ models:
     # Sent only for a resolved Ollama backend. none | low | medium | high | max;
     # absent/empty omits the field, an invalid value fails at boot.
     reasoning_effort: "none"
+    # Server-side Ollama context is 32768 (OLLAMA_CONTEXT_LENGTH before `ollama serve`).
+    # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096
     temperature: 0.2
     timeout_sec: 720
@@ -73,9 +75,9 @@ web:
   cache_bytes: 16777216 # 1048576–33554432 serialized cache bytes
   subqueries: 3 # 1–5 total model-selected subqueries
   rounds: 2 # 1–2 planning/retrieval rounds; one bounded crawl per run
-  evidence_tokens: 3000 # 256–6000, estimated when no tokenizer is available
+  evidence_tokens: 6000 # 256–6000, estimated when no tokenizer is available
   model_tokens: 1024 # 256–2048 maximum synthesis completion
-  total_tokens: 16000 # 2048–32000 across planning and synthesis
+  total_tokens: 28000 # 2048–32000; sized for a 32768-token server window with ~4k reserved for completion
   research_seconds: 300 # 10–1800 overall research deadline
   stale_seconds: 604800 # 60–31536000; fetch age, not publication-date verification
 
@@ -206,6 +208,7 @@ agentic:
     base_url: "http://127.0.0.1:11434/v1"
     model: "qwen3.8:27b-mlx"
     planner_timeout_sec: 720
+    # ~24k-char planner prompt + planner_max_tokens 3072 now fits comfortably in 32k (previously tight against a 16k window).
     planner_max_tokens: 3072
     allow_git_write_tools: false
     protected_write_paths:
