@@ -23,18 +23,25 @@ const ROLE_ADMIN: &str = "admin";
 const ROLE_OPERATOR: &str = "operator";
 const PERM_DENIED: &str = "AUTH_PERMISSION_DENIED";
 
-/// scrypt at n=2^17 allocates ~128 MiB per derivation, and tokio's blocking
-/// pool would otherwise run hundreds of them concurrently on a login burst.
-/// Two parallel password operations are plenty for a single-operator console.
-static AUTH_OP_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-
-/// Held across the blocking password operation. A closed semaphore is
-/// unreachable here; fail closed rather than run unbounded.
-async fn auth_op_permit() -> ApiResult<tokio::sync::SemaphorePermit<'static>> {
-    AUTH_OP_PERMITS
-        .acquire()
+async fn run_password_operation<T>(
+    permits: Arc<tokio::sync::Semaphore>,
+    operation: impl FnOnce() -> ApiResult<T> + Send + 'static,
+) -> ApiResult<T>
+where
+    T: Send + 'static,
+{
+    let permit = permits
+        .acquire_owned()
         .await
-        .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))
+        .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))?;
+    tokio::task::spawn_blocking(move || {
+        // Keep the permit with the unabortable blocking task, not its HTTP
+        // handler. A reset client must not bypass the scrypt memory bound.
+        let _permit = permit;
+        operation()
+    })
+    .await
+    .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))?
 }
 
 fn manager(state: &AppState) -> ApiResult<&AuthManager> {
@@ -163,13 +170,11 @@ pub async fn bootstrap_password(State(state): State<Arc<AppState>>, req: Request
         ));
     }
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
-    let _permit = auth_op_permit().await?;
     let st = state.clone();
-    let result = tokio::task::spawn_blocking(move || {
+    let result = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st).and_then(|m| m.bootstrap_set_password(&body.password).map_err(|e| map_auth_error(&e)))
     })
-    .await
-    .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))??;
+    .await?;
     let mut resp =
         Json(json!({"username": result.username, "role": ROLE_ADMIN, "csrf_token": result.csrf_token})).into_response();
     set_cookie(&mut resp, &result.session_id, secure);
@@ -182,13 +187,11 @@ pub async fn login(
     ValidJson(req): ValidJson<AuthLoginRequest>,
 ) -> ApiResult<Response> {
     manager(&state)?;
-    let _permit = auth_op_permit().await?;
     let st = state.clone();
-    let result = tokio::task::spawn_blocking(move || {
+    let result = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st).and_then(|m| m.login(&req.username, &req.password).map_err(|e| map_auth_error(&e)))
     })
-    .await
-    .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))??;
+    .await?;
     let role = manager(&state)?
         .get_user(&result.username)
         .map(|u| u.role)
@@ -225,15 +228,13 @@ pub async fn change_password(State(state): State<Arc<AppState>>, req: Request<Bo
     let account = actor(&state, &req)?;
     let secure = crate::server::guards::request_scheme(&req) == "https";
     let ValidJson(body) = ValidJson::<AuthChangePasswordRequest>::from_request(req, &()).await?;
-    let _permit = auth_op_permit().await?;
     let st = state.clone();
-    let result = tokio::task::spawn_blocking(move || {
+    let result = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st)?
             .change_password(&account.username, &body.current_password, &body.password)
             .map_err(|e| map_auth_error(&e))
     })
-    .await
-    .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))??;
+    .await?;
     let mut response = Json(json!({"ok":true,"must_change_password":false})).into_response();
     set_cookie(&mut response, &result.session_id, secure);
     Ok(response)
@@ -324,16 +325,14 @@ pub async fn create_user(State(state): State<Arc<AppState>>, req: Request<Body>)
     if account.role == ROLE_OPERATOR && role == ROLE_ADMIN {
         return Err(denied());
     }
-    let _permit = auth_op_permit().await?;
     let st = state.clone();
-    let created = tokio::task::spawn_blocking(move || {
+    let created = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st).and_then(|m| {
             m.create_user(&body.username, &body.password, &role)
                 .map_err(|e| map_auth_error(&e))
         })
     })
-    .await
-    .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))??;
+    .await?;
     let user = manager(&state)?
         .get_user(&created)
         .ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "created user missing"))?;
@@ -355,16 +354,14 @@ pub async fn set_password(
     }
     require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
-    let _permit = auth_op_permit().await?;
     let st = state.clone();
-    tokio::task::spawn_blocking(move || {
+    run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st).and_then(|m| {
             m.set_password(&username, &body.password)
                 .map_err(|e| map_auth_error(&e))
         })
     })
-    .await
-    .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))??;
+    .await?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -445,13 +442,46 @@ mod tests {
     }
 
     #[test]
-    fn password_operations_are_concurrency_bounded() {
-        let first = AUTH_OP_PERMITS.try_acquire().unwrap();
-        let second = AUTH_OP_PERMITS.try_acquire().unwrap();
-        assert!(AUTH_OP_PERMITS.try_acquire().is_err());
-        drop(first);
-        assert!(AUTH_OP_PERMITS.try_acquire().is_ok());
-        drop(second);
+    fn password_operation_cap_is_configured_and_bounded() {
+        use crate::common::config::AppConfig;
+        use crate::server::state::auth_operation_concurrency;
+
+        for (raw, expected) in [("{}", Some(2)), ("auth: {max_concurrent_operations: 3}", Some(3))] {
+            let cfg = AppConfig::from_str(raw, std::path::Path::new("fixture.yaml")).unwrap();
+            assert_eq!(auth_operation_concurrency(&cfg).ok(), expected);
+        }
+        for raw in ["0", "5", "'2'"] {
+            let cfg = AppConfig::from_str(
+                &format!("auth: {{max_concurrent_operations: {raw}}}"),
+                std::path::Path::new("fixture.yaml"),
+            )
+            .unwrap();
+            assert!(auth_operation_concurrency(&cfg).is_err(), "raw={raw}");
+        }
+    }
+
+    #[tokio::test]
+    async fn aborted_handler_keeps_the_scrypt_permit_until_blocking_work_exits() {
+        let permits = Arc::new(tokio::sync::Semaphore::new(1));
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+        let task = tokio::spawn(run_password_operation(permits.clone(), move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        }));
+        tokio::task::spawn_blocking(move || started_rx.recv_timeout(std::time::Duration::from_secs(1)))
+            .await
+            .unwrap()
+            .unwrap();
+        task.abort();
+        assert!(permits.try_acquire().is_err());
+        release_tx.send(()).unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), permits.clone().acquire_owned())
+                .await
+                .is_ok()
+        );
     }
 
     #[test]

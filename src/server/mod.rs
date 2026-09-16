@@ -112,6 +112,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     let settings = HarnessSettings::load(&home)?;
     let store = SessionStore::new(&home.sessions_dir())?;
     let audit = Audit::from_home(&home.root, &cfg);
+    let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
     let auth = if cfg.flag_is_true("auth.enabled") {
         let mgr = AuthManager::open(&home.auth_path(), &cfg)?;
         mgr.bootstrap_if_empty()?;
@@ -189,6 +190,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         api_key,
         key_file_sources: opts.key_file_sources,
         auth,
+        auth_operation_permits,
         tool_allowlist_override: opts.tool_allowlist_override,
         shim,
         jobs,
