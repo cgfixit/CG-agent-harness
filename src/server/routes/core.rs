@@ -452,6 +452,13 @@ async fn chat_inner(
             let paste_alone =
                 crate::server::compaction::projected_prompt_tokens(&system_prompt, &[], &req.message, max_tokens);
             if paste_alone > threshold {
+                state.audit.log(json!({
+                    "event": "chat_prompt_too_large",
+                    "session_id": session.session_id,
+                    "projected": projected,
+                    "compacted_projected": paste_alone,
+                    "threshold": threshold,
+                }));
                 return Err(ApiError::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "CHAT_PROMPT_TOO_LARGE",
