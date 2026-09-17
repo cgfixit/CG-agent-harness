@@ -71,7 +71,8 @@ Public Google fallback and destination page fetching retain URL permission check
   go through `POST /api/mcp/call` with `confirm: true`, the tool-broker
   allowlist, and DNS-pinned SSE. Stdio children are wrapped with the same
   Seatbelt / bubblewrap helpers as agentic verification. Do not attach MCP
-  tools to `/loop`.
+  tools to `/loop`. `GET /api/mcp` lists declared server/tool names to an
+  authenticated session.
 - Prefer a small unit test with `#[cfg(test)] mod tests` beside the function
   over another integration test when the thing under test is a pure parser or
   matcher (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`'

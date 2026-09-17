@@ -19,16 +19,28 @@ the server or the shim.
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
 
 MCP stdio children are spawned from `src/common/mcp.rs` with a constructed
-environment (secret names stripped) and process-group kill-on-drop. The child
-argv is wrapped by `src/common/sandbox_wrap.rs` using the same Seatbelt profile
-and `bwrap_argv` as agentic verification (`darwin-seatbelt` / `linux-bwrap`).
-Linux first probes `--unshare-net`; if that is EPERM it keeps the FS jail
-without net isolation. `linux-netns` and `linux-unconfined` are named
-fallbacks. Windows piped stdio has no FS jail (`windows-stdio`). `src/server` still contains no `Command::new`. Servers are
-operator-declared in `mcp.servers`; unknown names fail closed. SSE URLs reuse
-DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback` and ships
-false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker` and require
-`confirm: true`. MCP tools are not attached to `/loop`.
+environment (secret and linker-hijack names stripped). Unix Drop kills the
+process group (`killpg`) of the group leader created with `process_group(0)`,
+then `start_kill` on the direct child. Per backend: `linux-bwrap` /
+`linux-bwrap-fs` add `--die-with-parent`; `linux-netns` is the `unshare`
+process; `darwin-seatbelt` group-kills `sandbox-exec` and descendants, with a
+residual that a grandchild which left the group can survive; `windows-stdio`
+has no FS jail and grandchild survival is residual. `src/server` still contains
+no `Command::new`. The harness home and `Home::env_path()` (`.env`) are
+unreachable from MCP stdio children: cwd or a read root that is, is inside, or
+contains that home is refused (`MCP_HOME_REFUSED`); asserted in tests.
+Backends are named distinctly: `darwin-seatbelt`, `linux-bwrap` (FS+net),
+`linux-bwrap-fs` (FS only after `--unshare-net` EPERM/RTM_NEWADDR),
+`linux-netns`, `linux-unconfined`, `windows-stdio`. Probe failure class
+(`rtm_newaddr` / `missing_binary` / `eperm`) is audited on `mcp_stdio_spawn`.
+Servers are operator-declared in `mcp.servers`; unknown names fail closed.
+SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
+and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`
+and require `confirm: true`. MCP tools are not attached to `/loop`. `GET /api/mcp`
+discloses declared server and tool names to any authenticated session; that is
+acceptable for a single-operator console and must be revisited before persistent
+multi-user accounts. Calls and refusals are audited (`mcp_stdio_spawn`,
+`mcp_sse_call`, `mcp_refused`) without arguments or payloads.
 
 ## Account, transport and request boundaries
 
