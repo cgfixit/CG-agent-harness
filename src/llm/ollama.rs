@@ -346,19 +346,19 @@ mod tests {
     #[test]
     fn native_url_strips_v1_and_refuses_unsafe_endpoints() {
         assert_eq!(
-            native_base_url("http://127.0.0.1:11434/v1").as_deref(),
-            Some("http://127.0.0.1:11434")
+            native_base_url("http://127.0.0.1:11434/v1").as_deref(), // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
+            Some("http://127.0.0.1:11434") // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
         );
         assert_eq!(
-            native_base_url("http://localhost:11434/v1/").as_deref(),
-            Some("http://localhost:11434")
+            native_base_url("http://localhost:11434/v1/").as_deref(), // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
+            Some("http://localhost:11434") // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
         );
         assert_eq!(
-            native_base_url("http://127.0.0.1:11434").as_deref(),
-            Some("http://127.0.0.1:11434")
+            native_base_url("http://127.0.0.1:11434").as_deref(), // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
+            Some("http://127.0.0.1:11434") // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
         );
-        assert!(native_base_url("http://user:secret@127.0.0.1:11434/v1").is_none());
-        assert!(native_base_url("http://127.0.0.1:11434/v1?token=secret").is_none());
+        assert!(native_base_url("http://user:secret@127.0.0.1:11434/v1").is_none()); // DevSkim: ignore DS162092 DS137138 because this unit test must reject userinfo on loopback HTTP.
+        assert!(native_base_url("http://127.0.0.1:11434/v1?token=secret").is_none()); // DevSkim: ignore DS162092 DS137138 because this unit test must reject query tokens on loopback HTTP.
         assert!(native_base_url("https://example.invalid/v1").is_none());
         assert!(native_base_url("ftp://127.0.0.1/v1").is_none());
     }

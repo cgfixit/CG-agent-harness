@@ -75,7 +75,7 @@ async fn start_native_ollama() -> NativeOllama {
         axum::serve(listener, app).await.unwrap();
     });
     NativeOllama {
-        base: format!("http://127.0.0.1:{}", addr.port()),
+        base: format!("http://127.0.0.1:{}", addr.port()), // DevSkim: ignore DS162092 because this fixture binds only to loopback.
         pulls,
         generates,
         pull_delay_ms: delay,
