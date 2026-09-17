@@ -22,6 +22,11 @@ fn id_re() -> &'static regex::Regex {
     RE.get_or_init(|| regex::Regex::new(r"\A[0-9a-f]{12}\z").expect("static regex"))
 }
 
+/// Twelve lowercase hex chars. Export paths must use this, not a deserialized field blindly.
+pub fn session_id_ok(id: &str) -> bool {
+    id_re().is_match(id)
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TokenTally {
     #[serde(default)]

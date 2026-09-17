@@ -24,6 +24,13 @@ pub async fn export_session(
         .store
         .get(&session_id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    if session.session_id != session_id {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "HARNESS_SESSION_ERROR",
+            "session id mismatch",
+        ));
+    }
     write_export(&state.home, &session).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let body = session_export::render(&session);
     let mut resp = Response::new(Body::from(body));
