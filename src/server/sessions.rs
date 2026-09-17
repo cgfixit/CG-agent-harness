@@ -27,13 +27,27 @@ pub fn session_id_ok(id: &str) -> bool {
     id_re().is_match(id)
 }
 
-/// Rebuild a session id from an integer so filesystem names cannot carry `../`.
-pub fn canonical_session_id(raw: &str) -> Result<String> {
-    if raw.len() != SESSION_ID_CHARS || !raw.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+/// Parse twelve lowercase hex digits into an integer. The integer, not the
+/// original string, is what export uses to build a filename.
+pub fn session_id_u64(raw: &str) -> Result<u64> {
+    if raw.len() != SESSION_ID_CHARS {
         return Err(session_error("invalid session id", raw));
     }
-    let n = u64::from_str_radix(raw, 16).map_err(|_| session_error("invalid session id", raw))?;
-    Ok(format!("{n:012x}"))
+    let mut n = 0u64;
+    for b in raw.bytes() {
+        let digit = match b {
+            b'0'..=b'9' => u64::from(b - b'0'),
+            b'a'..=b'f' => u64::from(b - b'a' + 10),
+            _ => return Err(session_error("invalid session id", raw)),
+        };
+        n = (n << 4) | digit;
+    }
+    Ok(n)
+}
+
+/// Rebuild a session id from an integer so filesystem names cannot carry `../`.
+pub fn canonical_session_id(raw: &str) -> Result<String> {
+    Ok(format!("{:012x}", session_id_u64(raw)?))
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

@@ -116,14 +116,31 @@ fn session_err(message: &str) -> HarnessError {
     HarnessError::new(SESSION_ERROR_CODE, message)
 }
 
+/// Twelve lowercase hex digits plus `.md`, built only from an integer.
+fn export_filename(n: u64) -> Result<PathBuf> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut name = [0u8; 15];
+    let mut x = n;
+    for i in (0..12).rev() {
+        name[i] = HEX[(x & 0xf) as usize];
+        x >>= 4;
+    }
+    name[12] = b'.';
+    name[13] = b'm';
+    name[14] = b'd';
+    let s = std::str::from_utf8(&name).map_err(|_| session_err("export name"))?;
+    Ok(PathBuf::from(s))
+}
+
 pub fn write_export(home: &Home, file_id: &str, session: &Session) -> Result<PathBuf> {
-    let id = crate::server::sessions::canonical_session_id(file_id)?;
-    if session.session_id != id {
+    let n = crate::server::sessions::session_id_u64(file_id)?;
+    let stored = crate::server::sessions::session_id_u64(&session.session_id)?;
+    if n != stored {
         return Err(session_err("session id mismatch"));
     }
     let dir = home.exports_dir();
     std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{id}.md"));
+    let path = dir.join(export_filename(n)?);
     let bytes = render(session).into_bytes();
     write_atomic(&path, &bytes, Some(0o600))?;
     Ok(path)
@@ -173,6 +190,10 @@ mod tests {
         assert!(write_export(&home, "aaaaaaaaaaaa", &s).is_err());
         assert!(!home.exports_dir().join("../etc/passwd.md").exists());
         assert!(!home.exports_dir().join("aaaaaaaaaaaa.md").exists());
+        let ok = session("hi");
+        let written = write_export(&home, "aaaaaaaaaaaa", &ok).unwrap();
+        assert_eq!(written.file_name().unwrap(), "aaaaaaaaaaaa.md");
+        assert!(written.is_file());
     }
 
     #[test]
