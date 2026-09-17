@@ -133,6 +133,7 @@ impl Default for ServerOptions {
                 ("structured_memory.auto_consolidation".into(), "false".into()),
                 ("structured_memory.auto_suggest_chat".into(), "false".into()),
                 ("structured_memory.auto_suggest_coding".into(), "false".into()),
+                ("models.local_llm.warmup.enabled".into(), "false".into()),
             ],
             api_key: Some("test-api-key-0123456789".to_string()),
             deny_all_tools: false,

@@ -230,10 +230,17 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         request_log: cfg.flag_is_true("logging.request_log"),
         auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl::new(),
         memory_suggestions: crate::server::structured_memory_suggest::Suggestions::default(),
+        ollama: state::OllamaControl::new(),
     });
     routes::persona::recover_on_startup(&state)
         .map_err(|e| HarnessError::harness_config(format!("{}: {}", e.code, e.message)))?;
     crate::server::structured_memory_auto::sync_worker(&state);
+    {
+        let warmup = state.clone();
+        tokio::spawn(async move {
+            crate::llm::ollama::run_warmup(&warmup.backend, &warmup.cfg, &warmup.audit).await;
+        });
+    }
     Ok((routes::build_router(state.clone()), state))
 }
 

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::common::audit::Audit;
 use crate::common::auth_store::AuthManager;
@@ -19,6 +20,8 @@ use super::memory_notes::MemoryNotes;
 use super::sessions::SessionStore;
 use super::structured_memory::StructuredMemoryStore;
 use super::web_search::WebTool;
+use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 pub const HARNESS_LOOP_TOOL: &str = "harness_loop";
 pub const AGENT_RUN_TOOL: &str = "agent_run";
@@ -84,6 +87,63 @@ pub struct AppState {
     pub auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl,
     /// Bounded volatile completion inputs. Only proposals are persisted automatically.
     pub memory_suggestions: crate::server::structured_memory_suggest::Suggestions,
+    /// Native Ollama pull/inventory (loopback only; independent of chat generation).
+    pub ollama: OllamaControl,
+}
+
+/// Single-flight native Ollama pull plus a short-lived tags cache.
+pub struct OllamaControl {
+    pub pull_gate: GenerationGate,
+    pull_abort: Mutex<Option<CancellationToken>>,
+    cache: Mutex<Option<(Instant, Value)>>,
+}
+
+impl Default for OllamaControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OllamaControl {
+    pub fn new() -> Self {
+        Self {
+            pull_gate: GenerationGate::new(),
+            pull_abort: Mutex::new(None),
+            cache: Mutex::new(None),
+        }
+    }
+
+    pub fn register_pull(&self, token: CancellationToken) {
+        *self.pull_abort.lock().unwrap_or_else(|p| p.into_inner()) = Some(token);
+    }
+
+    pub fn abort_pull(&self) -> bool {
+        match self.pull_abort.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            Some(token) => {
+                token.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn cached_inventory(&self, max_age_sec: u64) -> Option<Value> {
+        let cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
+        let (at, value) = cache.as_ref()?;
+        if at.elapsed().as_secs() < max_age_sec {
+            Some(value.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn store_inventory(&self, value: Value) {
+        *self.cache.lock().unwrap_or_else(|p| p.into_inner()) = Some((Instant::now(), value));
+    }
+
+    pub fn invalidate_inventory(&self) {
+        *self.cache.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
 }
 
 impl AppState {
@@ -119,6 +179,10 @@ impl AppState {
     pub fn abort_chat(&self) {
         self.chat.abort_in_flight();
         self.cloud_chat.abort_in_flight();
+    }
+
+    pub fn abort_ollama_pull(&self) -> bool {
+        self.ollama.abort_pull()
     }
 
     pub fn loop_tool_allowlist(&self) -> BTreeSet<String> {

@@ -5,6 +5,7 @@ pub mod agent;
 pub mod auth;
 pub mod core;
 pub mod goals;
+pub mod ollama;
 pub mod panels;
 pub mod persona;
 pub mod skills;
@@ -21,7 +22,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 77] = [
+pub const REGISTERED_PATHS: [&str; 80] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -76,6 +77,9 @@ pub const REGISTERED_PATHS: [&str; 77] = [
     "/api/soul/proposals/{id}",
     "/api/soul",
     "/api/model",
+    "/api/ollama/inventory",
+    "/api/ollama/pull",
+    "/api/ollama/pull/cancel",
     "/api/keys",
     "/api/chat",
     "/api/chat/cancel",
@@ -223,6 +227,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/sessions/{session_id}/goal", post(core::session_goal))
         .route("/api/soul", post(core::soul_toggle))
         .route("/api/model", post(core::model_select))
+        .route("/api/ollama/inventory", get(ollama::inventory))
+        .route("/api/ollama/pull", post(ollama::pull))
+        .route("/api/ollama/pull/cancel", post(ollama::cancel_pull))
         .route("/api/keys", get(panels::api_keys_status).post(panels::api_keys_set))
         .route("/api/chat", post(core::chat))
         .route("/api/chat/cancel", post(core::cancel_chat))
@@ -316,7 +323,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 77);
+        assert_eq!(REGISTERED_PATHS.len(), 80);
 
         let all = registered_paths();
         assert!(

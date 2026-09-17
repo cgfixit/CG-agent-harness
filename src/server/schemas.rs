@@ -569,6 +569,22 @@ pub struct ModelSelectRequest {
     pub model: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OllamaPullRequest {
+    pub model: String,
+}
+
+impl Validate for OllamaPullRequest {
+    fn validate(&self) -> Vec<String> {
+        if crate::llm::ollama::model_name_ok(&self.model) {
+            vec![]
+        } else {
+            vec!["model".into()]
+        }
+    }
+}
+
 impl Validate for ModelSelectRequest {
     fn validate(&self) -> Vec<String> {
         if len_ok(&self.model, 1, MAX_TITLE_LEN) {

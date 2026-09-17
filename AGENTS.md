@@ -73,6 +73,11 @@ Public Google fallback and destination page fetching retain URL permission check
   Seatbelt / bubblewrap helpers as agentic verification. Do not attach MCP
   tools to `/loop`. `GET /api/mcp` lists declared server/tool names to an
   authenticated session.
+- Native Ollama management is loopback-only (`GET /api/ollama/inventory`,
+  abortable `POST /api/ollama/pull`). Pull/warmup never send `num_ctx`. Warmup
+  is `models.local_llm.warmup.enabled` (`flag_is_true`; missing in old homes is
+  off) and a bounded background `keep_alive` generate; failure is a logged
+  degrade, never a crash. Audit roles cannot pull; admin and operator can.
 - Prefer a small unit test with `#[cfg(test)] mod tests` beside the function
   over another integration test when the thing under test is a pure parser or
   matcher (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`'

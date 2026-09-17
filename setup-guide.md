@@ -240,7 +240,8 @@ running in its terminal while you use another terminal for the harness.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 require a
 **32768-token** Ollama window. The harness sends no `num_ctx`; it inherits
-whatever window the Ollama process started with. Set the env **before** that
+whatever window the Ollama process started with. Console `POST /api/ollama/pull`
+and startup `keep_alive` warmup use the same rule. Set the env **before** that
 process starts. Changing it later needs a full quit and relaunch, not a second
 daemon on an occupied port.
 
