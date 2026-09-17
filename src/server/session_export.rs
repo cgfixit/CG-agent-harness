@@ -116,18 +116,10 @@ fn session_err(message: &str) -> HarnessError {
     HarnessError::new(SESSION_ERROR_CODE, message)
 }
 
-pub fn write_export(home: &Home, session: &Session) -> Result<PathBuf> {
-    if !crate::server::sessions::session_id_ok(&session.session_id) {
-        return Err(session_err("invalid session id"));
-    }
-    let id: String = session
-        .session_id
-        .chars()
-        .filter(|c| matches!(c, '0'..='9' | 'a'..='f'))
-        .take(12)
-        .collect();
-    if id.len() != 12 {
-        return Err(session_err("invalid session id"));
+pub fn write_export(home: &Home, file_id: &str, session: &Session) -> Result<PathBuf> {
+    let id = crate::server::sessions::canonical_session_id(file_id)?;
+    if session.session_id != id {
+        return Err(session_err("session id mismatch"));
     }
     let dir = home.exports_dir();
     std::fs::create_dir_all(&dir)?;
@@ -177,8 +169,10 @@ mod tests {
         home.ensure_layout().unwrap();
         let mut s = session("hi");
         s.session_id = "../etc/passwd".into();
-        assert!(write_export(&home, &s).is_err());
+        assert!(write_export(&home, "../etc/passwd", &s).is_err());
+        assert!(write_export(&home, "aaaaaaaaaaaa", &s).is_err());
         assert!(!home.exports_dir().join("../etc/passwd.md").exists());
+        assert!(!home.exports_dir().join("aaaaaaaaaaaa.md").exists());
     }
 
     #[test]

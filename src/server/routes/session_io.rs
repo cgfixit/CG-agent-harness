@@ -20,18 +20,20 @@ pub async fn export_session(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> Result<Response, ApiError> {
+    let id = crate::server::sessions::canonical_session_id(&session_id)
+        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let session = state
         .store
-        .get(&session_id)
+        .get(&id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    if session.session_id != session_id {
+    if session.session_id != id {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "HARNESS_SESSION_ERROR",
             "session id mismatch",
         ));
     }
-    write_export(&state.home, &session).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    write_export(&state.home, &id, &session).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let body = session_export::render(&session);
     let mut resp = Response::new(Body::from(body));
     *resp.status_mut() = StatusCode::OK;

@@ -27,6 +27,15 @@ pub fn session_id_ok(id: &str) -> bool {
     id_re().is_match(id)
 }
 
+/// Rebuild a session id from an integer so filesystem names cannot carry `../`.
+pub fn canonical_session_id(raw: &str) -> Result<String> {
+    if raw.len() != SESSION_ID_CHARS || !raw.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return Err(session_error("invalid session id", raw));
+    }
+    let n = u64::from_str_radix(raw, 16).map_err(|_| session_error("invalid session id", raw))?;
+    Ok(format!("{n:012x}"))
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TokenTally {
     #[serde(default)]
@@ -469,6 +478,20 @@ impl SessionStore {
             .map_err(|_| HarnessError::new(PERSIST_ERROR_CODE, "could not persist session"))?;
         self.summaries.lock().unwrap_or_else(|p| p.into_inner()).remove(&path);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod id_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_session_id_rebuilds_from_an_integer() {
+        assert_eq!(canonical_session_id("aaaaaaaaaaaa").unwrap(), "aaaaaaaaaaaa");
+        assert_eq!(canonical_session_id("00000000000f").unwrap(), "00000000000f");
+        assert!(canonical_session_id("../etc/passwd").is_err());
+        assert!(canonical_session_id("AAAAAAAAAAAA").is_err());
+        assert!(canonical_session_id("aaaa").is_err());
     }
 }
 
