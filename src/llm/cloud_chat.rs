@@ -16,6 +16,7 @@ const CLAUDE_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_TIMEOUT_SEC: f64 = 90.0;
 const DEFAULT_MAX_TOKENS: u64 = 4096;
+const MAX_RESPONSE_BYTES: usize = 4_194_304;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Provider {
@@ -45,6 +46,7 @@ struct ProviderConfig {
     enabled: bool,
     model: String,
     api_key: String,
+    endpoint: String,
 }
 
 /// One explicitly selected paid provider. It is never selected as a fallback.
@@ -86,6 +88,11 @@ fn provider_config(cfg: &AppConfig, provider: Provider, fallback_model: &str) ->
         enabled,
         model,
         api_key: std::env::var(provider.key_env()).unwrap_or_default().trim().to_string(),
+        endpoint: match provider {
+            Provider::Grok => GROK_ENDPOINT,
+            Provider::Claude => CLAUDE_ENDPOINT,
+        }
+        .into(),
     })
 }
 
@@ -112,6 +119,7 @@ impl CloudChat {
             // Do not delegate paid credentials to ambient HTTP(S)_PROXY.
             client: reqwest::Client::builder()
                 .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs_f64(timeout_sec))
                 .build()
@@ -166,22 +174,34 @@ impl CloudChat {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(request_id.clone(), cancel.clone());
-        let result = tokio::select! {
+        struct Call<'a> {
+            chat: &'a CloudChat,
+            id: String,
+        }
+        impl Drop for Call<'_> {
+            fn drop(&mut self) {
+                self.chat
+                    .inflight
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&self.id);
+            }
+        }
+        let _call = Call {
+            chat: self,
+            id: request_id,
+        };
+        tokio::select! {
             _ = cancel.cancelled() => Err(err("cloud chat request cancelled")),
             result = self.request(config, message) => result,
-        };
-        self.inflight
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&request_id);
-        result
+        }
     }
 
     async fn request(&self, config: &ProviderConfig, message: &str) -> Result<ChatResult> {
         let response = match config.provider {
             Provider::Grok => self
                 .client
-                .post(GROK_ENDPOINT)
+                .post(&config.endpoint)
                 .bearer_auth(&config.api_key)
                 .json(&json!({
                     "model": config.model,
@@ -193,7 +213,7 @@ impl CloudChat {
                 .await,
             Provider::Claude => self
                 .client
-                .post(CLAUDE_ENDPOINT)
+                .post(&config.endpoint)
                 .header("x-api-key", &config.api_key)
                 .header("anthropic-version", ANTHROPIC_VERSION)
                 .json(&json!({"model":config.model,"max_tokens":self.max_tokens,"messages":[{"role":"user","content":message}]}))
@@ -209,9 +229,22 @@ impl CloudChat {
                 status.as_u16()
             )));
         }
-        let body: Value = response
-            .json()
+        let mut response = response;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
             .await
+            .map_err(|_| err(format!("{} cloud chat returned malformed JSON", config.provider.name())))?
+        {
+            if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+                return Err(err(format!(
+                    "{} cloud chat response exceeds limit",
+                    config.provider.name()
+                )));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let body: Value = serde_json::from_slice(&bytes)
             .map_err(|_| err(format!("{} cloud chat returned malformed JSON", config.provider.name())))?;
         let (body_text, prompt_tokens, completion_tokens) = match config.provider {
             Provider::Grok => parse_grok(&body)?,
@@ -284,6 +317,47 @@ fn parse_claude(body: &Value) -> Result<(String, u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::{header, Response, StatusCode};
+    use axum::response::Redirect;
+    use axum::routing::post;
+    use axum::Router;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    fn enabled_chat() -> CloudChat {
+        let cfg = AppConfig::from_str(
+            "models:\n  cloud_chat:\n    enabled: true\n    timeout_sec: 5\n    max_tokens: 16\n    grok: { enabled: true, model: grok-test }\n    claude: { enabled: true, model: claude-test }\n",
+            std::path::Path::new("config.yaml"),
+        )
+        .unwrap();
+        let mut chat = CloudChat::from_config(&cfg).unwrap();
+        chat.grok.api_key = "grok-test-key".into();
+        chat.claude.api_key = "claude-test-key".into();
+        chat
+    }
+
+    async fn serve(app: Router) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+        let origin = format!("http://{}", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only provider has no real credentials and binds only to loopback.
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (origin, task)
+    }
+
+    fn grok_body(len: usize) -> Vec<u8> {
+        let prefix =
+            br#"{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{},"padding":""#;
+        let suffix = br#""}"#;
+        assert!(len >= prefix.len() + suffix.len());
+        [
+            prefix.as_slice(),
+            &vec![b'x'; len - prefix.len() - suffix.len()],
+            suffix.as_slice(),
+        ]
+        .concat()
+    }
 
     #[test]
     fn provider_parsers_accept_only_nonempty_text() {
@@ -307,5 +381,115 @@ mod tests {
         assert!(cloud.is_cloud_selection("claude"));
         assert!(cloud.is_cloud_selection("claude-sonnet-5"));
         assert!(!cloud.is_cloud_selection("qwen3.8:27b-mlx"));
+    }
+
+    #[tokio::test]
+    async fn cloud_transport_refuses_redirects_and_bounds_success_bodies() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let sink_hits = hits.clone();
+        let (sink, sink_task) = serve(Router::new().route(
+            "/sink",
+            post(move || {
+                let hits = sink_hits.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        ))
+        .await;
+        let redirect_target = format!("{sink}/sink");
+        let (redirect, redirect_task) = serve(Router::new().route(
+            "/redirect",
+            post(move || {
+                let target = redirect_target.clone();
+                async move { Redirect::temporary(&target) }
+            }),
+        ))
+        .await;
+
+        let exact = axum::body::Bytes::from(grok_body(MAX_RESPONSE_BYTES));
+        let over = axum::body::Bytes::from(grok_body(MAX_RESPONSE_BYTES + 1));
+        let (responses, response_task) = serve(
+            Router::new()
+                .route(
+                    "/exact",
+                    post(move || {
+                        let body = exact.clone();
+                        async move {
+                            Response::builder()
+                                .header(header::CONTENT_TYPE, "application/json")
+                                .body(Body::from(body))
+                                .unwrap()
+                        }
+                    }),
+                )
+                .route(
+                    "/over",
+                    post(move || {
+                        let body = over.clone();
+                        async move {
+                            let split = MAX_RESPONSE_BYTES / 2;
+                            let chunks = vec![
+                                Ok::<_, std::convert::Infallible>(body.slice(..split)),
+                                Ok(body.slice(split..)),
+                            ];
+                            Response::builder()
+                                .header(header::CONTENT_TYPE, "application/json")
+                                .body(Body::from_stream(futures_util::stream::iter(chunks)))
+                                .unwrap()
+                        }
+                    }),
+                ),
+        )
+        .await;
+
+        let mut chat = enabled_chat();
+        chat.claude.endpoint = format!("{redirect}/redirect");
+        let refused = chat.chat("claude", "secret").await.unwrap_err();
+        assert!(refused.message.contains("HTTP 307"), "{}", refused.message);
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        chat.grok.endpoint = format!("{responses}/exact");
+        assert_eq!(chat.chat("grok", "hello").await.unwrap().body_text, "ok");
+        chat.grok.endpoint = format!("{responses}/over");
+        assert!(chat
+            .chat("grok", "hello")
+            .await
+            .unwrap_err()
+            .message
+            .contains("response exceeds limit"));
+
+        sink_task.abort();
+        redirect_task.abort();
+        response_task.abort();
+    }
+
+    #[tokio::test]
+    async fn dropping_a_cloud_call_unregisters_it() {
+        let (origin, server) = serve(Router::new().route(
+            "/pending",
+            post(|| async { std::future::pending::<StatusCode>().await }),
+        ))
+        .await;
+        let mut chat = enabled_chat();
+        chat.grok.endpoint = format!("{origin}/pending");
+        let chat = Arc::new(chat);
+        let task_chat = chat.clone();
+        let call = tokio::spawn(async move { task_chat.chat("grok", "hello").await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if chat.inflight.lock().unwrap_or_else(|p| p.into_inner()).len() == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        call.abort();
+        let _ = call.await;
+        assert!(chat.inflight.lock().unwrap_or_else(|p| p.into_inner()).is_empty());
+        server.abort();
     }
 }
