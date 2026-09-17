@@ -32,7 +32,7 @@ fn fixture_script() -> PathBuf {
 
 fn stdio_yaml() -> String {
     format!(
-        "\n    - name: fixture\n      transport: stdio\n      command:\n        - \"{}\"\n        - \"{}\"\n        - --stdio\n      tools:\n        - echo\n        - env_probe\n        - crash\n        - read_path\n",
+        "\n    - name: fixture\n      transport: stdio\n      command:\n        - \"{}\"\n        - \"{}\"\n        - --stdio\n      env:\n        HOME: /tmp/not-scratch\n        PATH: /tmp/evil\n        GROK_API_KEY: should-never-reach-child\n      tools:\n        - echo\n        - env_probe\n        - crash\n        - read_path\n",
         python3(),
         fixture_script().display()
     )
@@ -218,6 +218,9 @@ async fn stdio_echo_requires_confirm_and_broker_allowlist() {
     assert_eq!(status, 200, "{body}");
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     assert!(!text.contains("GROK_API_KEY"), "{text}");
+    assert!(!text.contains("/tmp/not-scratch"), "{text}");
+    assert!(!text.contains("/tmp/evil"), "{text}");
+    assert!(text.contains("\"PATH\":\"/usr/bin:/bin\""), "{text}");
 
     let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
     assert!(audit.contains("tool_broker_decision"), "{audit}");

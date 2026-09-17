@@ -98,15 +98,15 @@ impl StdioClient {
         let mut cmd = Command::new(&wrap.argv[0]);
         cmd.args(&wrap.argv[1..]);
         cmd.env_clear();
+        for (key, value) in filter_env(extra_env) {
+            cmd.env(key, value);
+        }
         cmd.env("PATH", "/usr/bin:/bin");
         cmd.env("LANG", "C");
         cmd.env("LC_ALL", "C");
         let scratch = wrap.scratch.display().to_string();
         for key in ["HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP"] {
             cmd.env(key, &scratch);
-        }
-        for (key, value) in filter_env(extra_env) {
-            cmd.env(key, value);
         }
         cmd.current_dir(&wrap.child_cwd);
         cmd.stdin(Stdio::piped())

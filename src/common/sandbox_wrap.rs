@@ -4,9 +4,10 @@
 //! `crate::agentic`. Never binds host root.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::errors::{HarnessError, Result};
-use super::process;
+use super::process::{self, RunSpec};
 
 fn wrap_err(message: impl Into<String>) -> HarnessError {
     HarnessError::new("MCP_STDIO", message)
@@ -229,6 +230,65 @@ pub fn wrap_mcp_stdio(argv: &[String], cwd: Option<&Path>) -> Result<WrappedStdi
     })
 }
 
+/// Same probe `LinuxBubblewrapSandbox::new` uses. Presence of `bwrap` is not enough:
+/// GitHub Actions often fails `bwrap` with `Failed RTM_NEWADDR`.
+pub fn probe_linux_bwrap() -> std::result::Result<PathBuf, String> {
+    let path = process::which("bwrap").ok_or_else(|| "bwrap not found".to_string())?;
+    let path = dunce::canonicalize(&path).map_err(|e| format!("bwrap path {}: {e}", path.display()))?;
+    let tmp = tempfile::Builder::new()
+        .prefix("cgah-bwrap-probe-")
+        .tempdir()
+        .map_err(|e| format!("bwrap probe tempdir: {e}"))?;
+    let candidate = tmp.path().join("candidate");
+    let scratch = tmp.path().join("scratch");
+    std::fs::create_dir(&candidate).map_err(|e| format!("bwrap probe candidate: {e}"))?;
+    std::fs::create_dir(&scratch).map_err(|e| format!("bwrap probe scratch: {e}"))?;
+    let wrapped = bwrap_argv(&path, &["/bin/true".into()], &candidate, &scratch, &[])?;
+    match process::run(RunSpec {
+        argv: &wrapped,
+        cwd: None,
+        env: None,
+        timeout: Duration::from_secs(5),
+        stdin: None,
+    }) {
+        Ok(out) if out.status == Some(0) => Ok(path),
+        Ok(out) => Err(format!("bwrap probe failed (status {:?}): {}", out.status, out.stderr)),
+        Err(e) => Err(format!("bwrap probe: {e}")),
+    }
+}
+
+fn linux_unshare_prefix() -> Option<Vec<String>> {
+    let path = process::which("unshare")?;
+    let probe = |extra: &[&str]| -> bool {
+        let mut argv = vec![path.display().to_string()];
+        argv.extend(extra.iter().map(|s| (*s).to_string()));
+        argv.push("/bin/true".into());
+        matches!(
+            process::run(RunSpec {
+                argv: &argv,
+                cwd: None,
+                env: None,
+                timeout: Duration::from_secs(5),
+                stdin: None,
+            }),
+            Ok(out) if out.status == Some(0)
+        )
+    };
+    if probe(&["--net"]) {
+        return Some(vec![path.display().to_string(), "--net".into(), "--".into()]);
+    }
+    if probe(&["--user", "--map-root-user", "--net"]) {
+        return Some(vec![
+            path.display().to_string(),
+            "--user".into(),
+            "--map-root-user".into(),
+            "--net".into(),
+            "--".into(),
+        ]);
+    }
+    None
+}
+
 fn wrap_argv(
     argv: &[String],
     cwd: &Path,
@@ -249,20 +309,17 @@ fn wrap_argv(
         return Ok((out, "darwin-seatbelt"));
     }
     if cfg!(target_os = "linux") {
-        if let Some(bwrap) = process::which("bwrap") {
-            let bwrap =
-                dunce::canonicalize(&bwrap).map_err(|e| wrap_err(format!("bwrap path {}: {e}", bwrap.display())))?;
+        if let Ok(bwrap) = probe_linux_bwrap() {
             let wrapped =
                 bwrap_argv(&bwrap, argv, cwd, scratch, read_roots).map_err(|e| wrap_err(format!("bwrap argv: {e}")))?;
             return Ok((wrapped, "linux-bwrap"));
         }
-        if let Some(unshare) = process::which("unshare") {
-            let mut wrapped = vec![unshare.display().to_string(), "--net".into(), "--".into()];
-            wrapped.extend(argv.iter().cloned());
-            return Ok((wrapped, "linux-netns"));
+        if let Some(mut prefix) = linux_unshare_prefix() {
+            prefix.extend(argv.iter().cloned());
+            return Ok((prefix, "linux-netns"));
         }
         return Err(HarnessError::sandbox_unavailable(
-            "bwrap and unshare missing; Linux MCP stdio fails closed",
+            "linux MCP stdio sandbox unavailable (bwrap probe failed and unshare --net probe failed)",
         ));
     }
     Ok((argv.to_vec(), "windows-stdio"))
@@ -285,5 +342,14 @@ mod tests {
         )
         .expect("bwrap argv");
         assert!(!argv_binds_host_root(&argv));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_stdio_wrap_uses_seatbelt() {
+        let wrapped = wrap_mcp_stdio(&["/bin/echo".into(), "ok".into()], None).expect("wrap");
+        assert_eq!(wrapped.backend, "darwin-seatbelt");
+        assert!(wrapped.argv[0].contains("sandbox-exec"), "{:?}", wrapped.argv);
+        assert_eq!(wrapped.argv[1], "-p");
     }
 }

@@ -69,7 +69,11 @@ def _handle(message):
         if name == "crash":
             os._exit(1)
         if name == "env_probe":
-            payload = {"keys": sorted(os.environ)}
+            payload = {
+                "keys": sorted(os.environ),
+                "HOME": os.environ.get("HOME", ""),
+                "PATH": os.environ.get("PATH", ""),
+            }
         elif name == "echo":
             payload = {"echo": args}
         elif name == "read_path":

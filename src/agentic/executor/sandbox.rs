@@ -223,39 +223,8 @@ pub struct LinuxBubblewrapSandbox {
 
 impl LinuxBubblewrapSandbox {
     pub fn new() -> Result<Self> {
-        let path = process::which("bwrap")
-            .ok_or_else(|| HarnessError::sandbox_unavailable("bwrap not found; Linux bubblewrap fails closed"))?;
-        // `which` can return a relative path when PATH holds a relative entry,
-        // and the sandboxed run later sets cwd to the untrusted worktree; pin
-        // an absolute executable so a repo-local `tools/bwrap` cannot replace it.
-        let path = dunce::canonicalize(&path)
-            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap path {}: {e}", path.display())))?;
-        let tmp = tempfile::Builder::new()
-            .prefix("cgah-bwrap-probe-")
-            .tempdir()
-            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap probe tempdir: {e}")))?;
-        let candidate = tmp.path().join("candidate");
-        let scratch = tmp.path().join("scratch");
-        std::fs::create_dir(&candidate)
-            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap probe candidate: {e}")))?;
-        std::fs::create_dir(&scratch)
-            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap probe scratch: {e}")))?;
-        let wrapped = bwrap_argv(&path, &["/bin/true".into()], &candidate, &scratch, &[])
-            .map_err(|e| HarnessError::sandbox_unavailable(format!("bwrap argv: {e}")))?;
-        match process::run(RunSpec {
-            argv: &wrapped,
-            cwd: None,
-            env: None,
-            timeout: Duration::from_secs(5),
-            stdin: None,
-        }) {
-            Ok(out) if out.status == Some(0) => Ok(Self { bwrap: path }),
-            Ok(out) => Err(HarnessError::sandbox_unavailable(format!(
-                "bwrap probe failed (status {:?}): {}",
-                out.status, out.stderr
-            ))),
-            Err(e) => Err(HarnessError::sandbox_unavailable(format!("bwrap probe: {e}"))),
-        }
+        let path = crate::common::sandbox_wrap::probe_linux_bwrap().map_err(HarnessError::sandbox_unavailable)?;
+        Ok(Self { bwrap: path })
     }
 }
 
