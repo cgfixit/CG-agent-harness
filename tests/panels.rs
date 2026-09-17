@@ -547,7 +547,7 @@ async fn tools_and_skills_views_report_wiring() {
     let (status, tools) = s.open_get("/api/tools").await;
     assert_eq!(status, 200);
     assert_eq!(tools["wired"], tools["total"], "every catalog surface is registered");
-    assert_eq!(tools["total"], 51);
+    assert_eq!(tools["total"], 53);
     assert!(tools["diagram"].as_str().unwrap().starts_with("HARNESS TOOLS"));
     let (status, skills) = s.open_get("/api/skills").await;
     assert_eq!(status, 200);
@@ -878,6 +878,18 @@ async fn advertised_methods_resolve_and_disabled_status_has_no_side_effects() {
             .await
             .unwrap();
         assert_ne!(response.status().as_u16(), 405, "{method} {path}");
+        if path.contains("/sessions/") && path.ends_with("/export") {
+            assert_eq!(response.status().as_u16(), 200, "{method} {path}");
+            assert!(
+                response
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|v| v.starts_with("text/markdown")),
+                "{method} {path} must return markdown"
+            );
+            continue;
+        }
         assert!(
             response.json::<serde_json::Value>().await.is_ok(),
             "{method} {path} must resolve to an API handler"

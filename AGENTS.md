@@ -78,6 +78,11 @@ Public Google fallback and destination page fetching retain URL permission check
   is `models.local_llm.warmup.enabled` (`flag_is_true`; missing in old homes is
   off) and a bounded background `keep_alive` generate; failure is a logged
   degrade, never a crash. Audit roles cannot pull; admin and operator can.
+- Session Markdown export and transcript search stay on the machine.
+  `GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at
+  `0o600`. `POST /api/sessions/search` uses a request-local Tantivy RAM index
+  (same crate as `web_index`, never mixed with the web cache). `GET /api/sessions`
+  still omits goal and bodies. Sessions remain shared portal resources.
 - Prefer a small unit test with `#[cfg(test)] mod tests` beside the function
   over another integration test when the thing under test is a pure parser or
   matcher (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`'

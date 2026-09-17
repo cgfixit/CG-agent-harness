@@ -8,6 +8,7 @@ pub mod goals;
 pub mod ollama;
 pub mod panels;
 pub mod persona;
+pub mod session_io;
 pub mod skills;
 pub mod structured_memory;
 
@@ -22,7 +23,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 80] = [
+pub const REGISTERED_PATHS: [&str; 82] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -66,8 +67,10 @@ pub const REGISTERED_PATHS: [&str; 80] = [
     "/api/structured-memory/consolidation/{id}",
     "/api/structured-memory/consolidation/{id}/cancel",
     "/api/sessions",
+    "/api/sessions/search",
     "/api/sessions/clear",
     "/api/sessions/{session_id}",
+    "/api/sessions/{session_id}/export",
     "/api/sessions/{session_id}/rename",
     "/api/sessions/{session_id}/goal",
     "/api/sessions/{session_id}/goal-stage",
@@ -221,8 +224,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(structured_memory::cancel_consolidation),
         )
         .route("/api/sessions", post(core::create_session))
+        .route("/api/sessions/search", post(session_io::search_session_transcripts))
         .route("/api/sessions/clear", post(core::clear_sessions))
         .route("/api/sessions/{session_id}", get(core::get_session))
+        .route("/api/sessions/{session_id}/export", get(session_io::export_session))
         .route("/api/sessions/{session_id}/rename", post(core::rename_session))
         .route("/api/sessions/{session_id}/goal", post(core::session_goal))
         .route("/api/soul", post(core::soul_toggle))
@@ -323,7 +328,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 80);
+        assert_eq!(REGISTERED_PATHS.len(), 82);
 
         let all = registered_paths();
         assert!(

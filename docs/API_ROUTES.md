@@ -56,8 +56,10 @@ session timeouts.
 | POST | `/api/ollama/pull/cancel` | Abort the in-flight pull |
 | POST | `/api/prompt/preview` | Show the assembled system prompt (`/prompt`) |
 | GET, POST | `/api/sessions` | List sessions or create one |
+| POST | `/api/sessions/search` | Local transcript search; snippets only |
 | POST | `/api/sessions/clear` | Delete all sessions |
 | GET | `/api/sessions/{session_id}` | Load one session |
+| GET | `/api/sessions/{session_id}/export` | Markdown export; also written 0o600 under home/exports |
 | POST | `/api/sessions/{session_id}/rename` | Rename |
 | POST | `/api/sessions/{session_id}/goal` | Set the session goal |
 | GET, POST | `/api/sessions/{session_id}/goal-stage` | Goal staging status and transitions |

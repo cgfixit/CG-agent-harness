@@ -35,7 +35,7 @@ pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8790;
 pub const MIN_USER_PORT: u16 = 1024;
 
-const SUBDIRS: [&str; 9] = [
+const SUBDIRS: [&str; 10] = [
     "sessions",
     "skills",
     "tools",
@@ -45,6 +45,7 @@ const SUBDIRS: [&str; 9] = [
     "data/agentic/workspaces",
     "data/agentic/harness_optimizer/runs/accepted",
     "logs",
+    "exports",
 ];
 
 const EMBEDDED_SKILLS: [(&str, &str); 2] = [
@@ -107,6 +108,9 @@ impl Home {
     }
     pub fn sessions_dir(&self) -> PathBuf {
         self.root.join("sessions")
+    }
+    pub fn exports_dir(&self) -> PathBuf {
+        self.root.join("exports")
     }
     pub fn skills_dir(&self) -> PathBuf {
         self.root.join("skills")
