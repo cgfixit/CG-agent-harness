@@ -33,13 +33,18 @@ impl GenerationGate {
     }
 
     pub fn claim(&self, owner: &str) -> Option<GateGuard> {
+        self.claim_or_busy_owner(owner).ok()
+    }
+
+    /// Claim, or the owner that already holds the gate, under one lock.
+    pub fn claim_or_busy_owner(&self, owner: &str) -> Result<GateGuard, String> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         if g.held {
-            return None;
+            return Err(g.owner.clone());
         }
         g.held = true;
         g.owner = owner.to_string();
-        Some(GateGuard {
+        Ok(GateGuard {
             inner: self.inner.clone(),
         })
     }
