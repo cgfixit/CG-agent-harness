@@ -132,6 +132,8 @@ jobs:
         run: |
           git config --global user.email "ci@example.invalid"
           git config --global user.name "CI"
+      - name: Grok ACP Phase 0 fake-runtime contract
+        run: python3 scripts/test-grok-acp-probe.py
       - name: Install bubblewrap on Linux
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
