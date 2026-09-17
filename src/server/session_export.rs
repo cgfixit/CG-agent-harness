@@ -132,14 +132,9 @@ fn export_filename(n: u64) -> Result<PathBuf> {
     Ok(PathBuf::from(s))
 }
 
-pub fn write_export(home: &Home, file_id: &str, session: &Session) -> Result<PathBuf> {
-    let n = crate::server::sessions::session_id_u64(file_id)?;
-    let stored = crate::server::sessions::session_id_u64(&session.session_id)?;
-    if n != stored {
-        return Err(session_err("session id mismatch"));
-    }
+pub fn write_export(home: &Home, session: &Session) -> Result<PathBuf> {
+    let n = crate::server::sessions::session_id_u64(&session.session_id)?;
     let dir = home.exports_dir();
-    std::fs::create_dir_all(&dir)?;
     let path = dir.join(export_filename(n)?);
     let bytes = render(session).into_bytes();
     write_atomic(&path, &bytes, Some(0o600))?;
@@ -186,12 +181,11 @@ mod tests {
         home.ensure_layout().unwrap();
         let mut s = session("hi");
         s.session_id = "../etc/passwd".into();
-        assert!(write_export(&home, "../etc/passwd", &s).is_err());
-        assert!(write_export(&home, "aaaaaaaaaaaa", &s).is_err());
+        assert!(write_export(&home, &s).is_err());
         assert!(!home.exports_dir().join("../etc/passwd.md").exists());
         assert!(!home.exports_dir().join("aaaaaaaaaaaa.md").exists());
         let ok = session("hi");
-        let written = write_export(&home, "aaaaaaaaaaaa", &ok).unwrap();
+        let written = write_export(&home, &ok).unwrap();
         assert_eq!(written.file_name().unwrap(), "aaaaaaaaaaaa.md");
         assert!(written.is_file());
     }

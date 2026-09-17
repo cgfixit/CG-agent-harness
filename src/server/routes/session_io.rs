@@ -33,7 +33,7 @@ pub async fn export_session(
             "session id mismatch",
         ));
     }
-    write_export(&state.home, &id, &session).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    write_export(&state.home, &session).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let body = session_export::render(&session);
     let mut resp = Response::new(Body::from(body));
     *resp.status_mut() = StatusCode::OK;
