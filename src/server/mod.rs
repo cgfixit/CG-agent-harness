@@ -24,6 +24,8 @@ pub mod prompts;
 pub mod request_log;
 pub mod routes;
 pub mod schemas;
+pub mod session_export;
+pub mod session_search;
 pub mod sessions;
 pub mod state;
 pub mod structured_memory;

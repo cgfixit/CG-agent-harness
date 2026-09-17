@@ -174,6 +174,23 @@ pub struct SessionCreateRequest {
     pub title: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SessionSearchRequest {
+    #[serde(default)]
+    pub query: String,
+}
+
+impl Validate for SessionSearchRequest {
+    fn validate(&self) -> Vec<String> {
+        if self.query.chars().count() <= 200 {
+            vec![]
+        } else {
+            vec!["query".into()]
+        }
+    }
+}
+
 impl Validate for SessionCreateRequest {
     fn validate(&self) -> Vec<String> {
         if len_ok(&self.title, 0, MAX_TITLE_LEN) {

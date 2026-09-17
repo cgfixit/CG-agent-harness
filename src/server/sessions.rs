@@ -22,6 +22,34 @@ fn id_re() -> &'static regex::Regex {
     RE.get_or_init(|| regex::Regex::new(r"\A[0-9a-f]{12}\z").expect("static regex"))
 }
 
+/// Twelve lowercase hex chars. Export paths must use this, not a deserialized field blindly.
+pub fn session_id_ok(id: &str) -> bool {
+    id_re().is_match(id)
+}
+
+/// Parse twelve lowercase hex digits into an integer. The integer, not the
+/// original string, is what export uses to build a filename.
+pub fn session_id_u64(raw: &str) -> Result<u64> {
+    if raw.len() != SESSION_ID_CHARS {
+        return Err(session_error("invalid session id", raw));
+    }
+    let mut n = 0u64;
+    for b in raw.bytes() {
+        let digit = match b {
+            b'0'..=b'9' => u64::from(b - b'0'),
+            b'a'..=b'f' => u64::from(b - b'a' + 10),
+            _ => return Err(session_error("invalid session id", raw)),
+        };
+        n = (n << 4) | digit;
+    }
+    Ok(n)
+}
+
+/// Rebuild a session id from an integer so filesystem names cannot carry `../`.
+pub fn canonical_session_id(raw: &str) -> Result<String> {
+    Ok(format!("{:012x}", session_id_u64(raw)?))
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TokenTally {
     #[serde(default)]
@@ -464,6 +492,20 @@ impl SessionStore {
             .map_err(|_| HarnessError::new(PERSIST_ERROR_CODE, "could not persist session"))?;
         self.summaries.lock().unwrap_or_else(|p| p.into_inner()).remove(&path);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod id_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_session_id_rebuilds_from_an_integer() {
+        assert_eq!(canonical_session_id("aaaaaaaaaaaa").unwrap(), "aaaaaaaaaaaa");
+        assert_eq!(canonical_session_id("00000000000f").unwrap(), "00000000000f");
+        assert!(canonical_session_id("../etc/passwd").is_err());
+        assert!(canonical_session_id("AAAAAAAAAAAA").is_err());
+        assert!(canonical_session_id("aaaa").is_err());
     }
 }
 

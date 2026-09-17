@@ -370,11 +370,8 @@ bodies.
   `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`,
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
   `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
-<<<<<<< HEAD
-  `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`.
-=======
+  `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,
   `src/server/compaction.rs::projection_uses_next_prompt_not_lifetime_tally`.
->>>>>>> fd200d4 ([docs] - Keep UTF-8 bytes/4 as the English-model token ruler)
 
 ## Signals weaker than their name
 
@@ -409,3 +406,20 @@ bodies are not echoed.
 - Locked by: `src/llm/ollama.rs`,
   `src/server/routes/ollama.rs`,
   `tests/ollama_manage.rs`.
+
+## Session export and transcript search stay on the machine
+
+`GET /api/sessions` remains an open summary list with no message bodies and no
+goal. Markdown export (`GET /api/sessions/{session_id}/export`) and transcript
+search (`POST /api/sessions/search`) sit on the CSRF-guarded router like
+`GET /api/sessions/{session_id}`. Export writes `{home}/exports/{id}.md` at
+`0o600` and returns the same bytes. Search rebuilds a request-local Tantivy
+RAM index over session JSON; it does not write the web cache or a second
+search crate. Hits are session id plus a bounded snippet. Sessions remain
+shared portal resources: any operator or admin who can load a session can
+export or search it. Transcripts never leave the machine.
+
+- Locked by: `src/server/session_export.rs`,
+  `src/server/session_search.rs`,
+  `src/server/routes/session_io.rs`,
+  `tests/session_export.rs`.

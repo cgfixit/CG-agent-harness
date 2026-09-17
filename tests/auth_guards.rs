@@ -9,6 +9,8 @@ use serde_json::json;
 fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
     vec![
         (Method::POST, "/api/sessions", json!({})),
+        (Method::POST, "/api/sessions/search", json!({"query": "hi"})),
+        (Method::GET, "/api/sessions/abcdefabcdef/export", json!(null)),
         (Method::POST, "/api/soul", json!({"enabled": true})),
         (Method::POST, "/api/model", json!({"model": "m"})),
         (Method::GET, "/api/ollama/inventory", json!(null)),
