@@ -339,8 +339,10 @@ already killed.
 
 ## Local chat compaction preserves goal and the first user turn
 
-The send window is stored prompt history (user and assistant turns, persist
-cap `MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
+The estimator is UTF-8 `bytes.div_ceil(4)`. That is the English-model money
+ruler (Grok, Claude, and similar). It is not a Qwen/CJK tokenizer. The send
+window is stored prompt history (user and assistant turns, persist cap
+`MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
 overflow. The effective trigger is
 `max(chat.compact_prompt_tokens, reply_allowance + 4096)`, capped at 30000.
 Web-enabled chat also clamps that trigger so one tool round plus two reply
@@ -366,7 +368,11 @@ bodies.
   `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`,
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
   `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
+<<<<<<< HEAD
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`.
+=======
+  `src/server/compaction.rs::projection_uses_next_prompt_not_lifetime_tally`.
+>>>>>>> fd200d4 ([docs] - Keep UTF-8 bytes/4 as the English-model token ruler)
 
 ## Signals weaker than their name
 
