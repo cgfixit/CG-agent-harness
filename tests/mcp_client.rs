@@ -459,9 +459,12 @@ async fn stdio_drop_kills_process_group_leader() {
     let pid = client.child_pid().expect("child pid");
     assert!(pid > 1);
     drop(client);
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    assert!(
-        !cgagentharness::common::process::pid_alive(pid),
-        "direct child {pid} still alive after Drop"
-    );
+    let dead = (0..100).any(|_| {
+        if !cgagentharness::common::process::pid_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        false
+    });
+    assert!(dead, "direct child {pid} still alive after Drop");
 }

@@ -304,6 +304,12 @@ impl Drop for StdioClient {
             }
         }
         let _ = self.child.start_kill();
+        for _ in 0..50 {
+            match self.child.try_wait() {
+                Ok(Some(_)) => break,
+                _ => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
     }
 }
 
