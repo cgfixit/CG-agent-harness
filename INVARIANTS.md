@@ -347,9 +347,11 @@ Web-enabled chat also clamps that trigger so one tool round plus two reply
 ceilings still fits `web.total_tokens`.
 Startup rejects local-chat or loop reply allowances above 25904 so that floor
 remains usable. The incoming user paste is never compacted. The server builds
-a candidate structured summary in memory. If compaction cannot bring that
-initial prompt below the trigger, the turn is refused without rewriting the
-session. If it can, the summary is persisted atomically with the next
+a candidate summary with one bounded local-model call (`SUMMARY_MAX_TOKENS`
+400) covering goals, decisions, files touched, leftover work, and key facts.
+A failed, empty, timed-out, or aborted summary does not rewrite the session.
+If compaction cannot bring that initial prompt below the trigger, the turn is
+refused without rewriting the session. If it can, the summary is persisted atomically with the next
 successful exchange using `write_json_atomic_mode` at `0o600`; failed or
 cancelled model calls leave stored history unchanged. The system prompt is
 composed each turn and is never stored in `messages`. `Session.goal` and the

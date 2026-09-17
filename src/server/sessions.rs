@@ -309,6 +309,7 @@ impl SessionStore {
         usage: &TokenTally,
         prompt_skills: &[Value],
         keep_recent: usize,
+        summary: &str,
     ) -> Result<Session> {
         self.record_exchange_inner(
             session_id,
@@ -317,7 +318,7 @@ impl SessionStore {
             model,
             usage,
             prompt_skills,
-            Some(keep_recent),
+            Some((keep_recent, summary.to_string())),
         )
     }
 
@@ -330,12 +331,12 @@ impl SessionStore {
         model: &str,
         usage: &TokenTally,
         prompt_skills: &[Value],
-        compact_keep_recent: Option<usize>,
+        compact: Option<(usize, String)>,
     ) -> Result<Session> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
-        if let Some(keep_recent) = compact_keep_recent {
-            session.messages = crate::server::compaction::compact_messages(&session.messages, keep_recent);
+        if let Some((keep_recent, summary)) = compact {
+            session.messages = crate::server::compaction::compact_messages(&session.messages, keep_recent, &summary);
         }
         let now = crate::common::now_ts();
         session.prompt_history.push(user_text.to_string());
@@ -530,7 +531,16 @@ mod tests {
                 .unwrap();
         }
         session = store
-            .record_compacted_exchange(&session.session_id, "latest user", "latest reply", "m", &usage, &[], 2)
+            .record_compacted_exchange(
+                &session.session_id,
+                "latest user",
+                "latest reply",
+                "m",
+                &usage,
+                &[],
+                2,
+                "[session-compacted]\nstub summary\n",
+            )
             .unwrap();
         assert_eq!(session.goal, "ship the parser");
         assert_eq!(session.messages[0].text, "user-0");
