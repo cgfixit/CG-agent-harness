@@ -99,7 +99,20 @@ pub struct StdioClient {
     next_id: i64,
     max_frame: usize,
     pub backend: &'static str,
+    pub probe_reason: String,
+    stderr_path: PathBuf,
     _wrap: WrappedStdio,
+}
+
+pub struct StdioOutcome {
+    pub result: Value,
+    pub backend: &'static str,
+    pub probe_reason: String,
+}
+
+fn stderr_snip(path: &Path) -> String {
+    let bytes = std::fs::read(path).unwrap_or_default();
+    String::from_utf8_lossy(&bytes).chars().take(512).collect()
 }
 
 impl StdioClient {
@@ -108,6 +121,7 @@ impl StdioClient {
         cwd: Option<&Path>,
         extra_env: &BTreeMap<String, String>,
         max_frame: usize,
+        home: Option<&Path>,
     ) -> Result<Self> {
         if argv.is_empty() {
             return Err(mcp_err("MCP_STDIO", "stdio command is empty"));
@@ -116,7 +130,7 @@ impl StdioClient {
         if !program.is_absolute() {
             return Err(mcp_err("MCP_STDIO", "stdio command must be an absolute path"));
         }
-        let wrap = wrap_mcp_stdio(argv, cwd)?;
+        let wrap = wrap_mcp_stdio(argv, cwd, home)?;
         let mut cmd = Command::new(&wrap.argv[0]);
         cmd.args(&wrap.argv[1..]);
         cmd.env_clear();
@@ -131,17 +145,21 @@ impl StdioClient {
             cmd.env(key, &scratch);
         }
         cmd.current_dir(&wrap.child_cwd);
+        let stderr_path = wrap.scratch.join("mcp-stderr.log");
+        let stderr_file =
+            std::fs::File::create(&stderr_path).map_err(|e| mcp_err("MCP_STDIO", format!("stderr file: {e}")))?;
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(stderr_file)
             .kill_on_drop(true);
         #[cfg(unix)]
         {
             cmd.process_group(0);
         }
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| mcp_err("MCP_STDIO", format!("cannot spawn: {e}")))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            let snip = stderr_snip(&stderr_path);
+            mcp_err("MCP_STDIO", format!("cannot spawn: {e}; stderr={snip}"))
+        })?;
         let stdin = child
             .stdin
             .take()
@@ -157,6 +175,8 @@ impl StdioClient {
             next_id: 1,
             max_frame,
             backend: wrap.backend,
+            probe_reason: wrap.probe_reason.clone(),
+            stderr_path,
             _wrap: wrap,
         })
     }
@@ -239,7 +259,8 @@ impl StdioClient {
                 .await
                 .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
             if n == 0 {
-                return Err(mcp_err("MCP_STDIO", "stdio MCP child closed"));
+                let snip = stderr_snip(&self.stderr_path);
+                return Err(mcp_err("MCP_STDIO", format!("stdio MCP child closed; stderr={snip}")));
             }
             headers.extend(line.as_bytes());
             if headers.len() > MAX_HEADER_BYTES {
@@ -268,12 +289,25 @@ impl StdioClient {
     }
 }
 
+impl StdioClient {
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child.id()
+    }
+}
+
 impl Drop for StdioClient {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            if let Some(pid) = self.child.id() {
+                crate::common::process::kill_pid_group(pid);
+            }
+        }
         let _ = self.child.start_kill();
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn call_stdio(
     argv: &[String],
     cwd: Option<&Path>,
@@ -282,13 +316,19 @@ pub async fn call_stdio(
     arguments: Value,
     timeout: Duration,
     max_frame: usize,
-) -> Result<(Value, &'static str)> {
+    home: Option<&Path>,
+) -> Result<StdioOutcome> {
     tokio::time::timeout(timeout, async {
-        let mut client = StdioClient::spawn(argv, cwd, extra_env, max_frame).await?;
+        let mut client = StdioClient::spawn(argv, cwd, extra_env, max_frame, home).await?;
         let backend = client.backend;
+        let probe_reason = client.probe_reason.clone();
         client.initialize().await?;
         let result = client.call_tool(tool, arguments).await?;
-        Ok((result, backend))
+        Ok(StdioOutcome {
+            result,
+            backend,
+            probe_reason,
+        })
     })
     .await
     .map_err(|_| mcp_err("MCP_TIMEOUT", "stdio MCP call timed out"))?

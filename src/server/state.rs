@@ -72,6 +72,8 @@ pub struct AppState {
     pub structured_gates: Mutex<crate::server::structured_memory::OperatorGates>,
     /// Test hook: when set, replaces the closed tool allowlists (empty = deny all).
     pub tool_allowlist_override: Option<BTreeSet<String>>,
+    /// Test hook for MCP only. Independent of `tool_allowlist_override`.
+    pub mcp_tool_allowlist_override: Option<BTreeSet<String>>,
     /// The only server -> agentic edge (a child process).
     pub shim: crate::shim::ShimContext,
     /// Detached real-repo runs (`/api/agent/jobs`).
@@ -132,7 +134,7 @@ impl AppState {
     }
 
     pub fn mcp_tool_allowlist(&self) -> BTreeSet<String> {
-        self.tool_allowlist_override
+        self.mcp_tool_allowlist_override
             .clone()
             .unwrap_or_else(|| self.mcp.broker_allowlist())
     }

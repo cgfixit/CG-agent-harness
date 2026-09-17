@@ -3,7 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -110,6 +111,7 @@ impl McpRuntime {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn call(
         &self,
         server: &str,
@@ -117,33 +119,50 @@ impl McpRuntime {
         arguments: Value,
         confirm: bool,
         allowlist: &BTreeSet<String>,
+        home: &Path,
         audit: &Audit,
     ) -> Result<Value> {
+        let refuse = |code: &str, message: String| {
+            audit.log(json!({
+                "event": "mcp_refused",
+                "code": code,
+                "server": server,
+                "tool": tool,
+            }));
+            Err(HarnessError::new(code, message))
+        };
         if !confirm {
-            return Err(HarnessError::new(
+            return refuse(
                 "MCP_CONFIRM_REQUIRED",
-                "Explicit confirmation is required to call an MCP tool",
-            ));
+                "Explicit confirmation is required to call an MCP tool".into(),
+            );
         }
         if !self.enabled {
-            return Err(mcp_err("MCP_DISABLED", "mcp.enabled is off"));
+            return refuse("MCP_DISABLED", "mcp.enabled is off".into());
         }
-        let declared = self
-            .servers
-            .iter()
-            .find(|item| item.name == server)
-            .ok_or_else(|| mcp_err("MCP_UNKNOWN_SERVER", format!("mcp server '{server}' is not declared")))?;
+        let declared = match self.servers.iter().find(|item| item.name == server) {
+            Some(item) => item,
+            None => return refuse("MCP_UNKNOWN_SERVER", format!("mcp server '{server}' is not declared")),
+        };
         if !declared.tools.contains(tool) {
-            return Err(mcp_err(
+            return refuse(
                 "MCP_UNKNOWN_TOOL",
                 format!("tool '{tool}' is not declared on mcp server '{server}'"),
-            ));
+            );
         }
         let namespaced = namespaced(server, tool);
-        assert_allowed(&namespaced, &[namespaced.clone()], allowlist, audit)?;
+        if let Err(err) = assert_allowed(&namespaced, &[namespaced.clone()], allowlist, audit) {
+            audit.log(json!({
+                "event": "mcp_refused",
+                "code": err.code,
+                "server": server,
+                "tool": tool,
+            }));
+            return Err(err);
+        }
         match declared.transport {
             Transport::Stdio => {
-                let (result, backend) = call_stdio(
+                match call_stdio(
                     &declared.argv,
                     declared.cwd.as_deref(),
                     &declared.env,
@@ -151,24 +170,85 @@ impl McpRuntime {
                     arguments,
                     self.timeout,
                     self.max_result_bytes,
+                    Some(home),
                 )
-                .await?;
-                audit.log(json!({
-                    "event": "mcp_stdio_spawn",
-                    "backend": backend,
-                    "server": server,
-                    "tool": tool,
-                }));
-                Ok(result)
+                .await
+                {
+                    Ok(outcome) => {
+                        audit.log(json!({
+                            "event": "mcp_stdio_spawn",
+                            "transport": "stdio",
+                            "backend": outcome.backend,
+                            "probe_reason": outcome.probe_reason,
+                            "server": server,
+                            "tool": tool,
+                            "outcome": "ok",
+                        }));
+                        Ok(outcome.result)
+                    }
+                    Err(err) => {
+                        let event = if err.code == "MCP_HOME_REFUSED" || err.code == "MCP_TIMEOUT" {
+                            "mcp_refused"
+                        } else {
+                            "mcp_stdio_spawn"
+                        };
+                        audit.log(json!({
+                            "event": event,
+                            "transport": "stdio",
+                            "code": err.code,
+                            "server": server,
+                            "tool": tool,
+                            "outcome": "error",
+                        }));
+                        Err(err)
+                    }
+                }
             }
             Transport::Sse => {
-                let url = declared
-                    .url
-                    .as_deref()
-                    .ok_or_else(|| mcp_err("MCP_SSE", "sse server missing url"))?;
-                tokio::time::timeout(self.timeout, call_sse(self, url, tool, arguments))
-                    .await
-                    .map_err(|_| mcp_err("MCP_TIMEOUT", "sse MCP call timed out"))?
+                let url = match declared.url.as_deref() {
+                    Some(url) => url,
+                    None => return refuse("MCP_SSE", "sse server missing url".into()),
+                };
+                match tokio::time::timeout(self.timeout, call_sse(self, url, tool, arguments)).await {
+                    Ok(Ok(result)) => {
+                        audit.log(json!({
+                            "event": "mcp_sse_call",
+                            "transport": "sse",
+                            "server": server,
+                            "tool": tool,
+                            "outcome": "ok",
+                        }));
+                        Ok(result)
+                    }
+                    Ok(Err(err)) => {
+                        let event = if err.code == "MCP_SSRF_DENIED" || err.code == "MCP_TIMEOUT" {
+                            "mcp_refused"
+                        } else {
+                            "mcp_sse_call"
+                        };
+                        audit.log(json!({
+                            "event": event,
+                            "transport": "sse",
+                            "code": err.code,
+                            "server": server,
+                            "tool": tool,
+                            "outcome": "error",
+                        }));
+                        Err(err)
+                    }
+                    Err(_) => {
+                        let err = mcp_err("MCP_TIMEOUT", "sse MCP call timed out");
+                        audit.log(json!({
+                            "event": "mcp_refused",
+                            "transport": "sse",
+                            "code": "MCP_TIMEOUT",
+                            "server": server,
+                            "tool": tool,
+                            "outcome": "error",
+                        }));
+                        Err(err)
+                    }
+                }
             }
         }
     }
@@ -459,10 +539,15 @@ async fn jsonrpc_post(
     method: &str,
     params: Value,
 ) -> Result<Value> {
+    static SSE_ID: AtomicI64 = AtomicI64::new(1);
     let mut message = json!({"jsonrpc": "2.0", "method": method, "params": params});
-    if method != "notifications/initialized" {
-        message["id"] = json!(1);
-    }
+    let id = if method == "notifications/initialized" {
+        None
+    } else {
+        let id = SSE_ID.fetch_add(1, Ordering::Relaxed);
+        message["id"] = json!(id);
+        Some(id)
+    };
     let response = client
         .post(endpoint.clone())
         .json(&message)
@@ -480,6 +565,11 @@ async fn jsonrpc_post(
         return Err(mcp_err("MCP_RESULT_TOO_LARGE", "sse MCP frame exceeds cap"));
     }
     let reply: Value = serde_json::from_slice(&bytes).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?;
+    if let Some(id) = id {
+        if reply.get("id") != Some(&json!(id)) {
+            return Err(mcp_err("MCP_PROTOCOL", "sse response id mismatch"));
+        }
+    }
     if let Some(err) = reply.get("error") {
         return Err(mcp_err(
             "MCP_CALL_FAILED",

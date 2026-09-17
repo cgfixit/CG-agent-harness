@@ -212,6 +212,7 @@ pub async fn mcp_call(
             arguments,
             req.confirm,
             &state.mcp_tool_allowlist(),
+            &state.home.root,
             &state.audit,
         )
         .await
@@ -222,7 +223,8 @@ pub async fn mcp_call(
                 | "MCP_UNKNOWN_SERVER"
                 | "MCP_UNKNOWN_TOOL"
                 | "MCP_DISABLED"
-                | "MCP_SSRF_DENIED" => StatusCode::FORBIDDEN,
+                | "MCP_SSRF_DENIED"
+                | "MCP_HOME_REFUSED" => StatusCode::FORBIDDEN,
                 "VALIDATION_ERROR" | "CONFIG_ERROR" => StatusCode::BAD_REQUEST,
                 "HARD_SANDBOX_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
                 "MCP_TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,

@@ -92,6 +92,8 @@ pub struct AppOptions {
     pub key_file_sources: BTreeSet<String>,
     /// Test hook: replace the closed tool allowlists (empty set = deny all).
     pub tool_allowlist_override: Option<BTreeSet<String>>,
+    /// Test hook: replace the MCP broker allowlist only.
+    pub mcp_tool_allowlist_override: Option<BTreeSet<String>>,
     /// Test hook: pin a hostname to an address for `/web` fetches.
     pub web_test_resolve: Option<(String, SocketAddr)>,
     /// Additional exact hosts for multi-site fixtures; never populated by a serving entrypoint.
@@ -109,6 +111,7 @@ impl AppOptions {
             api_key: None,
             key_file_sources: BTreeSet::new(),
             tool_allowlist_override: None,
+            mcp_tool_allowlist_override: None,
             web_test_resolve: None,
             web_test_resolve_extra: Vec::new(),
             shim_exe: None,
@@ -221,6 +224,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         auth,
         auth_operation_permits,
         tool_allowlist_override: opts.tool_allowlist_override,
+        mcp_tool_allowlist_override: opts.mcp_tool_allowlist_override,
         shim,
         jobs,
         request_log: cfg.flag_is_true("logging.request_log"),
