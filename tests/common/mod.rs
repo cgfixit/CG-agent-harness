@@ -384,6 +384,12 @@ pub fn install_fake_gh(dir: &Path, bare: &Path) -> PathBuf {
 BARE='{bare}'
 LOG="${{FAKE_GH_LOG:-}}"
 if [ -n "$LOG" ]; then echo "$@" >> "$LOG"; fi
+RETRY_MARKER="${{FAKE_GH_RETRY_MARKER:-}}"
+if [ -n "$RETRY_MARKER" ] && [ "$1" = repo ] && [ "$2" = view ] && [ ! -e "$RETRY_MARKER" ]; then
+  : > "$RETRY_MARKER"
+  echo "HTTP 502 transient fixture" 1>&2
+  exit 1
+fi
 case "$1" in
   --version) echo "gh version 2.60.0 (2026-01-01)"; exit 0 ;;
   repo)
