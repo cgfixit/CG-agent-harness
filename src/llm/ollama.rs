@@ -357,10 +357,10 @@ mod tests {
             native_base_url("http://127.0.0.1:11434").as_deref(), // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
             Some("http://127.0.0.1:11434") // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
         );
-        assert!(native_base_url("http://user:secret@127.0.0.1:11434/v1").is_none()); // DevSkim: ignore DS162092 DS137138 because this unit test must reject userinfo on loopback HTTP.
-        assert!(native_base_url("http://127.0.0.1:11434/v1?token=secret").is_none()); // DevSkim: ignore DS162092 DS137138 because this unit test must reject query tokens on loopback HTTP.
+        assert!(native_base_url("http://user:secret@127.0.0.1:11434/v1").is_none()); // DevSkim: ignore DS137138 because this unit test must reject userinfo on loopback HTTP.
+        assert!(native_base_url("http://127.0.0.1:11434/v1?token=secret").is_none()); // DevSkim: ignore DS137138 because this unit test must reject query tokens on loopback HTTP.
         assert!(native_base_url("https://example.invalid/v1").is_none());
-        assert!(native_base_url("ftp://127.0.0.1/v1").is_none());
+        assert!(native_base_url("ftp://127.0.0.1/v1").is_none()); // DevSkim: ignore DS162092 because this unit test must reject non-HTTP loopback schemes.
     }
 
     #[test]
@@ -370,7 +370,7 @@ mod tests {
         assert!(model_name_ok("qwen3.8:27b-mlx"));
         assert!(!model_name_ok(""));
         assert!(!model_name_ok("../etc/passwd"));
-        assert!(!model_name_ok("http://evil.example/model"));
+        assert!(!model_name_ok("http://evil.example/model")); // DevSkim: ignore DS137138 because this unit test rejects URL-shaped model names.
         assert!(!model_name_ok("name with space"));
         assert!(!model_name_ok("a:"));
     }
