@@ -678,9 +678,16 @@ fn gh_client_runs_the_fake_gh_and_enforces_the_version_floor() {
     // PATH is process-global; scope the override to this test's calls.
     let saved = std::env::var_os("PATH");
     std::env::set_var("PATH", path_with(&bin));
-    fn body(dir: &Path, audit: &Audit) {
+    fn body(dir: &Path, bin: &Path, audit: &Audit) {
         assert_eq!(check_gh_version((2, 40, 0)).unwrap(), (2, 60, 0));
         assert!(check_gh_version((3, 0, 0)).unwrap_err().message.contains("too old"));
+        use std::os::unix::fs::PermissionsExt;
+        let unchecked_bin = dir.join("unchecked-bin");
+        std::fs::create_dir_all(&unchecked_bin).unwrap();
+        let unchecked_gh = unchecked_bin.join("gh");
+        std::fs::write(&unchecked_gh, "#!/bin/sh\nprintf '{\"name\":\"unchecked\"}\\n'\n").unwrap();
+        std::fs::set_permissions(&unchecked_gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("PATH", path_with(&unchecked_bin));
         let req = |op: &'static str, dest: Option<&'static Path>| ReadRequest {
             op,
             repo: "o/r",
@@ -712,10 +719,36 @@ fn gh_client_runs_the_fake_gh_and_enforces_the_version_floor() {
         .unwrap();
         assert!(clone["dest"].as_str().unwrap().ends_with("cloned"));
         assert!(dest.join("target.txt").exists());
+        let retry_marker = dir.join("gh-retry-marker");
+        let replacement_ran = dir.join("replacement-ran");
+        std::env::set_var("FAKE_GH_RETRY_MARKER", &retry_marker);
+        std::thread::scope(|scope| {
+            let run = scope.spawn(|| run_read(audit, &req("repo_view", None)));
+            let mut retrying = false;
+            for _ in 0..200 {
+                if std::fs::read_to_string(dir.join("audit.jsonl"))
+                    .is_ok_and(|text| text.contains("agentic_read_retry"))
+                {
+                    retrying = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(retrying && retry_marker.exists(), "fake gh did not enter retry path");
+            std::fs::write(
+                bin.join("gh"),
+                format!("#!/bin/sh\nprintf ran > '{}'\n", replacement_ran.display()),
+            )
+            .unwrap();
+            let error = run.join().unwrap().unwrap_err();
+            assert!(error.message.contains("changed after version validation"));
+        });
+        std::env::remove_var("FAKE_GH_RETRY_MARKER");
+        assert!(!replacement_ran.exists(), "replacement gh must not execute");
         let audit_text = std::fs::read_to_string(dir.join("audit.jsonl")).unwrap();
         assert!(audit_text.contains("agentic_read"));
     }
-    body(dir.path(), &audit);
+    body(dir.path(), &bin, &audit);
     match saved {
         Some(p) => std::env::set_var("PATH", p),
         None => std::env::remove_var("PATH"),
