@@ -21,9 +21,10 @@ the server or the shim.
 MCP stdio children are spawned from `src/common/mcp.rs` with a constructed
 environment (secret names stripped) and process-group kill-on-drop. The child
 argv is wrapped by `src/common/sandbox_wrap.rs` using the same Seatbelt profile
-and `bwrap_argv` as agentic verification (`darwin-seatbelt` / `linux-bwrap`,
-with named `linux-netns` fallback). Windows piped stdio has no FS jail
-(`windows-stdio`). `src/server` still contains no `Command::new`. Servers are
+and `bwrap_argv` as agentic verification (`darwin-seatbelt` / `linux-bwrap`).
+Linux first probes `--unshare-net`; if that is EPERM it keeps the FS jail
+without net isolation. `linux-netns` and `linux-unconfined` are named
+fallbacks. Windows piped stdio has no FS jail (`windows-stdio`). `src/server` still contains no `Command::new`. Servers are
 operator-declared in `mcp.servers`; unknown names fail closed. SSE URLs reuse
 DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback` and ships
 false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker` and require

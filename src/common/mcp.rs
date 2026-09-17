@@ -29,6 +29,21 @@ pub const SECRET_ENV: &[&str] = &[
     "XAI_API_KEY",
 ];
 
+/// Dynamic-linker and interpreter hijack keys. Operator `env` must not restore them.
+const HIJACK_ENV: &[&str] = &[
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "LD_DEBUG",
+    "LD_DYNAMIC_WEAK",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FRAMEWORK_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    "DYLD_FALLBACK_FRAMEWORK_PATH",
+    "PYTHONHOME",
+];
+
 const MAX_HEADER_BYTES: usize = 4096;
 
 pub fn namespaced(server: &str, tool: &str) -> String {
@@ -62,10 +77,17 @@ pub fn validate_tool_name(name: &str) -> Result<String> {
     Ok(name.to_string())
 }
 
+fn blocked_env_key(key: &str) -> bool {
+    SECRET_ENV
+        .iter()
+        .chain(HIJACK_ENV.iter())
+        .any(|blocked| blocked.eq_ignore_ascii_case(key))
+}
+
 pub fn filter_env(extra: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     extra
         .iter()
-        .filter(|(key, _)| !SECRET_ENV.iter().any(|secret| secret.eq_ignore_ascii_case(key)))
+        .filter(|(key, _)| !blocked_env_key(key))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect()
 }
@@ -291,8 +313,14 @@ mod tests {
         extra.insert("GROK_API_KEY".into(), "secret".into());
         extra.insert("SAFE_FLAG".into(), "1".into());
         extra.insert("grok_api_key".into(), "also".into());
+        extra.insert("LD_PRELOAD".into(), "/tmp/evil.so".into());
+        extra.insert("dyld_insert_libraries".into(), "/tmp/evil.dylib".into());
+        extra.insert("PYTHONHOME".into(), "/tmp/py".into());
         let filtered = filter_env(&extra);
         assert_eq!(filtered.get("SAFE_FLAG").map(String::as_str), Some("1"));
         assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("GROK_API_KEY")));
+        assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("LD_PRELOAD")));
+        assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("DYLD_INSERT_LIBRARIES")));
+        assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("PYTHONHOME")));
     }
 }

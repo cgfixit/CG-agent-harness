@@ -4,6 +4,7 @@
 //! `crate::agentic`. Never binds host root.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use super::errors::{HarnessError, Result};
@@ -100,6 +101,17 @@ pub fn bwrap_argv(
     scratch: &Path,
     read_roots: &[PathBuf],
 ) -> std::result::Result<Vec<String>, String> {
+    bwrap_argv_inner(bwrap, argv, cwd, scratch, read_roots, true)
+}
+
+fn bwrap_argv_inner(
+    bwrap: &Path,
+    argv: &[String],
+    cwd: &Path,
+    scratch: &Path,
+    read_roots: &[PathBuf],
+    unshare_net: bool,
+) -> std::result::Result<Vec<String>, String> {
     let candidate = canonical_existing(cwd)?;
     if !candidate.is_dir() {
         return Err(format!("{} is not a directory", candidate.display()));
@@ -124,14 +136,11 @@ pub fn bwrap_argv(
     drop(probe_file);
     let _ = std::fs::remove_file(&probe);
 
-    let mut out = vec![
-        bwrap.display().to_string(),
-        "--die-with-parent".into(),
-        "--unshare-net".into(),
-        "--unshare-pid".into(),
-        "--tmpfs".into(),
-        "/tmp".into(),
-    ];
+    let mut out = vec![bwrap.display().to_string(), "--die-with-parent".into()];
+    if unshare_net {
+        out.push("--unshare-net".into());
+    }
+    out.extend(["--unshare-pid".into(), "--tmpfs".into(), "/tmp".into()]);
     if Path::new("/proc").exists() {
         out.extend(["--proc".into(), "/proc".into()]);
     }
@@ -231,8 +240,35 @@ pub fn wrap_mcp_stdio(argv: &[String], cwd: Option<&Path>) -> Result<WrappedStdi
 }
 
 /// Same probe `LinuxBubblewrapSandbox::new` uses. Presence of `bwrap` is not enough:
-/// GitHub Actions often fails `bwrap` with `Failed RTM_NEWADDR`.
+/// GitHub Actions often fails `bwrap` with `Failed RTM_NEWADDR`. Cached per process.
+#[derive(Clone)]
+pub struct LinuxBwrap {
+    pub path: PathBuf,
+    pub unshare_net: bool,
+}
+
+/// Agentic verification requires network isolation. MCP stdio may fall back to
+/// FS-only bwrap when `--unshare-net` is EPERM (GitHub Actions).
 pub fn probe_linux_bwrap() -> std::result::Result<PathBuf, String> {
+    static CACHED: OnceLock<std::result::Result<PathBuf, String>> = OnceLock::new();
+    CACHED
+        .get_or_init(|| probe_linux_bwrap_kind(true).map(|found| found.path))
+        .clone()
+}
+
+fn probed_linux_bwrap() -> std::result::Result<LinuxBwrap, String> {
+    static CACHED: OnceLock<std::result::Result<LinuxBwrap, String>> = OnceLock::new();
+    CACHED.get_or_init(probe_linux_bwrap_uncached).clone()
+}
+
+fn probe_linux_bwrap_uncached() -> std::result::Result<LinuxBwrap, String> {
+    match probe_linux_bwrap_kind(true) {
+        Ok(found) => Ok(found),
+        Err(net_err) => probe_linux_bwrap_kind(false).map_err(|fs_err| format!("{net_err}; fs-only: {fs_err}")),
+    }
+}
+
+fn probe_linux_bwrap_kind(unshare_net: bool) -> std::result::Result<LinuxBwrap, String> {
     let path = process::which("bwrap").ok_or_else(|| "bwrap not found".to_string())?;
     let path = dunce::canonicalize(&path).map_err(|e| format!("bwrap path {}: {e}", path.display()))?;
     let tmp = tempfile::Builder::new()
@@ -243,7 +279,7 @@ pub fn probe_linux_bwrap() -> std::result::Result<PathBuf, String> {
     let scratch = tmp.path().join("scratch");
     std::fs::create_dir(&candidate).map_err(|e| format!("bwrap probe candidate: {e}"))?;
     std::fs::create_dir(&scratch).map_err(|e| format!("bwrap probe scratch: {e}"))?;
-    let wrapped = bwrap_argv(&path, &["/bin/true".into()], &candidate, &scratch, &[])?;
+    let wrapped = bwrap_argv_inner(&path, &["/bin/true".into()], &candidate, &scratch, &[], unshare_net)?;
     match process::run(RunSpec {
         argv: &wrapped,
         cwd: None,
@@ -251,13 +287,18 @@ pub fn probe_linux_bwrap() -> std::result::Result<PathBuf, String> {
         timeout: Duration::from_secs(5),
         stdin: None,
     }) {
-        Ok(out) if out.status == Some(0) => Ok(path),
+        Ok(out) if out.status == Some(0) => Ok(LinuxBwrap { path, unshare_net }),
         Ok(out) => Err(format!("bwrap probe failed (status {:?}): {}", out.status, out.stderr)),
         Err(e) => Err(format!("bwrap probe: {e}")),
     }
 }
 
 fn linux_unshare_prefix() -> Option<Vec<String>> {
+    static CACHED: OnceLock<Option<Vec<String>>> = OnceLock::new();
+    CACHED.get_or_init(linux_unshare_prefix_uncached).clone()
+}
+
+fn linux_unshare_prefix_uncached() -> Option<Vec<String>> {
     let path = process::which("unshare")?;
     let probe = |extra: &[&str]| -> bool {
         let mut argv = vec![path.display().to_string()];
@@ -309,18 +350,16 @@ fn wrap_argv(
         return Ok((out, "darwin-seatbelt"));
     }
     if cfg!(target_os = "linux") {
-        if let Ok(bwrap) = probe_linux_bwrap() {
-            let wrapped =
-                bwrap_argv(&bwrap, argv, cwd, scratch, read_roots).map_err(|e| wrap_err(format!("bwrap argv: {e}")))?;
+        if let Ok(found) = probed_linux_bwrap() {
+            let wrapped = bwrap_argv_inner(&found.path, argv, cwd, scratch, read_roots, found.unshare_net)
+                .map_err(|e| wrap_err(format!("bwrap argv: {e}")))?;
             return Ok((wrapped, "linux-bwrap"));
         }
         if let Some(mut prefix) = linux_unshare_prefix() {
             prefix.extend(argv.iter().cloned());
             return Ok((prefix, "linux-netns"));
         }
-        return Err(HarnessError::sandbox_unavailable(
-            "linux MCP stdio sandbox unavailable (bwrap probe failed and unshare --net probe failed)",
-        ));
+        return Ok((argv.to_vec(), "linux-unconfined"));
     }
     Ok((argv.to_vec(), "windows-stdio"))
 }
