@@ -430,7 +430,15 @@ async fn chat_inner(
             crate::server::compaction::DEFAULT_PROMPT_TOKENS,
         );
         let minimum_threshold = max_tokens.saturating_add(MIN_PROMPT_HEADROOM).min(MAX_PROMPT_TOKENS);
-        let threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
+        let mut threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
+        if settings.web_enabled && !req.loop_turn {
+            let web_room = state
+                .web
+                .limits
+                .total_tokens
+                .saturating_sub(max_tokens.saturating_mul(2));
+            threshold = threshold.min(web_room).max(minimum_threshold);
+        }
         let keep = state
             .cfg
             .u64_or(

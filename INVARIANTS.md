@@ -334,6 +334,8 @@ The send window is stored prompt history (user and assistant turns, persist
 cap `MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
 overflow. The effective trigger is
 `max(chat.compact_prompt_tokens, reply_allowance + 4096)`, capped at 30000.
+Web-enabled chat also clamps that trigger so one tool round plus two reply
+ceilings still fits `web.total_tokens`.
 Startup rejects local-chat or loop reply allowances above 25904 so that floor
 remains usable. The incoming user paste is never compacted. The server builds
 a candidate structured summary in memory. If compaction cannot bring that
