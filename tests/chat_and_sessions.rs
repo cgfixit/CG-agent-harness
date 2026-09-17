@@ -337,6 +337,88 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
 }
 
 #[tokio::test]
+async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", "9600")
+            .with("chat.compact_keep_messages", "2"),
+    )
+    .await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    s.state
+        .store
+        .record_exchange(sid, "UNIQUE_FIRST_USER_TURN", "ack", "fixture", &usage, &[])
+        .unwrap();
+    for i in 0..40 {
+        s.state
+            .store
+            .record_exchange(
+                sid,
+                &format!("user-{i}-{}", "n".repeat(120)),
+                &format!("reply-{i}-{}", "a".repeat(120)),
+                "fixture",
+                &usage,
+                &[],
+            )
+            .unwrap();
+    }
+    let stored_chars: usize = s
+        .state
+        .store
+        .get(sid)
+        .unwrap()
+        .messages
+        .iter()
+        .map(|m| m.text.chars().count())
+        .sum();
+    assert!(
+        stored_chars > 8000,
+        "fixture must exceed the old 8000-char clip: {stored_chars}"
+    );
+
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":"continue"}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let session = s.state.store.get(sid).unwrap();
+    assert_eq!(session.messages[0].text, "UNIQUE_FIRST_USER_TURN");
+    assert!(session.messages.iter().any(|message| message
+        .text
+        .starts_with(cgagentharness::server::compaction::COMPACT_PREFIX)));
+    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
+    assert!(
+        audit
+            .lines()
+            .any(|line| line.contains("\"event\":\"chat_session_compacted\"")
+                && line.contains(&format!("\"session_id\":\"{sid}\""))),
+        "long normal session must compact, not clip: {audit}"
+    );
+    let sent = model.last_request().unwrap();
+    let history_chars: usize = sent["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .skip(1)
+        .filter_map(|m| m["content"].as_str())
+        .map(|t| t.chars().count())
+        .sum();
+    assert!(
+        sent["messages"].as_array().unwrap().iter().any(|m| m["content"]
+            .as_str()
+            .is_some_and(|t| t.starts_with(cgagentharness::server::compaction::COMPACT_PREFIX))),
+        "model must see the compact summary, not a silent 8000-char tail: {sent}"
+    );
+    assert!(
+        history_chars < stored_chars,
+        "compacted send window should be smaller than stored history: sent={history_chars} stored={stored_chars}"
+    );
+}
+
+#[tokio::test]
 async fn cancel_aborts_the_in_flight_turn_and_releases_the_gate() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;

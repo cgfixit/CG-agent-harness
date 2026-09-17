@@ -22,10 +22,6 @@ use crate::server::schemas::*;
 use crate::server::sessions::TokenTally;
 use crate::server::state::{AppState, HARNESS_LOOP_TOOL};
 
-const HISTORY_TURNS: usize = 20;
-const LOOP_HISTORY_TURNS: usize = 8;
-const LOOP_HISTORY_CHARS: usize = 4000;
-const CHAT_HISTORY_CHARS: usize = 8000;
 const DEFAULT_TEMPERATURE: f64 = 0.3;
 
 pub async fn status(
@@ -206,32 +202,18 @@ pub async fn model_select(
     ))
 }
 
-/// Keep the newest prior turns that fit `max_chars`; the newest message's tail survives.
-pub fn clip_history(messages: &[ChatMessage], max_chars: usize) -> Vec<ChatMessage> {
-    if max_chars == 0 {
-        return Vec::new();
-    }
-    let mut clipped: Vec<ChatMessage> = Vec::new();
-    let mut used = 0usize;
-    for msg in messages.iter().rev() {
-        if used >= max_chars {
-            break;
-        }
-        let room = max_chars - used;
-        let count = msg.content.chars().count();
-        let text: String = if count > room {
-            msg.content.chars().skip(count - room).collect()
-        } else {
-            msg.content.clone()
-        };
-        used += text.chars().count();
-        clipped.push(ChatMessage {
-            role: msg.role.clone(),
-            content: text,
-        });
-    }
-    clipped.reverse();
-    clipped
+/// Prior user/assistant turns for the next prompt. Compaction owns overflow.
+/// The persist cap is `MAX_MESSAGES`. There is no 20-turn or 8000-char clip.
+pub fn prompt_history(session: &crate::server::sessions::Session) -> Vec<ChatMessage> {
+    session
+        .messages
+        .iter()
+        .filter(|m| m.role == "user" || m.role == "assistant")
+        .map(|m| ChatMessage {
+            role: m.role.clone(),
+            content: m.text.clone(),
+        })
+        .collect()
 }
 
 fn loop_error(code: &str, message: &str) -> ApiError {
@@ -433,35 +415,13 @@ async fn chat_inner(
     } else {
         state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_REPLY_TOKENS)
     };
-    let (turns, chars) = if req.loop_turn {
-        (LOOP_HISTORY_TURNS, LOOP_HISTORY_CHARS)
-    } else {
-        (HISTORY_TURNS, CHAT_HISTORY_CHARS)
-    };
-    // The next prompt only ever carries this bounded window, so the compaction
-    // estimate must be built from it rather than from every stored message;
-    // turns that cannot enter the prompt must not trigger a session rewrite.
-    let bounded_history = |session: &crate::server::sessions::Session| -> Vec<ChatMessage> {
-        let prior: Vec<ChatMessage> = session
-            .messages
-            .iter()
-            .rev()
-            .take(turns)
-            .filter(|m| m.role == "user" || m.role == "assistant")
-            .map(|m| ChatMessage {
-                role: m.role.clone(),
-                content: m.text.clone(),
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        clip_history(&prior, chars)
-    };
+    // Projection uses stored prompt history (up to SessionStore::MAX_MESSAGES).
+    // Compaction owns overflow against chat.compact_prompt_tokens, floored at
+    // reply+4096. The incoming user paste is never compacted.
     let mut history = if cloud_selected {
         Vec::new()
     } else {
-        bounded_history(&session)
+        prompt_history(&session)
     };
     let mut compaction = None;
     if !cloud_selected {
@@ -470,7 +430,15 @@ async fn chat_inner(
             crate::server::compaction::DEFAULT_PROMPT_TOKENS,
         );
         let minimum_threshold = max_tokens.saturating_add(MIN_PROMPT_HEADROOM).min(MAX_PROMPT_TOKENS);
-        let threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
+        let mut threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
+        if settings.web_enabled && !req.loop_turn {
+            let web_room = state
+                .web
+                .limits
+                .total_tokens
+                .saturating_sub(max_tokens.saturating_mul(2));
+            threshold = threshold.min(web_room).max(minimum_threshold);
+        }
         let keep = state
             .cfg
             .u64_or(
@@ -484,7 +452,7 @@ async fn chat_inner(
             let before = session.messages.len();
             let mut compacted = session.clone();
             compacted.messages = crate::server::compaction::compact_messages(&session.messages, keep);
-            let compacted_history = bounded_history(&compacted);
+            let compacted_history = prompt_history(&compacted);
             let compacted_projected = crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
                 &compacted_history,

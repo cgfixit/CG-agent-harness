@@ -339,13 +339,17 @@ already killed.
 
 ## Local chat compaction preserves goal and the first user turn
 
-When estimated next-prompt size exceeds `chat.compact_prompt_tokens`, the
-effective trigger uses a per-turn floor of the selected reply allowance plus
-4096 estimated prompt tokens, capped at 30000. Startup rejects local-chat or
-loop reply allowances above 25904 so that floor remains usable. The server
-builds a candidate structured summary in memory. If compaction cannot bring
-that initial prompt below the trigger, the turn is refused without rewriting
-the session. If it can, the summary is persisted atomically with the next
+The send window is stored prompt history (user and assistant turns, persist
+cap `MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
+overflow. The effective trigger is
+`max(chat.compact_prompt_tokens, reply_allowance + 4096)`, capped at 30000.
+Web-enabled chat also clamps that trigger so one tool round plus two reply
+ceilings still fits `web.total_tokens`.
+Startup rejects local-chat or loop reply allowances above 25904 so that floor
+remains usable. The incoming user paste is never compacted. The server builds
+a candidate structured summary in memory. If compaction cannot bring that
+initial prompt below the trigger, the turn is refused without rewriting the
+session. If it can, the summary is persisted atomically with the next
 successful exchange using `write_json_atomic_mode` at `0o600`; failed or
 cancelled model calls leave stored history unchanged. The system prompt is
 composed each turn and is never stored in `messages`. `Session.goal` and the
@@ -357,11 +361,12 @@ bodies.
 
 - Locked by: `src/server/compaction.rs`,
   `src/server/sessions.rs::record_compacted_exchange`,
-  `src/server/routes/core.rs`,
+  `src/server/routes/core.rs::prompt_history`,
   `tests/chat_and_sessions.rs::minimum_compaction_threshold_still_allows_an_ordinary_turn`,
   `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`,
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
-  `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`.
+  `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
+  `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`.
 
 ## Signals weaker than their name
 
