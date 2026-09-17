@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -37,6 +38,47 @@ class GrokAcpProbeTests(unittest.TestCase):
             self.assertEqual(
                 json.loads((Path(tmp) / "api-key/grok/state.json").read_text())["auth_mode"],
                 "api_key")
+
+    def test_argv_locks_deny_all_and_disallowed_tools(self):
+        argv = probe._argv(["runtime"], {"work": Path("/w"), "grok": Path("/g")})
+        self.assertEqual(argv[argv.index("--deny") + 1], probe.DENY_ALL)
+        self.assertEqual(argv[argv.index("--disallowed-tools") + 1], probe.DISALLOWED_TOOLS)
+
+    def test_fake_runtime_rejects_missing_deny_or_disallowed_tools(self):
+        script = Path(__file__).with_name("grok-acp-probe.py")
+        for flag in ("--deny", "--disallowed-tools"):
+            with tempfile.TemporaryDirectory() as tmp:
+                grok = Path(tmp) / "grok"
+                work = Path(tmp) / "work"
+                grok.mkdir()
+                work.mkdir()
+                (grok / "requirements.toml").write_text(
+                    "[grok_com_config]\ndisable_api_key_auth = true\n")
+                env = {
+                    "HOME": tmp,
+                    "GROK_HOME": str(grok),
+                    "PATH": "/usr/bin:/bin",
+                    "TMPDIR": tmp,
+                    **probe.OFF_ENV,
+                }
+                argv = probe._argv([sys.executable, str(script), "--fake-runtime"],
+                                   {"work": work, "grok": grok})
+                idx = argv.index(flag)
+                del argv[idx:idx + 2]
+                completed = subprocess.run(
+                    argv, cwd=work, env=env, input=b"",
+                    capture_output=True, timeout=5)
+                self.assertNotEqual(completed.returncode, 0, flag)
+                self.assertIn(b"unsafe fake-runtime launch contract", completed.stderr)
+
+    def test_running_treats_exited_pid_as_not_live(self):
+        child = subprocess.Popen(
+            [sys.executable, "-c", "pass"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.assertEqual(child.wait(timeout=2), 0)
+        self.assertFalse(probe._running(child.pid))
 
     def test_wrong_auth_surface_fails_closed(self):
         with self.assertRaisesRegex(RuntimeError, "grok.com"):

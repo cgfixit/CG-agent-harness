@@ -84,9 +84,11 @@ terminal, and permission request, and reads assistant text only from
 `session/update` before accepting the prompt completion boundary.
 
 The cancellation fixture spawns a descendant, observes `session/cancel`, then
-deliberately ignores it. The probe terminates and reaps the owned process group
-and fails if the descendant remains. This proves ordinary same-group cleanup,
-not containment of a hostile daemon that reparents or escapes its group.
+deliberately ignores it. The probe sends `SIGTERM` to the owned process group,
+then `SIGKILL` after a short grace period even if the leader has already
+exited, and fails if the descendant remains as a live (non-zombie) process.
+This proves ordinary same-group cleanup, not containment of a hostile daemon
+that reparents or escapes its group.
 
 ## Remaining Phase 0 live questions
 

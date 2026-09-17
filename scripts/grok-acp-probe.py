@@ -14,6 +14,8 @@ import time
 
 
 FIXTURE_KEY = "fixture-not-a-credential"
+DENY_ALL = "*"
+DISALLOWED_TOOLS = "Bash,Edit,Glob,Grep,MCPTool,Read,Task,WebFetch,WebSearch,Write"
 DENIED_METHODS = {
     "session/request_permission",
     "fs/read_text_file",
@@ -98,8 +100,8 @@ def _argv(runtime, paths):
         "--no-auto-update",
         "--cwd", str(paths["work"]),
         "--tools", "",
-        "--disallowed-tools", "Bash,Edit,Glob,Grep,MCPTool,Read,Task,WebFetch,WebSearch,Write",
-        "--deny", "*",
+        "--disallowed-tools", DISALLOWED_TOOLS,
+        "--deny", DENY_ALL,
         "--permission-mode", "dontAsk",
         "--sandbox", "strict",
         "--disable-web-search",
@@ -171,26 +173,45 @@ async def _rpc(proc, state, method, params, cancel=None):
 
 
 async def _terminate_group(proc):
+    pgid = proc.pid
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     try:
         await asyncio.wait_for(proc.wait(), timeout=0.5)
     except asyncio.TimeoutError:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        pass
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if proc.returncode is None:
         await proc.wait()
 
 
 def _running(pid):
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
+    proc_stat = Path(f"/proc/{pid}/stat")
+    try:
+        text = proc_stat.read_text()
+        state = text[text.rindex(")") + 2]
+        return state not in "ZX"
+    except (OSError, ValueError, IndexError):
+        pass
+    completed = subprocess.run(
+        ["ps", "-o", "state=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    state = completed.stdout.strip()
+    if completed.returncode != 0 or not state:
+        return False
+    return state[0] not in "ZX"
 
 
 async def probe_profile(root, name, auth_mode, cancel=False):
@@ -272,6 +293,8 @@ def _fake_runtime():
     checks = [
         "--no-auto-update" in args,
         args[args.index("--tools") + 1] == "",
+        "--disallowed-tools" in args and args[args.index("--disallowed-tools") + 1] == DISALLOWED_TOOLS,
+        "--deny" in args and args[args.index("--deny") + 1] == DENY_ALL,
         args[args.index("--permission-mode") + 1] == "dontAsk",
         args[args.index("--sandbox") + 1] == "strict",
         all(flag in args for flag in ("--disable-web-search", "--no-subagents", "--no-plan")),
@@ -323,8 +346,22 @@ def _fake_runtime():
         elif method == "session/prompt":
             text = params.get("prompt", [{}])[0].get("text")
             if text == "cancel":
-                child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+                ready = grok_home / "child-ready"
+                child = subprocess.Popen([
+                    sys.executable, "-c",
+                    "import signal, time, pathlib\n"
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                    "signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+                    "signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+                    f"pathlib.Path({str(ready)!r}).write_text('1')\n"
+                    "time.sleep(60)\n",
+                ])
                 (grok_home / "child.pid").write_text(str(child.pid))
+                deadline = time.monotonic() + 2
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                if not ready.exists():
+                    raise SystemExit("cancel descendant did not start")
                 print(json.dumps({"jsonrpc": "2.0", "method": "session/update", "params": {
                     "sessionId": session_id, "update": {"sessionUpdate": "agent_message_chunk",
                                                          "content": {"type": "text", "text": "cancel-ready"}}}}),
