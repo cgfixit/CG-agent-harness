@@ -69,6 +69,16 @@ const DEFAULT_LOOP_MAX_REQUESTS: u64 = 8;
 const DEFAULT_LOOP_WINDOW_SEC: f64 = 300.0;
 const DEFAULT_LOOP_MAX_TOKENS: u64 = 2048;
 
+fn validate_reply_budget(path: &str, value: u64) -> Result<u64> {
+    if !(1..=compaction::MAX_REPLY_TOKENS).contains(&value) {
+        return Err(HarnessError::config(format!(
+            "{path} must be from 1 to {} to preserve prompt headroom",
+            compaction::MAX_REPLY_TOKENS
+        )));
+    }
+    Ok(value)
+}
+
 /// Options for `build_app`; everything optional except the home.
 pub struct AppOptions {
     pub home: Home,
@@ -111,6 +121,10 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         Some(c) => c,
         None => home.load_config()?,
     });
+    validate_reply_budget(
+        "models.local_llm.max_tokens",
+        cfg.u64_or("models.local_llm.max_tokens", compaction::DEFAULT_REPLY_TOKENS),
+    )?;
     let settings = HarnessSettings::load(&home)?;
     let store = SessionStore::new(&home.sessions_dir())?;
     let audit = Audit::from_home(&home.root, &cfg);
@@ -145,6 +159,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         0 => DEFAULT_LOOP_MAX_TOKENS,
         n => n,
     };
+    let loop_max_tokens = validate_reply_budget("api.harness_loop_rate_limit.max_tokens", loop_max_tokens)?;
     let csrf_token = crate::common::random_urlsafe(32);
     let console_html = console::HARNESS_HTML.replace(console::CSRF_PLACEHOLDER, &csrf_token);
     let console_html_segments: Vec<String> = console_html

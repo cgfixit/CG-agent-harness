@@ -296,8 +296,47 @@ impl SessionStore {
         usage: &TokenTally,
         prompt_skills: &[Value],
     ) -> Result<Session> {
+        self.record_exchange_inner(session_id, user_text, assistant_text, model, usage, prompt_skills, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_compacted_exchange(
+        &self,
+        session_id: &str,
+        user_text: &str,
+        assistant_text: &str,
+        model: &str,
+        usage: &TokenTally,
+        prompt_skills: &[Value],
+        keep_recent: usize,
+    ) -> Result<Session> {
+        self.record_exchange_inner(
+            session_id,
+            user_text,
+            assistant_text,
+            model,
+            usage,
+            prompt_skills,
+            Some(keep_recent),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_exchange_inner(
+        &self,
+        session_id: &str,
+        user_text: &str,
+        assistant_text: &str,
+        model: &str,
+        usage: &TokenTally,
+        prompt_skills: &[Value],
+        compact_keep_recent: Option<usize>,
+    ) -> Result<Session> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
+        if let Some(keep_recent) = compact_keep_recent {
+            session.messages = crate::server::compaction::compact_messages(&session.messages, keep_recent);
+        }
         let now = crate::common::now_ts();
         session.prompt_history.push(user_text.to_string());
         let excess = session.prompt_history.len().saturating_sub(PROMPT_HISTORY_LIMIT);
@@ -321,18 +360,6 @@ impl SessionStore {
         session.tally.prompt_tokens += usage.prompt_tokens;
         session.tally.completion_tokens += usage.completion_tokens;
         session.tally.exchanges += 1;
-        self.write(&session)?;
-        Ok(session)
-    }
-
-    /// Replace older dialogue with a structured summary. Goal and system prompt
-    /// are not stored in `messages` and are left untouched.
-    pub fn compact(&self, session_id: &str, keep_recent: usize) -> Result<Session> {
-        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let mut session = self.get(session_id)?;
-        let goal = session.goal.clone();
-        session.messages = crate::server::compaction::compact_messages(&session.messages, keep_recent);
-        session.goal = goal;
         self.write(&session)?;
         Ok(session)
     }
@@ -478,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_keeps_goal_and_first_user_message() {
+    fn compacted_exchange_keeps_goal_and_first_user_message() {
         let home = tempfile::tempdir().unwrap();
         let store = SessionStore::new(&home.path().join("sessions")).unwrap();
         let mut session = store.create("m", "alpha").unwrap();
@@ -502,7 +529,9 @@ mod tests {
                 )
                 .unwrap();
         }
-        session = store.compact(&session.session_id, 2).unwrap();
+        session = store
+            .record_compacted_exchange(&session.session_id, "latest user", "latest reply", "m", &usage, &[], 2)
+            .unwrap();
         assert_eq!(session.goal, "ship the parser");
         assert_eq!(session.messages[0].text, "user-0");
         assert!(session
