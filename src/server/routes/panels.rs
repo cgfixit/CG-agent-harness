@@ -191,6 +191,47 @@ pub async fn web_inject(
         .map_err(|e| web_err(&e))
 }
 
+pub async fn mcp_status(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(state.mcp.status())
+}
+
+pub async fn mcp_call(
+    State(state): State<Arc<AppState>>,
+    ValidJson(req): ValidJson<McpCallRequest>,
+) -> ApiResult<Json<Value>> {
+    let arguments = if req.arguments.is_null() {
+        json!({})
+    } else {
+        req.arguments
+    };
+    let result = state
+        .mcp
+        .call(
+            &req.server,
+            &req.tool,
+            arguments,
+            req.confirm,
+            &state.mcp_tool_allowlist(),
+            &state.audit,
+        )
+        .await
+        .map_err(|e| {
+            let status = match e.code.as_str() {
+                "MCP_CONFIRM_REQUIRED"
+                | "TOOL_DENIED"
+                | "MCP_UNKNOWN_SERVER"
+                | "MCP_UNKNOWN_TOOL"
+                | "MCP_DISABLED"
+                | "MCP_SSRF_DENIED" => StatusCode::FORBIDDEN,
+                "VALIDATION_ERROR" | "CONFIG_ERROR" => StatusCode::BAD_REQUEST,
+                "MCP_TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,
+                _ => StatusCode::BAD_GATEWAY,
+            };
+            ApiError::from_err(status, &e)
+        })?;
+    Ok(Json(json!({"ok": true, "result": result})))
+}
+
 pub async fn web_forget(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,

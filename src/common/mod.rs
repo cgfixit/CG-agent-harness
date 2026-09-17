@@ -15,6 +15,7 @@ pub mod home_lock;
 pub mod identity;
 pub mod injection;
 pub mod local_tls;
+pub mod mcp;
 pub mod process;
 pub mod ratelimit;
 pub mod repo_paths;

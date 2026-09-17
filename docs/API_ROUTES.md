@@ -121,6 +121,16 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 The `cgagentharness web` CLI family drives these same routes through the
 running portal.
 
+## MCP client
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/mcp` | Declared MCP servers and namespaced tools; does not auto-discover |
+| POST | `/api/mcp/call` | Call one declared MCP tool; `confirm` is never defaulted |
+
+SSE MCP URLs are DNS-pinned. Loopback SSE requires `mcp.sse_allow_loopback: true`.
+MCP tools are not attached to `/loop`.
+
 ## Coding agent
 
 | Method | Path | Purpose |

@@ -14,6 +14,7 @@ use crate::llm::cloud_chat::CloudChat;
 use crate::llm::openai_chat::ChatClient;
 
 use super::generation_gate::GenerationGate;
+use super::mcp::McpRuntime;
 use super::memory_notes::MemoryNotes;
 use super::sessions::SessionStore;
 use super::structured_memory::StructuredMemoryStore;
@@ -63,6 +64,7 @@ pub struct AppState {
     /// Limits concurrent memory-hard scrypt derivations for this app instance.
     pub auth_operation_permits: Arc<tokio::sync::Semaphore>,
     pub web: WebTool,
+    pub mcp: McpRuntime,
     pub notes: MemoryNotes,
     /// Present only when `structured_memory.enabled` is the literal boolean true.
     pub structured_memory: Option<StructuredMemoryStore>,
@@ -127,6 +129,12 @@ impl AppState {
         self.tool_allowlist_override
             .clone()
             .unwrap_or_else(|| [AGENT_RUN_TOOL.to_string()].into_iter().collect())
+    }
+
+    pub fn mcp_tool_allowlist(&self) -> BTreeSet<String> {
+        self.tool_allowlist_override
+            .clone()
+            .unwrap_or_else(|| self.mcp.broker_allowlist())
     }
 
     /// 409 `LOOP_IN_FLIGHT` when a turn for this session is still running.

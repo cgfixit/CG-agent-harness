@@ -89,6 +89,16 @@ web:
   research_seconds: 300 # 10–1800 overall research deadline
   stale_seconds: 604800 # 60–31536000; fetch age, not publication-date verification
 
+# External MCP tools. Off until an operator declares servers. Never auto-discover.
+# SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop.
+# stdio command[0] must be an absolute path. Calls require confirm: true.
+mcp:
+  enabled: false
+  sse_allow_loopback: false
+  timeout_sec: 15 # 1–60
+  max_result_bytes: 65536 # 1024–262144
+  servers: []
+
 security:
   # Compatibility setting. Harness keys are optional metadata and never grant
   # account permissions. False is deprecated and does not disable account login.
