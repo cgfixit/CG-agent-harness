@@ -1,7 +1,8 @@
 //! Prompt-window compaction for local chat sessions.
 //!
 //! Trigger uses estimated next-prompt size (UTF-8 bytes / 4 plus the reply
-//! ceiling), not lifetime `TokenTally::total`. System prompt and `Session.goal`
+//! ceiling). That is the English-model money ruler, not a CJK tokenizer.
+//! System prompt and `Session.goal`
 //! are composed each turn and are never stored in `messages`, so they cannot
 //! be compacted. The first user message is kept verbatim.
 
@@ -178,6 +179,7 @@ mod tests {
         }];
         let projected = projected_prompt_tokens("sys", &history, "efgh", 10);
         assert_eq!(projected, 1 + 1 + 1 + 10);
+        assert_eq!(estimate_tokens("abcd"), 1);
     }
 
     #[test]
