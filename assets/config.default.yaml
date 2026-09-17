@@ -42,6 +42,14 @@ models:
     inventory:
       timeout_sec: 2.0 # finite 0.1–30 seconds
       max_response_bytes: 262144 # integer 1024–1048576
+      refresh_sec: 30 # 1–3600; GET /api/ollama/inventory cache. Missing keys keep this default.
+    pull:
+      timeout_sec: 600 # 1–3600; abortable POST /api/ollama/pull (SSE when Accept is text/event-stream)
+      max_response_bytes: 1048576 # 1024–4194304 streamed NDJSON bound
+    warmup:
+      enabled: true # flag_is_true; missing in old homes is off. Failure is a logged degrade, never a crash.
+      keep_alive_sec: 300 # 1–3600 seconds sent as keep_alive; never num_ctx
+      timeout_sec: 30 # 1–120; bounded background POST /api/generate with an empty prompt
     # Optional loopback failover (LM Studio or any OpenAI-compatible server).
     fallback:
       enabled: false

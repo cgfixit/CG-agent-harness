@@ -51,6 +51,9 @@ session timeouts.
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
+| GET | `/api/ollama/inventory` | Live loopback tags plus configured-model readiness |
+| POST | `/api/ollama/pull` | Operator/admin abortable pull; SSE when `Accept: text/event-stream` |
+| POST | `/api/ollama/pull/cancel` | Abort the in-flight pull |
 | POST | `/api/prompt/preview` | Show the assembled system prompt (`/prompt`) |
 | GET, POST | `/api/sessions` | List sessions or create one |
 | POST | `/api/sessions/clear` | Delete all sessions |

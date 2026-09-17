@@ -371,3 +371,19 @@ Unix subprocess I/O shares an operation deadline and a fixed aggregate capture
 ceiling. The direct child stays unreaped through process-group cleanup. macOS
 also stops observed descendants across groups; this is best-effort ancestry
 cleanup, not containment. See `docs/PROCESS_LIFECYCLE.md` for limits and tests.
+
+## Native Ollama pull stays on loopback and never sends num_ctx
+
+`GET /api/ollama/inventory` reuses the existing `/v1/models` readiness probe and
+adds `GET /api/tags` for installed names. Both routes sit on the CSRF-guarded
+router (operator/admin). `POST /api/ollama/pull` streams NDJSON progress (SSE
+when `Accept: text/event-stream`) to a derived loopback origin (OpenAI `/v1`
+stripped). The pull is single-flighted on its own gate, abortable
+(`POST /api/ollama/pull/cancel` or disconnect), and never includes `num_ctx`.
+Startup `keep_alive` warmup is `models.local_llm.warmup.enabled` (`flag_is_true`;
+missing keys in old homes are off) and must not fail `serve`. Provider error
+bodies are not echoed.
+
+- Locked by: `src/llm/ollama.rs`,
+  `src/server/routes/ollama.rs`,
+  `tests/ollama_manage.rs`.
