@@ -157,6 +157,174 @@ async fn model_errors_are_502_without_echoing_the_body() {
 }
 
 #[tokio::test]
+async fn minimum_compaction_threshold_still_allows_an_ordinary_turn() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("chat.compact_prompt_tokens", "4096"),
+    )
+    .await;
+
+    let (status, body) = s.post_json("/api/chat", json!({"message":"hello"})).await;
+
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn maximum_reply_budget_still_allows_an_ordinary_turn() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("models.local_llm.max_tokens", "25904")
+            .with("chat.compact_prompt_tokens", "4096"),
+    )
+    .await;
+    // Web chat has its own independently configurable total-token budget.
+    s.post_json("/api/web", json!({"enabled":false})).await;
+
+    let (status, body) = s.post_json("/api/chat", json!({"message":"hello"})).await;
+
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(model.last_request().unwrap()["max_tokens"], 25904);
+}
+
+#[tokio::test]
+async fn reply_budget_that_consumes_prompt_headroom_fails_at_startup() {
+    for path in ["models.local_llm.max_tokens", "api.harness_loop_rate_limit.max_tokens"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = cgagentharness::common::home::Home::at(tmp.path().join("home"));
+        home.ensure_layout().unwrap();
+        let cfg = config_with(&home.root, &[(path, "25905")]);
+        let mut options = cgagentharness::server::AppOptions::new(home);
+        options.config = Some(cfg);
+
+        let err = cgagentharness::server::build_app(options)
+            .await
+            .err()
+            .expect("oversized reply budget must fail startup");
+
+        assert!(err.message.contains(&format!("{path} must be from 1 to 25904")));
+    }
+}
+
+#[tokio::test]
+async fn zero_loop_reply_budget_keeps_the_legacy_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = cgagentharness::common::home::Home::at(tmp.path().join("home"));
+    home.ensure_layout().unwrap();
+    let cfg = config_with(&home.root, &[("api.harness_loop_rate_limit.max_tokens", "0")]);
+    let mut options = cgagentharness::server::AppOptions::new(home);
+    options.config = Some(cfg);
+
+    let (_, state) = cgagentharness::server::build_app(options).await.unwrap();
+
+    assert_eq!(state.loop_max_tokens, 2048);
+}
+
+#[tokio::test]
+async fn irreducible_prompt_is_rejected_without_rewriting_the_session() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("chat.compact_prompt_tokens", "4096"),
+    )
+    .await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    for i in 0..6 {
+        s.state
+            .store
+            .record_exchange(sid, &format!("old-user-{i}"), "old-reply", "fixture", &usage, &[])
+            .unwrap();
+    }
+    let path = s.home.join("sessions").join(format!("{sid}.json"));
+    let before = std::fs::read(&path).unwrap();
+
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":"🦀".repeat(32768)}))
+        .await;
+
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
+    assert_eq!(body["detail"]["details"]["limit_tokens"], 8192);
+    assert!(body["detail"]["details"]["compacted_tokens"].as_u64().unwrap() > 8192);
+    assert!(model.requests.lock().unwrap().is_empty());
+    assert_eq!(std::fs::read(path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn compaction_is_persisted_only_with_a_successful_exchange() {
+    let model = start_mock_model().await;
+    let probe = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, created) = probe.post_json("/api/sessions", json!({})).await;
+    let (_, preview) = probe
+        .post_json("/api/prompt/preview", json!({"session_id":created["session_id"]}))
+        .await;
+    let base = cgagentharness::server::compaction::projected_prompt_tokens(
+        preview["prompt"].as_str().unwrap(),
+        &[],
+        "next",
+        4096,
+    );
+    let threshold = base + 1500;
+    assert!(threshold < 30_000, "fixture prompt unexpectedly large: {base}");
+    drop(probe);
+
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", &threshold.to_string())
+            .with("chat.compact_keep_messages", "2"),
+    )
+    .await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    for i in 0..10 {
+        s.state
+            .store
+            .record_exchange(
+                sid,
+                &format!("user-{i}-{}", "u".repeat(490)),
+                &format!("reply-{i}-{}", "a".repeat(490)),
+                "fixture",
+                &usage,
+                &[],
+            )
+            .unwrap();
+    }
+    let path = s.home.join("sessions").join(format!("{sid}.json"));
+    let before = std::fs::read(&path).unwrap();
+
+    model.set_reply(json!({"__status": 503}));
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+        .await;
+    assert_eq!(status, 502, "{body}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    model.set_reply(ok_reply("compacted", 10, 2));
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let session = s.state.store.get(sid).unwrap();
+    assert!(session.messages.iter().any(|message| message
+        .text
+        .starts_with(cgagentharness::server::compaction::COMPACT_PREFIX)));
+    assert!(model.last_request().unwrap()["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["content"]
+            .as_str()
+            .is_some_and(|text| text.starts_with(cgagentharness::server::compaction::COMPACT_PREFIX))));
+}
+
+#[tokio::test]
 async fn cancel_aborts_the_in_flight_turn_and_releases_the_gate() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;

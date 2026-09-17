@@ -306,15 +306,24 @@ already killed.
 
 ## Local chat compaction preserves goal and the first user turn
 
-When estimated next-prompt size exceeds `chat.compact_prompt_tokens`, older
-session messages are replaced by a structured summary written with
-`write_json_atomic_mode` at `0o600`. The system prompt is composed each turn and
-is never stored in `messages`. `Session.goal` is copied through the rewrite.
-The first user message is kept verbatim. Compaction is audited as
+When estimated next-prompt size exceeds `chat.compact_prompt_tokens`, the
+effective trigger uses a per-turn floor of the selected reply allowance plus
+4096 estimated prompt tokens, capped at 30000. Startup rejects local-chat or
+loop reply allowances above 25904 so that floor remains usable. The server
+builds a candidate structured summary in memory. If compaction cannot bring
+that initial prompt below the trigger, the turn is refused without rewriting
+the session. If it can, the summary is persisted atomically with the next
+successful exchange using `write_json_atomic_mode` at `0o600`; failed or
+cancelled model calls leave stored history unchanged. The system prompt is
+composed each turn and is never stored in `messages`. `Session.goal` and the
+first user message are preserved. Successful compaction is audited as
 `chat_session_compacted` without message bodies.
 
-- Locked by: `src/server/compaction.rs`, `src/server/sessions.rs::compact`,
-  `src/server/routes/core.rs`.
+- Locked by: `src/server/compaction.rs`,
+  `src/server/sessions.rs::record_compacted_exchange`,
+  `src/server/routes/core.rs`,
+  `tests/chat_and_sessions.rs::minimum_compaction_threshold_still_allows_an_ordinary_turn`,
+  `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`.
 
 ## Signals weaker than their name
 

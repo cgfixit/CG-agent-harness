@@ -35,7 +35,7 @@ models:
     # Server-side Ollama context must be 32768: set OLLAMA_CONTEXT_LENGTH before
     # `ollama serve` and verify context_length on /api/ps (setup-guide section 4).
     # The harness sends no num_ctx and inherits that window.
-    max_tokens: 4096
+    max_tokens: 4096 # 1–25904; preserves at least 4096 prompt tokens inside the 30000 safety limit
     temperature: 0.2
     timeout_sec: 720
     # Explicit local inventory only; no inference, cloud probes or model downloads.
@@ -53,7 +53,7 @@ models:
 # Local chat prompt compaction. Trigger is estimated next-prompt size, not
 # lifetime TokenTally.total. System prompt and session.goal are never compacted.
 chat:
-  compact_prompt_tokens: 24000 # 4096–30000; sized for a verified 32768 window
+  compact_prompt_tokens: 24000 # per-turn floor=reply allowance + 4096, capped at 30000; 8192 for seeded chat
   compact_keep_messages: 8 # 2–40 most recent messages kept verbatim
 
 api:
@@ -64,7 +64,7 @@ api:
   harness_loop_rate_limit:
     max_requests: 8
     window_seconds: 300
-    max_tokens: 2048
+    max_tokens: 2048 # 1–25904; legacy 0 selects 2048; shares the local prompt-window safety limit
 
 # Bounded public content reads; fresh harness.json enables web with an empty URL allowlist.
 # Missing values in existing homes use these defaults; invalid values fail boot.

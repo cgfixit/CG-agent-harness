@@ -1297,6 +1297,11 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 
 For output style, use section 7.4 before tuning generation parameters.
 `models.local_llm.max_tokens` is an output ceiling and can truncate a reply.
+To keep at least 4096 estimated prompt tokens inside the 30000-token safety
+limit, startup rejects unsigned numeric local-chat values of `0` or above
+25904 and unsigned numeric `/loop` values above 25904. The legacy `/loop`
+value `0` keeps its existing meaning of the 2048-token default. Web-enabled
+chat remains subject to the separate `web.total_tokens` per-turn budget.
 Local context is the Ollama server window (32768 via `OLLAMA_CONTEXT_LENGTH`,
 verified in section 4); the harness sends no `num_ctx`. `temperature` changes
 sampling, not a deterministic filler filter. Loop requests also have the
@@ -1313,9 +1318,10 @@ ones operators most often ask about:
 |---|---|---|
 | `app.agent_job_poll_ms` | 1500 | Browser job polling interval, clamped to 1–30 s |
 | `api.rate_limit.max_requests` / `window_seconds` | 60 / 60 | Per-IP sliding-window ceiling on every route |
-| `api.harness_loop_rate_limit.*` | 8 / 300 s / 2048 tokens | Separate, tighter `/loop` budget |
+| `api.harness_loop_rate_limit.*` | 8 / 300 s / 2048 tokens | Separate, tighter `/loop` budget; token ceiling 1–25904 after the legacy `0` → `2048` fallback |
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
 | `models.cloud_chat.max_tokens` / `timeout_sec` | 4096 / 90 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
+| `models.local_llm.max_tokens` | 4096 | Local reply ceiling; boot refuses unsigned numeric `0` or values above 25904 so 4096 estimated prompt tokens remain inside the 30000-token safety limit |
 | `models.local_llm.reasoning_effort` | `none` | Sent only to a resolved Ollama backend: `none`, `low`, `medium`, `high`, `max` |
 | `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
 | `auth.max_concurrent_operations` | 2 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |

@@ -12,6 +12,10 @@ use crate::server::sessions::Message;
 pub const COMPACT_PREFIX: &str = "[session-compacted]\n";
 pub const DEFAULT_PROMPT_TOKENS: u64 = 24_000;
 pub const DEFAULT_KEEP_MESSAGES: u64 = 8;
+pub const DEFAULT_REPLY_TOKENS: u64 = 4_096;
+pub const MIN_PROMPT_HEADROOM: u64 = 4_096;
+pub const MAX_PROMPT_TOKENS: u64 = 30_000;
+pub const MAX_REPLY_TOKENS: u64 = MAX_PROMPT_TOKENS - MIN_PROMPT_HEADROOM;
 
 pub fn estimate_tokens(text: &str) -> u64 {
     (text.len() as u64).div_ceil(4)

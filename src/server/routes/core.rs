@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::ChatMessage;
+use crate::server::compaction::{DEFAULT_REPLY_TOKENS, MAX_PROMPT_TOKENS, MIN_PROMPT_HEADROOM};
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::guards::retry_after_error;
 use crate::server::prompts::{compose_system_prompt, PromptInputs};
@@ -25,7 +26,6 @@ const HISTORY_TURNS: usize = 20;
 const LOOP_HISTORY_TURNS: usize = 8;
 const LOOP_HISTORY_CHARS: usize = 4000;
 const CHAT_HISTORY_CHARS: usize = 8000;
-const DEFAULT_MAX_TOKENS: u64 = 4096;
 const DEFAULT_TEMPERATURE: f64 = 0.3;
 
 pub async fn status(
@@ -293,7 +293,7 @@ async fn chat_inner(
             "loop turns require an existing session",
         ));
     }
-    let mut session = match req.session_id.as_deref().filter(|s| !s.is_empty()) {
+    let session = match req.session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => state
             .store
             .get(id)
@@ -423,7 +423,7 @@ async fn chat_inner(
     let max_tokens = if req.loop_turn {
         state.loop_max_tokens
     } else {
-        state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_MAX_TOKENS)
+        state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_REPLY_TOKENS)
     };
     let (turns, chars) = if req.loop_turn {
         (LOOP_HISTORY_TURNS, LOOP_HISTORY_CHARS)
@@ -455,14 +455,14 @@ async fn chat_inner(
     } else {
         bounded_history(&session)
     };
+    let mut compaction = None;
     if !cloud_selected {
-        let threshold = state
-            .cfg
-            .u64_or(
-                "chat.compact_prompt_tokens",
-                crate::server::compaction::DEFAULT_PROMPT_TOKENS,
-            )
-            .clamp(4096, 30_000);
+        let configured_threshold = state.cfg.u64_or(
+            "chat.compact_prompt_tokens",
+            crate::server::compaction::DEFAULT_PROMPT_TOKENS,
+        );
+        let minimum_threshold = max_tokens.saturating_add(MIN_PROMPT_HEADROOM).min(MAX_PROMPT_TOKENS);
+        let threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
         let keep = state
             .cfg
             .u64_or(
@@ -474,20 +474,30 @@ async fn chat_inner(
             crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, &req.message, max_tokens);
         if projected > threshold {
             let before = session.messages.len();
-            let goal = session.goal.clone();
-            session = state
-                .store
-                .compact(&session.session_id, keep)
-                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-            debug_assert_eq!(session.goal, goal);
-            state.audit.log(json!({
-                "event": "chat_session_compacted",
-                "session_id": session.session_id,
-                "before": before,
-                "after": session.messages.len(),
-                "projected": projected,
-            }));
-            history = bounded_history(&session);
+            let mut compacted = session.clone();
+            compacted.messages = crate::server::compaction::compact_messages(&session.messages, keep);
+            let compacted_history = bounded_history(&compacted);
+            let compacted_projected = crate::server::compaction::projected_prompt_tokens(
+                &system_prompt,
+                &compacted_history,
+                &req.message,
+                max_tokens,
+            );
+            if compacted_projected > threshold {
+                return Err(ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "CHAT_PROMPT_TOO_LARGE",
+                    "the next prompt still exceeds the configured limit after history compaction",
+                )
+                .details(json!({
+                    "projected_tokens": projected,
+                    "compacted_tokens": compacted_projected,
+                    "limit_tokens": threshold,
+                })));
+            }
+            let after = compacted.messages.len();
+            compaction = Some((keep, before, after, projected, compacted_projected, threshold));
+            history = compacted_history;
         }
     }
     history.push(ChatMessage {
@@ -539,24 +549,49 @@ async fn chat_inner(
     };
     drop(release);
 
-    let updated = state
-        .store
-        .record_exchange(
+    let usage = TokenTally {
+        prompt_tokens: reply.prompt_tokens,
+        completion_tokens: reply.completion_tokens,
+        exchanges: 0,
+    };
+    let prompt_skills = selected_skills
+        .iter()
+        .map(|(id, body)| {
+            use sha2::{Digest, Sha256};
+            json!({"id":id,"outcome":"included_in_successful_chat","chars":body.chars().count(),"sha256":hex::encode(Sha256::digest(body.as_bytes()))})
+        })
+        .collect::<Vec<_>>();
+    let recorded = match compaction {
+        Some((keep, ..)) => state.store.record_compacted_exchange(
             &session.session_id,
             &req.message,
             &reply.body_text,
             &reply.model,
-            &TokenTally {
-                prompt_tokens: reply.prompt_tokens,
-                completion_tokens: reply.completion_tokens,
-                exchanges: 0,
-            },
-            &selected_skills.iter().map(|(id,body)| {
-                use sha2::{Digest, Sha256};
-                json!({"id":id,"outcome":"included_in_successful_chat","chars":body.chars().count(),"sha256":hex::encode(Sha256::digest(body.as_bytes()))})
-            }).collect::<Vec<_>>(),
-        )
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+            &usage,
+            &prompt_skills,
+            keep,
+        ),
+        None => state.store.record_exchange(
+            &session.session_id,
+            &req.message,
+            &reply.body_text,
+            &reply.model,
+            &usage,
+            &prompt_skills,
+        ),
+    };
+    let updated = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    if let Some((_, before, after, projected, compacted_projected, threshold)) = compaction {
+        state.audit.log(json!({
+            "event": "chat_session_compacted",
+            "session_id": session.session_id,
+            "before": before,
+            "after": after,
+            "projected": projected,
+            "compacted_projected": compacted_projected,
+            "threshold": threshold,
+        }));
+    }
     let sensitivity = {
         let scanner = crate::common::injection::Scanner::core();
         if scanner.count_matches(&req.message) > 0 || scanner.count_matches(&reply.body_text) > 0 {
