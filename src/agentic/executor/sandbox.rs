@@ -277,7 +277,10 @@ impl HardSandbox for LinuxBubblewrapSandbox {
 }
 
 fn prefer_linux_sandbox() -> Result<Box<dyn HardSandbox>> {
-    prefer_linux_sandbox_from(LinuxBubblewrapSandbox::new(), LinuxNetnsSandbox::new())
+    match LinuxBubblewrapSandbox::new() {
+        Ok(sb) => prefer_linux_sandbox_from(Ok(sb), Err(HarnessError::sandbox_unavailable("unused"))),
+        Err(bwrap_err) => prefer_linux_sandbox_from(Err(bwrap_err), LinuxNetnsSandbox::new()),
+    }
 }
 
 fn prefer_linux_sandbox_from(
