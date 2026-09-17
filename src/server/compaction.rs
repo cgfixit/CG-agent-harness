@@ -19,6 +19,7 @@ pub const MAX_PROMPT_TOKENS: u64 = 30_000;
 pub const MAX_REPLY_TOKENS: u64 = MAX_PROMPT_TOKENS - MIN_PROMPT_HEADROOM;
 pub const SUMMARY_MAX_TOKENS: u64 = 400;
 const SUMMARY_INPUT_CHARS: usize = 24_000;
+const SUMMARY_TURN_CHARS: usize = 800;
 const SUMMARY_SYSTEM: &str = "Summarize this chat history for a later local-model turn. Cover goals, decisions, files touched, leftover work, and key facts. Dense prose. No preamble.";
 
 pub fn estimate_tokens(text: &str) -> u64 {
@@ -78,16 +79,32 @@ pub fn compact_messages(messages: &[Message], keep_recent: usize, summary: &str)
     out
 }
 
-/// One bounded local-model call. Empty or failed output must not persist.
-pub async fn summarize_turns(chat: &ChatClient, model: &str, middle: &[Message]) -> Result<String> {
+/// First user plus recent tail. These turns are never summarized away.
+pub fn retained_messages(messages: &[Message], keep_recent: usize) -> Vec<Message> {
+    compact_messages(messages, keep_recent, "")
+        .into_iter()
+        .filter(|m| !m.text.is_empty())
+        .collect()
+}
+
+fn summary_input(middle: &[Message]) -> String {
     let mut body = String::new();
     for msg in middle {
         body.push_str(&msg.role);
         body.push_str(": ");
-        body.push_str(&msg.text);
+        let snippet: String = msg.text.chars().take(SUMMARY_TURN_CHARS).collect();
+        body.push_str(&snippet);
         body.push('\n');
     }
-    let clipped: String = body.chars().take(SUMMARY_INPUT_CHARS).collect();
+    if body.chars().count() <= SUMMARY_INPUT_CHARS {
+        return body;
+    }
+    body.chars().skip(body.chars().count() - SUMMARY_INPUT_CHARS).collect()
+}
+
+/// One bounded local-model call. Empty or failed output must not persist.
+pub async fn summarize_turns(chat: &ChatClient, model: &str, middle: &[Message]) -> Result<(String, u64, u64)> {
+    let clipped = summary_input(middle);
     let reply = chat
         .chat(
             SUMMARY_SYSTEM,
@@ -112,7 +129,7 @@ pub async fn summarize_turns(chat: &ChatClient, model: &str, middle: &[Message])
     if !out.ends_with('\n') {
         out.push('\n');
     }
-    Ok(out)
+    Ok((out, reply.prompt_tokens, reply.completion_tokens))
 }
 
 #[cfg(test)]
@@ -161,5 +178,14 @@ mod tests {
         }];
         let projected = projected_prompt_tokens("sys", &history, "efgh", 10);
         assert_eq!(projected, 1 + 1 + 1 + 10);
+    }
+
+    #[test]
+    fn summary_input_keeps_later_turns() {
+        let early = msg("user", &"x".repeat(30_000));
+        let later = msg("assistant", "DECISION_KEEP");
+        let input = summary_input(&[early, later]);
+        assert!(input.contains("DECISION_KEEP"), "{input}");
+        assert!(input.chars().count() <= SUMMARY_INPUT_CHARS);
     }
 }
