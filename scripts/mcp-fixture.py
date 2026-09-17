@@ -150,7 +150,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--stdio", action="store_true")
     parser.add_argument("--sse", action="store_true")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default="127.0.0.1")  # DevSkim: ignore DS162092 because this fixture must bind only to loopback.
     parser.add_argument("--port", type=int, default=0)
     args = parser.parse_args()
     if args.stdio == args.sse:

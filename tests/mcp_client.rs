@@ -79,8 +79,8 @@ impl McpServer {
         app_opts.shim_exe = Some(PathBuf::from(BIN));
         let (router, state) = build_app(app_opts).await.unwrap();
         let transport =
-            cgagentharness::server::transport::Transport::load(&state.home, &state.cfg, "127.0.0.1").unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            cgagentharness::server::transport::Transport::load(&state.home, &state.cfg, "127.0.0.1").unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
         let addr = listener.local_addr().unwrap();
         let scheme = transport.scheme();
         let task = tokio::spawn(async move {
@@ -88,7 +88,7 @@ impl McpServer {
         });
         let csrf = state.csrf_token.clone();
         Self {
-            base: format!("{scheme}://127.0.0.1:{}", addr.port()),
+            base: format!("{scheme}://127.0.0.1:{}", addr.port()), // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
             csrf,
             api_key: "test-api-key-0123456789".into(),
             client: reqwest::Client::builder()
@@ -141,7 +141,7 @@ fn start_sse_fixture() -> (u16, std::process::Child) {
             fixture_script().as_os_str().to_str().unwrap(),
             "--sse",
             "--host",
-            "127.0.0.1",
+            "127.0.0.1", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
             "--port",
             "0",
         ])
@@ -242,7 +242,7 @@ async fn stdio_crash_is_fail_closed() {
 async fn sse_loopback_is_denied_until_explicitly_enabled() {
     let (port, mut child) = start_sse_fixture();
     let yaml = format!(
-        "\n    - name: local\n      transport: sse\n      url: http://127.0.0.1:{port}/sse\n      tools:\n        - echo\n"
+        "\n    - name: local\n      transport: sse\n      url: http://127.0.0.1:{port}/sse\n      tools:\n        - echo\n", // DevSkim: ignore DS162092 DS137138 because this SSRF test uses loopback HTTP on purpose.
     );
     let off = McpServer::boot(&yaml, &[]).await;
     let (status, body) = off
@@ -264,7 +264,7 @@ async fn sse_loopback_is_denied_until_explicitly_enabled() {
 #[tokio::test]
 async fn sse_private_literal_is_denied() {
     let yaml =
-        "\n    - name: bogon\n      transport: sse\n      url: http://10.0.0.1/sse\n      tools:\n        - echo\n";
+        "\n    - name: bogon\n      transport: sse\n      url: http://10.0.0.1/sse\n      tools:\n        - echo\n"; // DevSkim: ignore DS137138 because this SSRF test must use a non-TLS private URL.
     let server = McpServer::boot(yaml, &[("mcp.sse_allow_loopback", "true")]).await;
     let (status, body) = server
         .call(json!({"server":"bogon","tool":"echo","confirm":true}))
