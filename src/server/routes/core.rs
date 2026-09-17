@@ -424,6 +424,8 @@ async fn chat_inner(
         prompt_history(&session)
     };
     let mut compaction = None;
+    let mut summary_prompt_tokens = 0u64;
+    let mut summary_completion_tokens = 0u64;
     if !cloud_selected {
         let configured_threshold = state.cfg.u64_or(
             "chat.compact_prompt_tokens",
@@ -449,9 +451,75 @@ async fn chat_inner(
         let projected =
             crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, &req.message, max_tokens);
         if projected > threshold {
+            let paste_alone =
+                crate::server::compaction::projected_prompt_tokens(&system_prompt, &[], &req.message, max_tokens);
+            if paste_alone > threshold {
+                state.audit.log(json!({
+                    "event": "chat_prompt_too_large",
+                    "session_id": session.session_id,
+                    "projected": projected,
+                    "compacted_projected": paste_alone,
+                    "threshold": threshold,
+                }));
+                return Err(ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "CHAT_PROMPT_TOO_LARGE",
+                    "the next prompt still exceeds the configured limit after history compaction",
+                )
+                .details(json!({
+                    "projected_tokens": projected,
+                    "compacted_tokens": paste_alone,
+                    "limit_tokens": threshold,
+                })));
+            }
             let before = session.messages.len();
+            let retained = crate::server::compaction::retained_messages(&session.messages, keep);
+            let retained_history: Vec<ChatMessage> = retained
+                .iter()
+                .filter(|m| m.role == "user" || m.role == "assistant")
+                .map(|m| ChatMessage {
+                    role: m.role.clone(),
+                    content: m.text.clone(),
+                })
+                .collect();
+            let retained_projected = crate::server::compaction::projected_prompt_tokens(
+                &system_prompt,
+                &retained_history,
+                &req.message,
+                max_tokens,
+            );
+            if retained_projected > threshold {
+                state.audit.log(json!({
+                    "event": "chat_prompt_too_large",
+                    "session_id": session.session_id,
+                    "projected": projected,
+                    "compacted_projected": retained_projected,
+                    "threshold": threshold,
+                }));
+                return Err(ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "CHAT_PROMPT_TOO_LARGE",
+                    "the next prompt still exceeds the configured limit after history compaction",
+                )
+                .details(json!({
+                    "projected_tokens": projected,
+                    "compacted_tokens": retained_projected,
+                    "limit_tokens": threshold,
+                })));
+            }
+            let middle = crate::server::compaction::middle_turns(&session.messages, keep);
+            let summary = if middle.is_empty() {
+                crate::server::compaction::COMPACT_PREFIX.to_string()
+            } else {
+                let (text, p, c) = crate::server::compaction::summarize_turns(&state.chat, &model, middle)
+                    .await
+                    .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+                summary_prompt_tokens = p;
+                summary_completion_tokens = c;
+                text
+            };
             let mut compacted = session.clone();
-            compacted.messages = crate::server::compaction::compact_messages(&session.messages, keep);
+            compacted.messages = crate::server::compaction::compact_messages(&session.messages, keep, &summary);
             let compacted_history = prompt_history(&compacted);
             let compacted_projected = crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
@@ -479,7 +547,7 @@ async fn chat_inner(
                 })));
             }
             let after = compacted.messages.len();
-            compaction = Some((keep, before, after, projected, compacted_projected, threshold));
+            compaction = Some((keep, before, after, projected, compacted_projected, threshold, summary));
             history = compacted_history;
         }
     }
@@ -533,8 +601,8 @@ async fn chat_inner(
     drop(release);
 
     let usage = TokenTally {
-        prompt_tokens: reply.prompt_tokens,
-        completion_tokens: reply.completion_tokens,
+        prompt_tokens: reply.prompt_tokens.saturating_add(summary_prompt_tokens),
+        completion_tokens: reply.completion_tokens.saturating_add(summary_completion_tokens),
         exchanges: 0,
     };
     let prompt_skills = selected_skills
@@ -545,7 +613,7 @@ async fn chat_inner(
         })
         .collect::<Vec<_>>();
     let recorded = match compaction {
-        Some((keep, ..)) => state.store.record_compacted_exchange(
+        Some((keep, .., ref summary)) => state.store.record_compacted_exchange(
             &session.session_id,
             &req.message,
             &reply.body_text,
@@ -553,6 +621,7 @@ async fn chat_inner(
             &usage,
             &prompt_skills,
             keep,
+            summary,
         ),
         None => state.store.record_exchange(
             &session.session_id,
@@ -564,7 +633,7 @@ async fn chat_inner(
         ),
     };
     let updated = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    if let Some((_, before, after, projected, compacted_projected, threshold)) = compaction {
+    if let Some((_, before, after, projected, compacted_projected, threshold, _)) = compaction {
         state.audit.log(json!({
             "event": "chat_session_compacted",
             "session_id": session.session_id,

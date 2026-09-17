@@ -317,6 +317,16 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
         .await;
     assert_eq!(status, 502, "{body}");
     assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(
+        !s.state
+            .store
+            .get(sid)
+            .unwrap()
+            .messages
+            .iter()
+            .any(|m| m.text.starts_with(cgagentharness::server::compaction::COMPACT_PREFIX)),
+        "failed summary must not persist a compact"
+    );
 
     model.set_reply(ok_reply("compacted", 10, 2));
     let (status, body) = s
