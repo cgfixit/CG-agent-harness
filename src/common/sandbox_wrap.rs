@@ -4,6 +4,7 @@
 //! `crate::agentic`. Never binds host root.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -163,18 +164,7 @@ fn bwrap_argv_inner(
     if scratch_dir == candidate {
         return Err("scratch must differ from candidate".into());
     }
-    let probe = scratch_dir.join(".cgah-bwrap-write");
-    let mut probe_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-        .map_err(|e| format!("scratch probe {}: {e}", probe.display()))?;
-    use std::io::Write;
-    probe_file
-        .write_all(b"ok")
-        .map_err(|e| format!("scratch is not writable: {e}"))?;
-    drop(probe_file);
-    let _ = std::fs::remove_file(&probe);
+    exclusive_scratch_probe(&unique_scratch_probe(&scratch_dir))?;
 
     let mut out = vec![bwrap.display().to_string(), "--die-with-parent".into()];
     if unshare_net {
@@ -223,6 +213,27 @@ fn bwrap_argv_inner(
         return Err("bwrap argv would bind host root".into());
     }
     Ok(out)
+}
+
+fn unique_scratch_probe(scratch_dir: &Path) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    scratch_dir.join(format!(".cgah-bwrap-write-{}-{n}", std::process::id()))
+}
+
+pub fn exclusive_scratch_probe(probe: &Path) -> std::result::Result<(), String> {
+    let mut probe_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(probe)
+        .map_err(|e| format!("scratch probe {}: {e}", probe.display()))?;
+    use std::io::Write;
+    probe_file
+        .write_all(b"ok")
+        .map_err(|e| format!("scratch is not writable: {e}"))?;
+    drop(probe_file);
+    let _ = std::fs::remove_file(probe);
+    Ok(())
 }
 
 pub fn command_read_roots(argv: &[String], cwd: Option<&Path>) -> Vec<PathBuf> {

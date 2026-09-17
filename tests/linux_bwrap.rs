@@ -1,5 +1,7 @@
-//! Linux bubblewrap acceptance. Skips when `bwrap` is missing so Darwin and
-//! netns-only images stay green.
+//! Linux bubblewrap acceptance. Darwin stays a compile-only stub. On Linux a
+//! missing or unprobeable `bwrap` skips locally, and fails the job when `CI=true`.
+//! SIGKILL of the runner with a grandchild still alive is not covered here.
+//! That leftover matches the Seatbelt process-group residual.
 
 use cgagentharness::agentic::executor::sandbox::LinuxBubblewrapSandbox;
 
@@ -19,6 +21,9 @@ fn try_bwrap() -> Option<LinuxBubblewrapSandbox> {
     match LinuxBubblewrapSandbox::new() {
         Ok(sb) => Some(sb),
         Err(e) => {
+            if std::env::var_os("CI").as_deref() == Some(std::ffi::OsStr::new("true")) {
+                panic!("linux-bwrap required on Linux CI: {}", e.message);
+            }
             eprintln!("SKIP linux-bwrap: {}", e.message);
             None
         }
