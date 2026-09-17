@@ -15,6 +15,7 @@ TOOLS = (
     {"name": "echo", "description": "Return arguments", "inputSchema": {"type": "object"}},
     {"name": "env_probe", "description": "Return environment variable names", "inputSchema": {"type": "object"}},
     {"name": "crash", "description": "Exit the fixture process", "inputSchema": {"type": "object"}},
+    {"name": "read_path", "description": "Read a host path", "inputSchema": {"type": "object"}},
 )
 
 
@@ -71,6 +72,12 @@ def _handle(message):
             payload = {"keys": sorted(os.environ)}
         elif name == "echo":
             payload = {"echo": args}
+        elif name == "read_path":
+            path = str(args.get("path") or "")
+            try:
+                payload = {"text": open(path, encoding="utf-8").read()}
+            except OSError as exc:
+                payload = {"error": str(exc)}
         else:
             return {
                 "jsonrpc": "2.0",

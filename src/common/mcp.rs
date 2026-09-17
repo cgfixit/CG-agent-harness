@@ -14,6 +14,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use super::errors::{HarnessError, Result};
+use super::sandbox_wrap::{wrap_mcp_stdio, WrappedStdio};
 
 pub const SECRET_ENV: &[&str] = &[
     "ANTHROPIC_API_KEY",
@@ -75,6 +76,8 @@ pub struct StdioClient {
     stdout: BufReader<ChildStdout>,
     next_id: i64,
     max_frame: usize,
+    pub backend: &'static str,
+    _wrap: WrappedStdio,
 }
 
 impl StdioClient {
@@ -91,18 +94,21 @@ impl StdioClient {
         if !program.is_absolute() {
             return Err(mcp_err("MCP_STDIO", "stdio command must be an absolute path"));
         }
-        let mut cmd = Command::new(&program);
-        cmd.args(&argv[1..]);
+        let wrap = wrap_mcp_stdio(argv, cwd)?;
+        let mut cmd = Command::new(&wrap.argv[0]);
+        cmd.args(&wrap.argv[1..]);
         cmd.env_clear();
         cmd.env("PATH", "/usr/bin:/bin");
         cmd.env("LANG", "C");
         cmd.env("LC_ALL", "C");
+        let scratch = wrap.scratch.display().to_string();
+        for key in ["HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP"] {
+            cmd.env(key, &scratch);
+        }
         for (key, value) in filter_env(extra_env) {
             cmd.env(key, value);
         }
-        if let Some(cwd) = cwd {
-            cmd.current_dir(cwd);
-        }
+        cmd.current_dir(&wrap.child_cwd);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -128,6 +134,8 @@ impl StdioClient {
             stdout: BufReader::new(stdout),
             next_id: 1,
             max_frame,
+            backend: wrap.backend,
+            _wrap: wrap,
         })
     }
 
@@ -252,11 +260,13 @@ pub async fn call_stdio(
     arguments: Value,
     timeout: Duration,
     max_frame: usize,
-) -> Result<Value> {
+) -> Result<(Value, &'static str)> {
     tokio::time::timeout(timeout, async {
         let mut client = StdioClient::spawn(argv, cwd, extra_env, max_frame).await?;
+        let backend = client.backend;
         client.initialize().await?;
-        client.call_tool(tool, arguments).await
+        let result = client.call_tool(tool, arguments).await?;
+        Ok((result, backend))
     })
     .await
     .map_err(|_| mcp_err("MCP_TIMEOUT", "stdio MCP call timed out"))?

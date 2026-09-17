@@ -32,7 +32,7 @@ fn fixture_script() -> PathBuf {
 
 fn stdio_yaml() -> String {
     format!(
-        "\n    - name: fixture\n      transport: stdio\n      command:\n        - \"{}\"\n        - \"{}\"\n        - --stdio\n      tools:\n        - echo\n        - env_probe\n        - crash\n",
+        "\n    - name: fixture\n      transport: stdio\n      command:\n        - \"{}\"\n        - \"{}\"\n        - --stdio\n      tools:\n        - echo\n        - env_probe\n        - crash\n        - read_path\n",
         python3(),
         fixture_script().display()
     )
@@ -222,6 +222,47 @@ async fn stdio_echo_requires_confirm_and_broker_allowlist() {
     let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
     assert!(audit.contains("tool_broker_decision"), "{audit}");
     assert!(audit.contains("mcp:fixture:echo"), "{audit}");
+}
+
+#[tokio::test]
+async fn stdio_sandbox_denies_host_secret_when_fs_confined() {
+    let server = McpServer::boot(&stdio_yaml(), &[]).await;
+    let secret = server._tmp.path().join("host-secret.txt");
+    std::fs::write(&secret, "LEAKME-MCP-SECRET").unwrap();
+    let (status, body) = server
+        .call(json!({
+            "server":"fixture",
+            "tool":"read_path",
+            "arguments":{"path": secret.display().to_string()},
+            "confirm":true
+        }))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
+    assert!(audit.contains("mcp_stdio_spawn"), "{audit}");
+    let confined = audit.contains("darwin-seatbelt") || audit.contains("linux-bwrap");
+    if confined {
+        assert!(!text.contains("LEAKME-MCP-SECRET"), "{text}\n{audit}");
+        assert!(text.contains("error"), "{text}");
+    } else {
+        assert!(
+            audit.contains("linux-netns") || audit.contains("windows-stdio"),
+            "expected a named residual backend, got {audit}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn loop_allowlist_does_not_include_mcp_tools() {
+    let server = McpServer::boot(&stdio_yaml(), &[]).await;
+    let loop_tools = server.state.loop_tool_allowlist();
+    assert!(
+        loop_tools.iter().all(|name| !name.starts_with("mcp:")),
+        "{loop_tools:?}"
+    );
+    let mcp_tools = server.state.mcp_tool_allowlist();
+    assert!(mcp_tools.contains("mcp:fixture:echo"), "{mcp_tools:?}");
 }
 
 #[tokio::test]

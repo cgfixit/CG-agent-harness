@@ -19,13 +19,15 @@ the server or the shim.
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
 
 MCP stdio children are spawned from `src/common/mcp.rs` with a constructed
-environment (secret names stripped) and process-group kill-on-drop. They are
-not the agentic sandbox and are not inside bubblewrap or Seatbelt. `src/server`
-still contains no `Command::new`. Servers are operator-declared in `mcp.servers`;
-unknown names fail closed. SSE URLs reuse DNS-pinned SSRF checks; loopback SSE
-is `mcp.sse_allow_loopback` and ships false. Namespaced tools (`mcp:<server>:<tool>`)
-pass `tool_broker` and require `confirm: true`. MCP tools are not attached to
-`/loop`.
+environment (secret names stripped) and process-group kill-on-drop. The child
+argv is wrapped by `src/common/sandbox_wrap.rs` using the same Seatbelt profile
+and `bwrap_argv` as agentic verification (`darwin-seatbelt` / `linux-bwrap`,
+with named `linux-netns` fallback). Windows piped stdio has no FS jail
+(`windows-stdio`). `src/server` still contains no `Command::new`. Servers are
+operator-declared in `mcp.servers`; unknown names fail closed. SSE URLs reuse
+DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback` and ships
+false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker` and require
+`confirm: true`. MCP tools are not attached to `/loop`.
 
 ## Account, transport and request boundaries
 

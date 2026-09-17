@@ -143,7 +143,7 @@ impl McpRuntime {
         assert_allowed(&namespaced, &[namespaced.clone()], allowlist, audit)?;
         match declared.transport {
             Transport::Stdio => {
-                call_stdio(
+                let (result, backend) = call_stdio(
                     &declared.argv,
                     declared.cwd.as_deref(),
                     &declared.env,
@@ -152,7 +152,14 @@ impl McpRuntime {
                     self.timeout,
                     self.max_result_bytes,
                 )
-                .await
+                .await?;
+                audit.log(json!({
+                    "event": "mcp_stdio_spawn",
+                    "backend": backend,
+                    "server": server,
+                    "tool": tool,
+                }));
+                Ok(result)
             }
             Transport::Sse => {
                 let url = declared

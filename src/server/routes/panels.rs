@@ -224,6 +224,7 @@ pub async fn mcp_call(
                 | "MCP_DISABLED"
                 | "MCP_SSRF_DENIED" => StatusCode::FORBIDDEN,
                 "VALIDATION_ERROR" | "CONFIG_ERROR" => StatusCode::BAD_REQUEST,
+                "HARD_SANDBOX_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
                 "MCP_TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,
                 _ => StatusCode::BAD_GATEWAY,
             };
