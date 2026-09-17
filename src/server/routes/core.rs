@@ -129,6 +129,7 @@ pub async fn get_session(State(state): State<Arc<AppState>>, Path(session_id): P
         .collect();
     let mut out = session.summary();
     out["messages"] = json!(messages);
+    out["prompt_history"] = json!(session.prompt_history);
     out["goal"] = json!(session.goal);
     Ok(Json(out))
 }

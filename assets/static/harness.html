@@ -367,7 +367,8 @@
       <div class="inputbar">
         <span class="prompt-sym">❯</span>
         <input id="input" autocomplete="off" spellcheck="false"
-               placeholder="message the agent, or /help for commands" />
+               title="Up/Down: recall the last 50 saved prompts in this session; Down restores your draft"
+               placeholder="message the agent, or /help for commands (↑/↓ history)" />
         <button id="send">SEND</button>
       </div>
       <div class="statusbar">
@@ -469,6 +470,32 @@ const CSRF_TOKEN = csrfMeta ? csrfMeta.content : '';
 let sessionClearing = false;
 let sessionRevision = 0; // Discard replies and navigation responses from an older selection.
 let currentSession = null;   // session_id string or null
+let promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
+
+async function recallPrompt(direction) {
+  if (!currentSession || sendBtn.disabled) return;
+  if (promptHistory.session !== currentSession) {
+    promptHistory = {session:currentSession, prompts:[], index:0, draft:input.value, loading:false};
+  }
+  const history = promptHistory;
+  if (history.loading || (direction > 0 && history.index === history.prompts.length)) return;
+  if (!history.prompts.length) {
+    history.loading = true;
+    const revision = sessionRevision, draft = input.value;
+    try {
+      const session = await api('/api/sessions/' + encodeURIComponent(history.session));
+      if (revision !== sessionRevision || history !== promptHistory || history.session !== currentSession || input.value !== draft) return;
+      history.prompts = (session.prompt_history || (session.messages || []).filter(m => m.role === 'user').map(m => m.content)).slice(-50);
+      history.index = history.prompts.length;
+    } catch (error) { sys('Prompt history unavailable: ' + error.message); return; }
+    finally { history.loading = false; }
+  }
+  if (!history.prompts.length) return;
+  if (history.index === history.prompts.length) history.draft = input.value;
+  history.index = Math.max(0, Math.min(history.prompts.length, history.index + direction));
+  input.value = history.index === history.prompts.length ? history.draft : history.prompts[history.index];
+  input.setSelectionRange(input.value.length, input.value.length);
+}
 let soulEnabled = true;
 let soulStatus = {};
 let memoryEnabled = false;
@@ -1251,7 +1278,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
       delete_derived_episodes: deleteDerived
     });
     clearTranscript();
-    currentSession = null; sessionGoal = ''; loopAuto = false;
+    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false;
     input.value = '';
     $('sSession').textContent = 'none';
     $('hTokens').textContent = '0';
@@ -1303,6 +1330,7 @@ async function runSlash(line) {
             if (revision !== sessionRevision) break;
             clearTranscript();
             currentSession = s.session_id;
+            promptHistory.session = null; promptHistory.prompts = [];
             sessionGoal = typeof s.goal === 'string' ? s.goal : '';
             loopAuto = false;
             paintGoalLoop();
@@ -2197,6 +2225,7 @@ window.addEventListener('beforeunload', function () {
 });
 
 async function finishChat(r) {
+  promptHistory.session = null;
   if (r && r.session_id) {
     currentSession = r.session_id;
     $('sSession').textContent = currentSession;
@@ -2312,6 +2341,10 @@ async function onSend() {
 
 /* ── wiring ── */
 sendBtn.addEventListener('click', onSend);
+input.addEventListener('input', () => {
+  promptHistory.index = promptHistory.prompts.length;
+  promptHistory.draft = input.value;
+});
 const recoverJob = rememberedAgentJob();
 if (recoverJob) sys('retained job: ' + recoverJob + '. Use /agent job ' + recoverJob + ' to resume monitoring.');
 input.addEventListener('keydown', e => {
@@ -2319,6 +2352,9 @@ input.addEventListener('keydown', e => {
   // commit keystroke submits a half-typed query.
   if (e.isComposing) return;
   if (e.key === 'Enter') onSend();
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    e.preventDefault(); recallPrompt(e.key === 'ArrowUp' ? -1 : 1);
+  }
 });
 document.querySelectorAll('.side-tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -2432,7 +2468,7 @@ if (hAuthLogout) {
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
-    currentSession = null; sessionRevision++; window.__cyclawRole = null; await refreshStatus();
+    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionRevision++; window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
   });
 }

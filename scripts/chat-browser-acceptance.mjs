@@ -353,6 +353,34 @@ try {
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'switch renders the selected session, including its older messages');
  await send('/session use '+firstSession.session_id);
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'reselecting a session must not duplicate its transcript');
+ // Keyboard recall loads saved prompts, restores drafts, and never crosses session boundaries.
+ const arrow=async key=>{
+   await evaluate('document.getElementById("input").focus()');
+   await call('Input.dispatchKeyEvent',{type:'keyDown',key,code:key});
+   await call('Input.dispatchKeyEvent',{type:'keyUp',key,code:key});
+   await until('!promptHistory.loading');
+ };
+ await evaluate('input.value="unsent draft"');
+ await arrow('ArrowUp');assert.equal(await evaluate('input.value'),'OLD_MESSAGE_10');
+ await arrow('ArrowUp');assert.equal(await evaluate('input.value'),'OLD_MESSAGE_8');
+ await arrow('ArrowDown');await arrow('ArrowDown');assert.equal(await evaluate('input.value'),'unsent draft');
+ firstSession.prompt_history=Array.from({length:55},(_,i)=>'SAVED_PROMPT_'+i);
+ await send('/session use '+firstSession.session_id);
+ await evaluate('input.value="draft retained"');
+ await arrow('ArrowUp');assert.equal(await evaluate('input.value'),'SAVED_PROMPT_54');
+ for(let i=0;i<55;i++)await arrow('ArrowUp');
+ assert.equal(await evaluate('input.value'),'SAVED_PROMPT_5','recall is capped at fifty');
+ for(let i=0;i<50;i++)await arrow('ArrowDown');
+ assert.equal(await evaluate('input.value'),'draft retained');
+ await arrow('ArrowUp');
+ await evaluate('input.value="edited draft";input.dispatchEvent(new Event("input"))');
+ await arrow('ArrowUp');await arrow('ArrowDown');assert.equal(await evaluate('input.value'),'edited draft');
+ await send('/session new');await arrow('ArrowUp');assert.equal(await evaluate('input.value'),'','new session cannot recall old prompts');
+ await send('/session use '+firstSession.session_id);
+ await afterLoad(()=>call('Page.reload',{ignoreCache:true}));
+ await until('!!document.getElementById("input")');
+ await send('/session use '+firstSession.session_id);await arrow('ArrowUp');
+ assert.equal(await evaluate('input.value'),'SAVED_PROMPT_54','recall survives a page reload');
  await send('/agent run codex/old Old staged work');
  await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}');
  await evaluate('document.querySelector("#pane-sessions .cmd-item").click()');
@@ -464,7 +492,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','fresh soul missing','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
+ console.log(JSON.stringify({passed:true,coverage:['incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }
