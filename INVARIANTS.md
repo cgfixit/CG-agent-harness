@@ -341,13 +341,18 @@ successful exchange using `write_json_atomic_mode` at `0o600`; failed or
 cancelled model calls leave stored history unchanged. The system prompt is
 composed each turn and is never stored in `messages`. `Session.goal` and the
 first user message are preserved. Successful compaction is audited as
-`chat_session_compacted` without message bodies.
+`chat_session_compacted` without message bodies. An irreducible prompt is
+audited as `chat_prompt_too_large` with projected sizes only. A concurrent
+local-model claim is audited as `chat_busy`. Neither event stores message
+bodies.
 
 - Locked by: `src/server/compaction.rs`,
   `src/server/sessions.rs::record_compacted_exchange`,
   `src/server/routes/core.rs`,
   `tests/chat_and_sessions.rs::minimum_compaction_threshold_still_allows_an_ordinary_turn`,
-  `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`.
+  `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`,
+  `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
+  `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`.
 
 ## Signals weaker than their name
 

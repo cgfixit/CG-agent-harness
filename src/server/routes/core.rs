@@ -370,6 +370,11 @@ async fn chat_inner(
         } else if state.generation_gate.owner() == "consolidation" {
             details["busy"] = json!("consolidation");
         }
+        state.audit.log(json!({
+            "event": "chat_busy",
+            "session_id": session.session_id,
+            "owner": state.generation_gate.owner(),
+        }));
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "CHAT_BUSY",
@@ -484,6 +489,13 @@ async fn chat_inner(
                 max_tokens,
             );
             if compacted_projected > threshold {
+                state.audit.log(json!({
+                    "event": "chat_prompt_too_large",
+                    "session_id": session.session_id,
+                    "projected": projected,
+                    "compacted_projected": compacted_projected,
+                    "threshold": threshold,
+                }));
                 return Err(ApiError::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "CHAT_PROMPT_TOO_LARGE",
