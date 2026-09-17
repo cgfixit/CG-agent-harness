@@ -273,8 +273,10 @@ filesystem confinement. That fallback is explicit in the backend name, an
 info-level `linux hard sandbox backend selected` line, the self-test line, and
 the audit `sandbox` field. `/api/status` does not report the backend. The
 console must not import `crate::agentic`. Both backends missing is
-`HARD_SANDBOX_UNAVAILABLE` (exit 3). Linux CI (`CI=true`) must not skip the
-bubblewrap suite. SIGKILL of the runner with a live grandchild is unverified.
+`HARD_SANDBOX_UNAVAILABLE` (exit 3). Linux CI (`CI=true`) fails if `bwrap` is
+missing. GitHub-hosted runners that refuse `RTM_NEWADDR` skip confinement
+tests; that is a named runner limit, not a missing binary. SIGKILL of the
+runner with a live grandchild is unverified.
 It is the same process-group leftover already named for Seatbelt. Windows Job
 Object remains a process-tree kill boundary without network or filesystem
 isolation. See `docs/OFFLINE_CARGO.md` for preparation, required native tests,
