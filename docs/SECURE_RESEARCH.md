@@ -56,22 +56,22 @@ refuse startup; no automatic reset occurs. Failed writes do not publish successf
 in-memory account changes. Stop the server before an operator-controlled backup
 or recovery; preserve the database and initialization marker together.
 
-Structured memory, when the administrator sets `structured_memory.enabled: true`,
+Structured memory, enabled by default for fresh homes via `structured_memory.enabled: true`,
 uses a separate `memory/structured.sqlite3` with the same class of open policy
 (owned parent, `SQLITE_OPEN_NOFOLLOW`, `foreign_keys=ON`, `trusted_schema=OFF`,
 rollback journal, `synchronous=FULL`). Missing initialized or corrupt files
 refuse startup rather than bootstrapping. Owner-private file mode is **not**
 encryption: anyone who can run as the home owner can read fact and episode
 bytes. Models cannot create that database or apply facts. Episode capture is a
-second default-false gate and never writes facts. Explicit recall is a third
-default-false gate: selected facts enter `/prompt` only after operator selection
+second default-true gate and never writes facts. Explicit recall is a third
+default-true gate: selected facts enter `/prompt` only after operator selection
 and assembly-time owner/active/revision revalidation. Retrieval is a fourth
-default-false gate: FTS search is not injection. Per-request force-include is
-the explicit pick for that prompt; `auto_retrieval` is a fifth default-false
+default-true gate: FTS search is not injection. Per-request force-include is
+the explicit pick for that prompt; `auto_retrieval` is a fifth default-true
 silent path. FTS indexes facts only. Manual consolidation is a sixth
-default-false gate and writes pending proposals only. Automatic consolidation
-is a seventh default-false gate that also requires consolidation; feature-off
-starts no worker. Recalled text cannot
+default-true gate and writes pending proposals only. Automatic consolidation
+is a seventh default-true gate that also requires consolidation; feature-off
+starts no worker. Existing explicit off settings remain off. Recalled text cannot
 authorize tools, coding, or network. Pinned notes remain
 `memory/notes.json`.
 

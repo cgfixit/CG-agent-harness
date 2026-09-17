@@ -1031,7 +1031,7 @@ const COMMANDS = [
   ['/prompt', 'preview the next chat system prompt (private)'],
   ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
-  ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (off by default)'],
+  ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (on for fresh homes)'],
   ['/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding [on|off]', 'admin-only structured-memory gate overrides; /memory on stays pinned notes'],
   ['/memory search <query>', 'FTS fact candidates (not injected)'],
   ['/memory retrieve <query>', 'force FTS include for this prompt only'],
@@ -1435,7 +1435,7 @@ async function runSlash(line) {
           const episode = (r.episodes || [])[0];
           if (!episode) { sys('No completed episode for this account. Capture is ' + (r.available ? 'on; complete a chat turn first.' : 'off; enable capture and complete a chat turn first.')); break; }
           const saved = await api('/api/structured-memory/episodes/' + encodeURIComponent(episode.id) + '/summary', 'POST', {summary:summary,reason:reason,confirm:true});
-          sys('Summary saved on episode ' + saved.id + '; run /memory consolidate ' + saved.id + ' to queue suggestions. No facts written.');
+          sys('Summary saved on episode ' + saved.id + '; eligible for automatic consolidation when enabled, or run /memory consolidate ' + saved.id + '. Review results with /memory proposals. No facts written.');
         } else if (sub === 'proposals') {
           document.querySelector('[data-pane="memory"]').click();
         } else if (sub === 'consolidate') {

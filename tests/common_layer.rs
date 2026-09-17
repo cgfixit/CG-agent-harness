@@ -479,6 +479,20 @@ fn home_layout_seeds_config_registry_and_skills_once() {
     let home = Home::at(dir.path().join("h"));
     home.ensure_layout().unwrap();
     assert!(home.config_path().exists());
+    let default_soul = cgagentharness::common::home::DEFAULT_SOUL;
+    assert_eq!(std::fs::read_to_string(home.soul_path()).unwrap(), default_soul);
+    assert!(
+        default_soul.chars().count() <= home.load_config().unwrap().u64_or("personality.soul_max_chars", 8000) as usize
+    );
+    std::fs::write(home.soul_path(), "CUSTOM_PERSONA").unwrap();
+    home.ensure_layout().unwrap();
+    assert_eq!(std::fs::read_to_string(home.soul_path()).unwrap(), "CUSTOM_PERSONA");
+    std::fs::remove_file(home.soul_path()).unwrap();
+    home.ensure_layout().unwrap();
+    assert!(
+        !home.soul_path().exists(),
+        "a deleted persona is not silently recreated"
+    );
     assert!(home.registry_path().exists());
     assert!(home.skills_dir().join("ponytail").join("SKILL.md").exists());
     std::fs::write(home.skills_dir().join("ponytail").join("SKILL.md"), "edited").unwrap();
@@ -496,6 +510,7 @@ fn home_layout_seeds_config_registry_and_skills_once() {
 
     let mut s = HarnessSettings::load(&home).unwrap();
     assert!(s.soul_enabled);
+    assert!(s.memory_enabled);
     assert!(s.web_enabled);
     assert!(HarnessSettings::load(&home).unwrap().web_enabled);
     s.selected_model = "m".into();
@@ -615,6 +630,26 @@ fn security_switches_require_boolean_values() {
                 std::path::Path::new("fixture.yaml")
             )
             .is_err());
+        }
+    }
+}
+
+#[test]
+fn pinned_memory_default_comes_from_config_and_preserves_saved_choices() {
+    for value in ["true", "false", "\"true\""] {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path().join("home"));
+        home.ensure_layout().unwrap();
+        std::fs::write(home.config_path(), format!("memory:\n  enabled: {value}\n")).unwrap();
+        let mut settings = HarnessSettings::load(&home).unwrap();
+        assert_eq!(settings.memory_enabled, value == "true");
+        settings.memory_enabled = false;
+        settings.save(&home).unwrap();
+        std::fs::write(home.config_path(), "memory:\n  enabled: true\n").unwrap();
+        assert!(!HarnessSettings::load(&home).unwrap().memory_enabled);
+        for legacy in ["{}", "{\"memory_enabled\":\"true\"}"] {
+            std::fs::write(home.settings_path(), legacy).unwrap();
+            assert!(!HarnessSettings::load(&home).unwrap().memory_enabled);
         }
     }
 }

@@ -121,6 +121,18 @@ impl Default for ServerOptions {
             overrides: vec![
                 ("auth.enabled".into(), "false".into()),
                 ("tls.enabled".into(), "false".into()),
+                // Each focused fixture enables only the memory path it exercises.
+                // The shipped-default lifecycle test removes these opt-outs.
+                ("memory.enabled".into(), "false".into()),
+                ("structured_memory.enabled".into(), "false".into()),
+                ("structured_memory.episode_capture".into(), "false".into()),
+                ("structured_memory.explicit_recall".into(), "false".into()),
+                ("structured_memory.retrieval".into(), "false".into()),
+                ("structured_memory.auto_retrieval".into(), "false".into()),
+                ("structured_memory.consolidation".into(), "false".into()),
+                ("structured_memory.auto_consolidation".into(), "false".into()),
+                ("structured_memory.auto_suggest_chat".into(), "false".into()),
+                ("structured_memory.auto_suggest_coding".into(), "false".into()),
             ],
             api_key: Some("test-api-key-0123456789".to_string()),
             deny_all_tools: false,

@@ -50,7 +50,9 @@ independent literal-boolean gates (`flag_is_true`); slash overrides use
 versioned explicit booleans and are administrator-only when accounts are enabled.
 An explicit override `false` wins over config `true`; legacy override `false`
 keeps its prior unset meaning. The store-opening gate remains config + restart only.
-All nine ship false. Capture off means no episode writes; recall off
+All nine ship true in fresh configuration; existing config files and explicit off
+overrides remain authoritative. Fresh pinned-note inclusion comes from
+`memory.enabled: true`; existing harness.json values remain unchanged. Capture off means no episode writes; recall off
 means no selected-fact prompt injection; retrieval off means no FTS search or
 force-include. Search returns candidates only — prompt injection still requires
 an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
@@ -58,11 +60,11 @@ an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
 separately gated `auto_retrieval` silent path is on. FTS indexes facts only,
 never episode summaries. Manual consolidation off means no summarizer call and
 no proposal writes from selected episodes; when on, the local model may create
-pending proposals only. Automatic consolidation is a separate default-false
+pending proposals only. Automatic consolidation is a separate default-true
 gate that also requires consolidation (AND); when on, a bounded idle worker
 may enqueue the same pending-proposal runner. Feature-off starts no worker.
 Disabling stops new claims without corrupting in-flight work. Interactive
-chat wins generation-gate contention. Separately opted-in completion suggestions
+chat wins generation-gate contention. Independently gated completion suggestions
 require store + capture, use bounded current completion evidence for the initiating
 owner, and produce pending proposals only. They never read shared archives or
 write human semantic summaries. `/memory save <text> :: <reason>` is an explicit

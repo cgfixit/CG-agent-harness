@@ -62,12 +62,15 @@ Default home is `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`).
 | `memory/structured.sqlite3` | Structured store (created only when the store gate is on) |
 | `memory/structured_gates.json` | Slash overlays for the capture/recall/retrieval/auto-retrieve/consolidation/auto-consolidate sub-gates |
 
-### Enable (fail-closed)
+### Defaults and explicit overrides
 
 Every gate uses `flag_is_true`: literal YAML `true` only. Quoted `"true"` stays
 off. Config changes need a full quit/relaunch or `serve` restart. Slash
 overlays take effect immediately once the store is open; they **cannot open
 the store**.
+
+Fresh homes ship pinned-note inclusion and all nine structured gates on. Existing
+explicit off settings remain off. To enable an existing opted-out home:
 
 1. Set `structured_memory.enabled: true` in the active home's `config.yaml` and
    restart.
@@ -79,13 +82,13 @@ the store**.
 | `episode_capture` | `/memory capture on\|off` | Stage metadata-only episodes after a successful chat |
 | `explicit_recall` | `/memory recall on\|off` | Allow operator-selected facts into `/prompt` after recheck |
 | `retrieval` | `/memory retrieval on\|off` | Allow facts-only FTS search and per-request force-include |
-| `auto_retrieval` | `/memory auto-retrieve on\|off` | **High-risk.** Silent top-k inject when this is on **and** retrieval is on |
+| `auto_retrieval` | `/memory auto-retrieve on\|off` | Automatic top-k inject when this is on **and** retrieval is on |
 | `consolidation` | `/memory consolidation on\|off` | Allow manual selected-episode consolidation into **pending proposals only** |
 | `auto_consolidation` | `/memory auto-consolidate on\|off` | Bounded idle worker. Requires consolidation (AND). Pending proposals only. Chat wins the generation gate |
 | `auto_suggest_chat` | `/memory auto-suggest-chat on\|off` | With store + capture, completed current chat can queue pending summaries/insights |
 | `auto_suggest_coding` | `/memory auto-suggest-coding on\|off` | With store + capture, successful coding runs can queue pending summaries/insights |
 
-All of these ship **false**. `/memory` reports store and gate state. Tunables live
+All of these ship **true** for fresh homes; explicit operator off overrides win. `/memory` reports store and gate state. Tunables live
 in `assets/config.default.yaml`; do not invent extra flags.
 
 ## Explicit recall
@@ -131,19 +134,20 @@ Facts only. Episode summaries are not indexed.
 is `POST /api/prompt/preview` with `retrieve` / `retrieve_query` — the same
 set that chat would inject for that request.
 
-## `auto_retrieval` (high-risk)
+## Automatic retrieval
 
-Ships **false**. When it is on **and** `retrieval` is on, chat may FTS the user
-message and inject rechecked top-k **without** a per-request flag. That is an
-intentional silent path. Leave it off unless you mean every subsequent chat
-to search and inject.
+Ships **true** for fresh homes. When it is on **and** `retrieval` is on, chat
+searches bounded meaningful terms from the user message and injects rechecked
+top-k facts without a per-request flag. Common question words are ignored and
+FTS5/BM25 ranks candidates; explicit keyword searches still require all terms.
+This is lexical retrieval, so unrelated synonyms may not match.
 
 `/memory auto-retrieve off` (or the config literal `false`) closes it. Turning
 `/memory on` does not enable it.
 
 ## Manual consolidation
 
-Default **off**. Capture stages metadata, not durable facts. After a successful
+Default **on** for fresh homes. Capture stages metadata, not durable facts. After a successful
 captured turn, write the one durable sentence you want considered:
 
 ```text
@@ -151,11 +155,12 @@ captured turn, write the one durable sentence you want considered:
 ```
 
 This command explicitly confirms saving your summary on your latest completed
-episode. The visible reason is required. It prints the episode id; it does not
-start consolidation or write facts. This is **not chat autosave**. An open store
+episode. The visible reason is required. It prints the episode id; it does not itself
+run consolidation or write facts. An enabled idle worker may claim the episode. This is **not chat autosave**. An open store
 and a completed episode are required; capture may be off if that episode exists.
 Summaries are bounded by `max_episode_summary_chars` (default 500) and scanned.
-Then queue suggestions:
+With automatic consolidation enabled, wait for pending proposals in Memory.
+To request consolidation manually:
 
 ```text
 /memory consolidation on
@@ -190,7 +195,7 @@ gate. Restart reuses the same idempotency key.
 The `consolidator-v2` prompt prefers fewer durable, supported suggestions.
 `structured_memory.min_consolidation_confidence` defaults to 0.40 (clamped to
 0–1); supplied confidence below it is rejected, while omitted confidence remains
-accepted. All gates still ship false; confidence is not a review substitute.
+accepted. Fresh gates ship on; confidence is not a review substitute.
 
 ## Review and apply (console and API)
 
@@ -221,15 +226,15 @@ episodes referenced by pending proposals.
 Embeddings, vector DB, RAG fusion, episode FTS, episode prompt injection, or
 automatic canonical fact approval. Status can report `retrieval: true`,
 `consolidation: true`, or `auto_consolidation: true` while fusion and RAG
-stay false. `auto_consolidation` ships false.
+stay false. `auto_consolidation` ships true for fresh homes, but requires
+consolidation and a reviewed semantic episode summary.
 
 ## Rollout and rollback
 
-Do not flip a later gate until the earlier one is useful and the Phase 7
+Fresh defaults are on; existing homes keep their explicit choices. The Phase 7
 fixture bars in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md#phase-7-evaluation-rollout-and-rollback)
-are green: facts → episode capture → explicit recall → FTS → manual
-consolidation → auto consolidation. Each ships **false**. Measure Phase 7
-before recommending any gate ON:
+remain regression checks for facts, capture, recall, retrieval and consolidation:
+
 
 ```text
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \

@@ -190,7 +190,7 @@ Treat every PR, branch, and doc as something another model may also be touching.
 | Chat | local OpenAI-compatible model (Ollama `127.0.0.1:11434` by default) |
 | Pipeline | clone → plan → patch → hard-sandbox verify → human decide → commit → push → draft PR |
 
-Not CyClaw: no RAG, no corpus, no soul.md, no LangGraph topology, no Telegram /
+Not CyClaw: no external-corpus RAG or LangGraph topology, no Telegram /
 fsconnect / sqlconnect / netconnect. Same security *posture*, different product.
 
 ### 8.4 Invariants outline (see INVARIANTS.md)

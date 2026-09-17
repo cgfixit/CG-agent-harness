@@ -53,6 +53,10 @@ pub fn quote_token(token: &str) -> String {
 /// Field-prefixed AND of quoted tokens. `None` means "match nothing" — never
 /// a bare `*` or an unquoted operator string.
 pub fn match_expression(tokens: &[String]) -> Option<String> {
+    joined_expression(tokens, " AND ")
+}
+
+fn joined_expression(tokens: &[String], join: &str) -> Option<String> {
     if tokens.is_empty() {
         return None;
     }
@@ -63,11 +67,25 @@ pub fn match_expression(tokens: &[String]) -> Option<String> {
             format!("(title: {quoted} OR value: {quoted} OR tags: {quoted})")
         })
         .collect();
-    Some(clauses.join(" AND "))
+    Some(clauses.join(join))
 }
 
 pub fn safe_match(raw: &str, max_tokens: usize, max_token_chars: usize) -> Option<String> {
     match_expression(&tokenize_query(raw, max_tokens, max_token_chars))
+}
+
+/// Chat contains question words absent from saved facts. Match any meaningful
+/// term and let BM25 rank the bounded candidates; explicit keyword search stays AND.
+pub fn safe_prompt_match(raw: &str, max_tokens: usize, max_token_chars: usize) -> Option<String> {
+    const QUESTION_WORDS: &[&str] = &[
+        "a", "an", "the", "i", "me", "my", "we", "our", "you", "your", "it", "its", "is", "are", "am", "was", "were",
+        "be", "been", "do", "does", "did", "have", "has", "what", "which", "who", "when", "where", "why", "how", "can",
+        "could", "would", "should", "please", "tell", "about", "for", "to", "of", "in", "on", "with", "and", "or",
+    ];
+    let mut tokens = tokenize_query(raw, raw.chars().count(), max_token_chars);
+    tokens.retain(|token| !QUESTION_WORDS.iter().any(|word| token.eq_ignore_ascii_case(word)));
+    tokens.truncate(max_tokens);
+    joined_expression(&tokens, " OR ")
 }
 
 #[cfg(test)]

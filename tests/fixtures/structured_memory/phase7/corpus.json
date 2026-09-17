@@ -14,7 +14,7 @@
     "cross_owner",
     "unsupported_hallucination"
   ],
-  "shipped_gates_must_be_false": [
+  "shipped_gates_must_be_true": [
     "structured_memory.enabled",
     "structured_memory.episode_capture",
     "structured_memory.explicit_recall",

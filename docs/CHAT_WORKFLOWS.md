@@ -104,8 +104,9 @@ The compiled chat scope and execution boundaries remain fixed. Edit the persona 
 3. Enter persona text and a reason, then **Preview prompt**.
 4. Review the content, select the confirmation checkbox and **Save persona**.
 
-The next chat rereads the saved persona when `/soul on` is enabled. Nothing is
-silently seeded into a fresh `soul.md`. Empty, oversized, critical instruction-
+The next chat rereads the saved persona when `/soul on` is enabled. Fresh homes seed the bundled public default; existing edits and deletions are
+preserved. Planning and coding prompts share the shipped communication guidance,
+not private local persona edits, and retain their exact output/approval contracts. Empty, oversized, critical instruction-
 override patterns, and invalid content are refused. The default limit is
 8,000 characters (`personality.soul_max_chars`). Stale editor revisions cannot
 overwrite newer content; reload and review after a conflict.

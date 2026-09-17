@@ -66,13 +66,13 @@ episodes referenced by pending proposals.
     `tests/fixtures/structured_memory/phase7/`: synthetic cases for stable
     preferences, temporary statements, negation, corrections, secrets,
     prompt injection, conflicting facts, and cross-owner attempts. A
-    fixture-model measurement path asserts provisional baselines before any
-    default-off gate is flipped. Live reviewer rates and latency percentiles
+    fixture-model measurement path asserts provisional baselines and shipped
+    enabled memory defaults. Live reviewer rates and latency percentiles
     stay documented-only.
 
-## Completion suggestions (separate opt-in)
+## Completion suggestions (independent gates)
 
-`auto_suggest_chat` and `auto_suggest_coding` are two additional default-false
+`auto_suggest_chat` and `auto_suggest_coding` are two additional default-true
 gates with administrator-only slash overrides. Both require an open store and episode capture;
 neither requires or opens consolidation, recall or retrieval. `suggestion_mode`
 selects `summaries`, `insights`, or `both` (default); invalid values disable them.
@@ -111,7 +111,7 @@ injection, or any new cloud egress. `/memory save <text> :: <reason>` is an
 explicit human fact write through the existing API.
 Status flags for retrieval fusion and RAG remain **false**. `retrieval` or
 `consolidation` can be true while those stay false. `auto_consolidation`
-ships false and starts no worker unless it is on **and** consolidation is on.
+ships true and starts no worker unless it is on **and** consolidation is on.
 `explicit_recall` is independent of `retrieval` and consolidation.
 Episode availability is true only when
 `structured_memory.episode_capture` is on and the store is open.
@@ -122,30 +122,30 @@ Later phases in #87 remain independently gated.
 
 - Administrator capability: `structured_memory.enabled` in `config.yaml`,
   evaluated with `flag_is_true` (literal YAML `true` only; quoted `"true"` is
-  off). Ships **false**. Disabled startup does not create or open the database.
+  off). Ships **true**. Disabled startup does not create or open the database.
 - Episode capture: `structured_memory.episode_capture`, also `flag_is_true`,
-  ships **false**. Capture off performs no episode writes even if the store is
+  ships **true**. Capture off performs no episode writes even if the store is
   open. Capture cannot open the store by itself. `/memory capture on|off`
   persists an administrator override.
 - Explicit recall: `structured_memory.explicit_recall`, also `flag_is_true`,
-  ships **false**. Recall off injects no selected facts even if IDs are selected.
+  ships **true**. Recall off injects no selected facts even if IDs are selected.
   `/memory recall on|off` is the administrator override. `/memory on` still includes
   pinned notes only.
-- Retrieval: `structured_memory.retrieval`, also `flag_is_true`, ships **false**,
+- Retrieval: `structured_memory.retrieval`, also `flag_is_true`, ships **true**,
   independent of `/memory on` and `explicit_recall`. Off means no FTS search and
   no force-include. `/memory retrieval on|off` is the administrator override.
 - Auto-retrieval: `structured_memory.auto_retrieval`, also `flag_is_true`, ships
-  **false**. Requires retrieval. When on, chat may FTS the user message and
+  **true**. Requires retrieval. When on, chat may FTS the user message and
   inject rechecked top-k without a per-request flag. This is the Advisor-sensitive
   silent path. `/memory auto-retrieve on|off` is the overlay.
 - Consolidation: `structured_memory.consolidation`, also `flag_is_true`, ships
-  **false**, independent of `/memory on`, capture, recall, retrieval, and
+  **true**, independent of `/memory on`, capture, recall, retrieval, and
   auto_retrieval. Off means no selected-episode summarizer call. The separately
   opted-in completion-suggestion path may still create its own run records.
   `/memory consolidation on|off` is the overlay. `/memory consolidate <id...>`
   starts a manual run on selected episode IDs.
 - Auto-consolidation: `structured_memory.auto_consolidation`, also
-  `flag_is_true`, ships **false**. Requires consolidation (AND). When on, a
+  `flag_is_true`, ships **true**. Requires consolidation (AND). When on, a
   bounded idle worker may enqueue unexpired `none`/`pending` episodes with a
   nonblank human `semantic_summary` and reuse
   the manual consolidator. Feature-off starts no worker. `/memory
@@ -237,7 +237,7 @@ set chat would send. Suggest still does not mutate canonical facts.
   explicit pick for that request: run bounded FTS, recheck survivors, inject
   under the Phase 4 budget. The flag does not persist.
 - **auto_retrieval** may run FTS on the user message without a flag. It is
-  separately gated and ships false.
+  separately gated and ships true.
 - Co-updated with fact add/update/deactivate/purge. Enable-time backfill
   rewrites the virtual table from current active facts in one Immediate
   transaction. Busy/corrupt index is fail-soft for chat.

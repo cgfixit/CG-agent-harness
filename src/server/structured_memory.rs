@@ -11,9 +11,9 @@
 //! Recalled FTS hits still require an explicit pick (or the separately gated
 //! `auto_retrieval` silent path) and assembly-time owner/active/revision recheck.
 //!
-//! Phase 6 adds a default-off manual consolidator: selected episodes become
+//! Phase 6 adds a separately gated manual consolidator: selected episodes become
 //! pending proposals only. It never auto-applies facts and never feeds recalled
-//! facts into the summarizer prompt. A seventh default-off
+//! facts into the summarizer prompt. A seventh independent
 //! `auto_consolidation` gate may start a bounded idle worker that reuses the
 //! same runner; it still never writes canonical facts.
 
@@ -1377,6 +1377,21 @@ impl StructuredMemoryStore {
     /// Bounded FTS5 search over this owner's active facts. Tokenize/quote first;
     /// never pass raw MATCH syntax. Rechecks the live fact row (owner/active).
     pub fn search_facts_fts(&self, owner: &str, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        self.search_facts_fts_inner(owner, query, limit, false)
+    }
+
+    fn search_prompt_facts_fts(&self, owner: &str, message: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        let query: String = message.chars().take(self.limits.max_search_query_chars).collect();
+        self.search_facts_fts_inner(owner, &query, limit, true)
+    }
+
+    fn search_facts_fts_inner(
+        &self,
+        owner: &str,
+        query: &str,
+        limit: usize,
+        natural_language: bool,
+    ) -> Result<Vec<SearchHit>> {
         Self::require_owner(owner)?;
         if query.chars().count() > self.limits.max_search_query_chars {
             return Err(HarnessError::new(
@@ -1384,7 +1399,12 @@ impl StructuredMemoryStore {
                 "search query exceeds the configured character bound",
             ));
         }
-        let Some(expr) = crate::server::structured_memory_fts::safe_match(
+        let matcher = if natural_language {
+            crate::server::structured_memory_fts::safe_prompt_match
+        } else {
+            crate::server::structured_memory_fts::safe_match
+        };
+        let Some(expr) = matcher(
             query,
             self.limits.max_retrieval_tokens,
             self.limits.max_retrieval_token_chars,
@@ -3272,7 +3292,7 @@ pub fn retrieval_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGa
 }
 
 /// Silent FTS inject on every chat. Requires retrieval AND auto_retrieval.
-/// Default-off; Advisor-sensitive silent path.
+/// Enabled by fresh config; explicit off overrides still win.
 pub fn auto_retrieval_available(cfg: &AppConfig, store_open: bool, gates: &OperatorGates) -> bool {
     retrieval_available(cfg, store_open, gates)
         && store_open_and(
@@ -3372,7 +3392,12 @@ pub fn assemble_retrieval_facts(
         return (RecallResult::empty(), None);
     };
     let limit = store.limits().max_retrieval_results;
-    match store.search_facts_fts(owner, query, limit) {
+    let hits = if intent.query.is_some_and(|q| !q.trim().is_empty()) {
+        store.search_facts_fts(owner, query, limit)
+    } else {
+        store.search_prompt_facts_fts(owner, query, limit)
+    };
+    match hits {
         Ok(hits) => {
             let selections = StructuredMemoryStore::selections_from_hits(&hits);
             let mut recalled = store.recall_selected(owner, &selections);
@@ -3684,7 +3709,11 @@ mod tests {
     #[test]
     fn auto_consolidation_requires_consolidation_store_and_literal_or_overlay() {
         let dir = tempfile::tempdir().unwrap();
-        let off = cfg(dir.path());
+        let off = AppConfig::from_str(
+            "structured_memory:\n  consolidation: false\n  auto_consolidation: false\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
         let mut only_auto = OperatorGates::default();
         only_auto.set("auto_consolidation", true).unwrap();
         let mut both = only_auto.clone();
@@ -4085,6 +4114,55 @@ mod tests {
     }
 
     #[test]
+    fn conversational_retrieval_matches_meaningful_terms_with_owner_and_activity_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let fact = store
+            .add_fact(
+                "user_alice",
+                "User prefers metric units and concise answers.",
+                "insight",
+                "fixture",
+            )
+            .unwrap();
+        store
+            .add_fact(
+                "user_bob",
+                "My preferences for units and answers are private.",
+                "insight",
+                "fixture",
+            )
+            .unwrap();
+        let query = "What are my preferences for units and answers?";
+        assert!(store.search_facts_fts("user_alice", query, 3).unwrap().is_empty());
+        let hits = store.search_prompt_facts_fts("user_alice", query, 3).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].fact.id, fact.id);
+        assert!(store
+            .search_prompt_facts_fts("user_alice", "What are my?", 3)
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .search_prompt_facts_fts("user_alice", "astronomy nebula", 3)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .search_prompt_facts_fts("user_alice", &format!("units {}", "long prompt ".repeat(100)), 3)
+                .unwrap()
+                .len(),
+            1
+        );
+        store
+            .deactivate_fact("user_alice", &fact.id, fact.revision, "fixture")
+            .unwrap();
+        assert!(store
+            .search_prompt_facts_fts("user_alice", query, 3)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn search_is_literal_substring_not_fts() {
         let dir = tempfile::tempdir().unwrap();
         let store = store(dir.path());
@@ -4177,7 +4255,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = store(dir.path());
         let fact = store.add_fact("user_alice", "Should stay out", "pref", "add").unwrap();
-        let cfg = cfg(dir.path());
+        let cfg = AppConfig::from_str(
+            "structured_memory:\n  explicit_recall: false\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
         assert!(!cfg.flag_is_true("structured_memory.explicit_recall"));
         let recalled = assemble_selected_facts(
             Some(&store),

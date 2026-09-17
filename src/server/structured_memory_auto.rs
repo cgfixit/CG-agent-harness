@@ -1,4 +1,4 @@
-//! Phase 6 leftover: default-off idle auto-consolidator.
+//! Bounded idle auto-consolidator; config and administrator overrides control availability.
 //!
 //! Reuses [`super::structured_memory_consolidate::run_manual`]. Does not fork a
 //! summarizer. Claims the single local generation gate only while a bounded job

@@ -427,8 +427,8 @@ async fn skill_identity_and_soul_status_match_the_actual_prompt() {
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let (_, fresh) = s.open_get("/api/soul").await;
     assert_eq!(fresh["enabled"], true);
-    assert_eq!(fresh["loaded"], false);
-    assert_eq!(fresh["unavailable_reason"], "missing");
+    assert_eq!(fresh["loaded"], true);
+    assert_eq!(fresh["truncated"], false);
     let skills = s.home.join("skills");
     std::fs::create_dir_all(skills.join("custom")).unwrap();
     std::fs::write(
@@ -509,6 +509,7 @@ async fn soul_prompt_read_cannot_escape_the_home_through_a_symlink() {
     let outside = tempfile::tempdir().unwrap();
     let secret = outside.path().join("outside.md");
     std::fs::write(&secret, "OUTSIDE_HOME_MARKER").unwrap();
+    std::fs::remove_file(s.home.join("soul.md")).unwrap();
     std::os::unix::fs::symlink(&secret, s.home.join("soul.md")).unwrap();
     let (_, status) = s.open_get("/api/soul").await;
     assert_eq!(status["loaded"], false);

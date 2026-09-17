@@ -25,7 +25,7 @@ struct Corpus {
     issue: u64,
     phase: u64,
     required_classes: Vec<String>,
-    shipped_gates_must_be_false: Vec<String>,
+    shipped_gates_must_be_true: Vec<String>,
     thresholds: Thresholds,
     consolidation_cases: Vec<ConsolidationCase>,
     recall_queries: Vec<RecallQuery>,
@@ -381,7 +381,7 @@ fn evaluate_pruning(dir: &Path, spec: &PruneSpec) -> (usize, bool) {
 }
 
 #[test]
-fn phase7_corpus_covers_required_classes_and_shipped_gates_stay_off() {
+fn phase7_corpus_covers_required_classes_and_shipped_gates_are_on() {
     let corpus = load_corpus();
     assert_eq!(corpus.name, "phase7-eval-corpus");
     assert_eq!(corpus.issue, 87);
@@ -395,8 +395,8 @@ fn phase7_corpus_covers_required_classes_and_shipped_gates_stay_off() {
         assert!(in_cases || in_recall, "required class {required} missing from corpus");
     }
     let cfg = AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml")).unwrap();
-    for gate in &corpus.shipped_gates_must_be_false {
-        assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
+    for gate in &corpus.shipped_gates_must_be_true {
+        assert!(cfg.flag_is_true(gate), "{gate} must ship true");
     }
     let scanner = Scanner::core();
     assert!(

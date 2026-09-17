@@ -128,6 +128,11 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "agentic.deepagent_github.enabled",
         "agentic.deepagent_github.allow_git_write_tools",
         "unslop.enabled",
+    ] {
+        assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
+    }
+    for gate in [
+        "memory.enabled",
         "structured_memory.enabled",
         "structured_memory.episode_capture",
         "structured_memory.explicit_recall",
@@ -138,7 +143,7 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "structured_memory.auto_suggest_chat",
         "structured_memory.auto_suggest_coding",
     ] {
-        assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
+        assert!(cfg.flag_is_true(gate), "{gate} must ship true");
     }
     for boundary in ["auth.enabled", "tls.enabled", "tls.auto_generate"] {
         assert!(cfg.flag_is_true(boundary), "{boundary} must ship true");

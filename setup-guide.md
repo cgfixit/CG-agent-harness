@@ -474,8 +474,8 @@ agentic:
 Restart only after editing configuration; `/model use` applies to chat without
 a restart and does not change the coding planner. Existing homes are not
 overwritten with new configuration defaults; review new fields when upgrading.
-A missing `soul.md` is a valid starting state; section 7.2 explains optional
-explicit creation.
+Fresh homes seed the bundled default `soul.md`; section 7.2 explains editing
+and existing-home behavior.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
 (Cmd-,) shows its owned endpoint and model/tool diagnostics. Use **Check installed
@@ -594,10 +594,14 @@ The goal persists, while continuation counters and auto state are page state.
 Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
 an explicit separate workflow in section 9.4.
 
-### 7.2 Missing soul, effective prompt and persona editing
+### 7.2 Default soul, effective prompt and persona editing
 
-**Missing soul means no persona file loaded, not a broken installation.** Fresh
-homes enable the soul toggle but do not create `soul.md`. The base general-chat prompt still operates. The two seeded coding skills are
+**Fresh homes seed the bundled CG Agent persona and enable the soul toggle.**
+Existing homes, custom files and deliberate deletions are preserved. Missing soul
+means no persona file loaded; the base general-chat prompt still operates.
+Planning and coding use the same public shipped communication guidance, beneath
+their governed output contracts. Private local persona edits are not implicitly
+sent to a cloud coding provider. The two seeded coding skills are
 optional context and are not injected automatically. A missing persona is not fetched
 from CyClaw or Codex automatically.
 
@@ -783,7 +787,7 @@ controls described here require a build containing these changes; they are not
 a claim about an older installed release.
 
 There are two memory systems. Pinned notes are shared-home literals. Structured
-memory is a separate, default-off, account-private store. Neither is embeddings,
+memory is a separate, enabled-by-default, account-private store. Neither is embeddings,
 a vector database or RAG fusion. Optional completion suggestions require human
 approval before they become canonical facts.
 
@@ -821,19 +825,21 @@ loaded. Back up before manual repair.
 Pinned-note capability flags (`rag.facts`, episodes, retrieval fusion) remain
 false. `/memory on` does not enable structured memory.
 
-#### Structured memory (default-off)
+#### Structured memory (on in fresh configuration)
 
 Issue #87 through Phase 6 consolidators and Phase 7 eval: account-private
 facts, governed proposals, optional bounded episodes, explicit selected-fact
 recall, facts-only FTS5, operator-selected episode consolidation into pending
-proposals, an optional idle auto-consolidator, and separately opted-in
+proposals, an optional idle auto-consolidator, and independently gated
 completion suggestions for chat/coding. Phase 7 is a local fixture
 corpus for measuring those paths — not a reason to flip any gate. Models may
 POST a proposal; applying a fact still requires `confirm` and nonempty `reason`
 (same mutation rule as other API writes). Episode staging never writes facts,
 never injects episode text, and never fails an already-successful chat. File
 mode 0600 is access control, not encryption. Every structured-memory gate
-ships **false**; measure before considering ON.
+ships **true** in fresh configuration. Existing config files and explicit off
+overrides remain unchanged; apply the recipe in [MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md)
+to enable an existing home. Fresh pinned notes use `memory.enabled: true`.
 
 **Enable (fail-closed).** Every gate uses `flag_is_true`: literal YAML `true`
 only. Quoted `"true"` stays off. Administrator-only slash overrides persist
@@ -845,7 +851,7 @@ overrides config `true`. They take effect immediately but
 1. Set `structured_memory.enabled: true` in the active home's `config.yaml` and
    restart. That creates `<home>/memory/structured.sqlite3`. Disabled startup
    does not create or open the database.
-2. Turn the following sub-gates on only as needed, in config **or** via slash
+2. For existing homes, turn the following sub-gates on as needed, in config **or** via slash
    (store must already be open):
    - `structured_memory.episode_capture` / `/memory capture on` — stage
      metadata-only episodes after a successful chat exchange.
@@ -855,15 +861,15 @@ overrides config `true`. They take effect immediately but
    - `structured_memory.retrieval` / `/memory retrieval on` — allow bounded
      FTS search and per-request force-include.
    - `structured_memory.auto_retrieval` / `/memory auto-retrieve on` —
-     **Advisor-sensitive silent path.** When this is on **and** retrieval is
+     Automatic path. When this is on **and** retrieval is
      on, chat may FTS the user message and inject rechecked top-k without a
-     per-request flag. Ships false. Leave it off unless you intend that.
+     per-request flag. Ships true for fresh homes; turn it off to require explicit retrieval.
    - `structured_memory.consolidation` / `/memory consolidation on` — allow
      `/memory consolidate <episode-id...>` to turn selected episodes into
-     pending proposals only. Ships false.
+     pending proposals only. Ships true for fresh homes.
    - `structured_memory.auto_consolidation` / `/memory auto-consolidate on` —
      bounded idle worker that reuses the manual consolidator. Requires
-     consolidation (AND). Ships false. Feature-off starts no worker. Chat
+     consolidation (AND). Ships true for fresh homes. Feature-off starts no worker. Chat
      wins the generation gate. Pending proposals only.
    - `structured_memory.auto_suggest_chat` / `/memory auto-suggest-chat on` —
      queue the completed current chat turn for pending suggestions. Requires capture.
@@ -871,7 +877,7 @@ overrides config `true`. They take effect immediately but
      queue successful coding runs for pending suggestions. Requires capture.
 3. `/memory on` remains pinned-note inclusion only and never opens these gates.
 
-**Summarize, consolidate, review** (default-off; no chat autosave):
+**Summarize, consolidate, review** (enabled defaults; approval before fact writes):
 
 ```text
 /memory remember Prefer metric units in examples. :: My standing preference
@@ -896,7 +902,7 @@ still allowed but has worse quality. Auto-consolidation requires an unexpired
 `none`/`pending` episode with a nonblank human semantic summary.
 The `consolidator-v2` confidence floor is
 `structured_memory.min_consolidation_confidence: 0.40` (clamped to 0–1);
-omitted model confidence is still accepted. All gates still ship false.
+omitted model confidence is still accepted. All memory gates ship true in fresh configuration.
 Automatic consolidation additionally needs
 `/memory auto-consolidate on` and is **AND**ed with `consolidation`. Feature-off
 starts no worker. It waits for the generation gate; already-running generation
@@ -1011,8 +1017,8 @@ When only one source is present it may use the full 3000.
 
 **Not in this tree:** embeddings, vector DB, RAG fusion, or episode FTS.
 Status can report `retrieval: true` or `consolidation: true` while fusion
-and RAG stay false. `auto_consolidation` ships false; enable it only with
-consolidation. Feature-off starts no worker.
+and RAG stay false. `auto_consolidation` ships true for fresh homes and still
+requires consolidation. Feature-off starts no worker.
 
 Complete type/flag/bounds overview: [docs/MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md).
 The next-task [memory benchmark plan](docs/MEMORY_BENCHMARK_PLAN.md) follows the
@@ -1774,13 +1780,13 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 | Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Use `/memory`, `/tools` and `/prompt` for actual state; plain text cannot run commands. Verify Latest (v0.1.12) or tip `main` (capability-guide fix landed at `71eef11`) |
 | `/memory search` reports retrieval disabled | `structured_memory.retrieval` (and the store) are off | Enable the store in `config.yaml`, restart, then `/memory retrieval on`. Search still does not inject; use `/memory retrieve` for one prompt |
 | `/memory consolidate` is unknown or omitted from `/help` | Installed build predates [PR #94](https://github.com/cgfixit/CG-agent-harness/pull/94) / v0.1.11 | Use Latest v0.1.12 or a newer main Bundle. The command writes pending proposals only |
-| `/memory auto-consolidate` is unknown | Installed build predates [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95) / is older than Latest v0.1.12 | Use Latest v0.1.12 (`22520f3`) or a newer main Bundle. The gate stays default-off and requires `consolidation` |
+| `/memory auto-consolidate` is unknown | Installed build predates [PR #95](https://github.com/cgfixit/CG-agent-harness/pull/95) / is older than Latest v0.1.12 | Use Latest v0.1.12 (`22520f3`) or a newer main Bundle. The gate requires `consolidation` |
 | Automatic completion suggestions do not appear | Store/capture/source gate off, invalid mode, queue expiry/full, model/store error, or empty valid output | Inspect `GET /api/structured-memory` effective `automatic_suggestions`, run status and metadata audit events. Check `/memory capture` and `/memory auto-suggest-chat|auto-suggest-coding`; refresh Memory after generation. No result is guaranteed for every completion |
 | `/memory save` reports store closed | `structured_memory.enabled` is false or store failed to open | Enable the store and restart; automatic generation and capture may stay off. A prose request is not a save command |
-| `/memory consolidate` or auto-consolidator reports the gate off | `structured_memory.consolidation` (and for auto, also `auto_consolidation`) are off, or the store is closed | Enable the store in `config.yaml`, restart, then `/memory consolidation on`. Auto additionally needs `/memory auto-consolidate on`. Both ship false; measure Phase 7 on tip before considering ON |
+| `/memory consolidate` or auto-consolidator reports the gate off | `structured_memory.consolidation` (and for auto, also `auto_consolidation`) are off, or the store is closed | Enable the store in `config.yaml`, restart, then `/memory consolidation on`. Auto additionally needs `/memory auto-consolidate on`. Fresh defaults are on; existing off choices are preserved |
 | Clear all session history reports a storage error | A session file could not be removed; deletion may be partial | Inspect the active home's storage access, resolve the error and retry; do not infer that all data was removed |
 | Model inventory says `tag_missing`, or fallback is selected unexpectedly | Exact configured ID is absent from a responding inventory | Compare section 4 inventories and config; verify persisted `/model` selection against the resolved endpoint, then restart to reevaluate fallback |
-| Soul says missing | No `soul.md` exists in this active home | Valid fresh-home state; use explicit `/soul edit` if you want persona, then `/soul on` and `/prompt` |
+| Soul says missing | No `soul.md` exists in this active home | Valid existing-home state; use `/soul edit` to create persona, then `/soul on` and `/prompt` |
 | Soul saved but is not in chat | Toggle off, wrong home or rejected/stale save | Confirm Setup home, `/soul status`, editor result and `/prompt`; reload a stale editor before saving again |
 | Persona/proposal save conflicts or history is full | Base revision changed or 32-record store reached | Review current content/history; preserve and deliberately archive records if needed; do not retry blindly or delete the active persona |
 | Selected skill prevents chat | Missing, empty, unreadable or unsafe file; wrong directory ID | Check `<home>/skills/<id>/SKILL.md`; restore it or `/skill clear`, then inspect `/prompt` |
@@ -1814,7 +1820,7 @@ Use [DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) to record those checks.
 - [Operator memory manual](docs/USER_MANUAL.md) — pinned notes vs structured
   memory, gate on/off list, search vs retrieve, consolidators, rollback.
 - [Structured memory contract](docs/STRUCTURED_MEMORY.md) — ownership, HTTP
-  surfaces, Phase 6 consolidators, Phase 7 eval/rollback. Gates stay default-off.
+  surfaces, Phase 6 consolidators, Phase 7 eval/rollback. Fresh memory gates default on; explicit off settings are preserved.
 - [Issue #87 close-out](docs/memory/ISSUE_87_CLOSEOUT.md) — shipped gates, enable
   order, rollback, and non-goals.
 - [Chat workflow reference](docs/CHAT_WORKFLOWS.md) — persona proposals, skill
