@@ -51,6 +51,15 @@ struct McpServer {
 
 impl McpServer {
     async fn boot(servers: &str, extra: &[(&str, &str)]) -> Self {
+        Self::boot_inner(servers, extra, None, false).await
+    }
+
+    async fn boot_inner(
+        servers: &str,
+        extra: &[(&str, &str)],
+        agent_override: Option<std::collections::BTreeSet<String>>,
+        cwd_is_home: bool,
+    ) -> Self {
         let model = start_mock_model().await;
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
@@ -70,13 +79,19 @@ impl McpServer {
         let refs: Vec<(&str, &str)> = pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         config_with(&home.root, &refs);
         let mut yaml = std::fs::read_to_string(home.config_path()).unwrap();
-        yaml = yaml.replacen("servers: []", &format!("servers:{servers}"), 1);
+        let mut servers_yaml = servers.to_string();
+        if cwd_is_home {
+            servers_yaml =
+                servers_yaml.replacen("tools:", &format!("cwd: \"{}\"\n      tools:", home.root.display()), 1);
+        }
+        yaml = yaml.replacen("servers: []", &format!("servers:{servers_yaml}"), 1);
         std::fs::write(home.config_path(), &yaml).unwrap();
         let cfg = cgagentharness::common::config::AppConfig::from_str(&yaml, &home.config_path()).unwrap();
         let mut app_opts = AppOptions::new(home);
         app_opts.config = Some(cfg);
         app_opts.api_key = Some("test-api-key-0123456789".into());
         app_opts.shim_exe = Some(PathBuf::from(BIN));
+        app_opts.tool_allowlist_override = agent_override;
         let (router, state) = build_app(app_opts).await.unwrap();
         let transport =
             cgagentharness::server::transport::Transport::load(&state.home, &state.cfg, "127.0.0.1").unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
@@ -175,9 +190,41 @@ async fn shipped_mcp_is_off_and_undeclared_servers_fail_closed() {
     assert_eq!(code(&body), "MCP_DISABLED");
 }
 
+fn named_backends() -> &'static [&'static str] {
+    &[
+        "darwin-seatbelt",
+        "linux-bwrap",
+        "linux-bwrap-fs",
+        "linux-netns",
+        "linux-unconfined",
+        "windows-stdio",
+    ]
+}
+
+fn confined_backends() -> &'static [&'static str] {
+    &["darwin-seatbelt", "linux-bwrap", "linux-bwrap-fs"]
+}
+
+fn residual_backends() -> &'static [&'static str] {
+    &["linux-netns", "linux-unconfined", "windows-stdio"]
+}
+
+fn audit_field(audit: &str, event: &str, field: &str) -> Option<String> {
+    for line in audit.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value["event"].as_str() == Some(event) {
+            if let Some(item) = value.get(field).and_then(Value::as_str) {
+                return Some(item.to_string());
+            }
+        }
+    }
+    None
+}
+
 #[tokio::test]
 async fn stdio_echo_requires_confirm_and_broker_allowlist() {
-    std::env::set_var("GROK_API_KEY", "should-never-reach-child");
     let server = McpServer::boot(&stdio_yaml(), &[]).await;
     let (status, body) = server.get("/api/mcp").await;
     assert_eq!(status, 200);
@@ -226,6 +273,8 @@ async fn stdio_echo_requires_confirm_and_broker_allowlist() {
     let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
     assert!(audit.contains("tool_broker_decision"), "{audit}");
     assert!(audit.contains("mcp:fixture:echo"), "{audit}");
+    assert!(audit.contains("mcp_refused"), "{audit}");
+    assert!(audit.contains("MCP_CONFIRM_REQUIRED"), "{audit}");
 }
 
 #[tokio::test]
@@ -244,16 +293,21 @@ async fn stdio_sandbox_denies_host_secret_when_fs_confined() {
     assert_eq!(status, 200, "{body}");
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
-    assert!(audit.contains("mcp_stdio_spawn"), "{audit}");
-    let confined = audit.contains("darwin-seatbelt") || audit.contains("linux-bwrap");
-    if confined {
+    let backend = audit_field(&audit, "mcp_stdio_spawn", "backend").expect("backend audited");
+    eprintln!("mcp stdio backend={backend}");
+    assert!(
+        named_backends().contains(&backend.as_str()),
+        "unnamed backend {backend}: {audit}"
+    );
+    if confined_backends().contains(&backend.as_str()) {
         assert!(!text.contains("LEAKME-MCP-SECRET"), "{text}\n{audit}");
         assert!(text.contains("error"), "{text}");
     } else {
         assert!(
-            audit.contains("linux-netns") || audit.contains("linux-unconfined") || audit.contains("windows-stdio"),
-            "expected a named residual backend, got {audit}"
+            residual_backends().contains(&backend.as_str()),
+            "confinement was NOT proven; residual backend must be named, got {backend}"
         );
+        eprintln!("confinement was NOT proven for backend={backend}");
     }
 }
 
@@ -267,6 +321,22 @@ async fn loop_allowlist_does_not_include_mcp_tools() {
     );
     let mcp_tools = server.state.mcp_tool_allowlist();
     assert!(mcp_tools.contains("mcp:fixture:echo"), "{mcp_tools:?}");
+}
+
+#[tokio::test]
+async fn agent_run_allowlist_override_does_not_become_mcp_allowlist() {
+    let server = McpServer::boot_inner(
+        &stdio_yaml(),
+        &[],
+        Some(["agent_run".to_string()].into_iter().collect()),
+        false,
+    )
+    .await;
+    let mcp_tools = server.state.mcp_tool_allowlist();
+    assert!(mcp_tools.contains("mcp:fixture:echo"), "{mcp_tools:?}");
+    assert!(!mcp_tools.contains("agent_run"), "{mcp_tools:?}");
+    let agent_tools = server.state.agent_run_tool_allowlist();
+    assert!(agent_tools.contains("agent_run"), "{agent_tools:?}");
 }
 
 #[tokio::test]
@@ -295,6 +365,10 @@ async fn sse_loopback_is_denied_until_explicitly_enabled() {
         .await;
     assert_eq!(status, 403, "{body}");
     assert_eq!(code(&body), "MCP_SSRF_DENIED");
+    let denied = std::fs::read_to_string(off.state.audit.path()).unwrap_or_default();
+    assert!(denied.contains("mcp_refused"), "{denied}");
+    assert!(denied.contains("MCP_SSRF_DENIED"), "{denied}");
+    assert!(denied.contains("\"server\":\"local\""), "{denied}");
 
     let on = McpServer::boot(&yaml, &[("mcp.sse_allow_loopback", "true")]).await;
     let (status, body) = on
@@ -303,6 +377,9 @@ async fn sse_loopback_is_denied_until_explicitly_enabled() {
     assert_eq!(status, 200, "{body}");
     let text = body["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("\"k\":\"v\""), "{text}");
+    let sse_audit = std::fs::read_to_string(on.state.audit.path()).unwrap_or_default();
+    assert!(sse_audit.contains("mcp_sse_call"), "{sse_audit}");
+    assert!(!sse_audit.contains("\"k\":\"v\""), "{sse_audit}");
     let _ = child.kill();
 }
 
@@ -316,4 +393,75 @@ async fn sse_private_literal_is_denied() {
         .await;
     assert_eq!(status, 403, "{body}");
     assert_eq!(code(&body), "MCP_SSRF_DENIED");
+}
+
+#[tokio::test]
+async fn mcp_child_cannot_read_harness_env_and_home_cwd_is_refused() {
+    let server = McpServer::boot(&stdio_yaml(), &[]).await;
+    let env_path = server.state.home.env_path();
+    std::fs::write(&env_path, "CANARY-HARNESS-ENV\n").unwrap();
+    let (status, body) = server
+        .call(json!({
+            "server":"fixture",
+            "tool":"read_path",
+            "arguments":{"path": env_path.display().to_string()},
+            "confirm":true
+        }))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
+    let backend = audit_field(&audit, "mcp_stdio_spawn", "backend").expect("backend");
+    eprintln!("mcp stdio backend={backend}");
+    if confined_backends().contains(&backend.as_str()) {
+        assert!(!text.contains("CANARY-HARNESS-ENV"), "{text}\n{audit}");
+    } else {
+        assert!(
+            residual_backends().contains(&backend.as_str()),
+            "confinement was NOT proven; residual backend must be named, got {backend}"
+        );
+        eprintln!("confinement was NOT proven for env_path read backend={backend}");
+    }
+
+    let refused = McpServer::boot_inner(&stdio_yaml(), &[], None, true).await;
+    let (status, body) = refused
+        .call(json!({"server":"fixture","tool":"echo","confirm":true}))
+        .await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(code(&body), "MCP_HOME_REFUSED");
+    let refused_audit = std::fs::read_to_string(refused.state.audit.path()).unwrap_or_default();
+    assert!(refused_audit.contains("MCP_HOME_REFUSED"), "{refused_audit}");
+}
+
+#[tokio::test]
+async fn sse_crash_mid_call_is_fail_closed() {
+    let (port, mut child) = start_sse_fixture();
+    let yaml = format!(
+        "\n    - name: local\n      transport: sse\n      url: http://127.0.0.1:{port}/sse\n      tools:\n        - crash\n", // DevSkim: ignore DS162092 DS137138 because this SSRF test uses loopback HTTP on purpose.
+    );
+    let server = McpServer::boot(&yaml, &[("mcp.sse_allow_loopback", "true")]).await;
+    let (status, body) = server
+        .call(json!({"server":"local","tool":"crash","confirm":true}))
+        .await;
+    assert_ne!(status, 200, "{body}");
+    assert_ne!(code(&body), "ok");
+    let _ = child.kill();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stdio_drop_kills_process_group_leader() {
+    let argv = vec![python3(), fixture_script().display().to_string(), "--stdio".into()];
+    let extra = std::collections::BTreeMap::new();
+    let client = cgagentharness::common::mcp::StdioClient::spawn(&argv, None, &extra, 65536, None)
+        .await
+        .expect("spawn");
+    let pid = client.child_pid().expect("child pid");
+    assert!(pid > 1);
+    drop(client);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert!(
+        !cgagentharness::common::process::pid_alive(pid),
+        "direct child {pid} still alive after Drop"
+    );
 }
