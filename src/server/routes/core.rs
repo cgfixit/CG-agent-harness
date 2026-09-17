@@ -361,21 +361,29 @@ async fn chat_inner(
         active: loop_claimed,
     };
 
-    let Some(_gate) = state.generation_gate.claim("chat") else {
-        drop(release);
-        let mut details =
-            json!({"session_id": session.session_id, "timeout_sec": state.chat_timeout_sec(&model) as u64});
-        if state.generation_gate.owner() == "chat" {
-            details["cancel"] = json!("/api/chat/cancel");
-        } else if state.generation_gate.owner() == "consolidation" {
-            details["busy"] = json!("consolidation");
+    let _gate = match state.generation_gate.claim_or_busy_owner("chat") {
+        Ok(gate) => gate,
+        Err(busy_owner) => {
+            drop(release);
+            let mut details =
+                json!({"session_id": session.session_id, "timeout_sec": state.chat_timeout_sec(&model) as u64});
+            if busy_owner == "chat" {
+                details["cancel"] = json!("/api/chat/cancel");
+            } else if busy_owner == "consolidation" {
+                details["busy"] = json!("consolidation");
+            }
+            state.audit.log(json!({
+                "event": "chat_busy",
+                "session_id": session.session_id,
+                "owner": busy_owner,
+            }));
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "CHAT_BUSY",
+                "a local model turn is already running",
+            )
+            .details(details));
         }
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "CHAT_BUSY",
-            "a local model turn is already running",
-        )
-        .details(details));
     };
 
     let owner = super::auth::context_owner(user);
@@ -484,6 +492,13 @@ async fn chat_inner(
                 max_tokens,
             );
             if compacted_projected > threshold {
+                state.audit.log(json!({
+                    "event": "chat_prompt_too_large",
+                    "session_id": session.session_id,
+                    "projected": projected,
+                    "compacted_projected": compacted_projected,
+                    "threshold": threshold,
+                }));
                 return Err(ApiError::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "CHAT_PROMPT_TOO_LARGE",

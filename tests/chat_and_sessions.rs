@@ -253,6 +253,18 @@ async fn irreducible_prompt_is_rejected_without_rewriting_the_session() {
     assert!(body["detail"]["details"]["compacted_tokens"].as_u64().unwrap() > 8192);
     assert!(model.requests.lock().unwrap().is_empty());
     assert_eq!(std::fs::read(path).unwrap(), before);
+    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
+    assert!(
+        audit
+            .lines()
+            .any(|line| line.contains("\"event\":\"chat_prompt_too_large\"")
+                && line.contains(&format!("\"session_id\":\"{sid}\""))),
+        "422 CHAT_PROMPT_TOO_LARGE must write chat_prompt_too_large: {audit}"
+    );
+    assert!(
+        !audit.contains("🦀"),
+        "refusal audit must not carry the user paste: {audit}"
+    );
 }
 
 #[tokio::test]
@@ -342,6 +354,11 @@ async fn cancel_aborts_the_in_flight_turn_and_releases_the_gate() {
         assert_eq!(status, 409, "{body}");
         assert_eq!(code(&body), "CHAT_BUSY");
         assert_eq!(body["detail"]["details"]["cancel"], "/api/chat/cancel");
+        let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
+        assert!(
+            audit.lines().any(|line| line.contains("\"event\":\"chat_busy\"")),
+            "409 CHAT_BUSY must write chat_busy: {audit}"
+        );
         let (status, body) = s.post_json("/api/chat/cancel", json!({})).await;
         assert_eq!(status, 200);
         assert_eq!(body["cancelled"], true);
