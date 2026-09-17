@@ -1,5 +1,7 @@
-//! Linux bubblewrap acceptance. Skips when `bwrap` is missing so Darwin and
-//! netns-only images stay green.
+//! Linux bubblewrap acceptance. Darwin stays a compile-only stub. On Linux CI a
+//! missing `bwrap` binary fails the job. GitHub-hosted runners often refuse
+//! `RTM_NEWADDR` for `--unshare-net`; that probe error skips confinement tests
+//! instead of pretending they ran. SIGKILL of a live grandchild is not covered.
 
 use cgagentharness::agentic::executor::sandbox::LinuxBubblewrapSandbox;
 
@@ -15,14 +17,39 @@ fn env() -> BTreeMap<String, String> {
 }
 
 #[cfg(target_os = "linux")]
+fn ci_linux() -> bool {
+    std::env::var_os("CI").as_deref() == Some(std::ffi::OsStr::new("true"))
+}
+
+#[cfg(target_os = "linux")]
 fn try_bwrap() -> Option<LinuxBubblewrapSandbox> {
     match LinuxBubblewrapSandbox::new() {
         Ok(sb) => Some(sb),
         Err(e) => {
-            eprintln!("SKIP linux-bwrap: {}", e.message);
+            let kind = cgagentharness::common::sandbox_wrap::classify_probe_err(&e.message);
+            if ci_linux() && kind == "missing_binary" {
+                panic!("linux-bwrap required on Linux CI: {}", e.message);
+            }
+            eprintln!("SKIP linux-bwrap ({kind}): {}", e.message);
             None
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_ci_installs_the_bwrap_binary() {
+    if !ci_linux() {
+        return;
+    }
+    assert!(
+        std::process::Command::new("bwrap")
+            .arg("--version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false),
+        "Linux CI must install bubblewrap; a missing binary must not look like a skip"
+    );
 }
 
 #[cfg(target_os = "linux")]

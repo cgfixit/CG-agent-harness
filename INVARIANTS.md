@@ -269,13 +269,22 @@ scratch, tmpfs `/tmp`, and `--unshare-net`. Binding the host root (`--ro-bind / 
 is forbidden because it still exposes SSH keys and the harness env credential
 file. When `bwrap` is missing or its probe fails, Linux falls back to
 `unshare --net` only (`name()` is `linux-netns`): network isolation without
-filesystem confinement. That fallback is explicit in the backend name, the
-self-test line, and the audit `sandbox` field. Windows Job Object remains a
-process-tree kill boundary without network or filesystem isolation. See
-`docs/OFFLINE_CARGO.md` for preparation, required native tests, and remaining
-process/resource limitations.
+filesystem confinement. That fallback is explicit in the backend name, an
+info-level `linux hard sandbox backend selected` line, the self-test line, and
+the audit `sandbox` field. `/api/status` does not report the backend. The
+console must not import `crate::agentic`. Both backends missing is
+`HARD_SANDBOX_UNAVAILABLE` (exit 3). Linux CI (`CI=true`) fails if `bwrap` is
+missing. GitHub-hosted runners that refuse `RTM_NEWADDR` skip confinement
+tests; that is a named runner limit, not a missing binary. SIGKILL of the
+runner with a live grandchild is unverified.
+It is the same process-group leftover already named for Seatbelt. Windows Job
+Object remains a process-tree kill boundary without network or filesystem
+isolation. See `docs/OFFLINE_CARGO.md` for preparation, required native tests,
+and remaining process/resource limitations.
 
-- Locked by: `tests/macos_cargo.rs` (no sandbox capability skip).
+- Locked by: `tests/macos_cargo.rs` (no sandbox capability skip),
+  `tests/linux_bwrap.rs`,
+  `src/agentic/executor/sandbox.rs::prefer_linux_sandbox_falls_back_then_fails_closed`.
 
 ## Approval is bound to what was reviewed
 

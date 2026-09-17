@@ -11,7 +11,7 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::process::{self, RunSpec};
 use crate::common::sandbox_wrap::seatbelt_profile_with_inputs;
 
-pub use crate::common::sandbox_wrap::{argv_binds_host_root, bwrap_argv, seatbelt_profile};
+pub use crate::common::sandbox_wrap::{argv_binds_host_root, bwrap_argv, exclusive_scratch_probe, seatbelt_profile};
 
 pub const MAX_OUTPUT_CHARS: usize = 20_000;
 
@@ -278,13 +278,27 @@ impl HardSandbox for LinuxBubblewrapSandbox {
 
 fn prefer_linux_sandbox() -> Result<Box<dyn HardSandbox>> {
     match LinuxBubblewrapSandbox::new() {
-        Ok(sb) => Ok(Box::new(sb)),
-        Err(bwrap_err) => match LinuxNetnsSandbox::new() {
+        Ok(sb) => prefer_linux_sandbox_from(Ok(sb), Err(HarnessError::sandbox_unavailable("unused"))),
+        Err(bwrap_err) => prefer_linux_sandbox_from(Err(bwrap_err), LinuxNetnsSandbox::new()),
+    }
+}
+
+fn prefer_linux_sandbox_from(
+    bwrap: Result<LinuxBubblewrapSandbox>,
+    netns: Result<LinuxNetnsSandbox>,
+) -> Result<Box<dyn HardSandbox>> {
+    match bwrap {
+        Ok(sb) => {
+            tracing::info!(sandbox = "linux-bwrap", "linux hard sandbox backend selected");
+            Ok(Box::new(sb))
+        }
+        Err(bwrap_err) => match netns {
             Ok(sb) => {
                 tracing::warn!(
                     bwrap = bwrap_err.message.as_str(),
                     "linux-bwrap unavailable; falling back to linux-netns (network isolation only, host filesystem visible)"
                 );
+                tracing::info!(sandbox = "linux-netns", "linux hard sandbox backend selected");
                 Ok(Box::new(sb))
             }
             Err(netns_err) => Err(HarnessError::sandbox_unavailable(format!(
@@ -503,20 +517,65 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn bwrap_probe_refuses_planted_symlink() {
+        let target = tempfile::NamedTempFile::new().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let planted = scratch.path().join(".cgah-bwrap-write-planted");
+        std::os::unix::fs::symlink(target.path(), &planted).unwrap();
+        let err = exclusive_scratch_probe(&planted).unwrap_err();
+        assert!(err.contains("scratch probe"), "{err}");
+        assert_eq!(std::fs::read(target.path()).unwrap(), b"");
+    }
+
+    #[test]
+    fn bwrap_probe_unique_names_allow_parallel_checks_on_one_scratch() {
         let candidate = tempfile::tempdir().unwrap();
         let scratch = tempfile::tempdir().unwrap();
-        let target = tempfile::NamedTempFile::new().unwrap();
-        std::os::unix::fs::symlink(target.path(), scratch.path().join(".cgah-bwrap-write")).unwrap();
-        let err = bwrap_argv(
+        let first = bwrap_argv(
             Path::new("/usr/bin/bwrap"),
             &["/bin/true".into()],
             candidate.path(),
             scratch.path(),
             &[],
-        )
-        .unwrap_err();
-        assert!(err.contains("scratch probe"), "{err}");
-        assert_eq!(std::fs::read(target.path()).unwrap(), b"");
+        );
+        let second = bwrap_argv(
+            Path::new("/usr/bin/bwrap"),
+            &["/bin/true".into()],
+            candidate.path(),
+            scratch.path(),
+            &[],
+        );
+        first.expect("first probe");
+        second.expect("second probe on the same scratch");
+    }
+
+    #[test]
+    fn prefer_linux_sandbox_falls_back_then_fails_closed() {
+        let bwrap = LinuxBubblewrapSandbox {
+            bwrap: PathBuf::from("/bin/true"),
+        };
+        let netns = LinuxNetnsSandbox {
+            unshare: PathBuf::from("/bin/true"),
+            user_ns: false,
+        };
+        match prefer_linux_sandbox_from(Ok(bwrap), Err(HarnessError::sandbox_unavailable("netns unused"))) {
+            Ok(sb) => assert_eq!(sb.name(), "linux-bwrap"),
+            Err(e) => panic!("bwrap should win: {e}"),
+        }
+
+        match prefer_linux_sandbox_from(Err(HarnessError::sandbox_unavailable("bwrap missing")), Ok(netns)) {
+            Ok(sb) => assert_eq!(sb.name(), "linux-netns"),
+            Err(e) => panic!("netns should be the fallback: {e}"),
+        }
+
+        let both = match prefer_linux_sandbox_from(
+            Err(HarnessError::sandbox_unavailable("bwrap missing")),
+            Err(HarnessError::sandbox_unavailable("unshare missing")),
+        ) {
+            Ok(_) => panic!("both missing must fail closed"),
+            Err(e) => e,
+        };
+        assert_eq!(both.code, "HARD_SANDBOX_UNAVAILABLE");
+        assert_eq!(crate::agentic::cli::exit_code_for(&both), crate::agentic::cli::EXIT_ENV);
     }
 
     #[test]
