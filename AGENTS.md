@@ -67,6 +67,12 @@ Public Google fallback and destination page fetching retain URL permission check
 - `/api/agent/run` (sync) and `/api/agent/jobs` (detached) must stay in lockstep:
   both go through `agent::prepare_run` so the validation, budget check, tool
   broker, and both gates can never drift between the two paths.
+- MCP is opt-in (`mcp.enabled` literal true, declared `mcp.servers` only). Calls
+  go through `POST /api/mcp/call` with `confirm: true`, the tool-broker
+  allowlist, and DNS-pinned SSE. Stdio children are wrapped with the same
+  Seatbelt / bubblewrap helpers as agentic verification. Do not attach MCP
+  tools to `/loop`. `GET /api/mcp` lists declared server/tool names to an
+  authenticated session.
 - Prefer a small unit test with `#[cfg(test)] mod tests` beside the function
   over another integration test when the thing under test is a pure parser or
   matcher (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`'

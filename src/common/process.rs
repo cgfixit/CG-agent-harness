@@ -141,16 +141,24 @@ fn read_all<R: Read>(reader: Option<R>) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-/// SIGKILL the child's whole process group (unix) or the child (elsewhere).
-pub fn kill_tree(child: &mut std::process::Child) {
+/// SIGKILL a process group by leader pid (unix). No-op elsewhere.
+pub fn kill_pid_group(pid: u32) {
     #[cfg(unix)]
     {
-        let pid = child.id() as libc::pid_t;
-        // SAFETY: killpg on a pid we spawned into its own group.
-        unsafe {
-            libc::killpg(pid, libc::SIGKILL);
+        if pid > 1 {
+            let pid = pid as libc::pid_t;
+            // SAFETY: killpg on a pid we spawned into its own group.
+            unsafe {
+                libc::killpg(pid, libc::SIGKILL);
+            }
         }
     }
+    let _ = pid;
+}
+
+/// SIGKILL the child's whole process group (unix) or the child (elsewhere).
+pub fn kill_tree(child: &mut std::process::Child) {
+    kill_pid_group(child.id());
     let _ = child.kill();
 }
 

@@ -15,9 +15,11 @@ pub mod home_lock;
 pub mod identity;
 pub mod injection;
 pub mod local_tls;
+pub mod mcp;
 pub mod process;
 pub mod ratelimit;
 pub mod repo_paths;
+pub mod sandbox_wrap;
 pub mod tool_broker;
 
 /// Current Unix time as f64 seconds (the shape CyClaw stores in its JSON files).

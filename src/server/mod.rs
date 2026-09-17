@@ -18,6 +18,7 @@ pub mod errors;
 pub mod generation_gate;
 pub mod guards;
 pub mod headers;
+pub mod mcp;
 pub mod memory_notes;
 pub mod prompts;
 pub mod request_log;
@@ -57,6 +58,7 @@ use crate::llm::openai_chat::{ChatClient, DEFAULT_CHAT_TIMEOUT_SEC};
 use crate::shim::ShimContext;
 
 use generation_gate::GenerationGate;
+use mcp::McpRuntime;
 use memory_notes::MemoryNotes;
 use sessions::SessionStore;
 use state::AppState;
@@ -90,6 +92,8 @@ pub struct AppOptions {
     pub key_file_sources: BTreeSet<String>,
     /// Test hook: replace the closed tool allowlists (empty set = deny all).
     pub tool_allowlist_override: Option<BTreeSet<String>>,
+    /// Test hook: replace the MCP broker allowlist only.
+    pub mcp_tool_allowlist_override: Option<BTreeSet<String>>,
     /// Test hook: pin a hostname to an address for `/web` fetches.
     pub web_test_resolve: Option<(String, SocketAddr)>,
     /// Additional exact hosts for multi-site fixtures; never populated by a serving entrypoint.
@@ -107,6 +111,7 @@ impl AppOptions {
             api_key: None,
             key_file_sources: BTreeSet::new(),
             tool_allowlist_override: None,
+            mcp_tool_allowlist_override: None,
             web_test_resolve: None,
             web_test_resolve_extra: Vec::new(),
             shim_exe: None,
@@ -171,7 +176,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         .or_else(|| std::env::var(crate::common::apikey::API_KEY_ENV).ok());
     let mut web = WebTool::new(&home.tools_dir(), &cfg)?;
     web.search_key_from_file = opts.key_file_sources.contains("SERPAPI_API_KEY");
-    web.test_resolve = opts.web_test_resolve;
+    web.test_resolve = opts.web_test_resolve.clone();
     web.test_resolve_extra = opts.web_test_resolve_extra;
     let planner = cfg.u64_or(
         "agentic.deepagent_github.planner_timeout_sec",
@@ -182,6 +187,8 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     if let Some(exe) = opts.shim_exe {
         shim.exe = exe;
     }
+    let mut mcp = McpRuntime::from_config(&cfg)?;
+    mcp.test_resolve = opts.web_test_resolve;
     let jobs = agent_jobs::JobStore::open(&home.data_dir().join("agentic/console-jobs.json"))?;
     let structured_memory = if cfg.flag_is_true("structured_memory.enabled") {
         Some(StructuredMemoryStore::open(&home.structured_memory_path(), &cfg)?)
@@ -194,6 +201,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         structured_memory,
         structured_gates: Mutex::new(structured_gates),
         web,
+        mcp,
         home,
         cfg: cfg.clone(),
         settings: Mutex::new(settings),
@@ -216,6 +224,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         auth,
         auth_operation_permits,
         tool_allowlist_override: opts.tool_allowlist_override,
+        mcp_tool_allowlist_override: opts.mcp_tool_allowlist_override,
         shim,
         jobs,
         request_log: cfg.flag_is_true("logging.request_log"),

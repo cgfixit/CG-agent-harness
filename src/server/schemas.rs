@@ -11,7 +11,7 @@ use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 use super::errors::ApiError;
@@ -579,6 +579,33 @@ impl Validate for ModelSelectRequest {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpCallRequest {
+    pub server: String,
+    pub tool: String,
+    #[serde(default)]
+    pub arguments: Value,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl Validate for McpCallRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if self.server.is_empty() || self.server.len() > 32 {
+            bad.push("server".into());
+        }
+        if self.tool.is_empty() || self.tool.len() > 64 {
+            bad.push("tool".into());
+        }
+        if !self.arguments.is_object() && !self.arguments.is_null() {
+            bad.push("arguments".into());
+        }
+        bad
+    }
+}
+
 /// Start one real-repo coding run. `checks` carries profile NAMES, never
 /// commands; `confirm` is NOT defaulted on.
 #[derive(Debug, Clone, Deserialize)]
@@ -975,6 +1002,12 @@ mod tests {
 
     #[test]
     fn confirm_is_never_defaulted_on() {
+        let mcp: McpCallRequest = serde_json::from_value(json!({
+            "server": "fixture",
+            "tool": "echo"
+        }))
+        .unwrap();
+        assert!(!mcp.confirm, "absent MCP confirm must deserialize as false, never true");
         let req: AgentRunRequest = serde_json::from_value(json!({
             "instruction": "x",
             "branch": "claude/x",
