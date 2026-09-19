@@ -129,7 +129,15 @@ struct PreparedRun {
 }
 
 fn prepare_run(state: &AppState, req: &AgentRunRequest) -> ApiResult<PreparedRun> {
-    super::goals::validate_binding(state, req)?;
+    prepare_run_inner(state, req, false)
+}
+
+fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, recurring: bool) -> ApiResult<PreparedRun> {
+    if recurring {
+        super::goals::validate_binding_recurring(state, req)?;
+    } else {
+        super::goals::validate_binding(state, req)?;
+    }
     let requested: Vec<String> = req
         .checks
         .clone()
@@ -264,13 +272,22 @@ pub async fn agent_job_create(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<AgentRunRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    let prepared = prepare_run(&state, &req)?;
+    start_job(state, req, super::auth::context_owner(user), None).await
+}
+
+pub(crate) async fn start_job(
+    state: Arc<AppState>,
+    req: AgentRunRequest,
+    owner: String,
+    schedule_id: Option<String>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let prepared = prepare_run_inner(&state, &req, schedule_id.is_some())?;
     let job_id = crate::common::random_hex(16);
     let action = prepared.ops.action.clone();
     let task_state = state.clone();
     let task_job = job_id.clone();
-    let owner = super::auth::context_owner(user);
     let instruction = req.instruction.clone();
+    let task_schedule = schedule_id.clone();
     let (registered, ready) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move {
         if ready.await.is_err() {
@@ -293,6 +310,19 @@ pub async fn agent_job_create(
                     &job["result"],
                 );
             }
+            if let Some(sid) = task_schedule {
+                let event = if job["status"] == crate::server::agent_jobs::FINISHED {
+                    "agent_schedule_completed"
+                } else {
+                    "agent_schedule_failed"
+                };
+                task_state.audit.log(json!({
+                    "event": event,
+                    "schedule_id": sid,
+                    "job_id": task_job,
+                    "status": job["status"],
+                }));
+            }
         }
     });
     state.jobs.try_insert_running(&job_id, &action, handle).map_err(|_| {
@@ -303,10 +333,16 @@ pub async fn agent_job_create(
         )
     })?;
     if let Some(binding) = &req.goal_stage {
-        if let Err(error) = state
-            .store
-            .claim_goal_stage(&binding.session_id, &binding.stage_id, &req, &job_id)
-        {
+        let claimed = if schedule_id.is_some() {
+            state
+                .store
+                .rebind_goal_stage(&binding.session_id, &binding.stage_id, &req, &job_id)
+        } else {
+            state
+                .store
+                .claim_goal_stage(&binding.session_id, &binding.stage_id, &req, &job_id)
+        };
+        if let Err(error) = claimed {
             state.jobs.cancel(&job_id);
             return Err(ApiError::from_err(StatusCode::CONFLICT, &error));
         }
@@ -314,11 +350,115 @@ pub async fn agent_job_create(
     let _ = registered.send(());
     state
         .audit
-        .log(json!({"event": "agent_job_started", "job_id": job_id, "action": action}));
+        .log(json!({"event": "agent_job_started", "job_id": job_id, "action": action, "schedule_id": schedule_id}));
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({"job_id": job_id, "action": action, "status": crate::server::agent_jobs::RUNNING})),
     ))
+}
+
+pub async fn schedule_create(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(body): ValidJson<AgentScheduleCreate>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    super::goals::validate_binding(&state, &body.request)?;
+    let owner = super::auth::context_owner(user);
+    let request = serde_json::to_value(&body.request).map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "INVALID_SCHEDULE_REQUEST",
+            "schedule request could not be stored",
+        )
+    })?;
+    let created = state
+        .schedules
+        .create(body.interval_secs, request, &owner, crate::common::now_ts())
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+    state.audit.log(json!({
+        "event": "agent_schedule_created",
+        "schedule_id": created.schedule_id,
+        "interval_secs": created.interval_secs,
+    }));
+    Ok((StatusCode::CREATED, Json(created.to_json())))
+}
+
+pub async fn schedules_list(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(json!({
+        "schedules": state.schedules.list().into_iter().map(|s| s.to_json()).collect::<Vec<_>>(),
+    }))
+}
+
+fn validated_schedule_id(schedule_id: &str) -> ApiResult<String> {
+    if !run_id_re().is_match(schedule_id) {
+        return Err(
+            ApiError::bad_request("INVALID_SCHEDULE_ID", "schedule_id must be 32 lowercase hex characters")
+                .details(json!({"schedule_id": crate::common::clip_chars(schedule_id, MAX_ECHOED_RUN_ID_LEN)})),
+        );
+    }
+    Ok(schedule_id.to_string())
+}
+
+pub async fn schedule_get(
+    State(state): State<Arc<AppState>>,
+    Path(schedule_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let id = validated_schedule_id(&schedule_id)?;
+    state
+        .schedules
+        .get(&id)
+        .map(|s| Json(s.to_json()))
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SCHEDULE_NOT_FOUND", "no such schedule"))
+}
+
+pub async fn schedule_cancel(
+    State(state): State<Arc<AppState>>,
+    Path(schedule_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let id = validated_schedule_id(&schedule_id)?;
+    let v = state
+        .schedules
+        .cancel(&id)
+        .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SCHEDULE_NOT_FOUND", "no such schedule"))?;
+    state
+        .audit
+        .log(json!({"event": "agent_schedule_cancelled", "schedule_id": id}));
+    Ok(Json(v.to_json()))
+}
+
+/// Evaluate due schedules with a caller-supplied clock (tests inject `now`).
+pub async fn tick_schedules(state: &Arc<AppState>, now: f64) {
+    for due in state.schedules.due(now) {
+        let Some(_) = state.schedules.mark_attempted(&due.schedule_id, now) else {
+            continue;
+        };
+        state.audit.log(json!({
+            "event": "agent_schedule_start",
+            "schedule_id": due.schedule_id,
+        }));
+        let req = match crate::server::agent_schedules::parse_request(&due.request) {
+            Ok(req) => req,
+            Err(e) => {
+                state.audit.log(json!({
+                    "event": "agent_schedule_failed",
+                    "schedule_id": due.schedule_id,
+                    "error": e.message,
+                }));
+                continue;
+            }
+        };
+        match start_job(state.clone(), req, due.owner, Some(due.schedule_id.clone())).await {
+            Ok(_) => {}
+            Err(e) => {
+                state.audit.log(json!({
+                    "event": "agent_schedule_failed",
+                    "schedule_id": due.schedule_id,
+                    "error": e.body()["detail"]["code"],
+                }));
+            }
+        }
+    }
 }
 
 pub async fn agent_job_get(State(state): State<Arc<AppState>>, Path(job_id): Path<String>) -> ApiResult<Json<Value>> {

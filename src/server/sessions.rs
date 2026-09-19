@@ -443,7 +443,13 @@ impl SessionStore {
         self.write(&session)
     }
 
-    fn check_goal_binding(session: &Session, stage_id: &str, instruction: &str, branch: &str) -> Result<()> {
+    fn check_goal_binding(
+        session: &Session,
+        stage_id: &str,
+        instruction: &str,
+        branch: &str,
+        allow_claimed: bool,
+    ) -> Result<()> {
         let Some(stage) = &session.goal_stage else {
             return Err(session_error("No staged goal", &session.session_id));
         };
@@ -451,7 +457,7 @@ impl SessionStore {
             || stage["goal"] != session.goal
             || session.goal != instruction
             || stage["request"]["branch"] != branch
-            || !stage["job_id"].is_null()
+            || (!allow_claimed && !stage["job_id"].is_null())
         {
             return Err(session_error(
                 "Goal stage changed, is stale, or was already submitted; inspect and stage again",
@@ -461,7 +467,16 @@ impl SessionStore {
         Ok(())
     }
     pub fn validate_goal_binding(&self, id: &str, stage_id: &str, instruction: &str, branch: &str) -> Result<()> {
-        Self::check_goal_binding(&self.get(id)?, stage_id, instruction, branch)
+        Self::check_goal_binding(&self.get(id)?, stage_id, instruction, branch, false)
+    }
+    pub fn validate_goal_binding_recurring(
+        &self,
+        id: &str,
+        stage_id: &str,
+        instruction: &str,
+        branch: &str,
+    ) -> Result<()> {
+        Self::check_goal_binding(&self.get(id)?, stage_id, instruction, branch, true)
     }
     pub fn claim_goal_stage(
         &self,
@@ -470,9 +485,28 @@ impl SessionStore {
         request: &crate::server::schemas::AgentRunRequest,
         job_id: &str,
     ) -> Result<()> {
+        self.claim_goal_stage_inner(id, stage_id, request, job_id, false)
+    }
+    pub fn rebind_goal_stage(
+        &self,
+        id: &str,
+        stage_id: &str,
+        request: &crate::server::schemas::AgentRunRequest,
+        job_id: &str,
+    ) -> Result<()> {
+        self.claim_goal_stage_inner(id, stage_id, request, job_id, true)
+    }
+    fn claim_goal_stage_inner(
+        &self,
+        id: &str,
+        stage_id: &str,
+        request: &crate::server::schemas::AgentRunRequest,
+        job_id: &str,
+        allow_claimed: bool,
+    ) -> Result<()> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(id)?;
-        Self::check_goal_binding(&session, stage_id, &request.instruction, &request.branch)?;
+        Self::check_goal_binding(&session, stage_id, &request.instruction, &request.branch, allow_claimed)?;
         let stage = session.goal_stage.as_mut().unwrap();
         stage["job_id"] = json!(job_id);
         stage["declared_checks"] = json!(request

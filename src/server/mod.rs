@@ -7,6 +7,7 @@
 
 pub mod agent_jobs;
 pub mod agent_policy;
+pub mod agent_schedules;
 mod chat_web;
 pub mod client;
 pub mod compaction;
@@ -192,6 +193,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     let mut mcp = McpRuntime::from_config(&cfg)?;
     mcp.test_resolve = opts.web_test_resolve;
     let jobs = agent_jobs::JobStore::open(&home.data_dir().join("agentic/console-jobs.json"))?;
+    let schedules = agent_schedules::ScheduleStore::open(&home.data_dir().join("agentic/console-schedules.json"))?;
     let structured_memory = if cfg.flag_is_true("structured_memory.enabled") {
         Some(StructuredMemoryStore::open(&home.structured_memory_path(), &cfg)?)
     } else {
@@ -229,6 +231,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         mcp_tool_allowlist_override: opts.mcp_tool_allowlist_override,
         shim,
         jobs,
+        schedules,
         request_log: cfg.flag_is_true("logging.request_log"),
         auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl::new(),
         memory_suggestions: crate::server::structured_memory_suggest::Suggestions::default(),
@@ -241,6 +244,17 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         let warmup = state.clone();
         tokio::spawn(async move {
             crate::llm::ollama::run_warmup(&warmup.backend, &warmup.cfg, &warmup.audit).await;
+        });
+    }
+    {
+        let sched = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                crate::server::routes::agent::tick_schedules(&sched, crate::common::now_ts()).await;
+            }
         });
     }
     Ok((routes::build_router(state.clone()), state))

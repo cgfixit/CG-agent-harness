@@ -66,7 +66,9 @@ Public Google fallback and destination page fetching retain URL permission check
   invariant guard's whitelist assertion together.
 - `/api/agent/run` (sync) and `/api/agent/jobs` (detached) must stay in lockstep:
   both go through `agent::prepare_run` so the validation, budget check, tool
-  broker, and both gates can never drift between the two paths.
+  broker, and both gates can never drift between the two paths. Persisted
+  schedules (`POST /api/agent/schedules`) fire that same jobs path; unbound
+  or unreviewed goals fail closed; occurrences are at-most-once across restart.
 - MCP is opt-in (`mcp.enabled` literal true, declared `mcp.servers` only). Calls
   go through `POST /api/mcp/call` with `confirm: true`, the tool-broker
   allowlist, and DNS-pinned SSE. Stdio children are wrapped with the same
