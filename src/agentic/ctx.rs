@@ -49,12 +49,6 @@ impl AgenticCtx {
     }
 
     pub fn spend_file(&self) -> PathBuf {
-        let raw = self.cfg.str_or("logging.spend_file", "logs/spend.jsonl");
-        let p = PathBuf::from(&raw);
-        if p.is_absolute() {
-            p
-        } else {
-            self.home_root.join(p)
-        }
+        crate::llm::spend::spend_path(&self.home_root, &self.cfg)
     }
 }
