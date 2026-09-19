@@ -419,6 +419,7 @@ pub async fn schedule_cancel(
     let v = state
         .schedules
         .cancel(&id)
+        .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SCHEDULE_NOT_FOUND", "no such schedule"))?;
     state
         .audit

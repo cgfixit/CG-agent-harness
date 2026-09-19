@@ -96,6 +96,9 @@ impl ScheduleStore {
                 if row.status != ACTIVE && row.status != CANCELLED {
                     return Err(HarnessError::harness_config("invalid recovered schedule status"));
                 }
+                if !(MIN_INTERVAL_SECS..=MAX_INTERVAL_SECS).contains(&row.interval_secs) {
+                    return Err(HarnessError::harness_config("invalid recovered schedule interval"));
+                }
                 rows.insert(row.schedule_id.clone(), row);
             }
         }
@@ -129,8 +132,10 @@ impl ScheduleStore {
             ));
         }
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        let active = g.values().filter(|s| s.status == ACTIVE).count();
-        if active >= MAX_SCHEDULES {
+        if g.len() >= MAX_SCHEDULES {
+            g.retain(|_, s| s.status == ACTIVE);
+        }
+        if g.len() >= MAX_SCHEDULES {
             return Err(HarnessError::new("SCHEDULE_LIMIT", "too many active schedules"));
         }
         let schedule = Schedule {
@@ -144,7 +149,10 @@ impl ScheduleStore {
             owner: owner.to_string(),
         };
         g.insert(schedule.schedule_id.clone(), schedule.clone());
-        self.persist(&g)?;
+        if let Err(e) = self.persist(&g) {
+            g.remove(&schedule.schedule_id);
+            return Err(e);
+        }
         Ok(schedule)
     }
 
@@ -163,13 +171,23 @@ impl ScheduleStore {
         v
     }
 
-    pub fn cancel(&self, id: &str) -> Option<Schedule> {
+    pub fn cancel(&self, id: &str) -> Result<Option<Schedule>> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        let s = g.get_mut(id)?;
-        s.status = CANCELLED.into();
-        let out = s.clone();
-        let _ = self.persist(&g);
-        Some(out)
+        let (previous, out) = match g.get_mut(id) {
+            Some(s) => {
+                let previous = s.status.clone();
+                s.status = CANCELLED.into();
+                (previous, s.clone())
+            }
+            None => return Ok(None),
+        };
+        if let Err(e) = self.persist(&g) {
+            if let Some(s) = g.get_mut(id) {
+                s.status = previous;
+            }
+            return Err(e);
+        }
+        Ok(Some(out))
     }
 
     /// Active schedules whose next occurrence is due at `now`.
@@ -185,20 +203,33 @@ impl ScheduleStore {
     /// in the past so a restart never double-fires or catch-up-storms.
     pub fn mark_attempted(&self, id: &str, now: f64) -> Option<Schedule> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        let s = g.get_mut(id)?;
-        if s.status != ACTIVE {
+        let (previous_last, previous_next, out) = {
+            let s = g.get_mut(id)?;
+            if s.status != ACTIVE {
+                return None;
+            }
+            let occurrence = s.next_fire_at;
+            let previous_last = s.last_fired_at;
+            let previous_next = s.next_fire_at;
+            let step = s.interval_secs as f64;
+            if step <= 0.0 {
+                return None;
+            }
+            s.last_fired_at = Some(occurrence);
+            let mut next = occurrence + step;
+            while next <= now {
+                next += step;
+            }
+            s.next_fire_at = next;
+            (previous_last, previous_next, s.clone())
+        };
+        if self.persist(&g).is_err() {
+            if let Some(s) = g.get_mut(id) {
+                s.last_fired_at = previous_last;
+                s.next_fire_at = previous_next;
+            }
             return None;
         }
-        let occurrence = s.next_fire_at;
-        s.last_fired_at = Some(occurrence);
-        let step = s.interval_secs as f64;
-        let mut next = occurrence + step;
-        while next <= now {
-            next += step;
-        }
-        s.next_fire_at = next;
-        let out = s.clone();
-        let _ = self.persist(&g);
         Some(out)
     }
 }
@@ -250,7 +281,7 @@ mod tests {
         let next = recovered.get(&created.schedule_id).unwrap();
         assert_eq!(next.last_fired_at, Some(t0 + 60.0));
         assert_eq!(next.next_fire_at, t0 + 120.0);
-        recovered.cancel(&created.schedule_id);
+        recovered.cancel(&created.schedule_id).unwrap();
         assert!(recovered.due(t0 + 120.0).is_empty());
         #[cfg(unix)]
         {
@@ -278,5 +309,60 @@ mod tests {
     fn interval_below_one_minute_is_rejected() {
         let store = ScheduleStore::new();
         assert!(store.create(59, req(), "local", 0.0).is_err());
+    }
+
+    #[test]
+    fn recovered_zero_interval_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schedules.json");
+        std::fs::write(
+            &path,
+            r#"[{"schedule_id":"0123456789abcdef0123456789abcdef","interval_secs":0,"request":{},"next_fire_at":1.0,"last_fired_at":null,"created_at":0.0,"status":"active","owner":"local"}]"#,
+        )
+        .unwrap();
+        assert!(ScheduleStore::open(&path).is_err());
+    }
+
+    #[test]
+    fn cancelled_rows_do_not_grow_inventory_past_the_bound() {
+        let store = ScheduleStore::new();
+        let mut last = String::new();
+        for i in 0..MAX_SCHEDULES {
+            last = store.create(60, req(), "local", i as f64).unwrap().schedule_id;
+        }
+        assert!(store.create(60, req(), "local", 32.0).is_err());
+        store.cancel(&last).unwrap();
+        assert!(store.create(60, req(), "local", 33.0).is_ok());
+        assert!(store.list().len() <= MAX_SCHEDULES);
+        assert_eq!(
+            store.list().iter().filter(|s| s.status == ACTIVE).count(),
+            MAX_SCHEDULES
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persist_failure_does_not_keep_a_created_or_consumed_row() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schedules.json");
+        let store = ScheduleStore::open(&path).unwrap();
+        let created = store.create(60, req(), "local", 0.0).unwrap();
+        struct Reset<'a>(&'a std::path::Path);
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let _reset = Reset(dir.path());
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(store.create(60, req(), "local", 1.0).is_err());
+        assert_eq!(store.list().len(), 1);
+        assert!(store.mark_attempted(&created.schedule_id, 60.0).is_none());
+        let still = store.get(&created.schedule_id).unwrap();
+        assert_eq!(still.next_fire_at, 60.0);
+        assert!(still.last_fired_at.is_none());
+        assert!(store.cancel(&created.schedule_id).is_err());
+        assert_eq!(store.get(&created.schedule_id).unwrap().status, ACTIVE);
     }
 }
