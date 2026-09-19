@@ -62,6 +62,14 @@ pub async fn stage(
     ))
 }
 pub fn validate_binding(state: &AppState, req: &AgentRunRequest) -> ApiResult<()> {
+    validate_binding_inner(state, req, false)
+}
+
+pub fn validate_binding_recurring(state: &AppState, req: &AgentRunRequest) -> ApiResult<()> {
+    validate_binding_inner(state, req, true)
+}
+
+fn validate_binding_inner(state: &AppState, req: &AgentRunRequest, recurring: bool) -> ApiResult<()> {
     let Some(binding) = &req.goal_stage else { return Ok(()) };
     if !req.confirm || req.reason.trim().is_empty() {
         return Err(ApiError::bad_request(
@@ -69,10 +77,19 @@ pub fn validate_binding(state: &AppState, req: &AgentRunRequest) -> ApiResult<()
             "Goal execution requires explicit confirmation and reason",
         ));
     }
-    state
-        .store
-        .validate_goal_binding(&binding.session_id, &binding.stage_id, &req.instruction, &req.branch)
-        .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))
+    let result = if recurring {
+        state.store.validate_goal_binding_recurring(
+            &binding.session_id,
+            &binding.stage_id,
+            &req.instruction,
+            &req.branch,
+        )
+    } else {
+        state
+            .store
+            .validate_goal_binding(&binding.session_id, &binding.stage_id, &req.instruction, &req.branch)
+    };
+    result.map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))
 }
 pub fn completion_state(record: &Value) -> &'static str {
     match record["status"].as_str() {

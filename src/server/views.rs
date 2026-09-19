@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 53] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 55] = [
     (
         "goal-stage",
         "/goal stage|task",
@@ -365,6 +365,20 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 53] = [
         "POST",
         "/api/agent/jobs/{job_id}/cancel",
         "abort a detached run (kills the child process)",
+    ),
+    (
+        "agent-schedule-start",
+        "(API only)",
+        "POST",
+        "/api/agent/schedules",
+        "persist a cron interval that fires the same validated /api/agent/jobs body",
+    ),
+    (
+        "agent-schedule-cancel",
+        "(API only)",
+        "POST",
+        "/api/agent/schedules/{schedule_id}/cancel",
+        "cancel a persisted schedule; JobStore::finish stays a no-op after job cancel",
     ),
     (
         "agent-status",
@@ -738,10 +752,10 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 53);
+        assert_eq!(HARNESS_SURFACES.len(), 55);
         let report = list_wired_tools(&registered);
-        assert_eq!(report["total"], 53);
-        assert_eq!(report["wired"], 53, "a catalog surface is unwired");
+        assert_eq!(report["total"], 55);
+        assert_eq!(report["wired"], 55, "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }

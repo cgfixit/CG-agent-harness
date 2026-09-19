@@ -23,7 +23,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 82] = [
+pub const REGISTERED_PATHS: [&str; 85] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -98,6 +98,9 @@ pub const REGISTERED_PATHS: [&str; 82] = [
     "/api/agent/jobs",
     "/api/agent/jobs/{job_id}",
     "/api/agent/jobs/{job_id}/cancel",
+    "/api/agent/schedules",
+    "/api/agent/schedules/{schedule_id}",
+    "/api/agent/schedules/{schedule_id}/cancel",
     "/api/harness/runs",
     "/api/auth/setup-status",
     "/api/auth/bootstrap-password",
@@ -252,6 +255,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/agent/jobs/{job_id}", get(agent::agent_job_get))
         .route("/api/agent/jobs/{job_id}/cancel", post(agent::agent_job_cancel))
+        .route(
+            "/api/agent/schedules",
+            get(agent::schedules_list).post(agent::schedule_create),
+        )
+        .route("/api/agent/schedules/{schedule_id}", get(agent::schedule_get))
+        .route(
+            "/api/agent/schedules/{schedule_id}/cancel",
+            post(agent::schedule_cancel),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), guards::guarded));
 
     let auth_open = Router::new()
@@ -328,7 +340,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 82);
+        assert_eq!(REGISTERED_PATHS.len(), 85);
 
         let all = registered_paths();
         assert!(
