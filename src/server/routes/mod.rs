@@ -23,7 +23,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 85] = [
+pub const REGISTERED_PATHS: [&str; 86] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -66,6 +66,7 @@ pub const REGISTERED_PATHS: [&str; 85] = [
     "/api/structured-memory/consolidation",
     "/api/structured-memory/consolidation/{id}",
     "/api/structured-memory/consolidation/{id}/cancel",
+    "/api/spend/summary",
     "/api/sessions",
     "/api/sessions/search",
     "/api/sessions/clear",
@@ -226,6 +227,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/structured-memory/consolidation/{id}/cancel",
             post(structured_memory::cancel_consolidation),
         )
+        .route("/api/spend/summary", get(core::spend_summary))
         .route("/api/sessions", post(core::create_session))
         .route("/api/sessions/search", post(session_io::search_session_transcripts))
         .route("/api/sessions/clear", post(core::clear_sessions))
@@ -340,7 +342,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 85);
+        assert_eq!(REGISTERED_PATHS.len(), 86);
 
         let all = registered_paths();
         assert!(

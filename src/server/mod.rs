@@ -152,7 +152,9 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         &backend.api_key,
         backend.reasoning_effort.clone(),
     )?;
-    let cloud_chat = CloudChat::from_config(&cfg)?;
+    let spend_file = crate::llm::spend::spend_path(&home.root, &cfg);
+    let mut cloud_chat = CloudChat::from_config(&cfg)?;
+    cloud_chat.attach_spend(spend_file.clone());
     let rate_limiter = RateLimiter::new(
         cfg.u64_or("api.rate_limit.max_requests", 60) as usize,
         cfg.f64_or("api.rate_limit.window_seconds", 60.0).max(0.001),
@@ -232,6 +234,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         shim,
         jobs,
         schedules,
+        spend_file,
         request_log: cfg.flag_is_true("logging.request_log"),
         auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl::new(),
         memory_suggestions: crate::server::structured_memory_suggest::Suggestions::default(),

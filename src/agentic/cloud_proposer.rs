@@ -152,17 +152,20 @@ impl<'a> CloudProposerClient<'a> {
         }
     }
 
-    fn record_spend(&self, usage: Option<&Value>, outcome: &str) {
-        let (prompt_tokens, completion_tokens) = match (self.settings.provider.as_str(), usage) {
-            ("claude", Some(u)) => (u.get("input_tokens").cloned(), u.get("output_tokens").cloned()),
-            (_, Some(u)) => (u.get("prompt_tokens").cloned(), u.get("completion_tokens").cloned()),
-            _ => (None, None),
-        };
-        let record = json!({
-            "ts": crate::common::iso_now(), "provider": self.settings.provider, "model": self.settings.model,
-            "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "source": "agentic", "outcome": outcome,
-        });
-        self.audit.append_spend(&self.spend_file, &record);
+    fn record_spend(&self, usage: Option<&Value>, outcome: Option<&str>) {
+        crate::llm::spend::record(
+            Some(self.audit),
+            &self.spend_file,
+            8 * 1024 * 1024,
+            crate::llm::spend::SpendEvent {
+                provider: &self.settings.provider,
+                model: &self.settings.model,
+                served_model: None,
+                source: "agentic",
+                tokens: crate::llm::spend::parse_provider_usage(&self.settings.provider, usage),
+                outcome,
+            },
+        );
     }
 
     fn build_request(
@@ -291,11 +294,14 @@ impl ProposerClient for CloudProposerClient<'_> {
                 })?;
                 let usage = data.get("usage").cloned();
                 let content = self.extract_content(&data);
-                self.record_spend(usage.as_ref(), "ok");
+                let empty = content.as_ref().is_none_or(|c| c.trim().is_empty());
+                if empty {
+                    self.record_spend(usage.as_ref(), Some("failed_after_billing"));
+                    return Err(HarnessError::agentic("cloud proposer returned empty content"));
+                }
+                self.record_spend(usage.as_ref(), None);
                 self.audit.log(json!({"event": "agentic_deepagent_cloud_model_succeeded", "provider": provider, "model": self.settings.model}));
-                return content
-                    .filter(|c| !c.trim().is_empty())
-                    .ok_or_else(|| HarnessError::agentic("cloud proposer returned empty content"));
+                return Ok(content.expect("non-empty content"));
             }
             if attempts <= INVOKE_MAX_RETRIES && retryable {
                 tracing::warn!(

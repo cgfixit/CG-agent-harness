@@ -60,6 +60,10 @@ pub async fn status(
     }))
 }
 
+pub async fn spend_summary(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(crate::llm::spend::summarize_file(&state.spend_file))
+}
+
 pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({"sessions": state.store.list()}))
 }
@@ -556,11 +560,12 @@ async fn chat_inner(
         content: req.message.clone(),
     });
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
+    let spend_source = if req.loop_turn { "loop" } else { "chat" };
     let (reply, web_tools) = if cloud_selected {
         (
             state
                 .cloud_chat
-                .chat(&model, &req.message)
+                .chat_with_source(&model, &req.message, spend_source)
                 .await
                 .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
             Vec::new(),
@@ -599,6 +604,31 @@ async fn chat_inner(
         )
     };
     drop(release);
+
+    if !cloud_selected {
+        let tokens = if reply.usage_reported {
+            crate::llm::spend::UsageTokens {
+                input_tokens: Some(reply.prompt_tokens),
+                output_tokens: Some(reply.completion_tokens),
+                ..crate::llm::spend::UsageTokens::default()
+            }
+        } else {
+            crate::llm::spend::UsageTokens::default()
+        };
+        crate::llm::spend::record(
+            Some(&state.audit),
+            &state.spend_file,
+            crate::common::bounded_log::limit(&state.cfg),
+            crate::llm::spend::SpendEvent {
+                provider: "local",
+                model: &reply.model,
+                served_model: None,
+                source: spend_source,
+                tokens,
+                outcome: None,
+            },
+        );
+    }
 
     let usage = TokenTally {
         prompt_tokens: reply.prompt_tokens.saturating_add(summary_prompt_tokens),
