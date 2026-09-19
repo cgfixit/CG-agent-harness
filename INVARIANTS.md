@@ -274,9 +274,19 @@ info-level `linux hard sandbox backend selected` line, the self-test line, and
 the audit `sandbox` field. `/api/status` does not report the backend. The
 console must not import `crate::agentic`. Both backends missing is
 `HARD_SANDBOX_UNAVAILABLE` (exit 3). Linux CI (`CI=true`) fails if `bwrap` is
-missing. GitHub-hosted runners that refuse `RTM_NEWADDR` skip confinement
-tests; that is a named runner limit, not a missing binary. SIGKILL of the
-runner with a live grandchild is unverified.
+missing. The ordinary test matrix may report a classified confinement skip
+when a GitHub-hosted runner refuses `RTM_NEWADDR`; that is not confinement proof.
+The separate `Linux bubblewrap confinement (required)` job runs the same suite
+in a pinned container with namespace/mount capabilities. Setting
+`CGAH_REQUIRE_LINUX_BWRAP` (any value) makes every probe failure fatal and also
+refuses a non-Linux host; it is a test-only requirement, not a production gate.
+Python 3 probes must execute successfully, demonstrate candidate reads and
+scratch writes, and explicitly observe denied secret/symlink reads and candidate
+writes. The network probe first connects to an owned host listener outside the
+sandbox, then requires a different network namespace and connection denial
+inside it. No public endpoint or generic nonzero exit serves as network proof.
+The job changes no host sysctl and preserves the production backend ladder.
+SIGKILL of the runner with a live grandchild is unverified.
 It is the same process-group leftover already named for Seatbelt. Windows Job
 Object remains a process-tree kill boundary without network or filesystem
 isolation. See `docs/OFFLINE_CARGO.md` for preparation, required native tests,

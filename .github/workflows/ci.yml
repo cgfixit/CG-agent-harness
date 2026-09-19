@@ -160,6 +160,33 @@ jobs:
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""
 
+  linux-bwrap:
+    name: Linux bubblewrap confinement (required)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Required filesystem and network confinement (no skips)
+        # Explicit docker run avoids the Docker socket that Actions mounts in
+        # job containers. Only the checkout is mounted, read-only; no host
+        # sysctl changes, provider credentials, or production fallback changes.
+        run: |
+          docker run --rm \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/work,readonly" \
+            --workdir /work \
+            --env CI=true --env RUSTFLAGS="-D warnings" \
+            --env RUSTUP_TOOLCHAIN=1.88.0 --env CARGO_TARGET_DIR=/tmp/target \
+            --env CGAH_REQUIRE_LINUX_BWRAP=1 \
+            rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 \
+            sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3
+                    cargo test --test linux_bwrap --locked -- --nocapture'
+
   invariant-guard:
     name: invariant guard (I6 source scan)
     runs-on: ubuntu-latest
