@@ -6,3 +6,4 @@ pub mod inventory;
 pub mod ollama;
 pub mod openai_chat;
 pub mod openai_stream;
+pub mod spend;

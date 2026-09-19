@@ -7,9 +7,12 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use std::path::PathBuf;
+
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::llm::openai_chat::{ChatResult, LLM_ERROR_CODE};
+use crate::llm::spend::{self, UsageTokens};
 
 const GROK_ENDPOINT: &str = "https://api.x.ai/v1/responses";
 const CLAUDE_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
@@ -58,6 +61,8 @@ pub struct CloudChat {
     claude: ProviderConfig,
     client: reqwest::Client,
     inflight: Mutex<BTreeMap<String, CancellationToken>>,
+    spend_file: Option<PathBuf>,
+    spend_max_bytes: u64,
 }
 
 impl std::fmt::Debug for CloudChat {
@@ -125,7 +130,13 @@ impl CloudChat {
                 .build()
                 .map_err(|_| HarnessError::config("cannot construct cloud chat client"))?,
             inflight: Mutex::new(BTreeMap::new()),
+            spend_file: None,
+            spend_max_bytes: crate::common::bounded_log::limit(cfg),
         })
+    }
+
+    pub fn attach_spend(&mut self, path: PathBuf) {
+        self.spend_file = Some(path);
     }
 
     fn configured(&self, selection: &str) -> Option<&ProviderConfig> {
@@ -156,6 +167,10 @@ impl CloudChat {
     }
 
     pub async fn chat(&self, selection: &str, message: &str) -> Result<ChatResult> {
+        self.chat_with_source(selection, message, "chat").await
+    }
+
+    pub async fn chat_with_source(&self, selection: &str, message: &str, source: &str) -> Result<ChatResult> {
         let config = self
             .configured(selection)
             .ok_or_else(|| err("selected cloud chat model is not configured"))?;
@@ -193,11 +208,11 @@ impl CloudChat {
         };
         tokio::select! {
             _ = cancel.cancelled() => Err(err("cloud chat request cancelled")),
-            result = self.request(config, message) => result,
+            result = self.request(config, message, source) => result,
         }
     }
 
-    async fn request(&self, config: &ProviderConfig, message: &str) -> Result<ChatResult> {
+    async fn request(&self, config: &ProviderConfig, message: &str, source: &str) -> Result<ChatResult> {
         let response = match config.provider {
             Provider::Grok => self
                 .client
@@ -246,10 +261,21 @@ impl CloudChat {
         }
         let body: Value = serde_json::from_slice(&bytes)
             .map_err(|_| err(format!("{} cloud chat returned malformed JSON", config.provider.name())))?;
-        let (body_text, prompt_tokens, completion_tokens) = match config.provider {
-            Provider::Grok => parse_grok(&body)?,
-            Provider::Claude => parse_claude(&body)?,
+        let tokens = match config.provider {
+            Provider::Grok => spend::parse_grok_usage(body.get("usage")),
+            Provider::Claude => spend::parse_claude_usage(body.get("usage")),
         };
+        let text = match config.provider {
+            Provider::Grok => grok_text(&body),
+            Provider::Claude => claude_text(&body),
+        };
+        let outcome = if text.is_err() {
+            Some("failed_after_billing")
+        } else {
+            None
+        };
+        self.record_cloud_spend(config, &body, tokens.clone(), source, outcome);
+        let body_text = text?;
         Ok(ChatResult {
             body_text,
             model: body
@@ -258,14 +284,41 @@ impl CloudChat {
                 .filter(|value| !value.is_empty())
                 .unwrap_or(&config.model)
                 .to_string(),
-            prompt_tokens,
-            completion_tokens,
-            usage_reported: true,
+            prompt_tokens: tokens.input_tokens.unwrap_or(0),
+            completion_tokens: tokens.output_tokens.unwrap_or(0),
+            usage_reported: tokens.usage_reported(),
         })
+    }
+
+    fn record_cloud_spend(
+        &self,
+        config: &ProviderConfig,
+        body: &Value,
+        tokens: UsageTokens,
+        source: &str,
+        outcome: Option<&str>,
+    ) {
+        let Some(path) = &self.spend_file else {
+            return;
+        };
+        let served = body.get("model").and_then(Value::as_str);
+        spend::record(
+            None,
+            path,
+            self.spend_max_bytes,
+            spend::SpendEvent {
+                provider: config.provider.name(),
+                model: &config.model,
+                served_model: served,
+                source,
+                tokens,
+                outcome,
+            },
+        );
     }
 }
 
-fn parse_grok(body: &Value) -> Result<(String, u64, u64)> {
+fn grok_text(body: &Value) -> Result<String> {
     let text = body
         .get("output")
         .and_then(Value::as_array)
@@ -282,16 +335,21 @@ fn parse_grok(body: &Value) -> Result<(String, u64, u64)> {
     if text.is_empty() {
         return Err(err("Grok cloud chat returned no text"));
     }
+    Ok(text)
+}
+
+#[cfg(test)]
+fn parse_grok(body: &Value) -> Result<(String, u64, u64)> {
+    let text = grok_text(body)?;
+    let tokens = spend::parse_grok_usage(body.get("usage"));
     Ok((
         text,
-        body.pointer("/usage/input_tokens").and_then(Value::as_u64).unwrap_or(0),
-        body.pointer("/usage/output_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        tokens.input_tokens.unwrap_or(0),
+        tokens.output_tokens.unwrap_or(0),
     ))
 }
 
-fn parse_claude(body: &Value) -> Result<(String, u64, u64)> {
+fn claude_text(body: &Value) -> Result<String> {
     let text = body
         .get("content")
         .and_then(Value::as_array)
@@ -305,12 +363,17 @@ fn parse_claude(body: &Value) -> Result<(String, u64, u64)> {
     if text.is_empty() {
         return Err(err("Claude cloud chat returned no text"));
     }
+    Ok(text)
+}
+
+#[cfg(test)]
+fn parse_claude(body: &Value) -> Result<(String, u64, u64)> {
+    let text = claude_text(body)?;
+    let tokens = spend::parse_claude_usage(body.get("usage"));
     Ok((
         text,
-        body.pointer("/usage/input_tokens").and_then(Value::as_u64).unwrap_or(0),
-        body.pointer("/usage/output_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        tokens.input_tokens.unwrap_or(0),
+        tokens.output_tokens.unwrap_or(0),
     ))
 }
 
@@ -370,6 +433,38 @@ mod tests {
         assert_eq!(parse_claude(&claude).unwrap(), ("hello".into(), 4, 5));
         assert!(parse_grok(&json!({})).is_err());
         assert!(parse_claude(&json!({"content":[]})).is_err());
+        let missing = json!({"output":[{"type":"message","content":[{"type":"output_text","text":"hi"}]}],"usage":{}});
+        assert!(!spend::parse_grok_usage(missing.get("usage")).usage_reported());
+    }
+
+    #[tokio::test]
+    async fn empty_text_2xx_appends_failed_after_billing_without_prompt_or_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let spend = dir.path().join("spend.jsonl");
+        let (origin, server) = serve(Router::new().route(
+            "/empty",
+            post(|| async {
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"output":[],"usage":{"input_tokens":2,"output_tokens":0,"cost_in_usd_ticks":1}}"#,
+                    ))
+                    .unwrap()
+            }),
+        ))
+        .await;
+        let mut chat = enabled_chat();
+        chat.attach_spend(spend.clone());
+        chat.grok.endpoint = format!("{origin}/empty");
+        let err = chat.chat("grok", "secret-prompt-text").await.unwrap_err();
+        assert!(err.message.contains("no text"), "{}", err.message);
+        let text = std::fs::read_to_string(&spend).unwrap();
+        assert!(text.contains("failed_after_billing"));
+        assert!(text.contains("\"usage_missing\":false"));
+        assert!(!text.contains("secret-prompt-text"));
+        assert!(!text.contains("grok-test-key"));
+        assert!(!text.contains("\"usd\""));
+        server.abort();
     }
 
     #[test]
