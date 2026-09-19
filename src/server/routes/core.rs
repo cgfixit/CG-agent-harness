@@ -615,6 +615,7 @@ async fn chat_inner(
         } else {
             crate::llm::spend::UsageTokens::default()
         };
+        let empty = reply.body_text.trim().is_empty();
         crate::llm::spend::record(
             Some(&state.audit),
             &state.spend_file,
@@ -625,9 +626,16 @@ async fn chat_inner(
                 served_model: None,
                 source: spend_source,
                 tokens,
-                outcome: None,
+                outcome: empty.then_some("failed_after_billing"),
             },
         );
+        if empty {
+            return Err(ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "EMPTY_MODEL_RESPONSE",
+                "local model returned HTTP 2xx with empty text after billing",
+            ));
+        }
     }
 
     let usage = TokenTally {

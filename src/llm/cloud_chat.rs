@@ -252,6 +252,13 @@ impl CloudChat {
             .map_err(|_| err(format!("{} cloud chat returned malformed JSON", config.provider.name())))?
         {
             if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+                self.record_cloud_spend(
+                    config,
+                    &json!({}),
+                    spend::UsageTokens::default(),
+                    source,
+                    Some("failed_after_billing"),
+                );
                 return Err(err(format!(
                     "{} cloud chat response exceeds limit",
                     config.provider.name()
@@ -259,8 +266,22 @@ impl CloudChat {
             }
             bytes.extend_from_slice(&chunk);
         }
-        let body: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| err(format!("{} cloud chat returned malformed JSON", config.provider.name())))?;
+        let body: Value = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(_) => {
+                self.record_cloud_spend(
+                    config,
+                    &json!({}),
+                    spend::UsageTokens::default(),
+                    source,
+                    Some("failed_after_billing"),
+                );
+                return Err(err(format!(
+                    "{} cloud chat returned malformed JSON",
+                    config.provider.name()
+                )));
+            }
+        };
         let tokens = match config.provider {
             Provider::Grok => spend::parse_grok_usage(body.get("usage")),
             Provider::Claude => spend::parse_claude_usage(body.get("usage")),

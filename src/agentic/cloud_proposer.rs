@@ -288,10 +288,14 @@ impl ProposerClient for CloudProposerClient<'_> {
                 }
             };
             if let Some(resp) = response {
-                let data: Value = resp.json().map_err(|_| {
-                    HarnessError::agentic("cloud proposer invocation failed (ValueError)")
-                        .detail("provider", provider.clone())
-                })?;
+                let data: Value = match resp.json() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        self.record_spend(None, Some("failed_after_billing"));
+                        return Err(HarnessError::agentic("cloud proposer invocation failed (ValueError)")
+                            .detail("provider", provider.clone()));
+                    }
+                };
                 let usage = data.get("usage").cloned();
                 let content = self.extract_content(&data);
                 let empty = content.as_ref().is_none_or(|c| c.trim().is_empty());

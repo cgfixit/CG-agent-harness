@@ -9,6 +9,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use time::Date;
@@ -470,7 +471,15 @@ pub fn append_row(path: &Path, record: &Value, max_bytes: u64) {
         }
     };
     let _guard = APPEND_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    if bounded_log::append(&path, &line, max_bytes).is_err() {
+    if bounded_log::append_until(
+        &path,
+        &line,
+        max_bytes,
+        Instant::now() + Duration::from_millis(50),
+        Duration::from_millis(2),
+    )
+    .is_err()
+    {
         tracing::warn!("spend sink unavailable, busy, or record exceeds retention bound");
     }
 }
@@ -501,28 +510,39 @@ fn day_key(timestamp: &str) -> String {
     timestamp.chars().take(10).collect()
 }
 
-/// Read-time rollup by provider/model/UTC-day. Re-reads the append-only file.
+fn read_ledger_rows(path: &Path, rows: &mut Vec<Value>) {
+    if !path.exists() {
+        return;
+    }
+    let mut text = String::new();
+    match std::fs::File::open(path).and_then(|f| f.take(MAX_SUMMARY_BYTES + 1).read_to_string(&mut text)) {
+        Ok(_) if (text.len() as u64) <= MAX_SUMMARY_BYTES => {
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<Value>(line) {
+                    rows.push(v);
+                }
+            }
+        }
+        Ok(_) => tracing::warn!("spend ledger exceeds the summary bound; refusing to roll up"),
+        Err(e) => tracing::warn!("spend ledger unreadable: {e}"),
+    }
+}
+
+/// Read-time rollup by provider/model/UTC-day. Re-reads the append-only file
+/// plus the retained `.1` generation after rotation.
 pub fn summarize_file(path: &Path) -> Value {
     warn_once_if_stale();
     let mut rows: Vec<Value> = Vec::new();
     if let Some(path) = refuse_parent_components(path) {
-        if path.exists() {
-            let mut text = String::new();
-            match std::fs::File::open(&path).and_then(|f| f.take(MAX_SUMMARY_BYTES + 1).read_to_string(&mut text)) {
-                Ok(_) if (text.len() as u64) <= MAX_SUMMARY_BYTES => {
-                    for line in text.lines() {
-                        let line = line.trim();
-                        if line.is_empty() {
-                            continue;
-                        }
-                        if let Ok(v) = serde_json::from_str::<Value>(line) {
-                            rows.push(v);
-                        }
-                    }
-                }
-                Ok(_) => tracing::warn!("spend ledger exceeds the summary bound; refusing to roll up"),
-                Err(e) => tracing::warn!("spend ledger unreadable: {e}"),
-            }
+        read_ledger_rows(&path, &mut rows);
+        let mut rotated = path.into_os_string();
+        rotated.push(".1");
+        if let Some(previous) = refuse_parent_components(&PathBuf::from(rotated)) {
+            read_ledger_rows(&previous, &mut rows);
         }
     }
     type GroupKey = (String, String, String);
@@ -809,6 +829,25 @@ mod tests {
         assert!(rates_are_stale(
             Date::from_calendar_date(2026, time::Month::November, 1).ok()
         ));
+    }
+
+    #[test]
+    fn summarize_includes_the_rotated_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("spend.jsonl");
+        let previous = dir.path().join("spend.jsonl.1");
+        std::fs::write(
+            &previous,
+            "{\"provider\":\"local\",\"model\":\"a\",\"source\":\"chat\",\"timestamp\":\"2026-09-19T00:00:00Z\"}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &path,
+            "{\"provider\":\"grok\",\"model\":\"grok-4.6\",\"source\":\"chat\",\"timestamp\":\"2026-09-19T00:00:00Z\"}\n",
+        )
+        .unwrap();
+        let summary = summarize_file(&path);
+        assert_eq!(summary["rows"], 2);
     }
 
     #[test]
