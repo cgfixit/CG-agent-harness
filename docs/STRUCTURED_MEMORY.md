@@ -70,6 +70,36 @@ episodes referenced by pending proposals.
     enabled memory defaults. Live reviewer rates and latency percentiles
     stay documented-only.
 
+## Write-time injection checks and their limits
+
+Fact and proposal writes already use `Scanner::core()` through
+`StructuredMemoryStore::clean_text`; the missing-scanner claim in
+[issue #158](https://github.com/cgfixit/CG-agent-harness/issues/158) does not
+match this implementation. Both content and category are checked on direct
+fact creation, add/update proposal creation (including consolidation and
+completion suggestions), and again when a pending add/update proposal is
+applied. A core-pattern hit such as `ignore previous instructions` returns
+`STRUCTURED_MEMORY_INJECTION` (HTTP 400) before the write. A refused apply
+leaves the proposal pending and canonical facts unchanged; the operator can
+still reject it. Confirmation, reason, ownership and revision checks remain
+separate requirements.
+
+This is the fixed core pattern set, not the configured
+`policy.prompt_filter.banned_patterns` or the full coding governance scan.
+Matching is case-insensitive and recognizes whitespace variants, but this
+path does not use `scan_normalized`. It is not a secret scanner or a general
+prompt-injection detector. Individually clean fragments may pass, and the
+assembled recalled-facts block has no injection scan. Recalled facts remain
+untrusted background context; the label does not guarantee model obedience.
+Review pending proposals together for suspicious fragments before applying
+them. This verification does not change `auto_retrieval` or any other default.
+
+Regression coverage: `tests/structured_memory.rs` exercises HTTP fact/proposal
+refusals; the unit tests in `src/server/structured_memory.rs` exercise
+consolidation staging and apply-time rescanning of a legacy unsafe proposal
+with a valid revision. Existing benign propose/apply/recall and Phase 7 tests
+cover legitimate writes and the distinction from secret detection.
+
 ## Completion suggestions (independent gates)
 
 `auto_suggest_chat` and `auto_suggest_coding` are two additional default-true
