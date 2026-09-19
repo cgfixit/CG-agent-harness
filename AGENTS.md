@@ -83,9 +83,10 @@ Public Google fallback and destination page fetching retain URL permission check
   `0o600`. `POST /api/sessions/search` uses a request-local Tantivy RAM index
   (same crate as `web_index`, never mixed with the web cache). `GET /api/sessions`
   still omits goal and bodies. Sessions remain shared portal resources.
-- Inference spend is append-only JSONL (`logs/spend.jsonl`). Dollars are
-  read-time only; never persist `usd`, prompts, or keys. Local rows are
-  unpriced. Pull/warmup/MCP dispatch are not ledger events. Guarded
+- Inference spend is append-only JSONL (`logs/spend.jsonl`; home-relative
+  `logging.spend_file`, with absolute/`..` falling back to that default).
+  Dollars are read-time only; never persist `usd`, prompts, or keys. Local
+  rows are unpriced. Pull/warmup/MCP dispatch are not ledger events. Guarded
   `GET /api/spend/summary` is the rollup. `usage_reported` is honest (both
   counts must be JSON numbers). Empty-text 2xx still records
   `failed_after_billing`.
