@@ -281,15 +281,27 @@ fn agent_run_and_jobs_share_prepare_run() {
     let job_idx = src
         .find("pub async fn agent_job_create(")
         .expect("agent_job_create must exist");
+    let start_idx = src
+        .find("pub(crate) async fn start_job(")
+        .expect("start_job must exist");
     let run_slice = &src[run_idx..job_idx];
-    let job_slice = &src[job_idx..];
+    let job_slice = &src[job_idx..start_idx];
+    let start_slice = &src[start_idx..];
     assert!(
         run_slice.contains("prepare_run(&state, &req)?"),
         "/api/agent/run must go through prepare_run"
     );
     assert!(
-        job_slice.contains("prepare_run(&state, &req)?"),
-        "/api/agent/jobs must go through prepare_run"
+        job_slice.contains("start_job("),
+        "/api/agent/jobs must go through start_job"
+    );
+    assert!(
+        start_slice.contains("prepare_run_inner(&state, &req, schedule_id.is_some())?"),
+        "detached jobs and schedules must go through prepare_run_inner"
+    );
+    assert!(
+        src.contains("prepare_run_inner(state, req, false)"),
+        "prepare_run must be the non-recurring wrapper around prepare_run_inner"
     );
     // Neither route builds an OpsRequest by hand — that would let them drift.
     assert!(
@@ -299,6 +311,10 @@ fn agent_run_and_jobs_share_prepare_run() {
     assert!(
         !job_slice.contains("OpsRequest {"),
         "agent_job_create must not construct OpsRequest itself"
+    );
+    assert!(
+        !start_slice.contains("OpsRequest {"),
+        "start_job must not construct OpsRequest itself"
     );
 }
 

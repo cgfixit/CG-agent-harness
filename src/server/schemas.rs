@@ -10,7 +10,7 @@ use axum::body::Bytes;
 use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -641,14 +641,14 @@ impl Validate for McpCallRequest {
 
 /// Start one real-repo coding run. `checks` carries profile NAMES, never
 /// commands; `confirm` is NOT defaulted on.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GoalBinding {
     pub session_id: String,
     pub stage_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentRunRequest {
     #[serde(default)]
@@ -749,6 +749,28 @@ impl Validate for AgentRunRequest {
         }
         if self.pr.is_some() && self.issue.is_some() {
             bad.push("pr/issue".into());
+        }
+        bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentScheduleCreate {
+    pub interval_secs: u64,
+    pub request: AgentRunRequest,
+}
+
+impl Validate for AgentScheduleCreate {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = self.request.validate();
+        if !(crate::server::agent_schedules::MIN_INTERVAL_SECS..=crate::server::agent_schedules::MAX_INTERVAL_SECS)
+            .contains(&self.interval_secs)
+        {
+            bad.push("interval_secs".into());
+        }
+        if self.request.goal_stage.is_none() {
+            bad.push("goal_stage".into());
         }
         bad
     }

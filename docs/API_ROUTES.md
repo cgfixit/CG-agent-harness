@@ -146,6 +146,9 @@ MCP tools are not attached to `/loop`.
 | GET, POST | `/api/agent/jobs` | List detached jobs or start one |
 | GET | `/api/agent/jobs/{job_id}` | Job status |
 | POST | `/api/agent/jobs/{job_id}/cancel` | Cancel a job |
+| GET, POST | `/api/agent/schedules` | List persisted schedules or create one (reviewed goal required) |
+| GET | `/api/agent/schedules/{schedule_id}` | One schedule |
+| POST | `/api/agent/schedules/{schedule_id}/cancel` | Cancel a schedule |
 | GET | `/api/agent/runs` | Retained run records |
 | GET | `/api/agent/runs/{run_id}` | One run and its diff |
 | POST | `/api/agent/runs/{run_id}/decision` | Approve locally (`--reason` + confirm) |

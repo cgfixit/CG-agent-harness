@@ -81,6 +81,8 @@ pub struct AppState {
     pub shim: crate::shim::ShimContext,
     /// Detached real-repo runs (`/api/agent/jobs`).
     pub jobs: crate::server::agent_jobs::JobStore,
+    /// Persisted recurring agent jobs (`/api/agent/schedules`).
+    pub schedules: crate::server::agent_schedules::ScheduleStore,
     /// `logging.request_log`: one structured tracing line per request.
     pub request_log: bool,
     /// Idle auto-consolidator. Feature-off never spawns a worker.

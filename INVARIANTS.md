@@ -433,3 +433,19 @@ export or search it. Transcripts never leave the machine.
   `src/server/session_search.rs`,
   `src/server/routes/session_io.rs`,
   `tests/session_export.rs`.
+
+## Scheduled agentic runs cannot skip reviewed-goal or write gates
+
+A persisted schedule (`$CGAGENTHARNESS_HOME/data/agentic/console-schedules.json`,
+`0o600`) fires the same validated request as `POST /api/agent/jobs` through
+`prepare_run`. Creating a schedule without a bound/reviewed `goal_stage` fails
+closed. `confirm` is never defaulted; write gates stay closed. Each occurrence
+is consumed before the job starts (at-most-once): `next_fire_at` / `last_fired_at`
+survive process restart, a restart mid-window does not fire, and missed windows
+are skipped rather than caught up. Cancelled schedules do not fire; cancelling
+the resulting job still makes `JobStore::finish` a no-op. Start, complete, and
+fail are audited via `Audit::log` (JSONL, never raises).
+
+- Locked by: `src/server/agent_schedules.rs`,
+  `src/server/routes/agent.rs`,
+  `tests/agent_schedules.rs`.
