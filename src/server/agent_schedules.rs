@@ -223,7 +223,7 @@ mod tests {
             "commit_message": "Review the arithmetic implementation",
             "reason": "scheduled",
             "confirm": true,
-            "goal_stage": {"session_id": "aaaaaaaaaaaa", "stage_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+            "goal_stage": {"session_id": "aaaaaaaaaaaa", "stage_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"} // DevSkim: ignore DS173237 because this is a 32-hex stage_id fixture, not a credential.
         })
     }
 
