@@ -750,9 +750,9 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
     let reply = std::thread::scope(|s| s.spawn(|| c.invoke("sys", "hello", 100, Some(0.0))).join().unwrap()).unwrap();
     assert_eq!(reply, "claude\nsays hi", "multi-block content is joined");
     let ledger = std::fs::read_to_string(&spend).unwrap();
-    assert!(ledger.contains("\"prompt_tokens\":5"));
+    assert!(ledger.contains("\"input_tokens\":5"), "{ledger}");
     assert!(
-        ledger.contains("\"prompt_tokens\":7"),
+        ledger.contains("\"input_tokens\":7"),
         "claude input_tokens mapped: {ledger}"
     );
     assert!(std::thread::scope(|s| s

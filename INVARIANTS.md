@@ -449,3 +449,32 @@ fail are audited via `Audit::log` (JSONL, never raises).
 - Locked by: `src/server/agent_schedules.rs`,
   `src/server/routes/agent.rs`,
   `tests/agent_schedules.rs`.
+
+## Inference spend is an append-only ledger, not a predictor
+
+Cloud Grok/Claude 2xx responses and local OpenAI-compat usage append one JSONL
+row to `$CGAGENTHARNESS_HOME/logs/spend.jsonl` (or home-relative `logging.spend_file`;
+absolute values and parent-directory components fall back to `logs/spend.jsonl`) through
+the existing audit spend sink. Rows store provider, model, source
+(`chat`/`loop`/`agentic`/`eval`), token counts, optional vendor ticks, and
+`usage_missing`. They never store prompt/query/content/messages, credentials, or
+`usd`. Dollars are derived at read time (`estimate_usd`): prefer Grok
+`vendor_cost_ticks` (`TICKS_PER_USD = 10_000_000_000`); otherwise the dated
+rate table; incomplete usage and unknown models stay unpriced; local rows are
+always `local_unpriced`. `usage_reported` is true only when both input and
+output counts parsed as JSON numbers. HTTP 2xx with empty text still appends
+`outcome: failed_after_billing` then errors the chat. `TokenTally` and
+compaction `estimate_tokens` (UTF-8 `bytes.div_ceil(4)`) are not USD.
+`PRICED_AS_OF` is the oldest `_RATE_VERIFIED` date; a table older than 30 days
+warns once per process and does not fail the chat. Guarded
+`GET /api/spend/summary` rolls up the same file by provider/model/UTC-day with
+the same CSRF/authz class as a loaded session. Ollama pull, keep_alive warmup,
+and MCP broker dispatch are excluded from the ledger by definition — they are
+not billed inference. If a later MCP tool bills a cloud model, it must record
+`source: "agentic"` through this same file. The console must not import
+`crate::agentic` to write spend.
+
+- Locked by: `src/llm/spend.rs`,
+  `src/llm/cloud_chat.rs`,
+  `src/server/routes/core.rs`,
+  `tests/spend_ledger.rs`.

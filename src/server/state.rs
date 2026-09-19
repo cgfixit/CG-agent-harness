@@ -1,6 +1,7 @@
 //! Shared application state for the console.
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -83,6 +84,8 @@ pub struct AppState {
     pub jobs: crate::server::agent_jobs::JobStore,
     /// Persisted recurring agent jobs (`/api/agent/schedules`).
     pub schedules: crate::server::agent_schedules::ScheduleStore,
+    /// Append-only inference ledger (`logging.spend_file`).
+    pub spend_file: PathBuf,
     /// `logging.request_log`: one structured tracing line per request.
     pub request_log: bool,
     /// Idle auto-consolidator. Feature-off never spawns a worker.
