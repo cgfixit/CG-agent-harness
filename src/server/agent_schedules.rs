@@ -317,7 +317,7 @@ mod tests {
         let path = dir.path().join("schedules.json");
         std::fs::write(
             &path,
-            r#"[{"schedule_id":"0123456789abcdef0123456789abcdef","interval_secs":0,"request":{},"next_fire_at":1.0,"last_fired_at":null,"created_at":0.0,"status":"active","owner":"local"}]"#,
+            r#"[{"schedule_id":"0123456789abcdef0123456789abcdef","interval_secs":0,"request":{},"next_fire_at":1.0,"last_fired_at":null,"created_at":0.0,"status":"active","owner":"local"}]"#, // DevSkim: ignore DS173237 because this is a 32-hex schedule_id fixture, not a credential.
         )
         .unwrap();
         assert!(ScheduleStore::open(&path).is_err());
