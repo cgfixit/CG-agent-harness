@@ -136,6 +136,7 @@ logging:
   # latency, client). Never headers, bodies or query strings.
   request_log: true
   audit_file: "logs/audit.jsonl"
+  # Home-relative JSONL. Absolute paths and `..` fall back to this default.
   spend_file: "logs/spend.jsonl"
   # Each JSONL sink retains a current file and one .1 generation.
   max_file_bytes: 8388608 # clamped to 64 KiB–64 MiB; oversized events are dropped

@@ -453,7 +453,8 @@ fail are audited via `Audit::log` (JSONL, never raises).
 ## Inference spend is an append-only ledger, not a predictor
 
 Cloud Grok/Claude 2xx responses and local OpenAI-compat usage append one JSONL
-row to `$CGAGENTHARNESS_HOME/logs/spend.jsonl` (or `logging.spend_file`) through
+row to `$CGAGENTHARNESS_HOME/logs/spend.jsonl` (or home-relative `logging.spend_file`;
+absolute values and parent-directory components fall back to `logs/spend.jsonl`) through
 the existing audit spend sink. Rows store provider, model, source
 (`chat`/`loop`/`agentic`/`eval`), token counts, optional vendor ticks, and
 `usage_missing`. They never store prompt/query/content/messages, credentials, or

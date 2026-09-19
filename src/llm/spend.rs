@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -371,14 +371,29 @@ pub struct SpendEvent<'a> {
     pub outcome: Option<&'a str>,
 }
 
-pub fn spend_path(home: &Path, cfg: &AppConfig) -> std::path::PathBuf {
+pub fn spend_path(home: &Path, cfg: &AppConfig) -> PathBuf {
     let raw = cfg.str_or("logging.spend_file", DEFAULT_SPEND_FILE);
-    let path = std::path::PathBuf::from(&raw);
-    if path.is_absolute() {
-        path
-    } else {
-        home.join(path)
+    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+    // Reconstruct from the checked string so the sanitized value reaches FS APIs.
+    if raw.contains("..") {
+        tracing::warn!("logging.spend_file refused parent-directory components; using default");
+        return home.join(DEFAULT_SPEND_FILE);
     }
+    if Path::new(&raw).is_absolute() {
+        tracing::warn!("logging.spend_file refused an absolute path; using default");
+        return home.join(DEFAULT_SPEND_FILE);
+    }
+    home.join(PathBuf::from(raw))
+}
+
+/// CodeQL rust/path-injection treats `contains("..") == false` as a sink barrier.
+/// Reconstruct the path from the checked string so the sanitized value reaches FS APIs.
+fn refuse_parent_components(path: &Path) -> Option<PathBuf> {
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        return None;
+    }
+    Some(PathBuf::from(raw.as_ref()))
 }
 
 fn insert_token(map: &mut Map<String, Value>, key: &str, value: Option<u64>) {
@@ -437,6 +452,10 @@ static APPEND_LOCK: Mutex<()> = Mutex::new(());
 /// Append one JSONL row. Never raises. Does not write `usd`.
 pub fn append_row(path: &Path, record: &Value, max_bytes: u64) {
     warn_once_if_stale();
+    let Some(path) = refuse_parent_components(path) else {
+        tracing::warn!("spend ledger path refused parent-directory components");
+        return;
+    };
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
             tracing::warn!("spend ledger parent dir unavailable: {e}");
@@ -451,7 +470,7 @@ pub fn append_row(path: &Path, record: &Value, max_bytes: u64) {
         }
     };
     let _guard = APPEND_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    if bounded_log::append(path, &line, max_bytes).is_err() {
+    if bounded_log::append(&path, &line, max_bytes).is_err() {
         tracing::warn!("spend sink unavailable, busy, or record exceeds retention bound");
     }
 }
@@ -486,22 +505,24 @@ fn day_key(timestamp: &str) -> String {
 pub fn summarize_file(path: &Path) -> Value {
     warn_once_if_stale();
     let mut rows: Vec<Value> = Vec::new();
-    if path.exists() {
-        let mut text = String::new();
-        match std::fs::File::open(path).and_then(|f| f.take(MAX_SUMMARY_BYTES + 1).read_to_string(&mut text)) {
-            Ok(_) if (text.len() as u64) <= MAX_SUMMARY_BYTES => {
-                for line in text.lines() {
-                    let line = line.trim();
-                    if line.is_empty() {
-                        continue;
-                    }
-                    if let Ok(v) = serde_json::from_str::<Value>(line) {
-                        rows.push(v);
+    if let Some(path) = refuse_parent_components(path) {
+        if path.exists() {
+            let mut text = String::new();
+            match std::fs::File::open(&path).and_then(|f| f.take(MAX_SUMMARY_BYTES + 1).read_to_string(&mut text)) {
+                Ok(_) if (text.len() as u64) <= MAX_SUMMARY_BYTES => {
+                    for line in text.lines() {
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        if let Ok(v) = serde_json::from_str::<Value>(line) {
+                            rows.push(v);
+                        }
                     }
                 }
+                Ok(_) => tracing::warn!("spend ledger exceeds the summary bound; refusing to roll up"),
+                Err(e) => tracing::warn!("spend ledger unreadable: {e}"),
             }
-            Ok(_) => tracing::warn!("spend ledger exceeds the summary bound; refusing to roll up"),
-            Err(e) => tracing::warn!("spend ledger unreadable: {e}"),
         }
     }
     type GroupKey = (String, String, String);
@@ -788,5 +809,38 @@ mod tests {
         assert!(rates_are_stale(
             Date::from_calendar_date(2026, time::Month::November, 1).ok()
         ));
+    }
+
+    #[test]
+    fn spend_path_refuses_absolute_and_parent_components() {
+        let home = Path::new("/tmp/cgagent-home");
+        let default = home.join(DEFAULT_SPEND_FILE);
+        let ok = AppConfig::from_str(
+            "logging:\n  spend_file: \"logs/custom.jsonl\"",
+            Path::new("config.yaml"),
+        )
+        .unwrap();
+        assert_eq!(spend_path(home, &ok), home.join("logs/custom.jsonl"));
+        let traversal =
+            AppConfig::from_str("logging:\n  spend_file: \"../escape.jsonl\"", Path::new("config.yaml")).unwrap();
+        assert_eq!(spend_path(home, &traversal), default);
+        let abs_value = if cfg!(windows) {
+            r"C:\Windows\win.ini"
+        } else {
+            "/etc/passwd"
+        };
+        let abs_yaml = format!("logging:\n  spend_file: \"{abs_value}\"");
+        let absolute = AppConfig::from_str(&abs_yaml, Path::new("config.yaml")).unwrap();
+        assert_eq!(spend_path(home, &absolute), default);
+    }
+
+    #[test]
+    fn append_and_summarize_refuse_parent_components() {
+        let dir = tempfile::tempdir().unwrap();
+        let evil = dir.path().join("logs").join("..").join("outside.jsonl");
+        append_row(&evil, &json!({"provider": "local"}), 1024);
+        assert!(!dir.path().join("outside.jsonl").exists());
+        let summary = summarize_file(&evil);
+        assert_eq!(summary["rows"], 0);
     }
 }
