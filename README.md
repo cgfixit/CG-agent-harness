@@ -7,13 +7,14 @@
 
 A local harness for **chat, permitted web research, and reviewed coding**.
 
-Use the universal macOS app or run the Rust backend in a browser. Chat is
-served only by an OpenAI-compatible **loopback** model server; a non-loopback
-chat endpoint is refused. The coding pipeline can optionally route its planner
-to a cloud provider behind six gates including a per-run `--confirm-online`.
-That path ships closed and is never used for chat. Enabling it is a
-repository-content egress decision. Read [CODING_PIPELINE.md](docs/CODING_PIPELINE.md)
-before turning it on.
+Use the universal macOS app or run the Rust backend in a browser. Local chat
+uses an OpenAI-compatible **loopback** model server. Explicitly selecting
+`grok` or `claude` enables a separate cloud-chat path after provider setup;
+it sends only the new user message, without local history, memory, skills,
+attachments or web context. Cloud chat is unavailable for `/loop`.
+The coding planner is separate and ships closed behind six gates, including
+per-run `--confirm-online`. Enabling that planner permits repository-content
+egress; read [CODING_PIPELINE.md](docs/CODING_PIPELINE.md) first.
 
 > **Fresh homes require HTTPS and account login; the harness API key is
 > optional.** Start with `admin` / `admin`, then replace the password
@@ -21,15 +22,21 @@ before turning it on.
 > mutations remain disabled until explicitly configured, and commit, push, and
 > draft PR publication each require a separate operator decision.
 
-**Version scope:** [Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest)
-is [v0.1.12](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.12)
-at `22520f3ba5981c361ceb57dddd7ff96234a69290`. Cargo package version `0.1.0`
-does not establish feature availability. Identify the installed source with
+**Version scope:** use the source commit in the
+[latest release](https://github.com/cgfixit/CG-agent-harness/releases/latest)
+to establish feature availability. Cargo package version `0.1.0` alone does not. Identify the installed source with
 `Contents/Resources/COMMIT`, the workflow SHA, and `/help`. How tip `main`
 relates, and how to upgrade: [setup-guide.md](setup-guide.md).
 
 `/loop` continues chat toward a session goal. `/agent` drives the separate
 coding pipeline. Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
+
+Spend summaries and optional completion webhooks are documented in
+[Spend and completion notifications](docs/SPEND_AND_NOTIFICATIONS.md), including
+which feature PRs the installed build must contain. The Spend view reports
+retained usage and available costs; webhooks send only job metadata and stay
+disabled until configured. MCP stderr capture bounds are in
+[process lifecycle](docs/PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics).
 
 ## Quickstart
 
@@ -117,7 +124,8 @@ and `fable-protocol`. Contributor PRs use a driver-prefixed branch, target
 | [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging |
 | [docs/CHAT_STREAMING.md](docs/CHAT_STREAMING.md) | SSE chat streaming and `/loop stop` |
 | [docs/API_ROUTES.md](docs/API_ROUTES.md) | Registered HTTP route inventory |
-| [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator howto for pinned notes and structured memory |
+| [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator navigation, spend/notifications and memory howto |
+| [docs/SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md) | Spend completeness, webhook setup, retries and privacy |
 | [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Facts, proposals, episodes, explicit recall, facts-only FTS |
 | [docs/BOUNDED_EDITS.md](docs/BOUNDED_EDITS.md) | Exact-content edit format, scope and budget |
 | [docs/GIT_APPROVAL.md](docs/GIT_APPROVAL.md) | Approval binding, commit/push/publish separation |

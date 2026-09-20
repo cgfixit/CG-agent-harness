@@ -376,6 +376,14 @@ harness metadata key is never an account credential. `GH_TOKEN` supplies the
 GitHub CLI and its Git credential helper after restart. Leave it unset to use
 existing `gh auth login`; token scopes never bypass repository write approvals.
 
+Completion webhooks add an optional `CGAGENTHARNESS_WEBHOOK_TOKEN` managed key
+in [supported builds](SPEND_AND_NOTIFICATIONS.md). It requires restart and does
+not select a model or arm coding. Its destination is configured separately from
+web-content permissions: exact private URL grants, validated/pinned DNS, no proxy
+or redirects. Only job ID, status and timestamps enter the event; no job text or
+receiver body is logged. See the [webhook guide](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook)
+for retries, audit status and in-memory queue loss on shutdown.
+
 ## Reproducible evidence
 
 `cargo test --locked --all-targets --all-features` covers policy, pinned fetch,

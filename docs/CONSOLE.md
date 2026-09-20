@@ -29,12 +29,14 @@ Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [
 | Accounts and API Keys | Fresh `admin` / `admin` requires password replacement. Administrator, Portal operator and Auditor permissions are enforced on API reads and writes. Administrators manage masked saved/active credentials in API Keys. |
 | Coding loop | Stage a repository task and inspect files or a plan; confirm an isolated run that proposes bounded edits, runs fixed check profiles in a hard sandbox, and feeds check results back into later attempts. |
 | Review and publication | Inspect retained run status and diffs, approve the reviewed tree for a local commit, then separately push and publish a draft PR with a reviewed repository template. |
+| Spend | Read-only retained provider/model/day usage, available USD, completeness warnings and pagination. See [build requirements and interpretation](SPEND_AND_NOTIFICATIONS.md). |
+| Completion webhooks | Optional metadata-only notifications for terminal detached jobs, disabled until configured. Delivery does not grant job or repository authority; see [setup](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook). |
 | Recovery | Rediscover retained jobs and runs after reopening. Worker leases distinguish active work from interrupted runs; reopening does not automatically resume work or replay a publication. |
 
 ## 7. Chat, soul, skills and goals
 
-Fresh chat starts without an assigned repository, automatic coding skills or
-model tool access. The assistant can explain supplied context but cannot inspect
+Fresh chat starts without an assigned repository or automatic coding skills.
+Local chat can use the bounded web tools when enabled; `/loop` stays tool-free. The assistant can explain supplied context but cannot inspect
 local files or certify live wiring merely because you ask in chat. Use actual
 commands/results for evidence and the separate coding workflow for execution.
 

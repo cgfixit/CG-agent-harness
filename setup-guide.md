@@ -31,6 +31,7 @@ records certify only the source and artifact they name.
 | Chat, soul, skills, slash commands | [docs/CONSOLE.md](docs/CONSOLE.md) |
 | Operator memory notes | [docs/MEMORY_SETUP.md](docs/MEMORY_SETUP.md) |
 | Google search, URL fetch, page research | [docs/WEB.md](docs/WEB.md) |
+| Spend dashboard and completion webhooks | [docs/SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md) |
 | Coding pipeline | [docs/CODING_PIPELINE.md](docs/CODING_PIPELINE.md) |
 | Accounts and roles | [docs/ACCOUNTS.md](docs/ACCOUNTS.md) |
 | Troubleshooting | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
@@ -42,6 +43,7 @@ records certify only the source and artifact they name.
 - **Missing soul / output style:** [soul](docs/CONSOLE.md#72-default-soul-effective-prompt-and-persona-editing) and [style](docs/CONSOLE.md#74-customize-response-style).
 - **Runtime skills:** [skills](docs/CONSOLE.md#73-runtime-skills-and-codex-development-skills). Codex development skills are separate.
 - **Memory, web, connectors:** [MEMORY_SETUP.md](docs/MEMORY_SETUP.md), [WEB.md](docs/WEB.md), [connector catalog](docs/CONSOLE.md#77-tools-and-connectors-available-versus-catalog-only). Slash tables: [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference).
+- **Spend and job completion:** [usage, completeness and optional webhook setup](docs/SPEND_AND_NOTIFICATIONS.md). Check the guide’s build requirements; a green draft PR is not an installed release.
 - **Coding goal:** [CODING_PIPELINE.md](docs/CODING_PIPELINE.md), after local chat works.
 - **Start fresh or delete saved chats:** [sessions](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation). Memory is separate in [MEMORY_SETUP.md](docs/MEMORY_SETUP.md).
 - **Upgrade, preserve data, release cadence:** [persistence](docs/INSTALL.md#8-persistence-optional-keys-and-recovery).
@@ -86,7 +88,7 @@ independent, and repository writes still require their existing approvals.
 - [README.md](README.md) — product one-liner and quickstart.
 - [INVARIANTS.md](INVARIANTS.md) — process isolation, guard chain, write gates.
 - [AGENTS.md](AGENTS.md) — contributor rules and the quality bar.
-- [USER_MANUAL.md](docs/USER_MANUAL.md) — pinned notes vs structured memory.
+- [USER_MANUAL.md](docs/USER_MANUAL.md) — operator navigation, spend/notifications, pinned notes vs structured memory.
 - [STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) — contract and HTTP surfaces.
 - [CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) — persona proposals, skill bounds, goal evidence.
 - [CHAT_STREAMING.md](docs/CHAT_STREAMING.md) — SSE events and `/loop stop`.

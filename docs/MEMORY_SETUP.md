@@ -150,7 +150,7 @@ structured_memory:
   auto_retrieval: false
 ```
 
-Both new source booleans ship **false**, accept only literal config booleans, and
+Both source booleans ship **true for fresh homes**, preserve existing explicit off choices, accept only literal config booleans, and
 require store + capture. Enable either source alone in config or with
 `/memory auto-suggest-chat|auto-suggest-coding on`. Invalid modes, including
 non-string YAML values, disable suggestions. Existing slash overrides take
@@ -253,7 +253,7 @@ rollout order, and Phase 7 bars:
 shared-home preferences; use structured facts only after explicit review.
 Clearing session history keeps derived episodes unless you confirm
 `delete_derived_episodes`. Before flipping any later gate, re-run the Phase 7
-fixture corpus on Latest v0.1.12 / tip `main` (see
+fixture corpus on the source/build you intend to use (the earlier v0.1.12 record is in
 [historical issue #87 close-out](memory/ISSUE_87_CLOSEOUT.md)):
 
 ```text

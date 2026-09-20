@@ -36,6 +36,21 @@ cleanup/reaping can add time beyond the requested deadline. Use isolated
 fixtures and inspect surviving work after interruption; the console correctly
 keeps its descendant-survival warning.
 
+## MCP stdio diagnostics
+
+MCP stdio uses its own Tokio child owner; the 4 MiB synchronous-runner capture
+rule above does not describe it. With [PR #178](https://github.com/cgfixit/CG-agent-harness/pull/178)
+in the installed build, stderr is continuously drained and excess bytes discarded.
+At most 2 KiB is retained in memory; EOF diagnostics expose at most 512 Unicode
+characters. No MCP stderr log file is created. Earlier builds bounded diagnostic
+reads but still wrote the full stderr stream to a file.
+
+The drain lets a noisy child finish a valid protocol response without filling
+its stderr pipe. Response headers, including unterminated lines, remain limited
+to 4 KiB. The configured `mcp.timeout_sec` and existing child/process-group cleanup
+still apply. A diagnostic prefix does not prove complete capture or descendant
+containment. See [troubleshooting](TROUBLESHOOTING.md).
+
 ## Evidence
 
 `tests/process_lifecycle.rs` exercises inherited pipes in both runners, blocked

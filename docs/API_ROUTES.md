@@ -12,6 +12,8 @@ loopback/no forwarding headers, account/RBAC, then mutation CSRF
 (`X-CyClaw-CSRF`). Public routes still receive the early guards. The browser
 never supplies a command; agent routes carry check-profile names and run ids.
 
+Spend interpretation and completion-webhook configuration: [operator guide](SPEND_AND_NOTIFICATIONS.md). Webhooks are outbound notifications, not a new inbound route.
+
 ## Console and status
 
 | Method | Path | Purpose |

@@ -47,6 +47,16 @@ change global Gatekeeper settings or strip quarantine as a blanket workaround.
 The bundle targets macOS 12 or newer; the native test machine runs 26.6.2.
 Older supported deployment versions have not been tested.
 
+## Spend and job notifications
+
+The shared console exposes the [Spend dashboard and optional completion webhooks](SPEND_AND_NOTIFICATIONS.md)
+when their feature changes are included in the packaged source commit. A green
+feature PR does not update an already installed app. Spend is a read-only view;
+webhook settings and saved bearer changes require a full Cmd-Q/relaunch, not just
+closing the window. Pending webhook deliveries are not persisted across quit.
+Browser fixture checks and hosted bundle checks are distinct from interactive
+WKWebView acceptance for a particular installed artifact.
+
 ## Home and credentials
 
 Home precedence stays `CGAGENTHARNESS_HOME`, then `USERPROFILE`/`HOME` plus

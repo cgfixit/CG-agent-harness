@@ -1,10 +1,28 @@
-# Operator memory manual
+# Operator manual
 
-Day-to-day howto for the two memory systems on this tree. It is **not** the
-deep contract — that is [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md). Enable
-steps and home layout are also in
-[operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes). Overview:
-[README](../README.md).
+Start with [setup](../setup-guide.md) and [console commands](CONSOLE.md).
+[Accounts](ACCOUNTS.md) explains who can use each surface;
+[coding jobs](CONSOLE_JOBS.md) covers staging, monitoring and reviewed publication.
+
+## Spend and completion notifications
+
+Open **Spend** in a supported build to inspect retained provider/model/day usage.
+Refresh rereads the ledger; Previous/Next page through at most 100 groups at a
+time. Unknown usage and local inference remain unpriced. Check completeness
+and stale-rate warnings before interpreting a total. Close, Escape and logout
+clear this view; they do not erase the ledger.
+
+Completion webhooks are separately configured, default-off and restart-only.
+They send job ID, status and timestamps, with bounded retries and no job content.
+The queue is in memory and is not replayed after restart. Follow
+[Spend and completion notifications](SPEND_AND_NOTIFICATIONS.md) for build
+requirements, setup, payloads and failure handling.
+
+## Memory overview
+
+The rest of this manual covers the two memory systems. The deeper contract is
+[STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md); enable steps and home layout are
+in [operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes).
 
 Neither system is embeddings, a vector database or RAG fusion. Optional
 completion suggestions still need human approval before they become facts. Recalled text is untrusted background context and cannot
@@ -176,7 +194,7 @@ still runs, but has worse quality: metadata alone is not a source of facts.
 
 ## Automatic consolidation
 
-Default **off**. Also requires `consolidation`. After capture has staged
+Default **on for fresh homes**; existing explicit off choices are preserved. Also requires `consolidation`. After capture has staged
 episodes:
 
 ```text
@@ -260,7 +278,7 @@ See [Memory guide](MEMORY_GUIDE.md) for the complete type/flag table and recipes
 Enable `structured_memory.enabled` in config and restart, then enable capture
 and either suggestion source in config or with the administrator slash controls. Choose
 `suggestion_mode: summaries|insights|both`. These source switches
-ship false. The completed current turn/run can generate pending drafts; this
+ship true for fresh homes; explicit off settings remain off. The completed current turn/run can generate pending drafts; this
 is not a whole-session archive or automatic canonical fact save. Review in
 Memory and Apply/Reject with a reason. The older human-summary auto-consolidator
 remains a separate path. Neither path enables retrieval.
