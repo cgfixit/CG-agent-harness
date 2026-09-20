@@ -1542,9 +1542,11 @@ async function runSlash(line) {
         styleWriteChain = write;
         let r;
         try { r = await write; } catch (e) {
-          /* The dropdown already shows the rejected choice; put the last
-             persisted selection back unless a newer request owns the bar. */
-          if (!stale()) paintStyle();
+          /* The dropdown already shows the rejected choice. Re-read the
+             persisted selection rather than repainting the cached value: an
+             earlier queued write may have succeeded and been superseded in
+             the status bar by this one, so the cache can be behind. */
+          await refreshStyle(); paintStyle();
           throw e;
         }
         if (stale()) { sys('style ' + (r.style || 'off') + ' was set, but a newer selection or session change supersedes it in the status bar'); break; }
@@ -3004,6 +3006,8 @@ async function openSoulEditor(proposalOnly) {
 }
 $('soulClose').addEventListener('click', () => { $('soulEditor').close(); $('soulContent').value = ''; $('soulFeedback').textContent = ''; });
 $('soulPreview').addEventListener('click', async () => {
+  /* Same ordering as /prompt: a pending style write lands first. */
+  await styleWriteChain.catch(() => {});
   try { const r = await api('/api/prompt/preview', 'POST', {session_id:currentSession || null,soul_content:$('soulContent').value}); $('soulFeedback').textContent = r.scope + '\n' + r.prompt; }
   catch(e) { $('soulFeedback').textContent = e.message; }
 });

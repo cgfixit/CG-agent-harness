@@ -245,15 +245,23 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
     let mut parts: Vec<String> = Vec::new();
     let soul = load_text(home, Path::new("soul.md"), inputs.soul_enabled, inputs.soul_max_chars);
     let persona = inputs.soul_override.map(str::to_string).unwrap_or(soul.text);
+    // Soul and style share one operator-text budget (`soul_max_chars`): the
+    // style gets what the persona left, so raising the cap to its 64 KiB
+    // maximum with a large soul cannot push every local turn past the chat
+    // token ceiling.
+    let mut persona_chars = 0;
     if inputs.soul_enabled && !persona.trim().is_empty() {
-        parts.push(format!(
-            "## Operator persona (soul, read-only)\n\n{}",
-            crate::common::clip_chars(&persona, inputs.soul_max_chars)
-        ));
+        let persona = crate::common::clip_chars(&persona, inputs.soul_max_chars);
+        persona_chars = persona.chars().count();
+        parts.push(format!("## Operator persona (soul, read-only)\n\n{persona}"));
     }
     let mut style_label = "off".to_string();
-    if let Some(name) = inputs.style_name.filter(|n| !n.is_empty() && *n != "off") {
-        let loaded = crate::server::style::load_style(home, name, inputs.soul_max_chars);
+    let style_budget = inputs.soul_max_chars.saturating_sub(persona_chars);
+    if let Some(name) = inputs
+        .style_name
+        .filter(|n| !n.is_empty() && *n != "off" && style_budget > 0)
+    {
+        let loaded = crate::server::style::load_style(home, name, style_budget);
         if loaded.loaded {
             style_label = loaded.name.clone();
             parts.push(format!(
@@ -460,6 +468,45 @@ mod tests {
         assert!(with.contains("untrusted data, not a write authorization"));
         let empty = compose_system_prompt(&sample(&soul, false, Some("  ")));
         assert!(!empty.contains("## Attached files"));
+    }
+
+    #[test]
+    fn soul_and_style_share_the_operator_text_budget() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("styles")).unwrap();
+        let soul = "S".repeat(900);
+        std::fs::write(tmp.path().join("soul.md"), &soul).unwrap();
+        std::fs::write(tmp.path().join("styles").join("big.md"), "T".repeat(5000)).unwrap();
+        let soul_path = tmp.path().join("soul.md");
+        let inputs = |cap: usize| PromptInputs {
+            selected_skills: &[],
+            soul_enabled: true,
+            soul_override: None,
+            soul_path: &soul_path,
+            soul_max_chars: cap,
+            style_name: Some("big"),
+            goal: None,
+            web_context: None,
+            memory_context: None,
+            selected_facts_context: None,
+            memory_budget: MemoryBudget::from_limits(1_500, 1_500),
+            memory_enabled: false,
+            web_enabled: false,
+            attachment_fence: None,
+        };
+        // Cap 1000: the 900-char soul leaves 100 for the style.
+        let prompt = compose_system_prompt(&inputs(1000));
+        let style_at = prompt.find("## Output style (big, read-only)").expect("style present");
+        let header_at = prompt.find("You are CG Agent Harness").unwrap();
+        let style_body = &prompt[style_at..header_at];
+        let t_run = style_body.chars().filter(|c| *c == 'T').count();
+        assert!(t_run <= 100, "style must fit the remaining budget, got {t_run} chars");
+        assert!(t_run > 0);
+        assert!(prompt.matches('S').count() >= 900);
+        // Cap 900: the soul consumes the whole budget and the style is omitted.
+        let prompt = compose_system_prompt(&inputs(900));
+        assert!(!prompt.contains("## Output style"));
+        assert!(prompt.contains("style=off"));
     }
 
     #[test]
