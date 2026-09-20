@@ -321,7 +321,7 @@ fn skip_engine_phrases(lower: &[String], mut i: usize) -> usize {
 
 /// Length of a *linked* engine phrase at `k` (`on Google`, `the web`,
 /// `from the internet`), or 0. Unlike [`skip_engine_phrases`] a bare engine
-/// word does not count, so it can run over the subject.
+/// word does not count.
 fn linked_engine_phrase_len(lower: &[String], k: usize) -> usize {
     let at = |i: usize| lower.get(i).map(String::as_str);
     let linked = at(k).is_some_and(|w| ENGINE_LINKS.contains(&w));
@@ -375,18 +375,21 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         }
         rest.drain(start..end);
     }
-    // A linked engine phrase after the subject (`"Rust" with Google`,
-    // `"Rust" on the web`, `'x' first 2 links from serpapi`) is scaffolding
-    // wherever it sits. A bare engine word inside the subject is left alone:
-    // `"privacy policy" Google` may well be about Google.
-    let mut k = 0;
-    while k < rest.len() {
+    // A linked engine phrase that closes the request (`"Rust" with Google`,
+    // `"Rust" on the web`, `'x' first 2 links from serpapi`) is scaffolding.
+    // Only the trailing position is unambiguous: inside the subject the same
+    // words are content (`the web accessibility guidelines`, `data from
+    // Google Trends`), and a bare engine word is always content
+    // (`"privacy policy" Google`).
+    loop {
         let lower_rest: Vec<String> = rest.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
-        let len = linked_engine_phrase_len(&lower_rest, k);
-        if len > 0 {
-            rest.drain(k..k + len);
-        } else {
-            k += 1;
+        let trailing = (0..lower_rest.len()).find(|&k| {
+            let len = linked_engine_phrase_len(&lower_rest, k);
+            len > 0 && k + len == lower_rest.len()
+        });
+        match trailing {
+            Some(k) => rest.truncate(k),
+            None => break,
         }
     }
     // `'a' and 'b'`: a joiner between two quoted spans is scaffolding too.
@@ -739,6 +742,28 @@ mod tests {
         // A bare engine word inside the subject is kept.
         let p = parse("search \"privacy policy\" Google").expect("intent");
         assert_eq!(p.terms, vec!["privacy policy".to_string(), "Google".into()]);
+        // Engine-like words inside the subject are content, not scaffolding.
+        let p = parse("search first 2 results for the web accessibility guidelines").expect("intent");
+        assert_eq!(
+            p.terms,
+            vec![
+                "the".to_string(),
+                "web".into(),
+                "accessibility".into(),
+                "guidelines".into()
+            ]
+        );
+        let p = parse("search \"trend\" data from Google Trends").expect("intent");
+        assert_eq!(
+            p.terms,
+            vec![
+                "trend".to_string(),
+                "data".into(),
+                "from".into(),
+                "Google".into(),
+                "Trends".into()
+            ]
+        );
     }
 
     #[test]

@@ -785,10 +785,15 @@ async function api(path, method, body, timeoutMs, onDelta, signal) {
      sized above the server-side subprocess budget, so the server's typed
      AGENTIC_TIMEOUT/OPS envelope wins the race instead of a generic abort. */
   let resp;
+  let release = function () {};
   try {
-    resp = chatSignal
-      ? await fetch(path, opts)
-      : await fetchWithTimeout(path, opts, timeoutMs || 15000);
+    if (chatSignal) {
+      resp = await fetch(path, opts);
+    } else {
+      const held = await fetchHold(path, opts, timeoutMs || 15000);
+      resp = held.resp;
+      release = held.release;
+    }
   } catch (e) {
     const message = e && typeof e.message === 'string' ? e.message : '';
     const isFetchFailure = (e && e.name === 'AbortError') || e instanceof TypeError ||
@@ -807,14 +812,21 @@ async function api(path, method, body, timeoutMs, onDelta, signal) {
     throw err;
   }
   if (resp.ok && onDelta && (resp.headers.get('Content-Type') || '').startsWith('text/event-stream')) {
+    release();
     return readChatStream(resp, onDelta);
   }
   let data = null;
   try {
+    /* The timeout and the caller's abort stay armed while the body is read:
+       a gateway that sends headers and then stalls the JSON must still be
+       cancellable by /loop stop, session navigation or the timeout. */
     data = await resp.json();
   } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
     if (resp.ok) throw new Error('HTTP ' + resp.status + ' non-JSON from ' + path);
     /* Preserve the HTTP status below for non-JSON error bodies. */
+  } finally {
+    release();
   }
   if (!resp.ok) {
     const d = data && data.detail !== undefined ? data.detail : data;
@@ -885,22 +897,37 @@ async function readChatStream(resp, onDelta) {
 }
 
 /* ── status / statusbar ── */
-async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+/* fetch() with a timeout and an optional caller-owned abort signal composed
+   in (either one aborts the request). The returned `release` detaches both;
+   it must be called once the caller is done with the response BODY, since
+   fetch() resolves on headers and a stalled body would otherwise outlive
+   the timeout and the caller's abort (see api()). */
+async function fetchHold(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-  /* An external signal in options (a caller-owned AbortController) is
-     composed with the timeout: either one aborts the request. */
   const outer = options.signal;
   const relay = () => controller.abort();
   if (outer) {
     if (outer.aborted) controller.abort(); else outer.addEventListener('abort', relay, { once: true });
   }
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
+  const release = () => {
     window.clearTimeout(timer);
     if (outer) outer.removeEventListener('abort', relay);
+  };
+  try {
+    const resp = await fetch(url, { ...options, signal: controller.signal });
+    return { resp: resp, release: release };
+  } catch (e) {
+    release();
+    throw e;
   }
+}
+
+/* Header-only variant for callers that inspect the status and drop the body. */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const held = await fetchHold(url, options, timeoutMs);
+  held.release();
+  return held.resp;
 }
 
 const STATUS_BASE_INTERVAL = 15000;
@@ -2411,8 +2438,11 @@ function looksLikeNlSearch(text) {
      whole body, not only the suffix after the last term, so `"Rust" and
      compare it with "Go"` is caught by the `and` between the terms.
      Anything else stays on the chat path, where the model still has the
-     web tools when they are enabled. This errs toward chat on purpose: a
-     listing that drops half the ask is worse than a model turn. */
+     web tools when they are enabled. When quoted terms are present, every
+     remaining word must be scaffolding or an operator (see below), so a
+     bare follow-up (`"Rust" summarize it`) stays in chat too. This errs
+     toward chat on purpose: a listing that drops half the ask is worse
+     than a model turn. */
   var head = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.exec(text);
   if (!head) return false;
   var body = text.slice(head[0].length);
@@ -2423,15 +2453,28 @@ function looksLikeNlSearch(text) {
      still a count clause: it routes so the server's own range check refuses
      it (WEB_BAD_QUERY) rather than starting a model turn. */
   var countRe = /\bfirst\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?)\b/ig;
-  var signals = 0;
+  var quoted = 0, counts = 0;
   var Q = '\u0000';
   var masked = body
-    .replace(quoteRe, function (m) { signals++; return (/^[\s(,:\[]/.test(m) ? m.charAt(0) : '') + Q; })
-    .replace(countRe, function () { signals++; return ' '; });
-  if (signals === 0) return false;
+    .replace(quoteRe, function (m) { quoted++; return (/^[\s(,:\[]/.test(m) ? m.charAt(0) : '') + Q; })
+    .replace(countRe, function () { counts++; return ' '; });
+  if (quoted + counts === 0) return false;
   var joinerRe = /\u0000\s+(?:and|or|plus)\s+\u0000/i;
   while (joinerRe.test(masked)) masked = masked.replace(joinerRe, Q + ' ' + Q);
-  return !/(?:\b(?:and|or|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000]|\n\s*[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked);
+  if (/(?:\b(?:and|or|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000]|\n\s*[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked)) return false;
+  /* With quoted terms the subject is fully known, so whatever else remains
+     must be search scaffolding (engine phrases, introducers, articles),
+     a Google operator (`site:x`, `-word`, `OR`, `*`) or a year. A bare
+     follow-up such as `"Rust" summarize it` fails this and stays in chat.
+     Without quotes the remainder IS the subject, so only the boundary check
+     above applies. */
+  if (quoted === 0) return true;
+  var SCAFFOLD = /^(?:google|serpapi|the|a|an|web|internet|on|with|using|via|across|from|for|about|of|in)$/i;
+  var OPERATOR = /^(?:[-+~@]\S|\S*:\S|OR$|\*|\d{1,4}$)/;
+  return masked.split(/\s+/)
+    .map(function (t) { return t.replace(/^[(\[]+|[)\],.;:!?]+$/g, ''); })
+    .filter(function (t) { return t && t !== Q; })
+    .every(function (t) { return SCAFFOLD.test(t) || OPERATOR.test(t); });
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
