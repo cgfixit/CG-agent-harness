@@ -32,16 +32,19 @@ impl WebIntent {
 ///
 /// Two conditions must hold, otherwise the caller's query is passed through
 /// untouched: the line must be command-shaped (it starts with `search` or
-/// `google`, after optional politeness words, or is a `/web` remainder), and
-/// it must carry an explicit signal, either balanced quoted terms or a
-/// `first N` count. Ordinary Google syntax such as `site:x "search parser"`
-/// or `vector search benchmarks` therefore never reaches the rewrite.
+/// `google` after optional politeness words, is a `/web` remainder, or opens
+/// with `first N links|results|...` as the console's `/web search` remainder
+/// does), and it must carry an explicit signal, either balanced quoted terms
+/// or a `first N` count outside those quotes. Ordinary Google syntax such as
+/// `site:x "search parser"` or `vector search benchmarks` therefore never
+/// reaches the rewrite.
 pub fn parse(text: &str) -> Option<WebIntent> {
     parse_with_count(text, DEFAULT_COUNT)
 }
 
 /// Like [`parse`], but a request without an explicit `first N` keeps
-/// `fallback_count` (the caller's own count) instead of the default.
+/// `fallback_count` exactly as the caller supplied it, so the downstream
+/// range validation still sees an out-of-range caller value.
 pub fn parse_with_count(text: &str, fallback_count: usize) -> Option<WebIntent> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -51,8 +54,8 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> Option<WebIntent> 
     if !is_command_shaped(&lower) {
         return None;
     }
-    let quoted = extract_quoted(trimmed);
-    let explicit_count = extract_count(&lower);
+    let (quoted, residual) = split_quoted(trimmed);
+    let explicit_count = extract_count(&residual.to_ascii_lowercase());
     if quoted.is_empty() && explicit_count.is_none() {
         return None;
     }
@@ -65,7 +68,7 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> Option<WebIntent> 
         SearchEngine::Default
     };
 
-    let count = explicit_count.unwrap_or(fallback_count).clamp(1, MAX_COUNT);
+    let count = explicit_count.unwrap_or(fallback_count);
     let mut terms = quoted;
     if terms.is_empty() {
         terms = tokenize_unquoted(trimmed);
@@ -85,15 +88,28 @@ const LEAD_IN: &[&str] = &[
 /// Command verbs that open a natural-language search request.
 const VERBS: &[&str] = &["search", "google"];
 
+/// Nouns that make a leading `first N` read as a result-count clause
+/// (`first 2 links for rust`, the console's `/web search` remainder) rather
+/// than a query about the first two of something.
+const COUNT_NOUNS: &[&str] = &["links", "link", "results", "result", "hits", "hit", "pages", "page"];
+
 fn is_command_shaped(lower: &str) -> bool {
     if lower.starts_with("/web") {
         return true;
     }
-    lower
+    let words: Vec<&str> = lower
         .split_whitespace()
-        .map(|w| w.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
-        .find(|w| !LEAD_IN.contains(w))
-        .is_some_and(|w| VERBS.contains(&w))
+        .map(word_of)
+        .filter(|w| !w.is_empty())
+        .collect();
+    let mut i = 0;
+    while i < words.len() && LEAD_IN.contains(&words[i]) {
+        i += 1;
+    }
+    if words.get(i).is_some_and(|w| VERBS.contains(w)) {
+        return true;
+    }
+    matches!(words.get(i..i + 3), Some([a, b, c]) if is_count_pair(a, b) && COUNT_NOUNS.contains(c))
 }
 
 fn word_of(tok: &str) -> &str {
@@ -107,7 +123,8 @@ fn is_count_pair(a: &str, b: &str) -> bool {
 
 /// `first <ws> N` when present and N >= 1; None otherwise. Any amount of
 /// whitespace between the two words is accepted, matching the console's
-/// `first\s+\d+` predicate.
+/// `first\s+\d+` predicate. Callers pass the text with quoted spans removed
+/// so a phrase such as `"first 2 steps of Rust"` is never read as a count.
 fn extract_count(lower: &str) -> Option<usize> {
     let toks: Vec<&str> = lower.split_whitespace().collect();
     toks.windows(2)
@@ -127,11 +144,13 @@ fn closes_quote(chars: &[char], j: usize) -> bool {
         || matches!(chars[j + 1], c if c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':' | ')' | ']' | '!' | '?'))
 }
 
-/// Balanced quoted terms only. A quote opens at the start of a word and
-/// closes at the end of one, so an apostrophe inside `women's` or `what's`
-/// is an ordinary character and an unclosed quote is ignored.
-fn extract_quoted(text: &str) -> Vec<String> {
+/// Balanced quoted terms plus the text that remains once those spans are
+/// removed. A quote opens at the start of a word and closes at the end of
+/// one, so an apostrophe inside `women's` or `what's` is an ordinary
+/// character and an unclosed quote is ignored.
+fn split_quoted(text: &str) -> (Vec<String>, String) {
     let mut terms = Vec::new();
+    let mut residual = String::new();
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -143,21 +162,25 @@ fn extract_quoted(text: &str) -> Vec<String> {
                 if !t.is_empty() {
                     terms.push(t.to_string());
                 }
+                residual.push(' ');
                 i = j + 1;
                 continue;
             }
         }
+        residual.push(c);
         i += 1;
     }
-    terms
+    (terms, residual)
 }
 
 /// Unquoted request: drop the command scaffolding and the `first N` pair,
-/// keep every other token (years and other numbers included).
+/// keep every other token (years and other numbers included). Tokens are
+/// compared without surrounding punctuation so `Google:` or `search:` are
+/// scaffolding too, and emitted without it.
 fn tokenize_unquoted(text: &str) -> Vec<String> {
     const DROP: &[&str] = &[
         "search", "google", "serpapi", "for", "the", "links", "link", "and", "please", "can", "could", "would", "you",
-        "me", "kindly", "hey", "ok", "okay", "now", "a", "an", "of", "to", "using", "/web", "web",
+        "me", "kindly", "hey", "ok", "okay", "now", "a", "an", "of", "to", "using", "web",
     ];
     let raw: Vec<&str> = text
         .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',')
@@ -169,13 +192,31 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     while i < raw.len() {
         if i + 1 < raw.len() && is_count_pair(raw[i], raw[i + 1]) {
             i += 2;
+            // `first 2 results for ...`: the count noun belongs to the clause.
+            if raw
+                .get(i)
+                .is_some_and(|t| COUNT_NOUNS.contains(&word_of(t).to_ascii_lowercase().as_str()))
+            {
+                i += 1;
+            }
             continue;
         }
-        if !DROP.contains(&raw[i].to_ascii_lowercase().as_str()) {
-            out.push(raw[i].to_string());
+        let tok = raw[i];
+        let word = if tok.eq_ignore_ascii_case("/web") {
+            ""
+        } else {
+            word_of(tok)
+        };
+        if !word.is_empty() && !DROP.contains(&word.to_ascii_lowercase().as_str()) {
+            // Keep inner punctuation (`what's`, `c++`), drop the outer.
+            out.push(
+                tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '+' && c != '#')
+                    .to_string(),
+            );
         }
         i += 1;
     }
+    out.retain(|t| !t.is_empty());
     out
 }
 
@@ -260,6 +301,42 @@ mod tests {
         let p = parse("please search google for 'cgfixit'").expect("intent");
         assert_eq!(p.terms, vec!["cgfixit".to_string()]);
         assert!(parse("tell me about 'cgfixit' search").is_none());
+    }
+
+    #[test]
+    fn console_web_search_remainder_is_command_shaped() {
+        // The console posts only the remainder of `/web search ...`.
+        let p = parse_with_count("first 2 links for rust", 5).expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["rust".to_string()]);
+        let p = parse_with_count("first 3 results for election results", 5).expect("intent");
+        assert_eq!(p.count, 3);
+        assert_eq!(p.terms, vec!["election".to_string(), "results".into()]);
+        // A raw query that merely starts with "first N" is not a command.
+        assert!(parse("first 2 amendments").is_none());
+    }
+
+    #[test]
+    fn count_inside_quotes_does_not_override_the_caller() {
+        let p = parse_with_count("search Google for \"first 2 steps of Rust\"", 7).expect("intent");
+        assert_eq!(p.count, 7);
+        assert_eq!(p.terms, vec!["first 2 steps of Rust".to_string()]);
+    }
+
+    #[test]
+    fn punctuated_scaffolding_is_dropped() {
+        let p = parse("search Google: for the first 2 links for Rust").expect("intent");
+        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        let p = parse("search: first 2 links for Rust").expect("intent");
+        assert_eq!(p.terms, vec!["Rust".to_string()]);
+    }
+
+    #[test]
+    fn fallback_count_is_passed_through_unclamped() {
+        // Out-of-range caller counts must still reach the downstream range
+        // check instead of being silently corrected here.
+        assert_eq!(parse_with_count("search google for 'rust'", 0).unwrap().count, 0);
+        assert_eq!(parse_with_count("search google for 'rust'", 99).unwrap().count, 99);
     }
 
     #[test]

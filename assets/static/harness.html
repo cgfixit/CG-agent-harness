@@ -2341,9 +2341,12 @@ async function onSend() {
 
 function looksLikeNlSearch(text) {
   /* Mirrors src/server/web_intent.rs: command-shaped (optional politeness
-     words, then search/google) plus a quoted term or a `first N` count. */
+     words, then search/google) plus a balanced quoted term or a `first N`
+     count. A quote opens at a word start and closes at a word end, so the
+     apostrophe inside 'women's health' does not end the term. */
   var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\s,]+)*(?:search|google)\b/i.test(text);
-  return commandShaped && (/(^|[\s(,:\[])["'][^"']+["']($|[\s,.;:)\]!?])/.test(text) || /\bfirst\s+\d+/i.test(text));
+  var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
+  return commandShaped && (quoted || /\bfirst\s+\d+/i.test(text));
 }
 
 async function sendMaybeNlSearch(text) {
