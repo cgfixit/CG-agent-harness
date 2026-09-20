@@ -2466,25 +2466,38 @@ function looksLikeNlSearch(text) {
   if (quoted + counts === 0) return false;
   var joinerRe = /\u0000\s+(?:and|or|plus)\s+\u0000/i;
   while (joinerRe.test(masked)) masked = masked.replace(joinerRe, Q + ' ' + Q);
-  if (/(?:\b(?:and|or|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+(?![-+~@]\S|\S*:\S|OR\b|\*)[^\s\u0000]|\n\s*(?![-+~@]\S|\S*:\S|OR\b|\*)[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked)) return false;
-  /* With quoted terms the subject is fully known, so whatever else remains
-     must be search scaffolding (engine phrases, introducers, articles),
-     a Google operator (`site:x`, `-word`, `OR`, `*`) or a year. A bare
-     follow-up such as `"Rust" summarize it` fails this and stays in chat.
-     Without quotes the remainder IS the subject and cannot be whitelisted,
-     so it must at least look like a listing subject: a short run of words
-     (at most six beyond the scaffolding) with no object pronoun in it.
-     `first 2 results for Rust summarize them` stays in chat on `them`. */
-  var SCAFFOLD = /^(?:google|serpapi|the|a|an|web|internet|on|with|using|via|across|from|for|about|of|in)$/i;
-  var OPERATOR = /^(?:[-+~@]\S|\S*:\S|OR$|\*|\d{1,4}$)/;
-  var PRONOUN = /^(?:it|its|them|their|this|that|these|those|me|my|us|our|him|her|you|your)$/i;
   /* Follow-up action verbs never open a listing subject (`Rust summarize
-     briefly`, `Rust provide a summary`). */
+     briefly`, `Rust provide a summary`), and never count as an operator
+     when dressed as one (`summarize:briefly`, `-summarize`). */
   var ACTION = /^(?:summari[sz]e|synthesi[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify|compile|aggregate|digest|interpret|distill|collate|consolidate|critique|report)$/i;
+  /* Google operators: a prefixed word (`-cats`, `+rust`, `~term`, `@handle`),
+     a known colon operator (`site:x`, `intitle:x`, …), `OR`, `*`, a year. */
+  var OPERATOR = /^(?:[-+~@]\S|(?:site|intitle|inurl|intext|allintitle|allinurl|allintext|filetype|ext|related|cache|define|before|after|source|loc|location|lang|inanchor|allinanchor|daterange|around):\S|OR$|\*$|\d{1,4}$)/i;
+  var isOperator = function (t) {
+    return OPERATOR.test(t) && !ACTION.test(t.replace(/^[-+~@]/, '').replace(/:.*$/, ''));
+  };
+  /* Operators are masked like quoted terms, so punctuation before one
+     (`"Rust", site:github.com`) is not a clause boundary and they drop out
+     of the subject check below. */
+  var OPQ = '\u0001';
+  masked = masked.split(/(\s+)/).map(function (t) {
+    return isOperator(t.replace(/^[(\[]+|[)\],.;:!?]+$/g, '')) ? OPQ : t;
+  }).join('');
+  if (/(?:\b(?:and|or|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000\u0001]|\n\s*[^\s\u0000\u0001]|(?:^|\s)[-–—]\s+[^\s\u0000\u0001])/i.test(masked)) return false;
+  /* With quoted terms the subject is fully known, so whatever else remains
+     must be search scaffolding (engine phrases, introducers, articles) or
+     an operator. A bare follow-up such as `"Rust" summarize it` fails this
+     and stays in chat. Without quotes the remainder IS the subject and
+     cannot be whitelisted, so it must at least look like a listing subject:
+     a short run of words (at most six beyond the scaffolding) with no
+     object pronoun or action verb in it. `first 2 results for Rust
+     summarize them` stays in chat on `them`. */
+  var SCAFFOLD = /^(?:google|serpapi|the|a|an|web|internet|on|with|using|via|across|from|for|about|of|in)$/i;
+  var PRONOUN = /^(?:it|its|them|their|this|that|these|those|me|my|us|our|him|her|you|your)$/i;
   var words = masked.split(/\s+/)
     .map(function (t) { return t.replace(/^[(\[]+|[)\],.;:!?]+$/g, ''); })
-    .filter(function (t) { return t && t !== Q; });
-  var subject = words.filter(function (t) { return !SCAFFOLD.test(t) && !OPERATOR.test(t); });
+    .filter(function (t) { return t && t !== Q && t !== OPQ; });
+  var subject = words.filter(function (t) { return !SCAFFOLD.test(t); });
   if (quoted > 0) return subject.length === 0;
   return subject.length <= 6 && !subject.some(function (t) { return PRONOUN.test(t) || ACTION.test(t); });
 }

@@ -371,6 +371,17 @@ fn skip_engine_phrases(lower: &[String], mut i: usize) -> usize {
     }
 }
 
+/// The lowercase word used for scaffolding matches. An operator-prefixed
+/// token keeps its prefix (`-google` is Google's exclusion of the word, not
+/// the engine), so it never matches an engine, link or introducer table.
+fn scaffold_word(tok: &str) -> String {
+    if tok.starts_with(['-', '+', '~', '@']) {
+        tok.to_ascii_lowercase()
+    } else {
+        word_of(tok).to_ascii_lowercase()
+    }
+}
+
 /// `word_of` of a quote placeholder (`\0q3\0` → `q3`).
 fn is_placeholder_word(w: &str) -> bool {
     w.strip_prefix('q')
@@ -402,7 +413,7 @@ fn linked_engine_phrase_len(lower: &[String], k: usize) -> usize {
 /// non-ASCII terms such as `école` and `東京` are kept intact.
 fn tokenize_unquoted(text: &str) -> Vec<String> {
     let raw: Vec<&str> = text.split_whitespace().collect();
-    let lower: Vec<String> = raw.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
+    let lower: Vec<String> = raw.iter().map(|t| scaffold_word(t)).collect();
     let mut i = 0;
     if raw.first().is_some_and(|t| t.eq_ignore_ascii_case("/web")) {
         i += 1;
@@ -423,20 +434,17 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         if start > 0 && word_of(rest[start - 1]).eq_ignore_ascii_case("the") {
             start -= 1;
         }
-        // `Rust for the first 2 results`: the connector that joins the
-        // subject to a trailing count clause is scaffolding too.
-        if start > 0
-            && matches!(
-                word_of(rest[start - 1]).to_ascii_lowercase().as_str(),
-                "for" | "of" | "about" | "on"
-            )
-        {
+        // `Rust for the first 2 results`: the introducer that joins the
+        // subject to a trailing count clause is scaffolding too. Only `for`
+        // and `about` are unambiguous there; `on` or `of` may end the subject
+        // itself (`Carry On first 2 results`).
+        if start > 0 && matches!(scaffold_word(rest[start - 1]).as_str(), "for" | "about") {
             start -= 1;
         }
         // The clause may carry its own engine phrase and connector:
         // `first 2 results on Google for Rust`, `first 2 links on the web
         // about rust`. Both are scaffolding; the subject starts after them.
-        let lower_rest: Vec<String> = rest.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
+        let lower_rest: Vec<String> = rest.iter().map(|t| scaffold_word(t)).collect();
         // Only a *linked* engine phrase is consumed here: a bare engine word
         // after the count clause opens the subject (`first 2 results Google
         // Trends`).
@@ -461,7 +469,7 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     // and is kept as content, as is a bare engine word (`"privacy policy"
     // Google`).
     loop {
-        let lower_rest: Vec<String> = rest.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
+        let lower_rest: Vec<String> = rest.iter().map(|t| scaffold_word(t)).collect();
         let trailing = (1..lower_rest.len()).find(|&k| {
             let len = linked_engine_phrase_len(&lower_rest, k);
             len > 0
@@ -838,6 +846,17 @@ mod tests {
             assert_eq!(p.count, 2, "{text}");
             assert_eq!(p.terms, vec!["Rust".to_string()], "{text}");
         }
+        // A subject that ends in `on` / `of` keeps that word.
+        let p = parse("search Carry On first 2 results").expect("intent");
+        assert_eq!(p.terms, vec!["Carry".to_string(), "On".into()]);
+    }
+
+    #[test]
+    fn excluded_engine_word_is_a_query_operator() {
+        let p = parse("search -Google \"privacy policy\"").expect("intent");
+        assert_eq!(p.engine, SearchEngine::Google, "engine detection still reads the text");
+        assert_eq!(p.terms, vec!["-Google".to_string(), "privacy policy".into()]);
+        assert_eq!(p.query(), "-Google \"privacy policy\"");
     }
 
     #[test]
