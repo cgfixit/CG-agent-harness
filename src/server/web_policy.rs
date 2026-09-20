@@ -18,6 +18,12 @@ pub fn error(code: &str, message: &str) -> HarnessError {
 
 /// Canonical fetch identity. Reject ambiguous input before URL parsing erases it.
 pub fn canonical_url(raw: &str) -> Result<Url> {
+    canonical_http_url(raw, false)
+}
+
+// Parsing a configured webhook may admit a private spelling. This grants no
+// connection: the notifier separately checks its exact URL grant and DNS answers.
+pub(super) fn canonical_http_url(raw: &str, admit_private: bool) -> Result<Url> {
     let bad = || {
         error(
             "WEB_BAD_URL",
@@ -83,23 +89,24 @@ pub fn canonical_url(raw: &str) -> Result<Url> {
         return Err(bad());
     }
     match url.host() {
-        Some(url::Host::Ipv4(ip)) if !is_public_ip(ip.into()) => {
+        Some(url::Host::Ipv4(ip)) if !admit_private && !is_public_ip(ip.into()) => {
             return Err(error("WEB_SSRF_DENIED", "non-public address refused"))
         }
-        Some(url::Host::Ipv6(ip)) if !is_public_ip(ip.into()) => {
+        Some(url::Host::Ipv6(ip)) if !admit_private && !is_public_ip(ip.into()) => {
             return Err(error("WEB_SSRF_DENIED", "non-public address refused"))
         }
         Some(url::Host::Domain(host))
-            if !host.contains('.')
-                || [
-                    "localhost",
-                    "local",
-                    "internal",
-                    "localhost.localdomain",
-                    "metadata.goog",
-                ]
-                .iter()
-                .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}"))) =>
+            if !admit_private
+                && (!host.contains('.')
+                    || [
+                        "localhost",
+                        "local",
+                        "internal",
+                        "localhost.localdomain",
+                        "metadata.goog",
+                    ]
+                    .iter()
+                    .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))) =>
         {
             return Err(error("WEB_SSRF_DENIED", "local or metadata host refused"))
         }

@@ -23,6 +23,7 @@ pub mod guards;
 pub mod headers;
 pub mod mcp;
 pub mod memory_notes;
+pub mod notifications;
 pub mod prompts;
 pub mod request_log;
 pub mod routes;
@@ -202,7 +203,8 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     }
     let mut mcp = McpRuntime::from_config(&cfg)?;
     mcp.test_resolve = opts.web_test_resolve;
-    let jobs = agent_jobs::JobStore::open(&home.data_dir().join("agentic/console-jobs.json"))?;
+    let jobs = agent_jobs::JobStore::open(&home.data_dir().join("agentic/console-jobs.json"))?
+        .with_notifications(notifications::Notifier::start(&home, &cfg)?);
     let schedules = agent_schedules::ScheduleStore::open(&home.data_dir().join("agentic/console-schedules.json"))?;
     let structured_memory = if cfg.flag_is_true("structured_memory.enabled") {
         Some(StructuredMemoryStore::open(&home.structured_memory_path(), &cfg)?)

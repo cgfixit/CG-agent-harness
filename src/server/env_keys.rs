@@ -36,7 +36,13 @@ pub struct KeySpec {
 }
 
 /// Every entry is an env var this binary actually reads.
-pub const MANAGED_KEYS: [KeySpec; 6] = [
+pub const MANAGED_KEYS: [KeySpec; 7] = [
+    KeySpec {
+        name: "CGAGENTHARNESS_WEBHOOK_TOKEN",
+        label: "Completion webhook bearer token",
+        detail: "Optional bearer for the configured completion webhook. Restart after saving. Never sent to a model.",
+        self_auth: false,
+    },
     KeySpec {
         name: "SERPAPI_API_KEY",
         label: "Google results (SerpAPI)",

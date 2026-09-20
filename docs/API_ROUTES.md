@@ -165,3 +165,32 @@ retain up to 512 Unicode characters; this does not cap the stderr log file itsel
 Run and job routes both go through `agent::prepare_run`, then cross the shim
 into a child process; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
 [GIT_APPROVAL.md](GIT_APPROVAL.md).
+
+## Completion webhooks
+
+`notifications.enabled: true` enables a restart-only, best-effort notifier for
+terminal detached jobs (manual or scheduled). It is disabled by default. Set
+`notifications.webhook_url` to an HTTPS receiver. An exact entry in
+`notifications.private_url_allowlist` is required for loopback/private targets;
+that grant also permits HTTP for a local receiver. DNS is checked and pinned on
+every attempt. Link-local/metadata addresses, proxies and redirects are refused.
+Web content grants do not grant notification destinations, or vice versa.
+
+Each JSON POST contains `version: 1`, a `batch_id` and `events`. Each event has only
+`job_id`, terminal `status` (`finished`, `failed`, `cancelled`), `created_at` and
+`finished_at` Unix timestamps. It contains no goal, instruction, repository,
+result, error text or credentials. An optional `CGAGENTHARNESS_WEBHOOK_TOKEN`
+is sent as a bearer header; save it in **API Keys** or the private managed `.env`
+file, then restart. Explicit process environment takes precedence.
+
+The finite queue batches at most `batch_size` events after `batch_interval_sec`.
+A 2xx response succeeds. Transport/DNS timeouts, 429 and 5xx receive at most
+`max_attempts` total attempts (maximum three); other statuses, including redirects,
+stop immediately. Retries use the same JSON body and `X-CGAgentHarness-Batch-ID`.
+Receivers should deduplicate that ID: a lost response can cause duplicate delivery.
+Queue overflow and final failure are audited without changing job outcomes.
+
+The queue is in memory: process exit can lose pending events, and startup does
+not replay old terminal jobs or emit recovered `interrupted` records. This is a
+completion hint, not a durable job log; the existing job and audit stores remain
+authoritative. No Telegram integration or real external receiver is required.
