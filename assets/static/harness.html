@@ -33,7 +33,7 @@
      `[hidden]`. Keep the attribute authoritative so every toggled node stays
      collapsed. */
   [hidden] { display: none !important; }
-  button, input { font: inherit; }
+  button, input, select { font: inherit; }
   body {
     background: var(--bg-primary); color: var(--text-primary);
     font-family: var(--sans); font-size: 13px; line-height: 1.5;
@@ -250,6 +250,10 @@
   .toggle { cursor: pointer; background: none; border: none; font: inherit; color: inherit; padding: 0; }
   .toggle .v.on { color: var(--accent-green); }
   .toggle .v.off { color: var(--accent-red); }
+  .statusbar select {
+    font: inherit; color: var(--text-primary); background: var(--bg-input);
+    border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; max-width: 132px;
+  }
   .apikey {
     font: inherit; color: var(--text-primary); background: var(--bg-input);
     width: 130px; max-width: 100%;
@@ -380,6 +384,12 @@
         <button class="toggle" id="sMemory" title="toggle operator /memory notes in the system prompt">
           <span class="k">mem </span><span class="v" id="sMemoryV">…</span>
         </button>
+        <label title="session output style; does not write soul.md">
+          <span class="k">style </span>
+          <select id="sStyle" aria-label="output style">
+            <option value="off">off</option>
+          </select>
+        </label>
         <span title="session /goal"><span class="k">goal </span><span class="v" id="sGoal">none</span></span>
         <span title="human-gated /loop"><span class="k">loop </span><span class="v" id="sLoop">off</span></span>
         <span class="spacer"></span>
@@ -497,6 +507,8 @@ async function recallPrompt(direction) {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 let soulEnabled = true;
+let currentStyle = 'off';
+let styleOptionsLoaded = false;
 let soulStatus = {};
 let memoryEnabled = false;
 /* A staged (not yet sent) agent run. The server's own gate needs an explicit
@@ -896,6 +908,8 @@ async function refreshStatus() {
     if (typeof s.memory_enabled === 'boolean') memoryEnabled = s.memory_enabled;
     paintSoul();
     paintMemory();
+    await ensureStyleOptions();
+    paintStyle();
     $('hDot').style.background = 'var(--accent-green)';
     statusBackoffMs = STATUS_BASE_INTERVAL;
   } catch (e) {
@@ -931,6 +945,29 @@ function paintMemory() {
   if (!v) return;
   v.textContent = memoryEnabled ? 'on' : 'off';
   v.className = 'v ' + (memoryEnabled ? 'on' : 'off');
+}
+async function ensureStyleOptions() {
+  const sel = $('sStyle');
+  if (!sel || styleOptionsLoaded) return;
+  try {
+    const r = await api('/api/style');
+    const keep = currentStyle || 'off';
+    sel.innerHTML = '';
+    const off = document.createElement('option'); off.value = 'off'; off.textContent = 'off';
+    sel.appendChild(off);
+    (r.styles || []).forEach(s => {
+      const o = document.createElement('option'); o.value = s.id; o.textContent = s.id;
+      sel.appendChild(o);
+    });
+    sel.value = keep;
+    styleOptionsLoaded = true;
+  } catch (e) { /* catalog is optional until a session exists */ }
+}
+function paintStyle() {
+  const sel = $('sStyle');
+  if (!sel) return;
+  sel.disabled = !currentSession;
+  if ([...sel.options].some(o => o.value === (currentStyle || 'off'))) sel.value = currentStyle || 'off';
 }
 
 /* ── sessions pane ── */
@@ -1031,6 +1068,7 @@ const COMMANDS = [
   ['/prompt', 'preview the next chat system prompt (private)'],
   ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
+  ['/style <name>|off', 'session output-style preset (concise, unslop, technical-deep, beginner); default off'],
   ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (on for fresh homes)'],
   ['/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding [on|off]', 'admin-only structured-memory gate overrides; /memory on stays pinned notes'],
   ['/memory search <query>', 'FTS fact candidates (not injected)'],
@@ -1335,6 +1373,7 @@ async function runSlash(line) {
             loopAuto = false;
             paintGoalLoop();
             sys((sub === 'new' ? 'session created: ' : 'switched to session ') + s.session_id + ' — ' + s.title);
+            currentStyle = s.style || 'off'; paintStyle();
             if (sub === 'new') sys('Fresh conversation. Shared persona, enabled memory notes and web context remain; /prompt shows what is included.');
             (s.messages || []).forEach(m => {
               if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
@@ -1366,7 +1405,22 @@ async function runSlash(line) {
 
       case 'prompt': {
         const r = await api('/api/prompt/preview', 'POST', { session_id: currentSession || null });
-        sys(r.scope + '\n\n' + r.prompt); break;
+        const styleName = (r.style && r.style.name) ? r.style.name : 'off';
+        sys('active style: ' + styleName + '\n' + r.scope + '\n\n' + r.prompt); break;
+      }
+      case 'style': {
+        if (!currentSession) { sys('no active session'); break; }
+        const name = (rest[0] || '').trim().toLowerCase();
+        if (!name) {
+          const r = await api('/api/style?session_id=' + encodeURIComponent(currentSession));
+          currentStyle = r.style || 'off'; paintStyle();
+          sys('style ' + currentStyle + (r.origin ? ' (' + r.origin + ')' : ''));
+          break;
+        }
+        const r = await api('/api/style', 'POST', { session_id: currentSession, name: name });
+        currentStyle = r.style || 'off'; paintStyle();
+        sys('style ' + currentStyle + (r.origin ? ' (' + r.origin + ')' : '') + '. /prompt shows the active style. soul.md is unchanged.');
+        break;
       }
       case 'soul': {
         const sub = rest[0];
@@ -2071,6 +2125,7 @@ async function runSlash(line) {
         }
         sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider],
                    ['soul', s.soul_enabled ? 'on' : 'off'],
+                   ['style', currentStyle || 'off'],
                    ['memory', s.memory_enabled ? 'on' : 'off'],
                    ['sessions', String(s.sessions)],
                    ['total tokens', String(s.total_tokens)], ['home', s.home],
@@ -2600,6 +2655,11 @@ $('soulPropose').addEventListener('click', () => submitSoul(true));
 
 $('sSoul').addEventListener('click', () => runSlash('/soul ' + (soulEnabled ? 'off' : 'on')));
 $('sMemory').addEventListener('click', () => runSlash('/memory ' + (memoryEnabled ? 'off' : 'on')));
+$('sStyle').addEventListener('change', () => {
+  const name = $('sStyle').value || 'off';
+  if (!currentSession) { paintStyle(); sys('no active session'); return; }
+  runSlash('/style ' + name);
+});
 
 buildCommands();
 refreshStatus();

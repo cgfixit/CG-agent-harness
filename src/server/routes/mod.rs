@@ -11,6 +11,7 @@ pub mod persona;
 pub mod session_io;
 pub mod skills;
 pub mod structured_memory;
+pub mod style;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -23,7 +24,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 86] = [
+pub const REGISTERED_PATHS: [&str; 87] = [
     "/",
     "/static/{name}",
     "/api/status",
@@ -80,6 +81,7 @@ pub const REGISTERED_PATHS: [&str; 86] = [
     "/api/soul/proposals",
     "/api/soul/proposals/{id}",
     "/api/soul",
+    "/api/style",
     "/api/model",
     "/api/ollama/inventory",
     "/api/ollama/pull",
@@ -139,6 +141,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/web", get(panels::web_status))
         .route("/api/sessions", get(core::list_sessions))
         .route("/api/soul", get(core::soul_state))
+        .route("/api/style", get(style::catalog))
         .route("/api/agent/checks", get(agent::agent_checks))
         .route("/api/harness/runs", get(panels::harness_runs));
 
@@ -236,6 +239,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/sessions/{session_id}/rename", post(core::rename_session))
         .route("/api/sessions/{session_id}/goal", post(core::session_goal))
         .route("/api/soul", post(core::soul_toggle))
+        .route("/api/style", post(style::select))
         .route("/api/model", post(core::model_select))
         .route("/api/ollama/inventory", get(ollama::inventory))
         .route("/api/ollama/pull", post(ollama::pull))
@@ -342,7 +346,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 86);
+        assert_eq!(REGISTERED_PATHS.len(), 87);
 
         let all = registered_paths();
         assert!(

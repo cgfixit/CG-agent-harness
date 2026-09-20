@@ -34,6 +34,7 @@ pub mod structured_memory_auto;
 pub mod structured_memory_consolidate;
 pub mod structured_memory_fts;
 pub mod structured_memory_suggest;
+pub mod style;
 pub mod transport;
 pub mod views;
 mod web_google;

@@ -168,6 +168,7 @@ mod tests {
             tally: TokenTally::default(),
             goal: "do the thing".into(),
             selected_skills: Vec::new(),
+            style: None,
             selected_facts: Vec::new(),
             last_prompt_skills: Vec::new(),
             goal_stage: None,

@@ -57,6 +57,7 @@ async fn new_session_isolates_history_goal_and_skills_but_keeps_explicit_shared_
             "/prompt",
             "/goal stage",
             "/skill use",
+            "/style",
             "/web",
         ] {
             assert!(prompt.contains(command), "missing operator guidance for {command}");

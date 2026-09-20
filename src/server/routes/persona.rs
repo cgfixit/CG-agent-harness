@@ -366,6 +366,7 @@ pub async fn preview(
         soul_path: &soul_path,
         soul_max_chars: max_chars(&state),
         soul_override: req.soul_content.as_deref(),
+        style_name: session.as_ref().and_then(|s| s.style.as_deref()),
         goal: session.as_ref().map(|s| s.goal.as_str()),
         web_context: Some(&web),
         memory_context: Some(&pinned),
@@ -375,6 +376,10 @@ pub async fn preview(
         web_enabled: settings.web_enabled,
     };
     let prompt = compose_system_prompt(&inputs);
+    let style_load = session
+        .as_ref()
+        .and_then(|s| s.style.as_deref())
+        .map(|name| crate::server::style::load_style(&state.home.root, name, max_chars(&state)));
     let sections: Vec<Value> = selected
         .iter()
         .map(|(id, body)| {
@@ -384,7 +389,12 @@ pub async fn preview(
         .collect();
     Ok(private(
         json!({"prompt":prompt,"discipline_sections":[],"selected_skill_sections":sections,
-        "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled, max_chars(&state)),"candidate":req.soul_content.is_some(),
+        "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled, max_chars(&state)),
+        "style": {
+            "name": session.as_ref().and_then(|s| s.style.clone()),
+            "origin": style_load.as_ref().and_then(|load| load.origin),
+        },
+        "candidate":req.soul_content.is_some(),
         "limits":{"goal":2000,"web":4000,"memory":3000,"pinned_reserved":memory_budget.pinned_reserved,"facts_reserved":memory_budget.facts_reserved,"soul":max_chars(&state)},
         "structured_facts":{
             "explicit_recall": crate::server::structured_memory::recall_available(&state.cfg, state.structured_memory.is_some(), &crate::server::structured_memory::current_gates(&state)),

@@ -91,13 +91,23 @@ be wrong; only actual command results establish successful execution.
 
 `/prompt` opens a private snapshot of the next chat system prompt. It includes
 the general-chat header, an operator-command guide and current inclusion settings,
-selected prompt skills, enabled persona, the current
+selected prompt skills, enabled persona, the active output style, the current
 session goal, explicitly injected web context while web is enabled, and enabled
 memory notes. It is not a transcript or the coding planner's prompt. The API also reports source
 load state and limits. No credentials file is included. Private preview/editor
 responses require the existing API guards and use `Cache-Control: no-store`.
 
-The compiled chat scope and execution boundaries remain fixed. Edit the persona with:
+The compiled chat scope and execution boundaries remain fixed.
+
+`/style <name>` selects a session output-style preset (`concise`, `unslop`,
+`technical-deep`, `beginner`). `/style off` clears it. Default is off. The
+choice is stored on the session JSON and never writes `soul.md`. Operator
+overlays live at `$CGAGENTHARNESS_HOME/styles/<name>.md` and win over the
+shipped `data/styles/<name>.md` files. Style text is chat prose only. It cannot
+override HEADER or CAPABILITIES. Cloud chat still sends only the new user
+message. `/prompt` prints the active style name and the composed body.
+
+Edit the persona with:
 
 1. `/soul status` to see enabled, present, loaded, truncated, and a safe reason.
 2. `/soul edit` to open the current document or explicitly create a missing one.
