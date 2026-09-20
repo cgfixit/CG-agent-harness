@@ -2352,7 +2352,15 @@ async function onSend() {
   if (sendBtn.disabled) {
     if (isLoopStopCommand(text)) {
       input.value = '';
-      requestLoopStop('loop stop requested — aborting the in-flight turn');
+      if (inflightSearch) {
+        /* A routed natural-language search holds the gate. Abort that request
+           (sendMaybeNlSearch reports "search cancelled" and releases the gate)
+           instead of requestLoopStop, which only aborts inflightChat and would
+           post /api/chat/cancel for a model turn that does not exist. */
+        abortInflightSearch();
+      } else {
+        requestLoopStop('loop stop requested — aborting the in-flight turn');
+      }
     }
     return;
   }
@@ -2369,27 +2377,40 @@ function looksLikeNlSearch(text) {
      and the verb need whitespace (or end) after any trailing punctuation so
      `Please:search` and `search:first` tokenize like the server.
 
-     Direct routing is for listing-only requests. Structurally: whatever
-     follows the last quoted term (or, unquoted, the count clause) must not
-     open another clause (`and`, `then`, `so`, `plus`, `also`, `to`, `;`).
-     Anything else (`"Rust" and provide a short summary`, `; summarize it`,
-     `"..." to explain`) stays on the chat path, where the model still has
-     the web tools when they are enabled. This errs toward chat on purpose:
-     a listing that drops half the ask is worse than a model turn. */
+     Direct routing is for listing-only requests. Structurally: once every
+     quoted term and count clause is masked out, nothing left in the text
+     may open another clause (`and`, `then`, `so`, `plus`, `also`, `to`,
+     `;`). The mask covers the whole text, not only the suffix after the
+     last term, so `"Rust" and compare it with "Go"` is caught by the `and`
+     between the terms. Anything else (`"Rust" and provide a short summary`,
+     `; summarize it`, `"..." to explain`) stays on the chat path, where the
+     model still has the web tools when they are enabled. This errs toward
+     chat on purpose: a listing that drops half the ask is worse than a
+     model turn. */
   var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.test(text);
   if (!commandShaped) return false;
   var quoteRe = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/g;
   var countRe = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/ig;
-  var lastEnd = -1, m;
-  while ((m = quoteRe.exec(text)) !== null) lastEnd = Math.max(lastEnd, m.index + m[0].length);
-  while ((m = countRe.exec(text)) !== null) lastEnd = Math.max(lastEnd, m.index + m[0].length);
-  if (lastEnd < 0) return false;
-  var tail = text.slice(lastEnd);
-  return !/(?:\b(?:and|then|so|plus|also|to)\b|;)/i.test(tail);
+  var signals = 0;
+  var masked = text
+    .replace(quoteRe, function (m, q, offset) { signals++; return m.charAt(0) === q ? ' ' : m.charAt(0) + ' '; })
+    .replace(countRe, function () { signals++; return ' '; });
+  if (signals === 0) return false;
+  return !/(?:\b(?:and|then|so|plus|also|to)\b|;)/i.test(masked);
 }
+
+/* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
+   validated on the raw text before the intent rewrite, and the model's
+   web_search tool carries the same bound, so a longer listing request cannot
+   succeed on either path and is refused here without a billed model turn. */
+var MAX_WEB_QUERY_LEN = 200;
 
 async function sendMaybeNlSearch(text) {
   if (!looksLikeNlSearch(text)) { await sendChat(text, false); return; }
+  if (Array.from(text).length > MAX_WEB_QUERY_LEN) {
+    sys('search refused: a search request is limited to ' + MAX_WEB_QUERY_LEN + ' characters');
+    return;
+  }
   /* Hold the console's in-flight gate (sendBtn.disabled, see onSend) while
      the routed search runs so a second Enter cannot start a concurrent search
      or a model turn that interleaves with it. The revision guard mirrors
@@ -2429,10 +2450,12 @@ async function sendMaybeNlSearch(text) {
       return;
     }
     if (revision !== sessionRevision) return;
-    if (e && typeof e.code === 'string' && e.code.indexOf('WEB_') === 0) {
+    if (e && typeof e.code === 'string' && (e.code.indexOf('WEB_') === 0 || e.code === 'VALIDATION_ERROR')) {
       /* The search route answered and refused (bad query, web disabled,
-         permission, provider or quota failure). That is the answer; a model
-         turn without search tools would only produce an ungrounded reply. */
+         permission, provider or quota failure, or the request body failed
+         schema validation). That is the answer; the request body is built
+         here, so a validation refusal is about the query itself and the
+         model's web_search tool would hit the same bound. */
       sys('search refused: ' + e.message);
       return;
     }
