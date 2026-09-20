@@ -687,12 +687,11 @@ mod tests {
         assert_eq!(p.terms, vec!["-site:'pinterest.com'".to_string(), "rust".into()]);
         assert_eq!(p.query(), "-site:'pinterest.com' rust");
         // A verb glued to its quote was never command-shaped (unchanged), and
-        // `foo"x"` (no colon) is no span.
+        // `foo"x"` (no colon) is no span: it stays an ordinary subject token,
+        // trimmed of its trailing quote like any other unquoted word.
         assert_eq!(parse_with_count("search:\"rust\"", 5), WebIntentParse::PassThrough);
-        assert_eq!(
-            parse_with_count("search foo\"bar\" first 2 links", 5),
-            WebIntentParse::Invalid("search request has no subject after the count clause".into())
-        );
+        let p = parse("search foo\"bar\" first 2 links").expect("intent");
+        assert_eq!(p.terms, vec!["foo\"bar".to_string()]);
     }
 
     #[test]
