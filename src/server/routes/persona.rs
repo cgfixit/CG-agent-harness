@@ -391,9 +391,15 @@ pub async fn preview(
     Ok(private(
         json!({"prompt":prompt,"discipline_sections":[],"selected_skill_sections":sections,
         "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled, max_chars(&state)),
+        // The effective load state, not just the persisted name: an overlay
+        // that was deleted, made unreadable, oversized or now trips the
+        // injection scanner is omitted from the prompt, and the preview says
+        // so instead of presenting the stale name as active.
         "style": {
             "name": session.as_ref().and_then(|s| s.style.clone()),
             "origin": style_load.as_ref().and_then(|load| load.origin),
+            "loaded": style_load.as_ref().is_some_and(|load| load.loaded),
+            "unavailable_reason": style_load.as_ref().and_then(|load| load.unavailable_reason),
         },
         "candidate":req.soul_content.is_some(),
         "limits":{"goal":2000,"web":4000,"memory":3000,"pinned_reserved":memory_budget.pinned_reserved,"facts_reserved":memory_budget.facts_reserved,"soul":max_chars(&state)},

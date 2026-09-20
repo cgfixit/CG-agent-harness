@@ -1317,6 +1317,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     });
     clearTranscript();
     currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false;
+    currentStyle = 'off'; paintStyle();
     input.value = '';
     $('sSession').textContent = 'none';
     $('hTokens').textContent = '0';
@@ -1405,8 +1406,11 @@ async function runSlash(line) {
 
       case 'prompt': {
         const r = await api('/api/prompt/preview', 'POST', { session_id: currentSession || null });
-        const styleName = (r.style && r.style.name) ? r.style.name : 'off';
-        sys('active style: ' + styleName + '\n' + r.scope + '\n\n' + r.prompt); break;
+        const st = r.style || {};
+        const styleLine = !st.name ? 'active style: off'
+          : st.loaded ? 'active style: ' + st.name + (st.origin ? ' (' + st.origin + ')' : '')
+          : 'active style: off — selected preset "' + st.name + '" is unavailable (' + (st.unavailable_reason || 'unknown') + ') and was not included';
+        sys(styleLine + '\n' + r.scope + '\n\n' + r.prompt); break;
       }
       case 'style': {
         if (!currentSession) { sys('no active session'); break; }
@@ -2282,6 +2286,9 @@ window.addEventListener('beforeunload', function () {
 async function finishChat(r) {
   promptHistory.session = null;
   if (r && r.session_id) {
+    /* A session the server just auto-created starts with style off; the
+       status bar must not keep showing a cleared session's preset. */
+    if (currentSession !== r.session_id) { currentStyle = 'off'; paintStyle(); }
     currentSession = r.session_id;
     $('sSession').textContent = currentSession;
   }
@@ -2542,7 +2549,7 @@ if (hAuthLogout) {
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
-    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionRevision++; window.__cyclawRole = null; await refreshStatus();
+    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; currentStyle = 'off'; paintStyle(); sessionRevision++; window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
   });
 }

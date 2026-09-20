@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "session",
     "prompt",
     "soul",
+    "style",
     "memory",
     "api",
     "model",
@@ -486,6 +487,21 @@ mod tests {
         assert!(p.dispatch);
         assert_eq!(p.canonical.as_deref(), Some("/help"));
         assert_eq!(p.kind, SlashKind::Dispatch);
+    }
+
+    #[test]
+    fn exact_style_dispatches_with_its_name() {
+        for (line, canonical) in [
+            ("/style concise", "/style concise"),
+            ("/style off", "/style off"),
+            ("/style", "/style"),
+        ] {
+            let p = parse_line(line);
+            assert!(p.dispatch, "{line}: {p:?}");
+            assert_eq!(p.kind, SlashKind::Dispatch, "{line}");
+            assert_eq!(p.command.as_deref(), Some("style"), "{line}");
+            assert_eq!(p.canonical.as_deref(), Some(canonical), "{line}");
+        }
     }
 
     #[test]
