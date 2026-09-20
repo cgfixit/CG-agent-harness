@@ -109,11 +109,11 @@ fn is_command_shaped(lower: &str) -> bool {
     if words.get(i).is_some_and(|w| VERBS.contains(w)) {
         return true;
     }
-    matches!(words.get(i..i + 3), Some([a, b, c]) if is_count_pair(a, b) && COUNT_NOUNS.contains(c))
+    words.get(i..).is_some_and(|rest| find_count_clause(rest) == Some(0))
 }
 
 fn word_of(tok: &str) -> &str {
-    tok.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+    tok.trim_matches(|c: char| !c.is_alphanumeric())
 }
 
 fn is_count_pair(a: &str, b: &str) -> bool {
@@ -121,18 +121,24 @@ fn is_count_pair(a: &str, b: &str) -> bool {
     word_of(a).eq_ignore_ascii_case("first") && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())
 }
 
-/// `first <ws> N` when present and N >= 1; None otherwise. Any amount of
-/// whitespace between the two words is accepted, matching the console's
+/// Index of a `first N <noun>` result-count clause in `toks`, if any.
+/// The noun is required so `first 2 amendments` stays part of the subject.
+fn find_count_clause(toks: &[&str]) -> Option<usize> {
+    toks.windows(3)
+        .position(|w| is_count_pair(w[0], w[1]) && COUNT_NOUNS.contains(&word_of(w[2]).to_ascii_lowercase().as_str()))
+}
+
+/// `first N <noun>` when present and N >= 1; None otherwise. Any amount of
+/// whitespace between the words is accepted, matching the console's
 /// `first\s+\d+` predicate. Callers pass the text with quoted spans removed
 /// so a phrase such as `"first 2 steps of Rust"` is never read as a count.
 fn extract_count(lower: &str) -> Option<usize> {
     let toks: Vec<&str> = lower.split_whitespace().collect();
-    toks.windows(2)
-        .find(|w| is_count_pair(w[0], w[1]))
-        .and_then(|w| match word_of(w[1]).parse::<usize>() {
-            Ok(v) if v >= 1 => Some(v.min(MAX_COUNT)),
-            _ => None,
-        })
+    let k = find_count_clause(&toks)?;
+    match word_of(toks[k + 1]).parse::<usize>() {
+        Ok(v) if v >= 1 => Some(v.min(MAX_COUNT)),
+        _ => None,
+    }
 }
 
 fn opens_quote(chars: &[char], i: usize) -> bool {
@@ -173,51 +179,56 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
     (terms, residual)
 }
 
-/// Unquoted request: drop the command scaffolding and the `first N` pair,
-/// keep every other token (years and other numbers included). Tokens are
-/// compared without surrounding punctuation so `Google:` or `search:` are
-/// scaffolding too, and emitted without it.
+/// Words that may sit between the command verb and the subject
+/// (`search Google (serpapi) for the ...`).
+const AFTER_VERB: &[&str] = &["google", "serpapi", "for", "the", "on", "in", "using", "with", "web"];
+
+/// Unquoted request: remove the command scaffolding by position (lead-in
+/// words, the verb, engine and preposition words right after it, and the
+/// `first N <noun>` clause with its joining `the` / `for`), then keep every
+/// remaining token verbatim. Nothing inside the subject is filtered, so
+/// `The Who`, `and`, `you` or a year survive; trimming of outer punctuation
+/// is Unicode-aware so `école` and `東京` are kept intact.
 fn tokenize_unquoted(text: &str) -> Vec<String> {
-    const DROP: &[&str] = &[
-        "search", "google", "serpapi", "for", "the", "links", "link", "and", "please", "can", "could", "would", "you",
-        "me", "kindly", "hey", "ok", "okay", "now", "a", "an", "of", "to", "using", "web",
-    ];
-    let raw: Vec<&str> = text
-        .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',')
-        .map(|t| t.trim().trim_matches(|c: char| c == '"' || c == '\''))
-        .filter(|t| !t.is_empty())
-        .collect();
-    let mut out = Vec::new();
+    let raw: Vec<&str> = text.split_whitespace().collect();
+    let lower: Vec<String> = raw.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
     let mut i = 0;
-    while i < raw.len() {
-        if i + 1 < raw.len() && is_count_pair(raw[i], raw[i + 1]) {
-            i += 2;
-            // `first 2 results for ...`: the count noun belongs to the clause.
-            if raw
-                .get(i)
-                .is_some_and(|t| COUNT_NOUNS.contains(&word_of(t).to_ascii_lowercase().as_str()))
-            {
-                i += 1;
-            }
-            continue;
-        }
-        let tok = raw[i];
-        let word = if tok.eq_ignore_ascii_case("/web") {
-            ""
-        } else {
-            word_of(tok)
-        };
-        if !word.is_empty() && !DROP.contains(&word.to_ascii_lowercase().as_str()) {
-            // Keep inner punctuation (`what's`, `c++`), drop the outer.
-            out.push(
-                tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '+' && c != '#')
-                    .to_string(),
-            );
-        }
+    if raw.first().is_some_and(|t| t.eq_ignore_ascii_case("/web")) {
         i += 1;
     }
-    out.retain(|t| !t.is_empty());
-    out
+    while i < lower.len() && LEAD_IN.contains(&lower[i].as_str()) {
+        i += 1;
+    }
+    if i < lower.len() && VERBS.contains(&lower[i].as_str()) {
+        i += 1;
+        while i < lower.len() && AFTER_VERB.contains(&lower[i].as_str()) {
+            i += 1;
+        }
+    }
+    let mut rest: Vec<&str> = raw[i..].to_vec();
+    if let Some(k) = find_count_clause(&rest) {
+        let mut start = k;
+        if start > 0 && word_of(rest[start - 1]).eq_ignore_ascii_case("the") {
+            start -= 1;
+        }
+        let mut end = k + 3;
+        if end < rest.len()
+            && matches!(
+                word_of(rest[end]).to_ascii_lowercase().as_str(),
+                "for" | "of" | "about" | "on"
+            )
+        {
+            end += 1;
+        }
+        rest.drain(start..end);
+    }
+    rest.iter()
+        .map(|t| {
+            t.trim_matches(|c: char| !c.is_alphanumeric() && !matches!(c, '+' | '#'))
+                .to_string()
+        })
+        .filter(|t| !t.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -337,6 +348,41 @@ mod tests {
         // check instead of being silently corrected here.
         assert_eq!(parse_with_count("search google for 'rust'", 0).unwrap().count, 0);
         assert_eq!(parse_with_count("search google for 'rust'", 99).unwrap().count, 99);
+    }
+
+    #[test]
+    fn non_ascii_terms_are_preserved() {
+        let p = parse("search Google for first 2 links for 東京").expect("intent");
+        assert_eq!(p.terms, vec!["東京".to_string()]);
+        let p = parse("search first 2 links for école normale").expect("intent");
+        assert_eq!(p.terms, vec!["école".to_string(), "normale".into()]);
+    }
+
+    #[test]
+    fn subject_words_that_look_like_scaffolding_survive() {
+        let p = parse("search first 2 links for The Who").expect("intent");
+        assert_eq!(p.terms, vec!["The".to_string(), "Who".into()]);
+        let p = parse("search google for the first 3 results for can you search and google").expect("intent");
+        assert_eq!(
+            p.terms,
+            vec![
+                "can".to_string(),
+                "you".into(),
+                "search".into(),
+                "and".into(),
+                "google".into()
+            ]
+        );
+    }
+
+    #[test]
+    fn first_n_without_a_result_noun_is_part_of_the_subject() {
+        // No count clause and no quotes: not a natural-language request, the
+        // whole query goes to the provider untouched.
+        assert!(parse("search Google for first 2 amendments").is_none());
+        let p = parse("search Google for first 2 links for first 2 amendments").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["first".to_string(), "2".into(), "amendments".into()]);
     }
 
     #[test]

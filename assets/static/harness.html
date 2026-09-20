@@ -2341,12 +2341,14 @@ async function onSend() {
 
 function looksLikeNlSearch(text) {
   /* Mirrors src/server/web_intent.rs: command-shaped (optional politeness
-     words, then search/google) plus a balanced quoted term or a `first N`
-     count. A quote opens at a word start and closes at a word end, so the
-     apostrophe inside 'women's health' does not end the term. */
-  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\s,]+)*(?:search|google)\b/i.test(text);
+     words, then a whole `search` / `google` token) plus a balanced quoted term
+     or a `first N links|results|hits|pages` clause. A quote opens at a word
+     start and closes at a word end, so the apostrophe inside
+     'women's health' does not end the term, and `Google's` is not a verb. */
+  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\s,]+)*(?:search|google)(?=$|[\s,.;:!?])/i.test(text);
   var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
-  return commandShaped && (quoted || /\bfirst\s+\d+/i.test(text));
+  var counted = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/i.test(text);
+  return commandShaped && (quoted || counted);
 }
 
 async function sendMaybeNlSearch(text) {
