@@ -111,6 +111,13 @@ fn overlay_relative(id: &str) -> PathBuf {
 fn read_overlay(home: &Path, id: &str) -> Result<String, Option<&'static str>> {
     let read = (|| {
         let dir = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
+        // Only a regular file is opened: a FIFO or device would block the
+        // synchronous read (and `list_catalog` probes every built-in name on
+        // each status poll), and a symlink could point outside the jail.
+        let meta = dir.symlink_metadata(overlay_relative(id))?;
+        if !meta.is_file() {
+            return Err(std::io::Error::other("overlay is not a regular file"));
+        }
         let mut text = String::new();
         dir.open(overlay_relative(id))?
             .take(256 * 1024 + 1)
@@ -256,6 +263,30 @@ mod tests {
         assert_eq!(suggest_builtin("technical"), Some("technical-deep"));
         assert_eq!(suggest_builtin("off"), None);
         assert_eq!(suggest_builtin(""), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_regular_overlays_are_rejected_without_opening_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::create_dir_all(home.join("styles")).unwrap();
+        // A FIFO with no writer: opening it for read would block forever.
+        let fifo = std::ffi::CString::new(home.join("styles").join("concise.md").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        // A symlink to a real file outside the styles directory.
+        std::fs::write(home.join("outside.md"), "OUTSIDE text\n").unwrap();
+        std::os::unix::fs::symlink(home.join("outside.md"), home.join("styles").join("linked.md")).unwrap();
+        let fifo_load = load_style(home, "concise", 8000);
+        assert!(!fifo_load.loaded);
+        assert_eq!(fifo_load.unavailable_reason, Some("unreadable"));
+        let link_load = load_style(home, "linked", 8000);
+        assert!(!link_load.loaded);
+        assert_eq!(link_load.unavailable_reason, Some("unreadable"));
+        assert!(link_load.text.is_empty());
+        // The catalog probe over every built-in name completes too.
+        let ids: Vec<String> = list_catalog(home).into_iter().map(|(id, _)| id).collect();
+        assert!(ids.iter().any(|id| id == "concise"), "{ids:?}");
     }
 
     #[test]

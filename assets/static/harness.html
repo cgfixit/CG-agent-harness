@@ -512,6 +512,10 @@ let currentStyle = 'off';
    earlier one whose overlay takes longer to load, or the earlier handler
    would overwrite it server-side after the UI already shows the later choice. */
 let styleWriteChain = Promise.resolve();
+/* Each status-poll read of the style takes a generation; two overlapping
+   polls (a scheduled one and the refresh after a chat turn) must not let the
+   older reply overwrite the newer one. */
+let stylePollSeq = 0;
 /* Every /style request and every poll of the active session's style takes
    a ticket; a reply whose ticket is no longer the latest is discarded, so
    two quick dropdown changes end on the later choice and a poll never
@@ -1021,9 +1025,10 @@ function paintMemory() {
 async function refreshStyle() {
   const sel = $('sStyle');
   if (!sel) return;
-  const revision = sessionRevision, session = currentSession, ticket = styleRequestSeq;
+  const revision = sessionRevision, session = currentSession, ticket = styleRequestSeq, poll = ++stylePollSeq;
   try {
     const r = await api('/api/style' + (session ? '?session_id=' + encodeURIComponent(session) : ''));
+    if (poll !== stylePollSeq) return;
     const ids = ['off'].concat((r.styles || []).map(s => s.id));
     const have = [...sel.options].map(o => o.value);
     if (ids.length !== have.length || ids.some((id, i) => id !== have[i])) {
@@ -2422,6 +2427,9 @@ async function finishChat(r) {
 
 async function sendChat(text, asLoop, extra) {
   const revision = sessionRevision;
+  /* A style change issued just before Send must be persisted before the
+     turn is posted, or the server composes the reply with the old style. */
+  await styleWriteChain.catch(() => {});
   user(text);
   sendBtn.disabled = true;
   const controller = new AbortController();
