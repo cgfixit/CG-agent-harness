@@ -250,7 +250,7 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     rest.iter()
         .map(|t| {
             t.trim_matches(|c: char| c == '"' || c == '\'')
-                .trim_end_matches(|c: char| matches!(c, ',' | '.' | ';' | ':' | '!' | '?'))
+                .trim_end_matches([',', '.', ';', ':', '!', '?'])
                 .to_string()
         })
         .filter(|t| !t.is_empty())
