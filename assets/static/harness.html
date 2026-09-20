@@ -269,7 +269,14 @@
   /* The status bar row stays dense; the header fields get room for their labels. */
   .statusbar .apikey { padding: 3px 8px; }
   #harnessAuth .apikey { width: 160px; }
-#soulEditor, #sessionClearDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
+#soulEditor, #sessionClearDialog, #spendDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
+#spendDialog { margin:auto;max-height:90vh; }
+#spendDialog p { margin:12px 0; }
+#spendDialog button { padding:6px 12px;margin:4px 8px 4px 0; }
+#spendDialog .spend-table { overflow:auto;max-height:55vh; }
+#spendDialog table { width:100%;border-collapse:collapse;text-align:left; }
+#spendDialog th, #spendDialog td { padding:8px;border-bottom:1px solid var(--border); }
+#spendDialog td { overflow-wrap:anywhere; }
 #sessionClearDialog { max-width:520px; }
 #sessionClearDialog button { padding:8px 12px; margin-right:8px; }
 #sessionClearConfirm { color:var(--accent-red); }
@@ -314,7 +321,7 @@
     #harnessAuth .apikey { flex: 1 1 120px; width: auto; }
     #send { padding: 9px 14px; }
     #sGoal { max-width: 90px; }
-    #soulEditor, #sessionClearDialog { width: 94%; padding: 16px; }
+    #soulEditor, #sessionClearDialog, #spendDialog { width: 94%; padding: 16px; }
     #pane-api-keys form { grid-template-columns: 1fr; }
   }
 
@@ -343,6 +350,7 @@
         <button class="toggle" id="hAuthPassword" type="button" hidden>change password</button>
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
       </span>
+      <button class="toggle" id="openSpend" type="button">Spend</button>
       <div class="pill model">model <b id="hModel">…</b></div>
       <div class="pill" title="Total tokens across all saved sessions">all sessions · tokens <b id="hTokens">0</b></div>
       <div class="dot" id="hDot" title="server status"></div>
@@ -408,6 +416,22 @@
   <input id="agentPRBodyFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
   <input id="agentPlanFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
 
+<dialog id="spendDialog" aria-labelledby="spendTitle">
+  <h2 id="spendTitle">Inference spend</h2>
+  <p>Retained ledger history, grouped by provider, model and UTC day. Local inference is unpriced; amounts are recorded vendor costs or estimates, not invoices.</p>
+  <button id="refreshSpend" type="button">Refresh</button>
+  <button id="closeSpend" type="button">Close</button>
+  <p id="spendStatus" role="status" aria-live="polite"></p>
+  <div class="spend-table">
+    <table><caption>Inference usage and cost</caption>
+      <thead><tr><th scope="col">UTC day</th><th scope="col">Provider</th><th scope="col">Model</th><th scope="col">Calls</th><th scope="col">Input tokens</th><th scope="col">Output tokens</th><th scope="col">USD</th></tr></thead>
+      <tbody id="spendRows"></tbody>
+    </table>
+  </div>
+  <button id="spendPrevious" type="button">Previous</button>
+  <span id="spendPage"></span>
+  <button id="spendNext" type="button">Next</button>
+</dialog>
 <dialog id="passwordDialog" aria-labelledby="passwordTitle">
   <h2 id="passwordTitle">Change your password</h2>
   <p id="passwordHelp">Enter your current password and a new password of at least 12 characters.</p>
@@ -2940,6 +2964,57 @@ input.addEventListener('keydown', e => {
     e.preventDefault(); recallPrompt(e.key === 'ArrowUp' ? -1 : 1);
   }
 });
+/* Spend dashboard: one guarded read on open/refresh, no polling or mutations. */
+function spendSummaryView(data) {
+  const complete = data.complete === true;
+  let status = complete ? 'Complete for retained ledger files.' : data.complete === false
+    ? 'Incomplete ledger: totals below are partial.' : 'Ledger completeness unknown: this backend does not report it.';
+  if (data.skipped_rows) status += ' Skipped rows: ' + data.skipped_rows + '.';
+  const failed = (data.files || []).filter(f => !['read', 'missing'].includes(f.status));
+  if (failed.length) status += ' Unavailable files: ' + failed.map(f => f.generation + ' (' + f.status + ')').join(', ') + '.';
+  status += ' Rates dated ' + (data.priced_as_of || 'unknown') + (data.rates_stale ? ' — STALE; estimates need review.' : '.');
+  const count = v => typeof v === 'number' && Number.isFinite(v) ? String(v) : 'Unknown';
+  const money = new Intl.NumberFormat('en-US', {style:'currency', currency:'USD', minimumFractionDigits:2, maximumFractionDigits:8});
+  const rows = (data.days || []).map(d => [d.day, d.provider, d.model, count(d.calls), count(d.input_tokens), count(d.output_tokens),
+    d.provider === 'local' ? 'Unpriced (local)' : typeof d.estimate?.usd === 'number' && Number.isFinite(d.estimate.usd)
+      ? money.format(d.estimate.usd) : 'Unpriced / incomplete']);
+  if (!rows.length) status += complete ? ' No inference rows in retained history.' : ' No usable rows; this is not proof of zero spend.';
+  return {status, rows};
+}
+let spendRequest = 0, spendRows = [], spendPage = 0;
+function paintSpendPage() {
+  const body = $('spendRows'); body.replaceChildren();
+  for (const row of spendRows.slice(spendPage * 100, (spendPage + 1) * 100)) {
+    const tr = document.createElement('tr');
+    for (const value of row) { const td = document.createElement('td'); td.textContent = String(value ?? 'Unknown'); tr.appendChild(td); }
+    body.appendChild(tr);
+  }
+  $('spendPrevious').disabled = spendPage === 0;
+  $('spendNext').disabled = (spendPage + 1) * 100 >= spendRows.length;
+  $('spendPage').textContent = spendRows.length ? 'Page ' + (spendPage + 1) + ' of ' + Math.ceil(spendRows.length / 100) : '';
+}
+function clearSpend() {
+  ++spendRequest; spendRows = []; spendPage = 0; paintSpendPage();
+  $('spendStatus').textContent = ''; $('spendDialog').close();
+}
+async function refreshSpend() {
+  const request = ++spendRequest;
+  spendRows = []; spendPage = 0; paintSpendPage(); $('spendStatus').textContent = 'Loading ledger…';
+  try {
+    const data = await api('/api/spend/summary');
+    if (request !== spendRequest || !$('spendDialog').open) return;
+    const view = spendSummaryView(data); spendRows = view.rows; paintSpendPage(); $('spendStatus').textContent = view.status;
+  } catch (e) {
+    if (request === spendRequest && $('spendDialog').open) $('spendStatus').textContent = 'Spend unavailable: ' + e.message;
+  }
+}
+$('openSpend').addEventListener('click', () => { $('spendDialog').showModal(); refreshSpend(); });
+$('refreshSpend').addEventListener('click', refreshSpend);
+$('closeSpend').addEventListener('click', clearSpend);
+$('spendDialog').addEventListener('cancel', clearSpend);
+$('spendPrevious').addEventListener('click', () => { if (spendPage > 0) { --spendPage; paintSpendPage(); } });
+$('spendNext').addEventListener('click', () => { if ((spendPage + 1) * 100 < spendRows.length) { ++spendPage; paintSpendPage(); } });
+/* End spend dashboard. */
 document.querySelectorAll('.side-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.side-tab').forEach(t => t.classList.remove('active'));
@@ -3047,6 +3122,7 @@ if (hAuthLogout) {
     const claimed = ++sessionRevision;
     sendBtn.disabled = true;
     clearPendingAttachments();
+    clearSpend();
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
