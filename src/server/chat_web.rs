@@ -189,15 +189,15 @@ async fn run_inner(
             "web_search" => {
                 let args: SearchArgs =
                     serde_json::from_str(args).map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
+                // The tool contract bounds the RAW arguments; enforce both before
+                // whitespace normalisation and the intent rewrite so neither can
+                // shrink a long instruction under the limit and a textual
+                // `first N` cannot mask an out-of-range count. A refused argument
+                // is an ordinary tool failure (bounded reply, usage recorded), not
+                // a run error: the model already spent the turn that produced it.
+                let raw_len = args.query.chars().count();
                 let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
-                // The tool contract bounds the raw arguments; enforce both before
-                // the intent rewrite so a long instruction cannot shrink under the
-                // limit and a textual `first N` cannot mask an out-of-range count.
-                // A refused argument is an ordinary tool failure (bounded reply,
-                // usage recorded), not a run error: the model already spent the
-                // turn that produced the call.
-                let planned = if !(1..=10).contains(&args.count)
-                    || query.chars().count() > crate::server::schemas::MAX_WEB_QUERY_LEN
+                let planned = if !(1..=10).contains(&args.count) || raw_len > crate::server::schemas::MAX_WEB_QUERY_LEN
                 {
                     Err(error(
                         "WEB_BAD_QUERY",

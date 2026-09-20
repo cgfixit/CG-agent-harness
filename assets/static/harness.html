@@ -2451,9 +2451,9 @@ function looksLikeNlSearch(text) {
   var head = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.exec(text);
   if (!head) return false;
   var body = text.slice(head[0].length);
-  /* `-"cats"` (Google's quoted exclusion) is a quoted term too, mirroring
-     split_quoted on the server. */
-  var quoteRe = /(?:^|[\s(,:\[])-?(?:"[^"]+"|'.+?'|“[^”]+”|‘.+?’)(?=$|[\s,.;:)\]!?])/gs;
+  /* `-"cats"`, `+"rust async"`, `~"cheap"` (a Google operator on a quoted
+     span) are quoted terms too, mirroring split_quoted on the server. */
+  var quoteRe = /(?:^|[\s(,:\[])[-+~]?(?:"[^"]+"|'.+?'|“[^”]+”|‘.+?’)(?=$|[\s,.;:)\]!?])/gs;
   /* A signed or bracketed count (`first -2 results`, `first (2) links`) is
      still a count clause: it routes so the server's own range check refuses
      it (WEB_BAD_QUERY) rather than starting a model turn. */
@@ -2469,7 +2469,7 @@ function looksLikeNlSearch(text) {
   /* Follow-up action verbs never open a listing subject (`Rust summarize
      briefly`, `Rust provide a summary`), and never count as an operator
      when dressed as one (`summarize:briefly`, `-summarize`). */
-  var ACTION = /^(?:summari[sz]e|synthesi[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify|compile|aggregate|digest|interpret|distill|collate|consolidate|critique|report)$/i;
+  var ACTION = /^(?:summari[sz]e|synthesi[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify|compile|aggregate|digest|interpret|distill|collate|consolidate|critique|report|list|show|display|print|cite|enumerate|present)$/i;
   /* Google operators: a prefixed word (`-cats`, `+rust`, `~term`, `@handle`),
      a known colon operator (`site:x`, `intitle:x`, …), `OR`, `*`, a year. */
   var OPERATOR = /^(?:[-+~@]\S|(?:site|intitle|inurl|intext|allintitle|allinurl|allintext|filetype|ext|related|cache|define|before|after|source|loc|location|lang|inanchor|allinanchor|daterange|around):\S|\*$|\d{1,4}$)/i;
@@ -2556,17 +2556,17 @@ async function sendMaybeNlSearch(text) {
       return;
     }
     if (revision !== sessionRevision) return;
-    if (e && typeof e.code === 'string' && (e.code.indexOf('WEB_') === 0 || e.code === 'VALIDATION_ERROR')) {
-      /* The search route answered and refused (bad query, web disabled,
-         permission, provider or quota failure, or the request body failed
-         schema validation). That is the answer; the request body is built
-         here, so a validation refusal is about the query itself and the
-         model's web_search tool would hit the same bound. */
+    if (e && typeof e.code === 'string' && e.code && e.code !== 'NETWORK') {
+      /* The search route answered with a typed refusal: a web error (bad
+         query, web disabled, provider or quota failure), a schema validation
+         failure, or a guard refusal (rate limit, auth, CSRF). That is the
+         answer. The same guards protect /api/chat, so re-sending the text as
+         a model turn would only repeat the refusal and bill a turn. */
       sys('search refused: ' + e.message);
       return;
     }
-    /* Only a routing / compatibility failure (network, unknown route,
-       validation envelope) falls back to the ordinary chat path. */
+    /* Only a routing / compatibility failure (network, unknown route with
+       no typed body) falls back to the ordinary chat path. */
     sys('search router did not run: ' + e.message);
     fallbackToChat = true;
   } finally {
