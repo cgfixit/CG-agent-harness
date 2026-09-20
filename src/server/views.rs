@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 58] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 59] = [
     (
         "goal-stage",
         "/goal stage|task",
@@ -238,6 +238,13 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 58] = [
         "GET",
         "/api/soul",
         "harness-local soul-in-prompt toggle (does not write soul.md)",
+    ),
+    (
+        "style",
+        "/style",
+        "POST",
+        "/api/style",
+        "session output-style preset; context only; never writes soul.md",
     ),
     (
         "memory",
@@ -773,10 +780,10 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 58);
+        assert_eq!(HARNESS_SURFACES.len(), 59);
         let report = list_wired_tools(&registered);
-        assert_eq!(report["total"], 58);
-        assert_eq!(report["wired"], 58, "a catalog surface is unwired");
+        assert_eq!(report["total"], 59);
+        assert_eq!(report["wired"], 59, "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }

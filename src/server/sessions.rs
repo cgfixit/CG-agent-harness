@@ -105,6 +105,9 @@ pub struct Session {
     pub goal: String,
     #[serde(default)]
     pub selected_skills: Vec<String>,
+    /// Session output-style preset id. Default off. Never written to soul.md.
+    #[serde(default)]
+    pub style: Option<String>,
     /// Explicit structured-fact selection for this session. IDs only; content
     /// is re-read and revalidated at prompt assembly.
     #[serde(default)]
@@ -184,6 +187,7 @@ impl SessionStore {
             tally: TokenTally::default(),
             goal: String::new(),
             selected_skills: Vec::new(),
+            style: None,
             selected_facts: Vec::new(),
             last_prompt_skills: Vec::new(),
             goal_stage: None,
@@ -223,6 +227,13 @@ impl SessionStore {
         let excess = session.prompt_history.len().saturating_sub(PROMPT_HISTORY_LIMIT);
         session.prompt_history.drain(..excess);
         session.goal = session.goal.trim().to_string();
+        if session
+            .style
+            .as_ref()
+            .is_some_and(|s| s.trim().is_empty() || s == "off")
+        {
+            session.style = None;
+        }
         Ok(session)
     }
 
@@ -413,6 +424,16 @@ impl SessionStore {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
         session.selected_skills = ids.to_vec();
+        self.write(&session)
+    }
+
+    pub fn set_style(&self, session_id: &str, style: Option<&str>) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        session.style = style
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "off")
+            .map(str::to_string);
         self.write(&session)
     }
 

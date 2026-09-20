@@ -10,6 +10,7 @@
 //!   .env               managed API keys (written by env_keys)
 //!   auth.sqlite3       users + hashed sessions; legacy auth.json is migration input
 //!   soul.md            seeded default, editable operator persona
+//!   styles/<name>.md   optional operator overlay for output-style presets
 //!   sessions/          one JSON per chat session
 //!   skills/<name>/SKILL.md
 //!   tools/             web allowlist + last extract
@@ -36,8 +37,9 @@ pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8790;
 pub const MIN_USER_PORT: u16 = 1024;
 
-const SUBDIRS: [&str; 11] = [
+const SUBDIRS: [&str; 12] = [
     "sessions",
+    "styles",
     "skills",
     "tools",
     "memory",
@@ -119,6 +121,9 @@ impl Home {
     }
     pub fn skills_dir(&self) -> PathBuf {
         self.root.join("skills")
+    }
+    pub fn styles_dir(&self) -> PathBuf {
+        self.root.join("styles")
     }
     pub fn tools_dir(&self) -> PathBuf {
         self.root.join("tools")

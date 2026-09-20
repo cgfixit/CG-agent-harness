@@ -77,6 +77,7 @@ See [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md) and
 | Method | Path | Purpose |
 |---|---|---|
 | GET, POST | `/api/soul` | Persona state and on/off toggle |
+| GET, POST | `/api/style` | Output-style catalog and session select (`/style <name>` or `/style off`) |
 | GET, POST | `/api/soul/document` | Read or edit the persona document |
 | POST | `/api/soul/proposals` | Propose a persona change |
 | GET, POST | `/api/soul/proposals/{id}` | Review or decide a proposal |

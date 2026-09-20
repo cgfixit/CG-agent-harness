@@ -193,6 +193,7 @@ pub async fn get_session(State(state): State<Arc<AppState>>, Path(session_id): P
     out["messages"] = json!(messages);
     out["prompt_history"] = json!(session.prompt_history);
     out["goal"] = json!(session.goal);
+    out["style"] = json!(session.style);
     Ok(Json(out))
 }
 
@@ -475,6 +476,7 @@ async fn chat_inner(
             soul_max_chars: crate::server::prompts::effective_soul_max_chars(
                 state.cfg.u64_or("personality.soul_max_chars", 8000),
             ),
+            style_name: session.style.as_deref(),
             goal: Some(&session.goal),
             web_context: Some(&web_context),
             memory_context: Some(&pinned),
@@ -482,7 +484,6 @@ async fn chat_inner(
             memory_budget,
             memory_enabled: settings.memory_enabled,
             web_enabled: settings.web_enabled,
-            style_name: None,
             attachment_fence: Some(attachment_fence.as_str()),
         })
     };

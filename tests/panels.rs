@@ -547,7 +547,7 @@ async fn tools_and_skills_views_report_wiring() {
     let (status, tools) = s.open_get("/api/tools").await;
     assert_eq!(status, 200);
     assert_eq!(tools["wired"], tools["total"], "every catalog surface is registered");
-    assert_eq!(tools["total"], 58);
+    assert_eq!(tools["total"], 59);
     assert!(tools["diagram"].as_str().unwrap().starts_with("HARNESS TOOLS"));
     let (status, skills) = s.open_get("/api/skills").await;
     assert_eq!(status, 200);
@@ -862,7 +862,13 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
 #[tokio::test]
 async fn advertised_methods_resolve_and_disabled_status_has_no_side_effects() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    // One request per catalog surface plus the session create and the
+    // tools read now exceed the default 60-per-minute per-IP ceiling.
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("api.rate_limit.max_requests", "200"),
+    )
+    .await;
     let (_, session) = s.post_json("/api/sessions", json!({})).await;
     let sid = session["session_id"].as_str().unwrap();
     for (_, _, method, path, _) in cgagentharness::server::views::HARNESS_SURFACES {
