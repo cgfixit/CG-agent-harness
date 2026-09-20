@@ -15,20 +15,12 @@ has no outbound network access. The **console** is the same interface in the
 app's native WKWebView and in a browser. The **coding pipeline** runs in a
 separate child process and ships disarmed.
 
-**Version scope:** this guide follows this source tree (tip `main`).
-[Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest) is
-[v0.1.12](https://github.com/cgfixit/CG-agent-harness/releases/tag/v0.1.12)
-and targets `22520f3ba5981c361ceb57dddd7ff96234a69290` (issue #87 structured
-memory through Phase 7 fixture eval, including manual consolidation, optional
-idle auto-consolidator, and completion-suggestion gates). Tip `main` at that
-SHA matches Latest for structured memory; tip does not lag Latest for those
-surfaces. Use a source build or successful Bundle artifact when you need
-unreleased tip behavior beyond Latest; a PR artifact remains a candidate until
-merged. Do not invent a release that GitHub has not published. The Cargo
-package version remains `0.1.0`; identify the installed source using
-`Contents/Resources/COMMIT`, the workflow SHA, release notes and `/help`.
-Earlier acceptance records retain their dated results and do not certify a
-different source or bundle.
+**Version scope:** this guide follows this source tree. Check the
+[latest published release](https://github.com/cgfixit/CG-agent-harness/releases/latest)
+for its actual source commit; a source checkout can include newer features.
+The Cargo package version remains `0.1.0`. Identify an installed build using
+`Contents/Resources/COMMIT`, its workflow SHA, and release notes. Dated acceptance
+records certify only the source and artifact they name.
 
 ## Topic pages
 
