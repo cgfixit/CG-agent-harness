@@ -202,7 +202,12 @@ fn word_of(tok: &str) -> &str {
 
 fn is_count_pair(a: &str, b: &str) -> bool {
     let n = word_of(b);
-    word_of(a).eq_ignore_ascii_case("first") && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())
+    // `+first 2 results` is an operator-prefixed query word (`+first`), not
+    // a count clause: only an unprefixed `first` opens one.
+    a.starts_with(|c: char| c.is_alphanumeric())
+        && word_of(a).eq_ignore_ascii_case("first")
+        && !n.is_empty()
+        && n.chars().all(|c| c.is_ascii_digit())
 }
 
 /// Index of a `first N <noun>` result-count clause in `toks`, if any.
@@ -522,18 +527,26 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     // (`jobs with Google`, `history of the web`, `data from Google Trends`)
     // and is kept as content, as is a bare engine word (`"privacy policy"
     // Google`).
-    loop {
+    // The whole contiguous suffix of linked phrases goes (`"Rust" on the web
+    // with Google`), not only a single closing phrase.
+    {
         let lower_rest: Vec<String> = rest.iter().map(|t| scaffold_word(t)).collect();
         let trailing = (1..lower_rest.len()).find(|&k| {
-            let len = linked_engine_phrase_len(&lower_rest, k);
-            len > 0
-                && k + len == lower_rest.len()
-                && ENGINE_LINKS.contains(&lower_rest[k].as_str())
-                && placeholder_index(rest[k - 1]).is_some()
+            if placeholder_index(rest[k - 1]).is_none() {
+                return false;
+            }
+            let mut j = k;
+            while j < lower_rest.len() {
+                let len = linked_engine_phrase_len(&lower_rest, j);
+                if len == 0 || !ENGINE_LINKS.contains(&lower_rest[j].as_str()) {
+                    return false;
+                }
+                j += len;
+            }
+            true
         });
-        match trailing {
-            Some(k) => rest.truncate(k),
-            None => break,
+        if let Some(k) = trailing {
+            rest.truncate(k);
         }
     }
     // `'a' and 'b'`: a joiner between two quoted spans is scaffolding too.
@@ -1038,10 +1051,56 @@ mod tests {
     }
 
     #[test]
+    fn operator_prefixed_first_is_a_query_word_not_a_count() {
+        // `+first` is a required-word operator; without a count clause the
+        // request has no signal and passes through untouched, so the
+        // prefixed term is never dropped.
+        assert_eq!(
+            parse_with_count("search +first 2 results about Rust", 5),
+            WebIntentParse::PassThrough
+        );
+        let p = parse("search +first 2 results about \"Rust\"").expect("intent");
+        assert_eq!(p.count, 5);
+        assert_eq!(
+            p.terms,
+            vec![
+                "+first".to_string(),
+                "2".into(),
+                "results".into(),
+                "about".into(),
+                "Rust".into()
+            ]
+        );
+        let p = parse("search -first first 2 results about Rust").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["-first".to_string(), "about".into(), "Rust".into()]);
+    }
+
+    #[test]
     fn trailing_engine_phrases_are_scaffolding() {
         let p = parse("search \"Rust\" with Google").expect("intent");
         assert_eq!(p.engine, SearchEngine::Google);
         assert_eq!(p.terms, vec!["Rust".to_string()]);
+        // Every contiguous linked phrase after the quoted subject goes.
+        let p = parse("search \"Rust\" on the web with Google").expect("intent");
+        assert_eq!(p.engine, SearchEngine::Google);
+        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        let p = parse("search \"Rust\" with Google on the web via serpapi").expect("intent");
+        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        // A non-engine word between them keeps the rest as content.
+        let p = parse("search \"Rust\" on the web jobs with Google").expect("intent");
+        assert_eq!(
+            p.terms,
+            vec![
+                "Rust".to_string(),
+                "on".into(),
+                "the".into(),
+                "web".into(),
+                "jobs".into(),
+                "with".into(),
+                "Google".into()
+            ]
+        );
         let p = parse("search \"Rust\" on the web").expect("intent");
         assert_eq!(p.terms, vec!["Rust".to_string()]);
         let p = parse("search 'x' first 2 links from serpapi").expect("intent");
