@@ -1415,13 +1415,20 @@ async function runSlash(line) {
       case 'style': {
         if (!currentSession) { sys('no active session'); break; }
         const name = (rest[0] || '').trim().toLowerCase();
+        /* A reply that lands after the operator switched, cleared or logged
+           out must not repaint the new selection with the old session's
+           style; the server-side value of the old session is unaffected. */
+        const styleRevision = sessionRevision, styleSession = currentSession;
+        const stale = () => styleRevision !== sessionRevision || styleSession !== currentSession;
         if (!name) {
-          const r = await api('/api/style?session_id=' + encodeURIComponent(currentSession));
+          const r = await api('/api/style?session_id=' + encodeURIComponent(styleSession));
+          if (stale()) { sys('style reply for a previous session ignored'); break; }
           currentStyle = r.style || 'off'; paintStyle();
           sys('style ' + currentStyle + (r.origin ? ' (' + r.origin + ')' : ''));
           break;
         }
-        const r = await api('/api/style', 'POST', { session_id: currentSession, name: name });
+        const r = await api('/api/style', 'POST', { session_id: styleSession, name: name });
+        if (stale()) { sys('style ' + (r.style || 'off') + ' was set on a previous session; the current selection is unchanged'); break; }
         currentStyle = r.style || 'off'; paintStyle();
         sys('style ' + currentStyle + (r.origin ? ' (' + r.origin + ')' : '') + '. /prompt shows the active style. soul.md is unchanged.');
         break;
