@@ -8,11 +8,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::server::errors::{session_status, ApiError, ApiResult};
-use crate::server::prompts::effective_soul_max_chars;
+use crate::server::prompts::{effective_soul_max_chars, style_budget_after_soul};
 use crate::server::schemas::{ValidJson, Validate};
 use crate::server::sessions::session_id_ok;
 use crate::server::state::AppState;
-use crate::server::style::{list_catalog, load_style, suggest_builtin, StyleLoad};
+use crate::server::style::{list_catalog, load_style_within, suggest_builtin, StyleLoad};
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -51,9 +51,18 @@ fn catalog_json(state: &AppState) -> Vec<Value> {
         .collect()
 }
 
+/// What the next local turn would include: the style is loaded within the
+/// budget the enabled soul leaves, exactly as `compose_system_prompt` does.
+fn style_budget(state: &AppState) -> usize {
+    let soul_enabled = state.settings.lock().unwrap_or_else(|p| p.into_inner()).soul_enabled;
+    style_budget_after_soul(&state.home.root, soul_enabled, None, max_chars(state))
+}
+
 fn load_active(state: &AppState, name: Option<&str>) -> StyleLoad {
     match name {
-        Some(name) if !name.is_empty() && name != "off" => load_style(&state.home.root, name, max_chars(state)),
+        Some(name) if !name.is_empty() && name != "off" => {
+            load_style_within(&state.home.root, name, style_budget(state))
+        }
         _ => StyleLoad {
             name: String::new(),
             origin: None,
@@ -117,7 +126,7 @@ pub async fn select(
             "cleared; subsequent local chat turns omit the style section",
         )));
     }
-    let load = load_style(&state.home.root, name, max_chars(&state));
+    let load = load_style_within(&state.home.root, name, style_budget(&state));
     if !load.loaded {
         // A catalogued overlay that fails to load is a file problem the
         // operator can act on, not an unknown name: say which file and why
@@ -132,6 +141,11 @@ pub async fn select(
             Some(r @ ("empty" | "unreadable")) => (
                 "STYLE_UNAVAILABLE",
                 format!("Style '{name}' is catalogued but its overlay styles/{name}.md is {r}; fix or remove the file"),
+                None,
+            ),
+            Some("budget") => (
+                "STYLE_UNAVAILABLE",
+                "The enabled soul already uses the whole personality.soul_max_chars budget; nothing is left for a style. Shorten soul.md, raise the cap, or /soul off".to_string(),
                 None,
             ),
             _ => {

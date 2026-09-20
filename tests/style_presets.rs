@@ -161,3 +161,34 @@ async fn unloadable_catalogued_overlay_is_reported_as_unavailable_not_unknown() 
     assert_eq!(body["detail"]["details"]["reason"], "empty", "{body}");
     assert!(body["detail"]["details"]["suggestion"].is_null(), "{body}");
 }
+
+#[tokio::test]
+async fn style_with_no_budget_left_after_the_soul_is_reported_inactive_everywhere() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let (status, set) = s
+        .post_json("/api/style", json!({"session_id": sid, "name": "concise"}))
+        .await;
+    assert_eq!(status, 200, "{set}");
+    // The enabled soul now fills the whole default 8000-char budget.
+    std::fs::write(s.home.join("soul.md"), "S".repeat(9000)).unwrap();
+    let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
+    assert!(!preview["prompt"].as_str().unwrap().contains("## Output style"));
+    assert!(preview["prompt"].as_str().unwrap().contains("style=off"));
+    assert_eq!(preview["style"]["name"], "concise");
+    assert_eq!(preview["style"]["loaded"], false, "{preview}");
+    assert_eq!(preview["style"]["unavailable_reason"], "budget", "{preview}");
+    let (_, read) = s.get_json(&format!("/api/style?session_id={sid}")).await;
+    assert_eq!(read["style"], "concise", "{read}");
+    assert_eq!(read["loaded"], false, "{read}");
+    assert_eq!(read["unavailable_reason"], "budget", "{read}");
+    // Selecting another style while nothing is left is refused with the reason.
+    let (status, body) = s
+        .post_json("/api/style", json!({"session_id": sid, "name": "beginner"}))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["detail"]["code"], "STYLE_UNAVAILABLE", "{body}");
+    assert_eq!(body["detail"]["details"]["reason"], "budget", "{body}");
+}

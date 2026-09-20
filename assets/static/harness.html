@@ -1467,7 +1467,10 @@ async function runSlash(line) {
             /* The session carries the persisted name; the effective style
                (does the overlay still load?) comes from /api/style. */
             currentStyle = s.style || 'off'; paintStyle();
-            await refreshStyle(); paintStyle();
+            await refreshStyle();
+            /* A second switch during that read owns the transcript now. */
+            if (revision !== sessionRevision) break;
+            paintStyle();
             if (sub === 'new') sys('Fresh conversation. Shared persona, enabled memory notes and web context remain; /prompt shows what is included.');
             (s.messages || []).forEach(m => {
               if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);

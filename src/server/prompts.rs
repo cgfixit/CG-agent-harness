@@ -239,6 +239,31 @@ fn clipped(text: Option<&str>, max: usize) -> String {
     crate::common::clip_chars(text.unwrap_or("").trim(), max)
 }
 
+/// Characters of `soul_max_chars` left for the style once the persona has
+/// taken its share. Soul and style share that one operator-text budget so
+/// the two together can never exceed what a soul alone may occupy; the
+/// style routes and the prompt preview report a style through this same
+/// figure, so what they call active is what `compose_system_prompt` includes.
+pub fn style_budget_after_soul(
+    home: &Path,
+    soul_enabled: bool,
+    soul_override: Option<&str>,
+    soul_max_chars: usize,
+) -> usize {
+    if !soul_enabled {
+        return soul_max_chars;
+    }
+    let persona = match soul_override {
+        Some(text) => text.to_string(),
+        None => load_text(home, Path::new("soul.md"), true, soul_max_chars).text,
+    };
+    if persona.trim().is_empty() {
+        return soul_max_chars;
+    }
+    let used = crate::common::clip_chars(&persona, soul_max_chars).chars().count();
+    soul_max_chars.saturating_sub(used)
+}
+
 /// Soul, then style, then HEADER/CAPABILITIES. The policy tail still wins.
 pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
     let home = inputs.soul_path.parent().unwrap_or(Path::new(""));
@@ -249,19 +274,14 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
     // style gets what the persona left, so raising the cap to its 64 KiB
     // maximum with a large soul cannot push every local turn past the chat
     // token ceiling.
-    let mut persona_chars = 0;
     if inputs.soul_enabled && !persona.trim().is_empty() {
         let persona = crate::common::clip_chars(&persona, inputs.soul_max_chars);
-        persona_chars = persona.chars().count();
         parts.push(format!("## Operator persona (soul, read-only)\n\n{persona}"));
     }
     let mut style_label = "off".to_string();
-    let style_budget = inputs.soul_max_chars.saturating_sub(persona_chars);
-    if let Some(name) = inputs
-        .style_name
-        .filter(|n| !n.is_empty() && *n != "off" && style_budget > 0)
-    {
-        let loaded = crate::server::style::load_style(home, name, style_budget);
+    let style_budget = style_budget_after_soul(home, inputs.soul_enabled, inputs.soul_override, inputs.soul_max_chars);
+    if let Some(name) = inputs.style_name.filter(|n| !n.is_empty() && *n != "off") {
+        let loaded = crate::server::style::load_style_within(home, name, style_budget);
         if loaded.loaded {
             style_label = loaded.name.clone();
             parts.push(format!(

@@ -142,6 +142,16 @@ fn builtin_body(id: &str) -> Option<&'static str> {
 }
 
 /// Operator `$CGAGENTHARNESS_HOME/styles/<name>.md` wins over the shipped file.
+/// `load_style` bounded by the shared soul/style budget: a zero budget (the
+/// enabled soul already fills `soul_max_chars`) reports `budget` instead of
+/// opening the file, so every reporter agrees with prompt composition.
+pub fn load_style_within(home: &Path, name: &str, budget: usize) -> StyleLoad {
+    if budget == 0 {
+        return empty_load(name.trim(), "budget");
+    }
+    load_style(home, name, budget)
+}
+
 pub fn load_style(home: &Path, name: &str, max_chars: usize) -> StyleLoad {
     let Some(id) = StyleId::parse(name) else {
         return empty_load(name.trim(), "invalid_id");

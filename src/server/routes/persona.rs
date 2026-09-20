@@ -377,10 +377,18 @@ pub async fn preview(
         attachment_fence: None,
     };
     let prompt = compose_system_prompt(&inputs);
+    // Reported through the same shared soul/style budget the composition
+    // used, so a style the soul left no room for reads as not loaded here too.
+    let style_budget = crate::server::prompts::style_budget_after_soul(
+        &state.home.root,
+        settings.soul_enabled,
+        req.soul_content.as_deref(),
+        max_chars(&state),
+    );
     let style_load = session
         .as_ref()
         .and_then(|s| s.style.as_deref())
-        .map(|name| crate::server::style::load_style(&state.home.root, name, max_chars(&state)));
+        .map(|name| crate::server::style::load_style_within(&state.home.root, name, style_budget));
     let sections: Vec<Value> = selected
         .iter()
         .map(|(id, body)| {
