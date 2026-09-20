@@ -402,7 +402,17 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         // `first 2 results on Google for Rust`, `first 2 links on the web
         // about rust`. Both are scaffolding; the subject starts after them.
         let lower_rest: Vec<String> = rest.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
-        let mut end = skip_engine_phrases(&lower_rest, k + 3);
+        // Only a *linked* engine phrase is consumed here: a bare engine word
+        // after the count clause opens the subject (`first 2 results Google
+        // Trends`).
+        let mut end = k + 3;
+        loop {
+            let len = linked_engine_phrase_len(&lower_rest, end);
+            if len == 0 {
+                break;
+            }
+            end += len;
+        }
         if end < rest.len() && matches!(lower_rest[end].as_str(), "for" | "of" | "about" | "on") {
             end += 1;
         }
@@ -750,6 +760,9 @@ mod tests {
         // `on` followed by a non-engine word is the plain connector it was.
         let p = parse("search first 2 links on rust").expect("intent");
         assert_eq!(p.terms, vec!["rust".to_string()]);
+        // A bare engine word after the count clause opens the subject.
+        let p = parse("search first 2 results Google Trends").expect("intent");
+        assert_eq!(p.terms, vec!["Google".to_string(), "Trends".into()]);
     }
 
     #[test]

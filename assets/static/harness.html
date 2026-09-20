@@ -2214,9 +2214,10 @@ async function runLoopTurns() {
     while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
       const framed = 'Continue toward the session goal. Be concise (local 27b). If the goal is fully satisfied, end with GOAL_DONE on its own line. Stay in this chat; do not request a real-repo write.';
-      /* A routed search started during the cooldown owns the gate; let it
-         settle rather than starting a model turn that overlaps it. */
-      while (inflightSearch && loopState === activeLoop && !loopState.stop) await sleepMs(250);
+      /* A routed search started during the cooldown owns the gate, and so
+         does the chat turn it may fall back to on a router failure; let both
+         settle rather than starting a model turn that overlaps them. */
+      while ((inflightSearch || inflightChat) && loopState === activeLoop && !loopState.stop) await sleepMs(250);
       if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
       const reply = await sendChat(framed, true);
       if (loopState !== activeLoop) return;
