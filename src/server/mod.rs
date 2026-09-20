@@ -8,6 +8,7 @@
 pub mod agent_jobs;
 pub mod agent_policy;
 pub mod agent_schedules;
+pub mod attachments;
 mod chat_web;
 pub mod client;
 pub mod compaction;
@@ -202,6 +203,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         None
     };
     let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
+    let attachments = crate::server::attachments::AttachmentStore::open(&home.attachments_dir())?;
     let state = Arc::new(AppState {
         notes: MemoryNotes::new(&home.memory_dir()),
         structured_memory,
@@ -212,6 +214,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         cfg: cfg.clone(),
         settings: Mutex::new(settings),
         store,
+        attachments,
         backend,
         chat,
         cloud_chat,

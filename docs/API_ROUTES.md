@@ -49,6 +49,7 @@ session timeouts.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
+| POST | `/api/chat/attachments` | Store up to 3 text files (txt/md/json/csv/log, 15 MB each, 64 MB home quota). UUID blobs at `0600`. Inlined only on local chat/`/prompt`, never cloud, `/loop`, or `/agent`. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
 | GET | `/api/ollama/inventory` | Live loopback tags plus configured-model readiness |

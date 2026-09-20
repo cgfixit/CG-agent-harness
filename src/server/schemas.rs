@@ -109,6 +109,9 @@ pub struct ChatRequest {
     /// Optional FTS query for `retrieve`. When empty, the user message is used.
     #[serde(default)]
     pub retrieve_query: Option<String>,
+    /// Local-chat-only blob ids from `POST /api/chat/attachments`. Ignored for cloud and `/loop`.
+    #[serde(default)]
+    pub attachment_ids: Vec<String>,
 }
 
 impl Validate for ChatRequest {
@@ -135,6 +138,11 @@ impl Validate for ChatRequest {
             .is_some_and(|q| q.chars().count() > MAX_STRUCTURED_FACT_CHARS)
         {
             bad.push("retrieve_query".into());
+        }
+        if self.attachment_ids.len() > crate::server::attachments::MAX_FILES_PER_REQUEST
+            || self.attachment_ids.iter().any(|id| uuid::Uuid::parse_str(id).is_err())
+        {
+            bad.push("attachment_ids".into());
         }
         bad
     }

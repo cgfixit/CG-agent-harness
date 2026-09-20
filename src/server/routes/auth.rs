@@ -390,9 +390,11 @@ pub async fn delete_user(
     if account.role != ROLE_ADMIN {
         return Err(denied());
     }
-    manager(&state)?
-        .delete_user(&username)
-        .map_err(|e| map_auth_error(&e))?;
+    let manager = manager(&state)?;
+    if let Some(summary) = manager.get_user(&username) {
+        let _ = state.attachments.unlink_owner(&summary.user_id);
+    }
+    manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
     Ok(Json(json!({"ok": true})))
 }
 

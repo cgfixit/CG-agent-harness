@@ -15,6 +15,7 @@ use crate::llm::backend::ResolvedLocalBackend;
 use crate::llm::cloud_chat::CloudChat;
 use crate::llm::openai_chat::ChatClient;
 
+use super::attachments::AttachmentStore;
 use super::generation_gate::GenerationGate;
 use super::mcp::McpRuntime;
 use super::memory_notes::MemoryNotes;
@@ -45,6 +46,7 @@ pub struct AppState {
     pub cfg: SharedConfig,
     pub settings: Mutex<HarnessSettings>,
     pub store: SessionStore,
+    pub attachments: AttachmentStore,
     pub backend: ResolvedLocalBackend,
     pub chat: ChatClient,
     pub cloud_chat: CloudChat,

@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::ChatMessage;
+use crate::server::attachments;
 use crate::server::compaction::{DEFAULT_REPLY_TOKENS, MAX_PROMPT_TOKENS, MIN_PROMPT_HEADROOM};
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::guards::retry_after_error;
@@ -64,6 +65,61 @@ pub async fn spend_summary(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(crate::llm::spend::summarize_file(&state.spend_file))
 }
 
+pub async fn upload_attachments(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    req: axum::extract::Request,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    let content_type = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let declared = attachments::parse_content_length(
+        req.headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok()),
+    )
+    .map_err(|e| attachments::upload_error(&e))?;
+    if let Some(n) = declared {
+        if n > attachments::MAX_REQUEST_BYTES {
+            return Err(attachments::upload_error(&crate::common::errors::HarnessError::new(
+                "ATTACHMENT_TOO_LARGE",
+                "Content-Length exceeds the attachment request limit",
+            )));
+        }
+    }
+    let limit = attachments::MAX_REQUEST_BYTES as usize;
+    let bytes = axum::body::to_bytes(req.into_body(), limit.saturating_add(1))
+        .await
+        .map_err(|_| {
+            attachments::upload_error(&crate::common::errors::HarnessError::new(
+                "ATTACHMENT_TOO_LARGE",
+                "request body exceeds the attachment request limit",
+            ))
+        })?;
+    attachments::check_content_length(declared, bytes.len() as u64).map_err(|e| attachments::upload_error(&e))?;
+    let boundary = attachments::multipart_boundary(&content_type).map_err(|e| attachments::upload_error(&e))?;
+    let files = attachments::parse_multipart(&bytes, &boundary).map_err(|e| attachments::upload_error(&e))?;
+    let blobs = state
+        .attachments
+        .store(&owner, &files)
+        .map_err(|e| attachments::upload_error(&e))?;
+    state.audit.log(attachments::audit_record(&owner, &blobs));
+    Ok(Json(json!({
+        "attachments": blobs.iter().map(|b| json!({
+            "id": b.id,
+            "sha256": b.sha256,
+            "magic_mime": b.magic_mime,
+            "byte_len": b.byte_len,
+        })).collect::<Vec<_>>(),
+        "count": blobs.len(),
+        "bytes": blobs.iter().map(|b| b.byte_len).sum::<u64>(),
+    })))
+}
+
 pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({"sessions": state.store.list()}))
 }
@@ -104,6 +160,7 @@ pub async fn clear_sessions(
     } else if let Some(store) = state.structured_memory.as_ref() {
         derived_retained = store.episode_count(&owner).unwrap_or(0);
     }
+    let _ = state.attachments.unlink_owner(&owner);
     Ok(Json(json!({
         "deleted_sessions": deleted,
         "derived_episodes_deleted": derived_deleted,
@@ -383,6 +440,14 @@ async fn chat_inner(
         .as_ref()
         .map(|items| super::structured_memory::selections_from_items(items))
         .unwrap_or_else(|| session.selected_facts.clone());
+    let attachment_fence = if cloud_selected || req.loop_turn {
+        String::new()
+    } else {
+        state
+            .attachments
+            .fence_for(&owner, &req.attachment_ids)
+            .map_err(|e| attachments::upload_error(&e))?
+    };
     let (pinned, facts, memory_budget, recalled, retrieval_error) = super::structured_memory::prompt_memory(
         &state,
         &owner,
@@ -412,6 +477,7 @@ async fn chat_inner(
             memory_budget,
             memory_enabled: settings.memory_enabled,
             web_enabled: settings.web_enabled,
+            attachment_fence: Some(attachment_fence.as_str()),
         })
     };
     let max_tokens = if req.loop_turn {
