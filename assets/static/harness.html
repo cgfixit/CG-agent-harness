@@ -2472,8 +2472,11 @@ function looksLikeNlSearch(text) {
   var ACTION = /^(?:summari[sz]e|synthesi[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify|compile|aggregate|digest|interpret|distill|collate|consolidate|critique|report)$/i;
   /* Google operators: a prefixed word (`-cats`, `+rust`, `~term`, `@handle`),
      a known colon operator (`site:x`, `intitle:x`, …), `OR`, `*`, a year. */
-  var OPERATOR = /^(?:[-+~@]\S|(?:site|intitle|inurl|intext|allintitle|allinurl|allintext|filetype|ext|related|cache|define|before|after|source|loc|location|lang|inanchor|allinanchor|daterange|around):\S|OR$|\*$|\d{1,4}$)/i;
+  var OPERATOR = /^(?:[-+~@]\S|(?:site|intitle|inurl|intext|allintitle|allinurl|allintext|filetype|ext|related|cache|define|before|after|source|loc|location|lang|inanchor|allinanchor|daterange|around):\S|\*$|\d{1,4}$)/i;
   var isOperator = function (t) {
+    /* `OR` is Google's operator only in uppercase; a lowercase `or` opens a
+       follow-up clause (`Rust or list Go sources`). */
+    if (t === 'OR') return true;
     return OPERATOR.test(t) && !ACTION.test(t.replace(/^[-+~@]/, '').replace(/:.*$/, ''));
   };
   /* Operators are masked like quoted terms, so punctuation before one

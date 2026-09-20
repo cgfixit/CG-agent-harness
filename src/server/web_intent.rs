@@ -307,7 +307,9 @@ fn split_quoted(text: &str) -> (Vec<String>, Vec<bool>, String) {
 /// span so the provider sees it intact; `foo"x"` (no colon) is not a span.
 fn quote_after_operator(chars: &[char], i: usize) -> Option<usize> {
     let mut k = i;
-    if chars.get(k) == Some(&'-') {
+    // `-"x"`, `+"x"` and `~"x"`: the prefixes the console also treats as
+    // operators on a quoted span.
+    if chars.get(k).is_some_and(|c| matches!(c, '-' | '+' | '~')) {
         k += 1;
     }
     let op_start = k;
@@ -820,6 +822,12 @@ mod tests {
         let p = parse("search -\"cats\" first 2 results").expect("intent");
         assert_eq!(p.count, 2);
         assert_eq!(p.terms, vec!["-\"cats\"".to_string()]);
+        let p = parse("search +\"rust async\" first 2 results").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["+\"rust async\"".to_string()]);
+        assert_eq!(p.query(), "+\"rust async\"");
+        let p = parse("search ~\"cheap\" flights").expect("intent");
+        assert_eq!(p.terms, vec!["~\"cheap\"".to_string(), "flights".into()]);
         let p = parse("search \"dogs\" -'Chris Grady'").expect("intent");
         assert_eq!(p.terms, vec!["dogs".to_string(), "-'Chris Grady'".into()]);
         assert_eq!(p.query(), "\"dogs\" -'Chris Grady'");
