@@ -533,6 +533,23 @@ let loopState = null;
 /* AbortController for the in-flight POST /api/chat. /loop stop aborts
    the browser wait AND tells the server to drop the Ollama socket. */
 let inflightChat = null;
+/* The routed natural-language search owns its own AbortController. It is
+   tracked apart from inflightChat so cancelling it never posts
+   /api/chat/cancel (which could abort an unrelated model turn). */
+let inflightSearch = null;
+function abortInflightSearch() {
+  if (!inflightSearch) return;
+  try { inflightSearch.abort(); } catch (e) { /* already finished */ }
+}
+/* The send gate (sendBtn.disabled) is shared by chat turns and routed
+   searches. A turn that settles releases it only when nothing else still
+   owns it, so a search that started during a loop cooldown cannot re-open
+   the gate under a model turn that began afterwards (or vice versa). */
+function releaseSendGate() {
+  if (inflightChat || inflightSearch) return;
+  sendBtn.disabled = false;
+  input.focus();
+}
 
 function paintGoalLoop() {
   const g = $('sGoal');
@@ -740,13 +757,18 @@ function renderWebStatus(data) {
    regex, so every call would silently record as GET). Changing only this body is
    invisible to it. The parser also has no comment handling, so this comment must
    avoid writing the helper's name followed by an open paren. */
-async function api(path, method, body, timeoutMs, onDelta) {
+async function api(path, method, body, timeoutMs, onDelta, signal) {
   const opts = { method: method || 'GET', headers: {} };
   if (onDelta) opts.headers.Accept = 'text/event-stream';
   /* Attach the in-flight chat AbortController here (body only) so the
-     contract parser that hand-reads call sites stays valid. */
-  if (inflightChat && path === '/api/chat' && (method || 'GET') === 'POST') {
+     contract parser that hand-reads call sites stays valid. Other callers
+     that own an AbortController pass it as `signal`; it is composed with
+     the request timeout instead of replacing it. */
+  const chatSignal = inflightChat && path === '/api/chat' && (method || 'GET') === 'POST';
+  if (chatSignal) {
     opts.signal = inflightChat.signal;
+  } else if (signal) {
+    opts.signal = signal;
   }
   const key = apiKeyInput ? apiKeyInput.value.trim() : '';
   /* Sent on every request, not just the guarded ones: the open read routes
@@ -776,10 +798,15 @@ async function api(path, method, body, timeoutMs, onDelta) {
      sized above the server-side subprocess budget, so the server's typed
      AGENTIC_TIMEOUT/OPS envelope wins the race instead of a generic abort. */
   let resp;
+  let release = function () {};
   try {
-    resp = opts.signal
-      ? await fetch(path, opts)
-      : await fetchWithTimeout(path, opts, timeoutMs || 15000);
+    if (chatSignal) {
+      resp = await fetch(path, opts);
+    } else {
+      const held = await fetchHold(path, opts, timeoutMs || 15000);
+      resp = held.resp;
+      release = held.release;
+    }
   } catch (e) {
     const message = e && typeof e.message === 'string' ? e.message : '';
     const isFetchFailure = (e && e.name === 'AbortError') || e instanceof TypeError ||
@@ -798,14 +825,21 @@ async function api(path, method, body, timeoutMs, onDelta) {
     throw err;
   }
   if (resp.ok && onDelta && (resp.headers.get('Content-Type') || '').startsWith('text/event-stream')) {
+    release();
     return readChatStream(resp, onDelta);
   }
   let data = null;
   try {
+    /* The timeout and the caller's abort stay armed while the body is read:
+       a gateway that sends headers and then stalls the JSON must still be
+       cancellable by /loop stop, session navigation or the timeout. */
     data = await resp.json();
   } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
     if (resp.ok) throw new Error('HTTP ' + resp.status + ' non-JSON from ' + path);
     /* Preserve the HTTP status below for non-JSON error bodies. */
+  } finally {
+    release();
   }
   if (!resp.ok) {
     const d = data && data.detail !== undefined ? data.detail : data;
@@ -876,14 +910,37 @@ async function readChatStream(resp, onDelta) {
 }
 
 /* ── status / statusbar ── */
-async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+/* fetch() with a timeout and an optional caller-owned abort signal composed
+   in (either one aborts the request). The returned `release` detaches both;
+   it must be called once the caller is done with the response BODY, since
+   fetch() resolves on headers and a stalled body would otherwise outlive
+   the timeout and the caller's abort (see api()). */
+async function fetchHold(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    window.clearTimeout(timer);
+  const outer = options.signal;
+  const relay = () => controller.abort();
+  if (outer) {
+    if (outer.aborted) controller.abort(); else outer.addEventListener('abort', relay, { once: true });
   }
+  const release = () => {
+    window.clearTimeout(timer);
+    if (outer) outer.removeEventListener('abort', relay);
+  };
+  try {
+    const resp = await fetch(url, { ...options, signal: controller.signal });
+    return { resp: resp, release: release };
+  } catch (e) {
+    release();
+    throw e;
+  }
+}
+
+/* Header-only variant for callers that inspect the status and drop the body. */
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const held = await fetchHold(url, options, timeoutMs);
+  held.release();
+  return held.resp;
 }
 
 const STATUS_BASE_INTERVAL = 15000;
@@ -1278,12 +1335,12 @@ $('sessionClearDialog').addEventListener('cancel', e => { if (sessionClearing) e
 $('sessionClearConfirm').addEventListener('click', async () => {
   if (sessionClearing) return;
   sessionClearing = true;
-  ++sessionRevision;
+  abortInflightSearch(); ++sessionRevision;
   sendBtn.disabled = true;
   $('sessionClearConfirm').disabled = true;
   $('sessionClearCancel').disabled = true;
   try {
-    if (inflightChat) await requestLoopStop(); else stopLoop();
+    abortInflightSearch(); if (inflightChat) await requestLoopStop(); else stopLoop();
     const deleteDerived = !!$('sessionClearDerivedEpisodes').checked;
     const cleared = await api('/api/sessions/clear', 'POST', {
       confirm:true,
@@ -1335,7 +1392,7 @@ async function runSlash(line) {
         if (sub === 'new' || sub === 'use') {
           const revision = ++sessionRevision;
           sendBtn.disabled = true;
-          if (inflightChat) await requestLoopStop(); else stopLoop();
+          abortInflightSearch(); if (inflightChat) await requestLoopStop(); else stopLoop();
           try {
             const s = sub === 'new'
               ? await api('/api/sessions', 'POST', { title: rest.slice(1).join(' ') })
@@ -2170,6 +2227,11 @@ async function runLoopTurns() {
     while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
       const framed = 'Continue toward the session goal. Be concise (local 27b). If the goal is fully satisfied, end with GOAL_DONE on its own line. Stay in this chat; do not request a real-repo write.';
+      /* A routed search started during the cooldown owns the gate, and so
+         does the chat turn it may fall back to on a router failure; let both
+         settle rather than starting a model turn that overlaps them. */
+      while ((inflightSearch || inflightChat) && loopState === activeLoop && !loopState.stop) await sleepMs(250);
+      if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
       const reply = await sendChat(framed, true);
       if (loopState !== activeLoop) return;
       if (!loopState || loopState.stop) {
@@ -2322,7 +2384,7 @@ async function sendChat(text, asLoop, extra) {
   } finally {
     if (preview) preview.remove();
     if (inflightChat === controller) inflightChat = null;
-    if (revision === sessionRevision) { sendBtn.disabled = false; input.focus(); }
+    if (revision === sessionRevision) releaseSendGate();
   }
 }
 
@@ -2359,15 +2421,28 @@ async function onSend() {
   if (sendBtn.disabled) {
     if (isLoopStopCommand(text)) {
       input.value = '';
-      requestLoopStop('loop stop requested — aborting the in-flight turn');
+      /* A routed natural-language search may hold the gate: abort that
+         request first (sendMaybeNlSearch reports "search cancelled" and
+         releases the gate). requestLoopStop is still needed whenever a model
+         turn or an automatic loop is active (a search can start during the
+         loop's cooldown, so both can be live at once); it is skipped only
+         when the search was the sole thing running, so a search cancel never
+         posts /api/chat/cancel for a model turn that does not exist. */
+      const hadSearch = !!inflightSearch;
+      abortInflightSearch();
+      if (inflightChat || loopState || !hadSearch) {
+        requestLoopStop('loop stop requested — aborting the in-flight turn');
+      }
     }
     return;
   }
   input.value = '';
   if (text.startsWith('/')) { await runSlashMaybeFuzzy(text); return; }
   const files = attachInput && attachInput.files ? Array.from(attachInput.files) : [];
-  let extra;
   if (files.length) {
+    /* An attached file grounds a model turn; a line with attachments is
+       never routed to the listing search. */
+    let extra;
     try {
       extra = { attachment_ids: await uploadChatAttachments(files) };
       if (attachInput) attachInput.value = '';
@@ -2375,8 +2450,177 @@ async function onSend() {
       sys('error: ' + ((e && e.message) || e));
       return;
     }
+    await sendChat(text, false, extra);
+    return;
   }
-  await sendChat(text, false, extra);
+  await sendMaybeNlSearch(text);
+}
+
+function looksLikeNlSearch(text) {
+  /* Mirrors src/server/web_intent.rs: command-shaped (optional politeness
+     words, then a whole `search` token; `google` is an entity, not a verb)
+     plus a balanced quoted term or a `first N links|results|hits|pages`
+     clause. A quote opens at a word start and closes at a word end, so the
+     apostrophe inside 'women's health' does not end the term. Lead-in words
+     and the verb need whitespace (or end) after any trailing punctuation so
+     `Please:search` and `search:first` tokenize like the server.
+
+     Direct routing is for listing-only requests. Structurally: after the
+     command head (lead-in words and the verb), once every quoted term and
+     count clause is masked out, nothing left may open another clause: a
+     connective (`and`, `or`, `but`, `then`, `so`, `plus`, `also`, `to`, or `with`
+     unless it names an engine: `with serpapi`, `with the web`), a
+     standalone `&`, a semicolon, a comma / period / colon / `!` / `?`
+     followed by more words (`"Rust", summarize it`; `"Rust": explain it`),
+     or a spaced dash (`"Rust" — summarize it`); punctuation followed by a
+     search operator (`"Rust", site:github.com`) is not a boundary.
+     Punctuation glued to a word
+     (`node.js`, `site:x.com`, `AT&T`, `-cats`) or at the very end is not a
+     boundary. A quoted term may span a line break (Shift+Enter), but a line
+     break outside quotes followed by more words is a boundary. Typographic
+     quotes (`“…”`, `‘…’`) are quoted terms like ASCII ones. A
+     joiner (`and`, `or`, `plus`) directly between two quoted terms is the
+     scaffolding tokenize_unquoted drops (`'cgfixit' and 'Chris Grady'`),
+     not a follow-up clause. The mask covers the
+     whole body, not only the suffix after the last term, so `"Rust" and
+     compare it with "Go"` is caught by the `and` between the terms.
+     Anything else stays on the chat path, where the model still has the
+     web tools when they are enabled. When quoted terms are present, every
+     remaining word must be scaffolding or an operator (see below), so a
+     bare follow-up (`"Rust" summarize it`) stays in chat too; an unquoted
+     subject must be short, pronoun-free and free of follow-up action verbs
+     (`summarize`, `explain`, `provide`, …). This errs
+     toward chat on purpose: a listing that drops half the ask is worse
+     than a model turn. */
+  var head = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.exec(text);
+  if (!head) return false;
+  var body = text.slice(head[0].length);
+  /* `-"cats"`, `+"rust async"`, `~"cheap"` (a Google operator on a quoted
+     span) are quoted terms too, mirroring split_quoted on the server. */
+  var quoteRe = /(?:^|[\s(,:\[])[-+~]?(?:"[^"]+"|'.+?'|“[^”]+”|‘.+?’)(?=$|[\s,.;:)\]!?])/gs;
+  /* A signed or bracketed count (`first -2 results`, `first (2) links`) is
+     still a count clause: it routes so the server's own range check refuses
+     it (WEB_BAD_QUERY) rather than starting a model turn. */
+  var countRe = /\bfirst\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?)\b/ig;
+  var quoted = 0, counts = 0;
+  var Q = '\u0000';
+  var masked = body
+    .replace(quoteRe, function (m) { quoted++; return (/^[\s(,:\[]/.test(m) ? m.charAt(0) : '') + Q; })
+    .replace(countRe, function () { counts++; return ' '; });
+  if (quoted + counts === 0) return false;
+  var joinerRe = /\u0000\s+(?:and|or|plus)\s+\u0000/i;
+  while (joinerRe.test(masked)) masked = masked.replace(joinerRe, Q + ' ' + Q);
+  /* Follow-up action verbs never open a listing subject (`Rust summarize
+     briefly`, `Rust provide a summary`), and never count as an operator
+     when dressed as one (`summarize:briefly`, `-summarize`). */
+  var ACTION = /^(?:summari[sz]e|synthesi[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify|compile|aggregate|digest|interpret|distill|collate|consolidate|critique|report|list|show|display|print|cite|enumerate|present|open|read|visit|click|browse|fetch|download|navigate|follow|check|verify|get|grab|pull|retrieve|obtain|gather|collect|lookup|pick|choose|select|filter|sort|highlight|save|store|export|copy|send|email|share|post|bookmark|scrape|crawl|parse|convert|format|render|preview|expand|include|add|attach|find|locate|discover|identify|spot|research|investigate|explore|make|build|produce|prepare|craft|construct|assemble|tabulate|visuali[sz]e|calculate|compute|tally|combine|merge|organi[sz]e|arrange|turn|transform|reformat|restructure|reshape|reorgani[sz]e|tabulari[sz]e|return|output|respond|reply|emit|yield|deliver|dump|stream|log)$/i;
+  /* Google operators: a prefixed word (`-cats`, `+rust`, `~term`, `@handle`),
+     a known colon operator (`site:x`, `intitle:x`, …), `OR`, `*`, a year. */
+  var OPERATOR = /^(?:[-+~@]\S|(?:site|intitle|inurl|intext|allintitle|allinurl|allintext|filetype|ext|related|cache|define|before|after|source|loc|location|lang|inanchor|allinanchor|daterange|around):\S|\*$|\d{1,4}$)/i;
+  var isOperator = function (t) {
+    /* `OR` is Google's operator only in uppercase; a lowercase `or` opens a
+       follow-up clause (`Rust or list Go sources`). */
+    if (t === 'OR') return true;
+    return OPERATOR.test(t) && !ACTION.test(t.replace(/^[-+~@]/, '').replace(/:.*$/, ''));
+  };
+  /* Operators are masked like quoted terms, so punctuation before one
+     (`"Rust", site:github.com`) is not a clause boundary and they drop out
+     of the subject check below. */
+  var OPQ = '\u0001';
+  masked = masked.split(/(\s+)/).map(function (t) {
+    return isOperator(t.replace(/^[(\[]+|[)\],.;:!?]+$/g, '')) ? OPQ : t;
+  }).join('');
+  if (/(?:\b(?:and|or|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000\u0001]|\n\s*[^\s\u0000\u0001]|(?:^|\s)[-–—]\s+[^\s\u0000\u0001])/i.test(masked)) return false;
+  /* With quoted terms the subject is fully known, so whatever else remains
+     must be search scaffolding (engine phrases, introducers, articles) or
+     an operator. A bare follow-up such as `"Rust" summarize it` fails this
+     and stays in chat. Without quotes the remainder IS the subject and
+     cannot be whitelisted, so it must at least look like a listing subject:
+     a short run of words (at most six beyond the scaffolding) with no
+     object pronoun or action verb in it. `first 2 results for Rust
+     summarize them` stays in chat on `them`. */
+  var SCAFFOLD = /^(?:google|serpapi|the|a|an|web|internet|on|with|using|via|across|from|for|about|of|in)$/i;
+  var PRONOUN = /^(?:it|its|them|their|this|that|these|those|me|my|us|our|him|her|you|your|each|every|both)$/i;
+  var words = masked.split(/\s+/)
+    .map(function (t) { return t.replace(/^[(\[]+|[)\],.;:!?]+$/g, ''); })
+    .filter(function (t) { return t && t !== Q && t !== OPQ; });
+  var subject = words.filter(function (t) { return !SCAFFOLD.test(t); });
+  if (quoted > 0) return subject.length === 0;
+  return subject.length <= 6 && !subject.some(function (t) { return PRONOUN.test(t) || ACTION.test(t); });
+}
+
+/* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
+   validated on the raw text before the intent rewrite, and the model's
+   web_search tool carries the same bound, so a longer listing request cannot
+   succeed on either path and is refused here without a billed model turn. */
+var MAX_WEB_QUERY_LEN = 200;
+
+async function sendMaybeNlSearch(text) {
+  if (!looksLikeNlSearch(text)) { await sendChat(text, false); return; }
+  if (Array.from(text).length > MAX_WEB_QUERY_LEN) {
+    sys('search refused: a search request is limited to ' + MAX_WEB_QUERY_LEN + ' characters');
+    return;
+  }
+  /* Hold the console's in-flight gate (sendBtn.disabled, see onSend) while
+     the routed search runs so a second Enter cannot start a concurrent search
+     or a model turn that interleaves with it. The revision guard mirrors
+     sendChat: a session switch during the request means the result, the chat
+     fallback and the gate release all belong to a transcript that is gone. */
+  const revision = sessionRevision;
+  sendBtn.disabled = true;
+  /* Own an abort controller so /loop stop, a session switch or logout aborts
+     the request itself (abortInflightSearch) and releases the server's single
+     search gate, instead of only discarding the eventual result. It lives in
+     its own slot, not inflightChat, so nothing posts /api/chat/cancel for it.
+     The signal is passed explicitly so unrelated callers of the same route
+     (the settings "Test Google search" button) keep their own timeout path. */
+  const controller = new AbortController();
+  inflightSearch = controller;
+  let fallbackToChat = false;
+  try {
+    const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000, null, controller.signal);
+    if (revision !== sessionRevision) return;
+    if (found && found.results) {
+      sys(renderSearchResults(found));
+    } else {
+      sys(JSON.stringify(found, null, 2));
+    }
+    return;
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      if (controller.signal.aborted) {
+        /* Cancelled on purpose (/loop stop, session switch, logout): not a
+           routing failure, so never re-run the text as a model turn. */
+        if (revision === sessionRevision) sys('search cancelled');
+        return;
+      }
+      /* The request timed out (fetchWithTimeout aborted its own controller).
+         Surface it; a model turn would not make the provider answer faster. */
+      if (revision === sessionRevision) sys('search timed out: ' + e.message);
+      return;
+    }
+    if (revision !== sessionRevision) return;
+    if (e && typeof e.code === 'string' && e.code && e.code !== 'NETWORK') {
+      /* The search route answered with a typed refusal: a web error (bad
+         query, web disabled, provider or quota failure), a schema validation
+         failure, or a guard refusal (rate limit, auth, CSRF). That is the
+         answer. The same guards protect /api/chat, so re-sending the text as
+         a model turn would only repeat the refusal and bill a turn. */
+      sys('search refused: ' + e.message);
+      return;
+    }
+    /* Only a routing / compatibility failure (network, unknown route with
+       no typed body) falls back to the ordinary chat path. */
+    sys('search router did not run: ' + e.message);
+    fallbackToChat = true;
+  } finally {
+    if (inflightSearch === controller) inflightSearch = null;
+    /* Release the gate only while this request still owns the session. After
+       a revision change the flow that moved it (session navigation, logout)
+       owns the gate and releases it itself once its own request settles. */
+    if (revision === sessionRevision) releaseSendGate();
+  }
+  if (fallbackToChat) await sendChat(text, false);
 }
 
 async function runSlashMaybeFuzzy(text) {
@@ -2510,9 +2754,24 @@ if (hAuthLogout) {
   hAuthLogout.addEventListener('click', async function () {
     const headers = { 'Content-Type': 'application/json' };
     if (CSRF_TOKEN) headers['X-CyClaw-CSRF'] = CSRF_TOKEN;
+    /* Claim the selection and the send gate before aborting, so the aborted
+       request's cleanup sees a foreign revision and cannot re-enable sending
+       against the old session while logout is in flight. Then abort whatever
+       owns the gate (a chat turn or a routed search) so it releases the
+       server-side gate instead of outliving the session. The revision is
+       never rewound, even when logout is rejected: a session switch started
+       meanwhile owns a newer revision and must keep it. */
+    abortInflightSearch();
+    const claimed = ++sessionRevision;
+    sendBtn.disabled = true;
+    if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
       if (!response.ok) {
+        /* Release the gate only while this logout still owns the revision: a
+           session switch started meanwhile claimed a newer one and releases
+           the gate itself once its own request settles. */
+        if (sessionRevision === claimed) sendBtn.disabled = false;
         // Do not clear the page CSRF (const meta token). On 401/403 the
         // header is already rejected; whoami refreshes session UI so a
         // live cookie is visible. Restore the rejected line after whoami
@@ -2529,6 +2788,7 @@ if (hAuthLogout) {
     $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
     currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionRevision++; window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
+    sendBtn.disabled = false;
   });
 }
 const hAuthSetupBtn = document.getElementById('hAuthSetupBtn');
