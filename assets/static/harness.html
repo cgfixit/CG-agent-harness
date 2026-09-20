@@ -2387,7 +2387,10 @@ function looksLikeNlSearch(text) {
      standalone `&`, a semicolon, or a comma / period / `!` / `?` followed by
      more words (`"Rust", summarize it`; `"Rust". Explain it`). Punctuation
      glued to a word (`node.js`, `site:x.com`, `AT&T`) or at the very end is
-     not a boundary. A quoted term may span a line break (Shift+Enter). The mask covers the
+     not a boundary. A quoted term may span a line break (Shift+Enter). A
+     joiner (`and`, `or`, `plus`) directly between two quoted terms is the
+     scaffolding tokenize_unquoted drops (`'cgfixit' and 'Chris Grady'`),
+     not a follow-up clause. The mask covers the
      whole body, not only the suffix after the last term, so `"Rust" and
      compare it with "Go"` is caught by the `and` between the terms.
      Anything else stays on the chat path, where the model still has the
@@ -2404,11 +2407,14 @@ function looksLikeNlSearch(text) {
      it (WEB_BAD_QUERY) rather than starting a model turn. */
   var countRe = /\bfirst\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?)\b/ig;
   var signals = 0;
+  var Q = '\u0000';
   var masked = body
-    .replace(quoteRe, function (m) { signals++; return (/^[\s(,:\[]/.test(m) ? m.charAt(0) : '') + ' '; })
+    .replace(quoteRe, function (m) { signals++; return (/^[\s(,:\[]/.test(m) ? m.charAt(0) : '') + Q; })
     .replace(countRe, function () { signals++; return ' '; });
   if (signals === 0) return false;
-  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|(?:^|\s)&(?:\s|$)|;|[,.!?]\s+\S)/i.test(masked);
+  var joinerRe = /\u0000\s+(?:and|or|plus)\s+\u0000/i;
+  while (joinerRe.test(masked)) masked = masked.replace(joinerRe, Q + ' ' + Q);
+  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|(?:^|\s)&(?:\s|$)|;|[,.!?]\s+[^\s\u0000])/i.test(masked);
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is

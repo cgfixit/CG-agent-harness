@@ -218,18 +218,24 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        let excluded = chars[i] == '-' && opens_quote(&chars, i) && matches!(chars.get(i + 1), Some('"' | '\''));
-        let q_at = if excluded { i + 1 } else { i };
-        let q = chars[q_at];
-        if (q == '"' || q == '\'') && (excluded || opens_quote(&chars, i)) {
+        if let Some(q_at) = opens_quote(&chars, i)
+            .then(|| quote_after_operator(&chars, i))
+            .flatten()
+        {
+            let q = chars[q_at];
             if let Some(j) = (q_at + 1..chars.len()).find(|&j| chars[j] == q && closes_quote(&chars, j)) {
                 let t: String = chars[q_at + 1..j].iter().collect();
                 let t = t.trim();
                 if !t.is_empty() {
+                    let prefix: String = chars[i..q_at].iter().collect();
                     residual.push(' ');
                     residual.push_str(&quote_placeholder(terms.len()));
                     residual.push(' ');
-                    terms.push(if excluded { format!("-{q}{t}{q}") } else { t.to_string() });
+                    terms.push(if prefix.is_empty() {
+                        t.to_string()
+                    } else {
+                        format!("{prefix}{q}{t}{q}")
+                    });
                 }
                 i = j + 1;
                 continue;
@@ -239,6 +245,29 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
         i += 1;
     }
     (terms, residual)
+}
+
+/// At word start `i`, the index of the opening quote of a bare quoted span
+/// (`"x"`), a quoted exclusion (`-"x"`) or a quoted operator argument
+/// (`intitle:"x"`, `site:"x"`, `-site:"x"`). The operator is kept with the
+/// span so the provider sees it intact; `foo"x"` (no colon) is not a span.
+fn quote_after_operator(chars: &[char], i: usize) -> Option<usize> {
+    let is_quote = |c: char| c == '"' || c == '\'';
+    let mut k = i;
+    if chars.get(k) == Some(&'-') {
+        k += 1;
+    }
+    let op_start = k;
+    while chars.get(k).is_some_and(|c| c.is_alphanumeric() || *c == '_') {
+        k += 1;
+    }
+    if k > op_start {
+        if chars.get(k) != Some(&':') {
+            return None;
+        }
+        k += 1;
+    }
+    chars.get(k).copied().filter(|c| is_quote(*c)).map(|_| k)
 }
 
 /// Engine names that may follow the verb (`search Google`, `search serpapi`).
@@ -645,6 +674,25 @@ mod tests {
         // A hyphen inside a word is not an exclusion operator.
         let p = parse("search first 2 links for well-known rust").expect("intent");
         assert_eq!(p.terms, vec!["well-known".to_string(), "rust".into()]);
+    }
+
+    #[test]
+    fn quoted_operator_arguments_stay_one_term() {
+        let p = parse("search intitle:\"rust async\"").expect("intent");
+        assert_eq!(p.terms, vec!["intitle:\"rust async\"".to_string()]);
+        let p = parse("search site:\"example.com\" first 2 links").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["site:\"example.com\"".to_string()]);
+        let p = parse("search -site:'pinterest.com' \"rust\"").expect("intent");
+        assert_eq!(p.terms, vec!["-site:'pinterest.com'".to_string(), "rust".into()]);
+        assert_eq!(p.query(), "-site:'pinterest.com' rust");
+        // A verb glued to its quote was never command-shaped (unchanged), and
+        // `foo"x"` (no colon) is no span.
+        assert_eq!(parse_with_count("search:\"rust\"", 5), WebIntentParse::PassThrough);
+        assert_eq!(
+            parse_with_count("search foo\"bar\" first 2 links", 5),
+            WebIntentParse::Invalid("search request has no subject after the count clause".into())
+        );
     }
 
     #[test]
