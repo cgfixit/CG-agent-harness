@@ -1074,6 +1074,15 @@ function applyStyleState(r) {
     : !r.loaded ? (r.unavailable_reason || 'unavailable')
     : r.truncated ? 'truncated' : null;
 }
+/* The active-style line for a `/api/prompt/preview` reply, shared by the
+   /prompt command and the soul editor's preview so a persona that displaces
+   or clips the selected preset is called out wherever the prompt is shown. */
+function previewStyleLine(r) {
+  const st = (r && r.style) || {};
+  return !st.name ? 'active style: off'
+    : st.loaded ? 'active style: ' + st.name + (st.origin ? ' (' + st.origin + ')' : '') + (st.truncated ? ' — warning: ' + styleIssueText('truncated') : '')
+    : 'active style: off — selected preset "' + st.name + '" is ' + styleIssueText(st.unavailable_reason || 'unavailable');
+}
 function styleIssueText(issue) {
   return issue === 'truncated' ? 'clipped to the budget the soul leaves; the preset is only partly in the prompt'
     : 'not in the prompt (' + issue + '); pick off to clear it or fix the overlay';
@@ -1543,11 +1552,7 @@ async function runSlash(line) {
         if (promptRevision !== sessionRevision || promptSession !== currentSession) { sys('prompt preview abandoned: the session changed'); break; }
         const r = await api('/api/prompt/preview', 'POST', { session_id: promptSession || null });
         if (promptRevision !== sessionRevision || promptSession !== currentSession) { sys('prompt preview discarded: the session changed'); break; }
-        const st = r.style || {};
-        const styleLine = !st.name ? 'active style: off'
-          : st.loaded ? 'active style: ' + st.name + (st.origin ? ' (' + st.origin + ')' : '') + (st.truncated ? ' — ' + styleIssueText('truncated') : '')
-          : 'active style: off — selected preset "' + st.name + '" is ' + styleIssueText(st.unavailable_reason || 'unavailable');
-        sys(styleLine + '\n' + r.scope + '\n\n' + r.prompt); break;
+        sys(previewStyleLine(r) + '\n' + r.scope + '\n\n' + r.prompt); break;
       }
       case 'style': {
         if (!currentSession) { sys('no active session'); break; }
@@ -3055,7 +3060,7 @@ $('soulClose').addEventListener('click', () => { $('soulEditor').close(); $('sou
 $('soulPreview').addEventListener('click', async () => {
   /* Same ordering as /prompt: a pending style write lands first. */
   await awaitStyleWrites();
-  try { const r = await api('/api/prompt/preview', 'POST', {session_id:currentSession || null,soul_content:$('soulContent').value}); $('soulFeedback').textContent = r.scope + '\n' + r.prompt; }
+  try { const r = await api('/api/prompt/preview', 'POST', {session_id:currentSession || null,soul_content:$('soulContent').value}); $('soulFeedback').textContent = previewStyleLine(r) + '\n' + r.scope + '\n' + r.prompt; }
   catch(e) { $('soulFeedback').textContent = e.message; }
 });
 async function submitSoul(propose) {
