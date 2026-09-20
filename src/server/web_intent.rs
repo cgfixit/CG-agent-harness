@@ -94,6 +94,13 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
     if residual.chars().any(|c| matches!(c, '"' | '\u{201c}' | '\u{201d}')) {
         return WebIntentParse::Invalid("search request has an unbalanced double quote".into());
     }
+    // `'The "Rust" Book'`: the span is rendered as `"The "Rust" Book"`, and
+    // an operator argument such as `site:'a"b'` carries the stray quote as
+    // is. Either splits or unbalances the provider's exact-phrase syntax, so
+    // refuse instead of guessing at an escape the provider does not define.
+    if quoted.iter().zip(&bare).any(|(t, b)| has_embedded_double_quote(t, *b)) {
+        return WebIntentParse::Invalid("a quoted search term contains an embedded double quote".into());
+    }
     let explicit_count = match extract_count(&residual.to_ascii_lowercase()) {
         Some(Ok(n)) => Some(n),
         Some(Err(message)) => return WebIntentParse::Invalid(message),
@@ -171,6 +178,22 @@ fn is_command_shaped(lower: &str) -> bool {
 /// is Google's exclusion of the word `search`, not the command verb.
 fn is_plain_word(tok: &str, words: &[&str]) -> bool {
     tok.chars().next().is_some_and(char::is_alphanumeric) && words.contains(&word_of(tok).to_ascii_lowercase().as_str())
+}
+
+/// True when the contents of a quoted span (between its own delimiters)
+/// contain a double quote of any kind. `bare` terms are stored without
+/// their delimiters; operator arguments keep them (`site:'x'`).
+fn has_embedded_double_quote(term: &str, bare: bool) -> bool {
+    let is_dq = |c: char| matches!(c, '"' | '\u{201c}' | '\u{201d}');
+    if bare {
+        return term.chars().any(is_dq);
+    }
+    let chars: Vec<char> = term.chars().collect();
+    let open = chars.iter().position(|c| closing_quote(*c).is_some());
+    match open {
+        Some(o) if chars.len() > o + 2 => chars[o + 1..chars.len() - 1].iter().any(|c| is_dq(*c)),
+        _ => false,
+    }
 }
 
 fn word_of(tok: &str) -> &str {
@@ -516,9 +539,14 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     // `'a' and 'b'`: a joiner between two quoted spans is scaffolding too.
     // Uppercase `OR` is Google's operator, not a joiner: `"cats" OR "dogs"`
     // must reach the provider with the operator between the terms.
+    // `-and`, `+plus`, `~or` are operator-prefixed words, not joiners:
+    // `"cats" -and "dogs"` must keep the exclusion between the terms.
     let is_joiner = |tok: &str| {
         let w = word_of(tok);
-        w.eq_ignore_ascii_case("and") || w.eq_ignore_ascii_case("plus") || (w.eq_ignore_ascii_case("or") && w != "OR")
+        tok.starts_with(|c: char| c.is_alphanumeric())
+            && (w.eq_ignore_ascii_case("and")
+                || w.eq_ignore_ascii_case("plus")
+                || (w.eq_ignore_ascii_case("or") && w != "OR"))
     };
     let mut keep = vec![true; rest.len()];
     for k in 1..rest.len().saturating_sub(1) {
@@ -955,6 +983,39 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn embedded_double_quote_in_a_quoted_term_is_refused() {
+        for text in [
+            "search 'The \"Rust\" Book'",
+            "search first 2 results for \u{2018}The \"Rust\" Book\u{2019}",
+            "search \u{201c}The \"Rust\" Book\u{201d} first 2 links",
+            "search site:'a\"b' first 2 links",
+            "search -'a\u{201c}b' first 2 links",
+        ] {
+            match parse_with_count(text, 5) {
+                WebIntentParse::Invalid(message) => {
+                    assert!(message.contains("embedded double quote"), "{text}: {message}")
+                }
+                other => panic!("{text} should be refused, got {other:?}"),
+            }
+        }
+        // Single quotes inside a double-quoted span are ordinary characters.
+        let p = parse("search \"rock 'n' roll\" first 2 links").expect("intent");
+        assert_eq!(p.query(), "\"rock 'n' roll\"");
+        let p = parse("search 'The Rust Book' first 2 links").expect("intent");
+        assert_eq!(p.query(), "\"The Rust Book\"");
+    }
+
+    #[test]
+    fn operator_prefixed_joiner_between_quoted_terms_is_kept() {
+        let p = parse("search \"cats\" -and \"dogs\" first 2 links").expect("intent");
+        assert_eq!(p.query(), "\"cats\" -and \"dogs\"");
+        let p = parse("search \"cats\" +plus \"dogs\" first 2 links").expect("intent");
+        assert_eq!(p.query(), "\"cats\" +plus \"dogs\"");
+        let p = parse("search \"cats\" and \"dogs\" first 2 links").expect("intent");
+        assert_eq!(p.query(), "\"cats\" \"dogs\"");
     }
 
     #[test]
