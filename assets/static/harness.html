@@ -2385,6 +2385,12 @@ async function sendMaybeNlSearch(text) {
     }
     return;
   } catch (e) {
+    if (e && e.name === 'AbortError') {
+      /* Cancelled on purpose (/loop stop, session switch, logout): not a
+         routing failure, so never re-run the text as a model turn. */
+      if (revision === sessionRevision) sys('search cancelled');
+      return;
+    }
     if (revision !== sessionRevision) return;
     if (e && typeof e.code === 'string' && e.code.indexOf('WEB_') === 0) {
       /* The search route answered and refused (bad query, web disabled,
@@ -2399,11 +2405,10 @@ async function sendMaybeNlSearch(text) {
     fallbackToChat = true;
   } finally {
     if (inflightChat === controller) inflightChat = null;
-    /* Release the gate when this request still owns the session, or when
-       the revision moved (session switch, logout) without another chat turn
-       taking the gate over; otherwise the console would stay locked after a
-       logout/login until reload. */
-    if (revision === sessionRevision || !inflightChat) { sendBtn.disabled = false; input.focus(); }
+    /* Release the gate only while this request still owns the session. After
+       a revision change the flow that moved it (session navigation, logout)
+       owns the gate and releases it itself once its own request settles. */
+    if (revision === sessionRevision) { sendBtn.disabled = false; input.focus(); }
   }
   if (fallbackToChat) await sendChat(text, false);
 }
@@ -2539,6 +2544,10 @@ if (hAuthLogout) {
   hAuthLogout.addEventListener('click', async function () {
     const headers = { 'Content-Type': 'application/json' };
     if (CSRF_TOKEN) headers['X-CyClaw-CSRF'] = CSRF_TOKEN;
+    /* Abort whatever request owns the send gate (a chat turn or a routed
+       search) so it releases the server-side gate instead of outliving the
+       session; logout then owns the console gate and releases it below. */
+    if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
       if (!response.ok) {
@@ -2558,6 +2567,7 @@ if (hAuthLogout) {
     $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
     currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionRevision++; window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
+    sendBtn.disabled = false;
   });
 }
 const hAuthSetupBtn = document.getElementById('hAuthSetupBtn');
