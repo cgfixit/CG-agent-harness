@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use super::{state::AppState, web_policy::error, web_research::authorize_owner};
 use crate::common::errors::Result;
+use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::{parse_chat_response, ChatMessage, ChatResult};
+use crate::server::tool_inventory::chat_callable_names;
 
 pub fn tools() -> Vec<Value> {
     vec![
@@ -28,6 +30,20 @@ fn five() -> usize {
 #[serde(deny_unknown_fields)]
 struct FetchArgs {
     url: String,
+}
+
+fn tool_argv(name: &str, args: &str) -> Vec<String> {
+    match name {
+        "web_search" => serde_json::from_str::<SearchArgs>(args)
+            .ok()
+            .map(|a| vec![a.query])
+            .unwrap_or_default(),
+        "web_fetch" => serde_json::from_str::<FetchArgs>(args)
+            .ok()
+            .map(|a| vec![a.url])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 fn check_evidence(state: &AppState, owner: &str, sources: &[String]) -> Result<()> {
@@ -166,6 +182,9 @@ async fn run_inner(
             .filter(|s| s.len() <= 4096)
             .ok_or_else(|| error("WEB_TOOL_ARGUMENTS", "invalid tool arguments"))?;
         authorize_owner(state, owner)?;
+        let argv = tool_argv(name, args);
+        assert_allowed(name, &argv, &chat_callable_names(true), &state.audit)
+            .map_err(|e| error("WEB_TOOL_DENIED", &e.message))?;
         let result = match name {
             "web_search" => {
                 let args: SearchArgs =
