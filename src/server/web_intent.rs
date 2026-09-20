@@ -128,19 +128,21 @@ fn is_command_shaped(lower: &str) -> bool {
     if lower == "/web" || lower.starts_with("/web ") {
         return true;
     }
-    let words: Vec<&str> = lower
-        .split_whitespace()
-        .map(word_of)
-        .filter(|w| !w.is_empty())
-        .collect();
+    let raw: Vec<&str> = lower.split_whitespace().filter(|t| !word_of(t).is_empty()).collect();
     let mut i = 0;
-    while i < words.len() && LEAD_IN.contains(&words[i]) {
+    while i < raw.len() && is_plain_word(raw[i], LEAD_IN) {
         i += 1;
     }
-    if words.get(i).is_some_and(|w| VERBS.contains(w)) {
+    if raw.get(i).is_some_and(|t| is_plain_word(t, VERBS)) {
         return true;
     }
-    words.get(i..).is_some_and(|rest| find_count_clause(rest) == Some(0))
+    raw.get(i..).is_some_and(|rest| find_count_clause(rest) == Some(0))
+}
+
+/// `tok` is one of `words` and carries no operator prefix: `-search "x"`
+/// is Google's exclusion of the word `search`, not the command verb.
+fn is_plain_word(tok: &str, words: &[&str]) -> bool {
+    tok.chars().next().is_some_and(char::is_alphanumeric) && words.contains(&word_of(tok).to_ascii_lowercase().as_str())
 }
 
 fn word_of(tok: &str) -> &str {
@@ -185,6 +187,18 @@ fn extract_count(lower: &str) -> Option<Result<usize, String>> {
     })
 }
 
+/// The closing character that pairs with an opening quote: ASCII quotes
+/// close themselves, typographic quotes (`“…”`, `‘…’`) close with their
+/// right-hand form.
+fn closing_quote(open: char) -> Option<char> {
+    match open {
+        '"' | '\'' => Some(open),
+        '\u{201c}' => Some('\u{201d}'),
+        '\u{2018}' => Some('\u{2019}'),
+        _ => None,
+    }
+}
+
 fn opens_quote(chars: &[char], i: usize) -> bool {
     i == 0 || matches!(chars[i - 1], c if c.is_whitespace() || matches!(c, '(' | ',' | ':' | '['))
 }
@@ -223,7 +237,8 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
             .flatten()
         {
             let q = chars[q_at];
-            if let Some(j) = (q_at + 1..chars.len()).find(|&j| chars[j] == q && closes_quote(&chars, j)) {
+            let close = closing_quote(q).unwrap_or(q);
+            if let Some(j) = (q_at + 1..chars.len()).find(|&j| chars[j] == close && closes_quote(&chars, j)) {
                 let t: String = chars[q_at + 1..j].iter().collect();
                 let t = t.trim();
                 if !t.is_empty() {
@@ -234,7 +249,7 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
                     terms.push(if prefix.is_empty() {
                         t.to_string()
                     } else {
-                        format!("{prefix}{q}{t}{q}")
+                        format!("{prefix}{q}{t}{close}")
                     });
                 }
                 i = j + 1;
@@ -252,7 +267,6 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
 /// (`intitle:"x"`, `site:"x"`, `-site:"x"`). The operator is kept with the
 /// span so the provider sees it intact; `foo"x"` (no colon) is not a span.
 fn quote_after_operator(chars: &[char], i: usize) -> Option<usize> {
-    let is_quote = |c: char| c == '"' || c == '\'';
     let mut k = i;
     if chars.get(k) == Some(&'-') {
         k += 1;
@@ -267,7 +281,7 @@ fn quote_after_operator(chars: &[char], i: usize) -> Option<usize> {
         }
         k += 1;
     }
-    chars.get(k).copied().filter(|c| is_quote(*c)).map(|_| k)
+    chars.get(k).copied().filter(|c| closing_quote(*c).is_some()).map(|_| k)
 }
 
 /// Engine names that may follow the verb (`search Google`, `search serpapi`).
@@ -318,10 +332,10 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     if raw.first().is_some_and(|t| t.eq_ignore_ascii_case("/web")) {
         i += 1;
     }
-    while i < lower.len() && LEAD_IN.contains(&lower[i].as_str()) {
+    while i < raw.len() && is_plain_word(raw[i], LEAD_IN) {
         i += 1;
     }
-    if i < lower.len() && VERBS.contains(&lower[i].as_str()) {
+    if i < raw.len() && is_plain_word(raw[i], VERBS) {
         i = skip_engine_phrases(&lower, i + 1);
         // At most one introducer; whatever follows is the subject.
         if i < lower.len() && INTRODUCERS.contains(&lower[i].as_str()) {
@@ -363,7 +377,7 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     // `-pinterest`, `@handle`, `*` or `site:` survive.
     rest.iter()
         .map(|t| {
-            t.trim_matches(|c: char| c == '"' || c == '\'')
+            t.trim_matches(|c: char| matches!(c, '"' | '\'' | '\u{201c}' | '\u{201d}' | '\u{2018}' | '\u{2019}'))
                 .trim_end_matches([',', '.', ';', ':', '!', '?'])
                 .to_string()
         })
@@ -678,6 +692,30 @@ mod tests {
         // A hyphen inside a word is not an exclusion operator.
         let p = parse("search first 2 links for well-known rust").expect("intent");
         assert_eq!(p.terms, vec!["well-known".to_string(), "rust".into()]);
+    }
+
+    #[test]
+    fn typographic_quotes_are_quoted_terms() {
+        let p = parse("search Google for \u{201c}Rust async\u{201d}").expect("intent");
+        assert_eq!(p.engine, SearchEngine::Google);
+        assert_eq!(p.terms, vec!["Rust async".to_string()]);
+        // The apostrophe inside `women’s` is not the closing quote.
+        let p = parse("search \u{2018}women\u{2019}s health\u{2019} first 2 links").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["women\u{2019}s health".to_string()]);
+        let p = parse("search -\u{201c}cats\u{201d} \"dogs\"").expect("intent");
+        assert_eq!(p.terms, vec!["-\u{201c}cats\u{201d}".to_string(), "dogs".into()]);
+    }
+
+    #[test]
+    fn operator_prefixed_verb_is_a_query_word() {
+        let p = parse("/web search -search \"rust\"").expect("intent");
+        assert_eq!(p.terms, vec!["-search".to_string(), "rust".into()]);
+        assert_eq!(parse_with_count("-search \"rust\"", 5), WebIntentParse::PassThrough);
+        assert_eq!(
+            parse_with_count("-please search \"rust\"", 5),
+            WebIntentParse::PassThrough
+        );
     }
 
     #[test]

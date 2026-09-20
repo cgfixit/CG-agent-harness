@@ -2402,7 +2402,9 @@ function looksLikeNlSearch(text) {
      followed by more words (`"Rust", summarize it`; `"Rust": explain it`),
      or a spaced dash (`"Rust" — summarize it`). Punctuation glued to a word
      (`node.js`, `site:x.com`, `AT&T`, `-cats`) or at the very end is not a
-     boundary. A quoted term may span a line break (Shift+Enter). A
+     boundary. A quoted term may span a line break (Shift+Enter), but a line
+     break outside quotes followed by more words is a boundary. Typographic
+     quotes (`“…”`, `‘…’`) are quoted terms like ASCII ones. A
      joiner (`and`, `or`, `plus`) directly between two quoted terms is the
      scaffolding tokenize_unquoted drops (`'cgfixit' and 'Chris Grady'`),
      not a follow-up clause. The mask covers the
@@ -2416,7 +2418,7 @@ function looksLikeNlSearch(text) {
   var body = text.slice(head[0].length);
   /* `-"cats"` (Google's quoted exclusion) is a quoted term too, mirroring
      split_quoted on the server. */
-  var quoteRe = /(?:^|[\s(,:\[])-?(["']).+?\1(?=$|[\s,.;:)\]!?])/gs;
+  var quoteRe = /(?:^|[\s(,:\[])-?(?:"[^"]+"|'.+?'|“[^”]+”|‘.+?’)(?=$|[\s,.;:)\]!?])/gs;
   /* A signed or bracketed count (`first -2 results`, `first (2) links`) is
      still a count clause: it routes so the server's own range check refuses
      it (WEB_BAD_QUERY) rather than starting a model turn. */
@@ -2429,7 +2431,7 @@ function looksLikeNlSearch(text) {
   if (signals === 0) return false;
   var joinerRe = /\u0000\s+(?:and|or|plus)\s+\u0000/i;
   while (joinerRe.test(masked)) masked = masked.replace(joinerRe, Q + ' ' + Q);
-  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked);
+  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000]|\n\s*[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked);
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
