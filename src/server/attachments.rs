@@ -69,7 +69,10 @@ struct Manifest {
 
 #[derive(Debug)]
 pub struct AttachmentStore {
-    root: PathBuf,
+    /// Capability handle opened and verified once at startup; every blob and
+    /// index read, write, unlink and directory create is relative to it, so a
+    /// later swap of `attachments/` for a symlink cannot redirect them.
+    jail: Dir,
     lock: Mutex<()>,
 }
 
@@ -98,8 +101,32 @@ impl AttachmentStore {
         }
         std::fs::create_dir_all(root)
             .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot create attachments directory: {e}")))?;
+        let jail = Dir::open_ambient_dir(root, cap_std::ambient_authority())
+            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open attachments directory: {e}")))?;
+        // The handle is what every later operation uses, so confirm it is the
+        // directory the path names right now (not a link swapped in between
+        // the check above and the open).
+        #[cfg(unix)]
+        {
+            use cap_std::fs::MetadataExt;
+            use std::os::unix::fs::MetadataExt as StdMetadataExt;
+            let path_meta = std::fs::symlink_metadata(root)
+                .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot stat attachments directory: {e}")))?;
+            let dir_meta = jail
+                .dir_metadata()
+                .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot stat attachments directory: {e}")))?;
+            if path_meta.file_type().is_symlink()
+                || StdMetadataExt::dev(&path_meta) != dir_meta.dev()
+                || StdMetadataExt::ino(&path_meta) != dir_meta.ino()
+            {
+                return Err(HarnessError::new(
+                    "IO_ERROR",
+                    "attachments directory must not be a symlink",
+                ));
+            }
+        }
         Ok(Self {
-            root: root.to_path_buf(),
+            jail,
             lock: Mutex::new(()),
         })
     }
@@ -133,7 +160,7 @@ impl AttachmentStore {
                     .detail("stored_blobs", manifest.blobs.len()),
             );
         }
-        let jail = self.jail()?;
+        let jail = &self.jail;
         let mut stored = Vec::with_capacity(files.len());
         let mut written: Vec<PathBuf> = Vec::new();
         for (file, class) in files.iter().zip(classified.iter()) {
@@ -148,21 +175,21 @@ impl AttachmentStore {
             let rel = match blob_rel(&blob) {
                 Ok(p) => p,
                 Err(e) => {
-                    unlink_all(&jail, &written);
+                    unlink_all(jail, &written);
                     return Err(e);
                 }
             };
             if let Some(parent) = rel.parent() {
                 if let Err(e) = jail.create_dir_all(parent) {
-                    unlink_all(&jail, &written);
+                    unlink_all(jail, &written);
                     return Err(HarnessError::new(
                         "IO_ERROR",
                         format!("cannot create owner attachment directory: {e}"),
                     ));
                 }
             }
-            if let Err(e) = write_in_jail(&jail, &rel, &file.data) {
-                unlink_all(&jail, &written);
+            if let Err(e) = write_in_jail(jail, &rel, &file.data) {
+                unlink_all(jail, &written);
                 return Err(e);
             }
             written.push(rel);
@@ -170,7 +197,7 @@ impl AttachmentStore {
         }
         manifest.blobs.extend(stored.iter().cloned());
         if let Err(e) = self.save_manifest(&manifest) {
-            unlink_all(&jail, &written);
+            unlink_all(jail, &written);
             return Err(e);
         }
         Ok(stored)
@@ -181,7 +208,7 @@ impl AttachmentStore {
             return Ok(String::new());
         }
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let jail = self.jail()?;
+        let jail = &self.jail;
         let manifest = self.load_manifest()?;
         let mut sections = Vec::new();
         let mut remaining = MAX_WEB_CHARS;
@@ -196,7 +223,11 @@ impl AttachmentStore {
             let bytes = jail
                 .read(&rel)
                 .map_err(|_| HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"))?;
-            if bytes.len() as u64 != blob.byte_len {
+            // Length and digest are both re-verified on every read: the fence
+            // labels the content with the manifest SHA-256, so a blob altered
+            // in place must fail closed instead of being shown under the
+            // original provenance.
+            if bytes.len() as u64 != blob.byte_len || sha256_bytes_hex(&bytes) != blob.sha256 {
                 return Err(HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"));
             }
             let class = classify_bytes(&bytes, guessed_ext_from_mime(&blob.magic_mime))?;
@@ -247,19 +278,45 @@ impl AttachmentStore {
         ))
     }
 
+    /// Removes every blob owned by `owner`. A row leaves the manifest only
+    /// once its file is gone (or already absent); a blob whose unlink fails
+    /// stays listed so it keeps counting toward the quota and a later
+    /// cleanup can retry it, and the failure is reported after the manifest
+    /// is saved.
     pub fn unlink_owner(&self, owner: &str) -> Result<usize> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let jail = self.jail()?;
+        let jail = &self.jail;
         let mut manifest = self.load_manifest()?;
-        let (keep, drop): (Vec<_>, Vec<_>) = manifest.blobs.drain(..).partition(|b| b.owner != owner);
-        for blob in &drop {
-            if let Ok(rel) = blob_rel(blob) {
-                let _ = jail.remove_file(&rel);
+        let (mut keep, drop): (Vec<_>, Vec<_>) = manifest.blobs.drain(..).partition(|b| b.owner != owner);
+        let mut removed = 0usize;
+        let mut first_error: Option<std::io::Error> = None;
+        for blob in drop {
+            let outcome = blob_rel(&blob)
+                .map_err(|e| std::io::Error::other(e.message))
+                .and_then(|rel| match jail.remove_file(&rel) {
+                    Ok(()) => Ok(()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(e) => Err(e),
+                });
+            match outcome {
+                Ok(()) => removed += 1,
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                    keep.push(blob);
+                }
             }
         }
+        let retained = keep.len();
         manifest.blobs = keep;
         self.save_manifest(&manifest)?;
-        Ok(drop.len())
+        if let Some(e) = first_error {
+            return Err(
+                HarnessError::new("IO_ERROR", format!("cannot remove attachment blob: {e}"))
+                    .detail("removed", removed)
+                    .detail("retained", retained),
+            );
+        }
+        Ok(removed)
     }
 
     pub fn blob_count(&self) -> usize {
@@ -267,15 +324,8 @@ impl AttachmentStore {
         self.load_manifest().map(|m| m.blobs.len()).unwrap_or(0)
     }
 
-    /// Capability handle on the attachments root; all blob and index reads,
-    /// unlinks and directory creates are relative to it.
-    fn jail(&self) -> Result<Dir> {
-        Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
-            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open attachments directory: {e}")))
-    }
-
     fn load_manifest(&self) -> Result<Manifest> {
-        let text = match self.jail()?.read_to_string(INDEX_NAME) {
+        let text = match self.jail.read_to_string(INDEX_NAME) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Manifest::default()),
             Err(e) => {
@@ -291,7 +341,7 @@ impl AttachmentStore {
 
     fn save_manifest(&self, manifest: &Manifest) -> Result<()> {
         let text = serde_json::to_string_pretty(&serde_json::to_value(manifest)?)?;
-        write_in_jail(&self.jail()?, Path::new(INDEX_NAME), text.as_bytes())
+        write_in_jail(&self.jail, Path::new(INDEX_NAME), text.as_bytes())
     }
 }
 
@@ -326,6 +376,7 @@ pub fn upload_error(err: &HarnessError) -> ApiError {
     let status = match err.code.as_str() {
         "ATTACHMENT_TOO_LARGE" | "ATTACHMENT_QUOTA" => axum::http::StatusCode::PAYLOAD_TOO_LARGE,
         "ATTACHMENT_MEDIA" => axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "ATTACHMENT_BUSY" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
         "ATTACHMENT_NOT_FOUND" => axum::http::StatusCode::NOT_FOUND,
         _ => axum::http::StatusCode::BAD_REQUEST,
     };
@@ -401,6 +452,9 @@ pub fn parse_multipart(body: &[u8], boundary: &str) -> Result<Vec<IncomingFile>>
     let mut delim = Vec::with_capacity(boundary.len() + 4);
     delim.extend_from_slice(b"--");
     delim.extend_from_slice(boundary.as_bytes());
+    let mut line_delim = Vec::with_capacity(delim.len() + 2);
+    line_delim.extend_from_slice(b"\r\n");
+    line_delim.extend_from_slice(&delim);
     let mut files = Vec::new();
     let mut rest = body;
     let Some(first) = find_subslice(rest, &delim) else {
@@ -426,21 +480,17 @@ pub fn parse_multipart(body: &[u8], boundary: &str) -> Result<Vec<IncomingFile>>
         let headers = std::str::from_utf8(&rest[..header_end])
             .map_err(|_| HarnessError::new("ATTACHMENT_MEDIA", "multipart headers are not UTF-8"))?;
         rest = &rest[header_end + 4..];
-        let closer = match find_subslice(rest, &delim) {
-            Some(idx) if idx >= 2 && rest[idx - 2..idx] == *b"\r\n" => idx - 2,
-            Some(idx) => idx,
-            None => {
-                return Err(HarnessError::new(
-                    "ATTACHMENT_MEDIA",
-                    "multipart part is not terminated",
-                ));
-            }
+        // A delimiter only counts at the start of a line (RFC 2046 §5.1.1:
+        // the CRLF before it belongs to the boundary), so a part whose text
+        // contains `--<boundary>` mid-line is stored whole.
+        let Some(closer) = find_subslice(rest, &line_delim) else {
+            return Err(HarnessError::new(
+                "ATTACHMENT_MEDIA",
+                "multipart part is not terminated",
+            ));
         };
         let data = rest[..closer].to_vec();
-        rest = &rest[closer..];
-        if rest.starts_with(b"\r\n") {
-            rest = &rest[2..];
-        }
+        rest = &rest[closer + 2..];
         if !rest.starts_with(&delim) {
             return Err(HarnessError::new(
                 "ATTACHMENT_MEDIA",
@@ -865,6 +915,59 @@ mod tests {
         assert!(fence.contains("omitted=true"), "{fence}");
         assert!(!fence.contains("never reaches the prompt"), "{fence}");
         assert!(fence.contains("clipped or omitted"), "{fence}");
+    }
+
+    #[test]
+    fn boundary_text_inside_a_line_does_not_end_the_part() {
+        let boundary = "----testbound";
+        let text = "before ------testbound-- after\nsecond line";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n\r\n{text}\r\n--{boundary}--\r\n"
+        );
+        let files = parse_multipart(body.as_bytes(), boundary).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].data, text.as_bytes());
+        let unterminated = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n\r\nabc--{boundary}--\r\n"
+        );
+        assert_eq!(
+            parse_multipart(unterminated.as_bytes(), boundary).unwrap_err().code,
+            "ATTACHMENT_MEDIA"
+        );
+    }
+
+    #[test]
+    fn altered_blob_with_same_length_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = AttachmentStore::open(tmp.path()).unwrap();
+        let blobs = store.store("local", &[part("a.txt", "hello")]).unwrap();
+        let path = blob_path(tmp.path(), &blobs[0]).unwrap();
+        std::fs::write(&path, b"jello").unwrap();
+        let err = store.fence_for("local", &[blobs[0].id.clone()]).unwrap_err();
+        assert_eq!(err.code, "ATTACHMENT_NOT_FOUND");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unlink_failure_keeps_the_manifest_row() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = AttachmentStore::open(tmp.path()).unwrap();
+        let blobs = store.store("local", &[part("a.txt", "hello")]).unwrap();
+        let path = blob_path(tmp.path(), &blobs[0]).unwrap();
+        let owner_dir = path.parent().unwrap().to_path_buf();
+        // Skip on hosts where directory permissions do not bind (root).
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        std::fs::set_permissions(&owner_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let err = store.unlink_owner("local").unwrap_err();
+        std::fs::set_permissions(&owner_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(err.code, "IO_ERROR");
+        assert_eq!(store.blob_count(), 1, "row retained for retry");
+        assert!(path.exists());
+        assert_eq!(store.unlink_owner("local").unwrap(), 1);
+        assert_eq!(store.blob_count(), 0);
     }
 
     #[test]

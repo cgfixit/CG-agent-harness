@@ -142,6 +142,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     let store = SessionStore::new(&home.sessions_dir())?;
     let audit = Audit::from_home(&home.root, &cfg);
     let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
+    let upload_permits = Arc::new(tokio::sync::Semaphore::new(state::upload_concurrency(&cfg)?));
     let auth = if cfg.flag_is_true("auth.enabled") {
         let mgr = AuthManager::open(&home.auth_path(), &cfg)?;
         mgr.bootstrap_if_empty()?;
@@ -219,6 +220,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         settings: Mutex::new(settings),
         store,
         attachments,
+        upload_permits,
         backend,
         chat,
         cloud_chat,

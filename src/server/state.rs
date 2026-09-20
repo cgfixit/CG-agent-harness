@@ -41,6 +41,20 @@ pub fn auth_operation_concurrency(cfg: &AppConfig) -> Result<usize> {
     }
 }
 
+/// `attachments.max_concurrent_uploads`: bound on upload bodies buffered at
+/// once (each up to `MAX_REQUEST_BYTES`); the per-home byte quota is checked
+/// only after a body is in memory, so this is what caps transient memory.
+pub fn upload_concurrency(cfg: &AppConfig) -> Result<usize> {
+    match cfg.get("attachments.max_concurrent_uploads") {
+        None => Ok(2),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| (1..=8).contains(value))
+            .map(|value| value as usize)
+            .ok_or_else(|| HarnessError::config("attachments.max_concurrent_uploads must be an integer from 1 to 8")),
+    }
+}
+
 pub struct AppState {
     pub home: Home,
     pub cfg: SharedConfig,
@@ -69,6 +83,8 @@ pub struct AppState {
     pub auth: Option<AuthManager>,
     /// Limits concurrent memory-hard scrypt derivations for this app instance.
     pub auth_operation_permits: Arc<tokio::sync::Semaphore>,
+    /// Limits attachment upload bodies held in memory at once.
+    pub upload_permits: Arc<tokio::sync::Semaphore>,
     pub web: WebTool,
     pub mcp: McpRuntime,
     pub notes: MemoryNotes,
@@ -228,5 +244,27 @@ impl AppState {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(session_id);
+    }
+}
+
+#[cfg(test)]
+mod upload_concurrency_tests {
+    use super::upload_concurrency;
+    use crate::common::config::AppConfig;
+
+    #[test]
+    fn upload_cap_is_configured_and_bounded() {
+        for (raw, expected) in [("{}", Some(2)), ("attachments: {max_concurrent_uploads: 4}", Some(4))] {
+            let cfg = AppConfig::from_str(raw, std::path::Path::new("fixture.yaml")).unwrap();
+            assert_eq!(upload_concurrency(&cfg).ok(), expected);
+        }
+        for raw in ["0", "9", "'2'"] {
+            let cfg = AppConfig::from_str(
+                &format!("attachments: {{max_concurrent_uploads: {raw}}}"),
+                std::path::Path::new("fixture.yaml"),
+            )
+            .unwrap();
+            assert!(upload_concurrency(&cfg).is_err(), "raw={raw}");
+        }
     }
 }

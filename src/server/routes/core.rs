@@ -76,6 +76,15 @@ pub async fn upload_attachments(
     req: axum::extract::Request,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
+    // Take the buffering permit before a single body byte is read: with the
+    // route rate limit alone, one client could hold dozens of maximum-size
+    // bodies in memory while the quota check waits behind the store lock.
+    let Ok(_permit) = state.upload_permits.clone().try_acquire_owned() else {
+        return Err(attachments::upload_error(&crate::common::errors::HarnessError::new(
+            "ATTACHMENT_BUSY",
+            "too many attachment uploads are in flight; retry shortly",
+        )));
+    };
     let content_type = req
         .headers()
         .get(axum::http::header::CONTENT_TYPE)

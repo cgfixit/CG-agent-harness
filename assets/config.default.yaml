@@ -64,6 +64,12 @@ chat:
   compact_prompt_tokens: 24000 # per-turn floor=reply allowance + 4096, capped at 30000; 8192 for seeded chat
   compact_keep_messages: 8 # 2–40 most recent messages kept verbatim
 
+# Chat text attachments (/api/chat/attachments). Size, count and quota limits
+# are fixed in src/server/attachments.rs; this bounds how many upload bodies
+# (up to ~45 MiB each) may be buffered at once. Range 1–8.
+attachments:
+  max_concurrent_uploads: 2
+
 api:
   rate_limit:
     max_requests: 60       # per-IP request ceiling within the window

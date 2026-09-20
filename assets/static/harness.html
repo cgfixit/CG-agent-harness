@@ -2592,6 +2592,13 @@ async function sendChat(text, asLoop, extra) {
   }
 }
 
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 180000;
+/* Pending <input type=file> selections belong to the account that made
+   them: drop them on every account transition so a later sign-in cannot
+   upload the previous account's files. */
+function clearPendingAttachments() {
+  if (attachInput) { try { attachInput.value = ''; } catch (e) { /* inert input */ } }
+}
 async function uploadChatAttachments(files) {
   if (!files.length) return [];
   if (files.length > 3) {
@@ -2600,7 +2607,10 @@ async function uploadChatAttachments(files) {
   }
   const body = new FormData();
   for (const file of files) body.append('file', file, file.name);
-  const r = await api('/api/chat/attachments', 'POST', body);
+  /* Three 15 MiB files are written and fsynced before the reply; the generic
+     15 s api() timeout would abort the browser side after the server has
+     already committed the blobs (and charged the quota). */
+  const r = await api('/api/chat/attachments', 'POST', body, ATTACHMENT_UPLOAD_TIMEOUT_MS);
   return (r && r.attachments ? r.attachments : []).map(function (row) { return row.id; }).filter(Boolean);
 }
 
@@ -2952,6 +2962,7 @@ if (hAuthLogin) {
       pass.value = '';
       if (!r.ok) { if (who) who.textContent = 'login failed'; return; }
       const data = await r.json();
+      clearPendingAttachments();
       window.__cyclawRole = data.role;
       if (who) who.textContent = data.username + ' · ' + data.role;
       if (hAuthSetup) hAuthSetup.hidden = true;
@@ -2979,6 +2990,7 @@ if (hAuthLogout) {
     abortInflightSearch();
     const claimed = ++sessionRevision;
     sendBtn.disabled = true;
+    clearPendingAttachments();
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
@@ -3025,6 +3037,7 @@ if (hAuthSetupBtn) {
       }, 15000);
       if (!r.ok) { if (who) who.textContent = 'could not set password'; return; }
       const data = await r.json();
+      clearPendingAttachments();
       window.__cyclawRole = data.role;
       if (who) who.textContent = data.username + ' · ' + data.role;
       if (hAuthSetup) hAuthSetup.hidden = true;
