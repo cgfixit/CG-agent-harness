@@ -239,11 +239,14 @@ fn clipped(text: Option<&str>, max: usize) -> String {
     crate::common::clip_chars(text.unwrap_or("").trim(), max)
 }
 
-/// Characters of `soul_max_chars` left for the style once the persona has
-/// taken its share. Soul and style share that one operator-text budget so
-/// the two together can never exceed what a soul alone may occupy; the
+/// The style's character budget: its own `soul_max_chars`, but never more
+/// than what the persona leaves under `SOUL_CHARS_HARD_CAP`, so soul and
+/// style together can never exceed what a soul alone may occupy at the cap
+/// (a 64 KiB soul plus a 64 KiB style would push every local turn past the
+/// chat token ceiling). The shipped soul nearly fills the default 8000-char
+/// cap, so the style must not be charged against that smaller figure. The
 /// style routes and the prompt preview report a style through this same
-/// figure, so what they call active is what `compose_system_prompt` includes.
+/// budget, so what they call active is what `compose_system_prompt` includes.
 pub fn style_budget_after_soul(
     home: &Path,
     soul_enabled: bool,
@@ -261,7 +264,7 @@ pub fn style_budget_after_soul(
         return soul_max_chars;
     }
     let used = crate::common::clip_chars(&persona, soul_max_chars).chars().count();
-    soul_max_chars.saturating_sub(used)
+    soul_max_chars.min((SOUL_CHARS_HARD_CAP as usize).saturating_sub(used))
 }
 
 /// Soul, then style, then HEADER/CAPABILITIES. The policy tail still wins.
@@ -491,19 +494,18 @@ mod tests {
     }
 
     #[test]
-    fn soul_and_style_share_the_operator_text_budget() {
+    fn soul_and_style_together_stay_under_the_hard_cap() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("styles")).unwrap();
-        let soul = "S".repeat(900);
-        std::fs::write(tmp.path().join("soul.md"), &soul).unwrap();
         std::fs::write(tmp.path().join("styles").join("big.md"), "T".repeat(5000)).unwrap();
         let soul_path = tmp.path().join("soul.md");
-        let inputs = |cap: usize| PromptInputs {
+        let cap = super::SOUL_CHARS_HARD_CAP as usize;
+        let inputs = |soul_max_chars: usize| PromptInputs {
             selected_skills: &[],
             soul_enabled: true,
             soul_override: None,
             soul_path: &soul_path,
-            soul_max_chars: cap,
+            soul_max_chars,
             style_name: Some("big"),
             goal: None,
             web_context: None,
@@ -514,17 +516,27 @@ mod tests {
             web_enabled: false,
             attachment_fence: None,
         };
-        // Cap 1000: the 900-char soul leaves 100 for the style.
-        let prompt = compose_system_prompt(&inputs(1000));
+        // A soul that nearly fills a small cap does not starve the style: the
+        // style keeps its own cap while the pair stays far under the hard cap.
+        std::fs::write(&soul_path, "S".repeat(7_990)).unwrap();
+        let prompt = compose_system_prompt(&inputs(8_000));
         let style_at = prompt.find("## Output style (big, read-only)").expect("style present");
         let header_at = prompt.find("You are CG Agent Harness").unwrap();
-        let style_body = &prompt[style_at..header_at];
-        let t_run = style_body.chars().filter(|c| *c == 'T').count();
-        assert!(t_run <= 100, "style must fit the remaining budget, got {t_run} chars");
-        assert!(t_run > 0);
-        assert!(prompt.matches('S').count() >= 900);
-        // Cap 900: the soul consumes the whole budget and the style is omitted.
-        let prompt = compose_system_prompt(&inputs(900));
+        let t_run = prompt[style_at..header_at].chars().filter(|c| *c == 'T').count();
+        assert_eq!(t_run, 5000, "the whole preset is included");
+        // At the hard cap, the style only gets what the soul leaves.
+        std::fs::write(&soul_path, "S".repeat(cap - 100)).unwrap();
+        let prompt = compose_system_prompt(&inputs(cap));
+        let style_at = prompt.find("## Output style (big, read-only)").expect("style present");
+        let header_at = prompt.find("You are CG Agent Harness").unwrap();
+        let t_run = prompt[style_at..header_at].chars().filter(|c| *c == 'T').count();
+        assert!(
+            t_run <= 100 && t_run > 0,
+            "style must fit the remaining budget, got {t_run} chars"
+        );
+        // A soul that fills the hard cap leaves nothing: the style is omitted.
+        std::fs::write(&soul_path, "S".repeat(cap)).unwrap();
+        let prompt = compose_system_prompt(&inputs(cap));
         assert!(!prompt.contains("## Output style"));
         assert!(prompt.contains("style=off"));
     }

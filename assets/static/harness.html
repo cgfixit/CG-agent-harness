@@ -1530,8 +1530,8 @@ async function runSlash(line) {
         const r = await api('/api/prompt/preview', 'POST', { session_id: currentSession || null });
         const st = r.style || {};
         const styleLine = !st.name ? 'active style: off'
-          : st.loaded ? 'active style: ' + st.name + (st.origin ? ' (' + st.origin + ')' : '')
-          : 'active style: off — selected preset "' + st.name + '" is unavailable (' + (st.unavailable_reason || 'unknown') + ') and was not included';
+          : st.loaded ? 'active style: ' + st.name + (st.origin ? ' (' + st.origin + ')' : '') + (st.truncated ? ' — ' + styleIssueText('truncated') : '')
+          : 'active style: off — selected preset "' + st.name + '" is ' + styleIssueText(st.unavailable_reason || 'unavailable');
         sys(styleLine + '\n' + r.scope + '\n\n' + r.prompt); break;
       }
       case 'style': {

@@ -407,6 +407,7 @@ pub async fn preview(
             "name": session.as_ref().and_then(|s| s.style.clone()),
             "origin": style_load.as_ref().and_then(|load| load.origin),
             "loaded": style_load.as_ref().is_some_and(|load| load.loaded),
+            "truncated": style_load.as_ref().is_some_and(|load| load.truncated),
             "unavailable_reason": style_load.as_ref().and_then(|load| load.unavailable_reason),
         },
         "candidate":req.soul_content.is_some(),

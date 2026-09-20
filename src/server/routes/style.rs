@@ -145,7 +145,7 @@ pub async fn select(
             ),
             Some("budget") => (
                 "STYLE_UNAVAILABLE",
-                "The enabled soul already uses the whole personality.soul_max_chars budget; nothing is left for a style. Shorten soul.md, raise the cap, or /soul off".to_string(),
+                "The enabled soul already fills the 65536-character operator-text cap; nothing is left for a style. Shorten soul.md or /soul off".to_string(),
                 None,
             ),
             _ => {

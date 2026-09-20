@@ -117,6 +117,7 @@ async fn prompt_preview_reports_a_style_that_no_longer_loads() {
     let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
     assert_eq!(preview["style"]["name"], "mine");
     assert_eq!(preview["style"]["loaded"], true);
+    assert_eq!(preview["style"]["truncated"], false);
     assert_eq!(preview["style"]["origin"], "overlay");
     assert!(preview["style"]["unavailable_reason"].is_null());
     assert!(preview["prompt"].as_str().unwrap().contains("MINE_OVERLAY"));
@@ -162,18 +163,26 @@ async fn unloadable_catalogued_overlay_is_reported_as_unavailable_not_unknown() 
     assert!(body["detail"]["details"]["suggestion"].is_null(), "{body}");
 }
 
+fn hard_cap_options() -> ServerOptions {
+    let mut options = ServerOptions::default();
+    options
+        .overrides
+        .push(("personality.soul_max_chars".into(), "65536".into()));
+    options
+}
+
 #[tokio::test]
 async fn style_with_no_budget_left_after_the_soul_is_reported_inactive_everywhere() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s = spawn_server(&model.base_url(), hard_cap_options()).await;
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
     let sid = created["session_id"].as_str().unwrap();
     let (status, set) = s
         .post_json("/api/style", json!({"session_id": sid, "name": "concise"}))
         .await;
     assert_eq!(status, 200, "{set}");
-    // The enabled soul now fills the whole default 8000-char budget.
-    std::fs::write(s.home.join("soul.md"), "S".repeat(9000)).unwrap();
+    // The enabled soul now fills the whole 65536-char operator-text cap.
+    std::fs::write(s.home.join("soul.md"), "S".repeat(70_000)).unwrap();
     let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
     assert!(!preview["prompt"].as_str().unwrap().contains("## Output style"));
     assert!(preview["prompt"].as_str().unwrap().contains("style=off"));
@@ -191,4 +200,24 @@ async fn style_with_no_budget_left_after_the_soul_is_reported_inactive_everywher
     assert_eq!(status, 400, "{body}");
     assert_eq!(body["detail"]["code"], "STYLE_UNAVAILABLE", "{body}");
     assert_eq!(body["detail"]["details"]["reason"], "budget", "{body}");
+}
+
+#[tokio::test]
+async fn prompt_preview_reports_a_style_clipped_by_the_soul_as_truncated() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), hard_cap_options()).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let (status, set) = s
+        .post_json("/api/style", json!({"session_id": sid, "name": "concise"}))
+        .await;
+    assert_eq!(status, 200, "{set}");
+    // Leave 40 chars under the 65536-char cap: the preset is clipped.
+    std::fs::write(s.home.join("soul.md"), "S".repeat(65_496)).unwrap();
+    let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
+    assert_eq!(preview["style"]["loaded"], true, "{preview}");
+    assert_eq!(preview["style"]["truncated"], true, "{preview}");
+    assert!(preview["prompt"].as_str().unwrap().contains("## Output style (concise"));
+    let (_, read) = s.get_json(&format!("/api/style?session_id={sid}")).await;
+    assert_eq!(read["truncated"], true, "{read}");
 }
