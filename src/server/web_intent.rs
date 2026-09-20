@@ -250,6 +250,31 @@ const ENGINE_PLACES: &[&str] = &["web", "internet"];
 /// One optional word introducing the subject (`search for X`, `google about X`).
 const INTRODUCERS: &[&str] = &["for", "about"];
 
+/// Engine phrases, in any number, starting at `i`: `Google`, `(serpapi)`,
+/// `on Google`, `the web`, `on the web`. Returns the index just past them. A
+/// bare `internet` or `in` is not consumed, so subjects such as `Internet
+/// Archive` or `in vitro fertilization` survive.
+fn skip_engine_phrases(lower: &[String], mut i: usize) -> usize {
+    loop {
+        let at = |k: usize| lower.get(k).map(String::as_str);
+        let linked_engine =
+            at(i).is_some_and(|w| ENGINE_LINKS.contains(&w)) && at(i + 1).is_some_and(|w| ENGINES.contains(&w));
+        let place = at(i) == Some("the") && at(i + 1).is_some_and(|w| ENGINE_PLACES.contains(&w));
+        let linked_place = at(i).is_some_and(|w| ENGINE_LINKS.contains(&w))
+            && at(i + 1) == Some("the")
+            && at(i + 2).is_some_and(|w| ENGINE_PLACES.contains(&w));
+        if at(i).is_some_and(|w| ENGINES.contains(&w)) {
+            i += 1;
+        } else if linked_place {
+            i += 3;
+        } else if linked_engine || place {
+            i += 2;
+        } else {
+            return i;
+        }
+    }
+}
+
 /// Unquoted request: remove the command scaffolding by position (lead-in
 /// words, the verb, engine and preposition words right after it, and the
 /// `first N <noun>` clause with its joining `the` / `for`), then keep every
@@ -267,29 +292,7 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         i += 1;
     }
     if i < lower.len() && VERBS.contains(&lower[i].as_str()) {
-        i += 1;
-        // Engine phrases, in any number: `Google`, `(serpapi)`, `on Google`,
-        // `the web`, `on the web`. A bare `internet` or `in` is not consumed,
-        // so subjects such as `Internet Archive` or `in vitro fertilization`
-        // survive.
-        loop {
-            let at = |k: usize| lower.get(k).map(String::as_str);
-            let linked_engine =
-                at(i).is_some_and(|w| ENGINE_LINKS.contains(&w)) && at(i + 1).is_some_and(|w| ENGINES.contains(&w));
-            let place = at(i) == Some("the") && at(i + 1).is_some_and(|w| ENGINE_PLACES.contains(&w));
-            let linked_place = at(i).is_some_and(|w| ENGINE_LINKS.contains(&w))
-                && at(i + 1) == Some("the")
-                && at(i + 2).is_some_and(|w| ENGINE_PLACES.contains(&w));
-            if at(i).is_some_and(|w| ENGINES.contains(&w)) {
-                i += 1;
-            } else if linked_place {
-                i += 3;
-            } else if linked_engine || place {
-                i += 2;
-            } else {
-                break;
-            }
-        }
+        i = skip_engine_phrases(&lower, i + 1);
         // At most one introducer; whatever follows is the subject.
         if i < lower.len() && INTRODUCERS.contains(&lower[i].as_str()) {
             i += 1;
@@ -301,13 +304,12 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         if start > 0 && word_of(rest[start - 1]).eq_ignore_ascii_case("the") {
             start -= 1;
         }
-        let mut end = k + 3;
-        if end < rest.len()
-            && matches!(
-                word_of(rest[end]).to_ascii_lowercase().as_str(),
-                "for" | "of" | "about" | "on"
-            )
-        {
+        // The clause may carry its own engine phrase and connector:
+        // `first 2 results on Google for Rust`, `first 2 links on the web
+        // about rust`. Both are scaffolding; the subject starts after them.
+        let lower_rest: Vec<String> = rest.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
+        let mut end = skip_engine_phrases(&lower_rest, k + 3);
+        if end < rest.len() && matches!(lower_rest[end].as_str(), "for" | "of" | "about" | "on") {
             end += 1;
         }
         rest.drain(start..end);
@@ -614,6 +616,22 @@ mod tests {
         assert_eq!(p.terms, vec!["cats".to_string(), "dogs".into()]);
         let p = parse("search 'a' and 'b' plus 'c'").expect("intent");
         assert_eq!(p.terms, vec!["a".to_string(), "b".into(), "c".into()]);
+    }
+
+    #[test]
+    fn engine_phrase_after_the_count_clause_is_scaffolding() {
+        let p = parse("search first 2 results on Google for Rust").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.engine, SearchEngine::Google);
+        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        let p = parse("search the first 3 links on the web about rust async").expect("intent");
+        assert_eq!(p.terms, vec!["rust".to_string(), "async".into()]);
+        let p = parse("search first 2 links using serpapi for 'cgfixit'").expect("intent");
+        assert_eq!(p.engine, SearchEngine::Serpapi);
+        assert_eq!(p.terms, vec!["cgfixit".to_string()]);
+        // `on` followed by a non-engine word is the plain connector it was.
+        let p = parse("search first 2 links on rust").expect("intent");
+        assert_eq!(p.terms, vec!["rust".to_string()]);
     }
 
     #[test]

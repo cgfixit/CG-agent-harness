@@ -2352,13 +2352,16 @@ async function onSend() {
   if (sendBtn.disabled) {
     if (isLoopStopCommand(text)) {
       input.value = '';
-      if (inflightSearch) {
-        /* A routed natural-language search holds the gate. Abort that request
-           (sendMaybeNlSearch reports "search cancelled" and releases the gate)
-           instead of requestLoopStop, which only aborts inflightChat and would
-           post /api/chat/cancel for a model turn that does not exist. */
-        abortInflightSearch();
-      } else {
+      /* A routed natural-language search may hold the gate: abort that
+         request first (sendMaybeNlSearch reports "search cancelled" and
+         releases the gate). requestLoopStop is still needed whenever a model
+         turn or an automatic loop is active (a search can start during the
+         loop's cooldown, so both can be live at once); it is skipped only
+         when the search was the sole thing running, so a search cancel never
+         posts /api/chat/cancel for a model turn that does not exist. */
+      const hadSearch = !!inflightSearch;
+      abortInflightSearch();
+      if (inflightChat || loopState || !hadSearch) {
         requestLoopStop('loop stop requested — aborting the in-flight turn');
       }
     }
@@ -2380,10 +2383,11 @@ function looksLikeNlSearch(text) {
      Direct routing is for listing-only requests. Structurally: after the
      command head (lead-in words and the verb), once every quoted term and
      count clause is masked out, nothing left may open another clause: a
-     connective (`and`, `but`, `then`, `so`, `plus`, `also`, `to`), a semicolon, or
-     a comma / period / `!` / `?` followed by more words (`"Rust", summarize
-     it`; `"Rust". Explain it`). Punctuation glued to a word (`node.js`,
-     `site:x.com`) or at the very end is not a boundary. The mask covers the
+     connective (`and`, `but`, `then`, `so`, `plus`, `also`, `to`), a
+     standalone `&`, a semicolon, or a comma / period / `!` / `?` followed by
+     more words (`"Rust", summarize it`; `"Rust". Explain it`). Punctuation
+     glued to a word (`node.js`, `site:x.com`, `AT&T`) or at the very end is
+     not a boundary. A quoted term may span a line break (Shift+Enter). The mask covers the
      whole body, not only the suffix after the last term, so `"Rust" and
      compare it with "Go"` is caught by the `and` between the terms.
      Anything else stays on the chat path, where the model still has the
@@ -2394,14 +2398,17 @@ function looksLikeNlSearch(text) {
   var body = text.slice(head[0].length);
   /* `-"cats"` (Google's quoted exclusion) is a quoted term too, mirroring
      split_quoted on the server. */
-  var quoteRe = /(?:^|[\s(,:\[])-?(["']).+?\1(?=$|[\s,.;:)\]!?])/g;
-  var countRe = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/ig;
+  var quoteRe = /(?:^|[\s(,:\[])-?(["']).+?\1(?=$|[\s,.;:)\]!?])/gs;
+  /* A signed or bracketed count (`first -2 results`, `first (2) links`) is
+     still a count clause: it routes so the server's own range check refuses
+     it (WEB_BAD_QUERY) rather than starting a model turn. */
+  var countRe = /\bfirst\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?)\b/ig;
   var signals = 0;
   var masked = body
     .replace(quoteRe, function (m) { signals++; return (/^[\s(,:\[]/.test(m) ? m.charAt(0) : '') + ' '; })
     .replace(countRe, function () { signals++; return ' '; });
   if (signals === 0) return false;
-  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|;|[,.!?]\s+\S)/i.test(masked);
+  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|(?:^|\s)&(?:\s|$)|;|[,.!?]\s+\S)/i.test(masked);
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
@@ -2613,16 +2620,15 @@ if (hAuthLogout) {
        request's cleanup sees a foreign revision and cannot re-enable sending
        against the old session while logout is in flight. Then abort whatever
        owns the gate (a chat turn or a routed search) so it releases the
-       server-side gate instead of outliving the session. The claim is undone
-       only if the server rejects the logout. */
-    const priorRevision = sessionRevision;
+       server-side gate instead of outliving the session. The revision is
+       never rewound, even when logout is rejected: a session switch started
+       meanwhile owns a newer revision and must keep it. */
     abortInflightSearch(); ++sessionRevision;
     sendBtn.disabled = true;
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
       if (!response.ok) {
-        sessionRevision = priorRevision;
         sendBtn.disabled = false;
         // Do not clear the page CSRF (const meta token). On 401/403 the
         // header is already rejected; whoami refreshes session UI so a
