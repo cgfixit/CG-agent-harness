@@ -430,3 +430,18 @@ Arbitrary shell check commands are not accepted. Python profiles need their own
 prepared tools/dependencies; the Cargo preparation helper does not install them.
 The command implementation is in [the console](../assets/static/harness.html), and
 fixed profiles are in [agent policy](../src/server/agent_policy.rs).
+
+### Text-file attachments and prompt preview
+
+Choose up to three `.txt`, `.md`, `.json`, `.csv`, or `.log` files (15 MiB each).
+Run `/prompt` before sending to upload them locally and inspect their fenced,
+untrusted text. The persona editor's Preview includes the same pending files.
+Repeated previews reuse those uploads; the next ordinary message sends their
+IDs once. A failed preview retains the pending IDs. Changing session or account
+clears the pending selection, so another session cannot silently reuse it.
+Uploads count toward the home quota until session-clear or owner cleanup.
+
+Only local chat receives attachment text. Cloud chat and `/loop` omit it, and
+coding requests do not accept attachment IDs. The preview is a local-chat
+snapshot, not proof that cloud chat or the coding planner receives that context.
+Unsupported formats are refused. Clipped sections explicitly say they are incomplete.
