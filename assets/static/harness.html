@@ -2344,21 +2344,29 @@ function looksLikeNlSearch(text) {
      words, then a whole `search` / `google` token) plus a balanced quoted term
      or a `first N links|results|hits|pages` clause. A quote opens at a word
      start and closes at a word end, so the apostrophe inside
-     'women's health' does not end the term, and `Google's` is not a verb. */
+     'women's health' does not end the term, and `Google's` is not a verb.
+     A compound "search ... and summarize/explain/..." request stays on the
+     chat path: the listing alone would drop the second half of the ask. */
   var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\s,]+)*(?:search|google)(?=$|[\s,.;:!?])/i.test(text);
   var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
   var counted = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/i.test(text);
-  return commandShaped && (quoted || counted);
+  var compound = /\b(?:and|then)\s+(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\b/i.test(text);
+  return commandShaped && (quoted || counted) && !compound;
 }
 
 async function sendMaybeNlSearch(text) {
   if (!looksLikeNlSearch(text)) { await sendChat(text, false); return; }
   /* Hold the console's in-flight gate (sendBtn.disabled, see onSend) while
      the routed search runs so a second Enter cannot start a concurrent search
-     or a model turn that interleaves with it. */
+     or a model turn that interleaves with it. The revision guard mirrors
+     sendChat: a session switch during the request means the result, the chat
+     fallback and the gate release all belong to a transcript that is gone. */
+  const revision = sessionRevision;
   sendBtn.disabled = true;
+  let fallbackToChat = false;
   try {
     const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000);
+    if (revision !== sessionRevision) return;
     if (found && found.results) {
       sys(renderSearchResults(found));
     } else {
@@ -2366,12 +2374,19 @@ async function sendMaybeNlSearch(text) {
     }
     return;
   } catch (e) {
+    if (revision !== sessionRevision) return;
+    if (e && e.code === 'WEB_BAD_QUERY') {
+      /* A malformed search request (e.g. `first 0 results`) is refused, not
+         re-routed to the model as if it were a question. */
+      sys('search refused: ' + e.message);
+      return;
+    }
     sys('search router did not run: ' + e.message);
+    fallbackToChat = true;
   } finally {
-    sendBtn.disabled = false;
-    input.focus();
+    if (revision === sessionRevision) { sendBtn.disabled = false; input.focus(); }
   }
-  await sendChat(text, false);
+  if (fallbackToChat) await sendChat(text, false);
 }
 
 async function runSlashMaybeFuzzy(text) {

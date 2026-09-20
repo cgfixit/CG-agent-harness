@@ -165,8 +165,11 @@ pub async fn web_search(
             ));
         }
         let (query, count) = match crate::server::web_intent::parse_with_count(&req.query, req.count) {
-            Some(intent) if !intent.terms.is_empty() => (intent.query(), intent.count),
-            _ => (req.query.clone(), req.count),
+            crate::server::web_intent::WebIntentParse::Rewrite(intent) => (intent.query(), intent.count),
+            crate::server::web_intent::WebIntentParse::PassThrough => (req.query.clone(), req.count),
+            crate::server::web_intent::WebIntentParse::Invalid(message) => {
+                return Err(ApiError::new(StatusCode::BAD_REQUEST, "WEB_BAD_QUERY", message));
+            }
         };
         return state
             .web

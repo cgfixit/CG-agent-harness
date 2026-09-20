@@ -27,37 +27,56 @@ impl WebIntent {
     }
 }
 
+/// Outcome of the natural-language intent check for one query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebIntentParse {
+    /// A command-shaped request with a clear signal: send `terms` / `count`.
+    Rewrite(WebIntent),
+    /// Not a natural-language request: send the caller's query untouched.
+    PassThrough,
+    /// A request that is command-shaped but carries an invalid result count
+    /// (`first 0 results`, `first 99 links`); refuse instead of guessing.
+    Invalid(String),
+}
+
 /// Parse a chat line or `/web search` remainder into engine, count, and terms.
-/// Returns None when the text is not a natural-language search request.
+/// Returns None unless the text is a natural-language search request with a
+/// valid count; see [`parse_with_count`] for the three-way outcome.
 ///
-/// Two conditions must hold, otherwise the caller's query is passed through
-/// untouched: the line must be command-shaped (it starts with `search` or
-/// `google` after optional politeness words, is a `/web` remainder, or opens
-/// with `first N links|results|...` as the console's `/web search` remainder
-/// does), and it must carry an explicit signal, either balanced quoted terms
-/// or a `first N` count outside those quotes. Ordinary Google syntax such as
-/// `site:x "search parser"` or `vector search benchmarks` therefore never
-/// reaches the rewrite.
+/// Two conditions must hold for a rewrite: the line must be command-shaped
+/// (it starts with `search` or `google` after optional politeness words, is
+/// a `/web` remainder, or opens with `first N links|results|...` as the
+/// console's `/web search` remainder does), and it must carry an explicit
+/// signal, either balanced quoted terms or a `first N <noun>` count outside
+/// those quotes. Ordinary Google syntax such as `site:x "search parser"` or
+/// `vector search benchmarks` therefore never reaches the rewrite.
 pub fn parse(text: &str) -> Option<WebIntent> {
-    parse_with_count(text, DEFAULT_COUNT)
+    match parse_with_count(text, DEFAULT_COUNT) {
+        WebIntentParse::Rewrite(intent) => Some(intent),
+        _ => None,
+    }
 }
 
 /// Like [`parse`], but a request without an explicit `first N` keeps
 /// `fallback_count` exactly as the caller supplied it, so the downstream
 /// range validation still sees an out-of-range caller value.
-pub fn parse_with_count(text: &str, fallback_count: usize) -> Option<WebIntent> {
+pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return None;
+        return WebIntentParse::PassThrough;
     }
     let lower = trimmed.to_ascii_lowercase();
     if !is_command_shaped(&lower) {
-        return None;
+        return WebIntentParse::PassThrough;
     }
     let (quoted, residual) = split_quoted(trimmed);
-    let explicit_count = extract_count(&residual.to_ascii_lowercase());
+    let explicit_count = match extract_count(&residual.to_ascii_lowercase()) {
+        Some(Ok(n)) => Some(n),
+        Some(Err(message)) => return WebIntentParse::Invalid(message),
+        None => None,
+    };
     if quoted.is_empty() && explicit_count.is_none() {
-        return None;
+        return WebIntentParse::PassThrough;
     }
 
     let engine = if lower.contains("serpapi") {
@@ -75,9 +94,9 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> Option<WebIntent> 
     }
     terms.retain(|t| !t.is_empty());
     if terms.is_empty() {
-        return None;
+        return WebIntentParse::PassThrough;
     }
-    Some(WebIntent { engine, count, terms })
+    WebIntentParse::Rewrite(WebIntent { engine, count, terms })
 }
 
 /// Politeness words that may precede the command verb.
@@ -128,17 +147,20 @@ fn find_count_clause(toks: &[&str]) -> Option<usize> {
         .position(|w| is_count_pair(w[0], w[1]) && COUNT_NOUNS.contains(&word_of(w[2]).to_ascii_lowercase().as_str()))
 }
 
-/// `first N <noun>` when present and N >= 1; None otherwise. Any amount of
-/// whitespace between the words is accepted, matching the console's
-/// `first\s+\d+` predicate. Callers pass the text with quoted spans removed
-/// so a phrase such as `"first 2 steps of Rust"` is never read as a count.
-fn extract_count(lower: &str) -> Option<usize> {
+/// `first N <noun>` when present. `Some(Ok(n))` for 1..=MAX_COUNT,
+/// `Some(Err(_))` when the clause is present but N is outside that range
+/// (the request is refused rather than silently searched differently), and
+/// `None` when there is no clause. Any amount of whitespace between the
+/// words is accepted, matching the console's `first\s+\d+` predicate.
+/// Callers pass the text with quoted spans removed so a phrase such as
+/// `"first 2 steps of Rust"` is never read as a count.
+fn extract_count(lower: &str) -> Option<Result<usize, String>> {
     let toks: Vec<&str> = lower.split_whitespace().collect();
     let k = find_count_clause(&toks)?;
-    match word_of(toks[k + 1]).parse::<usize>() {
-        Ok(v) if v >= 1 => Some(v.min(MAX_COUNT)),
-        _ => None,
-    }
+    Some(match word_of(toks[k + 1]).parse::<usize>() {
+        Ok(v) if (1..=MAX_COUNT).contains(&v) => Ok(v),
+        _ => Err(format!("result count must be between 1 and {MAX_COUNT}")),
+    })
 }
 
 fn opens_quote(chars: &[char], i: usize) -> bool {
@@ -187,8 +209,8 @@ const AFTER_VERB: &[&str] = &["google", "serpapi", "for", "the", "on", "in", "us
 /// words, the verb, engine and preposition words right after it, and the
 /// `first N <noun>` clause with its joining `the` / `for`), then keep every
 /// remaining token verbatim. Nothing inside the subject is filtered, so
-/// `The Who`, `and`, `you` or a year survive; trimming of outer punctuation
-/// is Unicode-aware so `école` and `東京` are kept intact.
+/// `The Who`, `and`, `you`, a year or a `-excluded` operator survive, and
+/// non-ASCII terms such as `école` and `東京` are kept intact.
 fn tokenize_unquoted(text: &str) -> Vec<String> {
     let raw: Vec<&str> = text.split_whitespace().collect();
     let lower: Vec<String> = raw.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
@@ -222,9 +244,13 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         }
         rest.drain(start..end);
     }
+    // Subject tokens are kept verbatim apart from surrounding quote characters
+    // and trailing sentence punctuation, so Google operators such as
+    // `-pinterest`, `@handle`, `*` or `site:` survive.
     rest.iter()
         .map(|t| {
-            t.trim_matches(|c: char| !c.is_alphanumeric() && !matches!(c, '+' | '#'))
+            t.trim_matches(|c: char| c == '"' || c == '\'')
+                .trim_end_matches(|c: char| matches!(c, ',' | '.' | ';' | ':' | '!' | '?'))
                 .to_string()
         })
         .filter(|t| !t.is_empty())
@@ -234,6 +260,13 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rewrite(text: &str, fallback: usize) -> WebIntent {
+        match parse_with_count(text, fallback) {
+            WebIntentParse::Rewrite(intent) => intent,
+            other => panic!("{text:?} should rewrite, got {other:?}"),
+        }
+    }
 
     #[test]
     fn fixture_quoted_terms_and_count() {
@@ -268,15 +301,15 @@ mod tests {
         // existing search path keeps the query and the caller's count intact.
         assert!(parse("vector search benchmarks").is_none());
         assert!(parse("search engine optimization").is_none());
-        assert!(parse_with_count("elasticsearch tuning", 3).is_none());
+        assert_eq!(parse_with_count("elasticsearch tuning", 3), WebIntentParse::PassThrough);
     }
 
     #[test]
     fn caller_count_survives_when_no_first_n_is_given() {
-        let p = parse_with_count("search google for 'cgfixit'", 3).expect("intent");
+        let p = rewrite("search google for 'cgfixit'", 3);
         assert_eq!(p.count, 3);
         assert_eq!(p.terms, vec!["cgfixit".to_string()]);
-        let p = parse_with_count("search google for the first 2 links for 'cgfixit'", 7).expect("intent");
+        let p = rewrite("search google for the first 2 links for 'cgfixit'", 7);
         assert_eq!(p.count, 2);
     }
 
@@ -317,10 +350,10 @@ mod tests {
     #[test]
     fn console_web_search_remainder_is_command_shaped() {
         // The console posts only the remainder of `/web search ...`.
-        let p = parse_with_count("first 2 links for rust", 5).expect("intent");
+        let p = rewrite("first 2 links for rust", 5);
         assert_eq!(p.count, 2);
         assert_eq!(p.terms, vec!["rust".to_string()]);
-        let p = parse_with_count("first 3 results for election results", 5).expect("intent");
+        let p = rewrite("first 3 results for election results", 5);
         assert_eq!(p.count, 3);
         assert_eq!(p.terms, vec!["election".to_string(), "results".into()]);
         // A raw query that merely starts with "first N" is not a command.
@@ -329,7 +362,7 @@ mod tests {
 
     #[test]
     fn count_inside_quotes_does_not_override_the_caller() {
-        let p = parse_with_count("search Google for \"first 2 steps of Rust\"", 7).expect("intent");
+        let p = rewrite("search Google for \"first 2 steps of Rust\"", 7);
         assert_eq!(p.count, 7);
         assert_eq!(p.terms, vec!["first 2 steps of Rust".to_string()]);
     }
@@ -346,8 +379,12 @@ mod tests {
     fn fallback_count_is_passed_through_unclamped() {
         // Out-of-range caller counts must still reach the downstream range
         // check instead of being silently corrected here.
-        assert_eq!(parse_with_count("search google for 'rust'", 0).unwrap().count, 0);
-        assert_eq!(parse_with_count("search google for 'rust'", 99).unwrap().count, 99);
+        for fallback in [0usize, 99] {
+            match parse_with_count("search google for 'rust'", fallback) {
+                WebIntentParse::Rewrite(intent) => assert_eq!(intent.count, fallback),
+                other => panic!("expected a rewrite, got {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -386,9 +423,35 @@ mod tests {
     }
 
     #[test]
-    fn count_is_capped_at_ten() {
-        let p = parse("search google for the first 99 links for 'x'").expect("intent");
-        assert_eq!(p.count, 10);
-        assert_eq!(p.terms, vec!["x".to_string()]);
+    fn out_of_range_textual_counts_are_refused_not_guessed() {
+        for line in [
+            "search first 0 results for Rust",
+            "search google for the first 99 links for 'x'",
+        ] {
+            match parse_with_count(line, 5) {
+                WebIntentParse::Invalid(message) => assert!(message.contains("between 1 and 10"), "{message}"),
+                other => panic!("{line:?} should be refused, got {other:?}"),
+            }
+        }
+        // A clause with a valid count still rewrites; no clause still passes through.
+        assert!(matches!(
+            parse_with_count("search first 10 links for Rust", 5),
+            WebIntentParse::Rewrite(_)
+        ));
+        assert_eq!(
+            parse_with_count("vector search benchmarks", 5),
+            WebIntentParse::PassThrough
+        );
+    }
+
+    #[test]
+    fn leading_search_operators_survive_in_the_subject() {
+        let p = parse("search first 2 results for -pinterest rust").expect("intent");
+        assert_eq!(p.terms, vec!["-pinterest".to_string(), "rust".into()]);
+        let p = parse("search first 2 links for @cgfixit site:github.com *harness*").expect("intent");
+        assert_eq!(
+            p.terms,
+            vec!["@cgfixit".to_string(), "site:github.com".into(), "*harness*".into()]
+        );
     }
 }
