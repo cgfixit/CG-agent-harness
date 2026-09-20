@@ -2377,26 +2377,29 @@ function looksLikeNlSearch(text) {
      and the verb need whitespace (or end) after any trailing punctuation so
      `Please:search` and `search:first` tokenize like the server.
 
-     Direct routing is for listing-only requests. Structurally: once every
-     quoted term and count clause is masked out, nothing left in the text
-     may open another clause (`and`, `then`, `so`, `plus`, `also`, `to`,
-     `;`). The mask covers the whole text, not only the suffix after the
-     last term, so `"Rust" and compare it with "Go"` is caught by the `and`
-     between the terms. Anything else (`"Rust" and provide a short summary`,
-     `; summarize it`, `"..." to explain`) stays on the chat path, where the
-     model still has the web tools when they are enabled. This errs toward
-     chat on purpose: a listing that drops half the ask is worse than a
-     model turn. */
-  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.test(text);
-  if (!commandShaped) return false;
+     Direct routing is for listing-only requests. Structurally: after the
+     command head (lead-in words and the verb), once every quoted term and
+     count clause is masked out, nothing left may open another clause: a
+     connective (`and`, `then`, `so`, `plus`, `also`, `to`), a semicolon, or
+     a comma / period / `!` / `?` followed by more words (`"Rust", summarize
+     it`; `"Rust". Explain it`). Punctuation glued to a word (`node.js`,
+     `site:x.com`) or at the very end is not a boundary. The mask covers the
+     whole body, not only the suffix after the last term, so `"Rust" and
+     compare it with "Go"` is caught by the `and` between the terms.
+     Anything else stays on the chat path, where the model still has the
+     web tools when they are enabled. This errs toward chat on purpose: a
+     listing that drops half the ask is worse than a model turn. */
+  var head = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.exec(text);
+  if (!head) return false;
+  var body = text.slice(head[0].length);
   var quoteRe = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/g;
   var countRe = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/ig;
   var signals = 0;
-  var masked = text
-    .replace(quoteRe, function (m, q, offset) { signals++; return m.charAt(0) === q ? ' ' : m.charAt(0) + ' '; })
+  var masked = body
+    .replace(quoteRe, function (m, q) { signals++; return m.charAt(0) === q ? ' ' : m.charAt(0) + ' '; })
     .replace(countRe, function () { signals++; return ' '; });
   if (signals === 0) return false;
-  return !/(?:\b(?:and|then|so|plus|also|to)\b|;)/i.test(masked);
+  return !/(?:\b(?:and|then|so|plus|also|to)\b|;|[,.!?]\s+\S)/i.test(masked);
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is

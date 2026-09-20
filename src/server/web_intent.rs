@@ -169,9 +169,17 @@ fn find_count_clause(toks: &[&str]) -> Option<usize> {
 fn extract_count(lower: &str) -> Option<Result<usize, String>> {
     let toks: Vec<&str> = lower.split_whitespace().collect();
     let k = find_count_clause(&toks)?;
-    Some(match word_of(toks[k + 1]).parse::<usize>() {
-        Ok(v) if (1..=MAX_COUNT).contains(&v) => Ok(v),
-        _ => Err(format!("result count must be between 1 and {MAX_COUNT}")),
+    let tok = toks[k + 1];
+    // `word_of` drops a leading sign, so `first -2 results` would otherwise
+    // be searched as two results. A signed count is refused, never coerced.
+    let signed = tok
+        .trim_start_matches(|c: char| !c.is_alphanumeric() && c != '+' && c != '-')
+        .starts_with(['+', '-']);
+    Some(match word_of(tok).parse::<usize>() {
+        Ok(v) if !signed && (1..=MAX_COUNT).contains(&v) => Ok(v),
+        _ => Err(format!(
+            "result count must be an unsigned number between 1 and {MAX_COUNT}"
+        )),
     })
 }
 
@@ -297,12 +305,15 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         rest.drain(start..end);
     }
     // `'a' and 'b'`: a joiner between two quoted spans is scaffolding too.
+    // Uppercase `OR` is Google's operator, not a joiner: `"cats" OR "dogs"`
+    // must reach the provider with the operator between the terms.
+    let is_joiner = |tok: &str| {
+        let w = word_of(tok);
+        w.eq_ignore_ascii_case("and") || w.eq_ignore_ascii_case("plus") || (w.eq_ignore_ascii_case("or") && w != "OR")
+    };
     let mut keep = vec![true; rest.len()];
     for k in 1..rest.len().saturating_sub(1) {
-        if matches!(word_of(rest[k]).to_ascii_lowercase().as_str(), "and" | "or" | "plus")
-            && placeholder_index(rest[k - 1]).is_some()
-            && placeholder_index(rest[k + 1]).is_some()
-        {
+        if is_joiner(rest[k]) && placeholder_index(rest[k - 1]).is_some() && placeholder_index(rest[k + 1]).is_some() {
             keep[k] = false;
         }
     }
@@ -582,6 +593,37 @@ mod tests {
         );
         let p = parse("/web search first 2 links for \"cgfixit\"").expect("intent");
         assert_eq!(p.terms, vec!["cgfixit".to_string()]);
+    }
+
+    #[test]
+    fn uppercase_or_between_quoted_terms_is_a_query_operator() {
+        let p = parse("search \"cats\" OR \"dogs\"").expect("intent");
+        assert_eq!(p.terms, vec!["cats".to_string(), "OR".into(), "dogs".into()]);
+        assert_eq!(p.query(), "cats OR dogs");
+        // Lowercase `or` (and `and` / `plus`) between quoted terms is still
+        // natural-language scaffolding.
+        let p = parse("search \"cats\" or \"dogs\"").expect("intent");
+        assert_eq!(p.terms, vec!["cats".to_string(), "dogs".into()]);
+        let p = parse("search 'a' and 'b' plus 'c'").expect("intent");
+        assert_eq!(p.terms, vec!["a".to_string(), "b".into(), "c".into()]);
+    }
+
+    #[test]
+    fn signed_result_counts_are_refused_not_coerced() {
+        for text in [
+            "search \"Rust\" first -2 results",
+            "search \"Rust\" first +2 results",
+            "search first -2 links for rust",
+            "search first (-2) links for rust",
+        ] {
+            match parse_with_count(text, 5) {
+                WebIntentParse::Invalid(message) => assert!(message.contains("unsigned"), "{text:?}: {message}"),
+                other => panic!("{text:?} should be refused, got {other:?}"),
+            }
+        }
+        // A plain number with trailing punctuation is still a count.
+        let p = parse("search first 2, links for rust").expect("intent");
+        assert_eq!(p.count, 2);
     }
 
     #[test]
