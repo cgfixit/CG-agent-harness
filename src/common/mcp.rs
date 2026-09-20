@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -100,7 +101,8 @@ pub struct StdioClient {
     max_frame: usize,
     pub backend: &'static str,
     pub probe_reason: String,
-    stderr_path: PathBuf,
+    stderr: Arc<Mutex<Vec<u8>>>,
+    stderr_task: tokio::task::JoinHandle<()>,
     _wrap: WrappedStdio,
 }
 
@@ -110,14 +112,20 @@ pub struct StdioOutcome {
     pub probe_reason: String,
 }
 
-fn stderr_snip(path: &Path) -> String {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    if let Ok(file) = std::fs::File::open(path) {
-        // At most four UTF-8 bytes per retained character.
-        let _ = file.take(512 * 4).read_to_end(&mut bytes);
+// Preserve at most 512 Unicode characters. Drain excess bytes so stderr cannot
+// block a valid response, without storing an unbounded log on disk or in RAM.
+const STDERR_BYTES: usize = 512 * 4;
+async fn drain_stderr(mut pipe: tokio::process::ChildStderr, captured: Arc<Mutex<Vec<u8>>>) {
+    let mut chunk = [0u8; 8192];
+    loop {
+        let Ok(n) = pipe.read(&mut chunk).await else { break };
+        if n == 0 {
+            break;
+        }
+        let mut bytes = captured.lock().unwrap_or_else(|p| p.into_inner());
+        let keep = n.min(STDERR_BYTES - bytes.len());
+        bytes.extend_from_slice(&chunk[..keep]);
     }
-    String::from_utf8_lossy(&bytes).chars().take(512).collect()
 }
 
 impl StdioClient {
@@ -150,21 +158,23 @@ impl StdioClient {
             cmd.env(key, &scratch);
         }
         cmd.current_dir(&wrap.child_cwd);
-        let stderr_path = wrap.scratch.join("mcp-stderr.log");
-        let stderr_file =
-            std::fs::File::create(&stderr_path).map_err(|e| mcp_err("MCP_STDIO", format!("stderr file: {e}")))?;
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(stderr_file)
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         #[cfg(unix)]
         {
             cmd.process_group(0);
         }
-        let mut child = cmd.spawn().map_err(|e| {
-            let snip = stderr_snip(&stderr_path);
-            mcp_err("MCP_STDIO", format!("cannot spawn: {e}; stderr={snip}"))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|_| mcp_err("MCP_STDIO", "cannot spawn stdio MCP child"))?;
+        let stderr = Arc::new(Mutex::new(Vec::new()));
+        let pipe = child
+            .stderr
+            .take()
+            .ok_or_else(|| mcp_err("MCP_STDIO", "stdio stderr missing"))?;
+        let stderr_task = tokio::spawn(drain_stderr(pipe, stderr.clone()));
         let stdin = child
             .stdin
             .take()
@@ -181,7 +191,8 @@ impl StdioClient {
             max_frame,
             backend: wrap.backend,
             probe_reason: wrap.probe_reason.clone(),
-            stderr_path,
+            stderr,
+            stderr_task,
             _wrap: wrap,
         })
     }
@@ -263,7 +274,11 @@ impl StdioClient {
                 .await
                 .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
             if n == 0 {
-                let snip = stderr_snip(&self.stderr_path);
+                // Normally EOF follows the completed stderr write. Do not wait
+                // indefinitely for a descendant that inherited the pipe.
+                let _ = tokio::time::timeout(Duration::from_millis(50), &mut self.stderr_task).await;
+                let bytes = self.stderr.lock().unwrap_or_else(|p| p.into_inner());
+                let snip: String = String::from_utf8_lossy(&bytes).chars().take(512).collect();
                 return Err(mcp_err("MCP_STDIO", format!("stdio MCP child closed; stderr={snip}")));
             }
             if headers.len() > MAX_HEADER_BYTES {
@@ -300,6 +315,7 @@ impl StdioClient {
 
 impl Drop for StdioClient {
     fn drop(&mut self) {
+        self.stderr_task.abort();
         #[cfg(unix)]
         {
             if let Some(pid) = self.child.id() {
