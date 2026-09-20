@@ -527,6 +527,14 @@ let loopState = null;
 /* AbortController for the in-flight POST /api/chat. /loop stop aborts
    the browser wait AND tells the server to drop the Ollama socket. */
 let inflightChat = null;
+/* The routed natural-language search owns its own AbortController. It is
+   tracked apart from inflightChat so cancelling it never posts
+   /api/chat/cancel (which could abort an unrelated model turn). */
+let inflightSearch = null;
+function abortInflightSearch() {
+  if (!inflightSearch) return;
+  try { inflightSearch.abort(); } catch (e) { /* already finished */ }
+}
 
 function paintGoalLoop() {
   const g = $('sGoal');
@@ -1278,12 +1286,12 @@ $('sessionClearDialog').addEventListener('cancel', e => { if (sessionClearing) e
 $('sessionClearConfirm').addEventListener('click', async () => {
   if (sessionClearing) return;
   sessionClearing = true;
-  ++sessionRevision;
+  abortInflightSearch(); ++sessionRevision;
   sendBtn.disabled = true;
   $('sessionClearConfirm').disabled = true;
   $('sessionClearCancel').disabled = true;
   try {
-    if (inflightChat) await requestLoopStop(); else stopLoop();
+    abortInflightSearch(); if (inflightChat) await requestLoopStop(); else stopLoop();
     const deleteDerived = !!$('sessionClearDerivedEpisodes').checked;
     const cleared = await api('/api/sessions/clear', 'POST', {
       confirm:true,
@@ -1335,7 +1343,7 @@ async function runSlash(line) {
         if (sub === 'new' || sub === 'use') {
           const revision = ++sessionRevision;
           sendBtn.disabled = true;
-          if (inflightChat) await requestLoopStop(); else stopLoop();
+          abortInflightSearch(); if (inflightChat) await requestLoopStop(); else stopLoop();
           try {
             const s = sub === 'new'
               ? await api('/api/sessions', 'POST', { title: rest.slice(1).join(' ') })
@@ -2355,21 +2363,29 @@ async function onSend() {
 function looksLikeNlSearch(text) {
   /* Mirrors src/server/web_intent.rs: command-shaped (optional politeness
      words, then a whole `search` token; `google` is an entity, not a verb)
-     plus a balanced quoted term
-     or a `first N links|results|hits|pages` clause. A quote opens at a word
-     start and closes at a word end, so the apostrophe inside
-     'women's health' does not end the term, and `Google's` is not a verb.
-     A compound "search ... and summarize/explain/..." request stays on the
-     chat path (also `; summarize it`, `and briefly summarize`, `"..." to
-     summarize`): the listing alone would drop the second half of the ask. Lead-in words and the verb
-     need whitespace (or end) after any trailing punctuation so
-     `Please:search` and `search:first` tokenize like the server. */
+     plus a balanced quoted term or a `first N links|results|hits|pages`
+     clause. A quote opens at a word start and closes at a word end, so the
+     apostrophe inside 'women's health' does not end the term. Lead-in words
+     and the verb need whitespace (or end) after any trailing punctuation so
+     `Please:search` and `search:first` tokenize like the server.
+
+     Direct routing is for listing-only requests. Structurally: whatever
+     follows the last quoted term (or, unquoted, the count clause) must not
+     open another clause (`and`, `then`, `so`, `plus`, `also`, `to`, `;`).
+     Anything else (`"Rust" and provide a short summary`, `; summarize it`,
+     `"..." to explain`) stays on the chat path, where the model still has
+     the web tools when they are enabled. This errs toward chat on purpose:
+     a listing that drops half the ask is worse than a model turn. */
   var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.test(text);
-  var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
-  var counted = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/i.test(text);
-  var answerVerb = '(?:\\w+ly\\s+)*(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\\b';
-  var compound = new RegExp('(?:\\b(?:and|then)\\b|[;,])\\s*' + answerVerb + '|(?:["\']|\\b(?:links?|results?|hits?|pages?))\\s+to\\s+' + answerVerb, 'i').test(text);
-  return commandShaped && (quoted || counted) && !compound;
+  if (!commandShaped) return false;
+  var quoteRe = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/g;
+  var countRe = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/ig;
+  var lastEnd = -1, m;
+  while ((m = quoteRe.exec(text)) !== null) lastEnd = Math.max(lastEnd, m.index + m[0].length);
+  while ((m = countRe.exec(text)) !== null) lastEnd = Math.max(lastEnd, m.index + m[0].length);
+  if (lastEnd < 0) return false;
+  var tail = text.slice(lastEnd);
+  return !/(?:\b(?:and|then|so|plus|also|to)\b|;)/i.test(tail);
 }
 
 async function sendMaybeNlSearch(text) {
@@ -2381,13 +2397,14 @@ async function sendMaybeNlSearch(text) {
      fallback and the gate release all belong to a transcript that is gone. */
   const revision = sessionRevision;
   sendBtn.disabled = true;
-  /* Own an abort controller like sendChat so /loop stop, a session switch
-     or logout aborts the request itself and releases the server's single
-     search gate, instead of only discarding the eventual result. The signal
-     is passed explicitly so unrelated callers of the same route (the
-     settings "Test Google search" button) keep their own timeout path. */
+  /* Own an abort controller so /loop stop, a session switch or logout aborts
+     the request itself (abortInflightSearch) and releases the server's single
+     search gate, instead of only discarding the eventual result. It lives in
+     its own slot, not inflightChat, so nothing posts /api/chat/cancel for it.
+     The signal is passed explicitly so unrelated callers of the same route
+     (the settings "Test Google search" button) keep their own timeout path. */
   const controller = new AbortController();
-  inflightChat = controller;
+  inflightSearch = controller;
   let fallbackToChat = false;
   try {
     const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000, null, controller.signal);
@@ -2400,9 +2417,15 @@ async function sendMaybeNlSearch(text) {
     return;
   } catch (e) {
     if (e && e.name === 'AbortError') {
-      /* Cancelled on purpose (/loop stop, session switch, logout): not a
-         routing failure, so never re-run the text as a model turn. */
-      if (revision === sessionRevision) sys('search cancelled');
+      if (controller.signal.aborted) {
+        /* Cancelled on purpose (/loop stop, session switch, logout): not a
+           routing failure, so never re-run the text as a model turn. */
+        if (revision === sessionRevision) sys('search cancelled');
+        return;
+      }
+      /* The request timed out (fetchWithTimeout aborted its own controller).
+         Surface it; a model turn would not make the provider answer faster. */
+      if (revision === sessionRevision) sys('search timed out: ' + e.message);
       return;
     }
     if (revision !== sessionRevision) return;
@@ -2418,7 +2441,7 @@ async function sendMaybeNlSearch(text) {
     sys('search router did not run: ' + e.message);
     fallbackToChat = true;
   } finally {
-    if (inflightChat === controller) inflightChat = null;
+    if (inflightSearch === controller) inflightSearch = null;
     /* Release the gate only while this request still owns the session. After
        a revision change the flow that moved it (session navigation, logout)
        owns the gate and releases it itself once its own request settles. */
@@ -2565,7 +2588,7 @@ if (hAuthLogout) {
        server-side gate instead of outliving the session. The claim is undone
        only if the server rejects the logout. */
     const priorRevision = sessionRevision;
-    ++sessionRevision;
+    abortInflightSearch(); ++sessionRevision;
     sendBtn.disabled = true;
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
