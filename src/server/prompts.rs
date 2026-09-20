@@ -274,8 +274,21 @@ pub fn style_budget_for_persona(persona: &str, soul_enabled: bool, soul_max_char
     soul_max_chars.min((SOUL_CHARS_HARD_CAP as usize).saturating_sub(used))
 }
 
+/// A composed prompt together with the style load it was built from, so a
+/// reporter can describe exactly the snapshot it is showing instead of
+/// re-reading an overlay that may have changed since.
+pub struct ComposedPrompt {
+    pub prompt: String,
+    pub style: Option<crate::server::style::StyleLoad>,
+}
+
 /// Soul, then style, then HEADER/CAPABILITIES. The policy tail still wins.
 pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
+    compose_system_prompt_detailed(inputs).prompt
+}
+
+/// `compose_system_prompt` plus the style load result of this composition.
+pub fn compose_system_prompt_detailed(inputs: &PromptInputs<'_>) -> ComposedPrompt {
     let home = inputs.soul_path.parent().unwrap_or(Path::new(""));
     let mut parts: Vec<String> = Vec::new();
     let soul = load_text(home, Path::new("soul.md"), inputs.soul_enabled, inputs.soul_max_chars);
@@ -289,6 +302,7 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
         parts.push(format!("## Operator persona (soul, read-only)\n\n{persona}"));
     }
     let mut style_label = "off".to_string();
+    let mut style_load = None;
     let style_budget = style_budget_for_persona(&persona, inputs.soul_enabled, inputs.soul_max_chars);
     if let Some(name) = inputs.style_name.filter(|n| !n.is_empty() && *n != "off") {
         let loaded = crate::server::style::load_style_within(home, name, style_budget);
@@ -299,6 +313,7 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
                 loaded.name, loaded.text
             ));
         }
+        style_load = Some(loaded);
     }
     parts.push(HEADER.to_string());
     parts.push(super::tool_inventory::available_tools_markdown(inputs.web_enabled));
@@ -341,7 +356,10 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
             ));
         }
     }
-    parts.join("\n")
+    ComposedPrompt {
+        prompt: parts.join("\n"),
+        style: style_load,
+    }
 }
 
 #[cfg(test)]

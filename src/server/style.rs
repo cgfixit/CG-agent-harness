@@ -82,8 +82,11 @@ fn finish(name: &str, origin: &'static str, raw: &str, max_chars: usize) -> Styl
             text: String::new(),
         };
     }
-    let truncated = raw.chars().count() > max_chars;
-    let text = clip_chars(raw.trim(), max_chars);
+    // Measured on the body that is actually clipped: a trailing newline or
+    // surrounding whitespace must not report a preset as partly included.
+    let body = raw.trim();
+    let truncated = body.chars().count() > max_chars;
+    let text = clip_chars(body, max_chars);
     if text.is_empty() {
         return StyleLoad {
             name: name.to_string(),
@@ -346,6 +349,14 @@ mod tests {
         assert!(!blocked.loaded);
         assert_eq!(blocked.unavailable_reason, Some("injection"));
         assert!(blocked.text.is_empty());
+        // A body that exactly fits, with a trailing newline, is not truncated.
+        std::fs::write(home.join("styles").join("concise.md"), "EXACTLY_TEN\n").unwrap();
+        let fits = load_style(home, "concise", 11);
+        assert!(fits.loaded);
+        assert!(!fits.truncated, "trailing newline must not count as clipped");
+        assert_eq!(fits.text, "EXACTLY_TEN");
+        let clipped = load_style(home, "concise", 10);
+        assert!(clipped.truncated);
     }
 
     #[test]

@@ -2470,8 +2470,11 @@ async function finishChat(r) {
   if (r && r.session_id) {
     /* A session the server just auto-created starts with style off; the
        status bar must not keep showing a cleared session's preset. */
-    if (currentSession !== r.session_id) { currentStyle = 'off'; currentStyleIssue = null; paintStyle(); }
+    const switched = currentSession !== r.session_id;
     currentSession = r.session_id;
+    /* Painted after the assignment so the selector is enabled for the
+       auto-created session at once, not after the next status poll. */
+    if (switched) { currentStyle = 'off'; currentStyleIssue = null; paintStyle(); }
     $('sSession').textContent = currentSession;
   }
   const usage = (r && r.usage) || {};

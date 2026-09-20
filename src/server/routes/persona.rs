@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::server::errors::{session_status, ApiError, ApiResult};
-use crate::server::prompts::{compose_system_prompt, load_text, PromptInputs};
+use crate::server::prompts::{load_text, PromptInputs};
 use crate::server::schemas::{StructuredFactSelection, ValidJson, Validate, MAX_SELECTED_FACTS};
 use crate::server::state::AppState;
 
@@ -376,19 +376,11 @@ pub async fn preview(
         web_enabled: settings.web_enabled,
         attachment_fence: None,
     };
-    let prompt = compose_system_prompt(&inputs);
-    // Reported through the same shared soul/style budget the composition
-    // used, so a style the soul left no room for reads as not loaded here too.
-    let style_budget = crate::server::prompts::style_budget_after_soul(
-        &state.home.root,
-        settings.soul_enabled,
-        req.soul_content.as_deref(),
-        max_chars(&state),
-    );
-    let style_load = session
-        .as_ref()
-        .and_then(|s| s.style.as_deref())
-        .map(|name| crate::server::style::load_style_within(&state.home.root, name, style_budget));
+    let composed = crate::server::prompts::compose_system_prompt_detailed(&inputs);
+    let prompt = composed.prompt;
+    // The load result of this very composition: the overlay is read once,
+    // so the reported state cannot disagree with the prompt shown.
+    let style_load = composed.style;
     let sections: Vec<Value> = selected
         .iter()
         .map(|(id, body)| {
