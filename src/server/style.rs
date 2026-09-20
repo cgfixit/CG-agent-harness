@@ -39,8 +39,11 @@ impl StyleId {
     }
 }
 
+/// `off` is the clear sentinel of `POST /api/style` and `/style off`, never a
+/// preset: a `styles/off.md` overlay is not catalogued and cannot be selected.
 pub fn valid_style_id(id: &str) -> bool {
     !id.is_empty()
+        && id != "off"
         && id.len() <= 80
         && id
             .bytes()
@@ -236,7 +239,10 @@ mod tests {
     fn style_id_matches_skill_charset() {
         assert!(StyleId::parse("concise").is_some());
         assert!(StyleId::parse("technical-deep").is_some());
-        assert!(StyleId::parse("off").is_some());
+        assert!(
+            StyleId::parse("off").is_none(),
+            "off is the clear sentinel, not a preset"
+        );
         assert!(StyleId::parse("../etc").is_none());
         assert!(StyleId::parse("Has Caps").is_none());
         assert!(StyleId::parse("").is_none());
@@ -250,6 +256,22 @@ mod tests {
         assert_eq!(suggest_builtin("technical"), Some("technical-deep"));
         assert_eq!(suggest_builtin("off"), None);
         assert_eq!(suggest_builtin(""), None);
+    }
+
+    #[test]
+    fn reserved_off_overlay_is_never_catalogued_or_loaded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::create_dir_all(home.join("styles")).unwrap();
+        std::fs::write(home.join("styles").join("off.md"), "OFF_OVERLAY must never load.\n").unwrap();
+        std::fs::write(home.join("styles").join("mine.md"), "MINE loads.\n").unwrap();
+        let ids: Vec<String> = list_catalog(home).into_iter().map(|(id, _)| id).collect();
+        assert!(!ids.iter().any(|id| id == "off"), "{ids:?}");
+        assert!(ids.iter().any(|id| id == "mine"), "{ids:?}");
+        let blocked = load_style(home, "off", 8000);
+        assert!(!blocked.loaded);
+        assert_eq!(blocked.unavailable_reason, Some("invalid_id"));
+        assert!(blocked.text.is_empty());
     }
 
     #[test]

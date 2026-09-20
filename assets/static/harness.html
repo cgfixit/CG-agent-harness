@@ -1501,7 +1501,13 @@ async function runSlash(line) {
         }
         const write = styleWriteChain.catch(() => {}).then(() => api('/api/style', 'POST', { session_id: styleSession, name: name }));
         styleWriteChain = write;
-        const r = await write;
+        let r;
+        try { r = await write; } catch (e) {
+          /* The dropdown already shows the rejected choice; put the last
+             persisted selection back unless a newer request owns the bar. */
+          if (!stale()) paintStyle();
+          throw e;
+        }
         if (stale()) { sys('style ' + (r.style || 'off') + ' was set, but a newer selection or session change supersedes it in the status bar'); break; }
         currentStyle = r.style || 'off'; paintStyle();
         sys('style ' + currentStyle + (r.origin ? ' (' + r.origin + ')' : '') + '. /prompt shows the active style. soul.md is unchanged.');
