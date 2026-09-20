@@ -164,9 +164,13 @@ pub async fn web_search(
                 "Google search cannot use a local source group",
             ));
         }
+        let (query, count) = match crate::server::web_intent::parse(&req.query) {
+            Some(intent) if !intent.terms.is_empty() => (intent.query(), intent.count),
+            _ => (req.query.clone(), req.count),
+        };
         return state
             .web
-            .google_search(&req.query, req.count, enabled, &state.audit)
+            .google_search(&query, count, enabled, &state.audit)
             .await
             .map(Json)
             .map_err(|e| web_err(&e));

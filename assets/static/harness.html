@@ -2336,7 +2336,28 @@ async function onSend() {
     return;
   }
   input.value = '';
-  if (text.startsWith('/')) { await runSlash(text); } else { await sendChat(text, false); }
+  if (text.startsWith('/')) { await runSlash(text); } else { await sendMaybeNlSearch(text); }
+}
+
+function looksLikeNlSearch(text) {
+  return /\bsearch\b/i.test(text) && (text.indexOf("'") >= 0 || text.indexOf('"') >= 0 || /first\s+\d+/i.test(text));
+}
+
+async function sendMaybeNlSearch(text) {
+  if (looksLikeNlSearch(text)) {
+    try {
+      const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000);
+      if (found && found.results) {
+        sys(renderSearchResults(found));
+        return;
+      }
+      sys(JSON.stringify(found, null, 2));
+      return;
+    } catch (e) {
+      sys('search router did not run: ' + e.message);
+    }
+  }
+  await sendChat(text, false);
 }
 
 /* ── wiring ── */

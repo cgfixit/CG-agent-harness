@@ -171,11 +171,15 @@ async fn run_inner(
                 let args: SearchArgs =
                     serde_json::from_str(args).map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
                 let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
-                let key = (query.to_lowercase(), args.count);
+                let (query, count) = match crate::server::web_intent::parse(&query) {
+                    Some(intent) if !intent.terms.is_empty() => (intent.query(), intent.count),
+                    _ => (query, args.count),
+                };
+                let key = (query.to_lowercase(), count);
                 if let Some(result) = searches.get(&key) {
                     Ok(Value::clone(result))
                 } else {
-                    let result = state.web.google_search(&query, args.count, true, &state.audit).await;
+                    let result = state.web.google_search(&query, count, true, &state.audit).await;
                     if let Ok(value) = &result {
                         searches.insert(key, value.clone());
                     }
