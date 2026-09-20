@@ -17,6 +17,7 @@
 //!   memory/            operator /memory notes; structured.sqlite3 only if enabled
 //!   data/agentic/      skills_registry.json, workspaces/, harness_optimizer/runs/
 //!   logs/              audit.jsonl, spend.jsonl
+//!   attachments/       owner-scoped chat upload blobs (UUID names, 0600)
 //!   tmp/               staged shim temp files
 //! ```
 
@@ -36,7 +37,7 @@ pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8790;
 pub const MIN_USER_PORT: u16 = 1024;
 
-const SUBDIRS: [&str; 11] = [
+const SUBDIRS: [&str; 12] = [
     "sessions",
     "styles",
     "skills",
@@ -48,6 +49,7 @@ const SUBDIRS: [&str; 11] = [
     "data/agentic/harness_optimizer/runs/accepted",
     "logs",
     "exports",
+    "attachments",
 ];
 
 const EMBEDDED_SKILLS: [(&str, &str); 2] = [
@@ -113,6 +115,9 @@ impl Home {
     }
     pub fn exports_dir(&self) -> PathBuf {
         self.root.join("exports")
+    }
+    pub fn attachments_dir(&self) -> PathBuf {
+        self.root.join("attachments")
     }
     pub fn skills_dir(&self) -> PathBuf {
         self.root.join("skills")

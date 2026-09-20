@@ -390,10 +390,36 @@ pub async fn delete_user(
     if account.role != ROLE_ADMIN {
         return Err(denied());
     }
-    manager(&state)?
-        .delete_user(&username)
-        .map_err(|e| map_auth_error(&e))?;
-    Ok(Json(json!({"ok": true})))
+    let manager = manager(&state)?;
+    // Blobs go only once the account is actually gone: a refused deletion
+    // (last enabled admin, persistence failure) must not lose user data.
+    let owner = manager.get_user(&username).map(|summary| summary.user_id);
+    manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
+    // Cleanup is reported, never swallowed: a blob whose unlink failed keeps
+    // its manifest row (still charged to the quota) and is retried by the
+    // dead-owner sweep at the next deletion or server start.
+    let cleanup = match owner.as_deref().map(|owner| state.attachments.unlink_owner(owner)) {
+        None => json!({"removed": 0}),
+        Some(Ok(removed)) => json!({"removed": removed}),
+        Some(Err(e)) => {
+            state.audit.log(json!({
+                "event": "chat_attachments_cleanup_incomplete",
+                "owner": owner,
+                "code": e.code,
+                "message": e.message,
+                "details": e.details,
+            }));
+            json!({"removed": e.details.get("removed").cloned().unwrap_or(json!(0)),
+                   "retained": e.details.get("retained").cloned().unwrap_or(json!(0)),
+                   "error": e.code})
+        }
+    };
+    let live: std::collections::BTreeSet<String> = manager.list_users().into_iter().map(|u| u.user_id).collect();
+    let swept = state
+        .attachments
+        .sweep_dead_owners(&|candidate| candidate == "local" || live.contains(candidate))
+        .unwrap_or(0);
+    Ok(Json(json!({"ok": true, "attachment_cleanup": cleanup, "swept": swept})))
 }
 
 use axum::extract::FromRequest;

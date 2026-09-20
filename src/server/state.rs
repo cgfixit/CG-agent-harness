@@ -15,6 +15,7 @@ use crate::llm::backend::ResolvedLocalBackend;
 use crate::llm::cloud_chat::CloudChat;
 use crate::llm::openai_chat::ChatClient;
 
+use super::attachments::AttachmentStore;
 use super::generation_gate::GenerationGate;
 use super::mcp::McpRuntime;
 use super::memory_notes::MemoryNotes;
@@ -40,11 +41,41 @@ pub fn auth_operation_concurrency(cfg: &AppConfig) -> Result<usize> {
     }
 }
 
+/// `attachments.max_concurrent_uploads`: bound on upload bodies buffered at
+/// once (each up to `MAX_REQUEST_BYTES`); the per-home byte quota is checked
+/// only after a body is in memory, so this is what caps transient memory.
+pub fn upload_concurrency(cfg: &AppConfig) -> Result<usize> {
+    match cfg.get("attachments.max_concurrent_uploads") {
+        None => Ok(2),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| (1..=8).contains(value))
+            .map(|value| value as usize)
+            .ok_or_else(|| HarnessError::config("attachments.max_concurrent_uploads must be an integer from 1 to 8")),
+    }
+}
+
+/// `attachments.body_timeout_sec`: server-side deadline for reading one
+/// upload body. It bounds how long a stalled client can hold an upload
+/// permit; a body that does not arrive in time is refused and its permit
+/// released.
+pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
+    match cfg.get("attachments.body_timeout_sec") {
+        None => Ok(std::time::Duration::from_secs(120)),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| (5..=600).contains(value))
+            .map(std::time::Duration::from_secs)
+            .ok_or_else(|| HarnessError::config("attachments.body_timeout_sec must be an integer from 5 to 600")),
+    }
+}
+
 pub struct AppState {
     pub home: Home,
     pub cfg: SharedConfig,
     pub settings: Mutex<HarnessSettings>,
     pub store: SessionStore,
+    pub attachments: AttachmentStore,
     pub backend: ResolvedLocalBackend,
     pub chat: ChatClient,
     pub cloud_chat: CloudChat,
@@ -67,6 +98,10 @@ pub struct AppState {
     pub auth: Option<AuthManager>,
     /// Limits concurrent memory-hard scrypt derivations for this app instance.
     pub auth_operation_permits: Arc<tokio::sync::Semaphore>,
+    /// Limits attachment upload bodies held in memory at once.
+    pub upload_permits: Arc<tokio::sync::Semaphore>,
+    /// Deadline for reading one upload body while holding a permit.
+    pub upload_body_timeout: std::time::Duration,
     pub web: WebTool,
     pub mcp: McpRuntime,
     pub notes: MemoryNotes,
@@ -226,5 +261,43 @@ impl AppState {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(session_id);
+    }
+}
+
+#[cfg(test)]
+mod upload_concurrency_tests {
+    use super::{upload_body_timeout, upload_concurrency};
+    use crate::common::config::AppConfig;
+
+    #[test]
+    fn upload_body_timeout_is_configured_and_bounded() {
+        for (raw, expected) in [("{}", Some(120)), ("attachments: {body_timeout_sec: 30}", Some(30))] {
+            let cfg = AppConfig::from_str(raw, std::path::Path::new("fixture.yaml")).unwrap();
+            assert_eq!(upload_body_timeout(&cfg).ok().map(|d| d.as_secs()), expected);
+        }
+        for raw in ["4", "601", "'60'"] {
+            let cfg = AppConfig::from_str(
+                &format!("attachments: {{body_timeout_sec: {raw}}}"),
+                std::path::Path::new("fixture.yaml"),
+            )
+            .unwrap();
+            assert!(upload_body_timeout(&cfg).is_err(), "raw={raw}");
+        }
+    }
+
+    #[test]
+    fn upload_cap_is_configured_and_bounded() {
+        for (raw, expected) in [("{}", Some(2)), ("attachments: {max_concurrent_uploads: 4}", Some(4))] {
+            let cfg = AppConfig::from_str(raw, std::path::Path::new("fixture.yaml")).unwrap();
+            assert_eq!(upload_concurrency(&cfg).ok(), expected);
+        }
+        for raw in ["0", "9", "'2'"] {
+            let cfg = AppConfig::from_str(
+                &format!("attachments: {{max_concurrent_uploads: {raw}}}"),
+                std::path::Path::new("fixture.yaml"),
+            )
+            .unwrap();
+            assert!(upload_concurrency(&cfg).is_err(), "raw={raw}");
+        }
     }
 }

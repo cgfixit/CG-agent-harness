@@ -297,6 +297,8 @@ pub struct PreviewRequest {
     retrieve: bool,
     #[serde(default)]
     retrieve_query: Option<String>,
+    #[serde(default)]
+    attachment_ids: Vec<String>,
 }
 impl Validate for PreviewRequest {
     fn validate(&self) -> Vec<String> {
@@ -317,6 +319,11 @@ impl Validate for PreviewRequest {
             .is_some_and(|q| q.chars().count() > crate::server::schemas::MAX_STRUCTURED_FACT_CHARS)
         {
             bad.push("retrieve_query".into());
+        }
+        if self.attachment_ids.len() > crate::server::attachments::MAX_FILES_PER_REQUEST
+            || self.attachment_ids.iter().any(|id| uuid::Uuid::parse_str(id).is_err())
+        {
+            bad.push("attachment_ids".into());
         }
         bad
     }
@@ -360,6 +367,10 @@ pub async fn preview(
         &state,
         session.as_ref().map(|s| s.selected_skills.as_slice()).unwrap_or(&[]),
     )?;
+    let attachment_fence = state
+        .attachments
+        .fence_for(&owner, &req.attachment_ids)
+        .map_err(|e| crate::server::attachments::upload_error(&e))?;
     let inputs = PromptInputs {
         selected_skills: &selected,
         soul_enabled: settings.soul_enabled,
@@ -374,7 +385,7 @@ pub async fn preview(
         memory_budget,
         memory_enabled: settings.memory_enabled,
         web_enabled: settings.web_enabled,
-        attachment_fence: None,
+        attachment_fence: Some(attachment_fence.as_str()),
     };
     let composed = crate::server::prompts::compose_system_prompt_detailed(&inputs);
     let prompt = composed.prompt;

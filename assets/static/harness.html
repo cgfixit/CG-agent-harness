@@ -229,6 +229,10 @@
     cursor: pointer;
   }
   #send:disabled { opacity: .4; cursor: default; }
+  #attach {
+    color: var(--text-secondary); font-family: var(--mono); font-size: 11px;
+    max-width: 180px;
+  }
 
   /* status bar */
   .statusbar {
@@ -373,6 +377,8 @@
         <input id="input" autocomplete="off" spellcheck="false"
                title="Up/Down: recall the last 50 saved prompts in this session; Down restores your draft"
                placeholder="message the agent, or /help for commands (↑/↓ history)" />
+        <input id="attach" type="file" multiple accept=".txt,.md,.json,.csv,.log"
+               title="attach up to 3 text files (15 MB each) for local chat only" />
         <button id="send">SEND</button>
       </div>
       <div class="statusbar">
@@ -439,7 +445,7 @@
 /* Model output and registry data are DATA, never HTML: everything rendered
    through textContent or the table() builder (createElement + textContent). */
 const $ = id => document.getElementById(id);
-const stream = $('stream'), input = $('input'), sendBtn = $('send'), apiKeyInput = $('apiKey');
+const stream = $('stream'), input = $('input'), sendBtn = $('send'), attachInput = $('attach'), apiKeyInput = $('apiKey');
 const agentPlanInput = $('agentPlanFile');
 const MAX_AGENT_PLAN_CHARS = 6100;
 const MAX_AGENT_PLAN_BYTES = 25000;
@@ -813,7 +819,14 @@ async function api(path, method, body, timeoutMs, onDelta, signal) {
      with no browser Origin/Sec-Fetch-Site headers to trip the origin check)
      does not have it. */
   if (CSRF_TOKEN) opts.headers['X-CyClaw-CSRF'] = CSRF_TOKEN;
-  if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  if (body !== undefined) {
+    if (typeof FormData !== 'undefined' && body instanceof FormData) {
+      opts.body = body;
+    } else {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+  }
   /* Chat keeps inflightChat.signal so /loop stop still aborts. Every other
      route goes through fetchWithTimeout so a stalled gateway cannot hang the
      status/keys/web panels the way #1126 already bounded the auth probes.
@@ -1449,6 +1462,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
       delete_derived_episodes: deleteDerived
     });
     clearTranscript();
+    retryAttachmentIds = null;
     currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false;
     currentStyle = 'off'; currentStyleIssue = null; paintStyle();
     input.value = '';
@@ -1460,7 +1474,11 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     const kept = deleteDerived
       ? (' Derived episodes deleted: ' + String(cleared.derived_episodes_deleted || 0) + '; retained because a pending proposal still references them: ' + String(cleared.derived_episodes_retained || 0) + '.')
       : ' Derived structured-memory episodes remain unless you also confirm that cascade.';
-    sys('All saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept);
+    const cleanup = cleared && cleared.attachment_cleanup;
+    const blobs = cleanup && cleanup.error
+      ? (' Attachment cleanup incomplete: ' + String(cleanup.retained || 0) + ' blob(s) could not be removed (' + cleanup.error + ') and still count toward the quota; they are retried at the next server start.')
+      : '';
+    sys('All saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept + blobs);
   } catch (e) {
     $('sessionClearFeedback').textContent = e.message || String(e);
   } finally {
@@ -2535,6 +2553,9 @@ async function sendChat(text, asLoop, extra) {
     body.retrieve = true;
     if (extra.retrieve_query) body.retrieve_query = extra.retrieve_query;
   }
+  if (!asLoop && extra && extra.attachment_ids && extra.attachment_ids.length) {
+    body.attachment_ids = extra.attachment_ids;
+  }
   try {
     const r = await api('/api/chat', 'POST', body, undefined, onDelta);
     if (revision !== sessionRevision) return null;
@@ -2576,6 +2597,37 @@ async function sendChat(text, asLoop, extra) {
   }
 }
 
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 180000;
+/* Pending <input type=file> selections belong to the account that made
+   them: drop them on every account transition so a later sign-in cannot
+   upload the previous account's files. */
+function restoreUnsentPrompt(text) {
+  if (!input.value) input.value = text;
+}
+/* Attachment ids whose chat turn the server rejected (busy, prompt too
+   large, model error). The blobs are already stored and charged to the
+   quota, so they ride the next message in the same session instead of being
+   lost; any account or session transition drops them. */
+let retryAttachmentIds = null;
+function clearPendingAttachments() {
+  retryAttachmentIds = null;
+  if (attachInput) { try { attachInput.value = ''; } catch (e) { /* inert input */ } }
+}
+async function uploadChatAttachments(files) {
+  if (!files.length) return [];
+  if (files.length > 3) {
+    const err = new Error('at most 3 files may be uploaded per request');
+    throw err;
+  }
+  const body = new FormData();
+  for (const file of files) body.append('file', file, file.name);
+  /* Three 15 MiB files are written and fsynced before the reply; the generic
+     15 s api() timeout would abort the browser side after the server has
+     already committed the blobs (and charged the quota). */
+  const r = await api('/api/chat/attachments', 'POST', body, ATTACHMENT_UPLOAD_TIMEOUT_MS);
+  return (r && r.attachments ? r.attachments : []).map(function (row) { return row.id; }).filter(Boolean);
+}
+
 function isLoopStopCommand(text) {
   /* Normalize before the in-flight gate, mirroring runSlash(): case
      insensitive, collapses extra whitespace, and ignores trailing text. */
@@ -2613,7 +2665,53 @@ async function onSend() {
     return;
   }
   input.value = '';
-  if (text.startsWith('/')) { await runSlashMaybeFuzzy(text); } else { await sendMaybeNlSearch(text); }
+  if (text.startsWith('/')) { await runSlashMaybeFuzzy(text); return; }
+  const files = attachInput && attachInput.files ? Array.from(attachInput.files) : [];
+  if (files.length) {
+    /* An attached file grounds a model turn; a line with attachments is
+       never routed to the listing search. */
+    /* Hold the send gate and bind the session for the whole upload-plus-chat
+       operation: a large upload must not let a second Enter start another
+       send, nor let a session switch redirect the message. */
+    const uploadRevision = sessionRevision, uploadSession = currentSession;
+    sendBtn.disabled = true;
+    let extra;
+    try {
+      extra = { attachment_ids: await uploadChatAttachments(files) };
+      if (attachInput) attachInput.value = '';
+    } catch (e) {
+      if (uploadRevision === sessionRevision) sendBtn.disabled = false;
+      /* Nothing was sent, so give the typed prompt back instead of leaving
+         only the notice. */
+      restoreUnsentPrompt(text);
+      sys('error: ' + ((e && e.message) || e));
+      return;
+    }
+    if (uploadRevision !== sessionRevision || uploadSession !== currentSession) {
+      if (uploadRevision === sessionRevision) sendBtn.disabled = false;
+      restoreUnsentPrompt(text);
+      sys('the session changed while the files were uploading; the message was not sent (the uploads count toward the home quota until the session is cleared)');
+      return;
+    }
+    const outcome = await sendChat(text, false, extra);
+    if (outcome === null && uploadRevision === sessionRevision && uploadSession === currentSession) {
+      retryAttachmentIds = { session: uploadSession, ids: extra.attachment_ids };
+      restoreUnsentPrompt(text);
+      sys('the turn was not accepted; the ' + extra.attachment_ids.length + ' uploaded attachment(s) stay attached to your next message in this session');
+    } else {
+      retryAttachmentIds = null;
+    }
+    return;
+  }
+  if (retryAttachmentIds && retryAttachmentIds.session === currentSession) {
+    const retry = retryAttachmentIds;
+    const retryRevision = sessionRevision;
+    const outcome = await sendChat(text, false, { attachment_ids: retry.ids });
+    if (outcome !== null || retryRevision !== sessionRevision || retry.session !== currentSession) retryAttachmentIds = null;
+    else restoreUnsentPrompt(text);
+    return;
+  }
+  await sendMaybeNlSearch(text);
 }
 
 function looksLikeNlSearch(text) {
@@ -2897,6 +2995,7 @@ if (hAuthLogin) {
       pass.value = '';
       if (!r.ok) { if (who) who.textContent = 'login failed'; return; }
       const data = await r.json();
+      clearPendingAttachments();
       window.__cyclawRole = data.role;
       if (who) who.textContent = data.username + ' · ' + data.role;
       if (hAuthSetup) hAuthSetup.hidden = true;
@@ -2924,6 +3023,7 @@ if (hAuthLogout) {
     abortInflightSearch();
     const claimed = ++sessionRevision;
     sendBtn.disabled = true;
+    clearPendingAttachments();
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
@@ -2970,6 +3070,7 @@ if (hAuthSetupBtn) {
       }, 15000);
       if (!r.ok) { if (who) who.textContent = 'could not set password'; return; }
       const data = await r.json();
+      clearPendingAttachments();
       window.__cyclawRole = data.role;
       if (who) who.textContent = data.username + ' · ' + data.role;
       if (hAuthSetup) hAuthSetup.hidden = true;
