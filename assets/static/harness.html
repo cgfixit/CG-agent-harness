@@ -2396,7 +2396,7 @@ function looksLikeNlSearch(text) {
      Direct routing is for listing-only requests. Structurally: after the
      command head (lead-in words and the verb), once every quoted term and
      count clause is masked out, nothing left may open another clause: a
-     connective (`and`, `but`, `then`, `so`, `plus`, `also`, `to`, or `with`
+     connective (`and`, `or`, `but`, `then`, `so`, `plus`, `also`, `to`, or `with`
      unless it names an engine: `with serpapi`, `with the web`), a
      standalone `&`, a semicolon, a comma / period / colon / `!` / `?`
      followed by more words (`"Rust", summarize it`; `"Rust": explain it`),
@@ -2431,7 +2431,7 @@ function looksLikeNlSearch(text) {
   if (signals === 0) return false;
   var joinerRe = /\u0000\s+(?:and|or|plus)\s+\u0000/i;
   while (joinerRe.test(masked)) masked = masked.replace(joinerRe, Q + ' ' + Q);
-  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000]|\n\s*[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked);
+  return !/(?:\b(?:and|or|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000]|\n\s*[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked);
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
