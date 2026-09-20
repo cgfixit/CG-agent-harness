@@ -1,3 +1,5 @@
+Historical. See [MODELS.md](MODELS.md). Do not treat this file as current operator procedure.
+
 # Native local-model acceptance record
 
 Date: 2026-09-09. Host: Apple M5 Pro, 48 GiB unified memory, macOS 26.6.2

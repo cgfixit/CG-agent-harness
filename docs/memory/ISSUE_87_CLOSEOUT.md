@@ -1,3 +1,5 @@
+Historical. See [USER_MANUAL.md](../USER_MANUAL.md). Do not treat this file as current operator procedure.
+
 # Issue #87 close-out (structured memory)
 
 Operator close-out for
@@ -10,7 +12,7 @@ issue stays open until an operator closes it after merge.
 Deep contract: [STRUCTURED_MEMORY.md](../STRUCTURED_MEMORY.md).
 Day-to-day howto: [USER_MANUAL.md](../USER_MANUAL.md).
 Types and recipes: [MEMORY_GUIDE.md](../MEMORY_GUIDE.md).
-Enable steps: [setup-guide §7.5](../../setup-guide.md#75-operator-memory-notes).
+Enable steps: [operator memory notes](../MEMORY_SETUP.md#75-operator-memory-notes).
 
 ## Truth order
 

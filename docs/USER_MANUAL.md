@@ -3,7 +3,7 @@
 Day-to-day howto for the two memory systems on this tree. It is **not** the
 deep contract — that is [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md). Enable
 steps and home layout are also in
-[setup-guide §7.5](../setup-guide.md#75-operator-memory-notes). Overview:
+[operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes). Overview:
 [README](../README.md).
 
 Neither system is embeddings, a vector database or RAG fusion. Optional
@@ -250,7 +250,7 @@ stops new reads, writes, and workers. It does not delete
 
 - [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md) — gates, HTTP surfaces, ownership, Phase 7 eval
 - [memory/ISSUE_87_CLOSEOUT.md](memory/ISSUE_87_CLOSEOUT.md) — issue #87 close-out
-- [setup-guide §7.5](../setup-guide.md#75-operator-memory-notes) — enable steps
+- [operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes) — enable steps
 - [README](../README.md) — console overview
 - [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md) — sessions, `/prompt`, persona
 

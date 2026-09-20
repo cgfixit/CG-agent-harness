@@ -1,3 +1,5 @@
+Historical. See [MEMORY_GUIDE.md](MEMORY_GUIDE.md). Do not treat this file as current operator procedure.
+
 # Next task: memory suggestion benchmark
 
 Status: implementation plan, not an implemented live benchmark. The current
