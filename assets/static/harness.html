@@ -1031,9 +1031,14 @@ async function refreshStyle() {
       ids.forEach(id => { const o = document.createElement('option'); o.value = id; o.textContent = id; sel.appendChild(o); });
     }
     if (session && revision === sessionRevision && session === currentSession && ticket === styleRequestSeq) {
-      currentStyle = r.style || 'off';
+      currentStyle = effectiveStyle(r);
     }
   } catch (e) { /* the status poll already reports connectivity; keep the last known catalog and value */ }
+}
+/* `/api/style` reports the persisted name and whether it currently loads;
+   a name that does not load is composed out of the prompt, so it is off. */
+function effectiveStyle(r) {
+  return (r && r.style && r.loaded) ? r.style : 'off';
 }
 function paintStyle() {
   const sel = $('sStyle');
@@ -1486,7 +1491,10 @@ async function runSlash(line) {
       }
       case 'style': {
         if (!currentSession) { sys('no active session'); break; }
-        const name = (rest[0] || '').trim().toLowerCase();
+        /* The whole remainder is the id: `/style off please` or `/style
+           concise typo` is refused by the server instead of silently acting
+           on the first token. */
+        const name = rest.join(' ').trim().toLowerCase();
         /* A reply that lands after the operator switched, cleared or logged
            out must not repaint the new selection with the old session's
            style; the server-side value of the old session is unaffected. */
@@ -1495,8 +1503,12 @@ async function runSlash(line) {
         if (!name) {
           const r = await api('/api/style?session_id=' + encodeURIComponent(styleSession));
           if (stale()) { sys('style reply for a previous session ignored'); break; }
-          currentStyle = r.style || 'off'; paintStyle();
-          sys('style ' + currentStyle + (r.origin ? ' (' + r.origin + ')' : ''));
+          /* The effective style, not the persisted name: an overlay that no
+             longer loads is omitted from the prompt, so it reads as off. */
+          currentStyle = effectiveStyle(r); paintStyle();
+          sys(!r.style ? 'style off'
+            : r.loaded ? 'style ' + r.style + (r.origin ? ' (' + r.origin + ')' : '')
+            : 'style off — selected preset "' + r.style + '" is unavailable (' + (r.unavailable_reason || 'unknown') + ') and is not included in the prompt');
           break;
         }
         const write = styleWriteChain.catch(() => {}).then(() => api('/api/style', 'POST', { session_id: styleSession, name: name }));
@@ -1709,6 +1721,7 @@ async function runSlash(line) {
         if (!currentSession) {
           const created = await api('/api/sessions', 'POST', {}); currentSession = created.session_id;
           $('sSession').textContent = currentSession;
+          currentStyle = 'off'; paintStyle();
         }
         const path = '/api/sessions/' + encodeURIComponent(currentSession) + '/skills';
         const r = action === 'status' ? await api(path) : await api(path, 'POST', {ids:action === 'clear' ? [] : rest.slice(1)});
@@ -2138,6 +2151,7 @@ async function runSlash(line) {
           const created = await api('/api/sessions', 'POST', { title: arg.slice(0, 40) });
           currentSession = created.session_id;
           $('sSession').textContent = currentSession;
+          currentStyle = 'off'; paintStyle();
         }
         const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: arg });
         sessionGoal = set.goal || '';
