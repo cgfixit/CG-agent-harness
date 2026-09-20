@@ -2340,22 +2340,31 @@ async function onSend() {
 }
 
 function looksLikeNlSearch(text) {
-  return /\bsearch\b/i.test(text) && (text.indexOf("'") >= 0 || text.indexOf('"') >= 0 || /first\s+\d+/i.test(text));
+  /* Mirrors src/server/web_intent.rs: command-shaped (optional politeness
+     words, then search/google) plus a quoted term or a `first N` count. */
+  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\s,]+)*(?:search|google)\b/i.test(text);
+  return commandShaped && (/(^|[\s(,:\[])["'][^"']+["']($|[\s,.;:)\]!?])/.test(text) || /\bfirst\s+\d+/i.test(text));
 }
 
 async function sendMaybeNlSearch(text) {
-  if (looksLikeNlSearch(text)) {
-    try {
-      const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000);
-      if (found && found.results) {
-        sys(renderSearchResults(found));
-        return;
-      }
+  if (!looksLikeNlSearch(text)) { await sendChat(text, false); return; }
+  /* Hold the console's in-flight gate (sendBtn.disabled, see onSend) while
+     the routed search runs so a second Enter cannot start a concurrent search
+     or a model turn that interleaves with it. */
+  sendBtn.disabled = true;
+  try {
+    const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000);
+    if (found && found.results) {
+      sys(renderSearchResults(found));
+    } else {
       sys(JSON.stringify(found, null, 2));
-      return;
-    } catch (e) {
-      sys('search router did not run: ' + e.message);
     }
+    return;
+  } catch (e) {
+    sys('search router did not run: ' + e.message);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
   }
   await sendChat(text, false);
 }
