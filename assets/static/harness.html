@@ -2428,7 +2428,9 @@ function looksLikeNlSearch(text) {
      unless it names an engine: `with serpapi`, `with the web`), a
      standalone `&`, a semicolon, a comma / period / colon / `!` / `?`
      followed by more words (`"Rust", summarize it`; `"Rust": explain it`),
-     or a spaced dash (`"Rust" — summarize it`). Punctuation glued to a word
+     or a spaced dash (`"Rust" — summarize it`); punctuation followed by a
+     search operator (`"Rust", site:github.com`) is not a boundary.
+     Punctuation glued to a word
      (`node.js`, `site:x.com`, `AT&T`, `-cats`) or at the very end is not a
      boundary. A quoted term may span a line break (Shift+Enter), but a line
      break outside quotes followed by more words is a boundary. Typographic
@@ -2464,7 +2466,7 @@ function looksLikeNlSearch(text) {
   if (quoted + counts === 0) return false;
   var joinerRe = /\u0000\s+(?:and|or|plus)\s+\u0000/i;
   while (joinerRe.test(masked)) masked = masked.replace(joinerRe, Q + ' ' + Q);
-  if (/(?:\b(?:and|or|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000]|\n\s*[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked)) return false;
+  if (/(?:\b(?:and|or|but|then|so|plus|also|to)\b|\bwith\b(?!\s+(?:google|serpapi|the\s+(?:web|internet))\b)|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+(?![-+~@]\S|\S*:\S|OR\b|\*)[^\s\u0000]|\n\s*(?![-+~@]\S|\S*:\S|OR\b|\*)[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked)) return false;
   /* With quoted terms the subject is fully known, so whatever else remains
      must be search scaffolding (engine phrases, introducers, articles),
      a Google operator (`site:x`, `-word`, `OR`, `*`) or a year. A bare
@@ -2478,7 +2480,7 @@ function looksLikeNlSearch(text) {
   var PRONOUN = /^(?:it|its|them|their|this|that|these|those|me|my|us|our|him|her|you|your)$/i;
   /* Follow-up action verbs never open a listing subject (`Rust summarize
      briefly`, `Rust provide a summary`). */
-  var ACTION = /^(?:summari[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify)$/i;
+  var ACTION = /^(?:summari[sz]e|synthesi[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify|compile|aggregate|digest|interpret|distill|collate|consolidate|critique|report)$/i;
   var words = masked.split(/\s+/)
     .map(function (t) { return t.replace(/^[(\[]+|[)\],.;:!?]+$/g, ''); })
     .filter(function (t) { return t && t !== Q; });

@@ -191,21 +191,37 @@ fn find_count_clause(toks: &[&str]) -> Option<usize> {
 /// `"first 2 steps of Rust"` is never read as a count.
 fn extract_count(lower: &str) -> Option<Result<usize, String>> {
     let toks: Vec<&str> = lower.split_whitespace().collect();
-    let k = find_count_clause(&toks)?;
-    let tok = toks[k + 1];
-    // `word_of` drops any leading sign, so `first -2 results` (or a Unicode
-    // minus, `first \u{2212}2 results`) would otherwise be searched as two
-    // results. Only an opening bracket or quote may precede the digits; any
-    // other leading character makes the count invalid rather than coerced.
-    let core = tok
-        .trim_start_matches(['(', '[', '"', '\''])
-        .trim_end_matches(|c: char| !c.is_alphanumeric());
-    Some(match core.parse::<usize>() {
-        Ok(v) if core.chars().all(|c| c.is_ascii_digit()) && (1..=MAX_COUNT).contains(&v) => Ok(v),
-        _ => Err(format!(
-            "result count must be an unsigned number between 1 and {MAX_COUNT}"
-        )),
-    })
+    // Every clause is validated, not only the first: `first 2 results for
+    // Rust first 99 links` is refused rather than searched with the second
+    // clause left in the query. Two clauses are ambiguous and refused too.
+    let clauses: Vec<usize> = (0..toks.len().saturating_sub(2))
+        .filter(|&k| find_count_clause(&toks[k..k + 3]) == Some(0))
+        .collect();
+    let mut counts = Vec::new();
+    for &k in &clauses {
+        let tok = toks[k + 1];
+        // `word_of` drops any leading sign, so `first -2 results` (or a
+        // Unicode minus, `first \u{2212}2 results`) would otherwise be
+        // searched as two results. Only an opening bracket or quote may
+        // precede the digits; any other leading character makes the count
+        // invalid rather than coerced.
+        let core = tok
+            .trim_start_matches(['(', '[', '"', '\''])
+            .trim_end_matches(|c: char| !c.is_alphanumeric());
+        match core.parse::<usize>() {
+            Ok(v) if core.chars().all(|c| c.is_ascii_digit()) && (1..=MAX_COUNT).contains(&v) => counts.push(v),
+            _ => {
+                return Some(Err(format!(
+                    "result count must be an unsigned number between 1 and {MAX_COUNT}"
+                )))
+            }
+        }
+    }
+    match counts.as_slice() {
+        [] => None,
+        [one] => Some(Ok(*one)),
+        _ => Some(Err("search request has more than one result-count clause".into())),
+    }
 }
 
 /// The closing character that pairs with an opening quote: ASCII quotes
@@ -330,7 +346,20 @@ fn skip_engine_phrases(lower: &[String], mut i: usize) -> usize {
         let linked_place = at(i).is_some_and(|w| ENGINE_LINKS.contains(&w))
             && at(i + 1) == Some("the")
             && at(i + 2).is_some_and(|w| ENGINE_PLACES.contains(&w));
-        if at(i).is_some_and(|w| ENGINES.contains(&w)) {
+        // A bare engine word is scaffolding only when scaffolding follows it
+        // (`Google for x`, `Google "x"`, `Google first 2 links`, `Google
+        // (serpapi)`) or nothing does. Followed by a plain word it begins
+        // the subject: `Google Trends first 2 results`.
+        let bare_engine = at(i).is_some_and(|w| ENGINES.contains(&w))
+            && at(i + 1).is_none_or(|next| {
+                INTRODUCERS.contains(&next)
+                    || ENGINES.contains(&next)
+                    || ENGINE_LINKS.contains(&next)
+                    || next == "the"
+                    || next == "first"
+                    || is_placeholder_word(next)
+            });
+        if bare_engine {
             i += 1;
         } else if linked_place {
             i += 3;
@@ -340,6 +369,12 @@ fn skip_engine_phrases(lower: &[String], mut i: usize) -> usize {
             return i;
         }
     }
+}
+
+/// `word_of` of a quote placeholder (`\0q3\0` → `q3`).
+fn is_placeholder_word(w: &str) -> bool {
+    w.strip_prefix('q')
+        .is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Length of a *linked* engine phrase at `k` (`on Google`, `the web`,
@@ -763,6 +798,13 @@ mod tests {
         // A bare engine word after the count clause opens the subject.
         let p = parse("search first 2 results Google Trends").expect("intent");
         assert_eq!(p.terms, vec!["Google".to_string(), "Trends".into()]);
+        // ...and so does one right after the verb when a plain word follows.
+        let p = parse("search Google Trends first 2 results").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["Google".to_string(), "Trends".into()]);
+        let p = parse("search Google \"privacy policy\"").expect("intent");
+        assert_eq!(p.engine, SearchEngine::Google);
+        assert_eq!(p.terms, vec!["privacy policy".to_string()]);
     }
 
     #[test]
@@ -885,6 +927,18 @@ mod tests {
         assert_eq!(parse_with_count("search:\"rust\"", 5), WebIntentParse::PassThrough);
         let p = parse("search foo\"bar\" first 2 links").expect("intent");
         assert_eq!(p.terms, vec!["foo\"bar".to_string()]);
+    }
+
+    #[test]
+    fn every_count_clause_is_validated_and_only_one_is_allowed() {
+        match parse_with_count("search first 2 results for Rust first 99 links", 5) {
+            WebIntentParse::Invalid(message) => assert!(message.contains("between 1 and 10"), "{message}"),
+            other => panic!("should be refused, got {other:?}"),
+        }
+        match parse_with_count("search first 2 results for Rust first 3 links", 5) {
+            WebIntentParse::Invalid(message) => assert!(message.contains("more than one"), "{message}"),
+            other => panic!("should be refused, got {other:?}"),
+        }
     }
 
     #[test]
