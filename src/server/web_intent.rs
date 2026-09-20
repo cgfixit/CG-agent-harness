@@ -19,11 +19,27 @@ pub struct WebIntent {
     pub engine: SearchEngine,
     pub count: usize,
     pub terms: Vec<String>,
+    /// `terms[i]` came from an ordinary quoted span (`"New York Times"`)
+    /// and is sent to the provider as an exact phrase. Exclusions and
+    /// operator arguments (`-"cats"`, `site:"x"`) already carry their quotes.
+    #[serde(default)]
+    pub quoted: Vec<bool>,
 }
 
 impl WebIntent {
     pub fn query(&self) -> String {
-        self.terms.join(" ")
+        self.terms
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                if self.quoted.get(i).copied().unwrap_or(false) {
+                    format!("\"{t}\"")
+                } else {
+                    t.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -70,7 +86,7 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
     if !is_command_shaped(&lower) {
         return WebIntentParse::PassThrough;
     }
-    let (quoted, residual) = split_quoted(trimmed);
+    let (quoted, bare, residual) = split_quoted(trimmed);
     let explicit_count = match extract_count(&residual.to_ascii_lowercase()) {
         Some(Ok(n)) => Some(n),
         Some(Err(message)) => return WebIntentParse::Invalid(message),
@@ -91,21 +107,26 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
     let count = explicit_count.unwrap_or(fallback_count);
     // Quoted phrases stay single terms; unquoted constraints around them
     // (`site:github.com`, extra words) are kept in their original order.
-    let terms: Vec<String> = tokenize_unquoted(&residual)
+    let (terms, quoted): (Vec<String>, Vec<bool>) = tokenize_unquoted(&residual)
         .into_iter()
         .filter_map(|tok| match placeholder_index(&tok) {
-            Some(n) => quoted.get(n).cloned(),
-            None => Some(tok),
+            Some(n) => quoted.get(n).cloned().map(|t| (t, bare[n])),
+            None => Some((tok, false)),
         })
-        .filter(|t| !t.is_empty())
-        .collect();
+        .filter(|(t, _)| !t.is_empty())
+        .unzip();
     if terms.is_empty() {
         // Command-shaped with a valid count clause but nothing to search for
         // (`search first 2 results`): refuse rather than search the literal
         // instruction with the fallback count.
         return WebIntentParse::Invalid("search request has no subject after the count clause".into());
     }
-    WebIntentParse::Rewrite(WebIntent { engine, count, terms })
+    WebIntentParse::Rewrite(WebIntent {
+        engine,
+        count,
+        terms,
+        quoted,
+    })
 }
 
 /// Politeness words that may precede the command verb.
@@ -226,8 +247,9 @@ fn placeholder_index(tok: &str) -> Option<usize> {
 /// Google's quoted exclusion `-"cats"` is one span too: the operator and the
 /// quotes stay attached (`-"cats"`, `-"Chris Grady"`), so the provider sees
 /// the exclusion of the whole phrase instead of a detached `-"cats`.
-fn split_quoted(text: &str) -> (Vec<String>, String) {
+fn split_quoted(text: &str) -> (Vec<String>, Vec<bool>, String) {
     let mut terms = Vec::new();
+    let mut bare = Vec::new();
     let mut residual = String::new();
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
@@ -246,6 +268,7 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
                     residual.push(' ');
                     residual.push_str(&quote_placeholder(terms.len()));
                     residual.push(' ');
+                    bare.push(prefix.is_empty());
                     terms.push(if prefix.is_empty() {
                         t.to_string()
                     } else {
@@ -259,7 +282,7 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
         residual.push(chars[i]);
         i += 1;
     }
-    (terms, residual)
+    (terms, bare, residual)
 }
 
 /// At word start `i`, the index of the opening quote of a bare quoted span
@@ -365,6 +388,16 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         if start > 0 && word_of(rest[start - 1]).eq_ignore_ascii_case("the") {
             start -= 1;
         }
+        // `Rust for the first 2 results`: the connector that joins the
+        // subject to a trailing count clause is scaffolding too.
+        if start > 0
+            && matches!(
+                word_of(rest[start - 1]).to_ascii_lowercase().as_str(),
+                "for" | "of" | "about" | "on"
+            )
+        {
+            start -= 1;
+        }
         // The clause may carry its own engine phrase and connector:
         // `first 2 results on Google for Rust`, `first 2 links on the web
         // about rust`. Both are scaffolding; the subject starts after them.
@@ -375,18 +408,21 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         }
         rest.drain(start..end);
     }
-    // A connected engine phrase that closes the request (`"Rust" with
-    // Google`, `"Rust" on the web`, `'x' first 2 links from serpapi`) is
-    // scaffolding. Only that shape is unambiguous: inside the subject the
-    // same words are content (`the web accessibility guidelines`, `data from
-    // Google Trends`), a bare engine word is always content (`"privacy
-    // policy" Google`), and a trailing `the web` without its connector is
-    // the subject's own (`history of the web`).
+    // A connected engine phrase that closes the request right after a
+    // quoted span (`"Rust" with Google`, `"Rust" on the web`, `'x' first 2
+    // links from serpapi`) is scaffolding: the quoted span is the whole
+    // subject. After unquoted subject words the same phrase is ambiguous
+    // (`jobs with Google`, `history of the web`, `data from Google Trends`)
+    // and is kept as content, as is a bare engine word (`"privacy policy"
+    // Google`).
     loop {
         let lower_rest: Vec<String> = rest.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
-        let trailing = (0..lower_rest.len()).find(|&k| {
+        let trailing = (1..lower_rest.len()).find(|&k| {
             let len = linked_engine_phrase_len(&lower_rest, k);
-            len > 0 && k + len == lower_rest.len() && ENGINE_LINKS.contains(&lower_rest[k].as_str())
+            len > 0
+                && k + len == lower_rest.len()
+                && ENGINE_LINKS.contains(&lower_rest[k].as_str())
+                && placeholder_index(rest[k - 1]).is_some()
         });
         match trailing {
             Some(k) => rest.truncate(k),
@@ -437,7 +473,7 @@ mod tests {
         assert_eq!(p.count, 2);
         assert_eq!(p.terms, vec!["cgfixit".to_string(), "Chris Grady".to_string()]);
         assert_eq!(p.engine, SearchEngine::Serpapi);
-        assert_eq!(p.query(), "cgfixit Chris Grady");
+        assert_eq!(p.query(), "\"cgfixit\" \"Chris Grady\"");
     }
 
     #[test]
@@ -688,7 +724,7 @@ mod tests {
     fn uppercase_or_between_quoted_terms_is_a_query_operator() {
         let p = parse("search \"cats\" OR \"dogs\"").expect("intent");
         assert_eq!(p.terms, vec!["cats".to_string(), "OR".into(), "dogs".into()]);
-        assert_eq!(p.query(), "cats OR dogs");
+        assert_eq!(p.query(), "\"cats\" OR \"dogs\"");
         // Lowercase `or` (and `and` / `plus`) between quoted terms is still
         // natural-language scaffolding.
         let p = parse("search \"cats\" or \"dogs\"").expect("intent");
@@ -723,10 +759,30 @@ mod tests {
         assert_eq!(p.terms, vec!["-\"cats\"".to_string()]);
         let p = parse("search \"dogs\" -'Chris Grady'").expect("intent");
         assert_eq!(p.terms, vec!["dogs".to_string(), "-'Chris Grady'".into()]);
-        assert_eq!(p.query(), "dogs -'Chris Grady'");
+        assert_eq!(p.query(), "\"dogs\" -'Chris Grady'");
         // A hyphen inside a word is not an exclusion operator.
         let p = parse("search first 2 links for well-known rust").expect("intent");
         assert_eq!(p.terms, vec!["well-known".to_string(), "rust".into()]);
+    }
+
+    #[test]
+    fn quoted_spans_reach_the_provider_as_exact_phrases() {
+        let p = parse("search \"New York Times\"").expect("intent");
+        assert_eq!(p.terms, vec!["New York Times".to_string()]);
+        assert_eq!(p.quoted, vec![true]);
+        assert_eq!(p.query(), "\"New York Times\"");
+        let p = parse("search first 2 links for \"rust\" site:github.com async").expect("intent");
+        assert_eq!(p.quoted, vec![true, false, false]);
+        assert_eq!(p.query(), "\"rust\" site:github.com async");
+    }
+
+    #[test]
+    fn connector_before_a_trailing_count_clause_is_scaffolding() {
+        for text in ["search Rust for the first 2 results", "search Rust for first 2 results"] {
+            let p = parse(text).expect("intent");
+            assert_eq!(p.count, 2, "{text}");
+            assert_eq!(p.terms, vec!["Rust".to_string()], "{text}");
+        }
     }
 
     #[test]
@@ -765,6 +821,9 @@ mod tests {
                 "Trends".into()
             ]
         );
+        // After unquoted subject words the phrase is ambiguous and stays.
+        let p = parse("search first 2 results for jobs with Google").expect("intent");
+        assert_eq!(p.terms, vec!["jobs".to_string(), "with".into(), "Google".into()]);
         // A trailing `the web` without its connector belongs to the subject.
         let p = parse("search first 2 results for history of the web").expect("intent");
         assert_eq!(
@@ -806,7 +865,7 @@ mod tests {
         assert_eq!(p.terms, vec!["site:\"example.com\"".to_string()]);
         let p = parse("search -site:'pinterest.com' \"rust\"").expect("intent");
         assert_eq!(p.terms, vec!["-site:'pinterest.com'".to_string(), "rust".into()]);
-        assert_eq!(p.query(), "-site:'pinterest.com' rust");
+        assert_eq!(p.query(), "-site:'pinterest.com' \"rust\"");
         // A verb glued to its quote was never command-shaped (unchanged), and
         // `foo"x"` (no colon) is no span: it stays an ordinary subject token,
         // trimmed of its trailing quote like any other unquoted word.

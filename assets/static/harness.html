@@ -2441,7 +2441,8 @@ function looksLikeNlSearch(text) {
      web tools when they are enabled. When quoted terms are present, every
      remaining word must be scaffolding or an operator (see below), so a
      bare follow-up (`"Rust" summarize it`) stays in chat too; an unquoted
-     subject must be short and pronoun-free. This errs
+     subject must be short, pronoun-free and free of follow-up action verbs
+     (`summarize`, `explain`, `provide`, …). This errs
      toward chat on purpose: a listing that drops half the ask is worse
      than a model turn. */
   var head = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.exec(text);
@@ -2474,12 +2475,15 @@ function looksLikeNlSearch(text) {
   var SCAFFOLD = /^(?:google|serpapi|the|a|an|web|internet|on|with|using|via|across|from|for|about|of|in)$/i;
   var OPERATOR = /^(?:[-+~@]\S|\S*:\S|OR$|\*|\d{1,4}$)/;
   var PRONOUN = /^(?:it|its|them|their|this|that|these|those|me|my|us|our|him|her|you|your)$/i;
+  /* Follow-up action verbs never open a listing subject (`Rust summarize
+     briefly`, `Rust provide a summary`). */
+  var ACTION = /^(?:summari[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify)$/i;
   var words = masked.split(/\s+/)
     .map(function (t) { return t.replace(/^[(\[]+|[)\],.;:!?]+$/g, ''); })
     .filter(function (t) { return t && t !== Q; });
   var subject = words.filter(function (t) { return !SCAFFOLD.test(t) && !OPERATOR.test(t); });
   if (quoted > 0) return subject.length === 0;
-  return subject.length <= 6 && !subject.some(function (t) { return PRONOUN.test(t); });
+  return subject.length <= 6 && !subject.some(function (t) { return PRONOUN.test(t) || ACTION.test(t); });
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
