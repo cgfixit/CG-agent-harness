@@ -395,6 +395,44 @@ impl AttachmentStore {
         Ok(removed)
     }
 
+    /// Removes files under the root that no manifest row references: blobs
+    /// renamed into place before a crash cut off the manifest commit, and
+    /// abandoned `.tmp` staging files. Runs under the store lock, so an
+    /// in-progress upload (which commits blob then manifest under the same
+    /// lock) is never swept mid-way. Intended for startup recovery.
+    pub fn sweep_unreferenced_files(&self) -> Result<usize> {
+        let io = |e: std::io::Error| HarnessError::new("IO_ERROR", format!("cannot sweep attachments: {e}"));
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let manifest = self.load_manifest()?;
+        let referenced: std::collections::BTreeSet<PathBuf> =
+            manifest.blobs.iter().filter_map(|b| blob_rel(b).ok()).collect();
+        let mut removed = 0usize;
+        for entry in self.jail.entries().map_err(io)? {
+            let entry = entry.map_err(io)?;
+            let name = PathBuf::from(entry.file_name());
+            if !entry.file_type().map_err(io)?.is_dir() {
+                if name.as_os_str() != INDEX_NAME {
+                    self.jail.remove_file(&name).map_err(io)?;
+                    removed += 1;
+                }
+                continue;
+            }
+            let owner_dir = entry.open_dir().map_err(io)?;
+            for file in owner_dir.entries().map_err(io)? {
+                let file = file.map_err(io)?;
+                if !file.file_type().map_err(io)?.is_file() {
+                    continue;
+                }
+                let rel = name.join(file.file_name());
+                if !referenced.contains(&rel) {
+                    owner_dir.remove_file(file.file_name()).map_err(io)?;
+                    removed += 1;
+                }
+            }
+        }
+        Ok(removed)
+    }
+
     pub fn blob_count(&self) -> usize {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         self.load_manifest().map(|m| m.blobs.len()).unwrap_or(0)
@@ -455,6 +493,9 @@ pub fn upload_error(err: &HarnessError) -> ApiError {
         "ATTACHMENT_BUSY" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
         "ATTACHMENT_TIMEOUT" => axum::http::StatusCode::REQUEST_TIMEOUT,
         "ATTACHMENT_OWNER_GONE" => axum::http::StatusCode::FORBIDDEN,
+        // Storage failures are the server's, not the upload's: a client must
+        // not retry the file as if it were malformed.
+        "IO_ERROR" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "ATTACHMENT_NOT_FOUND" => axum::http::StatusCode::NOT_FOUND,
         _ => axum::http::StatusCode::BAD_REQUEST,
     };
@@ -1103,6 +1144,26 @@ mod tests {
         assert_eq!(store.sweep_dead_owners(&|o| o == "alive").unwrap(), 2);
         assert_eq!(store.blob_count(), 1);
         assert_eq!(store.sweep_dead_owners(&|o| o == "alive").unwrap(), 0);
+    }
+
+    #[test]
+    fn startup_sweep_removes_only_unreferenced_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = AttachmentStore::open(tmp.path()).unwrap();
+        let blobs = store.store("local", &[part("a.txt", "keep")]).unwrap();
+        let kept = blob_path(tmp.path(), &blobs[0]).unwrap();
+        let owner_dir = kept.parent().unwrap().to_path_buf();
+        std::fs::write(owner_dir.join(Uuid::new_v4().hyphenated().to_string()), b"orphan").unwrap();
+        std::fs::write(tmp.path().join("index.json.deadbeef.tmp"), b"{}").unwrap();
+        assert_eq!(store.sweep_unreferenced_files().unwrap(), 2);
+        assert!(kept.exists());
+        assert!(tmp.path().join(INDEX_NAME).exists());
+        assert_eq!(store.blob_count(), 1);
+        assert!(store
+            .fence_for("local", &[blobs[0].id.clone()])
+            .unwrap()
+            .contains("keep"));
+        assert_eq!(store.sweep_unreferenced_files().unwrap(), 0);
     }
 
     #[test]

@@ -210,6 +210,17 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     };
     let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
     let attachments = crate::server::attachments::AttachmentStore::open(&home.attachments_dir())?;
+    // Startup recovery: files left behind when a crash cut off the manifest
+    // commit are invisible to every API path, so reclaim them here.
+    match attachments.sweep_unreferenced_files() {
+        Ok(0) => {}
+        Ok(n) => audit.log(serde_json::json!({"event": "chat_attachments_orphans_removed", "removed": n})),
+        Err(e) => audit.log(serde_json::json!({
+            "event": "chat_attachments_orphan_sweep_incomplete",
+            "code": e.code,
+            "message": e.message,
+        })),
+    }
     if let Some(mgr) = auth.as_ref() {
         // Finish any account-deletion cleanup that failed part-way in an
         // earlier run: rows still naming a deleted user are removed here.

@@ -80,7 +80,7 @@ pub async fn upload_attachments(
     // Take the buffering permit before a single body byte is read: with the
     // route rate limit alone, one client could hold dozens of maximum-size
     // bodies in memory while the quota check waits behind the store lock.
-    let Ok(_permit) = state.upload_permits.clone().try_acquire_owned() else {
+    let Ok(permit) = state.upload_permits.clone().try_acquire_owned() else {
         return Err(attachments::upload_error(&crate::common::errors::HarnessError::new(
             "ATTACHMENT_BUSY",
             "too many attachment uploads are in flight; retry shortly",
@@ -128,19 +128,34 @@ pub async fn upload_attachments(
     })?;
     attachments::check_content_length(declared, bytes.len() as u64).map_err(|e| attachments::upload_error(&e))?;
     let boundary = attachments::multipart_boundary(&content_type).map_err(|e| attachments::upload_error(&e))?;
-    let files = attachments::parse_multipart(&bytes, &boundary).map_err(|e| attachments::upload_error(&e))?;
-    // Re-check the account under the store lock: a deletion that completed
-    // while this body was in flight must not gain an orphaned blob.
-    let owner_live = || match (state.auth.as_ref(), account.as_ref()) {
-        (Some(manager), Some(account)) => manager
-            .get_user(&account.username)
-            .is_some_and(|current| current.user_id == account.user_id && !current.disabled),
-        _ => true,
-    };
-    let blobs = state
-        .attachments
-        .store_guarded(&owner, &files, &owner_live)
-        .map_err(|e| attachments::upload_error(&e))?;
+    // Parsing, hashing, blob writes and fsync are synchronous and run under
+    // the store mutex, so they go to the blocking pool rather than a Tokio
+    // worker. The permit moves with the work: a client that disconnects
+    // does not release it before the store has finished.
+    let st = state.clone();
+    let task_owner = owner.clone();
+    let blobs = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let files = attachments::parse_multipart(&bytes, &boundary)?;
+        // Re-check the account under the store lock: a deletion that
+        // completed while this body was in flight must not gain an orphaned
+        // blob.
+        let owner_live = || match (st.auth.as_ref(), account.as_ref()) {
+            (Some(manager), Some(account)) => manager
+                .get_user(&account.username)
+                .is_some_and(|current| current.user_id == account.user_id && !current.disabled),
+            _ => true,
+        };
+        st.attachments.store_guarded(&task_owner, &files, &owner_live)
+    })
+    .await
+    .map_err(|_| {
+        attachments::upload_error(&crate::common::errors::HarnessError::new(
+            "IO_ERROR",
+            "attachment storage task failed",
+        ))
+    })?
+    .map_err(|e| attachments::upload_error(&e))?;
     state.audit.log(attachments::audit_record(&owner, &blobs));
     Ok(Json(json!({
         "attachments": blobs.iter().map(|b| json!({
@@ -194,9 +209,28 @@ pub async fn clear_sessions(
     } else if let Some(store) = state.structured_memory.as_ref() {
         derived_retained = store.episode_count(&owner).unwrap_or(0);
     }
-    let _ = state.attachments.unlink_owner(&owner);
+    // Session clear is the operator's recovery path for a full attachment
+    // quota, so an incomplete blob cleanup is reported rather than hidden.
+    let attachment_cleanup = match state.attachments.unlink_owner(&owner) {
+        Ok(removed) => json!({"removed": removed}),
+        Err(e) => {
+            state.audit.log(json!({
+                "event": "chat_attachments_cleanup_incomplete",
+                "owner": owner,
+                "code": e.code,
+                "message": e.message,
+                "details": e.details,
+            }));
+            json!({
+                "removed": e.details.get("removed").cloned().unwrap_or(json!(0)),
+                "retained": e.details.get("retained").cloned().unwrap_or(json!(0)),
+                "error": e.code,
+            })
+        }
+    };
     Ok(Json(json!({
         "deleted_sessions": deleted,
+        "attachment_cleanup": attachment_cleanup,
         "derived_episodes_deleted": derived_deleted,
         "derived_episodes_retained": derived_retained,
         "delete_derived_episodes": req.delete_derived_episodes,

@@ -1462,6 +1462,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
       delete_derived_episodes: deleteDerived
     });
     clearTranscript();
+    retryAttachmentIds = null;
     currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false;
     currentStyle = 'off'; currentStyleIssue = null; paintStyle();
     input.value = '';
@@ -1473,7 +1474,11 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     const kept = deleteDerived
       ? (' Derived episodes deleted: ' + String(cleared.derived_episodes_deleted || 0) + '; retained because a pending proposal still references them: ' + String(cleared.derived_episodes_retained || 0) + '.')
       : ' Derived structured-memory episodes remain unless you also confirm that cascade.';
-    sys('All saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept);
+    const cleanup = cleared && cleared.attachment_cleanup;
+    const blobs = cleanup && cleanup.error
+      ? (' Attachment cleanup incomplete: ' + String(cleanup.retained || 0) + ' blob(s) could not be removed (' + cleanup.error + ') and still count toward the quota; they are retried at the next server start.')
+      : '';
+    sys('All saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept + blobs);
   } catch (e) {
     $('sessionClearFeedback').textContent = e.message || String(e);
   } finally {
@@ -2599,7 +2604,13 @@ const ATTACHMENT_UPLOAD_TIMEOUT_MS = 180000;
 function restoreUnsentPrompt(text) {
   if (!input.value) input.value = text;
 }
+/* Attachment ids whose chat turn the server rejected (busy, prompt too
+   large, model error). The blobs are already stored and charged to the
+   quota, so they ride the next message in the same session instead of being
+   lost; any account or session transition drops them. */
+let retryAttachmentIds = null;
 function clearPendingAttachments() {
+  retryAttachmentIds = null;
   if (attachInput) { try { attachInput.value = ''; } catch (e) { /* inert input */ } }
 }
 async function uploadChatAttachments(files) {
@@ -2682,7 +2693,22 @@ async function onSend() {
       sys('the session changed while the files were uploading; the message was not sent (the uploads count toward the home quota until the session is cleared)');
       return;
     }
-    await sendChat(text, false, extra);
+    const outcome = await sendChat(text, false, extra);
+    if (outcome === null && uploadRevision === sessionRevision && uploadSession === currentSession) {
+      retryAttachmentIds = { session: uploadSession, ids: extra.attachment_ids };
+      restoreUnsentPrompt(text);
+      sys('the turn was not accepted; the ' + extra.attachment_ids.length + ' uploaded attachment(s) stay attached to your next message in this session');
+    } else {
+      retryAttachmentIds = null;
+    }
+    return;
+  }
+  if (retryAttachmentIds && retryAttachmentIds.session === currentSession) {
+    const retry = retryAttachmentIds;
+    const retryRevision = sessionRevision;
+    const outcome = await sendChat(text, false, { attachment_ids: retry.ids });
+    if (outcome !== null || retryRevision !== sessionRevision || retry.session !== currentSession) retryAttachmentIds = null;
+    else restoreUnsentPrompt(text);
     return;
   }
   await sendMaybeNlSearch(text);
