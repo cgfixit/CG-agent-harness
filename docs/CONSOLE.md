@@ -324,6 +324,26 @@ implementation and tests; enabling this YAML field does not provide either.
 See [the current probe](../src/agentic/unslop.rs) and
 [its loop integration](../src/agentic/real_repo_loop.rs).
 
+### DOCX attachments
+
+The file picker also accepts `.docx`. Only UTF-8 main-document text is read:
+paragraphs, tables, explicit tabs and breaks. Directly hidden/deleted runs and
+field instructions are excluded. Headers, footers, images/OCR, style-based
+visibility, macros and embedded files are not interpreted; relationships and
+URLs are never followed. Extraction is a bounded text view, not a reproduction
+of Word's layout. PDF remains unsupported after the issue #148 safety spike.
+
+DOCX uses the same 15 MiB/file, three-file request, home quota, owner checks,
+injection scan, private UUID storage and local-chat-only fence as text uploads.
+Magic bytes, package layout, content type and XML namespaces must agree. The
+reader refuses ZIP64/split archives, ambiguous entries, trailing payloads,
+custom entities/DTDs, non-UTF-8 XML and malformed or empty documents. Fixed
+safety ceilings: 256 parts, 256 KiB directory, 16 MiB declared expansion,
+64 KiB content-types XML, 1 MiB document XML/output, and 128 XML levels.
+A two-second cooperative deadline is checked on ZIP reads/seeks and XML events;
+this is bounded in-process parsing, not OS preemption or a hard real-time
+scheduler. Prompt clipping is separate and remains explicitly labeled.
+
 ### 7.7 Tools and connectors: available versus catalog-only
 
 `/tools` reports registered operations and capability information. `/tools all`
