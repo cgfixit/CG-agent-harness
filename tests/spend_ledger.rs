@@ -59,3 +59,31 @@ async fn spend_summary_is_csrf_guarded() {
     let (status, _) = s.open_get("/api/spend/summary").await;
     assert_ne!(status, 200);
 }
+
+#[test]
+fn summary_distinguishes_empty_corrupt_unreadable_and_oversized_generations() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("spend.jsonl");
+    let summarize = || cgagentharness::llm::spend::summarize_file(&path);
+    assert_eq!(summarize()["complete"], true);
+    let good = json!({"provider":"local","model":"fixture","timestamp":"2026-09-20T00:00:00Z","input_tokens":4,"output_tokens":2});
+    std::fs::write(&path, format!("{good}\nnot-json\nnull\n{{}}\n")).unwrap();
+    let partial = summarize();
+    assert_eq!(partial["complete"], false);
+    assert_eq!(partial["rows"], 1);
+    assert_eq!(partial["skipped_rows"], 3);
+    assert_eq!(partial["days"][0]["input_tokens"], 4);
+    std::fs::rename(&path, path.with_file_name("spend.jsonl.1")).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert_eq!(summarize()["files"][0]["status"], "unreadable");
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::write(&path, [0xff]).unwrap();
+    assert_eq!(summarize()["files"][0]["status"], "invalid_utf8");
+    let f = std::fs::File::create(&path).unwrap();
+    f.set_len(16 * 1024 * 1024 + 1).unwrap();
+    assert_eq!(summarize()["files"][0]["status"], "too_large");
+    std::fs::write(&path, format!("{good}\n")).unwrap();
+    std::fs::write(path.with_file_name("spend.jsonl.1"), format!("{good}\n")).unwrap();
+    assert_eq!(summarize()["complete"], true);
+    assert_eq!(summarize()["rows"], 2);
+}
