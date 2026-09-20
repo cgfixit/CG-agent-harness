@@ -351,23 +351,27 @@ fn skip_engine_phrases(lower: &[String], mut i: usize) -> usize {
         let at = |k: usize| lower.get(k).map(String::as_str);
         let linked_engine =
             at(i).is_some_and(|w| ENGINE_LINKS.contains(&w)) && at(i + 1).is_some_and(|w| ENGINES.contains(&w));
-        let place = at(i) == Some("the") && at(i + 1).is_some_and(|w| ENGINE_PLACES.contains(&w));
-        let linked_place = at(i).is_some_and(|w| ENGINE_LINKS.contains(&w))
-            && at(i + 1) == Some("the")
-            && at(i + 2).is_some_and(|w| ENGINE_PLACES.contains(&w));
-        // A bare engine word is scaffolding only when scaffolding follows it
-        // (`Google for x`, `Google "x"`, `Google first 2 links`, `Google
-        // (serpapi)`) or nothing does. Followed by a plain word it begins
-        // the subject: `Google Trends first 2 results`.
-        let bare_engine = at(i).is_some_and(|w| ENGINES.contains(&w))
-            && at(i + 1).is_none_or(|next| {
+        // A bare engine word or a bare `the web` is scaffolding only when
+        // scaffolding follows it (`Google for x`, `the web "x"`, `Google
+        // first 2 links`, `Google (serpapi)`) or nothing does. Followed by a
+        // plain word it begins the subject: `Google Trends first 2 results`,
+        // `The Web Conference first 2 results`.
+        let scaffolding_follows = |k: usize| {
+            at(k).is_none_or(|next| {
                 INTRODUCERS.contains(&next)
                     || ENGINES.contains(&next)
                     || ENGINE_LINKS.contains(&next)
                     || next == "the"
                     || next == "first"
                     || is_placeholder_word(next)
-            });
+            })
+        };
+        let place =
+            at(i) == Some("the") && at(i + 1).is_some_and(|w| ENGINE_PLACES.contains(&w)) && scaffolding_follows(i + 2);
+        let linked_place = at(i).is_some_and(|w| ENGINE_LINKS.contains(&w))
+            && at(i + 1) == Some("the")
+            && at(i + 2).is_some_and(|w| ENGINE_PLACES.contains(&w));
+        let bare_engine = at(i).is_some_and(|w| ENGINES.contains(&w)) && scaffolding_follows(i + 1);
         if bare_engine {
             i += 1;
         } else if linked_place {
@@ -464,8 +468,18 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
             }
             end += len;
         }
-        if end < rest.len() && matches!(lower_rest[end].as_str(), "for" | "of" | "about" | "on") {
-            end += 1;
+        // `for` after the clause is the documented introducer (`first 2
+        // links for rust`) and is always scaffolding. `about`, `of` and `on`
+        // are consumed only before a quoted term: before an unquoted subject
+        // they may be the title's first word (`first 2 results On the Road`,
+        // `About Time`, `Of Mice and Men`), and losing it is the costlier
+        // mistake.
+        if end < rest.len() {
+            let connector = lower_rest[end].as_str();
+            let before_quote = end + 1 < rest.len() && placeholder_index(rest[end + 1]).is_some();
+            if connector == "for" || (matches!(connector, "of" | "about" | "on") && before_quote) {
+                end += 1;
+            }
         }
         rest.drain(start..end);
     }
@@ -798,22 +812,47 @@ mod tests {
         assert_eq!(p.count, 2);
         assert_eq!(p.engine, SearchEngine::Google);
         assert_eq!(p.terms, vec!["Rust".to_string()]);
+        // `about` before an unquoted subject is kept (it may open a title);
+        // the provider treats it as a stop word.
         let p = parse("search the first 3 links on the web about rust async").expect("intent");
-        assert_eq!(p.terms, vec!["rust".to_string(), "async".into()]);
+        assert_eq!(p.terms, vec!["about".to_string(), "rust".into(), "async".into()]);
         let p = parse("search first 2 results from Google for Rust").expect("intent");
         assert_eq!(p.engine, SearchEngine::Google);
         assert_eq!(p.terms, vec!["Rust".to_string()]);
         let p = parse("search first 2 links using serpapi for 'cgfixit'").expect("intent");
         assert_eq!(p.engine, SearchEngine::Serpapi);
         assert_eq!(p.terms, vec!["cgfixit".to_string()]);
-        // `on` followed by a non-engine word is the plain connector it was.
+        // `on` before an unquoted subject is kept (it may open a title such
+        // as `On the Road`); the provider treats it as a stop word.
         let p = parse("search first 2 links on rust").expect("intent");
-        assert_eq!(p.terms, vec!["rust".to_string()]);
+        assert_eq!(p.terms, vec!["on".to_string(), "rust".into()]);
         // A bare engine word after the count clause opens the subject.
         let p = parse("search first 2 results Google Trends").expect("intent");
         assert_eq!(p.terms, vec!["Google".to_string(), "Trends".into()]);
         let p = parse("search first 2 results The Web Conference").expect("intent");
         assert_eq!(p.terms, vec!["The".to_string(), "Web".into(), "Conference".into()]);
+        let p = parse("search The Web Conference first 2 results").expect("intent");
+        assert_eq!(p.terms, vec!["The".to_string(), "Web".into(), "Conference".into()]);
+        let p = parse("search the web first 2 links for rust").expect("intent");
+        assert_eq!(p.terms, vec!["rust".to_string()]);
+        // A title-leading preposition after the count clause is kept; only
+        // `for` (the documented introducer) is always scaffolding there.
+        for (text, terms) in [
+            ("search first 2 results On the Road", vec!["On", "the", "Road"]),
+            ("search first 2 results About Time", vec!["About", "Time"]),
+            (
+                "search first 2 results Of Mice and Men",
+                vec!["Of", "Mice", "and", "Men"],
+            ),
+            ("search first 2 results about \"rust\"", vec!["rust"]),
+        ] {
+            let p = parse(text).expect("intent");
+            assert_eq!(
+                p.terms,
+                terms.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+                "{text}"
+            );
+        }
         // ...and so does one right after the verb when a plain word follows.
         let p = parse("search Google Trends first 2 results").expect("intent");
         assert_eq!(p.count, 2);
