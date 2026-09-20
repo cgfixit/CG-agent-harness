@@ -283,11 +283,23 @@ The most useful customization input is three actual responses you dislike,
 your preferred rewrite of each, and a sentence explaining the difference. Keep
 those as manual comparison examples. Describe observable preferences such as
 “answer before explanation” or “no repeated closing summary,” rather than only
-“sound human.” There is no built-in style-preset selector, `/style` command,
-automated style evaluation or rewrite button in this version.
+“sound human.”
 
-**What `unslop` currently does:** it is an optional local coding-planner prose
-probe, not a chat output filter. It scans for 16 fixed, case-insensitive phrases
+**Style presets.** `/style <name>` selects a per-session output-style preset
+without editing `soul.md`; `/style off` clears it and `/style` alone prints the
+active one. Shipped presets are `concise`, `unslop`, `technical-deep` and
+`beginner`; an operator overlay at `$CGAGENTHARNESS_HOME/styles/<name>.md` wins
+over the shipped file of the same name. The status bar `style` select does the
+same thing. The prompt is composed soul, then style, then the fixed policy
+tail, so a preset never overrides the harness contract. `/prompt` prints the
+active style and says when a selected overlay could not be loaded (missing,
+unreadable, empty, or refused by the injection scanner), in which case the
+prompt is composed without it. There is still no automated style evaluation or
+rewrite button.
+
+**What the `unslop` *planner probe* does:** separately from the `unslop` chat
+preset above, it is an optional local coding-planner prose probe, not a chat
+output filter. It scans for 16 fixed, case-insensitive phrases
 such as “delve,” “game-changer” and “I hope this helps.” It attempts to exclude
 proposed file bodies, records hit counts and a response hash, and supplies a
 nudge if the ordinary coding loop needs another iteration. A passing candidate

@@ -33,7 +33,7 @@
      `[hidden]`. Keep the attribute authoritative so every toggled node stays
      collapsed. */
   [hidden] { display: none !important; }
-  button, input { font: inherit; }
+  button, input, select { font: inherit; }
   body {
     background: var(--bg-primary); color: var(--text-primary);
     font-family: var(--sans); font-size: 13px; line-height: 1.5;
@@ -250,6 +250,10 @@
   .toggle { cursor: pointer; background: none; border: none; font: inherit; color: inherit; padding: 0; }
   .toggle .v.on { color: var(--accent-green); }
   .toggle .v.off { color: var(--accent-red); }
+  .statusbar select {
+    font: inherit; color: var(--text-primary); background: var(--bg-input);
+    border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; max-width: 132px;
+  }
   .apikey {
     font: inherit; color: var(--text-primary); background: var(--bg-input);
     width: 130px; max-width: 100%;
@@ -380,6 +384,12 @@
         <button class="toggle" id="sMemory" title="toggle operator /memory notes in the system prompt">
           <span class="k">mem </span><span class="v" id="sMemoryV">…</span>
         </button>
+        <label title="session output style; does not write soul.md">
+          <span class="k">style </span>
+          <select id="sStyle" aria-label="output style">
+            <option value="off">off</option>
+          </select>
+        </label>
         <span title="session /goal"><span class="k">goal </span><span class="v" id="sGoal">none</span></span>
         <span title="human-gated /loop"><span class="k">loop </span><span class="v" id="sLoop">off</span></span>
         <span class="spacer"></span>
@@ -497,6 +507,32 @@ async function recallPrompt(direction) {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 let soulEnabled = true;
+let currentStyle = 'off';
+/* Why the persisted style is not, or not fully, in the prompt: `missing`,
+   `unreadable`, `empty`, `injection`, `budget`, or `truncated`. The name is
+   kept (the server keeps it too) so the operator can see it and clear it
+   with `off`; `null` means the style is active as selected. */
+let currentStyleIssue = null;
+/* Style writes run one at a time: a later POST must not persist before an
+   earlier one whose overlay takes longer to load, or the earlier handler
+   would overwrite it server-side after the UI already shows the later choice. */
+let styleWriteChain = Promise.resolve();
+/* Settle every queued style write, including ones queued while waiting:
+   the chain can be replaced mid-await, so loop until the promise awaited is
+   still the current chain. Readers (polls, bare /style, /prompt, previews,
+   chat) use this so they never observe a selection a queued POST replaces. */
+async function awaitStyleWrites() {
+  for (;;) {
+    const chain = styleWriteChain;
+    await chain.catch(() => {});
+    if (chain === styleWriteChain) return;
+  }
+}
+/* Every /style request and every poll of the active session's style takes
+   a ticket; a reply whose ticket is no longer the latest is discarded, so
+   two quick dropdown changes end on the later choice and a poll never
+   overwrites a selection that is still being set. */
+let styleRequestSeq = 0;
 let soulStatus = {};
 let memoryEnabled = false;
 /* A staged (not yet sent) agent run. The server's own gate needs an explicit
@@ -953,6 +989,8 @@ async function refreshStatus() {
     if (typeof s.memory_enabled === 'boolean') memoryEnabled = s.memory_enabled;
     paintSoul();
     paintMemory();
+    await refreshStyle();
+    paintStyle();
     $('hDot').style.background = 'var(--accent-green)';
     statusBackoffMs = STATUS_BASE_INTERVAL;
   } catch (e) {
@@ -988,6 +1026,81 @@ function paintMemory() {
   if (!v) return;
   v.textContent = memoryEnabled ? 'on' : 'off';
   v.className = 'v ' + (memoryEnabled ? 'on' : 'off');
+}
+/* Every style read (status poll or bare /style) and every /style write
+   takes a ticket from the one `styleRequestSeq` generation; a reply whose
+   ticket is no longer the latest is discarded, whichever kind it is, so an
+   older read can never repaint over a newer read or a confirmed write.
+   Sessions are shared portal resources: the catalog (an operator can add or
+   remove `$CGAGENTHARNESS_HOME/styles/<name>.md` while the console is
+   open) and the open session's selection may both change underneath the
+   console, so each poll re-reads them. */
+async function refreshStyle() {
+  if (!$('sStyle')) return;
+  const revision = sessionRevision, session = currentSession;
+  try {
+    /* Read only once queued writes have settled, so the poll cannot observe
+       the selection a pending POST is about to replace; the ticket is taken
+       after that wait so a write issued during it still wins. */
+    await awaitStyleWrites();
+    const ticket = ++styleRequestSeq;
+    const r = await api('/api/style' + (session ? '?session_id=' + encodeURIComponent(session) : ''));
+    if (ticket !== styleRequestSeq) return;
+    applyStyleCatalog(r);
+    if (session && revision === sessionRevision && session === currentSession) {
+      applyStyleState(r);
+    }
+  } catch (e) { /* the status poll already reports connectivity; keep the last known catalog and value */ }
+}
+/* Rebuild the dropdown from a `/api/style` reply's catalog when it changed,
+   keeping the current selection. Both reads and successful writes carry it. */
+function applyStyleCatalog(r) {
+  const sel = $('sStyle');
+  if (!sel || !r || !Array.isArray(r.styles)) return;
+  const ids = ['off'].concat(r.styles.map(s => s.id));
+  const have = [...sel.options].map(o => o.value);
+  if (ids.length !== have.length || ids.some((id, i) => id !== have[i])) {
+    sel.innerHTML = '';
+    ids.forEach(id => { const o = document.createElement('option'); o.value = id; o.textContent = id; sel.appendChild(o); });
+  }
+}
+/* `/api/style` reports the persisted name, whether it currently loads and
+   whether it was clipped to the budget the soul left. Keep the name in the
+   status bar with its issue instead of collapsing it to `off`, so an
+   unavailable selection stays visible and clearable. */
+function applyStyleState(r) {
+  currentStyle = (r && r.style) ? r.style : 'off';
+  currentStyleIssue = !r || !r.style ? null
+    : !r.loaded ? (r.unavailable_reason || 'unavailable')
+    : r.truncated ? 'truncated' : null;
+}
+/* The active-style line for a `/api/prompt/preview` reply, shared by the
+   /prompt command and the soul editor's preview so a persona that displaces
+   or clips the selected preset is called out wherever the prompt is shown. */
+function previewStyleLine(r) {
+  const st = (r && r.style) || {};
+  return !st.name ? 'active style: off'
+    : st.loaded ? 'active style: ' + st.name + (st.origin ? ' (' + st.origin + ')' : '') + (st.truncated ? ' — warning: ' + styleIssueText('truncated') : '')
+    : 'active style: off — selected preset "' + st.name + '" is ' + styleIssueText(st.unavailable_reason || 'unavailable');
+}
+function styleIssueText(issue) {
+  return issue === 'truncated' ? 'clipped to the budget the soul leaves; the preset is only partly in the prompt'
+    : 'not in the prompt (' + issue + '); pick off to clear it or fix the overlay';
+}
+function paintStyle() {
+  const sel = $('sStyle');
+  if (!sel) return;
+  sel.disabled = !currentSession;
+  const value = currentStyle || 'off';
+  let opt = [...sel.options].find(o => o.value === value);
+  if (!opt) {
+    /* The persisted overlay is gone from the catalog: still show it, marked. */
+    opt = document.createElement('option'); opt.value = value; sel.appendChild(opt);
+  }
+  [...sel.options].forEach(o => { o.textContent = o.value; });
+  if (currentStyleIssue) opt.textContent = value + ' (' + currentStyleIssue + ')';
+  sel.value = value;
+  sel.title = currentStyleIssue ? 'style ' + value + ': ' + styleIssueText(currentStyleIssue) : 'session output style; does not write soul.md';
 }
 
 /* ── sessions pane ── */
@@ -1088,6 +1201,7 @@ const COMMANDS = [
   ['/prompt', 'preview the next chat system prompt (private)'],
   ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
   ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
+  ['/style <name>|off', 'session output-style preset (concise, unslop, technical-deep, beginner); default off'],
   ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (on for fresh homes)'],
   ['/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding [on|off]', 'admin-only structured-memory gate overrides; /memory on stays pinned notes'],
   ['/memory search <query>', 'FTS fact candidates (not injected)'],
@@ -1336,6 +1450,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     });
     clearTranscript();
     currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false;
+    currentStyle = 'off'; currentStyleIssue = null; paintStyle();
     input.value = '';
     $('sSession').textContent = 'none';
     $('hTokens').textContent = '0';
@@ -1392,6 +1507,13 @@ async function runSlash(line) {
             loopAuto = false;
             paintGoalLoop();
             sys((sub === 'new' ? 'session created: ' : 'switched to session ') + s.session_id + ' — ' + s.title);
+            /* The session carries the persisted name; the effective style
+               (does the overlay still load?) comes from /api/style. */
+            currentStyle = s.style || 'off'; currentStyleIssue = null; paintStyle();
+            await refreshStyle();
+            /* A second switch during that read owns the transcript now. */
+            if (revision !== sessionRevision) break;
+            paintStyle();
             if (sub === 'new') sys('Fresh conversation. Shared persona, enabled memory notes and web context remain; /prompt shows what is included.');
             (s.messages || []).forEach(m => {
               if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
@@ -1422,8 +1544,64 @@ async function runSlash(line) {
       }
 
       case 'prompt': {
-        const r = await api('/api/prompt/preview', 'POST', { session_id: currentSession || null });
-        sys(r.scope + '\n\n' + r.prompt); break;
+        /* Bind the session first, then let a style change still being
+           persisted land, or the snapshot is composed and labelled with the
+           previous style; a switch during the wait abandons the preview. */
+        const promptRevision = sessionRevision, promptSession = currentSession;
+        await awaitStyleWrites();
+        if (promptRevision !== sessionRevision || promptSession !== currentSession) { sys('prompt preview abandoned: the session changed'); break; }
+        const r = await api('/api/prompt/preview', 'POST', { session_id: promptSession || null });
+        if (promptRevision !== sessionRevision || promptSession !== currentSession) { sys('prompt preview discarded: the session changed'); break; }
+        sys(previewStyleLine(r) + '\n' + r.scope + '\n\n' + r.prompt); break;
+      }
+      case 'style': {
+        if (!currentSession) { sys('no active session'); break; }
+        /* The whole remainder is the id: `/style off please` or `/style
+           concise typo` is refused by the server instead of silently acting
+           on the first token. */
+        const name = rest.join(' ').trim().toLowerCase();
+        /* A reply that lands after the operator switched, cleared or logged
+           out must not repaint the new selection with the old session's
+           style; the server-side value of the old session is unaffected. */
+        const styleRevision = sessionRevision, styleSession = currentSession;
+        let styleTicket = ++styleRequestSeq;
+        const stale = () => styleRevision !== sessionRevision || styleSession !== currentSession || styleTicket !== styleRequestSeq;
+        if (!name) {
+          /* Read after any pending write so the report is the persisted
+             state, not the selection a queued POST is about to replace; the
+             ticket is retaken after the wait so this read shares one
+             generation with polls and writes issued meanwhile. */
+          await awaitStyleWrites();
+          styleTicket = ++styleRequestSeq;
+          const r = await api('/api/style?session_id=' + encodeURIComponent(styleSession));
+          if (stale()) { sys('style reply superseded by a newer read, write or session change'); break; }
+          applyStyleCatalog(r);
+          applyStyleState(r); paintStyle();
+          sys(!r.style ? 'style off'
+            : !r.loaded ? 'style ' + r.style + ' is selected but ' + styleIssueText(r.unavailable_reason || 'unavailable')
+            : 'style ' + r.style + (r.origin ? ' (' + r.origin + ')' : '') + (r.truncated ? ' — ' + styleIssueText('truncated') : ''));
+          break;
+        }
+        const write = styleWriteChain.catch(() => {}).then(() => api('/api/style', 'POST', { session_id: styleSession, name: name }));
+        styleWriteChain = write;
+        let r;
+        try { r = await write; } catch (e) {
+          /* The dropdown already shows the rejected choice. Re-read the
+             persisted selection rather than repainting the cached value: an
+             earlier queued write may have succeeded and been superseded in
+             the status bar by this one, so the cache can be behind. */
+          await refreshStyle(); paintStyle();
+          throw e;
+        }
+        if (stale()) { sys('style ' + (r.style || 'off') + ' was set, but a newer selection or session change supersedes it in the status bar'); break; }
+        /* The write reply carries the refreshed catalog too: an overlay added
+           since the last poll must be in the dropdown before it is painted. */
+        applyStyleCatalog(r);
+        applyStyleState(r); paintStyle();
+        sys('style ' + currentStyle + (r.origin ? ' (' + r.origin + ')' : '')
+          + (r.truncated ? ' — warning: ' + styleIssueText('truncated') + '. Shorten soul.md or raise personality.soul_max_chars' : '')
+          + '. /prompt shows the active style. soul.md is unchanged.');
+        break;
       }
       case 'soul': {
         const sub = rest[0];
@@ -1442,6 +1620,9 @@ async function runSlash(line) {
         if (arg === 'on' || arg === 'off') {
           const r = await api('/api/soul', 'POST', { enabled: arg === 'on' });
           soulEnabled = r.enabled; soulStatus = r; paintSoul();
+          /* Soul and style share one budget: toggling the soul can make the
+             selected style effective or push it out; re-read it now. */
+          await refreshStyle(); paintStyle();
           sys('soul ' + (r.enabled ? 'enabled' : 'disabled') +
               ' (system prompt only — soul.md itself is governed and untouched)');
         } else {
@@ -1621,6 +1802,7 @@ async function runSlash(line) {
         if (!currentSession) {
           const created = await api('/api/sessions', 'POST', {}); currentSession = created.session_id;
           $('sSession').textContent = currentSession;
+          currentStyle = 'off'; currentStyleIssue = null; paintStyle();
         }
         const path = '/api/sessions/' + encodeURIComponent(currentSession) + '/skills';
         const r = action === 'status' ? await api(path) : await api(path, 'POST', {ids:action === 'clear' ? [] : rest.slice(1)});
@@ -2050,6 +2232,7 @@ async function runSlash(line) {
           const created = await api('/api/sessions', 'POST', { title: arg.slice(0, 40) });
           currentSession = created.session_id;
           $('sSession').textContent = currentSession;
+          currentStyle = 'off'; currentStyleIssue = null; paintStyle();
         }
         const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: arg });
         sessionGoal = set.goal || '';
@@ -2126,8 +2309,13 @@ async function runSlash(line) {
           sys(table([['version', s.version], ['access', access]]));
           break;
         }
+        /* The style row must reflect the persisted state: settle queued
+           style writes and re-read the open session's shared selection. */
+        await awaitStyleWrites();
+        await refreshStyle(); paintStyle();
         sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider],
                    ['soul', s.soul_enabled ? 'on' : 'off'],
+                   ['style', (currentStyle || 'off') + (currentStyleIssue ? ' (' + currentStyleIssue + ')' : '')],
                    ['memory', s.memory_enabled ? 'on' : 'off'],
                    ['sessions', String(s.sessions)],
                    ['total tokens', String(s.total_tokens)], ['home', s.home],
@@ -2289,7 +2477,13 @@ window.addEventListener('beforeunload', function () {
 async function finishChat(r) {
   promptHistory.session = null;
   if (r && r.session_id) {
+    /* A session the server just auto-created starts with style off; the
+       status bar must not keep showing a cleared session's preset. */
+    const switched = currentSession !== r.session_id;
     currentSession = r.session_id;
+    /* Painted after the assignment so the selector is enabled for the
+       auto-created session at once, not after the next status poll. */
+    if (switched) { currentStyle = 'off'; currentStyleIssue = null; paintStyle(); }
     $('sSession').textContent = currentSession;
   }
   const usage = (r && r.usage) || {};
@@ -2310,8 +2504,18 @@ async function finishChat(r) {
 
 async function sendChat(text, asLoop, extra) {
   const revision = sessionRevision;
-  user(text);
+  /* Take the send gate and bind the target session first, then wait for a
+     style change issued just before Send to be persisted (or the server
+     composes the reply with the old style). A session switch or logout
+     during that wait abandons the turn instead of posting it elsewhere. */
   sendBtn.disabled = true;
+  const targetSession = currentSession;
+  await awaitStyleWrites();
+  if (revision !== sessionRevision || targetSession !== currentSession) {
+    if (revision === sessionRevision) sendBtn.disabled = false;
+    return null;
+  }
+  user(text);
   const controller = new AbortController();
   inflightChat = controller;
   if (asLoop && typeof asLoop === 'object') {
@@ -2325,7 +2529,7 @@ async function sendChat(text, asLoop, extra) {
     preview.querySelector('.body').appendChild(document.createTextNode(delta));
     stream.scrollTop = stream.scrollHeight;
   };
-  const body = { message: text, session_id: currentSession };
+  const body = { message: text, session_id: targetSession };
   if (asLoop) body.loop = true;
   if (extra && extra.retrieve) {
     body.retrieve = true;
@@ -2742,7 +2946,7 @@ if (hAuthLogout) {
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
-    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionRevision++; window.__cyclawRole = null; await refreshStatus();
+    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++; window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
     sendBtn.disabled = false;
   });
@@ -2858,7 +3062,9 @@ async function openSoulEditor(proposalOnly) {
 }
 $('soulClose').addEventListener('click', () => { $('soulEditor').close(); $('soulContent').value = ''; $('soulFeedback').textContent = ''; });
 $('soulPreview').addEventListener('click', async () => {
-  try { const r = await api('/api/prompt/preview', 'POST', {session_id:currentSession || null,soul_content:$('soulContent').value}); $('soulFeedback').textContent = r.scope + '\n' + r.prompt; }
+  /* Same ordering as /prompt: a pending style write lands first. */
+  await awaitStyleWrites();
+  try { const r = await api('/api/prompt/preview', 'POST', {session_id:currentSession || null,soul_content:$('soulContent').value}); $('soulFeedback').textContent = previewStyleLine(r) + '\n' + r.scope + '\n' + r.prompt; }
   catch(e) { $('soulFeedback').textContent = e.message; }
 });
 async function submitSoul(propose) {
@@ -2875,6 +3081,11 @@ $('soulPropose').addEventListener('click', () => submitSoul(true));
 
 $('sSoul').addEventListener('click', () => runSlash('/soul ' + (soulEnabled ? 'off' : 'on')));
 $('sMemory').addEventListener('click', () => runSlash('/memory ' + (memoryEnabled ? 'off' : 'on')));
+$('sStyle').addEventListener('change', () => {
+  const name = $('sStyle').value || 'off';
+  if (!currentSession) { paintStyle(); sys('no active session'); return; }
+  runSlash('/style ' + name);
+});
 
 buildCommands();
 refreshStatus();

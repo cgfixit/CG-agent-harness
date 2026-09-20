@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "session",
     "prompt",
     "soul",
+    "style",
     "memory",
     "api",
     "model",
@@ -183,6 +184,9 @@ fn parse_slash_primary(line: &str) -> SlashParse {
     let rest = match (cmd, sub.as_deref()) {
         ("memory", Some("consolidate")) => id_tokens(&args).join(" "),
         ("web", Some("search" | "pages" | "research" | "fetch")) => args.join(" "),
+        // A style id is opaque: an overlay may be called `notes` or
+        // `session`, which the filler list would otherwise swallow.
+        ("style", _) => args.join(" "),
         _ => strip_filler_tokens(&args).join(" "),
     };
     let fuzzy = aliased || sub_fuzzy || filler_was_stripped(after_cmd, sub.as_deref(), &args);
@@ -486,6 +490,25 @@ mod tests {
         assert!(p.dispatch);
         assert_eq!(p.canonical.as_deref(), Some("/help"));
         assert_eq!(p.kind, SlashKind::Dispatch);
+    }
+
+    #[test]
+    fn exact_style_dispatches_with_its_name() {
+        for (line, canonical) in [
+            ("/style concise", "/style concise"),
+            ("/style off", "/style off"),
+            ("/style", "/style"),
+            // Overlay ids that collide with filler words stay intact.
+            ("/style notes", "/style notes"),
+            ("/style session", "/style session"),
+            ("/style My-Notes", "/style My-Notes"),
+        ] {
+            let p = parse_line(line);
+            assert!(p.dispatch, "{line}: {p:?}");
+            assert_eq!(p.kind, SlashKind::Dispatch, "{line}");
+            assert_eq!(p.command.as_deref(), Some("style"), "{line}");
+            assert_eq!(p.canonical.as_deref(), Some(canonical), "{line}");
+        }
     }
 
     #[test]

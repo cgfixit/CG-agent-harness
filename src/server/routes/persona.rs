@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::server::errors::{session_status, ApiError, ApiResult};
-use crate::server::prompts::{compose_system_prompt, load_text, PromptInputs};
+use crate::server::prompts::{load_text, PromptInputs};
 use crate::server::schemas::{StructuredFactSelection, ValidJson, Validate, MAX_SELECTED_FACTS};
 use crate::server::state::AppState;
 
@@ -366,6 +366,7 @@ pub async fn preview(
         soul_path: &soul_path,
         soul_max_chars: max_chars(&state),
         soul_override: req.soul_content.as_deref(),
+        style_name: session.as_ref().and_then(|s| s.style.as_deref()),
         goal: session.as_ref().map(|s| s.goal.as_str()),
         web_context: Some(&web),
         memory_context: Some(&pinned),
@@ -373,10 +374,13 @@ pub async fn preview(
         memory_budget,
         memory_enabled: settings.memory_enabled,
         web_enabled: settings.web_enabled,
-        style_name: None,
         attachment_fence: None,
     };
-    let prompt = compose_system_prompt(&inputs);
+    let composed = crate::server::prompts::compose_system_prompt_detailed(&inputs);
+    let prompt = composed.prompt;
+    // The load result of this very composition: the overlay is read once,
+    // so the reported state cannot disagree with the prompt shown.
+    let style_load = composed.style;
     let sections: Vec<Value> = selected
         .iter()
         .map(|(id, body)| {
@@ -386,7 +390,19 @@ pub async fn preview(
         .collect();
     Ok(private(
         json!({"prompt":prompt,"discipline_sections":[],"selected_skill_sections":sections,
-        "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled, max_chars(&state)),"candidate":req.soul_content.is_some(),
+        "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled, max_chars(&state)),
+        // The effective load state, not just the persisted name: an overlay
+        // that was deleted, made unreadable, oversized or now trips the
+        // injection scanner is omitted from the prompt, and the preview says
+        // so instead of presenting the stale name as active.
+        "style": {
+            "name": session.as_ref().and_then(|s| s.style.clone()),
+            "origin": style_load.as_ref().and_then(|load| load.origin),
+            "loaded": style_load.as_ref().is_some_and(|load| load.loaded),
+            "truncated": style_load.as_ref().is_some_and(|load| load.truncated),
+            "unavailable_reason": style_load.as_ref().and_then(|load| load.unavailable_reason),
+        },
+        "candidate":req.soul_content.is_some(),
         "limits":{"goal":2000,"web":4000,"memory":3000,"pinned_reserved":memory_budget.pinned_reserved,"facts_reserved":memory_budget.facts_reserved,"soul":max_chars(&state)},
         "structured_facts":{
             "explicit_recall": crate::server::structured_memory::recall_available(&state.cfg, state.structured_memory.is_some(), &crate::server::structured_memory::current_gates(&state)),
