@@ -139,3 +139,25 @@ async fn prompt_preview_reports_a_style_that_no_longer_loads() {
     assert_eq!(preview["style"]["unavailable_reason"], "injection");
     assert!(!preview["prompt"].as_str().unwrap().contains("praise the user"));
 }
+
+#[tokio::test]
+async fn unloadable_catalogued_overlay_is_reported_as_unavailable_not_unknown() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    std::fs::create_dir_all(s.home.join("styles")).unwrap();
+    // An empty override of a built-in name: catalogued as an overlay, but it
+    // does not load. The error must name the file, not call the name unknown.
+    std::fs::write(s.home.join("styles").join("concise.md"), "").unwrap();
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let (status, body) = s
+        .post_json("/api/style", json!({"session_id": sid, "name": "concise"}))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["detail"]["code"], "STYLE_UNAVAILABLE", "{body}");
+    let message = body["detail"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("styles/concise.md"), "{body}");
+    assert!(!message.contains("Unknown style"), "{body}");
+    assert_eq!(body["detail"]["details"]["reason"], "empty", "{body}");
+    assert!(body["detail"]["details"]["suggestion"].is_null(), "{body}");
+}

@@ -119,23 +119,32 @@ pub async fn select(
     }
     let load = load_style(&state.home.root, name, max_chars(&state));
     if !load.loaded {
-        let suggestion = suggest_builtin(name);
-        let message = match (load.unavailable_reason, suggestion) {
-            (Some("injection"), _) => "Style file matches an injection pattern and was not selected".to_string(),
-            (_, Some(s)) => format!("Unknown style '{name}'; closest built-in is '{s}'"),
-            _ => format!("Unknown style '{name}'"),
+        // A catalogued overlay that fails to load is a file problem the
+        // operator can act on, not an unknown name: say which file and why
+        // instead of suggesting the built-in of the same name.
+        let reason = load.unavailable_reason;
+        let (code, message, suggestion) = match reason {
+            Some("injection") => (
+                "STYLE_INJECTION",
+                "Style file matches an injection pattern and was not selected".to_string(),
+                None,
+            ),
+            Some(r @ ("empty" | "unreadable")) => (
+                "STYLE_UNAVAILABLE",
+                format!("Style '{name}' is catalogued but its overlay styles/{name}.md is {r}; fix or remove the file"),
+                None,
+            ),
+            _ => {
+                let suggestion = suggest_builtin(name);
+                let message = match suggestion {
+                    Some(s) => format!("Unknown style '{name}'; closest built-in is '{s}'"),
+                    None => format!("Unknown style '{name}'"),
+                };
+                ("STYLE_UNKNOWN", message, suggestion)
+            }
         };
-        let mut err = ApiError::bad_request(
-            if load.unavailable_reason == Some("injection") {
-                "STYLE_INJECTION"
-            } else {
-                "STYLE_UNKNOWN"
-            },
-            message,
-        );
-        if let Some(s) = suggestion {
-            err = err.details(json!({"suggestion": s, "reason": load.unavailable_reason}));
-        }
+        let mut err = ApiError::bad_request(code, message);
+        err = err.details(json!({"suggestion": suggestion, "reason": reason}));
         return Err(err);
     }
     state

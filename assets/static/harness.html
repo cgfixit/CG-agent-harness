@@ -1451,7 +1451,10 @@ async function runSlash(line) {
             loopAuto = false;
             paintGoalLoop();
             sys((sub === 'new' ? 'session created: ' : 'switched to session ') + s.session_id + ' — ' + s.title);
+            /* The session carries the persisted name; the effective style
+               (does the overlay still load?) comes from /api/style. */
             currentStyle = s.style || 'off'; paintStyle();
+            await refreshStyle(); paintStyle();
             if (sub === 'new') sys('Fresh conversation. Shared persona, enabled memory notes and web context remain; /prompt shows what is included.');
             (s.messages || []).forEach(m => {
               if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
@@ -1501,6 +1504,9 @@ async function runSlash(line) {
         const styleRevision = sessionRevision, styleSession = currentSession, styleTicket = ++styleRequestSeq;
         const stale = () => styleRevision !== sessionRevision || styleSession !== currentSession || styleTicket !== styleRequestSeq;
         if (!name) {
+          /* Read after any pending write so the report is the persisted
+             state, not the selection a queued POST is about to replace. */
+          await styleWriteChain.catch(() => {});
           const r = await api('/api/style?session_id=' + encodeURIComponent(styleSession));
           if (stale()) { sys('style reply for a previous session ignored'); break; }
           /* The effective style, not the persisted name: an overlay that no
