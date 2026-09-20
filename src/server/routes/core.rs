@@ -75,6 +75,7 @@ pub async fn upload_attachments(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     req: axum::extract::Request,
 ) -> ApiResult<Json<Value>> {
+    let account = user.as_ref().map(|u| u.0.clone());
     let owner = super::auth::context_owner(user);
     // Take the buffering permit before a single body byte is read: with the
     // route rate limit alone, one client could hold dozens of maximum-size
@@ -106,20 +107,39 @@ pub async fn upload_attachments(
         }
     }
     let limit = attachments::MAX_REQUEST_BYTES as usize;
-    let bytes = axum::body::to_bytes(req.into_body(), limit.saturating_add(1))
-        .await
-        .map_err(|_| {
-            attachments::upload_error(&crate::common::errors::HarnessError::new(
-                "ATTACHMENT_TOO_LARGE",
-                "request body exceeds the attachment request limit",
-            ))
-        })?;
+    // The body read is bounded so a client that trickles or never finishes
+    // its upload cannot hold the permit indefinitely.
+    let bytes = tokio::time::timeout(
+        state.upload_body_timeout,
+        axum::body::to_bytes(req.into_body(), limit.saturating_add(1)),
+    )
+    .await
+    .map_err(|_| {
+        attachments::upload_error(&crate::common::errors::HarnessError::new(
+            "ATTACHMENT_TIMEOUT",
+            "request body was not received within the upload deadline",
+        ))
+    })?
+    .map_err(|_| {
+        attachments::upload_error(&crate::common::errors::HarnessError::new(
+            "ATTACHMENT_TOO_LARGE",
+            "request body exceeds the attachment request limit",
+        ))
+    })?;
     attachments::check_content_length(declared, bytes.len() as u64).map_err(|e| attachments::upload_error(&e))?;
     let boundary = attachments::multipart_boundary(&content_type).map_err(|e| attachments::upload_error(&e))?;
     let files = attachments::parse_multipart(&bytes, &boundary).map_err(|e| attachments::upload_error(&e))?;
+    // Re-check the account under the store lock: a deletion that completed
+    // while this body was in flight must not gain an orphaned blob.
+    let owner_live = || match (state.auth.as_ref(), account.as_ref()) {
+        (Some(manager), Some(account)) => manager
+            .get_user(&account.username)
+            .is_some_and(|current| current.user_id == account.user_id && !current.disabled),
+        _ => true,
+    };
     let blobs = state
         .attachments
-        .store(&owner, &files)
+        .store_guarded(&owner, &files, &owner_live)
         .map_err(|e| attachments::upload_error(&e))?;
     state.audit.log(attachments::audit_record(&owner, &blobs));
     Ok(Json(json!({

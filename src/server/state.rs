@@ -55,6 +55,21 @@ pub fn upload_concurrency(cfg: &AppConfig) -> Result<usize> {
     }
 }
 
+/// `attachments.body_timeout_sec`: server-side deadline for reading one
+/// upload body. It bounds how long a stalled client can hold an upload
+/// permit; a body that does not arrive in time is refused and its permit
+/// released.
+pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
+    match cfg.get("attachments.body_timeout_sec") {
+        None => Ok(std::time::Duration::from_secs(120)),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| (5..=600).contains(value))
+            .map(std::time::Duration::from_secs)
+            .ok_or_else(|| HarnessError::config("attachments.body_timeout_sec must be an integer from 5 to 600")),
+    }
+}
+
 pub struct AppState {
     pub home: Home,
     pub cfg: SharedConfig,
@@ -85,6 +100,8 @@ pub struct AppState {
     pub auth_operation_permits: Arc<tokio::sync::Semaphore>,
     /// Limits attachment upload bodies held in memory at once.
     pub upload_permits: Arc<tokio::sync::Semaphore>,
+    /// Deadline for reading one upload body while holding a permit.
+    pub upload_body_timeout: std::time::Duration,
     pub web: WebTool,
     pub mcp: McpRuntime,
     pub notes: MemoryNotes,
@@ -249,8 +266,24 @@ impl AppState {
 
 #[cfg(test)]
 mod upload_concurrency_tests {
-    use super::upload_concurrency;
+    use super::{upload_body_timeout, upload_concurrency};
     use crate::common::config::AppConfig;
+
+    #[test]
+    fn upload_body_timeout_is_configured_and_bounded() {
+        for (raw, expected) in [("{}", Some(120)), ("attachments: {body_timeout_sec: 30}", Some(30))] {
+            let cfg = AppConfig::from_str(raw, std::path::Path::new("fixture.yaml")).unwrap();
+            assert_eq!(upload_body_timeout(&cfg).ok().map(|d| d.as_secs()), expected);
+        }
+        for raw in ["4", "601", "'60'"] {
+            let cfg = AppConfig::from_str(
+                &format!("attachments: {{body_timeout_sec: {raw}}}"),
+                std::path::Path::new("fixture.yaml"),
+            )
+            .unwrap();
+            assert!(upload_body_timeout(&cfg).is_err(), "raw={raw}");
+        }
+    }
 
     #[test]
     fn upload_cap_is_configured_and_bounded() {

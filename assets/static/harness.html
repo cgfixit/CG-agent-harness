@@ -2596,6 +2596,9 @@ const ATTACHMENT_UPLOAD_TIMEOUT_MS = 180000;
 /* Pending <input type=file> selections belong to the account that made
    them: drop them on every account transition so a later sign-in cannot
    upload the previous account's files. */
+function restoreUnsentPrompt(text) {
+  if (!input.value) input.value = text;
+}
 function clearPendingAttachments() {
   if (attachInput) { try { attachInput.value = ''; } catch (e) { /* inert input */ } }
 }
@@ -2667,11 +2670,15 @@ async function onSend() {
       if (attachInput) attachInput.value = '';
     } catch (e) {
       if (uploadRevision === sessionRevision) sendBtn.disabled = false;
+      /* Nothing was sent, so give the typed prompt back instead of leaving
+         only the notice. */
+      restoreUnsentPrompt(text);
       sys('error: ' + ((e && e.message) || e));
       return;
     }
     if (uploadRevision !== sessionRevision || uploadSession !== currentSession) {
       if (uploadRevision === sessionRevision) sendBtn.disabled = false;
+      restoreUnsentPrompt(text);
       sys('the session changed while the files were uploading; the message was not sent (the uploads count toward the home quota until the session is cleared)');
       return;
     }

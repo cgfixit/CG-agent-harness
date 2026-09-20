@@ -143,6 +143,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     let audit = Audit::from_home(&home.root, &cfg);
     let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
     let upload_permits = Arc::new(tokio::sync::Semaphore::new(state::upload_concurrency(&cfg)?));
+    let upload_body_timeout = state::upload_body_timeout(&cfg)?;
     let auth = if cfg.flag_is_true("auth.enabled") {
         let mgr = AuthManager::open(&home.auth_path(), &cfg)?;
         mgr.bootstrap_if_empty()?;
@@ -209,6 +210,20 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     };
     let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
     let attachments = crate::server::attachments::AttachmentStore::open(&home.attachments_dir())?;
+    if let Some(mgr) = auth.as_ref() {
+        // Finish any account-deletion cleanup that failed part-way in an
+        // earlier run: rows still naming a deleted user are removed here.
+        let live: BTreeSet<String> = mgr.list_users().into_iter().map(|u| u.user_id).collect();
+        match attachments.sweep_dead_owners(&|owner| owner == "local" || live.contains(owner)) {
+            Ok(0) => {}
+            Ok(n) => audit.log(serde_json::json!({"event": "chat_attachments_swept", "removed": n})),
+            Err(e) => audit.log(serde_json::json!({
+                "event": "chat_attachments_sweep_incomplete",
+                "code": e.code,
+                "message": e.message,
+            })),
+        }
+    }
     let state = Arc::new(AppState {
         notes: MemoryNotes::new(&home.memory_dir()),
         structured_memory,
@@ -221,6 +236,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         store,
         attachments,
         upload_permits,
+        upload_body_timeout,
         backend,
         chat,
         cloud_chat,

@@ -69,6 +69,9 @@ chat:
 # (up to ~45 MiB each) may be buffered at once. Range 1–8.
 attachments:
   max_concurrent_uploads: 2
+  # Server-side deadline for receiving one upload body (seconds, 5–600); a
+  # stalled client releases its permit when it expires.
+  body_timeout_sec: 120
 
 api:
   rate_limit:
