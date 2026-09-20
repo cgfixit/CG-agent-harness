@@ -87,6 +87,13 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
         return WebIntentParse::PassThrough;
     }
     let (quoted, bare, residual) = split_quoted(trimmed);
+    // A double quote that did not pair up would otherwise be trimmed off a
+    // subject word and silently broaden the search (`"C programming` → `C
+    // programming`). Refuse the malformed request instead. Apostrophes are
+    // ordinary characters (`women's`), so single quotes are left alone.
+    if residual.chars().any(|c| matches!(c, '"' | '\u{201c}' | '\u{201d}')) {
+        return WebIntentParse::Invalid("search request has an unbalanced double quote".into());
+    }
     let explicit_count = match extract_count(&residual.to_ascii_lowercase()) {
         Some(Ok(n)) => Some(n),
         Some(Err(message)) => return WebIntentParse::Invalid(message),
@@ -436,24 +443,23 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         if start > 0 && word_of(rest[start - 1]).eq_ignore_ascii_case("the") {
             start -= 1;
         }
-        // `Rust for the first 2 results`: the introducer that joins the
-        // subject to a trailing count clause is scaffolding too. Only `for`
-        // and `about` are unambiguous there; `on` or `of` may end the subject
-        // itself (`Carry On first 2 results`).
-        if start > 0 && matches!(scaffold_word(rest[start - 1]).as_str(), "for" | "about") {
-            start -= 1;
-        }
+        // A word before the clause is never removed, even a preposition:
+        // `Rust for the first 2 results` reaches the provider as `Rust for`
+        // (a harmless stop word) rather than risk truncating a title such as
+        // `What Are You Looking For first 2 results` or `Carry On first 2
+        // results`. Dropping content is the costlier mistake.
         // The clause may carry its own engine phrase and connector:
         // `first 2 results on Google for Rust`, `first 2 links on the web
         // about rust`. Both are scaffolding; the subject starts after them.
         let lower_rest: Vec<String> = rest.iter().map(|t| scaffold_word(t)).collect();
-        // Only a *linked* engine phrase is consumed here: a bare engine word
+        // Only an engine phrase with its connector is consumed here (`on
+        // Google`, `from the web`): a bare engine word or a bare `the web`
         // after the count clause opens the subject (`first 2 results Google
-        // Trends`).
+        // Trends`, `first 2 results The Web Conference`).
         let mut end = k + 3;
         loop {
             let len = linked_engine_phrase_len(&lower_rest, end);
-            if len == 0 {
+            if len == 0 || !ENGINE_LINKS.contains(&lower_rest[end].as_str()) {
                 break;
             }
             end += len;
@@ -500,13 +506,11 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     let rest: Vec<&str> = rest.iter().zip(keep).filter(|(_, k)| *k).map(|(t, _)| *t).collect();
     // Subject tokens are kept verbatim apart from surrounding quote characters
     // and trailing sentence punctuation, so Google operators such as
-    // `-pinterest`, `@handle`, `*` or `site:` survive.
+    // `-pinterest`, `@handle`, `*` or `site:` survive. Quote characters are
+    // kept: a double quote here is refused earlier, and an apostrophe is
+    // part of the word.
     rest.iter()
-        .map(|t| {
-            t.trim_matches(|c: char| matches!(c, '"' | '\'' | '\u{201c}' | '\u{201d}' | '\u{2018}' | '\u{2019}'))
-                .trim_end_matches([',', '.', ';', ':', '!', '?'])
-                .to_string()
-        })
+        .map(|t| t.trim_end_matches([',', '.', ';', ':', '!', '?']).to_string())
         .filter(|t| !t.is_empty())
         .collect()
 }
@@ -808,6 +812,8 @@ mod tests {
         // A bare engine word after the count clause opens the subject.
         let p = parse("search first 2 results Google Trends").expect("intent");
         assert_eq!(p.terms, vec!["Google".to_string(), "Trends".into()]);
+        let p = parse("search first 2 results The Web Conference").expect("intent");
+        assert_eq!(p.terms, vec!["The".to_string(), "Web".into(), "Conference".into()]);
         // ...and so does one right after the verb when a plain word follows.
         let p = parse("search Google Trends first 2 results").expect("intent");
         assert_eq!(p.count, 2);
@@ -848,15 +854,37 @@ mod tests {
     }
 
     #[test]
-    fn connector_before_a_trailing_count_clause_is_scaffolding() {
-        for text in ["search Rust for the first 2 results", "search Rust for first 2 results"] {
+    fn words_before_a_trailing_count_clause_are_never_removed() {
+        // `the` directly before the clause is the article of `the first N`;
+        // anything else is the subject's own, preposition or not.
+        let p = parse("search Rust for the first 2 results").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["Rust".to_string(), "for".into()]);
+        for (text, terms) in [
+            ("search Carry On first 2 results", vec!["Carry", "On"]),
+            (
+                "search What Are You Looking For first 2 results",
+                vec!["What", "Are", "You", "Looking", "For"],
+            ),
+        ] {
             let p = parse(text).expect("intent");
-            assert_eq!(p.count, 2, "{text}");
-            assert_eq!(p.terms, vec!["Rust".to_string()], "{text}");
+            assert_eq!(
+                p.terms,
+                terms.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+                "{text}"
+            );
         }
-        // A subject that ends in `on` / `of` keeps that word.
-        let p = parse("search Carry On first 2 results").expect("intent");
-        assert_eq!(p.terms, vec!["Carry".to_string(), "On".into()]);
+    }
+
+    #[test]
+    fn unbalanced_double_quote_is_refused() {
+        match parse_with_count("search first 2 results for \"C programming", 5) {
+            WebIntentParse::Invalid(message) => assert!(message.contains("unbalanced"), "{message}"),
+            other => panic!("should be refused, got {other:?}"),
+        }
+        // An apostrophe is an ordinary character.
+        let p = parse("search first 2 results for women's health").expect("intent");
+        assert_eq!(p.terms, vec!["women's".to_string(), "health".into()]);
     }
 
     #[test]
@@ -952,8 +980,10 @@ mod tests {
         // `foo"x"` (no colon) is no span: it stays an ordinary subject token,
         // trimmed of its trailing quote like any other unquoted word.
         assert_eq!(parse_with_count("search:\"rust\"", 5), WebIntentParse::PassThrough);
-        let p = parse("search foo\"bar\" first 2 links").expect("intent");
-        assert_eq!(p.terms, vec!["foo\"bar".to_string()]);
+        match parse_with_count("search foo\"bar\" first 2 links", 5) {
+            WebIntentParse::Invalid(message) => assert!(message.contains("unbalanced"), "{message}"),
+            other => panic!("should be refused, got {other:?}"),
+        }
     }
 
     #[test]

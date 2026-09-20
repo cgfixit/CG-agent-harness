@@ -2469,7 +2469,7 @@ function looksLikeNlSearch(text) {
   /* Follow-up action verbs never open a listing subject (`Rust summarize
      briefly`, `Rust provide a summary`), and never count as an operator
      when dressed as one (`summarize:briefly`, `-summarize`). */
-  var ACTION = /^(?:summari[sz]e|synthesi[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify|compile|aggregate|digest|interpret|distill|collate|consolidate|critique|report|list|show|display|print|cite|enumerate|present)$/i;
+  var ACTION = /^(?:summari[sz]e|synthesi[sz]e|explain|describe|compare|contrast|provide|give|tell|write|draft|translate|analy[sz]e|review|outline|discuss|recommend|suggest|answer|rank|evaluate|assess|extract|generate|create|condense|paraphrase|rewrite|elaborate|clarify|compile|aggregate|digest|interpret|distill|collate|consolidate|critique|report|list|show|display|print|cite|enumerate|present|open|read|visit|click|browse|fetch|download|navigate|follow|check|verify)$/i;
   /* Google operators: a prefixed word (`-cats`, `+rust`, `~term`, `@handle`),
      a known colon operator (`site:x`, `intitle:x`, …), `OR`, `*`, a year. */
   var OPERATOR = /^(?:[-+~@]\S|(?:site|intitle|inurl|intext|allintitle|allinurl|allintext|filetype|ext|related|cache|define|before|after|source|loc|location|lang|inanchor|allinanchor|daterange|around):\S|\*$|\d{1,4}$)/i;
@@ -2496,7 +2496,7 @@ function looksLikeNlSearch(text) {
      object pronoun or action verb in it. `first 2 results for Rust
      summarize them` stays in chat on `them`. */
   var SCAFFOLD = /^(?:google|serpapi|the|a|an|web|internet|on|with|using|via|across|from|for|about|of|in)$/i;
-  var PRONOUN = /^(?:it|its|them|their|this|that|these|those|me|my|us|our|him|her|you|your)$/i;
+  var PRONOUN = /^(?:it|its|them|their|this|that|these|those|me|my|us|our|him|her|you|your|each|every|both)$/i;
   var words = masked.split(/\s+/)
     .map(function (t) { return t.replace(/^[(\[]+|[)\],.;:!?]+$/g, ''); })
     .filter(function (t) { return t && t !== Q && t !== OPQ; });
