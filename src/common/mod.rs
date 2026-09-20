@@ -76,3 +76,29 @@ pub fn clip_chars(text: &str, max: usize) -> String {
 
 /// Fixed byte ceiling for an explicitly reviewed pull-request description.
 pub const MAX_PR_BODY_BYTES: usize = 65_536;
+
+#[cfg(test)]
+mod tests {
+    /// Timestamps are `f64` seconds and travel through JSON on every route.
+    /// The value below is one of the 17-significant-digit shapes that
+    /// serde_json's default fast float parser rounds to the neighbouring
+    /// double; the `float_roundtrip` feature makes the parse exact, so a
+    /// value written by the server compares equal after a client re-parse.
+    #[test]
+    fn f64_timestamps_survive_a_json_round_trip_exactly() {
+        for text in ["1789875807.3327327", "1789875807.332733", "1758337152.1234567"] {
+            let parsed: f64 = serde_json::from_str(text).unwrap();
+            assert_eq!(
+                serde_json::to_string(&parsed).unwrap(),
+                text,
+                "shortest repr must round-trip"
+            );
+            let value: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert_eq!(value.as_f64(), Some(parsed));
+        }
+        let now = super::now_ts();
+        let encoded = serde_json::to_string(&now).unwrap();
+        let back: f64 = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(back.to_bits(), now.to_bits(), "{encoded}");
+    }
+}
