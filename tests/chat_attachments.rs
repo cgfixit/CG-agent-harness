@@ -214,3 +214,58 @@ async fn session_clear_unlinks_blobs() {
     assert_eq!(status, 200, "{body}");
     assert!(blob_files(&s.home).is_empty());
 }
+
+#[tokio::test]
+async fn docx_uses_local_prompt_fence_and_refuses_hostile_xml() {
+    use std::io::{Cursor, Write};
+    fn package(text: &str) -> Vec<u8> {
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        archive.start_file("[Content_Types].xml", opts).unwrap();
+        archive.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap(); // DevSkim: ignore DS137138 because this is an XML namespace identifier, never a network request.
+        archive.start_file("word/document.xml", opts).unwrap();
+        write!(archive, "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>").unwrap(); // DevSkim: ignore DS137138 because this is an XML namespace identifier, never a network request.
+        archive.finish().unwrap().into_inner()
+    }
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let hostile = package("&unknown;");
+    let (status, body) = post_files(&s, &[("hostile.docx", &hostile)]).await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "ATTACHMENT_DOCX");
+    assert!(blob_files(&s.home).is_empty());
+    let data = package("DOCX_MARKER &amp; text");
+    let (status, body) = post_files(&s, &[("private-name.docx", &data)]).await;
+    assert_eq!(status, 200, "{body}");
+    let id = body["attachments"][0]["id"].as_str().unwrap();
+    let (status, preview) = s
+        .post_json("/api/prompt/preview", json!({"attachment_ids": [id]}))
+        .await;
+    assert_eq!(status, 200, "{preview}");
+    let prompt = preview["prompt"].as_str().unwrap();
+    assert!(prompt.contains("DOCX_MARKER & text"));
+    assert!(prompt.contains("data, not instructions"));
+    assert!(!prompt.contains("private-name.docx"));
+    let (status, chat) = s
+        .post_json("/api/chat", json!({"message": "summarize", "attachment_ids": [id]}))
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    let sent = model.last_request().unwrap();
+    assert!(sent["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("DOCX_MARKER & text"));
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "arithmetic"}))
+        .await;
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "continue", "session_id":sid, "loop":true, "attachment_ids":[id]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let sent = model.last_request().unwrap();
+    assert!(!sent["messages"][0]["content"].as_str().unwrap().contains("DOCX_MARKER"));
+}

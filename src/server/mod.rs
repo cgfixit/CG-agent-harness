@@ -15,6 +15,7 @@ pub mod compaction;
 pub mod console;
 #[cfg(unix)]
 pub mod desktop;
+mod docx;
 pub mod env_keys;
 pub mod errors;
 pub mod generation_gate;

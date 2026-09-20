@@ -156,3 +156,16 @@ all-target tests, cargo-deny policies, fresh compatible-update previews,
 release packaging, and isolated native/backend acceptance. Workflow checks use
 checksum-verified actionlint 1.7.12 and zizmor 1.30.1. Remaining incompatible
 releases are recorded explicitly rather than claimed to be installed.
+
+## DOCX attachment reader (issue #148)
+
+| Dependency | License | Purpose |
+|---|---|---|
+| `zip` 8.6.0 | MIT | In-memory ZIP reader; default features off, deflate only |
+| `quick-xml` 0.42.0 | MIT | Incremental, namespace-aware main-document XML reading |
+
+No PDF reader or parser subprocess is included. The application lockfile
+SHA-256 `530a6ac90fc335589ac494f7a60936b882b71760c185d119a98c60e900ba6148`
+was audited with `cargo deny check` and prepared with `scripts/prepare-cargo.py`
+for offline verification. The DOCX limits and deliberate format exclusions are
+in [CONSOLE.md](CONSOLE.md#docx-attachments).

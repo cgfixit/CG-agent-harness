@@ -660,6 +660,12 @@ pub fn audit_record(owner: &str, blobs: &[AttachmentBlob]) -> Value {
 }
 
 fn classify_bytes(data: &[u8], ext: &str) -> Result<ClassifiedText> {
+    if ext == "docx" {
+        return super::docx::extract(data).map(|text| ClassifiedText {
+            magic_mime: super::docx::MIME,
+            text,
+        });
+    }
     if data.contains(&0) {
         return Err(HarnessError::new(
             "ATTACHMENT_NUL",
@@ -736,6 +742,7 @@ fn allowed_extension(filename: &str) -> Result<&'static str> {
         "json" => Ok("json"),
         "csv" => Ok("csv"),
         "log" => Ok("log"),
+        "docx" => Ok("docx"),
         _ => Err(HarnessError::new(
             "ATTACHMENT_TYPE",
             "file extension is not an allowed text type",
@@ -748,6 +755,7 @@ fn guessed_ext_from_mime(mime: &str) -> &'static str {
         "text/markdown" => "md",
         "text/csv" => "csv",
         "application/json" => "json",
+        super::docx::MIME => "docx",
         _ => "txt",
     }
 }
