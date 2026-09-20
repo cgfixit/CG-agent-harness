@@ -190,9 +190,11 @@ async fn run_inner(
                 let args: SearchArgs =
                     serde_json::from_str(args).map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
                 let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
-                // The tool contract bounds the raw argument; enforce it before the
-                // intent rewrite so a long instruction cannot shrink under the limit.
-                if query.chars().count() > crate::server::schemas::MAX_WEB_QUERY_LEN {
+                // The tool contract bounds the raw arguments; enforce both before
+                // the intent rewrite so a long instruction cannot shrink under the
+                // limit and a textual `first N` cannot mask an out-of-range count.
+                if !(1..=10).contains(&args.count) || query.chars().count() > crate::server::schemas::MAX_WEB_QUERY_LEN
+                {
                     return Err(error(
                         "WEB_BAD_QUERY",
                         "search needs a query of 1–200 characters and 1–10 results",

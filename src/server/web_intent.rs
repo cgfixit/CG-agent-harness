@@ -44,7 +44,7 @@ pub enum WebIntentParse {
 /// valid count; see [`parse_with_count`] for the three-way outcome.
 ///
 /// Two conditions must hold for a rewrite: the line must be command-shaped
-/// (it starts with `search` or `google` after optional politeness words, is
+/// (it starts with `search` after optional politeness words, is
 /// a `/web` remainder, or opens with `first N links|results|...` as the
 /// console's `/web search` remainder does), and it must carry an explicit
 /// signal, either balanced quoted terms or a `first N <noun>` count outside
@@ -113,8 +113,11 @@ const LEAD_IN: &[&str] = &[
     "please", "can", "could", "would", "you", "kindly", "hey", "ok", "okay", "now",
 ];
 
-/// Command verbs that open a natural-language search request.
-const VERBS: &[&str] = &["search", "google"];
+/// Command verbs that open a natural-language search request. `google` is
+/// deliberately not a verb: as the first word it is far more often the
+/// entity (`Google "privacy policy"`) than an instruction, and `search`
+/// followed by `Google` already covers the command form.
+const VERBS: &[&str] = &["search"];
 
 /// Nouns that make a leading `first N` read as a result-count clause
 /// (`first 2 links for rust`, the console's `/web search` remainder) rather
@@ -549,6 +552,22 @@ mod tests {
             WebIntentParse::Invalid(_) => {}
             other => panic!("expected Invalid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_leading_entity_name_is_not_a_verb() {
+        // `/web search Google "privacy policy"` reaches the server as the
+        // remainder `Google "privacy policy"`: a literal query, not a command.
+        assert_eq!(
+            parse_with_count("Google \"privacy policy\"", 5),
+            WebIntentParse::PassThrough
+        );
+        assert_eq!(
+            parse_with_count("google first 2 links for rust", 5),
+            WebIntentParse::PassThrough
+        );
+        let p = parse("search Google \"privacy policy\"").expect("intent");
+        assert_eq!(p.terms, vec!["privacy policy".to_string()]);
     }
 
     #[test]

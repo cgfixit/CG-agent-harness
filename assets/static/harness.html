@@ -739,7 +739,7 @@ async function api(path, method, body, timeoutMs, onDelta) {
   if (onDelta) opts.headers.Accept = 'text/event-stream';
   /* Attach the in-flight chat AbortController here (body only) so the
      contract parser that hand-reads call sites stays valid. */
-  if (inflightChat && path === '/api/chat' && (method || 'GET') === 'POST') {
+  if (inflightChat && (path === '/api/chat' || path === '/api/web/search') && (method || 'GET') === 'POST') {
     opts.signal = inflightChat.signal;
   }
   const key = apiKeyInput ? apiKeyInput.value.trim() : '';
@@ -2341,19 +2341,21 @@ async function onSend() {
 
 function looksLikeNlSearch(text) {
   /* Mirrors src/server/web_intent.rs: command-shaped (optional politeness
-     words, then a whole `search` / `google` token) plus a balanced quoted term
+     words, then a whole `search` token; `google` is an entity, not a verb)
+     plus a balanced quoted term
      or a `first N links|results|hits|pages` clause. A quote opens at a word
      start and closes at a word end, so the apostrophe inside
      'women's health' does not end the term, and `Google's` is not a verb.
      A compound "search ... and summarize/explain/..." request stays on the
-     chat path (also `; summarize it`, `and briefly summarize`): the listing
-     alone would drop the second half of the ask. Lead-in words and the verb
+     chat path (also `; summarize it`, `and briefly summarize`, `"..." to
+     summarize`): the listing alone would drop the second half of the ask. Lead-in words and the verb
      need whitespace (or end) after any trailing punctuation so
      `Please:search` and `search:first` tokenize like the server. */
-  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[,.;:!?]*\s+)*(?:search|google)[,.;:!?]*(?=$|\s)/i.test(text);
+  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[^\w\s]*\s+)*search[^\w\s]*(?=$|\s)/i.test(text);
   var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
   var counted = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/i.test(text);
-  var compound = /(?:\b(?:and|then)\b|[;,])\s*(?:\w+ly\s+)*(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\b/i.test(text);
+  var answerVerb = '(?:\\w+ly\\s+)*(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\\b';
+  var compound = new RegExp('(?:\\b(?:and|then)\\b|[;,])\\s*' + answerVerb + '|(?:["\']|\\b(?:links?|results?|hits?|pages?))\\s+to\\s+' + answerVerb, 'i').test(text);
   return commandShaped && (quoted || counted) && !compound;
 }
 
@@ -2366,6 +2368,12 @@ async function sendMaybeNlSearch(text) {
      fallback and the gate release all belong to a transcript that is gone. */
   const revision = sessionRevision;
   sendBtn.disabled = true;
+  /* Own an abort controller like sendChat so a session switch or logout
+     aborts the request itself (api() attaches inflightChat.signal to this
+     route) and releases the server's single search gate, instead of only
+     discarding the eventual result. */
+  const controller = new AbortController();
+  inflightChat = controller;
   let fallbackToChat = false;
   try {
     const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000);
@@ -2390,6 +2398,7 @@ async function sendMaybeNlSearch(text) {
     sys('search router did not run: ' + e.message);
     fallbackToChat = true;
   } finally {
+    if (inflightChat === controller) inflightChat = null;
     /* Release the gate when this request still owns the session, or when
        the revision moved (session switch, logout) without another chat turn
        taking the gate over; otherwise the console would stay locked after a
