@@ -88,11 +88,16 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
     };
 
     let count = explicit_count.unwrap_or(fallback_count);
-    let mut terms = quoted;
-    if terms.is_empty() {
-        terms = tokenize_unquoted(trimmed);
-    }
-    terms.retain(|t| !t.is_empty());
+    // Quoted phrases stay single terms; unquoted constraints around them
+    // (`site:github.com`, extra words) are kept in their original order.
+    let terms: Vec<String> = tokenize_unquoted(&residual)
+        .into_iter()
+        .filter_map(|tok| match placeholder_index(&tok) {
+            Some(n) => quoted.get(n).cloned(),
+            None => Some(tok),
+        })
+        .filter(|t| !t.is_empty())
+        .collect();
     if terms.is_empty() {
         return WebIntentParse::PassThrough;
     }
@@ -172,10 +177,20 @@ fn closes_quote(chars: &[char], j: usize) -> bool {
         || matches!(chars[j + 1], c if c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':' | ')' | ']' | '!' | '?'))
 }
 
-/// Balanced quoted terms plus the text that remains once those spans are
-/// removed. A quote opens at the start of a word and closes at the end of
-/// one, so an apostrophe inside `women's` or `what's` is an ordinary
-/// character and an unclosed quote is ignored.
+/// Placeholder token that stands in for the n-th quoted span inside the
+/// residual text. NUL cannot appear in a chat line, so it never collides.
+fn quote_placeholder(n: usize) -> String {
+    format!("\u{0}q{n}\u{0}")
+}
+
+fn placeholder_index(tok: &str) -> Option<usize> {
+    tok.strip_prefix("\u{0}q")?.strip_suffix('\u{0}')?.parse().ok()
+}
+
+/// Balanced quoted terms plus the text that remains once each span is
+/// replaced by a placeholder token. A quote opens at the start of a word and
+/// closes at the end of one, so an apostrophe inside `women's` or `what's`
+/// is an ordinary character and an unclosed quote is ignored.
 fn split_quoted(text: &str) -> (Vec<String>, String) {
     let mut terms = Vec::new();
     let mut residual = String::new();
@@ -188,9 +203,11 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
                 let t: String = chars[i + 1..j].iter().collect();
                 let t = t.trim();
                 if !t.is_empty() {
+                    residual.push(' ');
+                    residual.push_str(&quote_placeholder(terms.len()));
+                    residual.push(' ');
                     terms.push(t.to_string());
                 }
-                residual.push(' ');
                 i = j + 1;
                 continue;
             }
@@ -203,7 +220,9 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
 
 /// Words that may sit between the command verb and the subject
 /// (`search Google (serpapi) for the ...`).
-const AFTER_VERB: &[&str] = &["google", "serpapi", "for", "the", "on", "in", "using", "with", "web"];
+const AFTER_VERB: &[&str] = &[
+    "google", "serpapi", "for", "on", "in", "using", "with", "web", "internet",
+];
 
 /// Unquoted request: remove the command scaffolding by position (lead-in
 /// words, the verb, engine and preposition words right after it, and the
@@ -223,8 +242,19 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     }
     if i < lower.len() && VERBS.contains(&lower[i].as_str()) {
         i += 1;
-        while i < lower.len() && AFTER_VERB.contains(&lower[i].as_str()) {
-            i += 1;
+        loop {
+            if i < lower.len() && AFTER_VERB.contains(&lower[i].as_str()) {
+                i += 1;
+            } else if i + 1 < lower.len()
+                && lower[i] == "the"
+                && (AFTER_VERB.contains(&lower[i + 1].as_str()) || find_count_clause(&raw[i + 1..]) == Some(0))
+            {
+                // `the web`, `the first 2 links`: article that belongs to the
+                // scaffolding. A subject such as `The Who` keeps its article.
+                i += 1;
+            } else {
+                break;
+            }
         }
     }
     let mut rest: Vec<&str> = raw[i..].to_vec();
@@ -244,6 +274,17 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         }
         rest.drain(start..end);
     }
+    // `'a' and 'b'`: a joiner between two quoted spans is scaffolding too.
+    let mut keep = vec![true; rest.len()];
+    for k in 1..rest.len().saturating_sub(1) {
+        if matches!(word_of(rest[k]).to_ascii_lowercase().as_str(), "and" | "or" | "plus")
+            && placeholder_index(rest[k - 1]).is_some()
+            && placeholder_index(rest[k + 1]).is_some()
+        {
+            keep[k] = false;
+        }
+    }
+    let rest: Vec<&str> = rest.iter().zip(keep).filter(|(_, k)| *k).map(|(t, _)| *t).collect();
     // Subject tokens are kept verbatim apart from surrounding quote characters
     // and trailing sentence punctuation, so Google operators such as
     // `-pinterest`, `@handle`, `*` or `site:` survive.
@@ -330,7 +371,7 @@ mod tests {
             vec!["what's".to_string(), "new".into(), "in".into(), "rust".into()]
         );
         let p = parse("search for 'women's health' news").expect("intent");
-        assert_eq!(p.terms, vec!["women's health".to_string()]);
+        assert_eq!(p.terms, vec!["women's health".to_string(), "news".into()]);
     }
 
     #[test]
@@ -442,6 +483,27 @@ mod tests {
             parse_with_count("vector search benchmarks", 5),
             WebIntentParse::PassThrough
         );
+    }
+
+    #[test]
+    fn quoted_terms_keep_their_unquoted_constraints_in_order() {
+        let p = parse("search Google for \"rust async\" site:github.com first 2 results").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["rust async".to_string(), "site:github.com".into()]);
+        let p = parse("search for -reddit 'tokio tutorial' 2025").expect("intent");
+        assert_eq!(
+            p.terms,
+            vec!["-reddit".to_string(), "tokio tutorial".into(), "2025".into()]
+        );
+    }
+
+    #[test]
+    fn trailing_count_clause_keeps_a_leading_article() {
+        let p = parse("search for The Who first 2 results").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["The".to_string(), "Who".into()]);
+        let p = parse("search the web for the first 2 links for The Who").expect("intent");
+        assert_eq!(p.terms, vec!["The".to_string(), "Who".into()]);
     }
 
     #[test]

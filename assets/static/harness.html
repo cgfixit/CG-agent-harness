@@ -2347,7 +2347,7 @@ function looksLikeNlSearch(text) {
      'women's health' does not end the term, and `Google's` is not a verb.
      A compound "search ... and summarize/explain/..." request stays on the
      chat path: the listing alone would drop the second half of the ask. */
-  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\s,]+)*(?:search|google)(?=$|[\s,.;:!?])/i.test(text);
+  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\s,.;:!?]+)*(?:search|google)(?=$|[\s,.;:!?])/i.test(text);
   var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
   var counted = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/i.test(text);
   var compound = /\b(?:and|then)\s+(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\b/i.test(text);
@@ -2375,12 +2375,15 @@ async function sendMaybeNlSearch(text) {
     return;
   } catch (e) {
     if (revision !== sessionRevision) return;
-    if (e && e.code === 'WEB_BAD_QUERY') {
-      /* A malformed search request (e.g. `first 0 results`) is refused, not
-         re-routed to the model as if it were a question. */
+    if (e && typeof e.code === 'string' && e.code.indexOf('WEB_') === 0) {
+      /* The search route answered and refused (bad query, web disabled,
+         permission, provider or quota failure). That is the answer; a model
+         turn without search tools would only produce an ungrounded reply. */
       sys('search refused: ' + e.message);
       return;
     }
+    /* Only a routing / compatibility failure (network, unknown route,
+       validation envelope) falls back to the ordinary chat path. */
     sys('search router did not run: ' + e.message);
     fallbackToChat = true;
   } finally {
