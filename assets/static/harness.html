@@ -535,6 +535,15 @@ function abortInflightSearch() {
   if (!inflightSearch) return;
   try { inflightSearch.abort(); } catch (e) { /* already finished */ }
 }
+/* The send gate (sendBtn.disabled) is shared by chat turns and routed
+   searches. A turn that settles releases it only when nothing else still
+   owns it, so a search that started during a loop cooldown cannot re-open
+   the gate under a model turn that began afterwards (or vice versa). */
+function releaseSendGate() {
+  if (inflightChat || inflightSearch) return;
+  sendBtn.disabled = false;
+  input.focus();
+}
 
 function paintGoalLoop() {
   const g = $('sGoal');
@@ -2178,6 +2187,10 @@ async function runLoopTurns() {
     while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
       const framed = 'Continue toward the session goal. Be concise (local 27b). If the goal is fully satisfied, end with GOAL_DONE on its own line. Stay in this chat; do not request a real-repo write.';
+      /* A routed search started during the cooldown owns the gate; let it
+         settle rather than starting a model turn that overlaps it. */
+      while (inflightSearch && loopState === activeLoop && !loopState.stop) await sleepMs(250);
+      if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
       const reply = await sendChat(framed, true);
       if (loopState !== activeLoop) return;
       if (!loopState || loopState.stop) {
@@ -2327,7 +2340,7 @@ async function sendChat(text, asLoop, extra) {
   } finally {
     if (preview) preview.remove();
     if (inflightChat === controller) inflightChat = null;
-    if (revision === sessionRevision) { sendBtn.disabled = false; input.focus(); }
+    if (revision === sessionRevision) releaseSendGate();
   }
 }
 
@@ -2384,10 +2397,11 @@ function looksLikeNlSearch(text) {
      command head (lead-in words and the verb), once every quoted term and
      count clause is masked out, nothing left may open another clause: a
      connective (`and`, `but`, `then`, `so`, `plus`, `also`, `to`), a
-     standalone `&`, a semicolon, or a comma / period / `!` / `?` followed by
-     more words (`"Rust", summarize it`; `"Rust". Explain it`). Punctuation
-     glued to a word (`node.js`, `site:x.com`, `AT&T`) or at the very end is
-     not a boundary. A quoted term may span a line break (Shift+Enter). A
+     standalone `&`, a semicolon, a comma / period / colon / `!` / `?`
+     followed by more words (`"Rust", summarize it`; `"Rust": explain it`),
+     or a spaced dash (`"Rust" — summarize it`). Punctuation glued to a word
+     (`node.js`, `site:x.com`, `AT&T`, `-cats`) or at the very end is not a
+     boundary. A quoted term may span a line break (Shift+Enter). A
      joiner (`and`, `or`, `plus`) directly between two quoted terms is the
      scaffolding tokenize_unquoted drops (`'cgfixit' and 'Chris Grady'`),
      not a follow-up clause. The mask covers the
@@ -2414,7 +2428,7 @@ function looksLikeNlSearch(text) {
   if (signals === 0) return false;
   var joinerRe = /\u0000\s+(?:and|or|plus)\s+\u0000/i;
   while (joinerRe.test(masked)) masked = masked.replace(joinerRe, Q + ' ' + Q);
-  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|(?:^|\s)&(?:\s|$)|;|[,.!?]\s+[^\s\u0000])/i.test(masked);
+  return !/(?:\b(?:and|but|then|so|plus|also|to)\b|(?:^|\s)&(?:\s|$)|;|[,.!?:]\s+[^\s\u0000]|(?:^|\s)[-–—]\s+[^\s\u0000])/i.test(masked);
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
@@ -2486,7 +2500,7 @@ async function sendMaybeNlSearch(text) {
     /* Release the gate only while this request still owns the session. After
        a revision change the flow that moved it (session navigation, logout)
        owns the gate and releases it itself once its own request settles. */
-    if (revision === sessionRevision) { sendBtn.disabled = false; input.focus(); }
+    if (revision === sessionRevision) releaseSendGate();
   }
   if (fallbackToChat) await sendChat(text, false);
 }
@@ -2629,13 +2643,17 @@ if (hAuthLogout) {
        server-side gate instead of outliving the session. The revision is
        never rewound, even when logout is rejected: a session switch started
        meanwhile owns a newer revision and must keep it. */
-    abortInflightSearch(); ++sessionRevision;
+    abortInflightSearch();
+    const claimed = ++sessionRevision;
     sendBtn.disabled = true;
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
       if (!response.ok) {
-        sendBtn.disabled = false;
+        /* Release the gate only while this logout still owns the revision: a
+           session switch started meanwhile claimed a newer one and releases
+           the gate itself once its own request settles. */
+        if (sessionRevision === claimed) sendBtn.disabled = false;
         // Do not clear the page CSRF (const meta token). On 401/403 the
         // header is already rejected; whoami refreshes session UI so a
         // live cookie is visible. Restore the rejected line after whoami

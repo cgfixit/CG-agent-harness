@@ -193,29 +193,41 @@ async fn run_inner(
                 // The tool contract bounds the raw arguments; enforce both before
                 // the intent rewrite so a long instruction cannot shrink under the
                 // limit and a textual `first N` cannot mask an out-of-range count.
-                if !(1..=10).contains(&args.count) || query.chars().count() > crate::server::schemas::MAX_WEB_QUERY_LEN
+                // A refused argument is an ordinary tool failure (bounded reply,
+                // usage recorded), not a run error: the model already spent the
+                // turn that produced the call.
+                let planned = if !(1..=10).contains(&args.count)
+                    || query.chars().count() > crate::server::schemas::MAX_WEB_QUERY_LEN
                 {
-                    return Err(error(
+                    Err(error(
                         "WEB_BAD_QUERY",
                         "search needs a query of 1–200 characters and 1–10 results",
-                    ));
-                }
-                let (query, count) = match crate::server::web_intent::parse_with_count(&query, args.count) {
-                    crate::server::web_intent::WebIntentParse::Rewrite(intent) => (intent.query(), intent.count),
-                    crate::server::web_intent::WebIntentParse::PassThrough => (query, args.count),
-                    crate::server::web_intent::WebIntentParse::Invalid(message) => {
-                        return Err(error("WEB_BAD_QUERY", &message));
+                    ))
+                } else {
+                    match crate::server::web_intent::parse_with_count(&query, args.count) {
+                        crate::server::web_intent::WebIntentParse::Rewrite(intent) => {
+                            Ok((intent.query(), intent.count))
+                        }
+                        crate::server::web_intent::WebIntentParse::PassThrough => Ok((query, args.count)),
+                        crate::server::web_intent::WebIntentParse::Invalid(message) => {
+                            Err(error("WEB_BAD_QUERY", &message))
+                        }
                     }
                 };
-                let key = (query.to_lowercase(), count);
-                if let Some(result) = searches.get(&key) {
-                    Ok(Value::clone(result))
-                } else {
-                    let result = state.web.google_search(&query, count, true, &state.audit).await;
-                    if let Ok(value) = &result {
-                        searches.insert(key, value.clone());
+                match planned {
+                    Err(failure) => Err(failure),
+                    Ok((query, count)) => {
+                        let key = (query.to_lowercase(), count);
+                        if let Some(result) = searches.get(&key) {
+                            Ok(Value::clone(result))
+                        } else {
+                            let result = state.web.google_search(&query, count, true, &state.audit).await;
+                            if let Ok(value) = &result {
+                                searches.insert(key, value.clone());
+                            }
+                            result
+                        }
                     }
-                    result
                 }
             }
             "web_fetch" => {
