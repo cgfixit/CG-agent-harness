@@ -517,6 +517,17 @@ let currentStyleIssue = null;
    earlier one whose overlay takes longer to load, or the earlier handler
    would overwrite it server-side after the UI already shows the later choice. */
 let styleWriteChain = Promise.resolve();
+/* Settle every queued style write, including ones queued while waiting:
+   the chain can be replaced mid-await, so loop until the promise awaited is
+   still the current chain. Readers (polls, bare /style, /prompt, previews,
+   chat) use this so they never observe a selection a queued POST replaces. */
+async function awaitStyleWrites() {
+  for (;;) {
+    const chain = styleWriteChain;
+    await chain.catch(() => {});
+    if (chain === styleWriteChain) return;
+  }
+}
 /* Every /style request and every poll of the active session's style takes
    a ticket; a reply whose ticket is no longer the latest is discarded, so
    two quick dropdown changes end on the later choice and a poll never
@@ -1031,7 +1042,7 @@ async function refreshStyle() {
     /* Read only once queued writes have settled, so the poll cannot observe
        the selection a pending POST is about to replace; the ticket is taken
        after that wait so a write issued during it still wins. */
-    await styleWriteChain.catch(() => {});
+    await awaitStyleWrites();
     const ticket = ++styleRequestSeq;
     const r = await api('/api/style' + (session ? '?session_id=' + encodeURIComponent(session) : ''));
     if (ticket !== styleRequestSeq) return;
@@ -1526,7 +1537,7 @@ async function runSlash(line) {
       case 'prompt': {
         /* A style change still being persisted must land first, or the
            snapshot is composed and labelled with the previous style. */
-        await styleWriteChain.catch(() => {});
+        await awaitStyleWrites();
         const r = await api('/api/prompt/preview', 'POST', { session_id: currentSession || null });
         const st = r.style || {};
         const styleLine = !st.name ? 'active style: off'
@@ -1551,7 +1562,7 @@ async function runSlash(line) {
              state, not the selection a queued POST is about to replace; the
              ticket is retaken after the wait so this read shares one
              generation with polls and writes issued meanwhile. */
-          await styleWriteChain.catch(() => {});
+          await awaitStyleWrites();
           styleTicket = ++styleRequestSeq;
           const r = await api('/api/style?session_id=' + encodeURIComponent(styleSession));
           if (stale()) { sys('style reply superseded by a newer read, write or session change'); break; }
@@ -2483,7 +2494,7 @@ async function sendChat(text, asLoop, extra) {
      during that wait abandons the turn instead of posting it elsewhere. */
   sendBtn.disabled = true;
   const targetSession = currentSession;
-  await styleWriteChain.catch(() => {});
+  await awaitStyleWrites();
   if (revision !== sessionRevision || targetSession !== currentSession) {
     if (revision === sessionRevision) sendBtn.disabled = false;
     return null;
@@ -3036,7 +3047,7 @@ async function openSoulEditor(proposalOnly) {
 $('soulClose').addEventListener('click', () => { $('soulEditor').close(); $('soulContent').value = ''; $('soulFeedback').textContent = ''; });
 $('soulPreview').addEventListener('click', async () => {
   /* Same ordering as /prompt: a pending style write lands first. */
-  await styleWriteChain.catch(() => {});
+  await awaitStyleWrites();
   try { const r = await api('/api/prompt/preview', 'POST', {session_id:currentSession || null,soul_content:$('soulContent').value}); $('soulFeedback').textContent = r.scope + '\n' + r.prompt; }
   catch(e) { $('soulFeedback').textContent = e.message; }
 });
