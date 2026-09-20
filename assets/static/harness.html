@@ -734,13 +734,18 @@ function renderWebStatus(data) {
    regex, so every call would silently record as GET). Changing only this body is
    invisible to it. The parser also has no comment handling, so this comment must
    avoid writing the helper's name followed by an open paren. */
-async function api(path, method, body, timeoutMs, onDelta) {
+async function api(path, method, body, timeoutMs, onDelta, signal) {
   const opts = { method: method || 'GET', headers: {} };
   if (onDelta) opts.headers.Accept = 'text/event-stream';
   /* Attach the in-flight chat AbortController here (body only) so the
-     contract parser that hand-reads call sites stays valid. */
-  if (inflightChat && (path === '/api/chat' || path === '/api/web/search') && (method || 'GET') === 'POST') {
+     contract parser that hand-reads call sites stays valid. Other callers
+     that own an AbortController pass it as `signal`; it is composed with
+     the request timeout instead of replacing it. */
+  const chatSignal = inflightChat && path === '/api/chat' && (method || 'GET') === 'POST';
+  if (chatSignal) {
     opts.signal = inflightChat.signal;
+  } else if (signal) {
+    opts.signal = signal;
   }
   const key = apiKeyInput ? apiKeyInput.value.trim() : '';
   /* Sent on every request, not just the guarded ones: the open read routes
@@ -764,7 +769,7 @@ async function api(path, method, body, timeoutMs, onDelta) {
      AGENTIC_TIMEOUT/OPS envelope wins the race instead of a generic abort. */
   let resp;
   try {
-    resp = opts.signal
+    resp = chatSignal
       ? await fetch(path, opts)
       : await fetchWithTimeout(path, opts, timeoutMs || 15000);
   } catch (e) {
@@ -866,10 +871,18 @@ async function readChatStream(resp, onDelta) {
 async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  /* An external signal in options (a caller-owned AbortController) is
+     composed with the timeout: either one aborts the request. */
+  const outer = options.signal;
+  const relay = () => controller.abort();
+  if (outer) {
+    if (outer.aborted) controller.abort(); else outer.addEventListener('abort', relay, { once: true });
+  }
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     window.clearTimeout(timer);
+    if (outer) outer.removeEventListener('abort', relay);
   }
 }
 
@@ -2351,7 +2364,7 @@ function looksLikeNlSearch(text) {
      summarize`): the listing alone would drop the second half of the ask. Lead-in words and the verb
      need whitespace (or end) after any trailing punctuation so
      `Please:search` and `search:first` tokenize like the server. */
-  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[^\w\s]*\s+)*search[^\w\s]*(?=$|\s)/i.test(text);
+  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.test(text);
   var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
   var counted = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/i.test(text);
   var answerVerb = '(?:\\w+ly\\s+)*(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\\b';
@@ -2368,15 +2381,16 @@ async function sendMaybeNlSearch(text) {
      fallback and the gate release all belong to a transcript that is gone. */
   const revision = sessionRevision;
   sendBtn.disabled = true;
-  /* Own an abort controller like sendChat so a session switch or logout
-     aborts the request itself (api() attaches inflightChat.signal to this
-     route) and releases the server's single search gate, instead of only
-     discarding the eventual result. */
+  /* Own an abort controller like sendChat so /loop stop, a session switch
+     or logout aborts the request itself and releases the server's single
+     search gate, instead of only discarding the eventual result. The signal
+     is passed explicitly so unrelated callers of the same route (the
+     settings "Test Google search" button) keep their own timeout path. */
   const controller = new AbortController();
   inflightChat = controller;
   let fallbackToChat = false;
   try {
-    const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000);
+    const found = await api('/api/web/search', 'POST', { query: text, engine: 'google' }, 190000, null, controller.signal);
     if (revision !== sessionRevision) return;
     if (found && found.results) {
       sys(renderSearchResults(found));
@@ -2544,13 +2558,21 @@ if (hAuthLogout) {
   hAuthLogout.addEventListener('click', async function () {
     const headers = { 'Content-Type': 'application/json' };
     if (CSRF_TOKEN) headers['X-CyClaw-CSRF'] = CSRF_TOKEN;
-    /* Abort whatever request owns the send gate (a chat turn or a routed
-       search) so it releases the server-side gate instead of outliving the
-       session; logout then owns the console gate and releases it below. */
+    /* Claim the selection and the send gate before aborting, so the aborted
+       request's cleanup sees a foreign revision and cannot re-enable sending
+       against the old session while logout is in flight. Then abort whatever
+       owns the gate (a chat turn or a routed search) so it releases the
+       server-side gate instead of outliving the session. The claim is undone
+       only if the server rejects the logout. */
+    const priorRevision = sessionRevision;
+    ++sessionRevision;
+    sendBtn.disabled = true;
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
       if (!response.ok) {
+        sessionRevision = priorRevision;
+        sendBtn.disabled = false;
         // Do not clear the page CSRF (const meta token). On 401/403 the
         // header is already rejected; whoami refreshes session UI so a
         // live cookie is visible. Restore the rejected line after whoami
