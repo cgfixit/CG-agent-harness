@@ -436,8 +436,18 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     }
     if i < raw.len() && is_plain_word(raw[i], VERBS) {
         i = skip_engine_phrases(&lower, i + 1);
-        // At most one introducer; whatever follows is the subject.
-        if i < lower.len() && INTRODUCERS.contains(&lower[i].as_str()) {
+        // At most one introducer, and only when scaffolding follows it: a
+        // quoted term (`for "x"`), the count clause (`for first 2 links`,
+        // `for the first 2 links`). Before an unquoted subject the word may
+        // be the title's own (`About Time first 2 results`, `For Whom the
+        // Bell Tolls first 2 results`) and is kept; the provider treats a
+        // stray `for` as a stop word.
+        if i < lower.len()
+            && INTRODUCERS.contains(&lower[i].as_str())
+            && lower
+                .get(i + 1)
+                .is_none_or(|next| next == "the" || next == "first" || is_placeholder_word(next))
+        {
             i += 1;
         }
     }
@@ -736,7 +746,12 @@ mod tests {
         let p = parse("search for -reddit 'tokio tutorial' 2025").expect("intent");
         assert_eq!(
             p.terms,
-            vec!["-reddit".to_string(), "tokio tutorial".into(), "2025".into()]
+            vec![
+                "for".to_string(),
+                "-reddit".into(),
+                "tokio tutorial".into(),
+                "2025".into()
+            ]
         );
     }
 
@@ -752,7 +767,10 @@ mod tests {
     #[test]
     fn subject_leading_scaffold_lookalikes_are_kept() {
         let p = parse("search for in vitro fertilization first 2 results").expect("intent");
-        assert_eq!(p.terms, vec!["in".to_string(), "vitro".into(), "fertilization".into()]);
+        assert_eq!(
+            p.terms,
+            vec!["for".to_string(), "in".into(), "vitro".into(), "fertilization".into()]
+        );
         let p = parse("search Internet Archive first 2 results").expect("intent");
         assert_eq!(p.terms, vec!["Internet".to_string(), "Archive".into()]);
         let p = parse("search on Google the web for 'x'").expect("intent");
@@ -862,6 +880,13 @@ mod tests {
                 vec!["For", "Whom", "the", "Bell", "Tolls"],
             ),
             ("search first 2 links for \"rust\"", vec!["rust"]),
+            ("search About Time first 2 results", vec!["About", "Time"]),
+            (
+                "search For Whom the Bell Tolls first 2 results",
+                vec!["For", "Whom", "the", "Bell", "Tolls"],
+            ),
+            ("search for \"rust\" first 2 links", vec!["rust"]),
+            ("search for the first 2 links for \"rust\"", vec!["rust"]),
         ] {
             let p = parse(text).expect("intent");
             assert_eq!(
