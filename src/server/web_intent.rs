@@ -375,17 +375,18 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         }
         rest.drain(start..end);
     }
-    // A linked engine phrase that closes the request (`"Rust" with Google`,
-    // `"Rust" on the web`, `'x' first 2 links from serpapi`) is scaffolding.
-    // Only the trailing position is unambiguous: inside the subject the same
-    // words are content (`the web accessibility guidelines`, `data from
-    // Google Trends`), and a bare engine word is always content
-    // (`"privacy policy" Google`).
+    // A connected engine phrase that closes the request (`"Rust" with
+    // Google`, `"Rust" on the web`, `'x' first 2 links from serpapi`) is
+    // scaffolding. Only that shape is unambiguous: inside the subject the
+    // same words are content (`the web accessibility guidelines`, `data from
+    // Google Trends`), a bare engine word is always content (`"privacy
+    // policy" Google`), and a trailing `the web` without its connector is
+    // the subject's own (`history of the web`).
     loop {
         let lower_rest: Vec<String> = rest.iter().map(|t| word_of(t).to_ascii_lowercase()).collect();
         let trailing = (0..lower_rest.len()).find(|&k| {
             let len = linked_engine_phrase_len(&lower_rest, k);
-            len > 0 && k + len == lower_rest.len()
+            len > 0 && k + len == lower_rest.len() && ENGINE_LINKS.contains(&lower_rest[k].as_str())
         });
         match trailing {
             Some(k) => rest.truncate(k),
@@ -763,6 +764,12 @@ mod tests {
                 "Google".into(),
                 "Trends".into()
             ]
+        );
+        // A trailing `the web` without its connector belongs to the subject.
+        let p = parse("search first 2 results for history of the web").expect("intent");
+        assert_eq!(
+            p.terms,
+            vec!["history".to_string(), "of".into(), "the".into(), "web".into()]
         );
     }
 

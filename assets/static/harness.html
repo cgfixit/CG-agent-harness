@@ -2440,7 +2440,8 @@ function looksLikeNlSearch(text) {
      Anything else stays on the chat path, where the model still has the
      web tools when they are enabled. When quoted terms are present, every
      remaining word must be scaffolding or an operator (see below), so a
-     bare follow-up (`"Rust" summarize it`) stays in chat too. This errs
+     bare follow-up (`"Rust" summarize it`) stays in chat too; an unquoted
+     subject must be short and pronoun-free. This errs
      toward chat on purpose: a listing that drops half the ask is worse
      than a model turn. */
   var head = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\p{P}\p{S}]*\s+)*search[\p{P}\p{S}]*(?=$|\s)/iu.exec(text);
@@ -2466,15 +2467,19 @@ function looksLikeNlSearch(text) {
      must be search scaffolding (engine phrases, introducers, articles),
      a Google operator (`site:x`, `-word`, `OR`, `*`) or a year. A bare
      follow-up such as `"Rust" summarize it` fails this and stays in chat.
-     Without quotes the remainder IS the subject, so only the boundary check
-     above applies. */
-  if (quoted === 0) return true;
+     Without quotes the remainder IS the subject and cannot be whitelisted,
+     so it must at least look like a listing subject: a short run of words
+     (at most six beyond the scaffolding) with no object pronoun in it.
+     `first 2 results for Rust summarize them` stays in chat on `them`. */
   var SCAFFOLD = /^(?:google|serpapi|the|a|an|web|internet|on|with|using|via|across|from|for|about|of|in)$/i;
   var OPERATOR = /^(?:[-+~@]\S|\S*:\S|OR$|\*|\d{1,4}$)/;
-  return masked.split(/\s+/)
+  var PRONOUN = /^(?:it|its|them|their|this|that|these|those|me|my|us|our|him|her|you|your)$/i;
+  var words = masked.split(/\s+/)
     .map(function (t) { return t.replace(/^[(\[]+|[)\],.;:!?]+$/g, ''); })
-    .filter(function (t) { return t && t !== Q; })
-    .every(function (t) { return SCAFFOLD.test(t) || OPERATOR.test(t); });
+    .filter(function (t) { return t && t !== Q; });
+  var subject = words.filter(function (t) { return !SCAFFOLD.test(t) && !OPERATOR.test(t); });
+  if (quoted > 0) return subject.length === 0;
+  return subject.length <= 6 && !subject.some(function (t) { return PRONOUN.test(t); });
 }
 
 /* Mirrors src/server/schemas.rs MAX_WEB_QUERY_LEN: POST /api/web/search is
