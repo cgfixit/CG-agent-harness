@@ -100,7 +100,10 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
         .filter(|t| !t.is_empty())
         .collect();
     if terms.is_empty() {
-        return WebIntentParse::PassThrough;
+        // Command-shaped with a valid count clause but nothing to search for
+        // (`search first 2 results`): refuse rather than search the literal
+        // instruction with the fallback count.
+        return WebIntentParse::Invalid("search request has no subject after the count clause".into());
     }
     WebIntentParse::Rewrite(WebIntent { engine, count, terms })
 }
@@ -222,7 +225,7 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
 /// Engine names that may follow the verb (`search Google`, `search serpapi`).
 const ENGINES: &[&str] = &["google", "serpapi"];
 /// `search on Google`, `search with serpapi`, `search via Google`.
-const ENGINE_LINKS: &[&str] = &["on", "with", "using", "via"];
+const ENGINE_LINKS: &[&str] = &["on", "with", "using", "via", "across"];
 /// `search the web`, `search the internet`.
 const ENGINE_PLACES: &[&str] = &["web", "internet"];
 /// One optional word introducing the subject (`search for X`, `google about X`).
@@ -247,15 +250,21 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     if i < lower.len() && VERBS.contains(&lower[i].as_str()) {
         i += 1;
         // Engine phrases, in any number: `Google`, `(serpapi)`, `on Google`,
-        // `the web`. A bare `internet` or `in` is not consumed, so subjects
-        // such as `Internet Archive` or `in vitro fertilization` survive.
+        // `the web`, `on the web`. A bare `internet` or `in` is not consumed,
+        // so subjects such as `Internet Archive` or `in vitro fertilization`
+        // survive.
         loop {
             let at = |k: usize| lower.get(k).map(String::as_str);
             let linked_engine =
                 at(i).is_some_and(|w| ENGINE_LINKS.contains(&w)) && at(i + 1).is_some_and(|w| ENGINES.contains(&w));
             let place = at(i) == Some("the") && at(i + 1).is_some_and(|w| ENGINE_PLACES.contains(&w));
+            let linked_place = at(i).is_some_and(|w| ENGINE_LINKS.contains(&w))
+                && at(i + 1) == Some("the")
+                && at(i + 2).is_some_and(|w| ENGINE_PLACES.contains(&w));
             if at(i).is_some_and(|w| ENGINES.contains(&w)) {
                 i += 1;
+            } else if linked_place {
+                i += 3;
             } else if linked_engine || place {
                 i += 2;
             } else {
@@ -524,6 +533,22 @@ mod tests {
         assert_eq!(p.terms, vec!["Internet".to_string(), "Archive".into()]);
         let p = parse("search on Google the web for 'x'").expect("intent");
         assert_eq!(p.terms, vec!["x".to_string()]);
+        let p = parse("search on the web for first 2 results for Rust").expect("intent");
+        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        let p = parse("search across the internet for the first 2 links for Rust").expect("intent");
+        assert_eq!(p.terms, vec!["Rust".to_string()]);
+    }
+
+    #[test]
+    fn count_clause_without_a_subject_is_refused() {
+        match parse_with_count("search first 2 results", 5) {
+            WebIntentParse::Invalid(message) => assert!(message.contains("no subject"), "{message}"),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+        match parse_with_count("search Google for the first 3 links", 5) {
+            WebIntentParse::Invalid(_) => {}
+            other => panic!("expected Invalid, got {other:?}"),
+        }
     }
 
     #[test]

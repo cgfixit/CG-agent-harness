@@ -2347,9 +2347,10 @@ function looksLikeNlSearch(text) {
      'women's health' does not end the term, and `Google's` is not a verb.
      A compound "search ... and summarize/explain/..." request stays on the
      chat path (also `; summarize it`, `and briefly summarize`): the listing
-     alone would drop the second half of the ask. Lead-in words need
-     whitespace after them so `Please:search` tokenizes like the server. */
-  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[,.;:!?]*\s+)*(?:search|google)(?=$|[\s,.;:!?])/i.test(text);
+     alone would drop the second half of the ask. Lead-in words and the verb
+     need whitespace (or end) after any trailing punctuation so
+     `Please:search` and `search:first` tokenize like the server. */
+  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[,.;:!?]*\s+)*(?:search|google)[,.;:!?]*(?=$|\s)/i.test(text);
   var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
   var counted = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/i.test(text);
   var compound = /(?:\b(?:and|then)\b|[;,])\s*(?:\w+ly\s+)*(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\b/i.test(text);
@@ -2389,7 +2390,11 @@ async function sendMaybeNlSearch(text) {
     sys('search router did not run: ' + e.message);
     fallbackToChat = true;
   } finally {
-    if (revision === sessionRevision) { sendBtn.disabled = false; input.focus(); }
+    /* Release the gate when this request still owns the session, or when
+       the revision moved (session switch, logout) without another chat turn
+       taking the gate over; otherwise the console would stay locked after a
+       logout/login until reload. */
+    if (revision === sessionRevision || !inflightChat) { sendBtn.disabled = false; input.focus(); }
   }
   if (fallbackToChat) await sendChat(text, false);
 }
