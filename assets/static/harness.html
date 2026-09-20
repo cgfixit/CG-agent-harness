@@ -2309,6 +2309,10 @@ async function runSlash(line) {
           sys(table([['version', s.version], ['access', access]]));
           break;
         }
+        /* The style row must reflect the persisted state: settle queued
+           style writes and re-read the open session's shared selection. */
+        await awaitStyleWrites();
+        await refreshStyle(); paintStyle();
         sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider],
                    ['soul', s.soul_enabled ? 'on' : 'off'],
                    ['style', (currentStyle || 'off') + (currentStyleIssue ? ' (' + currentStyleIssue + ')' : '')],
