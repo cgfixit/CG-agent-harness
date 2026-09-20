@@ -151,6 +151,11 @@ pub fn parse_line(input: &str) -> SlashParse {
 
 fn split_second_intent(line: &str) -> (String, Option<String>) {
     let lower = line.to_ascii_lowercase();
+    // Only the conversational consolidation form has a second-intent grammar.
+    // In an exact save/search/rename command, these words belong to its data.
+    if !lower.starts_with("/memory consolidate ") && !lower.starts_with("/mem consolidate ") {
+        return (line.to_string(), None);
+    }
     let needle = " and search ";
     if let Some(idx) = lower.find(needle) {
         if idx > 0 {
@@ -187,9 +192,12 @@ fn parse_slash_primary(line: &str) -> SlashParse {
         // A style id is opaque: an overlay may be called `notes` or
         // `session`, which the filler list would otherwise swallow.
         ("style", _) => args.join(" "),
-        _ => strip_filler_tokens(&args).join(" "),
+        _ => args.join(" "),
     };
-    let fuzzy = aliased || sub_fuzzy || filler_was_stripped(after_cmd, sub.as_deref(), &args);
+    let fuzzy = aliased
+        || sub_fuzzy
+        || filler_was_stripped(after_cmd, sub.as_deref(), &args)
+        || (cmd == "memory" && sub.as_deref() == Some("consolidate") && rest != args.join(" "));
     let confidence = if !fuzzy && cmd_score == 100 {
         100
     } else if cmd_score == 100 {
@@ -208,7 +216,8 @@ fn parse_slash_primary(line: &str) -> SlashParse {
         canonical.push_str(&rest);
     }
 
-    let mutation = is_mutation(cmd, sub.as_deref());
+    let mutation = is_mutation(cmd, sub.as_deref())
+        || (cmd == "memory" && sub.as_deref() == Some("consolidate") && !rest.is_empty());
     let mut notice = None;
     if cmd == "memory" && sub.as_deref() == Some("consolidate") && rest.is_empty() {
         notice = Some(
@@ -370,19 +379,6 @@ fn filler_was_stripped(after_cmd: &[&str], sub: Option<&str>, args: &[&str]) -> 
     original != rebuilt
 }
 
-fn strip_filler_tokens<'a>(tokens: &'a [&'a str]) -> Vec<&'a str> {
-    tokens
-        .iter()
-        .copied()
-        .filter(|t| !is_filler(t) && !is_engine_paren(t))
-        .collect()
-}
-
-fn is_engine_paren(tok: &str) -> bool {
-    let t = tok.to_ascii_lowercase();
-    t.contains("serpapi") && t.starts_with('(')
-}
-
 fn id_tokens<'a>(tokens: &'a [&'a str]) -> Vec<&'a str> {
     tokens.iter().copied().filter(|t| looks_like_id(t)).collect()
 }
@@ -400,7 +396,10 @@ fn is_mutation(cmd: &str, sub: Option<&str>) -> bool {
         ("web", Some("allow" | "deny" | "on" | "off" | "inject" | "forget")) => true,
         ("api", _) => true,
         ("soul", Some("apply" | "reject" | "edit" | "propose")) => true,
-        ("memory", Some("forget" | "clear" | "save" | "remember" | "add")) => true,
+        ("soul", Some("on" | "off")) => true,
+        ("memory", Some("on" | "off" | "forget" | "clear" | "save" | "remember" | "add")) => true,
+        ("session", Some("new" | "rename" | "use")) => true,
+        ("goal" | "style" | "model" | "skill" | "loop", _) => true,
         (
             "memory",
             Some(
@@ -573,6 +572,39 @@ mod tests {
         let p = parse_line("/memory save keep the loopback bind :: operator confirmed");
         assert!(p.dispatch);
         assert_eq!(p.sub.as_deref(), Some("save"));
+        assert_eq!(
+            p.canonical.as_deref(),
+            Some("/memory save keep the loopback bind :: operator confirmed")
+        );
+    }
+
+    #[test]
+    fn exact_command_arguments_are_data_not_filler_or_second_intents() {
+        for line in [
+            "/memory save search the docs and search Google :: for my notes",
+            "/memory remember this is the note :: please keep this for me",
+            "/agent confirm this is the reason for my change",
+            "/session rename notes from this session",
+            "/goal the notes for this session",
+            "/web search the phrase and search Google",
+            "/api set EXAMPLE just-for-me",
+        ] {
+            let parsed = parse_line(line);
+            assert!(parsed.dispatch, "{line}: {parsed:?}");
+            assert_eq!(parsed.canonical.as_deref(), Some(line), "{line}");
+        }
+        for line in [
+            "/mem please save this note :: my reason",
+            "/agent please confirm for me",
+            "/memory please clear",
+            "/memory please on",
+            "/soul please off",
+            "/session please new",
+            "/model please use local",
+            "/memory consolidate please use 123456789abcdef0",
+        ] {
+            assert!(!parse_line(line).dispatch, "{line}");
+        }
     }
 
     #[test]
