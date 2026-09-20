@@ -1562,14 +1562,7 @@ async function runSlash(line) {
       }
 
       case 'prompt': {
-        /* Bind the session first, then let a style change still being
-           persisted land, or the snapshot is composed and labelled with the
-           previous style; a switch during the wait abandons the preview. */
-        const promptRevision = sessionRevision, promptSession = currentSession;
-        await awaitStyleWrites();
-        if (promptRevision !== sessionRevision || promptSession !== currentSession) { sys('prompt preview abandoned: the session changed'); break; }
-        const r = await api('/api/prompt/preview', 'POST', { session_id: promptSession || null });
-        if (promptRevision !== sessionRevision || promptSession !== currentSession) { sys('prompt preview discarded: the session changed'); break; }
+        const r = await previewChatPrompt();
         sys(previewStyleLine(r) + '\n' + r.scope + '\n\n' + r.prompt); break;
       }
       case 'style': {
@@ -2628,6 +2621,36 @@ async function uploadChatAttachments(files) {
   return (r && r.attachments ? r.attachments : []).map(function (row) { return row.id; }).filter(Boolean);
 }
 
+/* Preview the next turn's files without generating a reply. Uploaded ids
+   stay pending for Send, so repeated previews never spend the quota twice. */
+async function previewChatPrompt(extra) {
+  if (sendBtn.disabled) throw new Error('wait for the current request before previewing');
+  const revision = sessionRevision, session = currentSession;
+  const stale = () => revision !== sessionRevision || session !== currentSession;
+  sendBtn.disabled = true;
+  try {
+    await awaitStyleWrites();
+    if (stale()) throw new Error('prompt preview abandoned: the session changed');
+    const selection = attachInput && attachInput.files;
+    const files = selection ? Array.from(selection) : [];
+    if (files.length) {
+      const ids = await uploadChatAttachments(files);
+      if (stale()) throw new Error('prompt preview abandoned: the session changed; uploaded files remain until cleanup');
+      retryAttachmentIds = { session: session, ids: ids };
+      if (attachInput.files === selection) attachInput.value = '';
+      sys(ids.length + ' uploaded attachment(s) are pending for your next message in this session');
+    }
+    const ids = retryAttachmentIds && retryAttachmentIds.session === session ? retryAttachmentIds.ids : [];
+    const r = await api('/api/prompt/preview', 'POST', Object.assign({}, extra, {
+      session_id: session || null, attachment_ids: ids
+    }));
+    if (stale()) throw new Error('prompt preview discarded: the session changed');
+    return r;
+  } finally {
+    if (revision === sessionRevision) releaseSendGate();
+  }
+}
+
 function isLoopStopCommand(text) {
   /* Normalize before the in-flight gate, mirroring runSlash(): case
      insensitive, collapses extra whitespace, and ignores trailing text. */
@@ -3163,9 +3186,7 @@ async function openSoulEditor(proposalOnly) {
 }
 $('soulClose').addEventListener('click', () => { $('soulEditor').close(); $('soulContent').value = ''; $('soulFeedback').textContent = ''; });
 $('soulPreview').addEventListener('click', async () => {
-  /* Same ordering as /prompt: a pending style write lands first. */
-  await awaitStyleWrites();
-  try { const r = await api('/api/prompt/preview', 'POST', {session_id:currentSession || null,soul_content:$('soulContent').value}); $('soulFeedback').textContent = previewStyleLine(r) + '\n' + r.scope + '\n' + r.prompt; }
+  try { const r = await previewChatPrompt({soul_content:$('soulContent').value}); $('soulFeedback').textContent = previewStyleLine(r) + '\n' + r.scope + '\n' + r.prompt; }
   catch(e) { $('soulFeedback').textContent = e.message; }
 });
 async function submitSoul(propose) {
