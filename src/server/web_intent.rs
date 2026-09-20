@@ -170,13 +170,15 @@ fn extract_count(lower: &str) -> Option<Result<usize, String>> {
     let toks: Vec<&str> = lower.split_whitespace().collect();
     let k = find_count_clause(&toks)?;
     let tok = toks[k + 1];
-    // `word_of` drops a leading sign, so `first -2 results` would otherwise
-    // be searched as two results. A signed count is refused, never coerced.
-    let signed = tok
-        .trim_start_matches(|c: char| !c.is_alphanumeric() && c != '+' && c != '-')
-        .starts_with(['+', '-']);
-    Some(match word_of(tok).parse::<usize>() {
-        Ok(v) if !signed && (1..=MAX_COUNT).contains(&v) => Ok(v),
+    // `word_of` drops any leading sign, so `first -2 results` (or a Unicode
+    // minus, `first \u{2212}2 results`) would otherwise be searched as two
+    // results. Only an opening bracket or quote may precede the digits; any
+    // other leading character makes the count invalid rather than coerced.
+    let core = tok
+        .trim_start_matches(['(', '[', '"', '\''])
+        .trim_end_matches(|c: char| !c.is_alphanumeric());
+    Some(match core.parse::<usize>() {
+        Ok(v) if core.chars().all(|c| c.is_ascii_digit()) && (1..=MAX_COUNT).contains(&v) => Ok(v),
         _ => Err(format!(
             "result count must be an unsigned number between 1 and {MAX_COUNT}"
         )),
@@ -206,28 +208,34 @@ fn placeholder_index(tok: &str) -> Option<usize> {
 /// replaced by a placeholder token. A quote opens at the start of a word and
 /// closes at the end of one, so an apostrophe inside `women's` or `what's`
 /// is an ordinary character and an unclosed quote is ignored.
+///
+/// Google's quoted exclusion `-"cats"` is one span too: the operator and the
+/// quotes stay attached (`-"cats"`, `-"Chris Grady"`), so the provider sees
+/// the exclusion of the whole phrase instead of a detached `-"cats`.
 fn split_quoted(text: &str) -> (Vec<String>, String) {
     let mut terms = Vec::new();
     let mut residual = String::new();
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        let c = chars[i];
-        if (c == '"' || c == '\'') && opens_quote(&chars, i) {
-            if let Some(j) = (i + 1..chars.len()).find(|&j| chars[j] == c && closes_quote(&chars, j)) {
-                let t: String = chars[i + 1..j].iter().collect();
+        let excluded = chars[i] == '-' && opens_quote(&chars, i) && matches!(chars.get(i + 1), Some('"' | '\''));
+        let q_at = if excluded { i + 1 } else { i };
+        let q = chars[q_at];
+        if (q == '"' || q == '\'') && (excluded || opens_quote(&chars, i)) {
+            if let Some(j) = (q_at + 1..chars.len()).find(|&j| chars[j] == q && closes_quote(&chars, j)) {
+                let t: String = chars[q_at + 1..j].iter().collect();
                 let t = t.trim();
                 if !t.is_empty() {
                     residual.push(' ');
                     residual.push_str(&quote_placeholder(terms.len()));
                     residual.push(' ');
-                    terms.push(t.to_string());
+                    terms.push(if excluded { format!("-{q}{t}{q}") } else { t.to_string() });
                 }
                 i = j + 1;
                 continue;
             }
         }
-        residual.push(c);
+        residual.push(chars[i]);
         i += 1;
     }
     (terms, residual)
@@ -609,10 +617,25 @@ mod tests {
     }
 
     #[test]
+    fn quoted_exclusions_keep_operator_and_quotes() {
+        let p = parse("search -\"cats\" first 2 results").expect("intent");
+        assert_eq!(p.count, 2);
+        assert_eq!(p.terms, vec!["-\"cats\"".to_string()]);
+        let p = parse("search \"dogs\" -'Chris Grady'").expect("intent");
+        assert_eq!(p.terms, vec!["dogs".to_string(), "-'Chris Grady'".into()]);
+        assert_eq!(p.query(), "dogs -'Chris Grady'");
+        // A hyphen inside a word is not an exclusion operator.
+        let p = parse("search first 2 links for well-known rust").expect("intent");
+        assert_eq!(p.terms, vec!["well-known".to_string(), "rust".into()]);
+    }
+
+    #[test]
     fn signed_result_counts_are_refused_not_coerced() {
         for text in [
             "search \"Rust\" first -2 results",
             "search \"Rust\" first +2 results",
+            "search \"Rust\" first \u{2212}2 results",
+            "search \"Rust\" first \u{2013}2 results",
             "search first -2 links for rust",
             "search first (-2) links for rust",
         ] {
@@ -621,8 +644,10 @@ mod tests {
                 other => panic!("{text:?} should be refused, got {other:?}"),
             }
         }
-        // A plain number with trailing punctuation is still a count.
+        // A plain number with trailing punctuation or brackets is still a count.
         let p = parse("search first 2, links for rust").expect("intent");
+        assert_eq!(p.count, 2);
+        let p = parse("search first (2) links for rust").expect("intent");
         assert_eq!(p.count, 2);
     }
 
