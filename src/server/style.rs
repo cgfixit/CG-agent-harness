@@ -164,13 +164,16 @@ pub fn list_catalog(home: &Path) -> Vec<(String, &'static str)> {
             ((*id).to_string(), origin)
         })
         .collect();
-    if let Ok(rd) = std::fs::read_dir(home.join("styles")) {
+    // Enumerate overlays through the same capability jail `read_overlay` uses:
+    // the listing is relative to `home`, never an ambient path built from it.
+    let overlays = Dir::open_ambient_dir(home, cap_std::ambient_authority()).and_then(|dir| dir.read_dir("styles"));
+    if let Ok(rd) = overlays {
         for entry in rd.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("md") {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
                 continue;
-            }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            };
+            let Some(stem) = name.strip_suffix(".md") else {
                 continue;
             };
             if !valid_style_id(stem) {
