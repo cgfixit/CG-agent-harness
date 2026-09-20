@@ -384,6 +384,7 @@ pub async fn preview(
         memory_budget,
         memory_enabled: settings.memory_enabled,
         web_enabled: settings.web_enabled,
+        style_name: None,
         attachment_fence: Some(attachment_fence.as_str()),
     };
     let prompt = compose_system_prompt(&inputs);

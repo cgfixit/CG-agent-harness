@@ -1,3 +1,5 @@
+Historical. See [DESKTOP.md](DESKTOP.md). Do not treat this file as current operator procedure.
+
 # Desktop acceptance
 
 ## Native exact-artifact matrix (tip `22520f3`)

@@ -81,7 +81,8 @@ GitHub publication, startup recovery or descendant termination.
 
 The following describes the earlier recorded model/runtime, not the current
 HTTPS/account acceptance. Current security evidence is in
-[DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md) and [SECURE_RESEARCH.md](SECURE_RESEARCH.md).
+[SECURE_RESEARCH.md](SECURE_RESEARCH.md). Historical native matrix:
+[DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
 
 On the target Apple M5 Pro/48 GiB, macOS 26.6.2, actual Chrome exercised the flow
 with installed `qwen3.8:27b`, a separate Ollama process with Seatbelt non-loopback
