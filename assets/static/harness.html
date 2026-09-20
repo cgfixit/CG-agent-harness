@@ -2646,12 +2646,23 @@ async function onSend() {
   if (files.length) {
     /* An attached file grounds a model turn; a line with attachments is
        never routed to the listing search. */
+    /* Hold the send gate and bind the session for the whole upload-plus-chat
+       operation: a large upload must not let a second Enter start another
+       send, nor let a session switch redirect the message. */
+    const uploadRevision = sessionRevision, uploadSession = currentSession;
+    sendBtn.disabled = true;
     let extra;
     try {
       extra = { attachment_ids: await uploadChatAttachments(files) };
       if (attachInput) attachInput.value = '';
     } catch (e) {
+      if (uploadRevision === sessionRevision) sendBtn.disabled = false;
       sys('error: ' + ((e && e.message) || e));
+      return;
+    }
+    if (uploadRevision !== sessionRevision || uploadSession !== currentSession) {
+      if (uploadRevision === sessionRevision) sendBtn.disabled = false;
+      sys('the session changed while the files were uploading; the message was not sent (the uploads count toward the home quota until the session is cleared)');
       return;
     }
     await sendChat(text, false, extra);

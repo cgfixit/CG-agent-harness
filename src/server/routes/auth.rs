@@ -391,10 +391,13 @@ pub async fn delete_user(
         return Err(denied());
     }
     let manager = manager(&state)?;
-    if let Some(summary) = manager.get_user(&username) {
-        let _ = state.attachments.unlink_owner(&summary.user_id);
-    }
+    // Blobs go only once the account is actually gone: a refused deletion
+    // (last enabled admin, persistence failure) must not lose user data.
+    let owner = manager.get_user(&username).map(|summary| summary.user_id);
     manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
+    if let Some(owner) = owner {
+        let _ = state.attachments.unlink_owner(&owner);
+    }
     Ok(Json(json!({"ok": true})))
 }
 
