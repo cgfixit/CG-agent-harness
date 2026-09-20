@@ -174,6 +174,8 @@ pub struct PromptInputs<'a> {
     pub memory_budget: MemoryBudget,
     pub memory_enabled: bool,
     pub web_enabled: bool,
+    /// Tools actually attached to this request; loop turns remain tool-free.
+    pub chat_tools_enabled: bool,
     pub attachment_fence: Option<&'a str>,
 }
 
@@ -316,7 +318,9 @@ pub fn compose_system_prompt_detailed(inputs: &PromptInputs<'_>) -> ComposedProm
         style_load = Some(loaded);
     }
     parts.push(HEADER.to_string());
-    parts.push(super::tool_inventory::available_tools_markdown(inputs.web_enabled));
+    parts.push(super::tool_inventory::available_tools_markdown(
+        inputs.chat_tools_enabled,
+    ));
     parts.push(CAPABILITIES.to_string());
     parts.push(format!(
         "Current inclusion settings: memory={}, web={}, soul={}, style={}. Enabled does not imply content is present. Soul and style appear above this contract when loaded; other included content appears below.",
@@ -429,6 +433,7 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            chat_tools_enabled: false,
             web_enabled: false,
             attachment_fence: None,
         });
@@ -457,6 +462,7 @@ mod tests {
             selected_facts_context: Some(facts),
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            chat_tools_enabled: false,
             web_enabled: false,
             attachment_fence: None,
         });
@@ -480,6 +486,7 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            chat_tools_enabled: web_enabled,
             web_enabled,
             style_name: None,
             attachment_fence,
@@ -505,7 +512,7 @@ mod tests {
         let prompt = compose_system_prompt(&sample(&soul, true, None));
         assert!(prompt.contains("web_search"));
         assert!(prompt.contains("web_fetch"));
-        assert!(prompt.contains("you MAY call: web_search, web_fetch"));
+        assert!(prompt.contains("you MAY call: web_fetch, web_search"));
         assert!(!prompt.contains("session_new"));
     }
 
@@ -537,6 +544,7 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            chat_tools_enabled: false,
             web_enabled: false,
             style_name: None,
             attachment_fence: Some(fence),
@@ -566,6 +574,7 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            chat_tools_enabled: false,
             web_enabled: false,
             attachment_fence: None,
         };
@@ -611,6 +620,7 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            chat_tools_enabled: false,
             web_enabled: false,
             attachment_fence: None,
         });
@@ -639,6 +649,7 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            chat_tools_enabled: false,
             web_enabled: false,
             attachment_fence: None,
         });

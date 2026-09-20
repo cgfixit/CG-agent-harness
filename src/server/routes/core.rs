@@ -54,7 +54,7 @@ pub async fn status(
         "home": state.home.root.display().to_string(),
         "repo_root": Value::Null,
         "chat_mode": "conversation",
-        "chat_tools_available": settings.web_enabled,
+        "chat_tools_available": settings.web_enabled && !state.cloud_chat.is_cloud_selection(&state.current_model()),
         "sessions": sessions.len(),
         "total_tokens": total_tokens,
         "layout": {
@@ -546,6 +546,7 @@ async fn chat_inner(
             selected_facts_context: Some(&facts),
             memory_budget,
             memory_enabled: settings.memory_enabled,
+            chat_tools_enabled: settings.web_enabled && !req.loop_turn,
             web_enabled: settings.web_enabled,
             attachment_fence: Some(attachment_fence.as_str()),
         })
