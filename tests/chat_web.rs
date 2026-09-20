@@ -11,6 +11,29 @@ use std::sync::{
 };
 
 #[tokio::test]
+async fn loop_prompt_does_not_advertise_tools_even_with_web_enabled() {
+    let model = common::start_mock_model().await;
+    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    s.post_json("/api/web", json!({"enabled":true})).await;
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let id = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{id}/goal"),
+        json!({"goal":"Explain arithmetic"}),
+    )
+    .await;
+    let (status, body) = s
+        .post_json("/api/chat", json!({"message":"continue", "session_id":id, "loop":true}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let request = model.last_request().unwrap();
+    assert!(request.get("tools").is_none());
+    let prompt = request["messages"][0]["content"].as_str().unwrap();
+    assert!(!prompt.contains("you MAY call:"));
+    assert!(prompt.contains("This turn has no chat-callable web tools"));
+}
+
+#[tokio::test]
 async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let reads = Arc::new(AtomicUsize::new(0));

@@ -384,6 +384,7 @@ pub async fn preview(
         selected_facts_context: Some(&facts),
         memory_budget,
         memory_enabled: settings.memory_enabled,
+        chat_tools_enabled: settings.web_enabled,
         web_enabled: settings.web_enabled,
         attachment_fence: Some(attachment_fence.as_str()),
     };
