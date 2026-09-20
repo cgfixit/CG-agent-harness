@@ -66,6 +66,17 @@ def _handle(message):
     if method == "tools/call":
         name = (message.get("params") or {}).get("name")
         args = (message.get("params") or {}).get("arguments") or {}
+        if name == "header_flood":
+            # Never terminate the oversized header: the client must refuse it
+            # before waiting for the request timeout or a newline.
+            sys.stdout.buffer.write(b"X" * 4097)
+            sys.stdout.buffer.flush()
+            threading.Event().wait(10)
+            os._exit(1)
+        if name == "stderr_flood":
+            sys.stderr.buffer.write("界".encode() * (1024 * 1024))
+            sys.stderr.buffer.flush()
+            os._exit(1)
         if name == "crash":
             os._exit(1)
         if name == "env_probe":

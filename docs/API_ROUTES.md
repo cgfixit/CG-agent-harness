@@ -138,7 +138,9 @@ running portal.
 | POST | `/api/mcp/call` | Call one declared MCP tool; `confirm` is never defaulted |
 
 SSE MCP URLs are DNS-pinned. Loopback SSE requires `mcp.sse_allow_loopback: true`.
-MCP tools are not attached to `/loop`.
+MCP tools are not attached to `/loop`. Stdio response headers are limited to 4 KiB,
+including unterminated lines. Child stderr diagnostics read at most 2 KiB and
+retain up to 512 Unicode characters; this does not cap the stderr log file itself.
 
 ## Coding agent
 

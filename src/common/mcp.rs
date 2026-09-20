@@ -111,7 +111,12 @@ pub struct StdioOutcome {
 }
 
 fn stderr_snip(path: &Path) -> String {
-    let bytes = std::fs::read(path).unwrap_or_default();
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    if let Ok(file) = std::fs::File::open(path) {
+        // At most four UTF-8 bytes per retained character.
+        let _ = file.take(512 * 4).read_to_end(&mut bytes);
+    }
     String::from_utf8_lossy(&bytes).chars().take(512).collect()
 }
 
@@ -252,17 +257,15 @@ impl StdioClient {
     async fn read(&mut self) -> Result<Value> {
         let mut headers = Vec::new();
         loop {
-            let mut line = String::new();
-            let n = self
-                .stdout
-                .read_line(&mut line)
+            let n = (&mut self.stdout)
+                .take((MAX_HEADER_BYTES - headers.len() + 1) as u64)
+                .read_until(b'\n', &mut headers)
                 .await
                 .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
             if n == 0 {
                 let snip = stderr_snip(&self.stderr_path);
                 return Err(mcp_err("MCP_STDIO", format!("stdio MCP child closed; stderr={snip}")));
             }
-            headers.extend(line.as_bytes());
             if headers.len() > MAX_HEADER_BYTES {
                 return Err(mcp_err("MCP_PROTOCOL", "stdio headers exceeded 4 KiB"));
             }
@@ -270,7 +273,7 @@ impl StdioClient {
                 break;
             }
         }
-        let text = String::from_utf8_lossy(&headers);
+        let text = std::str::from_utf8(&headers).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?;
         let mut length = 0usize;
         for line in text.split(['\r', '\n']) {
             if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:") {
