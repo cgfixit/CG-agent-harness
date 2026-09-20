@@ -272,8 +272,9 @@ fn quote_after_operator(chars: &[char], i: usize) -> Option<usize> {
 
 /// Engine names that may follow the verb (`search Google`, `search serpapi`).
 const ENGINES: &[&str] = &["google", "serpapi"];
-/// `search on Google`, `search with serpapi`, `search via Google`.
-const ENGINE_LINKS: &[&str] = &["on", "with", "using", "via", "across"];
+/// `search on Google`, `search with serpapi`, `search via Google`,
+/// `first 2 results from Google`.
+const ENGINE_LINKS: &[&str] = &["on", "with", "using", "via", "across", "from"];
 /// `search the web`, `search the internet`.
 const ENGINE_PLACES: &[&str] = &["web", "internet"];
 /// One optional word introducing the subject (`search for X`, `google about X`).
@@ -655,6 +656,9 @@ mod tests {
         assert_eq!(p.terms, vec!["Rust".to_string()]);
         let p = parse("search the first 3 links on the web about rust async").expect("intent");
         assert_eq!(p.terms, vec!["rust".to_string(), "async".into()]);
+        let p = parse("search first 2 results from Google for Rust").expect("intent");
+        assert_eq!(p.engine, SearchEngine::Google);
+        assert_eq!(p.terms, vec!["Rust".to_string()]);
         let p = parse("search first 2 links using serpapi for 'cgfixit'").expect("intent");
         assert_eq!(p.engine, SearchEngine::Serpapi);
         assert_eq!(p.terms, vec!["cgfixit".to_string()]);
