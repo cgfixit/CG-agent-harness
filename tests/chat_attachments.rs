@@ -222,9 +222,9 @@ async fn docx_uses_local_prompt_fence_and_refuses_hostile_xml() {
         let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let opts = zip::write::SimpleFileOptions::default();
         archive.start_file("[Content_Types].xml", opts).unwrap();
-        archive.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap();
+        archive.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap(); // DevSkim: ignore DS137138 because this is an XML namespace identifier, never a network request.
         archive.start_file("word/document.xml", opts).unwrap();
-        write!(archive, "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>").unwrap();
+        write!(archive, "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>").unwrap(); // DevSkim: ignore DS137138 because this is an XML namespace identifier, never a network request.
         archive.finish().unwrap().into_inner()
     }
     let model = start_mock_model().await;

@@ -9,9 +9,9 @@ use quick_xml::{events::Event, name::ResolveResult, reader::NsReader};
 use crate::common::errors::{HarnessError, Result};
 
 pub const MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const WORD: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-const WORD_STRICT: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
-const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+const WORD: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"; // DevSkim: ignore DS137138 because this is an XML namespace identifier, never a network request.
+const WORD_STRICT: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main"; // DevSkim: ignore DS137138 because this is an XML namespace identifier, never a network request.
+const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types"; // DevSkim: ignore DS137138 because this is an XML namespace identifier, never a network request.
 const DOCUMENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
 // Fixed hostile-input ceilings, not promises to support every Word document.
 const XML_BYTES: usize = 1024 * 1024;
