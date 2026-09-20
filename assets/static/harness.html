@@ -509,6 +509,11 @@ async function recallPrompt(direction) {
 let soulEnabled = true;
 let currentStyle = 'off';
 let styleOptionsLoaded = false;
+/* Every /style request and every poll of the active session's style takes
+   a ticket; a reply whose ticket is no longer the latest is discarded, so
+   two quick dropdown changes end on the later choice and a poll never
+   overwrites a selection that is still being set. */
+let styleRequestSeq = 0;
 let soulStatus = {};
 let memoryEnabled = false;
 /* A staged (not yet sent) agent run. The server's own gate needs an explicit
@@ -909,6 +914,7 @@ async function refreshStatus() {
     paintSoul();
     paintMemory();
     await ensureStyleOptions();
+    await refreshSessionStyle();
     paintStyle();
     $('hDot').style.background = 'var(--accent-green)';
     statusBackoffMs = STATUS_BASE_INTERVAL;
@@ -945,6 +951,19 @@ function paintMemory() {
   if (!v) return;
   v.textContent = memoryEnabled ? 'on' : 'off';
   v.className = 'v ' + (memoryEnabled ? 'on' : 'off');
+}
+/* Sessions are shared portal resources: another tab or API client may
+   change the open session's style, so each status poll re-reads it. A
+   reply is dropped when the session changed underneath it or a /style
+   request was issued meanwhile (that request's reply is the newer truth). */
+async function refreshSessionStyle() {
+  if (!currentSession) return;
+  const revision = sessionRevision, session = currentSession, ticket = styleRequestSeq;
+  try {
+    const r = await api('/api/style?session_id=' + encodeURIComponent(session));
+    if (revision !== sessionRevision || session !== currentSession || ticket !== styleRequestSeq) return;
+    currentStyle = r.style || 'off';
+  } catch (e) { /* status poll already reports connectivity; keep the last known value */ }
 }
 async function ensureStyleOptions() {
   const sel = $('sStyle');
@@ -1418,8 +1437,8 @@ async function runSlash(line) {
         /* A reply that lands after the operator switched, cleared or logged
            out must not repaint the new selection with the old session's
            style; the server-side value of the old session is unaffected. */
-        const styleRevision = sessionRevision, styleSession = currentSession;
-        const stale = () => styleRevision !== sessionRevision || styleSession !== currentSession;
+        const styleRevision = sessionRevision, styleSession = currentSession, styleTicket = ++styleRequestSeq;
+        const stale = () => styleRevision !== sessionRevision || styleSession !== currentSession || styleTicket !== styleRequestSeq;
         if (!name) {
           const r = await api('/api/style?session_id=' + encodeURIComponent(styleSession));
           if (stale()) { sys('style reply for a previous session ignored'); break; }
@@ -1428,7 +1447,7 @@ async function runSlash(line) {
           break;
         }
         const r = await api('/api/style', 'POST', { session_id: styleSession, name: name });
-        if (stale()) { sys('style ' + (r.style || 'off') + ' was set on a previous session; the current selection is unchanged'); break; }
+        if (stale()) { sys('style ' + (r.style || 'off') + ' was set, but a newer selection or session change supersedes it in the status bar'); break; }
         currentStyle = r.style || 'off'; paintStyle();
         sys('style ' + currentStyle + (r.origin ? ' (' + r.origin + ')' : '') + '. /prompt shows the active style. soul.md is unchanged.');
         break;
