@@ -164,7 +164,7 @@ pub async fn web_search(
                 "Google search cannot use a local source group",
             ));
         }
-        let (query, count) = match crate::server::web_intent::parse(&req.query) {
+        let (query, count) = match crate::server::web_intent::parse_with_count(&req.query, req.count) {
             Some(intent) if !intent.terms.is_empty() => (intent.query(), intent.count),
             _ => (req.query.clone(), req.count),
         };

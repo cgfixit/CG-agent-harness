@@ -28,8 +28,19 @@ impl WebIntent {
 }
 
 /// Parse a chat line or `/web search` remainder into engine, count, and terms.
-/// Returns None when the text is not a search request.
+/// Returns None when the text is not a natural-language search request.
+///
+/// A request must carry an explicit natural-language signal: quoted terms
+/// (`'cgfixit'`) or a `first N` count. The bare word "search" is not enough,
+/// otherwise an ordinary query such as `vector search benchmarks` would lose
+/// the word "search" and have its requested count replaced.
 pub fn parse(text: &str) -> Option<WebIntent> {
+    parse_with_count(text, DEFAULT_COUNT)
+}
+
+/// Like [`parse`], but a request without an explicit `first N` keeps
+/// `fallback_count` (the caller's own count) instead of the default.
+pub fn parse_with_count(text: &str, fallback_count: usize) -> Option<WebIntent> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
@@ -38,8 +49,10 @@ pub fn parse(text: &str) -> Option<WebIntent> {
     if trimmed.starts_with('/') && !lower.starts_with("/web") {
         return None;
     }
-    let looks_like = has_word(&lower, "search")
-        || (lower.starts_with("/web") && (lower.contains("first ") || !extract_quoted(trimmed).is_empty()));
+    let quoted = extract_quoted(trimmed);
+    let explicit_count = extract_count(&lower);
+    let has_signal = !quoted.is_empty() || explicit_count.is_some();
+    let looks_like = has_signal && (has_word(&lower, "search") || lower.starts_with("/web"));
     if !looks_like {
         return None;
     }
@@ -52,8 +65,8 @@ pub fn parse(text: &str) -> Option<WebIntent> {
         SearchEngine::Default
     };
 
-    let count = extract_count(&lower).clamp(1, MAX_COUNT);
-    let mut terms = extract_quoted(trimmed);
+    let count = explicit_count.unwrap_or(fallback_count).clamp(1, MAX_COUNT);
+    let mut terms = quoted;
     if terms.is_empty() {
         terms = tokenize_unquoted(trimmed);
     }
@@ -68,19 +81,15 @@ fn has_word(lower: &str, word: &str) -> bool {
     lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w == word)
 }
 
-fn extract_count(lower: &str) -> usize {
-    let bytes = lower.as_bytes();
-    if let Some(idx) = lower.find("first ") {
-        let rest = &lower[idx + 6..];
-        let n: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(v) = n.parse::<usize>() {
-            if v >= 1 {
-                return v.min(MAX_COUNT);
-            }
-        }
+/// `first N` when present and N >= 1; None otherwise.
+fn extract_count(lower: &str) -> Option<usize> {
+    let idx = lower.find("first ")?;
+    let rest = &lower[idx + 6..];
+    let n: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    match n.parse::<usize>() {
+        Ok(v) if v >= 1 => Some(v.min(MAX_COUNT)),
+        _ => None,
     }
-    let _ = bytes;
-    DEFAULT_COUNT
 }
 
 fn extract_quoted(text: &str) -> Vec<String> {
@@ -154,6 +163,24 @@ mod tests {
     #[test]
     fn memory_slash_is_not_stolen() {
         assert!(parse("/memory consolidate insights from this session").is_none());
+    }
+
+    #[test]
+    fn plain_query_containing_search_is_left_alone() {
+        // No quotes and no `first N`: not a natural-language request, so the
+        // existing search path keeps the query and the caller's count intact.
+        assert!(parse("vector search benchmarks").is_none());
+        assert!(parse("search engine optimization").is_none());
+        assert!(parse_with_count("elasticsearch tuning", 3).is_none());
+    }
+
+    #[test]
+    fn caller_count_survives_when_no_first_n_is_given() {
+        let p = parse_with_count("search google for 'cgfixit'", 3).expect("intent");
+        assert_eq!(p.count, 3);
+        assert_eq!(p.terms, vec!["cgfixit".to_string()]);
+        let p = parse_with_count("search google for the first 2 links for 'cgfixit'", 7).expect("intent");
+        assert_eq!(p.count, 2);
     }
 
     #[test]

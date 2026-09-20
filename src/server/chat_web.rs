@@ -171,7 +171,7 @@ async fn run_inner(
                 let args: SearchArgs =
                     serde_json::from_str(args).map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
                 let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
-                let (query, count) = match crate::server::web_intent::parse(&query) {
+                let (query, count) = match crate::server::web_intent::parse_with_count(&query, args.count) {
                     Some(intent) if !intent.terms.is_empty() => (intent.query(), intent.count),
                     _ => (query, args.count),
                 };
