@@ -2346,11 +2346,13 @@ function looksLikeNlSearch(text) {
      start and closes at a word end, so the apostrophe inside
      'women's health' does not end the term, and `Google's` is not a verb.
      A compound "search ... and summarize/explain/..." request stays on the
-     chat path: the listing alone would drop the second half of the ask. */
-  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[\s,.;:!?]+)*(?:search|google)(?=$|[\s,.;:!?])/i.test(text);
+     chat path (also `; summarize it`, `and briefly summarize`): the listing
+     alone would drop the second half of the ask. Lead-in words need
+     whitespace after them so `Please:search` tokenizes like the server. */
+  var commandShaped = /^(?:(?:please|can|could|would|you|kindly|hey|ok|okay|now)[,.;:!?]*\s+)*(?:search|google)(?=$|[\s,.;:!?])/i.test(text);
   var quoted = /(?:^|[\s(,:\[])(["']).+?\1(?=$|[\s,.;:)\]!?])/.test(text);
   var counted = /\bfirst\s+\d+\s+(?:links?|results?|hits?|pages?)\b/i.test(text);
-  var compound = /\b(?:and|then)\s+(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\b/i.test(text);
+  var compound = /(?:\b(?:and|then)\b|[;,])\s*(?:\w+ly\s+)*(?:summari[sz]e|explain|compare|tell|answer|write|describe|analy[sz]e|list|extract|translate|draft|give|say|report)\b/i.test(text);
   return commandShaped && (quoted || counted) && !compound;
 }
 

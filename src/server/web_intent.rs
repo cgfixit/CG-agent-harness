@@ -66,6 +66,7 @@ pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
         return WebIntentParse::PassThrough;
     }
     let lower = trimmed.to_ascii_lowercase();
+    // `/web` needs a word boundary: `/webpack "x"` is a raw query, not a command.
     if !is_command_shaped(&lower) {
         return WebIntentParse::PassThrough;
     }
@@ -118,7 +119,7 @@ const VERBS: &[&str] = &["search", "google"];
 const COUNT_NOUNS: &[&str] = &["links", "link", "results", "result", "hits", "hit", "pages", "page"];
 
 fn is_command_shaped(lower: &str) -> bool {
-    if lower.starts_with("/web") {
+    if lower == "/web" || lower.starts_with("/web ") {
         return true;
     }
     let words: Vec<&str> = lower
@@ -218,11 +219,14 @@ fn split_quoted(text: &str) -> (Vec<String>, String) {
     (terms, residual)
 }
 
-/// Words that may sit between the command verb and the subject
-/// (`search Google (serpapi) for the ...`).
-const AFTER_VERB: &[&str] = &[
-    "google", "serpapi", "for", "on", "in", "using", "with", "web", "internet",
-];
+/// Engine names that may follow the verb (`search Google`, `search serpapi`).
+const ENGINES: &[&str] = &["google", "serpapi"];
+/// `search on Google`, `search with serpapi`, `search via Google`.
+const ENGINE_LINKS: &[&str] = &["on", "with", "using", "via"];
+/// `search the web`, `search the internet`.
+const ENGINE_PLACES: &[&str] = &["web", "internet"];
+/// One optional word introducing the subject (`search for X`, `google about X`).
+const INTRODUCERS: &[&str] = &["for", "about"];
 
 /// Unquoted request: remove the command scaffolding by position (lead-in
 /// words, the verb, engine and preposition words right after it, and the
@@ -242,19 +246,25 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
     }
     if i < lower.len() && VERBS.contains(&lower[i].as_str()) {
         i += 1;
+        // Engine phrases, in any number: `Google`, `(serpapi)`, `on Google`,
+        // `the web`. A bare `internet` or `in` is not consumed, so subjects
+        // such as `Internet Archive` or `in vitro fertilization` survive.
         loop {
-            if i < lower.len() && AFTER_VERB.contains(&lower[i].as_str()) {
+            let at = |k: usize| lower.get(k).map(String::as_str);
+            let linked_engine =
+                at(i).is_some_and(|w| ENGINE_LINKS.contains(&w)) && at(i + 1).is_some_and(|w| ENGINES.contains(&w));
+            let place = at(i) == Some("the") && at(i + 1).is_some_and(|w| ENGINE_PLACES.contains(&w));
+            if at(i).is_some_and(|w| ENGINES.contains(&w)) {
                 i += 1;
-            } else if i + 1 < lower.len()
-                && lower[i] == "the"
-                && (AFTER_VERB.contains(&lower[i + 1].as_str()) || find_count_clause(&raw[i + 1..]) == Some(0))
-            {
-                // `the web`, `the first 2 links`: article that belongs to the
-                // scaffolding. A subject such as `The Who` keeps its article.
-                i += 1;
+            } else if linked_engine || place {
+                i += 2;
             } else {
                 break;
             }
+        }
+        // At most one introducer; whatever follows is the subject.
+        if i < lower.len() && INTRODUCERS.contains(&lower[i].as_str()) {
+            i += 1;
         }
     }
     let mut rest: Vec<&str> = raw[i..].to_vec();
@@ -504,6 +514,30 @@ mod tests {
         assert_eq!(p.terms, vec!["The".to_string(), "Who".into()]);
         let p = parse("search the web for the first 2 links for The Who").expect("intent");
         assert_eq!(p.terms, vec!["The".to_string(), "Who".into()]);
+    }
+
+    #[test]
+    fn subject_leading_scaffold_lookalikes_are_kept() {
+        let p = parse("search for in vitro fertilization first 2 results").expect("intent");
+        assert_eq!(p.terms, vec!["in".to_string(), "vitro".into(), "fertilization".into()]);
+        let p = parse("search Internet Archive first 2 results").expect("intent");
+        assert_eq!(p.terms, vec!["Internet".to_string(), "Archive".into()]);
+        let p = parse("search on Google the web for 'x'").expect("intent");
+        assert_eq!(p.terms, vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn slash_web_needs_a_word_boundary() {
+        assert_eq!(
+            parse_with_count("/webpack \"module federation\"", 5),
+            WebIntentParse::PassThrough
+        );
+        assert_eq!(
+            parse_with_count("/webhook first 2 links for x", 5),
+            WebIntentParse::PassThrough
+        );
+        let p = parse("/web search first 2 links for \"cgfixit\"").expect("intent");
+        assert_eq!(p.terms, vec!["cgfixit".to_string()]);
     }
 
     #[test]
