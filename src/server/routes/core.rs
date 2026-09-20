@@ -20,7 +20,12 @@ use crate::server::guards::retry_after_error;
 use crate::server::prompts::{compose_system_prompt, PromptInputs};
 use crate::server::schemas::*;
 use crate::server::sessions::TokenTally;
+use crate::server::slash::{parse_line, SlashParseRequest};
 use crate::server::state::{AppState, HARNESS_LOOP_TOOL};
+
+pub async fn slash_parse(ValidJson(req): ValidJson<SlashParseRequest>) -> Json<Value> {
+    Json(parse_line(&req.line).to_json())
+}
 
 const DEFAULT_TEMPERATURE: f64 = 0.3;
 

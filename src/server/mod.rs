@@ -28,6 +28,7 @@ pub mod schemas;
 pub mod session_export;
 pub mod session_search;
 pub mod sessions;
+pub mod slash;
 pub mod state;
 pub mod structured_memory;
 pub mod structured_memory_auto;
