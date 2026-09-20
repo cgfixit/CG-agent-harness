@@ -2,10 +2,15 @@
 //!
 //! Uploaded bytes are untrusted. Storage names are UUIDs. The original
 //! filename never lands on disk, in audit, or in the prompt fence.
+//!
+//! Every read, unlink and directory create goes through a `cap_std::fs::Dir`
+//! opened at the attachments root, so blob paths are always relative to that
+//! jail and cannot escape it (same idiom as `sessions.rs` and `persona.rs`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -107,6 +112,7 @@ impl AttachmentStore {
                     .detail("used_bytes", used),
             );
         }
+        let jail = self.jail()?;
         let mut stored = Vec::with_capacity(files.len());
         let mut written: Vec<PathBuf> = Vec::new();
         for (file, class) in files.iter().zip(classified.iter()) {
@@ -118,32 +124,32 @@ impl AttachmentStore {
                 magic_mime: class.magic_mime.to_string(),
                 byte_len: file.data.len() as u64,
             };
-            let path = match blob_path(&self.root, &blob) {
+            let rel = match blob_rel(&blob) {
                 Ok(p) => p,
                 Err(e) => {
-                    unlink_all(&written);
+                    unlink_all(&jail, &written);
                     return Err(e);
                 }
             };
-            if let Some(parent) = path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    unlink_all(&written);
+            if let Some(parent) = rel.parent() {
+                if let Err(e) = jail.create_dir_all(parent) {
+                    unlink_all(&jail, &written);
                     return Err(HarnessError::new(
                         "IO_ERROR",
                         format!("cannot create owner attachment directory: {e}"),
                     ));
                 }
             }
-            if let Err(e) = write_atomic(&path, &file.data, Some(BLOB_MODE)) {
-                unlink_all(&written);
+            if let Err(e) = write_atomic(&self.root.join(&rel), &file.data, Some(BLOB_MODE)) {
+                unlink_all(&jail, &written);
                 return Err(e);
             }
-            written.push(path);
+            written.push(rel);
             stored.push(blob);
         }
         manifest.blobs.extend(stored.iter().cloned());
         if let Err(e) = self.save_manifest(&manifest) {
-            unlink_all(&written);
+            unlink_all(&jail, &written);
             return Err(e);
         }
         Ok(stored)
@@ -154,6 +160,7 @@ impl AttachmentStore {
             return Ok(String::new());
         }
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let jail = self.jail()?;
         let manifest = self.load_manifest()?;
         let mut sections = Vec::new();
         let mut remaining = MAX_WEB_CHARS;
@@ -164,8 +171,9 @@ impl AttachmentStore {
                 .iter()
                 .find(|b| b.id == *id && b.owner == owner)
                 .ok_or_else(|| HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"))?;
-            let path = blob_path(&self.root, blob)?;
-            let bytes = std::fs::read(&path)
+            let rel = blob_rel(blob)?;
+            let bytes = jail
+                .read(&rel)
                 .map_err(|_| HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"))?;
             if bytes.len() as u64 != blob.byte_len {
                 return Err(HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"));
@@ -193,11 +201,12 @@ impl AttachmentStore {
 
     pub fn unlink_owner(&self, owner: &str) -> Result<usize> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let jail = self.jail()?;
         let mut manifest = self.load_manifest()?;
         let (keep, drop): (Vec<_>, Vec<_>) = manifest.blobs.drain(..).partition(|b| b.owner != owner);
         for blob in &drop {
-            if let Ok(path) = blob_path(&self.root, blob) {
-                let _ = std::fs::remove_file(path);
+            if let Ok(rel) = blob_rel(blob) {
+                let _ = jail.remove_file(&rel);
             }
         }
         manifest.blobs = keep;
@@ -210,13 +219,24 @@ impl AttachmentStore {
         self.load_manifest().map(|m| m.blobs.len()).unwrap_or(0)
     }
 
+    /// Capability handle on the attachments root; all blob and index reads,
+    /// unlinks and directory creates are relative to it.
+    fn jail(&self) -> Result<Dir> {
+        Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
+            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open attachments directory: {e}")))
+    }
+
     fn load_manifest(&self) -> Result<Manifest> {
-        let path = self.root.join(INDEX_NAME);
-        if !path.exists() {
-            return Ok(Manifest::default());
-        }
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot read attachment index: {e}")))?;
+        let text = match self.jail()?.read_to_string(INDEX_NAME) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Manifest::default()),
+            Err(e) => {
+                return Err(HarnessError::new(
+                    "IO_ERROR",
+                    format!("cannot read attachment index: {e}"),
+                ))
+            }
+        };
         serde_json::from_str(&text)
             .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot parse attachment index: {e}")))
     }
@@ -510,23 +530,27 @@ fn disposition_filename(headers: &str) -> Option<String> {
     filename.filter(|n| !n.is_empty())
 }
 
-fn blob_path(root: &Path, blob: &AttachmentBlob) -> Result<PathBuf> {
-    let id = blob.id.as_str();
-    if id.contains("..") || Uuid::parse_str(id).is_err() {
-        return Err(HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"));
-    }
+/// `<sha256(owner)>/<uuid>` relative to the attachments root. Both components
+/// are rebuilt from validated values (hex digest, parsed UUID), never from the
+/// raw strings, so the result is always a plain two-segment relative path.
+fn blob_rel(blob: &AttachmentBlob) -> Result<PathBuf> {
+    let id = Uuid::parse_str(blob.id.trim())
+        .map_err(|_| HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"))?;
     let owner_key = crate::common::sha256_hex(&blob.owner);
-    if owner_key.contains("..") {
+    if owner_key.len() != 64 || !owner_key.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"));
     }
-    let owner_dir = PathBuf::from(&owner_key);
-    let file = PathBuf::from(id);
-    Ok(root.join(owner_dir).join(file))
+    Ok(PathBuf::from(owner_key).join(id.hyphenated().to_string()))
 }
 
-fn unlink_all(paths: &[PathBuf]) {
-    for path in paths {
-        let _ = std::fs::remove_file(path);
+#[cfg(test)]
+fn blob_path(root: &Path, blob: &AttachmentBlob) -> Result<PathBuf> {
+    Ok(root.join(blob_rel(blob)?))
+}
+
+fn unlink_all(jail: &Dir, rels: &[PathBuf]) {
+    for rel in rels {
+        let _ = jail.remove_file(rel);
     }
 }
 
