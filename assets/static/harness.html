@@ -2391,7 +2391,26 @@ async function onSend() {
     return;
   }
   input.value = '';
-  if (text.startsWith('/')) { await runSlash(text); } else { await sendChat(text, false); }
+  if (text.startsWith('/')) { await runSlashMaybeFuzzy(text); } else { await sendChat(text, false); }
+}
+
+async function runSlashMaybeFuzzy(text) {
+  try {
+    const parsed = await api('/api/slash/parse', 'POST', { line: text });
+    if (parsed && parsed.dispatch && parsed.canonical) {
+      if (parsed.notice) sys(parsed.notice);
+      if (parsed.canonical !== text) sys('normalized: ' + parsed.canonical);
+      await runSlash(parsed.canonical);
+      return;
+    }
+    if (parsed && parsed.kind === 'suggest') {
+      const extra = (parsed.suggestions || []).map(function (s) { return s.line; }).join('\n');
+      sys((parsed.notice || 'did not dispatch') + (extra ? '\n' + extra : ''));
+      return;
+    }
+  } catch (e) {
+  }
+  await runSlash(text);
 }
 
 /* ── wiring ── */

@@ -1,5 +1,7 @@
 # Chat, persona, skills and goal controls
 
+Slash-command tables: [CONSOLE.md](CONSOLE.md#78-slash-command-quick-reference).
+
 Chat continuation and executable coding jobs are separate operations. A goal,
 skill, persona, or model reply never grants permission to execute commands,
 commit, push, or publish.
@@ -234,7 +236,7 @@ skill discovery and general soul-evolution scheduling are not implemented.
 Phase 5 remains separate: reconcile #30/shared model readiness and implement
 connectors/integrations from the canonical [parity ledger](parity/STATUS.md).
 Native WKWebView evidence is recorded independently from browser/API tests in
-the candidate handoff; see [desktop acceptance](DESKTOP_ACCEPTANCE.md).
+the candidate handoff; see [DESKTOP.md](DESKTOP.md). Historical matrix: [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
 
 ## Cloud chat providers and streaming
 

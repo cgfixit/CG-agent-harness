@@ -55,6 +55,7 @@ session timeouts.
 | POST | `/api/ollama/pull` | Operator/admin abortable pull; SSE when `Accept: text/event-stream` |
 | POST | `/api/ollama/pull/cancel` | Abort the in-flight pull |
 | POST | `/api/prompt/preview` | Show the assembled system prompt (`/prompt`) |
+| POST | `/api/slash/parse` | Suggest-don't-guess slash normalizer; never executes mutations |
 | GET | `/api/spend/summary` | Guarded per-provider/model/day spend rollup (read-time USD) |
 | GET, POST | `/api/sessions` | List sessions or create one |
 | POST | `/api/sessions/search` | Local transcript search; snippets only |
