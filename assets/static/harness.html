@@ -2427,11 +2427,18 @@ async function finishChat(r) {
 
 async function sendChat(text, asLoop, extra) {
   const revision = sessionRevision;
-  /* A style change issued just before Send must be persisted before the
-     turn is posted, or the server composes the reply with the old style. */
-  await styleWriteChain.catch(() => {});
-  user(text);
+  /* Take the send gate and bind the target session first, then wait for a
+     style change issued just before Send to be persisted (or the server
+     composes the reply with the old style). A session switch or logout
+     during that wait abandons the turn instead of posting it elsewhere. */
   sendBtn.disabled = true;
+  const targetSession = currentSession;
+  await styleWriteChain.catch(() => {});
+  if (revision !== sessionRevision || targetSession !== currentSession) {
+    if (revision === sessionRevision) sendBtn.disabled = false;
+    return null;
+  }
+  user(text);
   const controller = new AbortController();
   inflightChat = controller;
   if (asLoop && typeof asLoop === 'object') {
@@ -2445,7 +2452,7 @@ async function sendChat(text, asLoop, extra) {
     preview.querySelector('.body').appendChild(document.createTextNode(delta));
     stream.scrollTop = stream.scrollHeight;
   };
-  const body = { message: text, session_id: currentSession };
+  const body = { message: text, session_id: targetSession };
   if (asLoop) body.loop = true;
   if (extra && extra.retrieve) {
     body.retrieve = true;
