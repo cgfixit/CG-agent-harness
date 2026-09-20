@@ -468,18 +468,17 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
             }
             end += len;
         }
-        // `for` after the clause is the documented introducer (`first 2
-        // links for rust`) and is always scaffolding. `about`, `of` and `on`
-        // are consumed only before a quoted term: before an unquoted subject
-        // they may be the title's first word (`first 2 results On the Road`,
-        // `About Time`, `Of Mice and Men`), and losing it is the costlier
-        // mistake.
-        if end < rest.len() {
-            let connector = lower_rest[end].as_str();
-            let before_quote = end + 1 < rest.len() && placeholder_index(rest[end + 1]).is_some();
-            if connector == "for" || (matches!(connector, "of" | "about" | "on") && before_quote) {
-                end += 1;
-            }
+        // A connector after the clause (`for`, `about`, `of`, `on`) is
+        // consumed only before a quoted term (`first 2 links for "cgfixit"`).
+        // Before an unquoted subject it is kept: `for rust` costs the
+        // provider a stop word, whereas `For Whom the Bell Tolls`, `On the
+        // Road`, `About Time` or `Of Mice and Men` would lose their first
+        // word, and losing content is the costlier mistake.
+        if end + 1 < rest.len()
+            && matches!(lower_rest[end].as_str(), "for" | "of" | "about" | "on")
+            && placeholder_index(rest[end + 1]).is_some()
+        {
+            end += 1;
         }
         rest.drain(start..end);
     }
@@ -599,7 +598,13 @@ mod tests {
         assert_eq!(p.count, 3);
         assert_eq!(
             p.terms,
-            vec!["what's".to_string(), "new".into(), "in".into(), "rust".into()]
+            vec![
+                "for".to_string(),
+                "what's".into(),
+                "new".into(),
+                "in".into(),
+                "rust".into()
+            ]
         );
         let p = parse("search for 'women's health' news").expect("intent");
         assert_eq!(p.terms, vec!["women's health".to_string(), "news".into()]);
@@ -609,7 +614,10 @@ mod tests {
     fn count_accepts_any_whitespace_and_keeps_other_numbers() {
         let p = parse("search Google for the first   2 links for 2024 election results").expect("intent");
         assert_eq!(p.count, 2);
-        assert_eq!(p.terms, vec!["2024".to_string(), "election".into(), "results".into()]);
+        assert_eq!(
+            p.terms,
+            vec!["for".to_string(), "2024".into(), "election".into(), "results".into()]
+        );
     }
 
     #[test]
@@ -624,10 +632,10 @@ mod tests {
         // The console posts only the remainder of `/web search ...`.
         let p = rewrite("first 2 links for rust", 5);
         assert_eq!(p.count, 2);
-        assert_eq!(p.terms, vec!["rust".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "rust".into()]);
         let p = rewrite("first 3 results for election results", 5);
         assert_eq!(p.count, 3);
-        assert_eq!(p.terms, vec!["election".to_string(), "results".into()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "election".into(), "results".into()]);
         // A raw query that merely starts with "first N" is not a command.
         assert!(parse("first 2 amendments").is_none());
     }
@@ -642,9 +650,9 @@ mod tests {
     #[test]
     fn punctuated_scaffolding_is_dropped() {
         let p = parse("search Google: for the first 2 links for Rust").expect("intent");
-        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "Rust".into()]);
         let p = parse("search: first 2 links for Rust").expect("intent");
-        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "Rust".into()]);
     }
 
     #[test]
@@ -662,20 +670,21 @@ mod tests {
     #[test]
     fn non_ascii_terms_are_preserved() {
         let p = parse("search Google for first 2 links for 東京").expect("intent");
-        assert_eq!(p.terms, vec!["東京".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "東京".into()]);
         let p = parse("search first 2 links for école normale").expect("intent");
-        assert_eq!(p.terms, vec!["école".to_string(), "normale".into()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "école".into(), "normale".into()]);
     }
 
     #[test]
     fn subject_words_that_look_like_scaffolding_survive() {
         let p = parse("search first 2 links for The Who").expect("intent");
-        assert_eq!(p.terms, vec!["The".to_string(), "Who".into()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "The".into(), "Who".into()]);
         let p = parse("search google for the first 3 results for can you search and google").expect("intent");
         assert_eq!(
             p.terms,
             vec![
-                "can".to_string(),
+                "for".to_string(),
+                "can".into(),
                 "you".into(),
                 "search".into(),
                 "and".into(),
@@ -691,7 +700,10 @@ mod tests {
         assert!(parse("search Google for first 2 amendments").is_none());
         let p = parse("search Google for first 2 links for first 2 amendments").expect("intent");
         assert_eq!(p.count, 2);
-        assert_eq!(p.terms, vec!["first".to_string(), "2".into(), "amendments".into()]);
+        assert_eq!(
+            p.terms,
+            vec!["for".to_string(), "first".into(), "2".into(), "amendments".into()]
+        );
     }
 
     #[test]
@@ -734,7 +746,7 @@ mod tests {
         assert_eq!(p.count, 2);
         assert_eq!(p.terms, vec!["The".to_string(), "Who".into()]);
         let p = parse("search the web for the first 2 links for The Who").expect("intent");
-        assert_eq!(p.terms, vec!["The".to_string(), "Who".into()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "The".into(), "Who".into()]);
     }
 
     #[test]
@@ -746,9 +758,9 @@ mod tests {
         let p = parse("search on Google the web for 'x'").expect("intent");
         assert_eq!(p.terms, vec!["x".to_string()]);
         let p = parse("search on the web for first 2 results for Rust").expect("intent");
-        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "Rust".into()]);
         let p = parse("search across the internet for the first 2 links for Rust").expect("intent");
-        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "Rust".into()]);
     }
 
     #[test]
@@ -811,14 +823,14 @@ mod tests {
         let p = parse("search first 2 results on Google for Rust").expect("intent");
         assert_eq!(p.count, 2);
         assert_eq!(p.engine, SearchEngine::Google);
-        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "Rust".into()]);
         // `about` before an unquoted subject is kept (it may open a title);
         // the provider treats it as a stop word.
         let p = parse("search the first 3 links on the web about rust async").expect("intent");
         assert_eq!(p.terms, vec!["about".to_string(), "rust".into(), "async".into()]);
         let p = parse("search first 2 results from Google for Rust").expect("intent");
         assert_eq!(p.engine, SearchEngine::Google);
-        assert_eq!(p.terms, vec!["Rust".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "Rust".into()]);
         let p = parse("search first 2 links using serpapi for 'cgfixit'").expect("intent");
         assert_eq!(p.engine, SearchEngine::Serpapi);
         assert_eq!(p.terms, vec!["cgfixit".to_string()]);
@@ -834,7 +846,7 @@ mod tests {
         let p = parse("search The Web Conference first 2 results").expect("intent");
         assert_eq!(p.terms, vec!["The".to_string(), "Web".into(), "Conference".into()]);
         let p = parse("search the web first 2 links for rust").expect("intent");
-        assert_eq!(p.terms, vec!["rust".to_string()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "rust".into()]);
         // A title-leading preposition after the count clause is kept; only
         // `for` (the documented introducer) is always scaffolding there.
         for (text, terms) in [
@@ -845,6 +857,11 @@ mod tests {
                 vec!["Of", "Mice", "and", "Men"],
             ),
             ("search first 2 results about \"rust\"", vec!["rust"]),
+            (
+                "search first 2 results For Whom the Bell Tolls",
+                vec!["For", "Whom", "the", "Bell", "Tolls"],
+            ),
+            ("search first 2 links for \"rust\"", vec!["rust"]),
         ] {
             let p = parse(text).expect("intent");
             assert_eq!(
@@ -878,7 +895,7 @@ mod tests {
         assert_eq!(p.query(), "\"dogs\" -'Chris Grady'");
         // A hyphen inside a word is not an exclusion operator.
         let p = parse("search first 2 links for well-known rust").expect("intent");
-        assert_eq!(p.terms, vec!["well-known".to_string(), "rust".into()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "well-known".into(), "rust".into()]);
     }
 
     #[test]
@@ -923,7 +940,7 @@ mod tests {
         }
         // An apostrophe is an ordinary character.
         let p = parse("search first 2 results for women's health").expect("intent");
-        assert_eq!(p.terms, vec!["women's".to_string(), "health".into()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "women's".into(), "health".into()]);
     }
 
     #[test]
@@ -953,7 +970,8 @@ mod tests {
         assert_eq!(
             p.terms,
             vec![
-                "the".to_string(),
+                "for".to_string(),
+                "the".into(),
                 "web".into(),
                 "accessibility".into(),
                 "guidelines".into()
@@ -972,12 +990,21 @@ mod tests {
         );
         // After unquoted subject words the phrase is ambiguous and stays.
         let p = parse("search first 2 results for jobs with Google").expect("intent");
-        assert_eq!(p.terms, vec!["jobs".to_string(), "with".into(), "Google".into()]);
+        assert_eq!(
+            p.terms,
+            vec!["for".to_string(), "jobs".into(), "with".into(), "Google".into()]
+        );
         // A trailing `the web` without its connector belongs to the subject.
         let p = parse("search first 2 results for history of the web").expect("intent");
         assert_eq!(
             p.terms,
-            vec!["history".to_string(), "of".into(), "the".into(), "web".into()]
+            vec![
+                "for".to_string(),
+                "history".into(),
+                "of".into(),
+                "the".into(),
+                "web".into()
+            ]
         );
     }
 
@@ -1062,11 +1089,16 @@ mod tests {
     #[test]
     fn leading_search_operators_survive_in_the_subject() {
         let p = parse("search first 2 results for -pinterest rust").expect("intent");
-        assert_eq!(p.terms, vec!["-pinterest".to_string(), "rust".into()]);
+        assert_eq!(p.terms, vec!["for".to_string(), "-pinterest".into(), "rust".into()]);
         let p = parse("search first 2 links for @cgfixit site:github.com *harness*").expect("intent");
         assert_eq!(
             p.terms,
-            vec!["@cgfixit".to_string(), "site:github.com".into(), "*harness*".into()]
+            vec![
+                "for".to_string(),
+                "@cgfixit".into(),
+                "site:github.com".into(),
+                "*harness*".into()
+            ]
         );
     }
 }
