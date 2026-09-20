@@ -20,7 +20,12 @@ use crate::server::guards::retry_after_error;
 use crate::server::prompts::{compose_system_prompt, PromptInputs};
 use crate::server::schemas::*;
 use crate::server::sessions::TokenTally;
+use crate::server::slash::{parse_line, SlashParseRequest};
 use crate::server::state::{AppState, HARNESS_LOOP_TOOL};
+
+pub async fn slash_parse(ValidJson(req): ValidJson<SlashParseRequest>) -> Json<Value> {
+    Json(parse_line(&req.line).to_json())
+}
 
 const DEFAULT_TEMPERATURE: f64 = 0.3;
 
@@ -412,6 +417,8 @@ async fn chat_inner(
             memory_budget,
             memory_enabled: settings.memory_enabled,
             web_enabled: settings.web_enabled,
+            style_name: None,
+            attachment_fence: None,
         })
     };
     let max_tokens = if req.loop_turn {
@@ -561,7 +568,7 @@ async fn chat_inner(
     });
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
     let spend_source = if req.loop_turn { "loop" } else { "chat" };
-    let (reply, web_tools) = if cloud_selected {
+    let (mut reply, web_tools) = if cloud_selected {
         (
             state
                 .cloud_chat
@@ -604,6 +611,10 @@ async fn chat_inner(
         )
     };
     drop(release);
+
+    let inventory =
+        crate::server::tool_inventory::chat_callable_names(!cloud_selected && settings.web_enabled && !req.loop_turn);
+    reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {
         let tokens = if reply.usage_reported {

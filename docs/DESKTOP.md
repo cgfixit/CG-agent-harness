@@ -6,8 +6,9 @@ external browser, frontend server, Rust or Python. Coding checks still need thei
 configured tools. Use the app for persistent local-model conversations, permitted
 public-document research, and separately reviewed coding work. Native HTTPS login,
 password replacement and account-role enforcement have local acceptance evidence;
-exact tested sources and broader window/coding limits are recorded in
-[DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
+exact tested sources and broader window/coding limits are recorded in the
+historical [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md) matrix. Do not treat
+that file as current operator procedure.
 
 ## Install and launch
 
