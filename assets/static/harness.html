@@ -1025,8 +1025,14 @@ function paintMemory() {
 async function refreshStyle() {
   const sel = $('sStyle');
   if (!sel) return;
-  const revision = sessionRevision, session = currentSession, ticket = styleRequestSeq, poll = ++stylePollSeq;
+  const revision = sessionRevision, session = currentSession, poll = ++stylePollSeq;
   try {
+    /* Poll only once queued writes have settled, so the read cannot observe
+       the selection a pending POST is about to replace; the ticket is taken
+       after that wait so a write issued during it still wins. */
+    await styleWriteChain.catch(() => {});
+    if (poll !== stylePollSeq) return;
+    const ticket = styleRequestSeq;
     const r = await api('/api/style' + (session ? '?session_id=' + encodeURIComponent(session) : ''));
     if (poll !== stylePollSeq) return;
     const ids = ['off'].concat((r.styles || []).map(s => s.id));
@@ -1490,6 +1496,9 @@ async function runSlash(line) {
       }
 
       case 'prompt': {
+        /* A style change still being persisted must land first, or the
+           snapshot is composed and labelled with the previous style. */
+        await styleWriteChain.catch(() => {});
         const r = await api('/api/prompt/preview', 'POST', { session_id: currentSession || null });
         const st = r.style || {};
         const styleLine = !st.name ? 'active style: off'
