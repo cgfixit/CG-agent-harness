@@ -260,10 +260,17 @@ pub fn style_budget_after_soul(
         Some(text) => text.to_string(),
         None => load_text(home, Path::new("soul.md"), true, soul_max_chars).text,
     };
-    if persona.trim().is_empty() {
+    style_budget_for_persona(&persona, soul_enabled, soul_max_chars)
+}
+
+/// The same figure from a persona already in hand, so composition budgets
+/// the style against the exact text it just put in the prompt rather than a
+/// second read of `soul.md` that could see a replaced file.
+pub fn style_budget_for_persona(persona: &str, soul_enabled: bool, soul_max_chars: usize) -> usize {
+    if !soul_enabled || persona.trim().is_empty() {
         return soul_max_chars;
     }
-    let used = crate::common::clip_chars(&persona, soul_max_chars).chars().count();
+    let used = crate::common::clip_chars(persona, soul_max_chars).chars().count();
     soul_max_chars.min((SOUL_CHARS_HARD_CAP as usize).saturating_sub(used))
 }
 
@@ -282,7 +289,7 @@ pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
         parts.push(format!("## Operator persona (soul, read-only)\n\n{persona}"));
     }
     let mut style_label = "off".to_string();
-    let style_budget = style_budget_after_soul(home, inputs.soul_enabled, inputs.soul_override, inputs.soul_max_chars);
+    let style_budget = style_budget_for_persona(&persona, inputs.soul_enabled, inputs.soul_max_chars);
     if let Some(name) = inputs.style_name.filter(|n| !n.is_empty() && *n != "off") {
         let loaded = crate::server::style::load_style_within(home, name, style_budget);
         if loaded.loaded {

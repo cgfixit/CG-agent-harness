@@ -1535,10 +1535,14 @@ async function runSlash(line) {
       }
 
       case 'prompt': {
-        /* A style change still being persisted must land first, or the
-           snapshot is composed and labelled with the previous style. */
+        /* Bind the session first, then let a style change still being
+           persisted land, or the snapshot is composed and labelled with the
+           previous style; a switch during the wait abandons the preview. */
+        const promptRevision = sessionRevision, promptSession = currentSession;
         await awaitStyleWrites();
-        const r = await api('/api/prompt/preview', 'POST', { session_id: currentSession || null });
+        if (promptRevision !== sessionRevision || promptSession !== currentSession) { sys('prompt preview abandoned: the session changed'); break; }
+        const r = await api('/api/prompt/preview', 'POST', { session_id: promptSession || null });
+        if (promptRevision !== sessionRevision || promptSession !== currentSession) { sys('prompt preview discarded: the session changed'); break; }
         const st = r.style || {};
         const styleLine = !st.name ? 'active style: off'
           : st.loaded ? 'active style: ' + st.name + (st.origin ? ' (' + st.origin + ')' : '') + (st.truncated ? ' — ' + styleIssueText('truncated') : '')

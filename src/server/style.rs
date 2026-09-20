@@ -111,17 +111,25 @@ fn overlay_relative(id: &str) -> PathBuf {
 fn read_overlay(home: &Path, id: &str) -> Result<String, Option<&'static str>> {
     let read = (|| {
         let dir = Dir::open_ambient_dir(home, cap_std::ambient_authority())?;
-        // Only a regular file is opened: a FIFO or device would block the
+        // Only a regular file is read: a FIFO or device would block the
         // synchronous read (and `list_catalog` probes every built-in name on
-        // each status poll), and a symlink could point outside the jail.
-        let meta = dir.symlink_metadata(overlay_relative(id))?;
-        if !meta.is_file() {
+        // each status poll), and a symlink could point outside the jail. The
+        // open itself refuses to follow a final symlink and never blocks, and
+        // the check is made on the handle it returned, so a path swapped
+        // between a lookup and the open cannot slip a special file through.
+        let mut options = cap_std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use cap_std::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = dir.open_with(overlay_relative(id), &options)?;
+        if !file.metadata()?.is_file() {
             return Err(std::io::Error::other("overlay is not a regular file"));
         }
         let mut text = String::new();
-        dir.open(overlay_relative(id))?
-            .take(256 * 1024 + 1)
-            .read_to_string(&mut text)?;
+        file.take(256 * 1024 + 1).read_to_string(&mut text)?;
         if text.len() > 256 * 1024 {
             return Err(std::io::Error::other("text exceeds input bound"));
         }
