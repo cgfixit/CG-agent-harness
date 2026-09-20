@@ -189,16 +189,45 @@ async fn run_inner(
             "web_search" => {
                 let args: SearchArgs =
                     serde_json::from_str(args).map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
+                // The tool contract bounds the RAW arguments; enforce both before
+                // whitespace normalisation and the intent rewrite so neither can
+                // shrink a long instruction under the limit and a textual
+                // `first N` cannot mask an out-of-range count. A refused argument
+                // is an ordinary tool failure (bounded reply, usage recorded), not
+                // a run error: the model already spent the turn that produced it.
+                let raw_len = args.query.chars().count();
                 let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
-                let key = (query.to_lowercase(), args.count);
-                if let Some(result) = searches.get(&key) {
-                    Ok(Value::clone(result))
+                let planned = if !(1..=10).contains(&args.count) || raw_len > crate::server::schemas::MAX_WEB_QUERY_LEN
+                {
+                    Err(error(
+                        "WEB_BAD_QUERY",
+                        "search needs a query of 1–200 characters and 1–10 results",
+                    ))
                 } else {
-                    let result = state.web.google_search(&query, args.count, true, &state.audit).await;
-                    if let Ok(value) = &result {
-                        searches.insert(key, value.clone());
+                    match crate::server::web_intent::parse_with_count(&query, args.count) {
+                        crate::server::web_intent::WebIntentParse::Rewrite(intent) => {
+                            Ok((intent.query(), intent.count))
+                        }
+                        crate::server::web_intent::WebIntentParse::PassThrough => Ok((query, args.count)),
+                        crate::server::web_intent::WebIntentParse::Invalid(message) => {
+                            Err(error("WEB_BAD_QUERY", &message))
+                        }
                     }
-                    result
+                };
+                match planned {
+                    Err(failure) => Err(failure),
+                    Ok((query, count)) => {
+                        let key = (query.to_lowercase(), count);
+                        if let Some(result) = searches.get(&key) {
+                            Ok(Value::clone(result))
+                        } else {
+                            let result = state.web.google_search(&query, count, true, &state.audit).await;
+                            if let Ok(value) = &result {
+                                searches.insert(key, value.clone());
+                            }
+                            result
+                        }
+                    }
                 }
             }
             "web_fetch" => {
