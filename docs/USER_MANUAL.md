@@ -28,6 +28,13 @@ The queue is in memory and is not replayed after restart. Follow
 [Spend and completion notifications](SPEND_AND_NOTIFICATIONS.md) for build
 requirements, setup, payloads and failure handling.
 
+## Reload web and API limits
+
+After editing supported limits in the active home's YAML, administrators can
+choose **Reload limits** without stopping the app. Invalid or restart-only
+changes preserve all running limits; the result explains the refusal. Unix
+SIGHUP reaches the same backend operation. See [the exact allowlist and recovery](CONFIG_RELOAD.md).
+
 ## Memory overview
 
 The rest of this manual covers the two memory systems. The deeper contract is

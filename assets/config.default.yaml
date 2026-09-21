@@ -95,10 +95,12 @@ notes_corpus:
   max_files_per_request: 8 # 1–16
   max_concurrent_ingests: 2 # 1–8
 
+# These API limits and the listed web limits support admin Reload limits/SIGHUP.
+# See docs/CONFIG_RELOAD.md; secrets, authority and other settings require restart.
 api:
   rate_limit:
-    max_requests: 60       # per-IP request ceiling within the window
-    window_seconds: 60     # sliding-window length in seconds
+    max_requests: 60       # 1–100000; per-IP request ceiling within the window
+    window_seconds: 60     # finite 0.001–86400; sliding-window seconds
   # /loop turns get their own, tighter budget.
   harness_loop_rate_limit:
     max_requests: 8
@@ -111,7 +113,7 @@ web:
   chat_tool_calls: 3 # 1–5 read-only calls per chat turn; no tools in /loop
   response_bytes: 262144 # 1024–1048576; compressed bodies refused
   request_seconds: 8 # 1–30, includes queue, DNS, headers and body
-  concurrency: 2 # 1–4 total fetches
+  concurrency: 2 # 1–4 total fetches; restart-only (shared permits)
   pages: 20 # 1–40 per run
   run_bytes: 2097152 # 1024–8388608 per run
   run_seconds: 60 # 1–180

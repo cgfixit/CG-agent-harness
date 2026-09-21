@@ -510,3 +510,26 @@ private destinations require an exact configured URL grant, and redirects are
 never followed. Failed deliveries/overflow are audited and never change a job's
 result. Retries are bounded to three with a stable batch ID. No durable delivery
 or replay after restart is claimed. I6 and all execution/write gates are unchanged.
+
+## Reload changes limits, not authority
+
+The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE`
+contains 22 API/web limits. A bounded regular-file config read (no-follow on Unix) is parsed
+and fully validated before one runtime snapshot is replaced. Any invalid limit,
+malformed YAML, unknown or restart-only change refuses the entire candidate
+and leaves running limits intact. Refusal audit/errors never echo YAML contents.
+HTTP reload requires a current non-bootstrap admin session and CSRF, even in
+legacy auth-disabled homes. Unix SIGHUP uses the same reload implementation.
+
+TLS, authentication, secrets, sandbox, provider/model and write authority are
+not reconfigured by reload. `web.concurrency` stays restart-only: web snapshots
+share existing fetch permits, mutation locks and cancellation rather than
+creating more capacity. New operations see the new limits; in-flight web
+operations retain their snapshot. Rate counters survive reload; widening a
+window cannot restore already expired history. A refusal does not rewrite the
+operator's file. Existing fresh-disk coding-policy and URL-permission checks
+remain independent and fail closed as before.
+
+- Locked by: `tests/secure_portal.rs` (HTTP, actual SIGHUP, role/CSRF,
+  atomic refusal, rate history and web response bounds), `config_reload` units,
+  and the existing web/research tests.

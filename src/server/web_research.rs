@@ -176,6 +176,7 @@ fn spent(usage: &[Usage]) -> u64 {
         .fold(0, u64::saturating_add)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn model_call(
     state: &AppState,
     owner: &str,
@@ -183,6 +184,7 @@ async fn model_call(
     system: &str,
     body: &Value,
     cap: u64,
+    total_budget: u64,
     usage: &mut Vec<Usage>,
 ) -> Result<String> {
     authorize_owner(state, owner)?;
@@ -194,7 +196,7 @@ async fn model_call(
     }
     let user = serde_json::to_string(body)?;
     let prompt = estimate(system).saturating_add(estimate(&user)).saturating_add(16);
-    if spent(usage).saturating_add(prompt).saturating_add(cap) > state.web.limits.total_tokens {
+    if spent(usage).saturating_add(prompt).saturating_add(cap) > total_budget {
         return Err(error("WEB_TOKEN_BUDGET", "no model budget remains"));
     }
     // Reserve before awaiting so cancellation, timeout and malformed upstream
@@ -249,15 +251,15 @@ async fn model_call(
 }
 
 async fn lookup(
-    state: Arc<AppState>,
+    web: super::web_search::WebTool,
     guard: Arc<OwnedSemaphorePermit>,
     queries: Vec<String>,
     group: Option<String>,
 ) -> Result<Vec<Passage>> {
     tokio::task::spawn_blocking(move || {
         let _guard = guard;
-        let (pages, _) = state.web.cached_pages(group.as_deref())?;
-        let policy = state.web.policy()?;
+        let (pages, _) = web.cached_pages(group.as_deref())?;
+        let policy = web.policy()?;
         let mut evidence = Vec::new();
         let mut seen = BTreeSet::new();
         let queries: Vec<_> = queries.iter().map(String::as_str).collect();
@@ -275,7 +277,7 @@ async fn lookup(
         let mut total = 0;
         evidence.retain(|p| {
             let size = estimate(&serde_json::to_string(p).unwrap_or_default());
-            if total + size > state.web.limits.evidence_tokens {
+            if total + size > web.limits.evidence_tokens {
                 false
             } else {
                 total += size;
@@ -323,22 +325,19 @@ pub async fn run(state: Arc<AppState>, owner: &str, question: &str, group: Optio
     if question.trim().is_empty() || question.chars().count() > 200 || group.is_some_and(|g| !valid_group(g)) {
         return Err(error("WEB_BAD_QUERY", "invalid research question or group"));
     }
+    let web = state.web_snapshot();
     let enabled = state
         .settings
         .lock()
         .map_err(|_| error("WEB_DISABLED", "settings unavailable"))?
         .web_enabled;
-    let policy = state.web.require_enabled(enabled)?;
+    let policy = web.require_enabled(enabled)?;
     if group.is_some_and(|g| !policy.rules.iter().any(|r| r.group == g)) {
         return Err(error("WEB_GROUP_UNKNOWN", "unknown source group"));
     }
-    state
-        .web
-        .gate_tool("web_search", &[question.into()], enabled, &state.audit)?;
+    web.gate_tool("web_search", &[question.into()], enabled, &state.audit)?;
     let guard = Arc::new(
-        state
-            .web
-            .search_gate
+        web.search_gate
             .clone()
             .try_acquire_owned()
             .map_err(|_| error("WEB_BUSY", "web research already running"))?,
@@ -347,7 +346,7 @@ pub async fn run(state: Arc<AppState>, owner: &str, question: &str, group: Optio
         .generation_gate
         .claim("web_research")
         .ok_or_else(|| error("WEB_BUSY", "local model already busy"))?;
-    let lease = state.web.research.start(owner)?;
+    let lease = web.research.start(owner)?;
     let start = tokio::time::Instant::now();
     let mut usage = Vec::new();
     let mut warnings = Vec::new();
@@ -356,20 +355,29 @@ pub async fn run(state: Arc<AppState>, owner: &str, question: &str, group: Optio
     let mut coverage = Coverage::default();
     let mut answer = Answer::default();
     let workflow = async {
-        evidence = lookup(state.clone(), guard.clone(), queries.clone(), group.map(str::to_string)).await?;
+        evidence = lookup(web.clone(), guard.clone(), queries.clone(), group.map(str::to_string)).await?;
         let stale = evidence
             .iter()
-            .any(|p| crate::common::now_ts() - p.fetched_at > state.web.limits.stale_seconds as f64);
+            .any(|p| crate::common::now_ts() - p.fetched_at > web.limits.stale_seconds as f64);
         if evidence.len() < 2 || stale {
-            for round in 0..state.web.limits.rounds {
-                let remaining = state.web.limits.subqueries + 1 - queries.len();
+            for round in 0..web.limits.rounds {
+                let remaining = web.limits.subqueries + 1 - queries.len();
                 if remaining > 0 {
                     authorize_evidence(&state, &evidence, group, owner)?;
                     let prompt = json!({"question":question, "remaining_queries":remaining,
                         "existing_queries":queries, "evidence": evidence.iter().take(3).map(|p| json!({"id":p.id,"text":crate::common::clip_chars(&p.text, 160)})).collect::<Vec<_>>()});
-                    match model_call(&state, owner, "planning", PLAN_SYSTEM, &prompt, 384, &mut usage)
-                        .await
-                        .and_then(|s| Plan::parse(&s, remaining.min(3)))
+                    match model_call(
+                        &state,
+                        owner,
+                        "planning",
+                        PLAN_SYSTEM,
+                        &prompt,
+                        384,
+                        web.limits.total_tokens,
+                        &mut usage,
+                    )
+                    .await
+                    .and_then(|s| Plan::parse(&s, remaining.min(3)))
                     {
                         Ok(plan) => {
                             for q in plan.queries {
@@ -382,12 +390,12 @@ pub async fn run(state: Arc<AppState>, owner: &str, question: &str, group: Optio
                     }
                 }
                 if round == 0 {
-                    coverage = state.web.discover(group).await?;
+                    coverage = web.discover(group).await?;
                 }
-                evidence = lookup(state.clone(), guard.clone(), queries.clone(), group.map(str::to_string)).await?;
+                evidence = lookup(web.clone(), guard.clone(), queries.clone(), group.map(str::to_string)).await?;
                 if evidence.len() >= 2
-                    || queries.len() > state.web.limits.subqueries
-                    || spent(&usage) >= state.web.limits.total_tokens
+                    || queries.len() > web.limits.subqueries
+                    || spent(&usage) >= web.limits.total_tokens
                 {
                     break;
                 }
@@ -408,7 +416,8 @@ pub async fn run(state: Arc<AppState>, owner: &str, question: &str, group: Optio
                 "synthesis",
                 ANSWER_SYSTEM,
                 &input,
-                state.web.limits.model_tokens,
+                web.limits.model_tokens,
+                web.limits.total_tokens,
                 &mut usage,
             )
             .await
@@ -426,7 +435,7 @@ pub async fn run(state: Arc<AppState>, owner: &str, question: &str, group: Optio
         Ok::<(), crate::common::errors::HarnessError>(())
     };
     let outcome = tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(state.web.limits.research_seconds), workflow) => result,
+        result = tokio::time::timeout(Duration::from_secs(web.limits.research_seconds), workflow) => result,
         _ = lease.token.cancelled() => Ok(Err(error("WEB_CANCELLED", "research cancelled"))),
     };
     match outcome {
@@ -447,16 +456,15 @@ pub async fn run(state: Arc<AppState>, owner: &str, question: &str, group: Optio
         queries = vec![question.into()];
         warnings.push("WEB_POLICY_CHANGED".into());
     }
-    if spent(&usage) > state.web.limits.total_tokens {
+    if spent(&usage) > web.limits.total_tokens {
         warnings.push("WEB_TOKEN_BUDGET_EXCEEDED".into());
     }
     let stale: Vec<_> = evidence
         .iter()
-        .filter(|p| crate::common::now_ts() - p.fetched_at > state.web.limits.stale_seconds as f64)
+        .filter(|p| crate::common::now_ts() - p.fetched_at > web.limits.stale_seconds as f64)
         .map(|p| p.id.clone())
         .collect();
-    let (_, cache_errors) = state
-        .web
+    let (_, cache_errors) = web
         .cached_pages(group)
         .unwrap_or_else(|e| (Vec::new(), vec![json!({"code":e.code})]));
     let estimated = usage.iter().any(|u| u.estimated);

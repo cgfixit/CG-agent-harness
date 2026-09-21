@@ -351,6 +351,7 @@
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
       </span>
       <button class="toggle" id="openSpend" type="button">Spend</button>
+      <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
       <div class="pill model">model <b id="hModel">…</b></div>
       <div class="pill" title="Total tokens across all saved sessions">all sessions · tokens <b id="hTokens">0</b></div>
       <div class="dot" id="hDot" title="server status"></div>
@@ -3062,6 +3063,14 @@ async function refreshSpend() {
   }
 }
 $('openSpend').addEventListener('click', () => { $('spendDialog').showModal(); refreshSpend(); });
+$('reloadLimits').addEventListener('click', async () => {
+  const button = $('reloadLimits'); button.disabled = true;
+  try {
+    const result = await api('/api/config/reload', 'POST', {});
+    sys(result.changed ? 'Configuration limits reloaded (revision ' + result.limits.revision + '). In-flight web operations keep their existing limits.' : 'Configuration limits are already current.');
+  } catch (e) { sys('Reload refused: ' + e.message); }
+  finally { button.disabled = false; }
+});
 $('refreshSpend').addEventListener('click', refreshSpend);
 $('closeSpend').addEventListener('click', clearSpend);
 $('spendDialog').addEventListener('cancel', clearSpend);
@@ -3086,6 +3095,7 @@ const hAuthLogout = document.getElementById('hAuthLogout');
 function setHarnessLogoutVisible(on) {
   if (hAuthLogout) hAuthLogout.hidden = !on;
   document.getElementById('hAuthPassword').hidden = !on;
+  $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin';
   $('hAuthHint').hidden = on || !hAuthLoginBox || hAuthLoginBox.hidden;
 }
 /* Both probes are bounded, matching terminal.js's refreshAuthUi. The catch
@@ -3111,6 +3121,7 @@ async function refreshHarnessAuth() {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
+      $('reloadLimits').hidden = data.role !== 'admin' || data.must_change_password;
       if (who) who.textContent = data.username + ' · ' + data.role;
       if (data.must_change_password) openPasswordChange(true);
       return;

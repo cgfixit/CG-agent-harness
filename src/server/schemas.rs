@@ -55,6 +55,15 @@ pub trait Validate {
     fn validate(&self) -> Vec<String>;
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigReloadRequest {}
+impl Validate for ConfigReloadRequest {
+    fn validate(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
 fn len_ok(s: &str, min: usize, max: usize) -> bool {
     let n = s.chars().count();
     n >= min && n <= max

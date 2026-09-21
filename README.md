@@ -137,6 +137,10 @@ installed build must contain:
 [SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md). MCP stderr
 capture bounds: [PROCESS_LIFECYCLE.md](docs/PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics).
 
+**Tune running limits.** Administrators can edit supported web/API limits and
+choose **Reload limits**; Unix backends also accept SIGHUP. Invalid or mixed
+restart-only changes preserve the running snapshot. See [configuration reload](docs/CONFIG_RELOAD.md).
+
 **Something broken?** Symptom table: [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Which version am I running?

@@ -79,7 +79,7 @@ pub async fn web_status(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     state
-        .web
+        .web_snapshot()
         .status(web_enabled(&state), &owner)
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -100,7 +100,7 @@ pub async fn web_toggle(
         .save(&state.home)
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     state
-        .web
+        .web_snapshot()
         .status(snapshot.web_enabled, &owner)
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -113,9 +113,9 @@ pub async fn web_allow(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     state
-        .web
+        .web_snapshot()
         .allow_rule(&req.url, &req.group, &req.seeds, web_enabled(&state))
-        .and_then(|_| state.web.status(web_enabled(&state), &owner))
+        .and_then(|_| state.web_snapshot().status(web_enabled(&state), &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
 }
@@ -127,9 +127,9 @@ pub async fn web_deny(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     state
-        .web
+        .web_snapshot()
         .deny(&req.url, web_enabled(&state))
-        .and_then(|_| state.web.status(web_enabled(&state), &owner))
+        .and_then(|_| state.web_snapshot().status(web_enabled(&state), &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
 }
@@ -142,7 +142,7 @@ pub async fn web_fetch(
     let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
     state
-        .web
+        .web_snapshot()
         .fetch(&req.url, enabled, &state.audit, &owner)
         .await
         .map(Json)
@@ -172,14 +172,14 @@ pub async fn web_search(
             }
         };
         return state
-            .web
+            .web_snapshot()
             .google_search(&query, count, enabled, &state.audit)
             .await
             .map(Json)
             .map_err(|e| web_err(&e));
     }
     state
-        .web
+        .web_snapshot()
         .search(&req.query, req.group.as_deref(), enabled, &state.audit, &owner)
         .await
         .map(Json)
@@ -192,7 +192,7 @@ pub async fn web_inject(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     state
-        .web
+        .web_snapshot()
         .inject(web_enabled(&state), &owner)
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -248,7 +248,7 @@ pub async fn web_forget(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     state
-        .web
+        .web_snapshot()
         .forget(web_enabled(&state), &owner)
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -273,7 +273,7 @@ pub async fn web_research(State(state): State<Arc<AppState>>, req: Request<Body>
 pub async fn web_cancel(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
     let owner = super::auth::web_owner(&state, &req)?;
     state
-        .web
+        .web_snapshot()
         .research
         .cancel(&owner)
         .map(|cancelled| Json(json!({"cancelled":cancelled})))

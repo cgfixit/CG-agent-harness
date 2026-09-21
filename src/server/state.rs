@@ -73,6 +73,7 @@ pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
 pub struct AppState {
     pub home: Home,
     pub cfg: SharedConfig,
+    pub runtime: std::sync::RwLock<Arc<super::config_reload::RuntimeLimits>>,
     pub settings: Mutex<HarnessSettings>,
     pub store: SessionStore,
     pub attachments: AttachmentStore,
@@ -84,7 +85,6 @@ pub struct AppState {
     pub audit: Audit,
     pub rate_limiter: RateLimiter,
     pub loop_rate_limiter: RateLimiter,
-    pub loop_max_tokens: u64,
     pub loop_inflight: Mutex<HashMap<String, f64>>,
     pub generation_gate: GenerationGate,
     pub agent_run_gate: GenerationGate,
@@ -189,6 +189,18 @@ impl OllamaControl {
 }
 
 impl AppState {
+    pub fn runtime_limits(&self) -> Arc<super::config_reload::RuntimeLimits> {
+        self.runtime.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// One web operation keeps its limits while sharing cancellation, fetch
+    /// permits and cache/policy mutation locks with every other snapshot.
+    pub fn web_snapshot(&self) -> WebTool {
+        let mut web = self.web.clone();
+        web.limits = self.runtime_limits().web.clone();
+        web
+    }
+
     pub fn current_model(&self) -> String {
         let selected = self
             .settings

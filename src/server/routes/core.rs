@@ -30,6 +30,24 @@ pub async fn slash_parse(ValidJson(req): ValidJson<SlashParseRequest>) -> Json<V
 
 const DEFAULT_TEMPERATURE: f64 = 0.3;
 
+pub async fn reload_config(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(_req): ValidJson<ConfigReloadRequest>,
+) -> ApiResult<Json<Value>> {
+    if user.is_none_or(|user| user.role != "admin" || user.must_change_password) {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "AUTH_PERMISSION_DENIED",
+            "configuration reload requires an administrator account",
+        ));
+    }
+    crate::server::config_reload::reload(state, "http")
+        .await
+        .map(Json)
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))
+}
+
 pub async fn status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
@@ -435,15 +453,22 @@ async fn chat_inner(
         super::skills::resolve(&state, &session.selected_skills)?
     };
 
+    let live = state.runtime_limits();
+    let mut web = state.web.clone();
+    web.limits = live.web.clone();
     let mut loop_claimed = false;
     if req.loop_turn {
         if session.goal.trim().is_empty() {
             return Err(loop_error("LOOP_REQUIRES_GOAL", "set a /goal before /loop"));
         }
         let ip = peer.ip().to_string();
-        if !state.loop_rate_limiter.allow(&ip) {
+        if !state
+            .loop_rate_limiter
+            .allow_with_limits(&ip, live.loop_rate.max_requests, live.loop_rate.window_seconds)
+        {
             return Err(retry_after_error(
                 &state.loop_rate_limiter,
+                &live.loop_rate,
                 &ip,
                 "LOOP_RATE_LIMIT",
                 "loop rate limit exceeded",
@@ -517,7 +542,7 @@ async fn chat_inner(
     let web_context = if cloud_selected {
         String::new()
     } else {
-        state.web.context_text(settings.web_enabled, &owner)
+        web.context_text(settings.web_enabled, &owner)
     };
     let selections = req
         .selected_facts
@@ -569,7 +594,7 @@ async fn chat_inner(
         })
     };
     let max_tokens = if req.loop_turn {
-        state.loop_max_tokens
+        live.loop_max_tokens
     } else {
         state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_REPLY_TOKENS)
     };
@@ -603,11 +628,7 @@ async fn chat_inner(
             .min(MAX_PROMPT_TOKENS);
         let mut threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
         if settings.web_enabled && !req.loop_turn {
-            let web_room = state
-                .web
-                .limits
-                .total_tokens
-                .saturating_sub(reservation.saturating_mul(2));
+            let web_room = web.limits.total_tokens.saturating_sub(reservation.saturating_mul(2));
             threshold = threshold.min(web_room).max(minimum_threshold);
         }
         let keep = state
@@ -764,6 +785,7 @@ async fn chat_inner(
     } else if settings.web_enabled && !req.loop_turn {
         crate::server::chat_web::run_stream(
             &state,
+            &web,
             &owner,
             &system_prompt,
             &history,

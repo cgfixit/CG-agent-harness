@@ -33,6 +33,16 @@ Saved `SERPAPI_API_KEY` changes activate immediately; explicit process environme
 values take precedence. The fixed SerpAPI search endpoint needs no page URL grant.
 Public Google fallback and destination page fetching retain URL permission checks.
 
+Non-secret runtime limits reload through one validated snapshot:
+`POST /api/config/reload` requires a non-bootstrap admin account and CSRF;
+Unix `serve` and native sidecars also install SIGHUP. The exact 22-key allowlist
+is `src/server/config_reload.rs::RELOADABLE`; everything else is restart-only
+for this operation. Invalid/mixed candidates preserve the entire snapshot and
+audit a safe refusal. Retain rate hits and share web permits, mutation locks
+and cancellation across snapshots. `web.concurrency` cannot hot-reload.
+Existing per-mutation coding-policy disk checks are independent and still apply.
+See `docs/CONFIG_RELOAD.md` before changing either boundary.
+
 ## Traps
 
 - **Never** make the server reference `crate::agentic`; `tests/invariant_guard.rs`

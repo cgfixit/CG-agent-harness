@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::{state::AppState, web_policy::error, web_research::authorize_owner};
+use super::{state::AppState, web_policy::error, web_research::authorize_owner, web_search::WebTool};
 use crate::common::errors::Result;
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::{parse_chat_response, ChatMessage, ChatResult};
@@ -61,6 +61,7 @@ fn check_evidence(state: &AppState, owner: &str, sources: &[String]) -> Result<(
 #[allow(clippy::too_many_arguments)]
 pub async fn run_stream(
     state: &AppState,
+    web: &WebTool,
     owner: &str,
     system: &str,
     history: &[ChatMessage],
@@ -70,11 +71,11 @@ pub async fn run_stream(
     token_ratio: f64,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
-    let lease = state.web.chat_turn.start(owner)?;
+    let lease = web.chat_turn.start(owner)?;
     tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
-        result = tokio::time::timeout(Duration::from_secs_f64(state.chat.timeout_sec.max(1.0)), run_inner(state, owner, system, history, model, cap, temperature, token_ratio, output)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.chat.timeout_sec.max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, output)) =>
             result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
     }
 }
@@ -82,6 +83,7 @@ pub async fn run_stream(
 #[allow(clippy::too_many_arguments)]
 async fn run_inner(
     state: &AppState,
+    web: &WebTool,
     owner: &str,
     system: &str,
     history: &[ChatMessage],
@@ -104,17 +106,17 @@ async fn run_inner(
     let mut initial_prompt_tokens = None;
     let mut budget_used = 0u64;
     let definitions = tools();
-    for turn in 0..=state.web.limits.chat_tool_calls {
+    for turn in 0..=web.limits.chat_tool_calls {
         check_evidence(state, owner, &sources)?;
         let estimate = ((system.len() + serde_json::to_vec(&messages)?.len() + serde_json::to_vec(&definitions)?.len())
             as u64)
             .div_ceil(4);
         let estimate = super::compaction::calibrated_tokens(estimate, token_ratio);
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
-        if budget_used.saturating_add(estimate).saturating_add(reservation) > state.web.limits.total_tokens {
+        if budget_used.saturating_add(estimate).saturating_add(reservation) > web.limits.total_tokens {
             return Err(error("WEB_TOKEN_BUDGET", "chat web token budget exhausted"));
         }
-        let available = if turn == state.web.limits.chat_tool_calls {
+        let available = if turn == web.limits.chat_tool_calls {
             &[][..]
         } else {
             definitions.as_slice()
@@ -230,7 +232,7 @@ async fn run_inner(
                         if let Some(result) = searches.get(&key) {
                             Ok(Value::clone(result))
                         } else {
-                            let result = state.web.google_search(&query, count, true, &state.audit).await;
+                            let result = web.google_search(&query, count, true, &state.audit).await;
                             if let Ok(value) = &result {
                                 searches.insert(key, value.clone());
                             }
@@ -242,8 +244,8 @@ async fn run_inner(
             "web_fetch" => {
                 let args: FetchArgs =
                     serde_json::from_str(args).map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid fetch arguments"))?;
-                state.web.fetch(&args.url, true, &state.audit, owner).await.map(|page| {
-                    json!({"url":page["url"],"title":page["title"],"text":crate::common::clip_chars(page["text"].as_str().unwrap_or(""), (state.web.limits.evidence_tokens * 4) as usize),
+                web.fetch(&args.url, true, &state.audit, owner).await.map(|page| {
+                    json!({"url":page["url"],"title":page["title"],"text":crate::common::clip_chars(page["text"].as_str().unwrap_or(""), (web.limits.evidence_tokens * 4) as usize),
                         "source_chars":page["chars"],"notice":"Untrusted fetched page text; excerpt may be truncated."})
                 })
             }

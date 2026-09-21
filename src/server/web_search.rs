@@ -20,7 +20,7 @@ pub const MAX_ALLOW: usize = MAX_RULES;
 pub const MAX_BYTES: usize = 262_144;
 const MAX_CONTEXT: usize = 4000;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Limits {
     pub response_bytes: usize,
     pub request_seconds: u64,
@@ -245,7 +245,7 @@ pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, Stri
     )
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WebTool {
     pub(super) tools_dir: PathBuf,
     /// Programmatic fixture hook; no configuration, CLI or HTTP path sets it.
@@ -254,11 +254,11 @@ pub struct WebTool {
     pub test_resolve_extra: Vec<(String, SocketAddr)>,
     pub(super) search_key_from_file: bool,
     pub limits: Limits,
-    pub(super) permits: Semaphore,
-    pub(super) mutation: Mutex<()>,
+    pub(super) permits: Arc<Semaphore>,
+    pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
-    pub research: super::web_research::ResearchState,
-    pub chat_turn: super::web_research::ResearchState,
+    pub research: Arc<super::web_research::ResearchState>,
+    pub chat_turn: Arc<super::web_research::ResearchState>,
 }
 
 impl WebTool {
@@ -268,13 +268,13 @@ impl WebTool {
             tools_dir: tools_dir.into(),
             test_resolve: None,
             test_resolve_extra: Vec::new(),
-            permits: Semaphore::new(limits.concurrency),
+            permits: Arc::new(Semaphore::new(limits.concurrency)),
             limits,
             search_key_from_file: false,
-            mutation: Mutex::new(()),
+            mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
-            research: super::web_research::ResearchState::default(),
-            chat_turn: super::web_research::ResearchState::default(),
+            research: Arc::default(),
+            chat_turn: Arc::default(),
         })
     }
     fn allow_path(&self) -> PathBuf {
