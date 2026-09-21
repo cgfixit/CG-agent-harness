@@ -28,6 +28,18 @@ metrics. It keeps the same completeness and pricing semantics; see
 
 ## Read spend without mistaking missing data for zero
 
+The chat header's **session · tokens** is the selected session's persisted
+prompt-plus-completion tally, not the total across saved sessions. A new session
+starts at zero; reopening a session restores its own tally, including after an
+app restart. `/tokens` breaks that tally down. An unavailable tally displays `—`,
+not zero. Analytics and `/status` retain their all-session aggregates.
+
+Session tallies count successfully committed chat exchanges (including their
+web-tool rounds and successful compaction usage). They are not billing records:
+failed-after-billing calls and independent research/coding operations can appear
+in Spend without becoming a saved chat exchange. Switching or creating sessions
+does not reset, rewrite or append to the spend ledger.
+
 Open **Spend**, then **Refresh** to read `GET /api/spend/summary`. Previous/Next
 show at most 100 provider/model/day groups per page. Closing the view, pressing
 Escape or logging out clears its page state without deleting the ledger.

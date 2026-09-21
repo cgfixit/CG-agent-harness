@@ -62,7 +62,7 @@ const server=createServer(async(req,res)=>{
   reply({keys:[{name:'SERPAPI_API_KEY',label:'Google results (SerpAPI)',detail:'Public Google fallback when unset',saved_configured:!!savedSearchKey,saved_masked:savedSearchKey?'••••••••5678':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedSearchKey,environment_override:false},{name:'DEEPAGENT_API_KEY',label:'Planner key',detail:'Optional fixture provider',saved_configured:!!savedKey,saved_masked:savedKey?'••••••••1234':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedKey,environment_override:false}]});return;
  }
  if(path==='/api/status'&&authFixture&&(!signedIn||mustChange||authRole==='audit')){reply({version:'fixture',auth_enabled:true});return;}
- if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:0});return;}
+ if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:987654});return;}
  if(path==='/api/soul/document'){
   if(req.method==='POST'){if(!body.confirm){reply({detail:{code:'SOUL_CONFIRM',message:'Confirmation required'}},400);return;}persona=body.content;reply({saved:true,revision:'1'.repeat(64)});return;}
   reply({content:persona,revision:persona?'1'.repeat(64):'missing',max_chars:8000,versions:[]});return;
@@ -158,6 +158,9 @@ const server=createServer(async(req,res)=>{
   if(mode==='rate'){reply({detail:{code:'LOOP_RATE_LIMIT',message:'rate fixture'}},429);return;}
   if(mode==='failure'){reply({detail:{code:'HARNESS_LLM_ERROR',message:'failure fixture'}},502);return;}
   const chat={reply:mode==='done'?'GOAL_DONE':mode==='repeat'?'same':'reply '+requests.length,session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:tokens},tally:{total:tokens}};
+  if(sessions.has(body.session_id)) {
+   const s=sessions.get(body.session_id); s.tokens.total+=1+tokens; chat.tally={...s.tokens};
+  }
   if(body.retrieve)chat.structured_facts={injected:structuredGates.retrieval?[ftsHit]:[],source:'fts',retrieval:!!structuredGates.retrieval};
   reply(chat);return;
  }
@@ -405,7 +408,18 @@ try {
  await send('/loop auto');await send('/loop 2');await send('/goal clear');assert.equal(await evaluate('loopState'),null);assert.equal(await evaluate('sessionGoal'),'');
  await send('/goal Another goal');await send('/loop 2');await send('/session new');assert.equal(await evaluate('loopState'),null);
  const firstSession=[...sessions.values()][0];
+ assert.equal(await evaluate('document.getElementById("hTokens").textContent'),'0','new session starts at zero despite nonzero aggregate');
+ const secondSession=await evaluate('currentSession');
+ await send('session token fixture');
+ assert.equal(await evaluate('document.getElementById("hTokens").textContent'),'3','completed chat updates its own tally');
+ firstSession.tokens={total:4321};
  firstSession.messages=Array.from({length:12},(_,i)=>({role:i%2?'assistant':'user',content:'OLD_MESSAGE_'+i}));
+ await send('/session use '+firstSession.session_id);
+ assert.equal(await evaluate('document.getElementById("hTokens").textContent'),(4321).toLocaleString(),'reopened session restores its own count');
+ await evaluate('refreshStatus()');
+ assert.equal(await evaluate('document.getElementById("hTokens").textContent'),(4321).toLocaleString(),'status polling cannot overwrite with aggregate');
+ await send('/session use '+secondSession);
+ assert.equal(await evaluate('document.getElementById("hTokens").textContent'),'3');
  await send('/session use '+firstSession.session_id);
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'switch renders the selected session, including its older messages');
  await send('/session use '+firstSession.session_id);

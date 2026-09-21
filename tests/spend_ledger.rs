@@ -6,6 +6,68 @@ use common::*;
 use serde_json::{json, Value};
 
 #[tokio::test]
+async fn session_tallies_are_independent_of_each_other_and_the_spend_ledger() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, a) = s.post_json("/api/sessions", json!({"title":"A"})).await;
+    let (_, b) = s.post_json("/api/sessions", json!({"title":"B"})).await;
+    assert_eq!(a["tokens"]["total"], 0);
+    assert_eq!(b["tokens"]["total"], 0);
+    let ledger = s.home.join("logs/spend.jsonl");
+    assert!(!ledger.exists(), "creating sessions is not inference");
+    for (session, input, output, total) in [(&a, 11, 3, 14), (&b, 20, 5, 25), (&a, 7, 2, 23)] {
+        model.set_reply(ok_reply("synthetic reply", input, output));
+        let (status, reply) = s
+            .post_json(
+                "/api/chat",
+                json!({"session_id":session["session_id"],"message":"test"}),
+            )
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        assert_eq!(reply["tally"]["total"], total);
+    }
+    let before = std::fs::read(&ledger).unwrap();
+    for (session, total, exchanges) in [(&a, 23, 2), (&b, 25, 1)] {
+        let (_, saved) = s
+            .get_json(&format!("/api/sessions/{}", session["session_id"].as_str().unwrap()))
+            .await;
+        assert_eq!(saved["tokens"]["total"], total);
+        assert_eq!(saved["tokens"]["exchanges"], exchanges);
+    }
+    let (_, fresh) = s.post_json("/api/sessions", json!({})).await;
+    assert_eq!(fresh["tokens"]["total"], 0);
+    assert_eq!(s.get_json("/api/status").await.1["total_tokens"], 48);
+    let summary = s.get_json("/api/spend/summary").await.1;
+    assert_eq!(summary["rows"], 3);
+    assert_eq!(summary["days"][0]["input_tokens"], 38);
+    assert_eq!(summary["days"][0]["output_tokens"], 10);
+    assert_eq!(
+        std::fs::read(&ledger).unwrap(),
+        before,
+        "session navigation cannot rewrite spend"
+    );
+
+    // A billed failure belongs in Spend, not a successfully saved exchange.
+    model.set_reply(ok_reply("", 4, 1));
+    let (status, _) = s
+        .post_json(
+            "/api/chat",
+            json!({"session_id":a["session_id"],"message":"empty response"}),
+        )
+        .await;
+    assert_eq!(status, 502);
+    let (_, saved) = s
+        .get_json(&format!("/api/sessions/{}", a["session_id"].as_str().unwrap()))
+        .await;
+    assert_eq!(saved["tokens"]["total"], 23);
+    assert_eq!(s.get_json("/api/spend/summary").await.1["rows"], 4);
+    let after = std::fs::read(&ledger).unwrap();
+    assert!(after.starts_with(&before), "the ledger must remain append-only");
+    let last: Value = serde_json::from_str(std::str::from_utf8(&after).unwrap().lines().last().unwrap()).unwrap();
+    assert_eq!(last["outcome"], "failed_after_billing");
+}
+
+#[tokio::test]
 async fn local_chat_appends_unpriced_usage_without_prompt_or_key() {
     let model = start_mock_model().await;
     model.set_reply(ok_reply("pong", 11, 3));

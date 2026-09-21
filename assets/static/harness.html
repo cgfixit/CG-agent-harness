@@ -413,7 +413,7 @@
       <button class="toggle" id="openSpend" type="button">Spend</button>
       <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
       <div class="pill model">model <b id="hModel">…</b></div>
-      <div class="pill" title="Total tokens across your saved sessions">your sessions · tokens <b id="hTokens">0</b></div>
+      <div class="pill" title="Recorded prompt and completion tokens for the selected session; separate from the Spend ledger">session · tokens <b id="hTokens">0</b></div>
       <div class="dot" id="hDot" title="server status"></div>
     </div>
   </div>
@@ -1179,12 +1179,31 @@ let statusBackoffMs = STATUS_BASE_INTERVAL;
 let statusTimer = null;
 let statusVisible = true;
 
+let sessionTokenRevision = 0;
+function paintSessionTokens(tokens) {
+  ++sessionTokenRevision; // A selection or completion invalidates older poll replies.
+  const total = tokens && tokens.total;
+  $('hTokens').textContent = typeof total === 'number' && Number.isFinite(total) && total >= 0
+    ? total.toLocaleString() : '—';
+}
+
+async function refreshSessionTokens() {
+  const session = currentSession, revision = sessionRevision, ticket = ++sessionTokenRevision;
+  const current = () => ticket === sessionTokenRevision && revision === sessionRevision && session === currentSession;
+  if (!session) { paintSessionTokens({total:0}); return; }
+  try {
+    const s = await api('/api/sessions/' + encodeURIComponent(session));
+    if (current()) paintSessionTokens(s.tokens);
+  } catch (e) {
+    if (current()) paintSessionTokens(null);
+  }
+}
+
 async function refreshStatus() {
   if (statusTimer) { window.clearTimeout(statusTimer); statusTimer = null; }
   try {
-    const s = await api('/api/status');
+    const [s] = await Promise.all([api('/api/status'), refreshSessionTokens()]);
     $('hModel').textContent = s.model || '(unset)';
-    $('hTokens').textContent = Number(s.total_tokens || 0).toLocaleString();
     $('sProvider').textContent = s.provider || (window.__cyclawRole === 'audit' ? 'read-only' : 'sign in');
     if (apiKeyInput) {
       apiKeyInput.placeholder = 'optional metadata key';
@@ -1755,7 +1774,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     currentStyle = 'off'; currentStyleIssue = null; paintStyle();
     input.value = '';
     $('sSession').textContent = 'none';
-    $('hTokens').textContent = '0';
+    paintSessionTokens({total:0});
     paintGoalLoop();
     $('sessionClearDialog').close();
     $('sessionClearDerivedEpisodes').checked = false;
@@ -1814,6 +1833,7 @@ async function runSlash(line) {
             if (revision !== sessionRevision) break;
             clearTranscript();
             currentSession = s.session_id;
+            paintSessionTokens(s.tokens);
             promptHistory.session = null; promptHistory.prompts = [];
             sessionGoal = typeof s.goal === 'string' ? s.goal : '';
             loopAuto = false;
@@ -2108,6 +2128,7 @@ async function runSlash(line) {
         if (!['use','clear','status'].includes(action)) { sys('usage: /skill use <id...> | clear | status | check:<profile>'); break; }
         if (!currentSession) {
           const created = await api('/api/sessions', 'POST', {}); currentSession = created.session_id;
+          paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
         }
@@ -2519,6 +2540,7 @@ async function runSlash(line) {
         if (!currentSession) {
           const created = await api('/api/sessions', 'POST', { title: arg.slice(0, 40) });
           currentSession = created.session_id;
+          paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
         }
@@ -2776,6 +2798,7 @@ async function finishChat(r) {
   }
   const usage = (r && r.usage) || {};
   const tally = (r && r.tally) || {};
+  paintSessionTokens(tally);
   if (loopState && r && r.usage) {
     loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
   }
@@ -3771,6 +3794,7 @@ if (hAuthLogout) {
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
     currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
+    paintSessionTokens({total:0});
     $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;
     promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
     currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;

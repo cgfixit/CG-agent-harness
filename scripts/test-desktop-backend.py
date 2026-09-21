@@ -453,6 +453,7 @@ class DesktopBoundary(unittest.TestCase):
         child = self.start()
         headers = headers_for(child)
         session = call(child, headers, '/api/sessions', {"title": "restart fixture"}, expected=201)
+        self.assertEqual(session['tokens']['total'], 0)
         sid = session['session_id']
         path = '/api/sessions/' + sid
         goal = 'Explain the repository checks'
@@ -468,6 +469,13 @@ class DesktopBoundary(unittest.TestCase):
         self.assertEqual(model.requests[0]['model'], 'fixture-model')
         self.assertIn(goal, model.requests[0]['messages'][0]['content'])
         self.assertIn(note, model.requests[0]['messages'][0]['content'])
+        second = call(child, headers, '/api/sessions', {"title": "separate tally"}, expected=201)
+        self.assertEqual(second['tokens']['total'], 0)
+        second_path = '/api/sessions/' + second['session_id']
+        other_reply = call(child, headers, '/api/chat', {"session_id": second['session_id'], "message": "other session"})
+        self.assertEqual(other_reply['tally']['total'], 12)
+        ledger = self.home / 'logs/spend.jsonl'
+        ledger_before_restart = ledger.read_bytes()
         child.close()  # real parent EOF, then a fresh process against the same home
 
         restarted = self.start()
@@ -479,22 +487,34 @@ class DesktopBoundary(unittest.TestCase):
         self.assertEqual(restored['title'], 'restart fixture')
         self.assertEqual(restored['goal'], goal)
         self.assertEqual(restored['tokens']['exchanges'], 1)
+        self.assertEqual(restored['tokens']['total'], 12)
+        self.assertEqual(call(restarted, fresh, second_path)['tokens']['total'], 12)
+        self.assertEqual(ledger.read_bytes(), ledger_before_restart)
         self.assertEqual([m['content'] for m in restored['messages']], ['first turn', 'fixture reply'])
         self.assertTrue(call(restarted, fresh, '/api/memory')['enabled'])
         self.assertEqual(call(restarted, fresh, '/api/status')['model'], 'fixture-model')
-        self.assertEqual(len(model.requests), 1, 'startup must not replay inference')
+        self.assertEqual(len(model.requests), 2, 'startup must not replay inference')
         reply = call(restarted, fresh, '/api/chat', {
             "session_id": sid, "message": "continue the goal", "loop": True})
         self.assertEqual(reply['tally']['exchanges'], 2)
         self.assertEqual(reply['tally']['total'], 24)
-        self.assertEqual(len(model.requests), 2)
-        request = model.requests[1]
+        self.assertEqual(len(model.requests), 3)
+        request = model.requests[2]
         self.assertEqual(request['model'], 'fixture-model')
         self.assertIn(goal, request['messages'][0]['content'])
         self.assertIn(note, request['messages'][0]['content'])
         self.assertEqual([m['content'] for m in request['messages'][1:]],
             ['first turn', 'fixture reply', 'continue the goal'])
         self.assertEqual(call(restarted, fresh, path)['message_count'], 4)
+        self.assertEqual(call(restarted, fresh, second_path)['tokens']['total'], 12)
+        self.assertEqual(call(restarted, fresh, '/api/status')['total_tokens'], 36)
+        newest = call(restarted, fresh, '/api/sessions', {}, expected=201)
+        self.assertEqual(newest['tokens']['total'], 0)
+        summary = call(restarted, fresh, '/api/spend/summary')
+        self.assertEqual(summary['rows'], 3)
+        self.assertEqual(summary['days'][0]['input_tokens'], 30)
+        self.assertEqual(summary['days'][0]['output_tokens'], 6)
+        self.assertTrue(ledger.read_bytes().startswith(ledger_before_restart))
 
     def test_home_lock_prevents_second_writer_and_releases_after_eof(self):
         first = self.start()
