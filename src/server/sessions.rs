@@ -523,7 +523,12 @@ impl SessionStore {
                 let p = e.path();
                 let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 if p.extension().and_then(|s| s.to_str()) == Some("json") && id_re().is_match(stem) {
-                    ids.push(stem.to_string());
+                    // Rebuild from the integer so a directory stem cannot carry `../`
+                    // into `path_for` / `join`. Skip names the parser refuses.
+                    let Ok(id) = canonical_session_id(stem) else {
+                        continue;
+                    };
+                    ids.push(id);
                 }
             }
         }
@@ -946,6 +951,42 @@ mod attachment_pin_tests {
         std::fs::write(reopened.path_for(&session.session_id).unwrap(), value.to_string()).unwrap();
         assert!(reopened.get(&session.session_id).unwrap().attachment_pins.is_empty());
         assert!(!reopened.list().iter().any(|row| row.get("attachment_pins").is_some()));
+    }
+
+    #[test]
+    fn filter_skips_non_canonical_stems_and_does_not_escape_the_session_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let session = store.create("fixture", "pins").unwrap();
+        store
+            .merge_attachment_pins(&session.session_id, "alice", &["keep".into()], live_all)
+            .unwrap();
+
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.json");
+        let hostile_payload = r#"{"session_id":"deadbeefdead","attachment_pins":[{"owner":"alice","id":"leak"}]}"#;
+        std::fs::write(&secret, hostile_payload).unwrap();
+
+        // Names that match neither `id_re` nor `canonical_session_id`.
+        let hostile_upper = dir.path().join("AAAAAAAAAAAA.json");
+        let hostile_short = dir.path().join("aaaa.json");
+        std::fs::write(&hostile_upper, hostile_payload).unwrap();
+        std::fs::write(&hostile_short, hostile_payload).unwrap();
+
+        assert!(canonical_session_id("../etc/passwd").is_err());
+        assert!(canonical_session_id("AAAAAAAAAAAA").is_err());
+        assert_eq!(store.drop_attachment_pins_for_owner("alice").unwrap(), 1);
+        assert!(store.get(&session.session_id).unwrap().attachment_pins.is_empty());
+
+        // Filter must not rewrite non-canonical siblings or anything outside `dir`.
+        assert_eq!(std::fs::read_to_string(&hostile_upper).unwrap(), hostile_payload);
+        assert_eq!(std::fs::read_to_string(&hostile_short).unwrap(), hostile_payload);
+        assert_eq!(std::fs::read_to_string(&secret).unwrap(), hostile_payload);
+        assert!(
+            std::fs::read_to_string(store.path_for(&session.session_id).unwrap())
+                .unwrap()
+                .contains(&session.session_id)
+        );
     }
 
     #[test]
