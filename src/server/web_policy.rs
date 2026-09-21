@@ -99,10 +99,10 @@ pub(super) fn canonical_http_url(raw: &str, admit_private: bool) -> Result<Url> 
             if !admit_private
                 && (!host.contains('.')
                     || [
-                        "localhost",
+                        "localhost", // DevSkim: ignore DS162092 because this is the SSRF deny list for loopback names, not leftover debug access.
                         "local",
                         "internal",
-                        "localhost.localdomain",
+                        "localhost.localdomain", // DevSkim: ignore DS162092 because this is the SSRF deny list for loopback names, not leftover debug access.
                         "metadata.goog",
                     ]
                     .iter()

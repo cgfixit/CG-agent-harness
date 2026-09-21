@@ -215,10 +215,10 @@ mod tests {
     fn destination_answers_fail_closed() {
         let addr = |s: &str| s.parse::<SocketAddr>().unwrap();
         assert!(!allowed_addresses(&[], true));
-        assert!(!allowed_addresses(&[addr("127.0.0.1:80")], false));
-        assert!(allowed_addresses(&[addr("127.0.0.1:80")], true));
-        assert!(!allowed_addresses(&[addr("8.8.8.8:443"), addr("127.0.0.1:80")], false));
+        assert!(!allowed_addresses(&[addr("127.0.0.1:80")], false)); // DevSkim: ignore DS162092 because this unit test pins loopback for the webhook destination grant.
+        assert!(allowed_addresses(&[addr("127.0.0.1:80")], true)); // DevSkim: ignore DS162092 because this unit test pins loopback for the webhook destination grant.
+        assert!(!allowed_addresses(&[addr("8.8.8.8:443"), addr("127.0.0.1:80")], false)); // DevSkim: ignore DS162092 because this unit test pins loopback for the webhook destination grant.
         assert!(!allowed_addresses(&[addr("169.254.169.254:80")], true));
-        assert!(!allowed_addresses(&[addr("[::ffff:127.0.0.1]:80")], true));
+        assert!(!allowed_addresses(&[addr("[::ffff:127.0.0.1]:80")], true)); // DevSkim: ignore DS162092 because this unit test pins IPv4-mapped loopback for the webhook destination grant.
     }
 }
