@@ -444,6 +444,14 @@ above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persis
 command instead takes an optional positional group and crawl seed. Memory `save`
 and `remember` split text from the required reason at the final `::`.
 
+Common misspellings such as `/memroy` and `/memory cler` suggest `/memory` and
+`/memory clear` without executing either. Ambiguous `/skil` offers both `/skill`
+and `/skills`; edit the input and submit the intended command yourself. Supported
+conversational prefixes preserve the following query words: `/web please search
+The Who` becomes `/web search The Who`. Existing normalization still collapses
+repeated whitespace. Unsupported fixed arguments such as `/memory clear --help`
+remain unexecuted; use the help commands above to inspect syntax.
+
 The `/agent` family operates the separate coding workflow:
 
 | Command | Effect |
