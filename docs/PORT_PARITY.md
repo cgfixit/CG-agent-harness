@@ -89,7 +89,8 @@ listed evidence; “unverified” means not yet executed at the required realism
 | Run store / cleanup | `agentic/run_store.rs`, `commands.rs` | Durable lifecycle and controlled cleanup | fixture record guards; crash/restart recovery not established | incomplete |
 | Python CLI/ops coverage | `agentic/cli.rs`, `shim/mod.rs`, views | Honest exposed capabilities | whitelist/invariant/surface scans | verified (structural) |
 | Python install scripts | packaging scripts and GitHub workflows | Apple Silicon package with assets/self-location | native arm64 archive/checksums/assets/shim self-location pass; ad-hoc signing only; preparation script absent from binary archive | incomplete |
-| RAG, terminal execution, fs/sql/netconnect, native desktop | no implementation | Excluded extraction scope | extraction commit explicitly omits RAG/terminal/connectors | intentionally omitted |
+| RAG, terminal execution, fs/sql/netconnect | no implementation | Excluded extraction scope | extraction commit explicitly omits RAG/terminal/connectors (`src/server/prompts.rs:67` still lists these as not implemented) | intentionally omitted |
+| Native desktop | `desktop/` Tauri crate (added after this ledger; not part of the pinned baseline above) | Native macOS app over the same backend | see [DESKTOP.md](DESKTOP.md) and [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md) | out of scope for this ledger, tracked separately |
 
 ## Current delivery status
 

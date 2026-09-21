@@ -25,7 +25,8 @@ goal, and skill selection. `/session use <id>` restores only that session's
 retained messages, without appending duplicate copies. Switching cancels the
 browser's current generation wait and ignores late replies from older selections.
 Hidden coding/proposal reviews are cleared, so an unseen review cannot remain
-armed. New/switch actions preserve saved sessions. `/clear` clears the display only.
+armed. New/switch actions preserve saved sessions. `/clear` clears visible output,
+staged coding/review state and chat continuation; saved sessions remain.
 To delete saved chats, choose **Clear my session history** below **+ new session**
 in the Sessions sidebar and confirm. This stops chat and removes session files,
 goals, skill selections and token totals; shared notes/persona/web and coding runs remain.
@@ -226,8 +227,9 @@ shell text cannot become commands. Use `/agent job <id>` and `/agent status
 /goal task
 ```
 
-Staging persists an exact goal/branch identity and creates no worker. One
-iteration is selected by default. Review the request and optional inputs before
+Staging persists an exact goal/branch identity and creates no worker. Three
+iterations are selected by default when `/agent iterations` is not set; this
+example explicitly requests one. Review the request and optional inputs before
 confirmation. Existing coding prerequisites, tool allowlists, write gates,
 subprocess isolation, time/output limits and sandbox checks apply unchanged.
 The server durably associates the stage and declared checks with the job before
