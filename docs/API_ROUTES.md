@@ -139,8 +139,9 @@ running portal.
 
 SSE MCP URLs are DNS-pinned. Loopback SSE requires `mcp.sse_allow_loopback: true`.
 MCP tools are not attached to `/loop`. Stdio response headers are limited to 4 KiB,
-including unterminated lines. Child stderr diagnostics read at most 2 KiB and
-retain up to 512 Unicode characters; this does not cap the stderr log file itself.
+including unterminated lines. Child stderr is drained through a pipe, retaining at most 2 KiB in memory and
+512 Unicode characters in diagnostics. No stderr log file is created; the existing
+call timeout and process-group cleanup still bound the child lifetime.
 
 ## Coding agent
 

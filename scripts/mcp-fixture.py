@@ -73,6 +73,10 @@ def _handle(message):
             sys.stdout.buffer.flush()
             threading.Event().wait(10)
             os._exit(1)
+        if name == "stderr_then_echo":
+            sys.stderr.buffer.write(b"X" * (3 * 1024 * 1024))
+            sys.stderr.buffer.flush()
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"content": [{"type": "text", "text": json.dumps({"echo": args, "stderr_file_exists": os.path.exists(os.path.join(os.environ["HOME"], "mcp-stderr.log"))})}]}}
         if name == "stderr_flood":
             sys.stderr.buffer.write("界".encode() * (1024 * 1024))
             sys.stderr.buffer.flush()

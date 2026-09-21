@@ -501,3 +501,18 @@ async fn stdio_unterminated_header_is_refused_before_timeout_and_stderr_is_clipp
         .await;
     assert_eq!(status, 200, "{body}");
 }
+
+#[tokio::test]
+async fn stdio_stderr_is_drained_without_a_log_file_or_blocked_response() {
+    let yaml = stdio_yaml().replace("        - crash", "        - stderr_then_echo\n        - crash");
+    let server = McpServer::boot(&yaml, &[("mcp.timeout_sec", "2")]).await;
+    let (status, body) = server
+        .call(
+            json!({"server":"fixture","tool":"stderr_then_echo","confirm":true,"arguments":{"marker":"after_stderr"}}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let result: Value = serde_json::from_str(body["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(result["echo"]["marker"], "after_stderr");
+    assert_eq!(result["stderr_file_exists"], false);
+}
