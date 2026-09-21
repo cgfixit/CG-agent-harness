@@ -1240,40 +1240,81 @@ async function refreshKeys() {
 
 /* ── commands pane ── */
 const COMMANDS = [
-  ['/help', 'list commands'],
-  ['/session new|list|use|rename', 'manage chat sessions'],
-  ['/prompt', 'preview the next chat system prompt (private)'],
-  ['/soul edit|propose|history|review <id>|apply <id> <reason>|reject <id> <reason>', 'edit persona or explicitly review/apply a proposal'],
-  ['/soul on|off|status', 'soul.md in system prompt (not /memory)'],
-  ['/style <name>|off', 'session output-style preset (concise, unslop, technical-deep, beginner); default off'],
-  ['/memory [on|off|add|forget|clear]', 'operator notes in prompt (on for fresh homes)'],
-  ['/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding [on|off]', 'admin-only structured-memory gate overrides; /memory on stays pinned notes'],
-  ['/memory search <query>', 'FTS fact candidates (not injected)'],
-  ['/memory retrieve <query>', 'force FTS include for this prompt only'],
-  ['/memory consolidate <id...>', 'manual selected-episode consolidation into pending proposals'],
-  ['/memory save <text> :: <reason>', 'confirm a private fact immediately; automation may remain off'],
-  ['/memory remember <sentence> :: <reason>', 'confirm a semantic summary on your latest completed episode'],
-  ['/memory proposals', 'open pending proposals; Apply or Reject requires your reason'],
-  ['/goal stage <branch>|task', 'explicitly stage the goal as a coding request; inspect durable progress'],
-  ['/goal [text]|clear', 'set, show, or clear the session goal'],
-  ['/loop [n]|stop|auto', 'chat continuation only; aggregate completion budget; per-turn budget set by server'],
-  ['/model [use <name>]', 'show or select the model'],
-  ['/skill use <id...>|clear|status|check:<profile>', 'select bounded prompt context or stage a fixed coding check'],
-  ['/skills [all|<name>]', 'registered runtime skills as a diagram'],
-  ['/tools [all|<name>]', 'registered runtime tools as a diagram'],
-  ['/web [on|off|allow|deny|fetch|search|pages|research|cancel|inject|forget]', 'Google search, permitted URL reads and bounded page research'],
-  ['/connectors', 'connector catalog'],
-  ['/github', 'agentic GitHub status'],
-  ['/agent run|plan|read|checks|confirm|cancel', 'stage and start a real-repo coding run'],
-  ['/agent iterations|pr|issue <n>|clear', 'set or clear staged numeric options'],
+  ['/agent [help]', 'coding workflow commands; stage, review and authorize each write explicitly'],
+  ['/agent approve <run-id> <reason>', 'review the complete diff, then authorize its commit'],
+  ['/agent cancel', 'clear the staged request; active jobs remain'],
+  ['/agent checks [profile ...]', 'list or select fixed profiles, separated by spaces or commas'],
+  ['/agent confirm <reason>', 'explicitly authorize and submit the staged request'],
+  ['/agent discard <run-id>', "reclaim a terminal run's owned clone"],
+  ['/agent issue <n>|clear', 'select an issue context (clears PR), or clear it'],
+  ['/agent iterations <n>|clear', 'set 1–10 iterations, or restore the configured default'],
+  ['/agent job [job-id]', 'monitor a job; omitted ID uses the retained job'],
+  ['/agent jobs', 'list retained coding jobs'],
+  ['/agent plan [clear]', 'choose a reviewed plan file, or clear the staged plan'],
+  ['/agent pr <n>|clear', 'select PR context (clears issue), or clear it'],
+  ['/agent pr-body <run-id>', 'choose and preview a completed PR template file'],
+  ['/agent publish <run-id> <reason>', 'authorize draft publication with the reviewed PR body'],
+  ['/agent push <run-id> <reason>', 'authorize pushing the approved commit; disabled by default'],
+  ['/agent read <repo-relative-path[#Lx-Ly]>|clear', 'stage bounded file context, or clear all staged reads'],
+  ['/agent reject <run-id>', 'reject a pending candidate'],
+  ['/agent run <branch> <instruction>', 'stage a real-repo coding request; nothing executes yet'],
   ['/agent runs', 'list retained runs and reconcile interrupted ownership'],
-  ['/agent status|approve|reject <id>', 'inspect or decide a pending run'],
-  ['/harness', 'harness optimizer runs'],
-  ['/tokens', 'token tally'],
-  ['/api [set <KEY> <value>|clear <KEY>]', 'admin credential editor; prefer the API Keys password fields'],
+  ['/agent status <run-id>', 'inspect a run and its complete diff'],
+  ['/agent stop [job-id]', 'request cancellation; omitted ID uses the retained job; descendants may survive'],
+  ['/api [set <KEY> <value>|clear <KEY>]', 'inspect or edit managed credentials; prefer API Keys password fields'],
+  ['/clear', 'clear visible output, staged reviews and chat continuation; saved sessions remain'],
+  ['/connectors', 'connector catalog'],
+  ['/github', 'read-only agentic GitHub status'],
+  ['/goal [text]|clear', 'show, set or clear the session goal'],
+  ['/goal stage <branch>', 'explicitly stage the goal as a coding request'],
+  ['/goal task', "inspect the goal's durable task linkage"],
+  ['/harness', 'list retained harness optimizer runs; does not start one'],
+  ['/help', 'list commands in alphabetical order'],
+  ['/loop [n]|auto|stop', 'bounded chat continuation; auto toggles; stop also cancels streaming chat'],
+  ['/memory [on|off]', 'show or toggle shared pinned notes in chat; separate from structured memory'],
+  ['/memory add <note>', 'save a literal pinned note'],
+  ['/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off', 'administrator overrides for automatic structured-memory features'],
+  ['/memory capture|recall|retrieval on|off', 'administrator overrides for capture, explicit recall or fact retrieval'],
+  ['/memory clear', 'clear all pinned notes'],
+  ['/memory consolidate <episode-id> [episode-id ...]', 'selected-episode consolidation into pending proposals; no facts applied'],
+  ['/memory consolidation on|off', 'administrator override for manual consolidation'],
+  ['/memory forget <id>', 'remove one pinned note'],
+  ['/memory proposals', 'open pending proposals; Apply or Reject requires a reason'],
+  ['/memory remember <sentence> :: <reason>', 'confirm a semantic summary on the latest completed episode'],
+  ['/memory retrieve <query>', 'force fact retrieval for this chat prompt only'],
+  ['/memory save <text> :: <reason>', 'confirm an immediate private fact write'],
+  ['/memory search <query>', 'search fact candidates without injecting them'],
+  ['/model [use <name>]', 'show or select a chat model; planner selection is separate'],
+  ['/prompt', 'preview the next chat system prompt (private)'],
+  ['/registry', 'combined skill, tool and connector catalog'],
+  ['/session [list]', 'list saved chat sessions'],
+  ['/session info', 'inspect the current session'],
+  ['/session new [title]', 'start a fresh conversation'],
+  ['/session rename <title>', 'rename the current session'],
+  ['/session use <id>', 'restore a saved conversation'],
+  ['/skill [status]|use <id...>|clear', 'inspect, replace or clear session prompt-skill selection'],
+  ['/skill check:<profile>', 'select one fixed check for an already staged coding request'],
+  ['/skills [all|help|<name>]', 'registered runtime skills as a diagram; all includes the catalog'],
+  ['/soul [on|off|status]', 'show or toggle soul.md in the system prompt (separate from memory)'],
+  ['/soul apply <id> <reason>', 'apply the exact persona proposal previously reviewed'],
+  ['/soul edit|history|propose', 'edit persona, list backups or propose a change'],
+  ['/soul reject <id> <reason>', 'reject the exact persona proposal previously reviewed'],
+  ['/soul review <id>', 'inspect a retained persona proposal before deciding'],
   ['/status', 'server status'],
+  ['/style [<name>|off]', 'show or select a session output style; soul.md is unchanged'],
+  ['/tokens', 'current session token tally'],
+  ['/tools [all|help|<name>]', 'registered runtime tools as a diagram; all includes the catalog'],
   ['/users', 'administer local harness accounts'],
-  ['/clear', 'clear the console'],
+  ['/web [help|on|off]', 'show web status/help, or toggle fetching and saved context'],
+  ['/web allow <url-or-pattern> [group] [seed-url]', 'administrator grant for an exact URL or explicit wildcard'],
+  ['/web cancel', 'cancel your bounded research request'],
+  ['/web deny <id-or-pattern>', 'administrator removal of a URL permission rule'],
+  ['/web fetch <url>', 'read a permitted URL'],
+  ['/web forget', 'clear your injected web context'],
+  ['/web inject', 'include your last fetched/page-search selection in chat'],
+  ['/web pages [group=name] <query>', 'search passages from permitted pages'],
+  ['/web research [group=name] <question>', 'bounded local-model research with cited passages'],
+  ['/web search [group=name] <query>', 'Google keyword results; a group selects permitted-page search instead'],
 ];
 
 function renderKeys(keys) {
@@ -1919,19 +1960,7 @@ async function runSlash(line) {
       case 'web': {
         const sub = rest[0] || 'status';
         if (sub === 'help') {
-          sys(table([
-            ['/web', 'status: enabled + allowlist (no page text)'],
-            ['/web on|off', 'enable or disable fetches and saved prompt context (persisted)'],
-            ['/web allow <url> [group] [seed-url]', 'allow an exact URL or explicit wildcard with a crawl seed'],
-            ['/web deny <url>', 'remove a rule by ID or pattern'],
-            ['/web fetch <url>', 'GET one allowlisted URL (text only)'],
-            ['/web search <query>', 'Google keyword results (SerpAPI key, otherwise public Google)'],
-            ['/web pages [group=name] <query>', 'search passages from permitted pages'],
-            ['/web research [group=name] <question>', 'bounded local-model research with cited passages'],
-            ['/web cancel', 'cancel your running research'],
-            ['/web inject', 'put last extract in the next chat prompt'],
-            ['/web forget', 'clear injected extract'],
-          ], ['command', 'action']));
+          sys(table(COMMANDS.filter(([command]) => command.startsWith('/web ')), ['command', 'action']));
           break;
         }
         if (sub === 'on' || sub === 'off') {
@@ -1940,13 +1969,13 @@ async function runSlash(line) {
         }
         if (sub === 'allow') {
           const url = rest[1] || '';
-          if (!url || rest.length > 4) { sys('usage: /web allow <url> [group] [seed-url]'); break; }
+          if (!url || rest.length > 4) { sys('usage: /web allow <url-or-pattern> [group] [seed-url]'); break; }
           sys(renderWebStatus(await api('/api/web/allow', 'POST', { url, group: rest[2] || 'default', seeds: rest[3] ? [rest[3]] : [] })));
           break;
         }
         if (sub === 'deny') {
           const url = rest.slice(1).join(' ').trim();
-          if (!url) { sys('usage: /web deny <https://host/path>'); break; }
+          if (!url) { sys('usage: /web deny <id-or-pattern>'); break; }
           sys(renderWebStatus(await api('/api/web/deny', 'POST', { url: url })));
           break;
         }
@@ -1965,7 +1994,7 @@ async function runSlash(line) {
           const args = rest.slice(1);
           const group = args[0] && args[0].startsWith('group=') ? args.shift().slice(6) : null;
           const q = args.join(' ').trim();
-          if (!q) { sys('usage: /web search <query>'); break; }
+          if (!q) { sys('usage: /web ' + sub + ' [group=name] ' + (sub === 'research' ? '<question>' : '<query>')); break; }
           if (sub === 'research') {
             sys('research started; /web cancel stops your request');
             const result = await api('/api/web/research', 'POST', { query: q, group }, 1810000);
@@ -2039,7 +2068,7 @@ async function runSlash(line) {
           const branch = rest[1] || '';
           const instruction = rest.slice(2).join(' ').trim();
           if (!branch || !instruction) {
-            sys('usage: /agent run claude/<topic> <what the agent should do>');
+            sys('usage: /agent run <branch> <instruction>');
             break;
           }
           const capabilities = await api('/api/agent/checks');
@@ -2221,28 +2250,7 @@ async function runSlash(line) {
           ));
           if (!staleReview() && rec) showAgentRecord(rec);
         } else {
-          sys(table([
-            ['/agent run claude/<topic> <task>', 'stage a run (sends nothing)'],
-            ['/agent plan [clear]', 'load or clear a reviewed local plan for the staged run'],
-            ['/agent read <repo-relative-path>', 'declare an existing file for the staged coder context'],
-            ['/agent read clear', 'clear declared read paths'],
-            ['/agent checks [profile ...]', 'list or choose allow-listed verification profiles'],
-            ['/agent iterations <n>|clear', 'set 1..10 iterations or restore the server default'],
-            ['/agent pr <n>|clear', 'set a positive PR number (clears issue) or unset it'],
-            ['/agent issue <n>|clear', 'set a positive issue number (clears PR) or unset it'],
-            ['/agent confirm <reason>', 'authorize and start the staged run'],
-            ['/agent cancel', 'discard only the staged run'],
-            ['/agent jobs', 'list jobs retained by this server process'],
-            ['/agent job <id>', 'monitor or recover a job after refresh'],
-            ['/agent stop <id>', 'cancel the request; descendant work may survive'],
-            ['/agent status <run id>', 'read a run record'],
-            ['/agent approve <run id> <reason>', 'review an unseen or changed diff; repeat to commit'],
-            ['/agent reject <run id>', 'discard the pending change'],
-            ['/agent push <run id> <reason>', 'push an approved branch to origin (disarmed by default)'],
-            ['/agent pr-body <run id>', 'load and preview a completed PR template file'],
-            ['/agent publish <run id> <why>', 'publish the reviewed body as a draft for a pushed run'],
-            ['/agent discard <run id>', 'reclaim the clone of a decided run from disk'],
-          ], ['command', 'action']));
+          sys(table(COMMANDS.filter(([command]) => command.startsWith('/agent ')), ['command', 'action']));
         }
         break;
       }
@@ -2703,11 +2711,10 @@ async function previewChatPrompt(extra) {
 }
 
 function isLoopStopCommand(text) {
-  /* Normalize before the in-flight gate, mirroring runSlash(): case
-     insensitive, collapses extra whitespace, and ignores trailing text. */
-  if (!text || text.charAt(0) !== '/') return false;
+  /* Only the exact local cancellation control bypasses slash parsing. */
+  if (!text || text.charAt(0) !== '/' || /\s/.test(text.charAt(1))) return false;
   const parts = text.slice(1).split(/\s+/).filter(Boolean);
-  return parts.length >= 2 && parts[0].toLowerCase() === 'loop' && parts[1].toLowerCase() === 'stop';
+  return parts.length === 2 && parts[0].toLowerCase() === 'loop' && parts[1].toLowerCase() === 'stop';
 }
 
 async function onSend() {
@@ -2956,22 +2963,27 @@ async function sendMaybeNlSearch(text) {
 }
 
 async function runSlashMaybeFuzzy(text) {
+  /* Keep cancellation available during auto-loop cooldown even if parsing
+     is unavailable; no other command may bypass the server's parser. */
+  if (isLoopStopCommand(text)) { await runSlash('/loop stop'); return; }
   try {
     const parsed = await api('/api/slash/parse', 'POST', { line: text });
-    if (parsed && parsed.dispatch && parsed.canonical) {
+    if (parsed && parsed.kind === 'dispatch' && parsed.dispatch === true &&
+        typeof parsed.canonical === 'string' && parsed.canonical.startsWith('/')) {
       if (parsed.notice) sys(parsed.notice);
       if (parsed.canonical !== text) sys('normalized: ' + parsed.canonical);
       await runSlash(parsed.canonical);
       return;
     }
-    if (parsed && parsed.kind === 'suggest') {
-      const extra = (parsed.suggestions || []).map(function (s) { return s.line; }).join('\n');
+    if (parsed && parsed.kind === 'suggest' && parsed.dispatch === false && Array.isArray(parsed.suggestions)) {
+      const extra = parsed.suggestions.map(function (s) { return s.line; }).join('\n');
       sys((parsed.notice || 'did not dispatch') + (extra ? '\n' + extra : ''));
       return;
     }
+    throw new Error('invalid slash-parser response');
   } catch (e) {
+    sys('command not dispatched: slash parsing unavailable (' + e.message + '). Retry or inspect the Commands pane.');
   }
-  await runSlash(text);
 }
 
 /* ── wiring ── */

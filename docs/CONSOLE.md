@@ -388,39 +388,61 @@ access. See [port scope](PORT_PARITY.md) and the
 ### 7.8 Slash-command quick reference
 
 Angle brackets below mean “replace with your value”; do not type the brackets.
-These are console commands, not shell commands. Inspect results after each
-state-changing command. The detailed sections above and [coding pipeline](CODING_PIPELINE.md) describe
-confirmation and persistence semantics.
+Square brackets mark optional arguments; `|` separates alternatives. The Commands
+pane and `/help` share an alphabetical catalog, with related variants together.
+Clicking a command fills its root in the input for editing; it does not run it.
+These are console commands, not shell commands: there are no GNU-style flags such
+as `--help`, `--dry-run` or `--confirm`. Use `/help`, `/agent`, `/web help`,
+`/skills help` or `/tools help` to inspect supported syntax.
+
+Typed slash commands require the server parser. A parser failure or invalid reply
+leaves the command unexecuted; inspect the Commands pane or retry. Exact `/loop stop`
+remains available to cancel chat continuation, including while the parser is
+unavailable. Extra words after that cancellation command do not trigger its local
+shortcut. Inspect results after every state-changing command. The detailed sections
+above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persistence.
 
 | Command family | Supported use |
 |---|---|
-| `/help`, `/status`, `/tokens` | Command help, runtime status and current session usage |
-| `/session new <title>`, `list`, `use <id>`, `rename <title>` | Create, list, reopen or rename saved conversations |
-| `/prompt` | Private preview of the next chat system prompt |
-| `/soul status`, `on`, `off`, `edit`, `propose`, `history` | Inspect, toggle or open persona editing/proposal flows |
-| `/soul review <id>`, `apply <id> <reason>`, `reject <id> <reason>` | Review and explicitly decide a persona proposal |
-| `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Explicit shared notes; [operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes) |
-| `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding on|off` | Administrator-only structured-memory gate overrides for the running process; `/memory on` stays pinned notes |
-| `/memory search <query>` / `/memory retrieve <query>` | FTS candidates vs per-prompt force-include; search is not inject |
-| `/memory save <text> :: <reason>` | Confirm an immediate private fact write, even with automatic suggestions off |
-| `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on your latest completed episode; no fact write |
-| `/memory proposals` | Open the Memory panel; review then Apply/Reject with a reason |
-| `/memory consolidate <episode-id...>` | Manual selected-episode consolidation into pending proposals; requires `consolidation`; does not write facts |
-| `/model`, `/model use <name>`, `/model use grok|claude` | Inspect/select a local chat model, or an explicit cloud provider (key required; refused for `/loop`) |
-| `/skills [all or name]`, `/tools [all or name]` | Inspect capability inventories |
-| `/skill use <id...>`, `clear`, `status` | Replace, clear or inspect session prompt-skill selection |
-| `/skill check:<profile>` | Replace the check selection for an already staged coding request |
-| `/web`, `on`, `off`, `allow <url> [group] [seed-url]`, `deny <id-or-pattern>` | Inspect fetching; administrators toggle or edit exact/wildcard permission |
-| `/web search <keywords>`, `fetch <url>`, `pages [group=name] <query>` | Search Google, fetch a permitted URL, or search permitted-page passages |
-| `/web inject`, `forget` | Include your last fetched/page-search selection in chat, or clear it |
-| `/web research [group=name] <question>`, `cancel` | Run/cancel your bounded local-model research; return citations, usage and coverage |
+| `/agent [help]` | Inspect coding commands; full workflow below |
+| `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields; [persistence](INSTALL.md#8-persistence-optional-keys-and-recovery) |
+| `/clear` | Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain |
+| `/connectors` | Connector catalog; does not activate connectors |
+| `/github` | Read-only agentic GitHub status |
 | `/goal`, `/goal <text>`, `/goal clear` | Inspect, set or clear the saved session goal |
-| `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `/loop stop` also cancels a streaming chat turn; [sessions](CONSOLE.md#71-sessions-and-bounded-chat-continuation) |
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
-| `/connectors`, `/registry`, `/github`, `/harness` | Inventory, GitHub status, or retained harness-run listing; not connector activation or optimizer execution |
-| `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields for secret entry; [persistence](INSTALL.md#8-persistence-optional-keys-and-recovery) |
-| `/users` | Open administrator-only account management; [accounts](ACCOUNTS.md) |
-| `/clear` | Clear visible console output, staged coding request, displayed diff tracking and loop state; does not delete saved chats, notes, persona or web context |
+| `/harness` | List retained optimizer runs; does not start optimization |
+| `/help` | List the same alphabetical command catalog as the sidebar |
+| `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
+| `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes) |
+| `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
+| `/memory consolidate <episode-id> [episode-id ...]` | Selected-episode consolidation into pending proposals; does not apply facts |
+| `/memory proposals` | Open the Memory panel; Apply/Reject requires review and a reason |
+| `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on the latest completed episode; no fact write |
+| `/memory retrieve <query>`, `/memory search <query>` | Force fact retrieval for this chat prompt, or inspect candidates without injection |
+| `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
+| `/model`, `/model use <name>`, `/model use grok\|claude` | Inspect/select a local chat model or explicit cloud provider; does not select the coding planner |
+| `/prompt` | Private preview of the next chat system prompt |
+| `/registry` | Combined skill, tool and connector catalog |
+| `/session`, `list`, `info`, `new [title]`, `rename <title>`, `use <id>` | List sessions, inspect the current session, create, rename or reopen one |
+| `/skill`, `status`, `use <id...>`, `clear` | Inspect, replace or clear session prompt-skill selection |
+| `/skill check:<profile>` | Select one fixed check for an already staged coding request |
+| `/skills [all\|help\|<name>]` | Inspect registered skills, the full catalog, help or one named skill |
+| `/soul`, `status`, `on`, `off`, `edit`, `history`, `propose` | Inspect, toggle or open persona editing/proposal flows |
+| `/soul apply <id> <reason>`, `reject <id> <reason>`, `review <id>` | Review a retained proposal before explicitly applying or rejecting its exact revision |
+| `/status` | Runtime status; operational details require account access |
+| `/style`, `/style <name>`, `/style off` | Inspect/select a session output style, or clear it without changing soul.md |
+| `/tokens` | Current session token tally |
+| `/tools [all\|help\|<name>]` | Inspect registered tools, the full catalog, help or one named tool |
+| `/users` | Administrator account panel; [accounts](ACCOUNTS.md) |
+| `/web`, `help`, `on`, `off`, `allow <url-or-pattern> [group] [seed-url]`, `deny <id-or-pattern>` | Inspect fetching; administrators toggle or edit exact/wildcard permission |
+| `/web cancel`, `fetch <url>`, `forget`, `inject` | Cancel research, fetch permitted content, clear or include your last selection |
+| `/web pages [group=name] <query>`, `research [group=name] <question>` | Search permitted-page passages or run bounded research with citations |
+| `/web search [group=name] <query>` | Google results without a group; a nonempty group selects permitted-page search instead |
+
+`group=name` must immediately follow `search`, `pages` or `research`. The `allow`
+command instead takes an optional positional group and crawl seed. Memory `save`
+and `remember` split text from the required reason at the final `::`.
 
 The `/agent` family operates the separate coding workflow:
 
@@ -434,7 +456,7 @@ The `/agent` family operates the separate coding workflow:
 | `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage up to 8 bounded file-context declarations, or clear them. A local planner may later emit `=== READ path ===` (cap 6, next iteration, same jail + basename deny-list); that is not a slash command. Denied basenames (`.env`, keys, credentials, …) refuse operator and model READ alike. A cloud planner refuses model-requested reads. The deny-list is not a secret scanner; the jail is not a secrets control. |
 | `/agent cancel` | Clear the staged request; does not stop an already submitted job |
 | `/agent confirm <reason>` | Explicitly submit the staged request through the execution gates |
-| `/agent jobs`, `/agent job <id>`, `/agent stop <id>` | List, inspect or request cancellation of retained jobs |
+| `/agent jobs`, `/agent job [job-id]`, `/agent stop [job-id]` | List, monitor or request cancellation; an omitted ID uses the retained job from the URL |
 | `/agent runs`, `/agent status <run-id>` | List runs or inspect a run and its diff |
 | `/agent approve <run-id> <reason>` | Review then approve the exact candidate; repeat only after reading a newly displayed diff |
 | `/agent reject <run-id>` | Reject a candidate |
