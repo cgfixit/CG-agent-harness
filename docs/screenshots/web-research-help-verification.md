@@ -3,6 +3,12 @@
 Local verification on 2026-09-21, before committing or publishing the PR.
 This is an arm64 development candidate, not a released or notarized application.
 
+After native acceptance, the five screenshots and this report were moved from
+`screenshots/web-research-help/` directly into `docs/screenshots/` at the operator's
+request. Image and runtime source bytes are unchanged. The source manifest below
+describes the original acceptance layout, before this documentation-only relocation;
+it is not a claim that renaming evidence paths reproduces the same whole-tree hash.
+
 ## Source and immutable artifact
 
 - Base: `f85e352a77d3af707d0443e2851ff4543b8b19af` from `origin/main`; latest resync added only an unrelated documentation image and preserved candidate edits.
