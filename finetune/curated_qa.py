@@ -177,7 +177,7 @@ CURATED_QA: list[dict[str, str]] = [
         "Web research (src/server/web_*.rs) is a policy-gated pipeline: web_intent classifies whether a "
         "turn needs the web, web_policy enforces what is permitted, web_search/web_google fetch results, "
         "web_index/index organize them, and web_research synthesizes. It is loopback-aware and bounded — "
-        "fetched content is treated as untrusted (injection-filtered) and never auto-executed. The pipeline "
+        "fetched content is treated as untrusted (clipped, labeled, never auto-executed). The pipeline "
         "is opt-in per the secure-research rules (docs/SECURE_RESEARCH.md), so the agent can ground answers "
         "in live sources without opening an unbounded egress path."
     ),
