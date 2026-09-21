@@ -100,7 +100,9 @@ Sign in, replace the bootstrap password, then `/help`. The Commands pane and
 help list supported commands alphabetically, including required arguments and
 modifiers. Clicking a menu entry fills the input without running it. Typos such
 as `/memroy` produce suggestions; corrections are not executed. Use the listed
-syntax rather than shell flags such as `--help` or `--dry-run`. Slash tables:
+syntax rather than shell flags such as `--help` or `--dry-run`. Memory commands
+require an exact, single-line `/memory` form: aliases and conversational wording
+only suggest, including retrieval that would start a chat. Slash tables:
 [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference). Memory:
 [MEMORY_SETUP.md](docs/MEMORY_SETUP.md). Web:
 [WEB.md](docs/WEB.md). Troubleshooting:
