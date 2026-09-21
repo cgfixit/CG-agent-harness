@@ -22,6 +22,12 @@ time. Unknown usage and local inference remain unpriced. Check completeness
 and stale-rate warnings before interpreting a total. Close, Escape and logout
 clear this view; they do not erase the ledger.
 
+For an unsent cloud draft, choose **Estimate draft**. Claude sends that text
+for token counting; Grok uses a labelled bytes/4 estimate. The preview reserves
+full output, warns about CJK and unknown/stale rates, and shows the optional
+per-call cap decision. Local inference is unpriced; count-only requests do not
+change the ledger. See [estimation and caps](SPEND_AND_NOTIFICATIONS.md#estimate-a-cloud-draft-and-configure-a-per-call-cap).
+
 Completion webhooks are separately configured, default-off and restart-only.
 They send job ID, status and timestamps, with bounded retries and no job content.
 The queue is in memory and is not replayed after restart. Follow

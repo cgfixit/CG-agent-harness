@@ -44,14 +44,17 @@ checks integrity; it does not establish a publisher identity or satisfy normal
 Developer ID distribution. Gatekeeper may require an explicit per-app approval
 through macOS Privacy & Security, or reject it under managed policy. Do not
 change global Gatekeeper settings or strip quarantine as a blanket workaround.
-The bundle targets macOS 12 or newer; the native test machine runs 26.6.2.
+The bundle targets macOS 12 or newer; the 2026-09-21 development acceptance ran
+on macOS 27.0 (26A428).
 Older supported deployment versions have not been tested.
 
 ## Spend and job notifications
 
 The shared console exposes the [Spend dashboard and optional completion webhooks](SPEND_AND_NOTIFICATIONS.md)
 when their feature changes are included in the packaged source commit. A green
-feature PR does not update an already installed app. Spend is a read-only view;
+feature PR does not update an already installed app. Spend reads the ledger;
+**Estimate draft** separately counts the selected cloud draft without generation.
+Claude counting sends that draft to the provider. Completion
 webhook settings and saved bearer changes require a full Cmd-Q/relaunch, not just
 closing the window. Pending webhook deliveries are not persisted across quit.
 Browser fixture checks and hosted bundle checks are distinct from interactive

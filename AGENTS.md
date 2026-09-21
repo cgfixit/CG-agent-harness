@@ -92,7 +92,12 @@ Public Google fallback and destination page fetching retain URL permission check
   `GET /api/spend/summary` is the rollup. `usage_reported` is honest (both
   counts must be JSON numbers). Empty-text 2xx still records
   `failed_after_billing`. Completeness is for retained generations, not lifetime
-  billing; unknown/local costs are not zero. The dashboard is read-only.
+  billing; unknown/local costs are not zero. The ledger view is read-only.
+  Explicit `POST /api/spend/predict` counts only the supplied cloud draft: Claude
+  vendor count with bounded fallback, Grok UTF-8 bytes/4. It creates no ledger
+  row. Reserve full output without cache credit; cap missing/null is ungated,
+  and heuristic gating requires literal `budget_on_heuristic: true`. Unknown
+  rates stay unpriced; local tokenizer calibration never controls cloud spend.
 - Completion webhooks are default-off, restart-only and metadata-only. Keep retries
   at most three, exact private destination grants, DNS pinning and no redirects.
   Delivery failure must not change a job outcome. Operator contracts and build

@@ -19,6 +19,9 @@ models:
     enabled: true
     max_tokens: 4096
     timeout_sec: 90
+    count_timeout_sec: 2 # 0.1–10; Claude count_tokens deadline, then a labelled heuristic fallback
+    max_usd_per_call: null # null/absent: no gate; otherwise a finite positive USD estimate limit
+    budget_on_heuristic: false # only literal true applies the cap to bytes/4 estimates (unreliable for CJK)
     grok:
       enabled: true
       model: "grok-4.6"
