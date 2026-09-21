@@ -39,8 +39,8 @@ async fn fixture(tools: &str, extra: &[(&str, &str)]) -> (TestServer, mcp_server
     (s, gateway, keys, alice, bob)
 }
 fn url(g: &mcp_server::Listener) -> String {
-    format!("http://{}/mcp", g.address)
-} // DevSkim: ignore DS137138 because this is the private loopback gateway fixture.
+    format!("http://{}/mcp", g.address) // DevSkim: ignore DS137138 because this is the private loopback gateway fixture.
+}
 fn rpc(method: &str, params: Value) -> Value {
     json!({"jsonrpc":"2.0","id":1,"method":method,"params":params})
 }
@@ -197,11 +197,10 @@ async fn transport_refuses_console_cookie_wrong_host_origin_forwarding_and_large
     for (header, value, status) in [
         ("cookie", "session=console_cookie", 401),
         ("host", "attacker.invalid", 403),
-        ("origin", "http://127.0.0.1", 403),
-        ("x-forwarded-for", "127.0.0.1", 403),
-        ("forwarded", "for=127.0.0.1", 403),
+        ("origin", "http://127.0.0.1", 403), // DevSkim: ignore DS162092 DS137138 because this adversarial header must be refused even when it claims loopback.
+        ("x-forwarded-for", "127.0.0.1", 403), // DevSkim: ignore DS162092 DS137138 because this adversarial header must be refused even when it claims loopback.
+        ("forwarded", "for=127.0.0.1", 403), // DevSkim: ignore DS162092 DS137138 because this adversarial header must be refused even when it claims loopback.
     ] {
-        // DevSkim: ignore DS137138 because the origin is deliberately refused.
         let mut request = client
             .post(url(&g))
             .header(header, value)
