@@ -21,6 +21,22 @@ const DEFAULT_TIMEOUT_SEC: f64 = 90.0;
 const DEFAULT_MAX_TOKENS: u64 = 4096;
 const MAX_RESPONSE_BYTES: usize = 4_194_304;
 
+/// Pre-call estimate, never measured usage or a guaranteed invoice ceiling.
+#[derive(Debug, serde::Serialize)]
+pub struct SpendPrediction {
+    pub provider: &'static str,
+    pub model: String,
+    pub input_tokens: u64,
+    pub reserved_output_tokens: u64,
+    pub estimate_source: &'static str,
+    pub usd: Option<f64>,
+    pub priced_as_of: &'static str,
+    pub rates_stale: bool,
+    pub max_usd_per_call: Option<f64>,
+    pub budget_applies: bool,
+    pub budget_exceeded: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Provider {
     Grok,
@@ -57,6 +73,9 @@ pub struct CloudChat {
     enabled: bool,
     timeout: Duration,
     max_tokens: u64,
+    count_timeout: Duration,
+    max_usd_per_call: Option<f64>,
+    budget_on_heuristic: bool,
     grok: ProviderConfig,
     claude: ProviderConfig,
     client: reqwest::Client,
@@ -115,10 +134,28 @@ impl CloudChat {
                 "models.cloud_chat.max_tokens must be from 1 to 32768",
             ));
         }
+        let max_usd_per_call = match cfg.get("models.cloud_chat.max_usd_per_call") {
+            None | Some(serde_yaml_ng::Value::Null) => None,
+            Some(value) => Some(value.as_f64().filter(|n| n.is_finite() && *n > 0.0).ok_or_else(|| {
+                HarnessError::config("models.cloud_chat.max_usd_per_call must be null or a finite positive number")
+            })?),
+        };
+        let count_seconds = match cfg.get("models.cloud_chat.count_timeout_sec") {
+            None => 2.0,
+            Some(value) => value
+                .as_f64()
+                .filter(|n| n.is_finite() && (0.1..=10.0).contains(n))
+                .ok_or_else(|| {
+                    HarnessError::config("models.cloud_chat.count_timeout_sec must be from 0.1 to 10 seconds")
+                })?,
+        };
         Ok(Self {
             enabled: cfg.flag_is_true("models.cloud_chat.enabled"),
             timeout: Duration::from_secs_f64(timeout_sec),
             max_tokens,
+            count_timeout: Duration::from_secs_f64(count_seconds),
+            max_usd_per_call,
+            budget_on_heuristic: cfg.flag_is_true("models.cloud_chat.budget_on_heuristic"),
             grok: provider_config(cfg, Provider::Grok, "grok-4.6")?,
             claude: provider_config(cfg, Provider::Claude, "claude-sonnet-5")?,
             // Do not delegate paid credentials to ambient HTTP(S)_PROXY.
@@ -157,7 +194,7 @@ impl CloudChat {
     }
 
     pub fn timeout_sec(&self) -> f64 {
-        self.timeout.as_secs_f64()
+        (self.timeout + self.count_timeout).as_secs_f64()
     }
 
     pub fn abort_in_flight(&self) {
@@ -171,6 +208,18 @@ impl CloudChat {
     }
 
     pub async fn chat_with_source(&self, selection: &str, message: &str, source: &str) -> Result<ChatResult> {
+        let config = self.ready(selection)?;
+        self.cancellable(self.request(config, message, source)).await
+    }
+
+    /// Counts only the explicitly supplied cloud message, without generating or recording spend.
+    pub async fn predict(&self, selection: &str, message: &str) -> Result<SpendPrediction> {
+        let config = self.ready(selection)?;
+        self.cancellable(async { Ok(self.predict_request(config, message).await) })
+            .await
+    }
+
+    fn ready(&self, selection: &str) -> Result<&ProviderConfig> {
         let config = self
             .configured(selection)
             .ok_or_else(|| err("selected cloud chat model is not configured"))?;
@@ -183,6 +232,10 @@ impl CloudChat {
                 config.provider.key_env()
             )));
         }
+        Ok(config)
+    }
+
+    async fn cancellable<T>(&self, operation: impl std::future::Future<Output = Result<T>>) -> Result<T> {
         let request_id = crate::common::random_urlsafe(16);
         let cancel = CancellationToken::new();
         self.inflight
@@ -207,33 +260,121 @@ impl CloudChat {
             id: request_id,
         };
         tokio::select! {
+            biased;
             _ = cancel.cancelled() => Err(err("cloud chat request cancelled")),
-            result = self.request(config, message, source) => result,
+            result = operation => result,
+        }
+    }
+
+    async fn count_input_tokens(&self, config: &ProviderConfig, message: &str) -> Option<u64> {
+        if config.provider != Provider::Claude {
+            return None;
+        }
+        // One deadline covers headers, a trickled body, and decoding. Failures
+        // discard provider bodies and use the explicitly labelled heuristic.
+        tokio::time::timeout(self.count_timeout, async {
+            let mut response = self
+                .client
+                .post(format!("{}/count_tokens", config.endpoint.trim_end_matches('/')))
+                .header("x-api-key", &config.api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .timeout(self.count_timeout)
+                .json(&claude_input(config, message))
+                .send()
+                .await
+                .ok()?;
+            if !response.status().is_success()
+                || response.content_length().is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
+            {
+                return None;
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.ok()? {
+                if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+                    return None;
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            let body: Value = serde_json::from_slice(&bytes).ok()?;
+            body.get("input_tokens")?.as_u64().filter(|n| *n > 0)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn predict_request(&self, config: &ProviderConfig, message: &str) -> SpendPrediction {
+        let counted = self.count_input_tokens(config, message).await;
+        // ponytail: cloud bytes/4 is a rough English estimate, including on CJK;
+        // use a provider counter when available, never borrow the local Qwen calibration.
+        let input_tokens = counted.unwrap_or_else(|| message.len().div_ceil(4) as u64);
+        let estimate = spend::estimate_usd(
+            &config.model,
+            &UsageTokens {
+                input_tokens: Some(input_tokens),
+                output_tokens: Some(self.max_tokens),
+                ..UsageTokens::default()
+            },
+            config.provider.name(),
+        );
+        let budget_applies = self.max_usd_per_call.is_some()
+            && estimate.usd.is_some()
+            && (counted.is_some() || self.budget_on_heuristic);
+        SpendPrediction {
+            provider: config.provider.name(),
+            model: config.model.clone(),
+            input_tokens,
+            reserved_output_tokens: self.max_tokens,
+            estimate_source: if counted.is_some() { "vendor_count" } else { "heuristic" },
+            usd: estimate.usd,
+            priced_as_of: estimate.priced_as_of,
+            rates_stale: spend::rates_are_stale(None),
+            max_usd_per_call: self.max_usd_per_call,
+            budget_applies,
+            budget_exceeded: budget_applies
+                && estimate
+                    .usd
+                    .zip(self.max_usd_per_call)
+                    .is_some_and(|(usd, cap)| usd > cap),
         }
     }
 
     async fn request(&self, config: &ProviderConfig, message: &str, source: &str) -> Result<ChatResult> {
+        let prediction = self.predict_request(config, message).await;
+        if prediction.budget_exceeded {
+            return Err(HarnessError::new(
+                "CLOUD_CHAT_BUDGET",
+                "cloud chat estimate exceeds max_usd_per_call; no generation was sent",
+            )
+            .detail("prediction", json!(prediction)));
+        }
         let response = match config.provider {
-            Provider::Grok => self
-                .client
-                .post(&config.endpoint)
-                .bearer_auth(&config.api_key)
-                .json(&json!({
-                    "model": config.model,
-                    "input": [{"role": "user", "content": message}],
-                    "max_output_tokens": self.max_tokens,
-                    "store": false,
-                }))
-                .send()
-                .await,
-            Provider::Claude => self
-                .client
-                .post(&config.endpoint)
-                .header("x-api-key", &config.api_key)
-                .header("anthropic-version", ANTHROPIC_VERSION)
-                .json(&json!({"model":config.model,"max_tokens":self.max_tokens,"messages":[{"role":"user","content":message}]}))
-                .send()
-                .await,
+            Provider::Grok => {
+                self.client
+                    .post(&config.endpoint)
+                    .bearer_auth(&config.api_key)
+                    .json(&json!({
+                        "model": config.model,
+                        "input": [{"role": "user", "content": message}],
+                        "max_output_tokens": self.max_tokens,
+                        "store": false,
+                    }))
+                    .send()
+                    .await
+            }
+            Provider::Claude => {
+                self.client
+                    .post(&config.endpoint)
+                    .header("x-api-key", &config.api_key)
+                    .header("anthropic-version", ANTHROPIC_VERSION)
+                    .json(&{
+                        let mut body = claude_input(config, message);
+                        body["max_tokens"] = json!(self.max_tokens);
+                        body
+                    })
+                    .send()
+                    .await
+            }
         }
         .map_err(|_| err(format!("{} cloud chat request failed", config.provider.name())))?;
         let status = response.status();
@@ -340,6 +481,10 @@ impl CloudChat {
     }
 }
 
+fn claude_input(config: &ProviderConfig, message: &str) -> Value {
+    json!({"model":config.model,"messages":[{"role":"user","content":message}]})
+}
+
 fn grok_text(body: &Value) -> Result<String> {
     let text = body
         .get("output")
@@ -422,6 +567,272 @@ mod tests {
         chat.grok.api_key = "grok-test-key".into();
         chat.claude.api_key = "claude-test-key".into();
         chat
+    }
+
+    #[tokio::test]
+    async fn configured_heuristic_budget_refuses_before_any_generation_or_ledger_write() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let generated = hits.clone();
+        let (origin, server) = serve(Router::new().route(
+            "/responses",
+            post(move || {
+                generated.fetch_add(1, Ordering::SeqCst);
+                async { axum::Json(json!({"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}})) }
+            }),
+        )).await;
+        let cfg = AppConfig::from_str(
+            "models:\n  cloud_chat:\n    enabled: true\n    max_tokens: 100\n    max_usd_per_call: 0.0001\n    budget_on_heuristic: true\n    grok: {enabled: true, model: grok-4.6}\n",
+            std::path::Path::new("config.yaml"),
+        ).unwrap();
+        let mut chat = CloudChat::from_config(&cfg).unwrap();
+        chat.grok.api_key = "fixture-only".into();
+        chat.grok.endpoint = format!("{origin}/responses");
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("spend.jsonl");
+        chat.attach_spend(ledger.clone());
+        let result = chat.chat("grok", "中文预算 SECRET_PROMPT").await;
+        server.abort();
+        assert_eq!(result.unwrap_err().code, "CLOUD_CHAT_BUDGET");
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(!ledger.exists());
+    }
+
+    #[test]
+    fn budget_configuration_is_explicit_and_invalid_caps_fail_closed() {
+        let config = |key: &str, value: &str| {
+            AppConfig::from_str(
+                &format!("models:\n  cloud_chat:\n    {key}: {value}\n"),
+                std::path::Path::new("config.yaml"),
+            )
+            .unwrap()
+        };
+        for value in ["0", "-1", ".inf", ".nan", "true", "'0.1'", "[]"] {
+            assert!(
+                CloudChat::from_config(&config("max_usd_per_call", value)).is_err(),
+                "{value}"
+            );
+        }
+        for value in ["0", "11", ".nan", "null", "'2'"] {
+            assert!(
+                CloudChat::from_config(&config("count_timeout_sec", value)).is_err(),
+                "{value}"
+            );
+        }
+        assert!(CloudChat::from_config(&config("max_usd_per_call", "null"))
+            .unwrap()
+            .max_usd_per_call
+            .is_none());
+        assert_eq!(
+            CloudChat::from_config(&config("max_usd_per_call", "0.1"))
+                .unwrap()
+                .max_usd_per_call,
+            Some(0.1)
+        );
+        assert!(
+            !CloudChat::from_config(&config("budget_on_heuristic", "'true'"))
+                .unwrap()
+                .budget_on_heuristic
+        );
+        let seed = AppConfig::from_str(AppConfig::embedded_default(), std::path::Path::new("config.yaml")).unwrap();
+        let chat = CloudChat::from_config(&seed).unwrap();
+        assert!(chat.max_usd_per_call.is_none());
+        assert!(!chat.budget_on_heuristic);
+    }
+
+    #[tokio::test]
+    async fn prediction_reserves_output_keeps_cjk_heuristic_explicit_and_unknown_models_unpriced() {
+        let mut chat = enabled_chat();
+        chat.grok.model = "grok-4.6".into();
+        chat.max_usd_per_call = Some(0.000001);
+        // An invalid endpoint proves Grok prediction makes no network request.
+        chat.grok.endpoint = "invalid endpoint".into();
+        let message = "中文budget";
+        let prediction = chat.predict("grok", message).await.unwrap();
+        assert_eq!(prediction.input_tokens, 3); // Two Han characters (6 bytes) plus six ASCII bytes.
+        assert_eq!(prediction.reserved_output_tokens, 16);
+        assert_eq!(prediction.estimate_source, "heuristic");
+        assert!((prediction.usd.unwrap() - (3.0 * 2.0 + 16.0 * 6.0) / 1_000_000.0).abs() < 1e-12);
+        assert!(!prediction.budget_applies);
+        assert!(!prediction.budget_exceeded);
+        chat.grok.model = "grok-unknown".into();
+        chat.budget_on_heuristic = true;
+        let unknown = chat.predict("grok", message).await.unwrap();
+        assert!(unknown.usd.is_none());
+        assert!(!unknown.budget_applies);
+        assert!(!unknown.budget_exceeded);
+        assert!(chat.predict("qwen3.8:27b-mlx", message).await.is_err());
+        chat.grok.api_key.clear();
+        assert!(chat.predict("grok", message).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn claude_counter_prices_identical_input_and_refuses_only_above_the_cap() {
+        let requests = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        let counted = requests.clone();
+        let generated = requests.clone();
+        let (origin, server) = serve(Router::new()
+            .route("/messages/count_tokens", post(move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| {
+                assert_eq!(headers["x-api-key"], "claude-test-key");
+                assert_eq!(headers["anthropic-version"], ANTHROPIC_VERSION);
+                counted.lock().unwrap().push(("count".into(), body));
+                async { axum::Json(json!({"input_tokens":25})) }
+            }))
+            .route("/messages", post(move |axum::Json(body): axum::Json<Value>| {
+                generated.lock().unwrap().push(("generate".into(), body));
+                async { axum::Json(json!({"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":25,"output_tokens":1}})) }
+            }))).await;
+        let mut chat = enabled_chat();
+        chat.claude.model = "claude-sonnet-5".into();
+        chat.claude.endpoint = format!("{origin}/messages");
+        chat.max_usd_per_call = Some(0.0001);
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("spend.jsonl");
+        chat.attach_spend(ledger.clone());
+        let prediction = chat.predict("claude", "中文 private draft").await.unwrap();
+        assert_eq!(prediction.estimate_source, "vendor_count");
+        assert_eq!(prediction.input_tokens, 25);
+        assert!((prediction.usd.unwrap() - 0.00021).abs() < 1e-12);
+        assert!(prediction.budget_exceeded);
+        assert!(!ledger.exists());
+        let refused = chat.chat("claude", "中文 private draft").await.unwrap_err();
+        assert_eq!(refused.code, "CLOUD_CHAT_BUDGET");
+        assert!(!serde_json::to_string(&refused.details)
+            .unwrap()
+            .contains("private draft"));
+        assert!(requests.lock().unwrap().iter().all(|(kind, _)| kind == "count"));
+        assert!(!ledger.exists());
+        chat.max_usd_per_call = prediction.usd; // Equal to cap is allowed.
+        assert_eq!(chat.chat("claude", "中文 private draft").await.unwrap().body_text, "ok");
+        let requests = requests.lock().unwrap();
+        let count = &requests[0].1;
+        let generation = &requests.last().unwrap().1;
+        assert_eq!(
+            count,
+            &json!({"model":"claude-sonnet-5","messages":[{"role":"user","content":"中文 private draft"}]})
+        );
+        assert_eq!(count["messages"], generation["messages"]);
+        assert_eq!(count["model"], generation["model"]);
+        assert_eq!(generation["max_tokens"], 16);
+        let recorded = std::fs::read_to_string(ledger).unwrap();
+        assert_eq!(recorded.lines().count(), 1);
+        assert!(!recorded.contains("private draft"));
+        assert!(!recorded.contains("claude-test-key"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn counter_failures_fall_back_without_following_redirects_or_blocking_on_a_trickled_body() {
+        let mode = Arc::new(AtomicUsize::new(0));
+        let counter_mode = mode.clone();
+        let redirected = Arc::new(AtomicUsize::new(0));
+        let sink = redirected.clone();
+        let (origin, server) = serve(
+            Router::new()
+                .route(
+                    "/messages/count_tokens",
+                    post(move || {
+                        let mode = counter_mode.load(Ordering::SeqCst);
+                        async move {
+                            match mode {
+                                0 => Response::builder()
+                                    .status(500)
+                                    .body(Body::from("PRIVATE_PROVIDER_ERROR"))
+                                    .unwrap(),
+                                1 => Response::new(Body::from("bad JSON")),
+                                2 => Response::new(Body::from(r#"{"input_tokens":"25"}"#)),
+                                3 => Response::new(Body::from(r#"{"input_tokens":0}"#)),
+                                4 => Response::builder()
+                                    .status(307)
+                                    .header(header::LOCATION, "/sink")
+                                    .body(Body::empty())
+                                    .unwrap(),
+                                5 => Response::new(Body::from_stream(futures_util::stream::iter([
+                                    Ok::<_, std::io::Error>(vec![b' '; MAX_RESPONSE_BYTES / 2]),
+                                    Ok(vec![b' '; MAX_RESPONSE_BYTES / 2 + 1]),
+                                ]))),
+                                6 => Response::new(Body::from_stream(futures_util::stream::unfold(
+                                    false,
+                                    |sent| async move {
+                                        if sent {
+                                            std::future::pending::<()>().await;
+                                        }
+                                        Some((Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"{")), true))
+                                    },
+                                ))),
+                                _ => std::future::pending::<Response<Body>>().await,
+                            }
+                        }
+                    }),
+                )
+                .route(
+                    "/sink",
+                    post(move || {
+                        sink.fetch_add(1, Ordering::SeqCst);
+                        async { StatusCode::OK }
+                    }),
+                ),
+        )
+        .await;
+        let mut chat = enabled_chat();
+        chat.claude.model = "claude-sonnet-5".into();
+        chat.claude.endpoint = format!("{origin}/messages");
+        chat.count_timeout = Duration::from_millis(100);
+        chat.max_usd_per_call = Some(0.000001);
+        for case in 0..8 {
+            mode.store(case, Ordering::SeqCst);
+            let prediction = tokio::time::timeout(Duration::from_secs(2), chat.predict("claude", "中文abcdef"))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(prediction.estimate_source, "heuristic", "case {case}");
+            assert_eq!(prediction.input_tokens, 3);
+            assert!(!prediction.budget_applies);
+            assert!(!serde_json::to_string(&prediction)
+                .unwrap()
+                .contains("PRIVATE_PROVIDER_ERROR"));
+        }
+        assert_eq!(redirected.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn cancelling_during_token_count_never_generates_and_unregisters_the_call() {
+        let counted = Arc::new(tokio::sync::Notify::new());
+        let arrived = counted.clone();
+        let generated = Arc::new(AtomicUsize::new(0));
+        let hits = generated.clone();
+        let (origin, server) = serve(
+            Router::new()
+                .route(
+                    "/messages/count_tokens",
+                    post(move || {
+                        arrived.notify_one();
+                        async { std::future::pending::<StatusCode>().await }
+                    }),
+                )
+                .route(
+                    "/messages",
+                    post(move || {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        async { StatusCode::OK }
+                    }),
+                ),
+        )
+        .await;
+        let mut chat = enabled_chat();
+        chat.claude.endpoint = format!("{origin}/messages");
+        let chat = Arc::new(chat);
+        let call_chat = chat.clone();
+        let call = tokio::spawn(async move { call_chat.chat("claude", "private").await });
+        tokio::time::timeout(Duration::from_secs(1), counted.notified())
+            .await
+            .unwrap();
+        chat.abort_in_flight();
+        assert!(call.await.unwrap().unwrap_err().message.contains("cancelled"));
+        assert!(chat.inflight.lock().unwrap().is_empty());
+        assert_eq!(generated.load(Ordering::SeqCst), 0);
+        assert!(chat.predict("grok", "next request").await.is_ok());
+        server.abort();
     }
 
     async fn serve(app: Router) -> (String, tokio::task::JoinHandle<()>) {

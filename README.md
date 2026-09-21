@@ -131,7 +131,9 @@ Details: [Chat workflows](docs/CHAT_WORKFLOWS.md#inspect-and-edit-the-chat-promp
 
 **Memory, web, spend.** Memory enable steps: [MEMORY_SETUP.md](docs/MEMORY_SETUP.md).
 Web research rules: [WEB.md](docs/WEB.md). The Spend view reports retained
-usage and available costs; optional completion webhooks send only job
+usage and available costs. **Estimate draft** previews the selected cloud model's
+input estimate and full output reservation; optional per-call caps can refuse
+generation. Claude counting sends only that draft. Optional completion webhooks send only job
 metadata and stay disabled until configured — including which feature PRs the
 installed build must contain:
 [SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md). MCP stderr

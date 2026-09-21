@@ -70,6 +70,38 @@ pub async fn spend_summary(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(crate::llm::spend::summarize_file(&state.spend_file))
 }
 
+pub async fn spend_predict(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<SpendPredictRequest>,
+) -> ApiResult<Json<crate::llm::cloud_chat::SpendPrediction>> {
+    let model = req.model.unwrap_or_else(|| state.current_model());
+    if !state.cloud_chat.is_cloud_selection(&model) {
+        return Err(ApiError::bad_request(
+            "SPEND_LOCAL_UNPRICED",
+            "local inference is unpriced; select a cloud model to estimate its cost",
+        ));
+    }
+    let _gate = state.generation_gate.claim("chat").ok_or_else(|| {
+        ApiError::new(
+            StatusCode::CONFLICT,
+            "CHAT_BUSY",
+            "a model operation is already running",
+        )
+    })?;
+    let prediction = state
+        .cloud_chat
+        .predict(&model, &req.message)
+        .await
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    state.audit.log(
+        json!({"event":"cloud_chat_prediction", "owner":super::auth::context_owner(user),
+        "provider":prediction.provider, "model":prediction.model, "estimate_source":prediction.estimate_source,
+        "budget_exceeded":prediction.budget_exceeded}),
+    );
+    Ok(Json(prediction))
+}
+
 pub async fn upload_attachments(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
@@ -758,7 +790,16 @@ async fn chat_inner(
                 .cloud_chat
                 .chat_with_source(&model, &req.message, spend_source)
                 .await
-                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
+                .map_err(|e| {
+                    if e.code == "CLOUD_CHAT_BUDGET" {
+                        state
+                            .audit
+                            .log(json!({"event":"cloud_chat_budget_refused", "owner":owner, "model":model}));
+                        ApiError::from_err(StatusCode::UNPROCESSABLE_ENTITY, &e)
+                    } else {
+                        ApiError::from_err(StatusCode::BAD_GATEWAY, &e)
+                    }
+                })?,
             Vec::new(),
         )
     } else if settings.web_enabled && !req.loop_turn {

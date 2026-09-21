@@ -468,7 +468,7 @@ fail are audited via `Audit::log` (JSONL, never raises).
   `src/server/routes/agent.rs`,
   `tests/agent_schedules.rs`.
 
-## Inference spend is an append-only ledger, not a predictor
+## Inference spend keeps recorded usage separate from prediction
 
 Cloud Grok/Claude 2xx responses and local OpenAI-compat usage append one JSONL
 row to `$CGAGENTHARNESS_HOME/logs/spend.jsonl` (or home-relative `logging.spend_file`;
@@ -482,7 +482,7 @@ rate table; incomplete usage and unknown models stay unpriced; local rows are
 always `local_unpriced`. `usage_reported` is true only when both input and
 output counts parsed as JSON numbers. HTTP 2xx with empty text still appends
 `outcome: failed_after_billing` then errors the chat. `TokenTally` and
-compaction `estimate_tokens` (UTF-8 `bytes.div_ceil(4)`) are not USD.
+local prompt/compaction token estimates are context budgets, not USD.
 `PRICED_AS_OF` is the oldest `_RATE_VERIFIED` date; a table older than 30 days
 warns once per process and does not fail the chat. Guarded
 `GET /api/spend/summary` rolls up the same file by provider/model/UTC-day with
@@ -496,6 +496,19 @@ not billed inference. If a later MCP tool bills a cloud model, it must record
   `src/llm/cloud_chat.rs`,
   `src/server/routes/core.rs`,
   `tests/spend_ledger.rs`.
+
+Cloud chat prediction is a separate pre-generation operation. Guarded
+`POST /api/spend/predict` accepts only the explicit message/model and shares the
+generation/cancellation gate. Claude counts the same model/message body at its
+fixed count endpoint, with a 2-second default deadline and 4 MiB response cap;
+Grok and count failures use a labelled UTF-8 bytes/4 heuristic. No history,
+attachments, local context or tokenizer calibration reaches the cloud counter.
+The dated ledger rate table prices full configured output with no cache credit.
+A missing/null `models.cloud_chat.max_usd_per_call` leaves generation ungated;
+otherwise it must be finite and positive. Vendor estimates enforce a known-rate
+cap; heuristic estimates enforce it only with literal `budget_on_heuristic: true`.
+Unknown rates remain unpriced. Prediction, count requests and budget refusal
+create no spend rows. This is an estimate, never a guaranteed invoice ceiling.
 
 ## Completion notifications do not grant job or content authority
 

@@ -292,3 +292,7 @@ unsaved slash commands are not part of prompt history.
 ## Spend dashboard
 
 Open **Spend** in the console header for a read-only provider/model/UTC-day table, then **Refresh** to reread the retained ledger. The view shows calls, input/output tokens and available read-time USD. Local inference and unknown costs stay unpriced. Stale rates and incomplete or unavailable ledger files are visible warnings; an empty partial summary is never presented as zero spend. Older backends without completeness metadata display an explicit unknown status. Pagination limits each page to 100 groups. Closing or logging out clears the displayed data.
+
+For the selected cloud model, **Estimate draft** previews an unsent message and
+optional per-call cap. Claude sends only that draft for counting; the bytes/4
+fallback is labelled and may undercount CJK. See [spend prediction](SPEND_AND_NOTIFICATIONS.md#estimate-a-cloud-draft-and-configure-a-per-call-cap).
