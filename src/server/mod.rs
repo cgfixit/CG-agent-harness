@@ -227,7 +227,8 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     }
     if let Some(mgr) = auth.as_ref() {
         // Finish any account-deletion cleanup that failed part-way in an
-        // earlier run: rows still naming a deleted user are removed here.
+        // earlier run: attachment rows and session pins still naming a
+        // deleted user are removed here.
         let live: BTreeSet<String> = mgr.list_users().into_iter().map(|u| u.user_id).collect();
         match attachments.sweep_dead_owners(&|owner| owner == "local" || live.contains(owner)) {
             Ok(0) => {}

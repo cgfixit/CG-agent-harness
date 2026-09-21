@@ -123,8 +123,9 @@ pub struct Session {
     pub last_prompt_skills: Vec<Value>,
     #[serde(default)]
     pub goal_stage: Option<Value>,
-    /// Owner-scoped blob ids inlined on the next local chat turn. Each pin
-    /// carries `owner` because sessions are shared portal resources.
+    /// Sticky per-owner blob ids. `owner` is on each pin because sessions are
+    /// shared portal resources; only this owner's live blobs are inlined on
+    /// local chat and prompt preview.
     #[serde(default)]
     pub attachment_pins: Vec<AttachmentPin>,
 }

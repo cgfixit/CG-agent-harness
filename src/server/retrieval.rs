@@ -1,4 +1,6 @@
-//! Which chat path may inline attachment bytes.
+//! Local chat and prompt preview may inline attachment bytes. Cloud, loop,
+//! and agent refuse both request ids and leftover session pins so sticky
+//! pins cannot ride along on those surfaces.
 
 use crate::common::errors::{HarnessError, Result};
 use crate::server::sessions::MAX_PINNED_ATTACHMENTS;
