@@ -132,6 +132,9 @@ an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-se
 ### 7.2 Default soul, effective prompt and persona editing
 
 **Fresh homes seed the bundled CG Agent persona and enable the soul toggle.**
+The bundled response contract asks for human-readable plain text in short
+paragraphs, using Markdown only when explicitly requested. This guides the model;
+it does not filter or rewrite generated output.
 Existing homes, custom files and deliberate deletions are preserved. Missing soul
 means no persona file loaded; the base general-chat prompt still operates.
 Planning and coding use the same public shipped communication guidance, beneath
