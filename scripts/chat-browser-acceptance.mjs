@@ -8,7 +8,9 @@ import {access, readFile, mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
-let persona=''; let clearFails=false;
+const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
+const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
+let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 let memoryEnabled=false, structuredOpen=true;
@@ -36,6 +38,13 @@ const server=createServer(async(req,res)=>{
  const reply=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
  if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/static/')){res.end('');return;}
+ // Browser dispatch contract fixture; actual grammar is covered by Rust slash tests.
+ if(path==='/api/slash/parse'){
+  if(slashMode==='error'){reply({detail:{code:'UNAVAILABLE',message:'parser fixture unavailable'}},503);return;}
+  if(slashMode==='invalid'){reply({});return;}
+  if(slashMode==='suggest'){reply({kind:'suggest',dispatch:false,suggestions:[],notice:'inspection only; not dispatched'});return;}
+  reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
+ }
  if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
  if(path==='/api/auth/setup-status'){reply({needs_password:false});return;}
  if(path==='/api/auth/login'){
@@ -244,6 +253,39 @@ try {
  assert.ok(await evaluate('document.body.innerText.includes("CG Agent Harness")'));
  assert.equal(await evaluate('document.body.innerText.toLowerCase().includes("cyclaw")'),false);
 
+ const menu = await evaluate('[...document.querySelectorAll("#pane-commands .c")].map(node=>node.textContent)');
+ assert.deepEqual([...new Set(menu.map(command=>command.split(' ')[0]))].sort(),canonicalCommands,'every canonical slash root must be discoverable');
+ assert.deepEqual(menu,[...menu].sort(),'command rows must render alphabetically with related variants together');
+ for(const usage of ['/agent approve <run-id> <reason>','/agent confirm <reason>','/agent jobs','/agent pr-body <run-id>','/agent publish <run-id> <reason>','/agent push <run-id> <reason>','/agent stop [job-id]','/memory capture|recall|retrieval on|off','/session info','/style [<name>|off]','/web pages [group=name] <query>'])assert.ok(menu.includes(usage),'missing command usage: '+usage);
+ const beforeMenuWrites=requests.filter(r=>r[0]==='POST').length;
+ await evaluate('[...document.querySelectorAll("#pane-commands .cmd-item")].find(node=>node.querySelector(".c").textContent==="/agent approve <run-id> <reason>").click()');
+ assert.equal(await evaluate('document.getElementById("input").value'),'/agent ','menu clicks stage a root for editing');
+ assert.equal(await evaluate('pendingAgentRun'),null);
+ assert.equal(requests.filter(r=>r[0]==='POST').length,beforeMenuWrites,'menu clicks must not dispatch commands');
+ await send('/help');
+ assert.deepEqual(await evaluate('[...document.querySelectorAll("#stream .msg:last-child td:first-child")].map(node=>node.textContent)'),menu,'help and the sidebar must expose the same catalog');
+ await send('/agent');
+ assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("/agent runs")'),'agent help must include retained runs');
+ await send('/web help');
+ assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("/web deny <id-or-pattern>")'));
+ for(const [command,usage] of [['/web deny','/web deny <id-or-pattern>'],['/web pages','/web pages [group=name] <query>'],['/web research','/web research [group=name] <question>']]){
+  await send(command);assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes('+JSON.stringify(usage)+')'),'usage must match the requested command');
+ }
+ assert.equal(requests.some(r=>r[0]==='POST'&&r[1].startsWith('/api/agent/')),false,'discovery must not execute agent work');
+
+ await send('/agent run codex/parser-fixture Keep this test request staged');
+ assert.ok(await evaluate('!!pendingAgentRun'),'exercise parser refusals with an executable request staged');
+ const mutationRequests=()=>requests.filter(r=>r[0]==='POST'&&r[1]!=='/api/slash/parse');
+ const beforeParserRefusals=mutationRequests().length;
+ for(const response of ['suggest','error','invalid']){
+  slashMode=response;
+  for(const command of ['/memory clear --help','/memory capture off --dry-run','/agent confirm --help'])await send(command);
+  assert.equal(mutationRequests().length,beforeParserRefusals,'parser '+response+' must not fall back to raw mutation dispatch');
+  assert.ok(await evaluate('!!pendingAgentRun'),'declining a command must preserve the staged request');
+ }
+ assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("command not dispatched")'));
+ slashMode='dispatch';await send('/agent cancel');
+
  mode='stream';const streamed=send('stream fixture');
  await until('document.getElementById("stream").innerText.includes("STREAM_PARTIAL hé")');
  assert.ok(await evaluate('!!inflightChat'));
@@ -343,8 +385,15 @@ try {
  mode='normal';tokens=999999;await send('/loop');assert.equal(await evaluate('loopState'),null);tokens=2;
  mode='rate';await send('/loop');assert.equal(await evaluate('loopState'),null);
  mode='failure';await send('/loop');await send('/loop');assert.equal(await evaluate('loopState'),null);
- mode='delay';const generation=send('/loop');await until('!!inflightChat');await send('/loop stop');await generation;assert.equal(await evaluate('loopState'),null);
- mode='normal';await send('/loop auto');before=chatCount();const auto=send('/loop 3');await until('loopState && loopState.remaining === 2');await send('/loop stop');await auto;assert.equal(chatCount(),before+1,'stop during cooldown prevents another turn');
+ mode='delay';const generation=send('/loop');await until('!!inflightChat');
+ const beforeHelpStop=requests.filter(r=>r[1]==='/api/chat/cancel').length;
+ for(const command of ['/loop stop --help','/ loop stop'])await send(command);
+ // A text input strips newlines, so exercise that raw wrapper input directly.
+ slashMode='error';await evaluate('runSlashMaybeFuzzy('+JSON.stringify('/\nloop stop')+')');slashMode='dispatch';
+ assert.equal(requests.filter(r=>r[1]==='/api/chat/cancel').length,beforeHelpStop,'malformed stop commands must not trigger the cancellation exception');
+ assert.ok(await evaluate('!!inflightChat'));
+ await send('/LOOP   STOP');await generation;assert.equal(await evaluate('loopState'),null);
+ mode='normal';await send('/loop auto');before=chatCount();const auto=send('/loop 3');await until('loopState && loopState.remaining === 2');slashMode='error';await send('/loop stop');await auto;assert.equal(chatCount(),before+1,'exact stop during cooldown works even when slash parsing is unavailable');slashMode='dispatch';
  await send('/loop auto');await send('/loop 2');await send('/goal clear');assert.equal(await evaluate('loopState'),null);assert.equal(await evaluate('sessionGoal'),'');
  await send('/goal Another goal');await send('/loop 2');await send('/session new');assert.equal(await evaluate('loopState'),null);
  const firstSession=[...sessions.values()][0];
@@ -498,7 +547,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

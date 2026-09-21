@@ -170,7 +170,13 @@ fn split_second_intent(line: &str) -> (String, Option<String>) {
 }
 
 fn parse_slash_primary(line: &str) -> SlashParse {
-    let body = line.trim().trim_start_matches('/');
+    let body = line.trim().strip_prefix('/').unwrap_or(line);
+    if body.starts_with('/') || body.starts_with(char::is_whitespace) {
+        return suggest_only(
+            "use one slash immediately before the command — try /help",
+            &[("help", 40)],
+        );
+    }
     let tokens: Vec<&str> = body.split_whitespace().filter(|t| !t.is_empty()).collect();
     if tokens.is_empty() {
         return suggest_only("unknown command: / — try /help", &[("help", 40)]);
@@ -186,6 +192,32 @@ fn parse_slash_primary(line: &str) -> SlashParse {
 
     let after_cmd = &tokens[1..];
     let (sub, args, sub_fuzzy) = resolve_sub(cmd, after_cmd);
+    // Goals and loop counts have a free-form/numeric fallback. Other families
+    // can suggest a mistyped subcommand without granting it execution authority.
+    if sub.is_none() && !matches!(cmd, "goal" | "loop") {
+        if let Some(raw_sub) = after_cmd.first() {
+            let near = nearby_tokens(&raw_sub.to_ascii_lowercase(), known_subs(cmd));
+            if !near.is_empty() {
+                let mut parsed = suggest_only("unknown subcommand; suggestions were not dispatched", &[]);
+                let tail = if after_cmd.len() > 1 {
+                    format!(" {}", after_cmd[1..].join(" "))
+                } else {
+                    String::new()
+                };
+                parsed.suggestions = near
+                    .into_iter()
+                    .map(|(sub, score)| SlashSuggestion {
+                        line: format!("/{cmd} {sub}{tail}"),
+                        score,
+                    })
+                    .collect();
+                return parsed;
+            }
+        }
+    }
+    if let Some(notice) = mutation_argument_refusal(cmd, sub.as_deref(), &args) {
+        return suggest_only(notice, &[("help", 100)]);
+    }
     let rest = match (cmd, sub.as_deref()) {
         ("memory", Some("consolidate")) => id_tokens(&args).join(" "),
         ("web", Some("search" | "pages" | "research" | "fetch")) => args.join(" "),
@@ -330,6 +362,7 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
             "push",
             "publish",
             "discard",
+            "pr-body",
         ],
         "goal" => &["stage", "task", "clear"],
         "loop" => &["stop", "auto"],
@@ -346,7 +379,8 @@ fn resolve_sub<'a>(cmd: &str, tokens: &'a [&'a str]) -> (Option<String>, Vec<&'a
     if subs.iter().any(|s| *s == first) {
         return (Some(first), tokens[1..].to_vec(), false);
     }
-    let stripped: Vec<&str> = tokens.iter().copied().filter(|t| !is_filler(t)).collect();
+    // Once a subcommand is found, all remaining words are its payload.
+    let stripped: Vec<&str> = tokens.iter().copied().skip_while(|t| is_filler(t)).collect();
     if let Some(head) = stripped.first() {
         let head_l = head.to_ascii_lowercase();
         if subs.iter().any(|s| *s == head_l) {
@@ -393,13 +427,13 @@ fn is_mutation(cmd: &str, sub: Option<&str>) -> bool {
     match (cmd, sub) {
         ("agent", Some("status" | "runs" | "jobs" | "job")) => false,
         ("agent", _) => true,
-        ("web", Some("allow" | "deny" | "on" | "off" | "inject" | "forget")) => true,
+        ("web", Some("allow" | "deny" | "on" | "off" | "inject" | "forget" | "cancel")) => true,
         ("api", _) => true,
         ("soul", Some("apply" | "reject" | "edit" | "propose")) => true,
         ("soul", Some("on" | "off")) => true,
         ("memory", Some("on" | "off" | "forget" | "clear" | "save" | "remember" | "add")) => true,
         ("session", Some("new" | "rename" | "use")) => true,
-        ("goal" | "style" | "model" | "skill" | "loop", _) => true,
+        ("goal" | "style" | "model" | "skill" | "loop" | "clear", _) => true,
         (
             "memory",
             Some(
@@ -419,15 +453,86 @@ fn is_mutation(cmd: &str, sub: Option<&str>) -> bool {
     }
 }
 
+fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Option<&'static str> {
+    // Validate fixed operands before console dispatch so ignored extra text
+    // cannot authorize an action. Keep free-form command payloads intact.
+    let max_args = match (cmd, sub) {
+        ("memory", Some("on" | "off" | "clear"))
+        | ("soul", Some("on" | "off" | "edit" | "propose"))
+        | ("skill", Some("clear"))
+        | ("web", Some("on" | "off" | "inject" | "forget" | "cancel"))
+        | ("agent", Some("cancel"))
+        | ("loop", Some("auto" | "stop"))
+        | ("clear", None) => Some(0),
+        (
+            "memory",
+            Some(
+                "forget"
+                | "capture"
+                | "recall"
+                | "retrieval"
+                | "auto-retrieve"
+                | "consolidation"
+                | "auto-consolidate"
+                | "auto-suggest-chat"
+                | "auto-suggest-coding",
+            ),
+        )
+        | ("session", Some("use"))
+        | ("api", Some("clear"))
+        | ("agent", Some("plan" | "iterations" | "pr" | "issue" | "stop" | "discard" | "pr-body"))
+        | ("goal", Some("stage"))
+        | ("loop", None) => Some(1),
+        ("skill", None) if args.first().is_some_and(|arg| arg.starts_with("check:")) => Some(1),
+        ("web", Some("allow")) => Some(3),
+        _ => None,
+    };
+    if max_args.is_some_and(|max| args.len() > max || args.iter().any(|arg| is_control_flag(arg))) {
+        return Some("unsupported arguments; command not dispatched — use /help for syntax");
+    }
+
+    let reason_start = match (cmd, sub) {
+        ("agent", Some("confirm")) => Some(0),
+        ("agent", Some("approve" | "reject" | "push" | "publish")) | ("soul", Some("apply" | "reject")) => Some(1),
+        _ => None,
+    };
+    let reason_is_help = reason_start.is_some_and(|start| is_help_reason(args.get(start..).unwrap_or_default()))
+        || (matches!((cmd, sub), ("memory", Some("save" | "remember")))
+            && args
+                .join(" ")
+                .rsplit_once("::")
+                .is_some_and(|(_, reason)| is_help_reason(&reason.split_whitespace().collect::<Vec<_>>())));
+    if reason_is_help {
+        return Some("help or dry-run text is not an approval reason; command not dispatched — use /help");
+    }
+    None
+}
+
+fn is_control_flag(token: &str) -> bool {
+    matches!(
+        token.to_ascii_lowercase().as_str(),
+        "-h" | "--help" | "--dry-run" | "--dryrun"
+    )
+}
+
+fn is_help_reason(tokens: &[&str]) -> bool {
+    tokens.first().is_some_and(|token| is_control_flag(token))
+        || (tokens.len() == 1 && matches!(tokens[0].to_ascii_lowercase().as_str(), "help" | "?"))
+}
+
 fn nearby_commands(cmd: &str) -> Vec<(&'static str, u8)> {
-    let mut scored: Vec<(&'static str, u8)> = COMMANDS
+    nearby_tokens(cmd, COMMANDS)
+}
+
+fn nearby_tokens<'a>(cmd: &str, candidates: &[&'a str]) -> Vec<(&'a str, u8)> {
+    let mut scored: Vec<(&str, u8)> = candidates
         .iter()
         .copied()
         .filter_map(|c| {
             let d = edit_distance(cmd, c);
             if d == 0 {
                 None
-            } else if d == 1 {
+            } else if d == 1 || adjacent_transposition(cmd, c) {
                 Some((c, 70))
             } else if c.starts_with(cmd) && cmd.len() >= 3 {
                 Some((c, 60))
@@ -439,6 +544,16 @@ fn nearby_commands(cmd: &str) -> Vec<(&'static str, u8)> {
     scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     scored.truncate(5);
     scored
+}
+
+fn adjacent_transposition(a: &str, b: &str) -> bool {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.len() != b.len() {
+        return false;
+    }
+    let differences: Vec<usize> = (0..a.len()).filter(|&i| a[i] != b[i]).collect();
+    matches!(differences.as_slice(), [i, j] if *j == i + 1 && a[*i] == b[*j] && a[*j] == b[*i])
 }
 
 fn edit_distance(a: &str, b: &str) -> usize {
@@ -599,6 +714,7 @@ mod tests {
             "/memory please clear",
             "/memory please on",
             "/soul please off",
+            "/web please cancel",
             "/session please new",
             "/model please use local",
             "/memory consolidate please use 123456789abcdef0",
@@ -619,5 +735,167 @@ mod tests {
         let p = parse_line("/");
         assert!(!p.dispatch);
         assert_eq!(p.kind, SlashKind::Suggest);
+    }
+
+    #[test]
+    fn malformed_slash_prefix_cannot_become_a_mutation() {
+        for line in [
+            "//memory clear",
+            "///agent confirm approved",
+            "/ memory clear",
+            "/\nweb off",
+        ] {
+            assert!(!parse_line(line).dispatch, "{line}");
+        }
+        assert!(parse_line("  /memory clear  ").dispatch);
+    }
+
+    #[test]
+    fn conversational_prefix_preserves_the_entire_payload() {
+        for (line, canonical, dispatch) in [
+            ("/web please search The Who", "/web search The Who", true),
+            ("/web google to be or not to be", "/web search to be or not to be", true),
+            (
+                "/memory please search notes from my session",
+                "/memory search notes from my session",
+                true,
+            ),
+            (
+                "/memory please save The Who notes :: for my notes",
+                "/memory save The Who notes :: for my notes",
+                false,
+            ),
+            (
+                "/agent please confirm for my change",
+                "/agent confirm for my change",
+                false,
+            ),
+        ] {
+            let p = parse_line(line);
+            assert_eq!(p.canonical.as_deref(), Some(canonical), "{line}");
+            assert_eq!(p.dispatch, dispatch, "{line}");
+        }
+    }
+
+    #[test]
+    fn extra_arguments_and_help_cannot_authorize_mutations() {
+        for line in [
+            "/memory clear --help",
+            "/memory clear what does this do",
+            "/memory on please",
+            "/memory forget note-id --dry-run",
+            "/memory capture off --dry-run",
+            "/soul off --help",
+            "/soul edit --help",
+            "/session use session-id --help",
+            "/api clear EXAMPLE --dry-run",
+            "/skill clear --help",
+            "/web off --help",
+            "/web inject --help",
+            "/web forget --dry-run",
+            "/web allow https://example.com --dry-run",
+            "/web allow https://example.com --help",
+            "/agent cancel --help",
+            "/agent discard run-id --dry-run",
+            "/agent stop job-id --help",
+            "/agent pr-body run-id --help",
+            "/goal stage codex/test --help",
+            "/loop auto --help",
+            "/loop stop --help",
+            "/loop 2 --help",
+            "/clear --help",
+            "/skill check:rust-test --help",
+            "/agent confirm --help",
+            "/agent confirm --dry-run",
+            "/agent confirm help",
+            "/agent confirm ?",
+            "/agent approve run-id --help",
+            "/agent push run-id --dry-run",
+            "/agent publish run-id -h",
+            "/agent reject run-id --help",
+            "/soul apply proposal-id --help",
+            "/soul reject proposal-id --dry-run",
+            "/memory save note :: --help",
+            "/memory remember note :: --dry-run",
+        ] {
+            let p = parse_line(line);
+            assert!(!p.dispatch, "{line}: {p:?}");
+            assert_eq!(p.kind, SlashKind::Suggest, "{line}");
+        }
+    }
+
+    #[test]
+    fn exact_mutations_and_free_form_flag_mentions_remain_available() {
+        for line in [
+            "/memory clear",
+            "/memory on",
+            "/memory forget note-id",
+            "/memory capture off",
+            "/soul off",
+            "/soul edit",
+            "/session use session-id",
+            "/api clear EXAMPLE",
+            "/skill clear",
+            "/skill use one two",
+            "/web off",
+            "/web inject",
+            "/web forget",
+            "/web allow https://example.com",
+            "/web allow https://example.com docs-notes_2",
+            "/web allow https://example.com help https://example.com/start?flag=--help",
+            "/agent cancel",
+            "/agent discard run-id",
+            "/agent stop job-id",
+            "/agent pr-body run-id",
+            "/goal stage codex/test",
+            "/loop auto",
+            "/loop 2",
+            "/loop stop",
+            "/clear",
+            "/skill check:rust-test",
+            "/agent confirm fix --help output",
+            "/agent approve run-id repair dry-run mode",
+            "/agent push run-id approved fix",
+            "/agent publish run-id ready for review",
+            "/agent reject run-id",
+            "/soul apply proposal-id improve help",
+            "/soul reject proposal-id keep current text",
+            "/memory save --help explains the flags :: preserve useful notes",
+            "/memory remember help with dry-run :: keep this for me",
+            "/memory add --help",
+            "/goal --help output should explain flags",
+            "/goal clear the cache",
+            "/session rename help with --dry-run",
+            "/web search --help for The Who",
+        ] {
+            let p = parse_line(line);
+            assert!(p.dispatch, "{line}: {p:?}");
+            assert_eq!(p.canonical.as_deref(), Some(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn typos_and_ambiguous_subcommands_only_suggest() {
+        for (line, expected) in [
+            ("/hlep", vec!["/help"]),
+            ("/memroy", vec!["/memory"]),
+            ("/skil", vec!["/skill", "/skills"]),
+            ("/memory cler", vec!["/memory clear"]),
+            (
+                "/memory retr notes",
+                vec!["/memory retrieval notes", "/memory retrieve notes"],
+            ),
+            (
+                "/agent confrim keep --help text",
+                vec!["/agent confirm keep --help text"],
+            ),
+        ] {
+            let p = parse_line(line);
+            assert!(!p.dispatch, "{line}: {p:?}");
+            for suggestion in expected {
+                assert!(p.suggestions.iter().any(|s| s.line == suggestion), "{line}: {p:?}");
+            }
+            assert!(p.suggestions.len() <= 5, "{line}");
+        }
     }
 }
