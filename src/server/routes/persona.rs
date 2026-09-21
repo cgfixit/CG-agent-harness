@@ -380,10 +380,15 @@ pub async fn preview(
         .cloned()
         .collect();
     let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
-    let attachment_fence = state
-        .attachments
-        .fence_for(&owner, &ids)
-        .map_err(|e| crate::server::attachments::upload_error(&e))?;
+    let attachment_fence = crate::server::retrieval::assemble_local_untrusted(
+        crate::server::retrieval::RetrievalSurface::PromptPreview,
+        &state.attachments,
+        &state.notes_corpus,
+        &owner,
+        &ids,
+        req.retrieve_query.as_deref(),
+    )
+    .map_err(|e| crate::server::attachments::upload_error(&e))?;
     let inputs = PromptInputs {
         selected_skills: &selected,
         soul_enabled: settings.soul_enabled,

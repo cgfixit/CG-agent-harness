@@ -76,6 +76,8 @@ pub struct AppState {
     pub settings: Mutex<HarnessSettings>,
     pub store: SessionStore,
     pub attachments: AttachmentStore,
+    pub notes_corpus: crate::server::notes_corpus::NotesCorpus,
+    pub notes_ingest_permits: Arc<tokio::sync::Semaphore>,
     pub backend: ResolvedLocalBackend,
     pub chat: ChatClient,
     pub cloud_chat: CloudChat,

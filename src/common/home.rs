@@ -18,6 +18,7 @@
 //!   data/agentic/      skills_registry.json, workspaces/, harness_optimizer/runs/
 //!   logs/              audit.jsonl, spend.jsonl
 //!   attachments/       owner-scoped chat upload blobs (UUID names, 0600)
+//!   notes_corpus/      owner-jailed .md/.txt notes for local chat (UUID names, 0600)
 //!   tmp/               staged shim temp files
 //! ```
 
@@ -37,7 +38,7 @@ pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8790;
 pub const MIN_USER_PORT: u16 = 1024;
 
-const SUBDIRS: [&str; 12] = [
+const SUBDIRS: [&str; 13] = [
     "sessions",
     "styles",
     "skills",
@@ -50,6 +51,7 @@ const SUBDIRS: [&str; 12] = [
     "logs",
     "exports",
     "attachments",
+    "notes_corpus",
 ];
 
 const EMBEDDED_SKILLS: [(&str, &str); 2] = [
@@ -118,6 +120,9 @@ impl Home {
     }
     pub fn attachments_dir(&self) -> PathBuf {
         self.root.join("attachments")
+    }
+    pub fn notes_corpus_dir(&self) -> PathBuf {
+        self.root.join("notes_corpus")
     }
     pub fn skills_dir(&self) -> PathBuf {
         self.root.join("skills")

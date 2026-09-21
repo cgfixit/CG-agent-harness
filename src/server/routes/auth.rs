@@ -416,6 +416,7 @@ pub async fn delete_user(
     };
     if let Some(owner) = owner.as_deref() {
         let _ = state.store.drop_attachment_pins_for_owner(owner);
+        let _ = state.notes_corpus.unlink_owner(owner);
     }
     let live: std::collections::BTreeSet<String> = manager.list_users().into_iter().map(|u| u.user_id).collect();
     let swept = state

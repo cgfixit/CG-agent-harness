@@ -511,8 +511,14 @@ IDs once. A failed preview retains the pending IDs. Changing session or account
 clears the pending selection, so another session cannot silently reuse it.
 Uploads count toward the home quota until session-clear or owner cleanup.
 
-Local chat persists owner-scoped blob ids on the session (cap 12). Cloud chat,
-`/loop`, and `/agent` return `ATTACHMENT_SURFACE_FORBIDDEN` if those ids or
-request `attachment_ids` are present. The preview is a local-chat snapshot, not
-proof that cloud chat or the coding planner receives that context.
+Local chat persists owner-scoped blob ids on the session (cap 12). The next
+local turn may BM25-search those blobs and inject matching passages into the
+existing attachment fence. Operator `.md`/`.txt` notes ingested at
+`/api/notes-corpus` live in a separate home jail and share that same local
+prompt budget (`source=notes_corpus`). That local retrieval is not cloud
+egress: cloud chat, `/loop`, and `/agent` return
+`ATTACHMENT_SURFACE_FORBIDDEN` if attachment ids or live pins are present,
+and they never receive notes-corpus bytes. The preview is a local-chat
+snapshot, not proof that cloud chat or the coding planner receives that
+context.
 Unsupported formats are refused. Clipped sections explicitly say they are incomplete.

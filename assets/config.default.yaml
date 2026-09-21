@@ -73,6 +73,15 @@ attachments:
   # stalled client releases its permit when it expires.
   body_timeout_sec: 120
 
+# Home-jail .md/.txt notes for local chat and prompt preview only.
+# Not structured memory. Cloud, /loop, and /agent never receive these bytes.
+notes_corpus:
+  max_files_per_owner: 64 # 1–256
+  max_file_bytes: 524288 # 1024–1048576
+  max_home_bytes: 8388608 # 1048576–33554432
+  max_files_per_request: 8 # 1–16
+  max_concurrent_ingests: 2 # 1–8
+
 api:
   rate_limit:
     max_requests: 60       # per-IP request ceiling within the window

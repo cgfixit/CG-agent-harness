@@ -8,6 +8,7 @@
 pub mod agent_jobs;
 pub mod agent_policy;
 pub mod agent_schedules;
+pub mod attachment_index;
 pub mod attachments;
 mod chat_web;
 pub mod client;
@@ -23,7 +24,9 @@ pub mod guards;
 pub mod headers;
 pub mod mcp;
 pub mod memory_notes;
+pub mod notes_corpus;
 pub mod notifications;
+pub mod passage_index;
 pub mod prompts;
 pub mod request_log;
 pub mod retrieval;
@@ -214,6 +217,9 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     };
     let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
     let attachments = crate::server::attachments::AttachmentStore::open(&home.attachments_dir())?;
+    let notes_limits = crate::server::notes_corpus::NotesLimits::from_config(&cfg)?;
+    let notes_ingest_permits = Arc::new(tokio::sync::Semaphore::new(notes_limits.max_concurrent_ingests));
+    let notes_corpus = crate::server::notes_corpus::NotesCorpus::open(&home.notes_corpus_dir(), notes_limits)?;
     // Startup recovery: files left behind when a crash cut off the manifest
     // commit are invisible to every API path, so reclaim them here.
     match attachments.sweep_unreferenced_files() {
@@ -260,6 +266,8 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         settings: Mutex::new(settings),
         store,
         attachments,
+        notes_corpus,
+        notes_ingest_permits,
         upload_permits,
         upload_body_timeout,
         backend,

@@ -396,3 +396,81 @@ async fn merge_pins_keep_the_other_owner_and_fence_for_rejects_cross_owner() {
     assert_eq!(saved.pinned_ids_for("bob"), vec!["bob-id".to_string()]);
     assert!(attachments.fence_for("bob", &[a[0].id.clone()]).is_err());
 }
+
+#[tokio::test]
+async fn local_chat_bm25_hit_keeps_honesty_and_stays_off_loop() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let mut body = "padding ".repeat(400);
+    body.push_str("UNIQUE_NEEDLE_TOKEN tail");
+    let (status, stored) = post_files(&s, &[("note.md", body.as_bytes())]).await;
+    assert_eq!(status, 200, "{stored}");
+    let id = stored["attachments"][0]["id"].as_str().unwrap();
+    let (status, chat) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "UNIQUE_NEEDLE_TOKEN", "attachment_ids": [id]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    let sent = model.last_request().unwrap();
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("UNIQUE_NEEDLE_TOKEN"), "{system}");
+    assert!(system.contains("<<<ATTACHMENT_DATA>>>"));
+    assert!(system.contains("source=attachment"));
+    assert!(!system.contains("note.md"));
+    let sid = chat["session_id"].as_str().unwrap();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "keep going"}))
+        .await;
+    let (status, loop_body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "continue", "session_id": sid, "loop": true}),
+        )
+        .await;
+    assert_eq!(status, 400, "{loop_body}");
+    assert_eq!(code(&loop_body), "ATTACHMENT_SURFACE_FORBIDDEN");
+}
+
+#[tokio::test]
+async fn notes_corpus_injects_local_chat_and_stays_off_loop() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (ct, body) = multipart(&[("ops.md", b"NOTES_CORPUS_NEEDLE in the runbook")]);
+    let resp = s
+        .req(reqwest::Method::POST, "/api/notes-corpus")
+        .header("content-type", ct)
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    let stored = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(status, 200, "{stored}");
+    assert_eq!(stored["count"], 1);
+    assert!(stored["notes"][0]["id"].as_str().is_some());
+    assert!(stored["notes"][0].get("filename").is_none());
+    let (status, chat) = s
+        .post_json("/api/chat", json!({"message": "NOTES_CORPUS_NEEDLE"}))
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    let sent = model.last_request().unwrap();
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("NOTES_CORPUS_NEEDLE"), "{system}");
+    assert!(system.contains("source=notes_corpus"));
+    assert!(!system.contains("ops.md"));
+    let sid = chat["session_id"].as_str().unwrap();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "keep going"}))
+        .await;
+    let (status, loop_body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "NOTES_CORPUS_NEEDLE", "session_id": sid, "loop": true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{loop_body}");
+    let sent = model.last_request().unwrap();
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(!system.contains("NOTES_CORPUS_NEEDLE"), "{system}");
+    assert!(!system.contains("source=notes_corpus"));
+}

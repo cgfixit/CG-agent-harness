@@ -3,6 +3,9 @@
 //! pins cannot ride along on those surfaces.
 
 use crate::common::errors::{HarnessError, Result};
+use crate::server::attachments::{AttachmentStore, FENCE_CLOSE, FENCE_OPEN};
+use crate::server::notes_corpus::NotesCorpus;
+use crate::server::prompts::MAX_WEB_CHARS;
 use crate::server::sessions::MAX_PINNED_ATTACHMENTS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +49,44 @@ pub fn refuse_forbidden_attachments(
         "this surface does not receive attachment bytes (cloud / loop / agent)",
     )
     .detail("surface", surface.as_str()))
+}
+
+pub fn allows_local_file_bytes(surface: RetrievalSurface) -> bool {
+    allows_attachment_bytes(surface)
+}
+
+pub fn assemble_local_untrusted(
+    surface: RetrievalSurface,
+    attachments: &AttachmentStore,
+    notes: &NotesCorpus,
+    owner: &str,
+    ids: &[String],
+    query: Option<&str>,
+) -> Result<String> {
+    if !allows_local_file_bytes(surface) {
+        return Ok(String::new());
+    }
+    let q = query.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
+    let att = crate::server::attachment_index::fence_for_query(attachments, owner, ids, q)?;
+    let remaining = MAX_WEB_CHARS.saturating_sub(untrusted_body_chars(&att));
+    let notes_fence = notes.fence_for_query(owner, q, remaining)?;
+    Ok(concat_fences(&att, &notes_fence))
+}
+
+fn untrusted_body_chars(fence: &str) -> usize {
+    match (fence.find(FENCE_OPEN), fence.rfind(FENCE_CLOSE)) {
+        (Some(start), Some(end)) if end > start => fence[start..end].chars().count(),
+        _ => 0,
+    }
+}
+
+fn concat_fences(att: &str, notes: &str) -> String {
+    match (att.trim().is_empty(), notes.trim().is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => att.to_string(),
+        (true, false) => notes.to_string(),
+        (false, false) => format!("{}\n{}", att.trim_end(), notes.trim_start()),
+    }
 }
 
 pub fn attachment_ids_for_prompt(pinned_live: &[String], request_ids: &[String]) -> Vec<String> {
