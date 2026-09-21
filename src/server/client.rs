@@ -17,21 +17,34 @@ use std::{
 
 #[derive(Subcommand)]
 pub enum WebCommand {
+    /// Show shared-home URL rules, source groups and your account's saved context.
     Status,
-    /// Add an exact URL or explicit wildcard; each seed must fit the rule.
+    /// Administrator: atomically allow URLs or quoted wildcard patterns.
     Allow {
-        url: String,
+        #[arg(required = true, num_args = 1..)]
+        urls: Vec<String>,
         #[arg(long, default_value = "default")]
         group: String,
         #[arg(long)]
         seed: Vec<String>,
     },
-    Deny {
-        rule: String,
-    },
+    /// Administrator: remove a rule ID or matching pattern across groups.
+    Deny { rule: String },
+    /// Read one or more exact permitted URLs under a shared budget; no crawl.
     Fetch {
-        url: String,
+        #[arg(required = true, num_args = 1..)]
+        urls: Vec<String>,
+        #[arg(long)]
+        group: Option<String>,
     },
+    /// Check URL permission without DNS/network access or granting authority.
+    Check {
+        #[arg(required = true, num_args = 1..)]
+        urls: Vec<String>,
+        #[arg(long)]
+        group: Option<String>,
+    },
+    /// Google listings (default), or permitted-page search with --group/--engine pages.
     Search {
         query: String,
         #[arg(long, value_parser = ["google", "pages"])]
@@ -41,15 +54,24 @@ pub enum WebCommand {
         #[arg(long)]
         group: Option<String>,
     },
+    /// Discover permitted links and synthesize checked citations with the local model.
     Research {
         query: String,
         #[arg(long)]
         group: Option<String>,
+        /// Concrete starting URL; repeat for multiple sites. Does not grant access.
+        #[arg(long)]
+        url: Vec<String>,
     },
+    /// Cancel your bounded research request.
     Cancel,
+    /// Select your last page for chat context; permission is rechecked.
     Inject,
+    /// Clear your account's saved web selection, not permission rules.
     Forget,
+    /// Administrator: enable web for this home; URL rules remain required.
     On,
+    /// Administrator: disable web for this home without deleting rules.
     Off,
 }
 #[derive(Subcommand)]
@@ -330,13 +352,14 @@ pub fn account(command: AccountCommand, origin: Option<String>) -> anyhow::Resul
 pub fn web(command: WebCommand, origin: Option<String>) -> anyhow::Result<()> {
     let (method, path, body) = match command {
         WebCommand::Status => ("GET", "/api/web", None),
-        WebCommand::Allow { url, group, seed } => (
+        WebCommand::Allow { urls, group, seed } => (
             "POST",
             "/api/web/allow",
-            Some(json!({"url":url,"group":group,"seeds":seed})),
+            Some(json!({"urls":urls,"group":group,"seeds":seed})),
         ),
         WebCommand::Deny { rule } => ("POST", "/api/web/deny", Some(json!({"url":rule}))),
-        WebCommand::Fetch { url } => ("POST", "/api/web/fetch", Some(json!({"url":url}))),
+        WebCommand::Fetch { urls, group } => ("POST", "/api/web/fetch", Some(json!({"urls":urls,"group":group}))),
+        WebCommand::Check { urls, group } => ("POST", "/api/web/check", Some(json!({"urls":urls,"group":group}))),
         WebCommand::Search {
             query,
             group,
@@ -349,9 +372,11 @@ pub fn web(command: WebCommand, origin: Option<String>) -> anyhow::Result<()> {
                 json!({"query":query,"group":group,"engine":engine.as_deref().unwrap_or(if group.is_some() { "pages" } else { "google" }),"count":count}),
             ),
         ),
-        WebCommand::Research { query, group } => {
-            ("POST", "/api/web/research", Some(json!({"query":query,"group":group})))
-        }
+        WebCommand::Research { query, group, url } => (
+            "POST",
+            "/api/web/research",
+            Some(json!({"query":query,"group":group,"urls":url})),
+        ),
         WebCommand::Cancel => ("POST", "/api/web/research/cancel", Some(json!({}))),
         WebCommand::Inject => ("POST", "/api/web/inject", Some(json!({}))),
         WebCommand::Forget => ("POST", "/api/web/forget", Some(json!({}))),

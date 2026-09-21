@@ -108,14 +108,17 @@ include the summary budget and the extra reservation for reasoning backends.
 1. Sign in with `admin` / `admin` and replace the bootstrap password.
 2. Run `/help`.
 
-The Commands pane and `/help` list every supported command alphabetically
-with required arguments and modifiers. Clicking a menu entry fills the input
-without executing it.
+The Commands pane is searchable. `/help` opens a compact topic guide; `/help web`
+shows research syntax and examples; `/help all` lists the complete alphabetical
+catalog. Search actions, descriptions or flags. Clicking an entry inserts its
+full command prefix for review without executing it.
 
 ## Using the console
 
-**Commands.** Use the listed slash syntax, not shell-style flags (`--help`,
-`--dry-run` are not commands). Typos such as `/memroy` produce suggestions;
+**Commands.** Use the listed syntax: web commands support `--group`, `--seed`,
+`--url`, `--count` and `--engine` where documented; `--help` is inert help, never
+approval. Unknown flags and `--dry-run` refuse rather than authorize an action.
+Typos such as `/memroy` produce suggestions;
 suggestions are never executed. `/memory` requires an exact, single-line
 form — aliases and conversational phrasing only suggest, including retrieval
 that would otherwise start a chat. Slash-command tables:

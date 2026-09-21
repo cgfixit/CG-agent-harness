@@ -395,11 +395,13 @@ access. See [port scope](PORT_PARITY.md) and the
 
 Angle brackets below mean “replace with your value”; do not type the brackets.
 Square brackets mark optional arguments; `|` separates alternatives. The Commands
-pane and `/help` share an alphabetical catalog, with related variants together.
-Clicking a command fills its root in the input for editing; it does not run it.
-These are console commands, not shell commands: there are no GNU-style flags such
-as `--help`, `--dry-run` or `--confirm`. Use `/help`, `/agent`, `/web help`,
-`/skills help` or `/tools help` to inspect supported syntax.
+pane and `/help all` share a searchable alphabetical catalog. `/help` opens a
+topic overview; `/help web`, `/help session`, or `/help <search words>` filters it.
+Clicking a command inserts the full fixed prefix (for example `/agent approve `)
+for editing, never execution. Examples and fuzzy suggestions also only insert.
+Web commands support the flags below; `--help` opens help without mutation.
+Unknown flags, `--dry-run` and `--confirm` cannot authorize an action. These are
+console commands, not a shell: no expansion, substitution or scripts are run.
 
 Memory commands require an exact `/memory` root and subcommand (case-insensitive;
 ordinary spaces are allowed). `/mem`, typos and conversational forms such as
@@ -430,7 +432,7 @@ above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persis
 | `/goal`, `/goal <text>`, `/goal clear` | Inspect, set or clear the saved session goal |
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
 | `/harness` | List retained optimizer runs; does not start optimization |
-| `/help` | List the same alphabetical command catalog as the sidebar |
+| `/help [topic\|search words\|all]` | Searchable topic guide, full command catalog and insertable examples |
 | `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
 | `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes) |
 | `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
@@ -453,14 +455,19 @@ above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persis
 | `/tokens` | Current session token tally |
 | `/tools [all\|help\|<name>]` | Inspect registered tools, the full catalog, help or one named tool |
 | `/users` | Administrator account panel; [accounts](ACCOUNTS.md) |
-| `/web`, `help`, `on`, `off`, `allow <url-or-pattern> [group] [seed-url]`, `deny <id-or-pattern>` | Inspect fetching; administrators toggle or edit exact/wildcard permission |
-| `/web cancel`, `fetch <url>`, `forget`, `inject` | Cancel research, fetch permitted content, clear or include your last selection |
-| `/web pages [group=name] <query>`, `research [group=name] <question>` | Search permitted-page passages or run bounded research with citations |
-| `/web search [group=name] <query>` | Google results without a group; a nonempty group selects permitted-page search instead |
+| `/web [status\|help]`, `/web on`, `/web off` | Inspect shared-home rules; administrators enable/disable web |
+| `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>` | Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule |
+| `/web check <URL> [URL ...] [--group name]` | Exact permission diagnostic, with no network request or grant |
+| `/web cancel`, `/web fetch <URL> [URL ...] [--group name]`, `/web forget`, `/web inject` | Cancel research, batch-read exact permitted URLs, clear or select your last extract |
+| `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>` | Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority |
+| `/web search [--count 1..10] [--engine google\|pages] [--group name] <query>` | Google listings by default; a group selects permitted-page search |
 
-`group=name` must immediately follow `search`, `pages` or `research`. The `allow`
-command instead takes an optional positional group and crawl seed. Memory `save`
-and `remember` split text from the required reason at the final `::`.
+Named web flags accept `--flag value` or `--flag=value`. Quote whole arguments
+when needed; use `--` before query words that start with a hyphen. Legacy
+`group=name` and single-pattern `allow PATTERN GROUP SEED` remain accepted.
+Unknown, repeated singleton, or missing-value flags refuse. Web commands must be
+one line, without control characters; fetch takes URLs, not appended prose.
+Memory `save` and `remember` split text from the required reason at the final `::`.
 
 Common misspellings such as `/memroy` and `/memory cler` suggest `/memory` and
 `/memory clear` without executing either. Ambiguous `/skil` offers both `/skill`

@@ -128,11 +128,12 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | Method | Path | Purpose |
 |---|---|---|
 | GET, POST | `/api/web` | Status and on/off toggle |
-| POST | `/api/web/allow` | Add an exact URL or explicit wildcard |
+| POST | `/api/web/allow` | Atomically grant one or more exact URLs or explicit wildcards, with a group and optional seeds |
 | POST | `/api/web/deny` | Remove a grant |
-| POST | `/api/web/fetch` | Fetch a permitted URL |
+| POST | `/api/web/fetch` | Read one or more exact permitted URLs within shared resource limits |
+| POST | `/api/web/check` | Check exact URL permissions locally, without fetching or granting access |
 | POST | `/api/web/search` | Bounded Google search (`SERPAPI_API_KEY` optional) |
-| POST | `/api/web/research` | Start a research run |
+| POST | `/api/web/research` | Research permitted sources, optionally narrowing the group and concrete starting URLs |
 | POST | `/api/web/research/cancel` | Cancel research |
 | POST | `/api/web/inject` | Inject a read into the session context |
 | POST | `/api/web/forget` | Drop injected reads |

@@ -43,6 +43,13 @@ const server=createServer(async(req,res)=>{
   if(slashMode==='error'){reply({detail:{code:'UNAVAILABLE',message:'parser fixture unavailable'}},503);return;}
   if(slashMode==='invalid'){reply({});return;}
   if(slashMode==='suggest'){reply({kind:'suggest',dispatch:false,suggestions:[],notice:'inspection only; not dispatched'});return;}
+  if(body.line==='/web help'){reply({kind:'dispatch',dispatch:true,canonical:'/help web'});return;}
+  if(body.line.startsWith('/web ')){
+   const [,action,...words]=body.line.split(' ');
+   if(action==='inject'&&!words.length){reply({kind:'dispatch',dispatch:true,canonical:body.line,web:{action,body:{}}});return;}
+   if(['pages','search'].includes(action)&&words.length){reply({kind:'dispatch',dispatch:true,canonical:body.line,web:{action,body:{query:words.join(' '),engine:action==='search'?'google':'pages',group:null,count:5}}});return;}
+   reply({kind:'suggest',dispatch:false,suggestions:[{line:'/help web'}],notice:'Missing arguments for /web '+action+'; use /help web.'});return;
+  }
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
  if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
@@ -256,21 +263,33 @@ try {
  const menu = await evaluate('[...document.querySelectorAll("#pane-commands .c")].map(node=>node.textContent)');
  assert.deepEqual([...new Set(menu.map(command=>command.split(' ')[0]))].sort(),canonicalCommands,'every canonical slash root must be discoverable');
  assert.deepEqual(menu,[...menu].sort(),'command rows must render alphabetically with related variants together');
- for(const usage of ['/agent approve <run-id> <reason>','/agent confirm <reason>','/agent jobs','/agent pr-body <run-id>','/agent publish <run-id> <reason>','/agent push <run-id> <reason>','/agent stop [job-id]','/memory capture|recall|retrieval on|off','/session info','/style [<name>|off]','/web pages [group=name] <query>'])assert.ok(menu.includes(usage),'missing command usage: '+usage);
+ for(const usage of ['/agent approve <run-id> <reason>','/agent confirm <reason>','/agent jobs','/agent pr-body <run-id>','/agent publish <run-id> <reason>','/agent push <run-id> <reason>','/agent stop [job-id]','/memory capture|recall|retrieval on|off','/session info','/style [<name>|off]','/web pages [--group name] <query>'])assert.ok(menu.includes(usage),'missing command usage: '+usage);
  const beforeMenuWrites=requests.filter(r=>r[0]==='POST').length;
  await evaluate('[...document.querySelectorAll("#pane-commands .cmd-item")].find(node=>node.querySelector(".c").textContent==="/agent approve <run-id> <reason>").click()');
- assert.equal(await evaluate('document.getElementById("input").value'),'/agent ','menu clicks stage a root for editing');
+ assert.equal(await evaluate('document.getElementById("input").value'),'/agent approve ','menu clicks retain the subcommand for editing');
  assert.equal(await evaluate('pendingAgentRun'),null);
  assert.equal(requests.filter(r=>r[0]==='POST').length,beforeMenuWrites,'menu clicks must not dispatch commands');
  await send('/help');
- assert.deepEqual(await evaluate('[...document.querySelectorAll("#stream .msg:last-child td:first-child")].map(node=>node.textContent)'),menu,'help and the sidebar must expose the same catalog');
+ assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("Choose a topic")'),'default help must be an overview, not the complete table');
+ await send('/help all');
+ assert.deepEqual(await evaluate('[...document.querySelectorAll("#stream .msg:last-child .c")].map(node=>node.textContent)'),menu,'help all and the sidebar must expose the same catalog');
+ await evaluate('(()=>{const search=document.querySelector("#stream .msg:last-child input[type=search]");search.value="--group";search.dispatchEvent(new Event("input"));})()');
+ assert.ok(await evaluate('[...document.querySelectorAll("#stream .msg:last-child .c")].every(node=>node.textContent.includes("--group"))'),'help filters flags');
  await send('/agent');
  assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("/agent runs")'),'agent help must include retained runs');
  await send('/web help');
  assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("/web deny <id-or-pattern>")'));
- for(const [command,usage] of [['/web deny','/web deny <id-or-pattern>'],['/web pages','/web pages [group=name] <query>'],['/web research','/web research [group=name] <question>']]){
-  await send(command);assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes('+JSON.stringify(usage)+')'),'usage must match the requested command');
+ for(const command of ['/web deny','/web pages','/web research']){
+  await send(command);assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes('+JSON.stringify(command)+')'),'refusal must identify the requested command');
  }
+ const beforeSuggestion=requests.length;
+ await evaluate('document.querySelector("#stream .msg:last-child button").click()');
+ assert.equal(await evaluate('input.value'),'/help web');
+ assert.equal(requests.length,beforeSuggestion,'suggestion click only inserts, never executes');
+ await send('/web inject');
+ assert.equal(requests.filter(r=>r[1]==='/api/web/inject').length,1,'inject must reach its fixed endpoint');
+ assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("first successful page")'),'inject must explain its single-page scope');
+ assert.equal(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("0 chars")'),false,'missing API metadata is not a zero-length extract');
  assert.equal(requests.some(r=>r[0]==='POST'&&r[1].startsWith('/api/agent/')),false,'discovery must not execute agent work');
 
  await send('/agent run codex/parser-fixture Keep this test request staged');
@@ -287,7 +306,7 @@ try {
  slashMode='suggest';
  await evaluate('runSlashMaybeFuzzy("/memory clear\\n")');
  assert.equal(requests.filter(r=>r[1]==='/api/slash/parse').at(-1)[2].line,'/memory clear\n','slash wrapper must preserve command boundaries');
- for(const pasted of ['/memory\n clear','/memory clear\n','/memory\tclear']) {
+ for(const pasted of ['/memory\n clear','/memory clear\n','/memory\tclear','/web allow https://example.org/*\n/web on']) {
   assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain",'+JSON.stringify(pasted)+');return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'ambiguous memory paste must be prevented before native input normalization');
  }
  assert.equal(await evaluate('(()=>{input.value="/memory ";input.setSelectionRange(8,8);const data=new DataTransfer();data.setData("text/plain","clear\\n");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'partial paste must consider existing command text');

@@ -232,7 +232,9 @@ impl ChatClient {
         if !tools.is_empty() {
             payload["tools"] = json!(tools);
             payload["tool_choice"] = json!("auto");
-            payload["parallel_tool_calls"] = json!(false);
+            // The dispatcher accepts a bounded batch and checks each read's
+            // authority. This permits multiple calls, not unbounded execution.
+            payload["parallel_tool_calls"] = json!(true);
         }
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = json!(effort);

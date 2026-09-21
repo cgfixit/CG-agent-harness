@@ -8,6 +8,10 @@ The bundled app and browser console use the same backend; no terminal is needed.
 Fresh web settings are on, with an empty URL allowlist. Existing settings remain
 unchanged. Administrators grant URLs; operators can use granted reads. Enter
 slash commands as plain text starting with `/`, without Markdown backticks.
+Web enablement and allowlist rules are **shared by this home, not per session**.
+Only saved web selections are account-private. `/web status` shows groups and
+seeds; `/web check URL` diagnoses exact permission without DNS or network access.
+`www.example.org` and `example.org` are distinct; neither is inferred from the other.
 
 For the keyless Google fallback only, also allow `https://www.google.com/*`.
 SerpAPI search needs no page grant. To fetch the example page:
@@ -54,21 +58,49 @@ page, independently grant that destination (or an appropriate explicit wildcard)
 Direct commands:
 
 ```text
-/web search veeam software cve
+/web search --count 3 veeam software cve
 /web fetch https://doc.rust-lang.org/book/ch01-01-installation.html
-/web allow https://example.com/docs/* docs https://example.com/docs/
-/web allow https://example.com/robots.txt docs
-/web pages group=docs widget_open
-/web research group=docs How does widget_open fail?
+/web allow https://www.veeam.com/* https://example.org/* --group vendors
+/web check https://www.veeam.com/ https://example.org/ --group vendors
+/web fetch https://www.veeam.com/ https://example.org/ --group vendors
+/web research --group vendors Compare the backup approaches
+/web research --url https://www.veeam.com/ Summarize products and permitted internal links
+/web allow https://example.com/docs/* https://example.com/robots.txt --group docs
+/web pages --group docs widget_open
+/web research --group docs How does widget_open fail?
 /web cancel
 /web inject
 ```
 
+An `allow` batch writes once or not at all. A `fetch` batch validates all targets
+before any request and shares page, byte, time and per-site limits. Partial reads
+show coverage/failures rather than claiming complete success. Fetch accepts exact
+URLs only; wildcard patterns belong in `allow`, not `fetch`.
+
+Slash flags accept `--name value` or `--name=value`; repeat `--seed` or `--url`
+for multiple values. Double-quoted query phrases retain their exact-phrase
+meaning. Use `--` before query text that resembles flags, such as
+`/web search -- --help`, or single-quote that literal argument. Unknown flags,
+missing values and multiline web commands refuse without dispatching.
+
+For `research`, repeat `--url` to start from multiple permitted pages/sites. Starts
+narrow discovery and evidence for that run, never grant access. Without explicit
+starts, the selected group's rules supply them: a concrete path wildcard starts
+at its permitted literal prefix (for example `/docs/`), while a host wildcard
+needs a concrete `--seed URL`. `https://*.example.org/*` excludes the apex.
+Research refreshes discovery even when matching cached passages already exist;
+bounded coverage is never a claim to have summarized an entire site.
+
 `/web pages` retains bounded discovery and BM25 passage retrieval; the legacy
 `/web search group=docs ...` form also selects page search. `/web research`
 retains its dedicated local-model controller and checked quote references.
-`/web inject` explicitly selects the last fetched/page-search extract for later
-chat; Google listings do not replace that saved selection. `/loop stop` or the
+`/web inject` explicitly selects the last fetched/page-search extract (the first
+successful page of a batch fetch) for later local
+chat. It adds a bounded source excerpt, not a summary; `/prompt` previews it and
+`/web forget` clears it. Google listings and `/web research` do not replace that
+saved selection. Research is a separate request-scoped, multi-source synthesis;
+do not inject afterward expecting its entire answer or all sources to be selected.
+`/loop stop` or the
 chat cancellation endpoint cancels an in-flight chat tool turn; `/web cancel`
 cancels dedicated research.
 
@@ -78,12 +110,18 @@ The authenticated terminal also supports `web search '<keywords>' --count 5`
 omitting `engine` preserves legacy page-search API behavior. Direct chat uses
 `POST /api/chat` and returns `web_tools` alongside the reply and aggregate usage.
 
-Web chat defaults to at most 3 tool calls (validated `web.chat_tool_calls`, 1–5),
+Web chat accepts multiple read-only tool calls in a model reply, with at most 10
+total calls across all rounds by default (validated `web.chat_tool_calls`, 1–10),
 within the chat timeout and web token budget. Fetches retain bounded bytes/time,
 public DNS pinning, no proxies/redirects/cookies, and ordinary TLS validation.
 Google's fixed API transport shares those network bounds. Permission is checked
 before reads and evidence delivery. Search sends the selected query to the
 provider, not the complete conversation; retrieved content goes to the local model.
+
+Existing homes keep explicitly configured smaller call budgets. To use ten there,
+set `web.chat_tool_calls: 10` in the active home's `config.yaml` and use
+**Reload limits** (or restart). Raising the call ceiling does not raise token,
+time, byte, or URL-permission limits.
 
 `/web off` suppresses future reads and injection. `/web forget` clears the current
 account's selection; `/web deny` revokes a rule. Neither erases previously

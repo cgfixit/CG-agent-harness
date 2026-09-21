@@ -89,6 +89,8 @@ pub struct SlashSuggestion {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SlashParse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web: Option<super::web_command::WebCommand>,
     pub kind: SlashKind,
     pub dispatch: bool,
     pub canonical: Option<String>,
@@ -127,6 +129,7 @@ pub fn parse_line(input: &str) -> SlashParse {
     let trimmed = input.trim();
     if trimmed.is_empty() || !trimmed.starts_with('/') {
         return SlashParse {
+            web: None,
             kind: SlashKind::NotSlash,
             dispatch: false,
             canonical: None,
@@ -141,13 +144,13 @@ pub fn parse_line(input: &str) -> SlashParse {
 
     // Memory commands are single-line operator intent, never pasted scripts.
     let root = trimmed.split_whitespace().next().unwrap_or("");
-    if matches!(root.to_ascii_lowercase().as_str(), "/memory" | "/mem")
+    if matches!(root.to_ascii_lowercase().as_str(), "/memory" | "/mem" | "/web")
         && input
             .chars()
             .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
     {
         return suggest_only(
-            "memory commands require one line without control characters; not dispatched",
+            "memory and web commands require one line without control characters; not dispatched",
             &[],
         );
     }
@@ -205,6 +208,9 @@ fn parse_slash_primary(line: &str) -> SlashParse {
     };
 
     let after_cmd = &tokens[1..];
+    if cmd != "help" && after_cmd.len() == 1 && matches!(after_cmd[0], "help" | "--help" | "-h") {
+        return parse_line(&format!("/help {cmd}"));
+    }
     let (sub, args, sub_fuzzy) = resolve_sub(cmd, after_cmd);
     // Goals and loop counts have a free-form/numeric fallback. Other families
     // can suggest a mistyped subcommand without granting it execution authority.
@@ -229,8 +235,11 @@ fn parse_slash_primary(line: &str) -> SlashParse {
             }
         }
     }
-    if cmd == "memory" && sub.is_none() && !after_cmd.is_empty() {
-        return suggest_only("unknown memory subcommand; not dispatched — use /help", &[]);
+    if matches!(cmd, "memory" | "web") && sub.is_none() && !after_cmd.is_empty() {
+        if cmd == "web" && after_cmd == ["--help"] {
+            return parse_line("/help web");
+        }
+        return suggest_only("unknown subcommand; not dispatched — use /help", &[]);
     }
     if let Some(notice) = mutation_argument_refusal(cmd, sub.as_deref(), &args) {
         return suggest_only(notice, &[("help", 100)]);
@@ -267,6 +276,15 @@ fn parse_slash_primary(line: &str) -> SlashParse {
 
     let mutation = is_mutation(cmd, sub.as_deref())
         || (cmd == "memory" && sub.as_deref() == Some("consolidate") && !rest.is_empty());
+    let web = if cmd == "web" {
+        match super::web_command::parse(sub.as_deref(), &rest) {
+            Ok(command) if command.action == "help" => return parse_line("/help web"),
+            Ok(command) => Some(command),
+            Err(message) => return suggest_only(&message, &[("help web", 100)]),
+        }
+    } else {
+        None
+    };
     let mut notice = None;
     if cmd == "memory" && sub.as_deref() == Some("consolidate") && rest.is_empty() {
         notice = Some(
@@ -278,6 +296,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
 
     if dispatch {
         SlashParse {
+            web,
             kind: SlashKind::Dispatch,
             dispatch: true,
             canonical: Some(canonical),
@@ -303,6 +322,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
             score: s,
         }));
         SlashParse {
+            web: None,
             kind: SlashKind::Suggest,
             dispatch: false,
             canonical: Some(canonical),
@@ -359,7 +379,8 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
         "model" => &["use"],
         "skill" => &["use", "clear", "status"],
         "web" => &[
-            "help", "on", "off", "allow", "deny", "fetch", "search", "pages", "research", "cancel", "inject", "forget",
+            "help", "status", "check", "on", "off", "allow", "deny", "fetch", "search", "pages", "research", "cancel",
+            "inject", "forget",
         ],
         "agent" => &[
             "run",
@@ -473,6 +494,10 @@ fn is_mutation(cmd: &str, sub: Option<&str>) -> bool {
 }
 
 fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Option<&'static str> {
+    // Web has a complete grammar, including inert help and validated flags.
+    if cmd == "web" {
+        return None;
+    }
     // Validate fixed operands before console dispatch so ignored extra text
     // cannot authorize an action. Keep free-form command payloads intact.
     let max_args = match (cmd, sub) {
@@ -599,6 +624,7 @@ fn edit_distance(a: &str, b: &str) -> usize {
 
 fn suggest_only(notice: &str, near: &[(&str, u8)]) -> SlashParse {
     SlashParse {
+        web: None,
         kind: SlashKind::Suggest,
         dispatch: false,
         canonical: None,
@@ -896,6 +922,20 @@ mod tests {
             "/memory remember note :: --dry-run",
         ] {
             let p = parse_line(line);
+            if p.command.as_deref() == Some("help") {
+                assert_eq!(
+                    p.canonical.as_deref(),
+                    Some(
+                        format!(
+                            "/help {}",
+                            line.split_whitespace().next().unwrap().trim_start_matches('/')
+                        )
+                        .as_str()
+                    )
+                );
+                assert!(p.web.is_none(), "help must not carry a web mutation");
+                continue;
+            }
             assert!(!p.dispatch, "{line}: {p:?}");
             assert_eq!(p.kind, SlashKind::Suggest, "{line}");
         }
@@ -919,7 +959,7 @@ mod tests {
             "/web forget",
             "/web allow https://example.com",
             "/web allow https://example.com docs-notes_2",
-            "/web allow https://example.com help https://example.com/start?flag=--help",
+            "/web allow https://example.com/* help https://example.com/start?flag=--help",
             "/agent cancel",
             "/agent discard run-id",
             "/agent stop job-id",
@@ -943,7 +983,7 @@ mod tests {
             "/goal --help output should explain flags",
             "/goal clear the cache",
             "/session rename help with --dry-run",
-            "/web search --help for The Who",
+            "/web search -- --help for The Who",
         ] {
             let p = parse_line(line);
             assert!(p.dispatch, "{line}: {p:?}");

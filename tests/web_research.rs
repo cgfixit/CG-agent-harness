@@ -77,7 +77,10 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["answer"]["supported"].as_array().unwrap().len(), 1, "{result}");
     let used = calls.load(Ordering::SeqCst);
-    assert!(used >= 2);
+    assert!(
+        used >= 1,
+        "fresh evidence may go directly to synthesis; account every actual call"
+    );
     assert_eq!(result["usage"]["total_tokens"], used * 30);
     assert_eq!(result["usage"]["contains_estimates"], false);
     assert_eq!(result["scope"], "request");
@@ -97,6 +100,40 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
         .exists());
     assert_eq!(s.state.web.policy().unwrap().revision, revision);
     assert_eq!(result["coverage"]["requests"], 2);
+    // Matching cached passages must not suppress a fresh multi-source run.
+    let (_, fresh) = s
+        .post_json("/api/web/research", json!({"query":"retry connections"}))
+        .await;
+    assert_eq!(
+        fresh["coverage"]["requests"], 2,
+        "fresh discovery still covers both granted sources"
+    );
+    // Explicit starting URLs narrow evidence as well as discovery, even when
+    // another authorized source is already present in the shared page cache.
+    let one = format!("http://research.invalid:{}/one", address.port());
+    let (_, narrow) = s
+        .post_json("/api/web/research", json!({"query":"retry connections","urls":[one]}))
+        .await;
+    assert_eq!(narrow["coverage"]["requests"], 1);
+    let passages = narrow["passages"].as_array().unwrap();
+    assert!(!passages.is_empty(), "{narrow}");
+    assert!(
+        passages.iter().all(|p| p["url"] == one),
+        "no unrelated cached source enters explicit research"
+    );
+    let before = calls.load(Ordering::SeqCst);
+    let (_, refused) = s
+        .post_json(
+            "/api/web/research",
+            json!({"query":"retry connections","urls":[one,"https://ungranted.example/"]}),
+        )
+        .await;
+    assert_eq!(code(&refused), "WEB_HOST_DENIED");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        before,
+        "invalid research starts cannot spend model tokens"
+    );
     // A model attempting to add an execution field cannot change application state.
     hostile.store(true, Ordering::SeqCst);
     let (_, bad) = s

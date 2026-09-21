@@ -74,7 +74,7 @@ impl Limits {
             model_tokens: bound("model_tokens", 1024, 256, 2048)?,
             total_tokens: bound("total_tokens", 16000, 2048, 32000)?,
             research_seconds: bound("research_seconds", 300, 10, 1800)?,
-            chat_tool_calls: bound("chat_tool_calls", 3, 1, 5)? as usize,
+            chat_tool_calls: bound("chat_tool_calls", 10, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
         })
     }
@@ -324,6 +324,7 @@ impl WebTool {
         Ok(
             json!({"enabled": enabled, "allowlist": policy.rules.iter().map(|r| &r.pattern).collect::<Vec<_>>(),
             "rules": policy.rules, "policy_revision": policy.revision,
+            "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
             "search_provider": if self.search_key()?.is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": MAX_ALLOW}),
@@ -334,7 +335,33 @@ impl WebTool {
         self.allow_rule(raw, "default", &[], enabled)
     }
     pub fn allow_rule(&self, raw: &str, group: &str, seeds: &[String], enabled: bool) -> Result<Value> {
-        let rule = Rule::new(raw, group, seeds)?;
+        self.allow_rules(&[raw.into()], group, seeds, enabled)
+    }
+
+    /// Validate the entire grant before writing once; a bad tail never grants a prefix.
+    pub fn allow_rules(&self, patterns: &[String], group: &str, seeds: &[String], enabled: bool) -> Result<Value> {
+        if patterns.is_empty() || patterns.len() > MAX_ALLOW || seeds.len() > 16 {
+            return Err(error("WEB_POLICY_INVALID", "invalid rule or seed count"));
+        }
+        let mut rules = patterns
+            .iter()
+            .map(|p| Rule::new(p, group, &[]))
+            .collect::<Result<Vec<_>>>()?;
+        for seed in seeds {
+            let target = super::web_policy::canonical_url(seed)?;
+            let mut matched = false;
+            for rule in &mut rules {
+                if rule.permits(&target) {
+                    matched = true;
+                    if !rule.seeds.contains(seed) {
+                        rule.seeds.push(seed.clone());
+                    }
+                }
+            }
+            if !matched {
+                return Err(error("WEB_POLICY_INVALID", "seed is outside every requested rule"));
+            }
+        }
         let _guard = self
             .mutation
             .lock()
@@ -345,16 +372,34 @@ impl WebTool {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Policy::empty(),
             _ => self.policy()?,
         };
-        if let Some(existing) = policy.rules.iter_mut().find(|r| r.id == rule.id) {
-            *existing = rule;
-        } else {
-            if policy.rules.len() >= MAX_ALLOW {
-                return Err(error("WEB_ALLOWLIST_FULL", "rule cap reached"));
+        for rule in rules {
+            if let Some(existing) = policy.rules.iter_mut().find(|r| r.id == rule.id) {
+                *existing = rule;
+            } else {
+                if policy.rules.len() >= MAX_ALLOW {
+                    return Err(error("WEB_ALLOWLIST_FULL", "rule cap reached"));
+                }
+                policy.rules.push(rule);
             }
-            policy.rules.push(rule);
         }
         self.save_policy(&policy)?;
         self.status(enabled, "")
+    }
+
+    /// A local policy diagnostic, not a DNS lookup, fetch or permission grant.
+    pub fn check_urls(&self, urls: &[String], group: Option<&str>, enabled: bool) -> Result<Value> {
+        let policy = self.policy()?;
+        let checks: Vec<_> = urls.iter().map(|raw| {
+            match policy.authorize(raw,group) {
+                Ok(url) => json!({"url":raw,"canonical_url":url.as_str(),"permitted":true,"enabled":enabled,
+                    "rule_ids":policy.rules.iter().filter(|r| group.is_none_or(|g| r.group==g) && r.permits(&url)).map(|r| &r.id).collect::<Vec<_>>() }),
+                Err(e) => json!({"url":raw,"permitted":false,"code":e.code,"enabled":enabled}),
+            }
+        }).collect();
+        Ok(
+            json!({"checks":checks,"policy_scope":"shared_home","policy_revision":policy.revision,
+            "notice":"Policy check only. Fetch still checks current permission, public DNS, redirects and resource limits. www and apex hosts are distinct; no host is inferred."}),
+        )
     }
 
     fn save_policy(&self, policy: &Policy) -> Result<()> {
@@ -751,6 +796,24 @@ mod tests {
         assert!(web.context_text(true, "local").is_empty());
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
         server.abort();
+    }
+
+    #[test]
+    fn chat_tool_call_budget_defaults_to_ten_and_rejects_out_of_range_values() {
+        for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
+            let cfg = AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
+            assert_eq!(Limits::load(&cfg).unwrap().chat_tool_calls, 10);
+        }
+        for value in ["1", "3", "10", "0", "11", "-1", "1.5", "\"10\"", "null"] {
+            let cfg =
+                AppConfig::from_str(&format!("web: {{chat_tool_calls: {value}}}"), Path::new("config.yaml")).unwrap();
+            let result = Limits::load(&cfg);
+            if let Ok(expected @ 1..=10) = value.parse::<usize>() {
+                assert_eq!(result.unwrap().chat_tool_calls, expected);
+            } else {
+                assert!(result.is_err(), "invalid limit accepted: {value}");
+            }
+        }
     }
 
     #[test]

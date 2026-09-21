@@ -414,7 +414,15 @@ async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
             matches!(code(&body).as_str(), "WEB_SSRF_DENIED" | "WEB_BAD_URL"),
             "{bad}: {body}"
         );
-        assert_eq!(message(&body), code(&body), "code only, no exception text");
+        if code(&body) == "WEB_BAD_URL" {
+            assert!(message(&body).contains("/help web"), "fixed actionable guidance");
+            assert!(
+                !message(&body).contains(bad),
+                "never echo credentials or upstream exception text"
+            );
+        } else {
+            assert_eq!(message(&body), code(&body), "no upstream exception text");
+        }
     }
     let (status, body) = s
         .post_json(
