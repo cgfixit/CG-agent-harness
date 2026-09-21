@@ -119,7 +119,7 @@ impl Page {
 }
 
 /// A fresh client has exactly one DNS override and no fallback resolver.
-struct RefuseDns;
+pub(super) struct RefuseDns;
 impl reqwest::dns::Resolve for RefuseDns {
     fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
         Box::pin(async { Err(std::io::Error::other("unvalidated DNS refused").into()) })

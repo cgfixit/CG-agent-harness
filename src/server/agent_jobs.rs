@@ -65,6 +65,7 @@ impl Job {
 pub struct JobStore {
     inner: Mutex<BTreeMap<String, Job>>,
     path: Option<PathBuf>,
+    notifications: Option<super::notifications::Notifier>,
 }
 
 impl JobStore {
@@ -129,9 +130,26 @@ impl JobStore {
         let store = Self {
             inner: Mutex::new(jobs),
             path: Some(path.to_path_buf()),
+            notifications: None,
         };
         store.persist(&store.inner.lock().unwrap_or_else(|p| p.into_inner()))?;
         Ok(store)
+    }
+
+    pub fn with_notifications(mut self, notifications: Option<super::notifications::Notifier>) -> Self {
+        self.notifications = notifications;
+        self
+    }
+
+    fn notify(&self, job: &Job) {
+        if let (Some(notifier), Some(finished_at)) = (&self.notifications, job.finished_at) {
+            notifier.enqueue(super::notifications::Completion {
+                job_id: job.job_id.clone(),
+                status: job.status.into(),
+                created_at: job.created_at,
+                finished_at,
+            });
+        }
     }
 
     fn persist(&self, jobs: &BTreeMap<String, Job>) -> crate::common::errors::Result<()> {
@@ -233,6 +251,9 @@ impl JobStore {
                 ));
             }
         }
+        if let Some(job) = g.get(job_id) {
+            self.notify(job);
+        }
     }
 
     pub fn get(&self, job_id: &str) -> Option<Value> {
@@ -257,7 +278,8 @@ impl JobStore {
     pub fn cancel(&self, job_id: &str) -> Option<Value> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let j = g.get_mut(job_id)?;
-        if j.status == RUNNING {
+        let changed = j.status == RUNNING;
+        if changed {
             if let Some(h) = j.handle.take() {
                 h.abort();
             }
@@ -267,6 +289,11 @@ impl JobStore {
         let value = j.to_json();
         if self.persist(&g).is_err() {
             tracing::error!("job cancellation could not be persisted; restart will report interrupted work");
+        }
+        if changed {
+            if let Some(job) = g.get(job_id) {
+                self.notify(job);
+            }
         }
         Some(value)
     }

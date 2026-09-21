@@ -20,6 +20,7 @@ use super::sandbox_wrap::{wrap_mcp_stdio, WrappedStdio};
 pub const SECRET_ENV: &[&str] = &[
     "ANTHROPIC_API_KEY",
     "CGAGENTHARNESS_API_KEY",
+    "CGAGENTHARNESS_WEBHOOK_TOKEN",
     "CLAUDE_API_KEY",
     "DEEPAGENT_API_KEY",
     "GH_TOKEN",

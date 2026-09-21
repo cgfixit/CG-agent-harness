@@ -478,3 +478,17 @@ not billed inference. If a later MCP tool bills a cloud model, it must record
   `src/llm/cloud_chat.rs`,
   `src/server/routes/core.rs`,
   `tests/spend_ledger.rs`.
+
+## Completion notifications do not grant job or content authority
+
+`notifications.enabled` is literal-true, default-off and restart-only. The shared
+JobStore emits terminal transitions once per process; repeated finish/cancel calls
+cannot create another event. An in-memory bounded queue delivers only job ID,
+status and timestamps to the explicitly configured webhook. It never sends job
+instructions/results, repository names, errors, or model context. Optional bearer
+credentials use the private managed environment store and are stripped from MCP
+child environments. Every DNS answer is validated and pinned before sending;
+private destinations require an exact configured URL grant, and redirects are
+never followed. Failed deliveries/overflow are audited and never change a job's
+result. Retries are bounded to three with a stable batch ID. No durable delivery
+or replay after restart is claimed. I6 and all execution/write gates are unchanged.
