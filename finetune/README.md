@@ -1,5 +1,7 @@
 # CG-Agent MLX QLoRA Fine-Tuning
 
+> this didnt tune it to the right local model im using - need to revisit and verify locally
+
 Vendored fine-tune toolchain for `qwen3.8:27b-mlx` on Apple Silicon, targeting the
 CG-agent-harness repo itself. Trains a LoRA adapter that bakes CG-Agent's
 architecture, security model, and module layout into the model — so chat **and** the
