@@ -297,7 +297,11 @@ tail, so a preset never overrides the harness contract. `/prompt` prints the
 active style and says when a selected overlay could not be loaded (missing,
 unreadable, empty, or refused by the injection scanner), in which case the
 prompt is composed without it. There is still no automated style evaluation or
-rewrite button.
+rewrite button. `concise` favors a short answer, `beginner` introduces terms with
+a worked example, `technical-deep` explains mechanisms and failure modes, and
+`unslop` removes inflated wording without discarding useful detail. These are
+model instructions, not deterministic filters; compare the same question in new
+sessions as described in [Chat workflows](CHAT_WORKFLOWS.md#inspect-and-edit-the-chat-prompt).
 
 **What the `unslop` *planner probe* does:** separately from the `unslop` chat
 preset above, it is an optional local coding-planner prose probe, not a chat

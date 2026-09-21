@@ -5,61 +5,84 @@ use common::*;
 use serde_json::json;
 
 #[tokio::test]
-async fn style_concise_changes_compose_and_off_reverts_without_touching_soul() {
+async fn every_builtin_style_reaches_chat_and_off_reverts_without_touching_default_soul() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let soul_before = std::fs::read_to_string(s.home.join("soul.md")).unwrap();
+    assert_eq!(soul_before, cgagentharness::common::home::DEFAULT_SOUL);
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
     let sid = created["session_id"].as_str().unwrap();
 
-    let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
-    assert_eq!(status, 200, "{preview}");
-    let off_prompt = preview["prompt"].as_str().unwrap();
-    assert!(off_prompt.contains("style=off"));
-    assert!(!off_prompt.contains("## Output style (concise, read-only)"));
-    assert!(off_prompt.contains("You have no filesystem, shell, gh, account or policy-editing tools"));
+    for (name, body) in [
+        ("beginner", include_str!("../data/styles/beginner.md")),
+        ("concise", include_str!("../data/styles/concise.md")),
+        ("technical-deep", include_str!("../data/styles/technical-deep.md")),
+        ("unslop", include_str!("../data/styles/unslop.md")),
+    ] {
+        let (status, set) = s
+            .post_json("/api/style", json!({"session_id": sid, "name": name}))
+            .await;
+        assert_eq!(status, 200, "{name}: {set}");
+        assert_eq!(set["style"], name);
+        assert_eq!(set["origin"], "builtin");
+        assert_eq!(set["loaded"], true);
+        assert_eq!(set["truncated"], false);
+        assert_eq!(s.state.store.get(sid).unwrap().style.as_deref(), Some(name));
 
-    let (status, set) = s
-        .post_json("/api/style", json!({"session_id": sid, "name": "concise"}))
-        .await;
-    assert_eq!(status, 200, "{set}");
-    assert_eq!(set["style"], "concise");
-    assert_eq!(set["origin"], "builtin");
-    assert_eq!(s.state.store.get(sid).unwrap().style.as_deref(), Some("concise"));
+        let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
+        assert_eq!(status, 200, "{name}: {preview}");
+        assert_eq!(preview["soul"]["loaded"], true);
+        assert_eq!(preview["soul"]["truncated"], false);
+        assert_eq!(preview["style"]["name"], name);
+        assert_eq!(preview["style"]["origin"], "builtin");
+        assert_eq!(preview["style"]["loaded"], true);
+        assert_eq!(preview["style"]["truncated"], false);
+        let on_prompt = preview["prompt"].as_str().unwrap();
+        assert!(on_prompt.contains(soul_before.trim()));
+        assert!(on_prompt.contains(body.trim()));
+        assert!(on_prompt.contains(&format!("style={name}")));
+        let soul_at = on_prompt.find("## Operator persona (soul, read-only)").unwrap();
+        let style_at = on_prompt.find(&format!("## Output style ({name}, read-only)")).unwrap();
+        let header_at = on_prompt.find("You are CG Agent Harness").unwrap();
+        assert!(soul_at < style_at && style_at < header_at);
 
-    let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
-    assert_eq!(status, 200, "{preview}");
-    let on_prompt = preview["prompt"].as_str().unwrap();
-    assert!(on_prompt.contains("style=concise"));
-    assert!(on_prompt.contains("## Output style (concise, read-only)"));
-    assert!(on_prompt.contains("Answer first"));
-    let soul_at = on_prompt.find("## Operator persona (soul, read-only)").unwrap();
-    let style_at = on_prompt.find("## Output style (concise, read-only)").unwrap();
-    let header_at = on_prompt.find("You are CG Agent Harness").unwrap();
-    assert!(soul_at < style_at);
-    assert!(style_at < header_at);
-    assert_eq!(preview["style"]["name"], "concise");
+        let (status, reply) = s
+            .post_json(
+                "/api/chat",
+                json!({"session_id": sid, "message": "Explain how a queue works."}),
+            )
+            .await;
+        assert_eq!(status, 200, "{name}: {reply}");
+        assert_eq!(
+            model.last_request().unwrap()["messages"][0]["content"],
+            preview["prompt"]
+        );
 
-    let (status, reply) = s
-        .post_json("/api/chat", json!({"session_id": sid, "message": "hello"}))
-        .await;
-    assert_eq!(status, 200, "{reply}");
-    let request = model.last_request().unwrap();
-    let chat_prompt = request["messages"][0]["content"].as_str().unwrap();
-    assert!(chat_prompt.contains("## Output style (concise, read-only)"));
-    assert!(chat_prompt.contains("Answer first"));
-
-    let (status, cleared) = s
-        .post_json("/api/style", json!({"session_id": sid, "name": "off"}))
-        .await;
-    assert_eq!(status, 200, "{cleared}");
-    assert!(cleared["style"].is_null());
-    let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
-    assert_eq!(status, 200, "{preview}");
-    let reverted = preview["prompt"].as_str().unwrap();
-    assert!(reverted.contains("style=off"));
-    assert!(!reverted.contains("## Output style (concise, read-only)"));
-    assert_eq!(std::fs::read_to_string(s.home.join("soul.md")).unwrap(), soul_before);
+        let (status, cleared) = s
+            .post_json("/api/style", json!({"session_id": sid, "name": "off"}))
+            .await;
+        assert_eq!(status, 200, "{cleared}");
+        assert!(cleared["style"].is_null());
+        let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
+        assert_eq!(status, 200, "{preview}");
+        let reverted = preview["prompt"].as_str().unwrap();
+        assert!(reverted.contains("style=off"));
+        assert!(!reverted.contains("## Output style ("));
+        assert!(reverted.contains(soul_before.trim()));
+        assert!(reverted.contains("You have no filesystem, shell, gh, account or policy-editing tools"));
+        let (status, reply) = s
+            .post_json(
+                "/api/chat",
+                json!({"session_id": sid, "message": "Explain how a stack works."}),
+            )
+            .await;
+        assert_eq!(status, 200, "off after {name}: {reply}");
+        assert_eq!(
+            model.last_request().unwrap()["messages"][0]["content"],
+            preview["prompt"]
+        );
+        assert_eq!(std::fs::read_to_string(s.home.join("soul.md")).unwrap(), soul_before);
+    }
 }
 
 #[tokio::test]
@@ -98,7 +121,7 @@ async fn overlay_style_wins_builtin_and_does_not_import_agentic() {
     let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
     let prompt = preview["prompt"].as_str().unwrap();
     assert!(prompt.contains("OVERLAY_WINS"));
-    assert!(!prompt.contains("Answer first"));
+    assert!(!prompt.contains(include_str!("../data/styles/concise.md").trim()));
 }
 
 #[tokio::test]
