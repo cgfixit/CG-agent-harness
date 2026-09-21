@@ -982,11 +982,9 @@ mod attachment_pin_tests {
         assert_eq!(std::fs::read_to_string(&hostile_upper).unwrap(), hostile_payload);
         assert_eq!(std::fs::read_to_string(&hostile_short).unwrap(), hostile_payload);
         assert_eq!(std::fs::read_to_string(&secret).unwrap(), hostile_payload);
-        assert!(
-            std::fs::read_to_string(store.path_for(&session.session_id).unwrap())
-                .unwrap()
-                .contains(&session.session_id)
-        );
+        assert!(std::fs::read_to_string(store.path_for(&session.session_id).unwrap())
+            .unwrap()
+            .contains(&session.session_id));
     }
 
     #[test]
