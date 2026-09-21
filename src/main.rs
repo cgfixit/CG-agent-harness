@@ -19,6 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Manage dedicated machine keys using trusted local filesystem authority.
+    McpKey {
+        #[command(subcommand)]
+        action: cgagentharness::server::mcp_keys::KeyCommand,
+    },
     /// Private supervised MCP stdio worker; no network listener.
     #[command(hide = true)]
     McpStdioWorker,
@@ -65,6 +70,7 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::McpKey { action } => report(cgagentharness::server::mcp_keys::run(action)),
         Command::McpStdioWorker => ExitCode::from(cgagentharness::common::mcp_worker::main()),
         Command::Web { url, action } => report(cgagentharness::server::client::web(action, url)),
         Command::Account { url, action } => report(cgagentharness::server::client::account(action, url)),

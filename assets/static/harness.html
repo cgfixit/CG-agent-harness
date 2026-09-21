@@ -868,6 +868,15 @@ function renderMcpCapabilities(status) {
     }
   }
   if (!(status.servers || []).length) lines.push('No servers declared.');
+  const gateway = status.memory_gateway;
+  if (gateway) {
+    lines.push('', 'PRIVATE MEMORY GATEWAY — ' + (gateway.configured ? 'configured; restart applies changes' : 'disabled; no listener'));
+    if (gateway.error) lines.push('Configuration refused: ' + gateway.error);
+    else if (gateway.configured) lines.push('Local address: ' + gateway.address + '/mcp',
+      'Published tools: ' + (gateway.tools.length ? gateway.tools.join(', ') : 'none'),
+      'Dedicated machine key required · memory:read · key-bound owner',
+      'Read only. Console login does not authorize gateway requests.');
+  }
   return lines.join('\n');
 }
 

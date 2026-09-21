@@ -24,6 +24,9 @@ pub mod generation_gate;
 pub mod guards;
 pub mod headers;
 pub mod mcp;
+pub mod mcp_keys;
+pub mod mcp_server;
+pub mod mcp_server_config;
 pub mod memory_notes;
 pub mod notes_corpus;
 mod notification_outbox;
@@ -327,8 +330,16 @@ fn port_in_use(host: &str, port: u16) -> bool {
 
 /// `cgagentharness serve`: loopback-only bind, port bounds, port-in-use probe.
 pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+    // SDK protocol traces can contain fact text. Only our content-free audit is enabled.
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_filter(tracing_subscriber::filter::filter_fn(|meta| {
+                    !meta.target().starts_with("rmcp")
+                }))
+                .with_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())),
+        )
         .init();
     let home = Home::resolve(None);
     let _ownership = crate::common::home_lock::HomeLock::acquire(&home.root)?;
@@ -378,6 +389,7 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
             listener.local_addr()?,
             state.home.root.display()
         );
+        let _mcp_listener = mcp_server::start(state.clone()).await?;
         transport.serve(listener, app).await?;
         Ok::<(), anyhow::Error>(())
     })

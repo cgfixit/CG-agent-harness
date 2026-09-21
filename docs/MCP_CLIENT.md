@@ -4,7 +4,7 @@ MCP stays disabled until an operator declares servers and enables `mcp.enabled`.
 Calls require an authenticated operator/admin, CSRF, the declared namespaced
 tool in the broker allowlist, and literal `confirm: true`. There is no discovery
 or model/repository permission to expand the declaration. `/loop` has no MCP
-tools. The client is separate from the proposed read-only memory gateway (#185).
+tools. The client is separate from the [read-only memory gateway](MCP_SERVER.md), whose listener, keys and tool grants are independent.
 
 ## Migrate a stdio declaration
 

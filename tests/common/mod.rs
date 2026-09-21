@@ -76,7 +76,7 @@ fn override_yaml(text: &str, dotted: &str, value: &str) -> String {
             }
         }
         let key = trimmed.split(':').next().unwrap_or("").trim();
-        if depth < parts.len() && key == parts[depth] {
+        if depth < parts.len() && key == parts[depth] && stack_indent.last().is_none_or(|parent| indent == parent + 2) {
             if depth == parts.len() - 1 {
                 out.push(format!("{}{}: {}", " ".repeat(indent), key, value));
                 done = true;

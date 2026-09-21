@@ -100,6 +100,12 @@ cloud proposers and no change to explicit confirm/reason or write gates.
   See `docs/MCP_CLIENT.md`. Do not attach MCP
   tools to `/loop`. `GET /api/mcp` lists declared server/tool names to an
   authenticated session.
+- Inbound MCP memory is a separate default-off loopback listener (`mcp.server`),
+  with explicit tool grants and dedicated `mcp_keys.sqlite3` machine credentials.
+  It reuses the existing memory store's owner-filtered read methods. Never accept
+  console cookies there or machine keys as console authority; no writes or agent
+  tools. Listener/key/capability changes are outside config reload. See
+  `docs/MCP_SERVER.md` for activation and the future remote deployment contract.
 - Native Ollama management is loopback-only (`GET /api/ollama/inventory`,
   abortable `POST /api/ollama/pull`). Pull/warmup never send `num_ctx`. Warmup
   is `models.local_llm.warmup.enabled` (`flag_is_true`; missing in old homes is

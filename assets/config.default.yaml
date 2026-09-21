@@ -159,6 +159,21 @@ notifications:
 # closed. See docs/MCP_CLIENT.md for filesystem, read_roots, write_roots, network, containment
 # and strict process/memory limits. These authority settings require restart.
 mcp:
+  # Separate inbound gateway: no listener or capabilities until explicitly selected.
+  server:
+    enabled: false
+    host: 127.0.0.1
+    port: 8791
+    tools: []
+    max_keys: 8
+    max_request_bytes: 16384
+    max_result_bytes: 65536
+    max_results: 32
+    max_query_chars: 256
+    request_timeout_sec: 5
+    concurrency: 2
+    requests_per_minute: 60
+    global_requests_per_minute: 180
   enabled: false
   sse_allow_loopback: false
   timeout_sec: 15 # 1–60
