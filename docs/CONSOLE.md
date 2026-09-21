@@ -132,6 +132,9 @@ an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-se
 ### 7.2 Default soul, effective prompt and persona editing
 
 **Fresh homes seed the bundled CG Agent persona and enable the soul toggle.**
+The bundled response contract asks for human-readable plain text in short
+paragraphs, using Markdown only when explicitly requested. This guides the model;
+it does not filter or rewrite generated output.
 Existing homes, custom files and deliberate deletions are preserved. Missing soul
 means no persona file loaded; the base general-chat prompt still operates.
 Planning and coding use the same public shipped communication guidance, beneath
@@ -297,7 +300,11 @@ tail, so a preset never overrides the harness contract. `/prompt` prints the
 active style and says when a selected overlay could not be loaded (missing,
 unreadable, empty, or refused by the injection scanner), in which case the
 prompt is composed without it. There is still no automated style evaluation or
-rewrite button.
+rewrite button. `concise` favors a short answer, `beginner` introduces terms with
+a worked example, `technical-deep` explains mechanisms and failure modes, and
+`unslop` removes inflated wording without discarding useful detail. These are
+model instructions, not deterministic filters; compare the same question in new
+sessions as described in [Chat workflows](CHAT_WORKFLOWS.md#inspect-and-edit-the-chat-prompt).
 
 **What the `unslop` *planner probe* does:** separately from the `unslop` chat
 preset above, it is an optional local coding-planner prose probe, not a chat

@@ -103,6 +103,12 @@ responses require the existing API guards and use `Cache-Control: no-store`.
 
 The compiled chat scope and execution boundaries remain fixed.
 
+The bundled default soul asks for clear, human-readable plain text in short
+paragraphs, with Markdown only when explicitly requested. Fresh homes seed that
+file and load it by default. Existing homes keep their saved persona; a new
+release does not replace it. `/soul status` reports whether that home's file is
+enabled, present, loaded, or truncated; `/prompt` shows the actual included text.
+
 `/style <name>` selects a session output-style preset (`concise`, `unslop`,
 `technical-deep`, `beginner`). `/style off` clears it. Default is off. The
 choice is stored on the session JSON and never writes `soul.md`. Operator
@@ -110,6 +116,23 @@ overlays live at `$CGAGENTHARNESS_HOME/styles/<name>.md` and win over the
 shipped `data/styles/<name>.md` files. Style text is chat prose only. It cannot
 override HEADER or CAPABILITIES. Cloud chat still sends only the new user
 message. `/prompt` prints the active style name and the composed body.
+
+| Preset | Intended difference |
+|---|---|
+| `concise` | One short paragraph or up to four short bullets by default; keep necessary qualifications. |
+| `beginner` | Introduce terms in plain language and walk through one concrete example. |
+| `technical-deep` | Explain the mechanism, relevant invariants, costs and failure modes. |
+| `unslop` | Remove inflated wording and canned framing while preserving useful detail and factual claims. |
+
+These are model instructions, not output filters or guaranteed length limits. An
+explicit request for a format or level of detail takes precedence over a preset's
+default. `off` removes the style only; the enabled soul still shapes the answer.
+Switching a style affects future turns and preserves existing conversation history.
+For a fair comparison, use `/session new` for each style and send the same question
+with the same local model and settings. For example: “Explain how a hash table
+works, including what happens when two keys share a bucket.” Inspect `/prompt` to
+confirm inclusion, then compare the generated explanations; a loaded indicator
+alone does not establish an effect on the prose. `/clear` is not a fresh session.
 
 Edit the persona with:
 

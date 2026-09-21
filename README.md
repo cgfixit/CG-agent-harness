@@ -31,6 +31,13 @@ relates, and how to upgrade: [setup-guide.md](setup-guide.md).
 `/loop` continues chat toward a session goal. `/agent` drives the separate
 coding pipeline. Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
 
+Fresh homes load a default soul that asks for human-readable plain text, with
+Markdown only when requested. Existing saved personas are preserved. For local
+chat, choose `/style concise`, `beginner`, `technical-deep`, or `unslop`; styles
+default to off and never edit the soul. Inspect `/soul status` and `/prompt`, and
+compare styles in fresh sessions. These are model instructions, not guaranteed
+formatting. Details: [Chat workflows](docs/CHAT_WORKFLOWS.md#inspect-and-edit-the-chat-prompt).
+
 Spend summaries and optional completion webhooks are documented in
 [Spend and completion notifications](docs/SPEND_AND_NOTIFICATIONS.md), including
 which feature PRs the installed build must contain. The Spend view reports
