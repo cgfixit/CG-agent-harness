@@ -4,6 +4,11 @@ A step-by-step guide to training a `qwen3.8:27b-mlx` LoRA adapter for CG-Agent a
 serving the fused model — with no Rust changes. Reference: [`docs/FINETUNE.md`](../FINETUNE.md).
 Tooling: [`finetune/`](../../finetune/).
 
+Before training, resolve the [base-model matching warning](../FINETUNE.md#tldr):
+the recipe's `malekoo/Qwen3.8-27B-MLX-4bit` weights are not verified to match an
+installed `qwen3.8:27b-mlx` tag. Mock chat success does not validate the training
+recipe or a fused adapter.
+
 **Prerequisites:** a Mac on Apple Silicon (M-series, 48 GB+ recommended), Python 3.10+,
 `git`, and the CG-agent-harness repo checked out. Ollama optional (GGUF path only).
 

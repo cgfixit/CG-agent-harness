@@ -573,9 +573,17 @@ async fn chat_inner(
     } else {
         state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_REPLY_TOKENS)
     };
+    let reservation = crate::server::compaction::reply_reservation(&state.backend, max_tokens);
+    let ratio =
+        crate::server::compaction::token_ratio(session.token_calibration.as_ref(), &state.chat.base_url, &model);
+    let tool_tokens = if !cloud_selected && settings.web_enabled && !req.loop_turn {
+        crate::server::compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_web::tools()).unwrap())
+    } else {
+        0
+    };
     // Projection uses stored prompt history (up to SessionStore::MAX_MESSAGES).
     // Compaction owns overflow against chat.compact_prompt_tokens, floored at
-    // reply+4096. The incoming user paste is never compacted.
+    // effective reply reservation+4096. The incoming paste is never compacted.
     let mut history = if cloud_selected {
         Vec::new()
     } else {
@@ -589,14 +597,17 @@ async fn chat_inner(
             "chat.compact_prompt_tokens",
             crate::server::compaction::DEFAULT_PROMPT_TOKENS,
         );
-        let minimum_threshold = max_tokens.saturating_add(MIN_PROMPT_HEADROOM).min(MAX_PROMPT_TOKENS);
+        let minimum_threshold = reservation
+            .saturating_add(MIN_PROMPT_HEADROOM)
+            .saturating_add(crate::server::compaction::calibrated_tokens(tool_tokens, ratio))
+            .min(MAX_PROMPT_TOKENS);
         let mut threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
         if settings.web_enabled && !req.loop_turn {
             let web_room = state
                 .web
                 .limits
                 .total_tokens
-                .saturating_sub(max_tokens.saturating_mul(2));
+                .saturating_sub(reservation.saturating_mul(2));
             threshold = threshold.min(web_room).max(minimum_threshold);
         }
         let keep = state
@@ -606,11 +617,23 @@ async fn chat_inner(
                 crate::server::compaction::DEFAULT_KEEP_MESSAGES,
             )
             .clamp(2, 40) as usize;
-        let projected =
-            crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, &req.message, max_tokens);
+        let projected = crate::server::compaction::projected_prompt_tokens(
+            &system_prompt,
+            &history,
+            &req.message,
+            reservation,
+            ratio,
+            tool_tokens,
+        );
         if projected > threshold {
-            let paste_alone =
-                crate::server::compaction::projected_prompt_tokens(&system_prompt, &[], &req.message, max_tokens);
+            let paste_alone = crate::server::compaction::projected_prompt_tokens(
+                &system_prompt,
+                &[],
+                &req.message,
+                reservation,
+                ratio,
+                tool_tokens,
+            );
             if paste_alone > threshold {
                 state.audit.log(json!({
                     "event": "chat_prompt_too_large",
@@ -644,7 +667,9 @@ async fn chat_inner(
                 &system_prompt,
                 &retained_history,
                 &req.message,
-                max_tokens,
+                reservation,
+                ratio,
+                tool_tokens,
             );
             if retained_projected > threshold {
                 state.audit.log(json!({
@@ -669,9 +694,17 @@ async fn chat_inner(
             let summary = if middle.is_empty() {
                 crate::server::compaction::COMPACT_PREFIX.to_string()
             } else {
-                let (text, p, c) = crate::server::compaction::summarize_turns(&state.chat, &model, middle)
-                    .await
-                    .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+                let summary_tokens = crate::server::compaction::summary_max_tokens(&state.cfg);
+                let (text, p, c) = crate::server::compaction::summarize_turns(
+                    &state.chat,
+                    &model,
+                    middle,
+                    summary_tokens,
+                    crate::server::compaction::reply_reservation(&state.backend, summary_tokens),
+                    ratio,
+                )
+                .await
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
                 summary_prompt_tokens = p;
                 summary_completion_tokens = c;
                 text
@@ -683,7 +716,9 @@ async fn chat_inner(
                 &system_prompt,
                 &compacted_history,
                 &req.message,
-                max_tokens,
+                reservation,
+                ratio,
+                tool_tokens,
             );
             if compacted_projected > threshold {
                 state.audit.log(json!({
@@ -713,6 +748,8 @@ async fn chat_inner(
         role: "user".into(),
         content: req.message.clone(),
     });
+    let estimated_input =
+        crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", 0, 1.0, tool_tokens);
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
     let spend_source = if req.loop_turn { "loop" } else { "chat" };
     let (mut reply, web_tools) = if cloud_selected {
@@ -733,6 +770,7 @@ async fn chat_inner(
             &model,
             max_tokens,
             temperature,
+            ratio,
             output,
         )
         .await
@@ -808,26 +846,27 @@ async fn chat_inner(
             json!({"id":id,"outcome":"included_in_successful_chat","chars":body.chars().count(),"sha256":hex::encode(Sha256::digest(body.as_bytes()))})
         })
         .collect::<Vec<_>>();
-    let recorded = match compaction {
-        Some((keep, .., ref summary)) => state.store.record_compacted_exchange(
-            &session.session_id,
-            &req.message,
-            &reply.body_text,
-            &reply.model,
-            &usage,
-            &prompt_skills,
-            keep,
-            summary,
-        ),
-        None => state.store.record_exchange(
-            &session.session_id,
-            &req.message,
-            &reply.body_text,
-            &reply.model,
-            &usage,
-            &prompt_skills,
-        ),
+    let calibration = if cloud_selected {
+        None
+    } else {
+        crate::server::compaction::calibrate(
+            session.token_calibration.as_ref(),
+            &state.chat.base_url,
+            &model,
+            estimated_input,
+            reply.initial_prompt_tokens,
+        )
     };
+    let recorded = state.store.record_exchange_inner(
+        &session.session_id,
+        &req.message,
+        &reply.body_text,
+        &reply.model,
+        &usage,
+        &prompt_skills,
+        compaction.as_ref().map(|(keep, .., summary)| (*keep, summary.clone())),
+        calibration,
+    );
     let updated = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     if !cloud_selected && !req.loop_turn {
         let live = |id: &str| state.attachments.owned_blob(&owner, id).is_some();

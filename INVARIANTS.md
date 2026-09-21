@@ -349,22 +349,38 @@ already killed.
 
 ## Local chat compaction preserves goal and the first user turn
 
-The estimator is UTF-8 `bytes.div_ceil(4)`. That is the English-model money
-ruler (Grok, Claude, and similar). It is not a Qwen/CJK tokenizer. The send
+The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a Qwen/CJK tokenizer.
+Successful local exchanges persist an observed/estimated prompt-token ratio
+with the session, scoped to the requested model and backend URL. It starts at
+1, stays within 1–3, responds immediately to increases and smooths decreases
+with a half-weight EMA. Missing, zero or non-integer prompt usage leaves the
+previous calibration unchanged. Web turns use the first model call's usage,
+never their aggregate; summary usage and cloud replies do not train this ratio.
+The send
 window is stored prompt history (user and assistant turns, persist cap
 `MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
 overflow. The effective trigger is
-`max(chat.compact_prompt_tokens, reply_allowance + 4096)`, capped at 30000.
-Web-enabled chat also clamps that trigger so one tool round plus two reply
-ceilings still fits `web.total_tokens`.
-Startup rejects local-chat or loop reply allowances above 25904 so that floor
-remains usable. The incoming user paste is never compacted. The server builds
-a candidate summary with one bounded local-model call (`SUMMARY_MAX_TOKENS`
-400) covering goals, decisions, files touched, leftover work, and key facts.
+`max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
+calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions are also
+included in the calibrated input estimate. Web-enabled chat tightens the trigger
+toward `web.total_tokens - 2 * effective_reply_reservation`, without going below
+that floor; the web dispatcher independently enforces its total budget.
+Resolved Ollama with explicit `reasoning_effort: "none"` reserves the reply
+ceiling once. Other reasoning settings, missing settings and compatible
+backends reserve it twice in startup validation, compaction and web dispatch.
+Startup rejects local-chat or loop reply allowances above 25904 or 12952,
+respectively. This is a conservative harness margin, not provider accounting.
+The incoming user paste is never compacted. The server builds a candidate
+summary with one local-model call (`compaction.summary_max_tokens`, default
+768, clamped 128–2048). Input stays within 24000 characters and the calibrated
+summary-call budget. Ordinary middle turns are clipped to 800 characters;
+prior `[session-compacted]` summaries are reserved intact before selecting
+recent ordinary turns. If the summaries alone cannot fit, compaction fails
+without clipping them or rewriting history.
 A failed, empty, timed-out, or aborted summary does not rewrite the session.
 If compaction cannot bring that initial prompt below the trigger, the turn is
 refused without rewriting the session. If it can, the summary is persisted atomically with the next
-successful exchange using `write_json_atomic_mode` at `0o600`; failed or
+successful exchange, alongside calibration, using `write_json_atomic_mode` at `0o600`; failed or
 cancelled model calls leave stored history unchanged. The system prompt is
 composed each turn and is never stored in `messages`. `Session.goal` and the
 first user message are preserved. Successful compaction is audited as
@@ -374,10 +390,12 @@ local-model claim is audited as `chat_busy`. Neither event stores message
 bodies.
 
 - Locked by: `src/server/compaction.rs`,
-  `src/server/sessions.rs::record_compacted_exchange`,
+  `src/server/sessions.rs::record_exchange_inner`,
   `src/server/routes/core.rs::prompt_history`,
   `tests/chat_and_sessions.rs::minimum_compaction_threshold_still_allows_an_ordinary_turn`,
   `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`,
+  `tests/chat_and_sessions.rs::observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_calibration`,
+  `tests/chat_and_sessions.rs::reasoning_and_compatible_backends_enforce_the_effective_reply_reservation`,
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
   `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,

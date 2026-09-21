@@ -48,7 +48,7 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
         if messages.last().unwrap()["role"]=="tool" {
             let result:Value=serde_json::from_str(messages.last().unwrap()["content"].as_str().unwrap()).unwrap();
             assert!(result["text"].as_str().unwrap().contains("FETCHED_ONLY_EVIDENCE"));
-            Json(common::ok_reply("Version 7, from http://docs.example/docs/item?q=version",20,4))
+            Json(common::ok_reply("Version 7, from http://docs.example/docs/item?q=version",5000,4)) // DevSkim: ignore DS137138 because this synthetic response names a test URL resolved only to the loopback fixture.
         } else if body.get("tools").is_none() {
             Json(common::ok_reply("Web tools unavailable",10,2))
         } else {
@@ -85,7 +85,13 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
         reply["web_tools"][0]["result"]["url"],
         "http://docs.example/docs/item?q=version"
     );
-    assert_eq!(reply["usage"], json!({"prompt_tokens":30,"completion_tokens":7}));
+    assert_eq!(reply["usage"], json!({"prompt_tokens":5010,"completion_tokens":7}));
+    let session = s.state.store.get(reply["session_id"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        session.token_calibration.unwrap().ratio,
+        1.0,
+        "calibrate from the initial 10-token prompt, not the 5010-token aggregate"
+    );
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     assert_eq!(requests.lock().unwrap().len(), 2);
     let (_, denied) = s.post_json("/api/chat", json!({"message":"deny"})).await;

@@ -67,13 +67,14 @@ pub async fn run_stream(
     model: &str,
     cap: u64,
     temperature: f64,
+    token_ratio: f64,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = state.web.chat_turn.start(owner)?;
     tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
-        result = tokio::time::timeout(Duration::from_secs_f64(state.chat.timeout_sec.max(1.0)), run_inner(state, owner, system, history, model, cap, temperature, output)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.chat.timeout_sec.max(1.0)), run_inner(state, owner, system, history, model, cap, temperature, token_ratio, output)) =>
             result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
     }
 }
@@ -87,6 +88,7 @@ async fn run_inner(
     model: &str,
     cap: u64,
     temperature: f64,
+    token_ratio: f64,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
@@ -99,6 +101,7 @@ async fn run_inner(
     let mut prompt_tokens = 0u64;
     let mut completion_tokens = 0u64;
     let mut reported = true;
+    let mut initial_prompt_tokens = None;
     let mut budget_used = 0u64;
     let definitions = tools();
     for turn in 0..=state.web.limits.chat_tool_calls {
@@ -106,7 +109,9 @@ async fn run_inner(
         let estimate = ((system.len() + serde_json::to_vec(&messages)?.len() + serde_json::to_vec(&definitions)?.len())
             as u64)
             .div_ceil(4);
-        if budget_used.saturating_add(estimate).saturating_add(cap) > state.web.limits.total_tokens {
+        let estimate = super::compaction::calibrated_tokens(estimate, token_ratio);
+        let reservation = super::compaction::reply_reservation(&state.backend, cap);
+        if budget_used.saturating_add(estimate).saturating_add(reservation) > state.web.limits.total_tokens {
             return Err(error("WEB_TOKEN_BUDGET", "chat web token budget exhausted"));
         }
         let available = if turn == state.web.limits.chat_tool_calls {
@@ -131,6 +136,9 @@ async fn run_inner(
             )
             .await?;
         let usage = &response["usage"];
+        if turn == 0 {
+            initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
+        }
         reported &= usage["prompt_tokens"].is_u64() && usage["completion_tokens"].is_u64();
         budget_used = budget_used
             .saturating_add(usage["prompt_tokens"].as_u64().unwrap_or(estimate))
@@ -150,6 +158,7 @@ async fn run_inner(
             reply.prompt_tokens = prompt_tokens;
             reply.completion_tokens = completion_tokens;
             reply.usage_reported = reported;
+            reply.initial_prompt_tokens = initial_prompt_tokens;
             return Ok((reply, events));
         }
         let calls = message["tool_calls"]
@@ -255,6 +264,7 @@ async fn run_inner(
                         prompt_tokens,
                         completion_tokens,
                         usage_reported: reported,
+                        initial_prompt_tokens,
                     },
                     events,
                 ));

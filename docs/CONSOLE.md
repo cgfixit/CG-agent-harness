@@ -522,3 +522,58 @@ and they never receive notes-corpus bytes. The preview is a local-chat
 snapshot, not proof that cloud chat or the coding planner receives that
 context.
 Unsupported formats are refused. Clipped sections explicitly say they are incomplete.
+
+The notes corpus accepts multipart ingest with `POST /api/notes-corpus`, lists
+the owner's documents with `GET /api/notes-corpus`, and deletes one with
+`DELETE /api/notes-corpus/{id}`. It has no dedicated console upload control.
+A new local message supplies the retrieval query, while `/prompt`
+shows the currently assembled local context. Notes remain separate from
+structured facts and pinned `/memory` notes. Currently the shared multipart
+parser limits each notes ingest to at most three files even if
+`notes_corpus.max_files_per_request` is higher ([#197](https://github.com/cgfixit/CG-agent-harness/issues/197)).
+
+### Local history compaction
+
+Before local chat or `/loop`, the harness estimates the next input (system,
+stored messages, new message and any web-tool definitions) plus an effective
+reply reservation. Above `chat.compact_prompt_tokens` (default 24000), it
+summarizes middle turns, preserving the first user message, goal and recent
+tail (`chat.compact_keep_messages`, default 8, clamped 2–40). Earlier summaries
+pass intact into the next summarizer; ordinary middle turns are clipped to 800
+characters each. Total summary input is at most 24000 characters and also fits
+the calibrated summary-call budget. Prior summaries that cannot fit cause an
+explicit failure and leave history intact.
+
+The effective reply reservation is `max_tokens` for resolved Ollama with
+explicit `reasoning_effort: "none"`, and twice `max_tokens` otherwise. The
+threshold floor is that reservation plus 4096 prompt tokens and the calibrated
+tool-definition allowance, capped at 30000. Web chat additionally tightens the
+threshold toward `web.total_tokens - 2 * reservation`, respecting the same
+floor; its dispatcher still checks the independent web budget before each call.
+Startup accepts at most 25904 reply tokens on the first path or 12952 on the
+second, for both chat and `/loop`.
+
+This doubled reservation is a conservative harness policy, not a claim that
+every provider counts reasoning separately. For example, OpenAI documents
+`max_completion_tokens` as including reasoning tokens, while compatible local
+servers differ in supported parameters ([OpenAI](https://developers.openai.com/api/reference/resources/chat),
+[Ollama](https://docs.ollama.com/api/openai-compatibility)). The harness retains
+its existing `max_tokens` request field.
+
+The initial input estimate is UTF-8 bytes divided by four. After each successful
+local reply, a model/backend-specific ratio learns from numeric positive prompt
+usage: increases apply immediately, decreases use a half-weight moving average,
+and the factor stays within 1–3. Only the initial prompt of a web tool sequence
+trains it; summary and cloud usage do not. Missing usage preserves the previous
+ratio. The calibration survives restart with the session and falls back to 1
+when the model or endpoint changes. It cannot predict an abrupt language change
+before the first reply, identify a model replaced under the same name, or
+guarantee a fit for token ratios above 3. Keep the configured model window in
+[MODELS.md](MODELS.md) verified.
+
+`compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048, including
+for older homes missing the key. Edit the home `config.yaml` and restart to tune
+it. Compaction is inline; there is no idle pre-compaction worker. Empty, failed,
+truncated or cancelled model output does not commit the candidate summary or
+calibration. A prompt that still exceeds the limit returns
+`CHAT_PROMPT_TOO_LARGE` (422); use a shorter paste or start a new session.

@@ -85,11 +85,11 @@ const DEFAULT_LOOP_MAX_REQUESTS: u64 = 8;
 const DEFAULT_LOOP_WINDOW_SEC: f64 = 300.0;
 const DEFAULT_LOOP_MAX_TOKENS: u64 = 2048;
 
-fn validate_reply_budget(path: &str, value: u64) -> Result<u64> {
-    if !(1..=compaction::MAX_REPLY_TOKENS).contains(&value) {
+fn validate_reply_budget(path: &str, value: u64, backend: &crate::llm::backend::ResolvedLocalBackend) -> Result<u64> {
+    let maximum = compaction::MAX_REPLY_TOKENS / compaction::reply_reservation(backend, 1);
+    if !(1..=maximum).contains(&value) {
         return Err(HarnessError::config(format!(
-            "{path} must be from 1 to {} to preserve prompt headroom",
-            compaction::MAX_REPLY_TOKENS
+            "{path} must be from 1 to {maximum} to preserve prompt headroom; reasoning or non-Ollama backends reserve twice the reply ceiling"
         )));
     }
     Ok(value)
@@ -140,9 +140,11 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         Some(c) => c,
         None => home.load_config()?,
     });
+    let backend = resolve_local_backend(&cfg).await?;
     validate_reply_budget(
         "models.local_llm.max_tokens",
         cfg.u64_or("models.local_llm.max_tokens", compaction::DEFAULT_REPLY_TOKENS),
+        &backend,
     )?;
     let settings = HarnessSettings::load(&home)?;
     let store = SessionStore::new(&home.sessions_dir())?;
@@ -157,7 +159,6 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     } else {
         None
     };
-    let backend = resolve_local_backend(&cfg).await?;
     let chat = ChatClient::new(
         &backend.base_url,
         &backend.model,
@@ -182,7 +183,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         0 => DEFAULT_LOOP_MAX_TOKENS,
         n => n,
     };
-    let loop_max_tokens = validate_reply_budget("api.harness_loop_rate_limit.max_tokens", loop_max_tokens)?;
+    let loop_max_tokens = validate_reply_budget("api.harness_loop_rate_limit.max_tokens", loop_max_tokens, &backend)?;
     let csrf_token = crate::common::random_urlsafe(32);
     let console_html = console::HARNESS_HTML.replace(console::CSRF_PLACEHOLDER, &csrf_token);
     let console_html_segments: Vec<String> = console_html

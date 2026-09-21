@@ -5,8 +5,9 @@
 
 A local harness for **chat, permitted web research, and reviewed coding**,
 written in Rust. Runs as a universal macOS app or as a standalone server you
-open in a browser. Local-first by default; every path that leaves the machine
-is off until an operator turns it on.
+open in a browser. Local chat stays on loopback. Cloud chat requires provider
+setup and selection; web reads require the account and content permissions
+described in [WEB.md](docs/WEB.md).
 
 ![CG Agent Harness running on macOS](docs/screenshots/CG-Agent-1.png)
 
@@ -95,6 +96,12 @@ Set-and-verify procedure: [MODELS.md](docs/MODELS.md). To fine-tune
 `qwen3.8:27b-mlx` on Apple Silicon and serve the fused model to chat **and**
 the coding planner, see [FINETUNE.md](docs/FINETUNE.md) and the
 [`finetune/`](finetune) toolchain.
+
+Long local conversations compact automatically while retaining the first user
+turn, session goal and recent messages. Prompt estimates learn from reported
+local usage, and prior summaries survive repeated compaction without being
+clipped. [Compaction settings and limits](docs/CONSOLE.md#local-history-compaction)
+include the summary budget and the extra reservation for reasoning backends.
 
 ### First run
 
