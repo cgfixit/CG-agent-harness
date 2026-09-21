@@ -37,6 +37,11 @@ async fn post_files(s: &TestServer, files: &[(&str, &[u8])]) -> (u16, serde_json
     (status, body)
 }
 
+fn session_json(home: &std::path::Path, session_id: &str) -> serde_json::Value {
+    let path = home.join("sessions").join(format!("{session_id}.json"));
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
 fn blob_files(home: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -93,6 +98,22 @@ async fn three_markdown_files_appear_in_prompt_fence() {
     let system = sent["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("<<<ATTACHMENT_DATA>>>"));
     assert!(system.contains("one-alpha"));
+    let sid = chat["session_id"].as_str().unwrap();
+    let pins = session_json(&s.home, sid)["attachment_pins"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(pins.len(), 3, "{pins:?}");
+    let (status, chat2) = s
+        .post_json("/api/chat", json!({"message": "again", "session_id": sid}))
+        .await;
+    assert_eq!(status, 200, "{chat2}");
+    let sent = model.last_request().unwrap();
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("<<<ATTACHMENT_DATA>>>"));
+    assert!(system.contains("one-alpha"));
+    assert!(system.contains("two-beta"));
+    assert!(system.contains("three-gamma"));
 }
 
 #[tokio::test]
@@ -155,14 +176,27 @@ async fn cloud_loop_and_agent_ignore_attachments() {
             json!({"message": "cloud please", "model": "grok", "attachment_ids": [id]}),
         )
         .await;
-    assert_ne!(status, 200, "{body}");
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "ATTACHMENT_SURFACE_FORBIDDEN");
     assert!(
         model.last_request().is_none(),
         "cloud chat must not send attachment text to the local mock"
     );
 
-    let (_, created) = s.post_json("/api/sessions", json!({})).await;
-    let sid = created["session_id"].as_str().unwrap();
+    let (status, local) = s
+        .post_json("/api/chat", json!({"message": "pin locally", "attachment_ids": [id]}))
+        .await;
+    assert_eq!(status, 200, "{local}");
+    let sid = local["session_id"].as_str().unwrap();
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "cloud please", "model": "grok", "session_id": sid}),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "ATTACHMENT_SURFACE_FORBIDDEN");
+
     s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "ship it"}))
         .await;
     let (status, body) = s
@@ -176,15 +210,38 @@ async fn cloud_loop_and_agent_ignore_attachments() {
             }),
         )
         .await;
-    assert_eq!(status, 200, "{body}");
-    let req = model.last_request().unwrap();
-    let prompt = req["messages"][0]["content"].as_str().unwrap();
-    assert!(!prompt.contains("secret-attachment-body"));
-    assert!(!prompt.contains("<<<ATTACHMENT_DATA>>>"));
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "ATTACHMENT_SURFACE_FORBIDDEN");
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({
+                "message": "loop please",
+                "session_id": sid,
+                "loop": true
+            }),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "ATTACHMENT_SURFACE_FORBIDDEN");
 
     let (status, body) = s
         .post_json(
             "/api/agent/run",
+            json!({
+                "instruction": "x",
+                "branch": "grok/x",
+                "commit_message": "m",
+                "reason": "r",
+                "attachment_ids": [id]
+            }),
+        )
+        .await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(code(&body), "VALIDATION_ERROR");
+    let (status, body) = s
+        .post_json(
+            "/api/agent/jobs",
             json!({
                 "instruction": "x",
                 "branch": "grok/x",
@@ -213,6 +270,14 @@ async fn session_clear_unlinks_blobs() {
         .await;
     assert_eq!(status, 200, "{body}");
     assert!(blob_files(&s.home).is_empty());
+    let (status, created) = s.post_json("/api/sessions", json!({})).await;
+    assert_eq!(status, 201, "{created}");
+    let sid = created["session_id"].as_str().unwrap();
+    let pins = session_json(&s.home, sid)["attachment_pins"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(pins.is_empty(), "{pins:?}");
 }
 
 #[tokio::test]
@@ -265,7 +330,69 @@ async fn docx_uses_local_prompt_fence_and_refuses_hostile_xml() {
             json!({"message": "continue", "session_id":sid, "loop":true, "attachment_ids":[id]}),
         )
         .await;
-    assert_eq!(status, 200, "{body}");
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "ATTACHMENT_SURFACE_FORBIDDEN");
+}
+
+#[tokio::test]
+async fn deleted_blob_drops_the_pin_and_chat_still_works() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, stored) = post_files(&s, &[("note.md", b"gone-soon")]).await;
+    assert_eq!(status, 200, "{stored}");
+    let id = stored["attachments"][0]["id"].as_str().unwrap();
+    let (status, chat) = s
+        .post_json("/api/chat", json!({"message": "remember this", "attachment_ids": [id]}))
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    let sid = chat["session_id"].as_str().unwrap();
+    assert_eq!(
+        session_json(&s.home, sid)["attachment_pins"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0),
+        1
+    );
+    let attachments = cgagentharness::server::attachments::AttachmentStore::open(&s.home.join("attachments")).unwrap();
+    assert_eq!(attachments.unlink_owner("local").unwrap(), 1);
+    let (status, chat2) = s
+        .post_json("/api/chat", json!({"message": "still here", "session_id": sid}))
+        .await;
+    assert_eq!(status, 200, "{chat2}");
     let sent = model.last_request().unwrap();
-    assert!(!sent["messages"][0]["content"].as_str().unwrap().contains("DOCX_MARKER"));
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(!system.contains("<<<ATTACHMENT_DATA>>>"));
+    assert!(!system.contains("gone-soon"));
+    let pins = session_json(&s.home, sid)["attachment_pins"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(pins.is_empty(), "{pins:?}");
+}
+
+#[tokio::test]
+async fn merge_pins_keep_the_other_owner_and_fence_for_rejects_cross_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let sessions = cgagentharness::server::sessions::SessionStore::new(dir.path()).unwrap();
+    let attachments = cgagentharness::server::attachments::AttachmentStore::open(&dir.path().join("blobs")).unwrap();
+    let a = attachments
+        .store(
+            "alice",
+            &[cgagentharness::server::attachments::IncomingFile {
+                filename: "a.md".into(),
+                data: b"alice-only".to_vec(),
+            }],
+        )
+        .unwrap();
+    let session = sessions.create("fixture", "shared").unwrap();
+    sessions
+        .merge_attachment_pins(&session.session_id, "alice", &[a[0].id.clone()], |_| true)
+        .unwrap();
+    sessions
+        .merge_attachment_pins(&session.session_id, "bob", &["bob-id".into()], |_| true)
+        .unwrap();
+    let saved = sessions.get(&session.session_id).unwrap();
+    assert_eq!(saved.pinned_ids_for("alice"), vec![a[0].id.clone()]);
+    assert_eq!(saved.pinned_ids_for("bob"), vec!["bob-id".to_string()]);
+    assert!(attachments.fence_for("bob", &[a[0].id.clone()]).is_err());
 }

@@ -15,6 +15,7 @@ pub const SESSION_ERROR_CODE: &str = "HARNESS_SESSION_ERROR";
 pub const PERSIST_ERROR_CODE: &str = "HARNESS_SESSION_PERSIST_ERROR";
 pub const MAX_MESSAGES: usize = 500;
 pub const PROMPT_HISTORY_LIMIT: usize = 50;
+pub const MAX_PINNED_ATTACHMENTS: usize = 12;
 const SESSION_ID_CHARS: usize = 12;
 
 fn id_re() -> &'static regex::Regex {
@@ -84,6 +85,12 @@ pub struct Message {
     pub ts: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachmentPin {
+    pub owner: String,
+    pub id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
     pub session_id: String,
@@ -116,6 +123,11 @@ pub struct Session {
     pub last_prompt_skills: Vec<Value>,
     #[serde(default)]
     pub goal_stage: Option<Value>,
+    /// Sticky per-owner blob ids. `owner` is on each pin because sessions are
+    /// shared portal resources; only this owner's live blobs are inlined on
+    /// local chat and prompt preview.
+    #[serde(default)]
+    pub attachment_pins: Vec<AttachmentPin>,
 }
 
 impl Session {
@@ -129,6 +141,14 @@ impl Session {
             "message_count": self.messages.len(),
             "tokens": self.tally.to_json(),
         })
+    }
+
+    pub fn pinned_ids_for(&self, owner: &str) -> Vec<String> {
+        self.attachment_pins
+            .iter()
+            .filter(|pin| pin.owner == owner)
+            .map(|pin| pin.id.clone())
+            .collect()
     }
 }
 
@@ -191,6 +211,7 @@ impl SessionStore {
             selected_facts: Vec::new(),
             last_prompt_skills: Vec::new(),
             goal_stage: None,
+            attachment_pins: Vec::new(),
         };
         self.write(&session)?;
         Ok(session)
@@ -446,6 +467,85 @@ impl SessionStore {
         let mut session = self.get(session_id)?;
         session.selected_facts = facts.to_vec();
         self.write(&session)
+    }
+
+    pub fn merge_attachment_pins(
+        &self,
+        session_id: &str,
+        owner: &str,
+        ids: &[String],
+        live: impl Fn(&str) -> bool,
+    ) -> Result<Session> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        let mut others = Vec::new();
+        let mut mine = Vec::new();
+        for pin in session.attachment_pins.drain(..) {
+            if pin.owner == owner {
+                if live(&pin.id) {
+                    mine.push(pin);
+                }
+            } else {
+                others.push(pin);
+            }
+        }
+        for id in ids {
+            if live(id) && !mine.iter().any(|pin| pin.id == *id) {
+                mine.push(AttachmentPin {
+                    owner: owner.to_string(),
+                    id: id.clone(),
+                });
+            }
+        }
+        if mine.len() > MAX_PINNED_ATTACHMENTS {
+            let drop = mine.len() - MAX_PINNED_ATTACHMENTS;
+            mine.drain(..drop);
+        }
+        others.extend(mine);
+        session.attachment_pins = others;
+        self.write(&session)?;
+        Ok(session)
+    }
+
+    pub fn drop_attachment_pins_for_owner(&self, owner: &str) -> Result<usize> {
+        self.filter_attachment_pins(|pin| pin.owner != owner)
+    }
+
+    pub fn drop_attachment_pins_unless(&self, live: impl Fn(&str) -> bool) -> Result<usize> {
+        self.filter_attachment_pins(|pin| live(&pin.owner))
+    }
+
+    fn filter_attachment_pins(&self, keep: impl Fn(&AttachmentPin) -> bool) -> Result<usize> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut ids = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&self.dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if p.extension().and_then(|s| s.to_str()) == Some("json") && id_re().is_match(stem) {
+                    // Rebuild from the integer so a directory stem cannot carry `../`
+                    // into `path_for` / `join`. Skip names the parser refuses.
+                    let Ok(id) = canonical_session_id(stem) else {
+                        continue;
+                    };
+                    ids.push(id);
+                }
+            }
+        }
+        let mut removed = 0usize;
+        for id in ids {
+            let Ok(mut session) = self.get(&id) else {
+                continue;
+            };
+            let before = session.attachment_pins.len();
+            session.attachment_pins.retain(|pin| keep(pin));
+            let n = before - session.attachment_pins.len();
+            if n > 0 {
+                self.write(&session)?;
+                removed += n;
+            }
+        }
+        Ok(removed)
     }
 
     pub fn stage_goal(
@@ -781,5 +881,151 @@ mod prompt_history_tests {
         assert!(!store.list().iter().any(|row| row.get("prompt_history").is_some()));
         store.clear().unwrap();
         assert!(store.get(&session.session_id).is_err());
+    }
+}
+
+#[cfg(test)]
+mod attachment_pin_tests {
+    use super::*;
+
+    fn live_all(_: &str) -> bool {
+        true
+    }
+
+    #[test]
+    fn merge_keeps_other_owners_and_fifo_caps_this_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let session = store.create("fixture", "pins").unwrap();
+        store
+            .merge_attachment_pins(&session.session_id, "bob", &["b1".into()], live_all)
+            .unwrap();
+        let alice: Vec<String> = (0..13).map(|i| format!("a{i}")).collect();
+        let saved = store
+            .merge_attachment_pins(&session.session_id, "alice", &alice, live_all)
+            .unwrap();
+        let alice_ids = saved.pinned_ids_for("alice");
+        assert_eq!(alice_ids.len(), MAX_PINNED_ATTACHMENTS);
+        assert_eq!(alice_ids.first().unwrap(), "a1");
+        assert_eq!(alice_ids.last().unwrap(), "a12");
+        assert!(!alice_ids.contains(&"a0".to_string()));
+        assert_eq!(saved.pinned_ids_for("bob"), vec!["b1".to_string()]);
+        assert_eq!(store.drop_attachment_pins_for_owner("alice").unwrap(), 12);
+        let after = store.get(&session.session_id).unwrap();
+        assert!(after.pinned_ids_for("alice").is_empty());
+        assert_eq!(after.pinned_ids_for("bob"), vec!["b1".to_string()]);
+        assert_eq!(store.drop_attachment_pins_unless(|owner| owner == "alice").unwrap(), 1);
+        assert!(store.get(&session.session_id).unwrap().attachment_pins.is_empty());
+    }
+
+    #[test]
+    fn dead_blobs_are_dropped_and_missing_ids_are_not_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let session = store.create("fixture", "pins").unwrap();
+        store
+            .merge_attachment_pins(&session.session_id, "local", &["live".into(), "gone".into()], |id| {
+                id == "live"
+            })
+            .unwrap();
+        let saved = store
+            .merge_attachment_pins(&session.session_id, "local", &["gone".into()], |id| id == "live")
+            .unwrap();
+        assert_eq!(saved.pinned_ids_for("local"), vec!["live".to_string()]);
+    }
+
+    #[test]
+    fn pins_round_trip_across_a_new_store_and_legacy_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let session = store.create("fixture", "pins").unwrap();
+        store
+            .merge_attachment_pins(&session.session_id, "local", &["keep-me".into()], live_all)
+            .unwrap();
+        drop(store);
+        let reopened = SessionStore::new(dir.path()).unwrap();
+        let loaded = reopened.get(&session.session_id).unwrap();
+        assert_eq!(loaded.pinned_ids_for("local"), vec!["keep-me".to_string()]);
+        let mut value = serde_json::to_value(&loaded).unwrap();
+        value.as_object_mut().unwrap().remove("attachment_pins");
+        std::fs::write(reopened.path_for(&session.session_id).unwrap(), value.to_string()).unwrap();
+        assert!(reopened.get(&session.session_id).unwrap().attachment_pins.is_empty());
+        assert!(!reopened.list().iter().any(|row| row.get("attachment_pins").is_some()));
+    }
+
+    #[test]
+    fn filter_skips_non_canonical_stems_and_does_not_escape_the_session_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let session = store.create("fixture", "pins").unwrap();
+        store
+            .merge_attachment_pins(&session.session_id, "alice", &["keep".into()], live_all)
+            .unwrap();
+
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.json");
+        let hostile_payload = r#"{"session_id":"deadbeefdead","attachment_pins":[{"owner":"alice","id":"leak"}]}"#;
+        std::fs::write(&secret, hostile_payload).unwrap();
+
+        // Names that match neither `id_re` nor `canonical_session_id`.
+        let hostile_upper = dir.path().join("AAAAAAAAAAAA.json");
+        let hostile_short = dir.path().join("aaaa.json");
+        std::fs::write(&hostile_upper, hostile_payload).unwrap();
+        std::fs::write(&hostile_short, hostile_payload).unwrap();
+
+        assert!(canonical_session_id("../etc/passwd").is_err());
+        assert!(canonical_session_id("AAAAAAAAAAAA").is_err());
+        assert_eq!(store.drop_attachment_pins_for_owner("alice").unwrap(), 1);
+        assert!(store.get(&session.session_id).unwrap().attachment_pins.is_empty());
+
+        // Filter must not rewrite non-canonical siblings or anything outside `dir`.
+        assert_eq!(std::fs::read_to_string(&hostile_upper).unwrap(), hostile_payload);
+        assert_eq!(std::fs::read_to_string(&hostile_short).unwrap(), hostile_payload);
+        assert_eq!(std::fs::read_to_string(&secret).unwrap(), hostile_payload);
+        assert!(std::fs::read_to_string(store.path_for(&session.session_id).unwrap())
+            .unwrap()
+            .contains(&session.session_id));
+    }
+
+    #[test]
+    fn compacted_exchange_keeps_pins() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let session = store.create("fixture", "pins").unwrap();
+        store
+            .merge_attachment_pins(&session.session_id, "local", &["sticky".into()], live_all)
+            .unwrap();
+        let usage = TokenTally {
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            exchanges: 0,
+        };
+        for i in 0..6 {
+            store
+                .record_exchange(
+                    &session.session_id,
+                    &format!("user-{i}"),
+                    &format!("asst-{i}"),
+                    "fixture",
+                    &usage,
+                    &[],
+                )
+                .unwrap();
+        }
+        let saved = store
+            .record_compacted_exchange(
+                &session.session_id,
+                "latest user",
+                "latest reply",
+                "fixture",
+                &usage,
+                &[],
+                2,
+                "[session-compacted]\nstub summary\n",
+            )
+            .unwrap();
+        assert_eq!(saved.pinned_ids_for("local"), vec!["sticky".to_string()]);
+        assert!(!saved.messages.iter().any(|m| m.text.contains("sticky")));
+        assert_eq!(saved.goal, "");
     }
 }

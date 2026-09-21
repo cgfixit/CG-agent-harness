@@ -12,12 +12,39 @@ use serde_json::{json, Value};
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::headers::NO_STORE;
 use crate::server::schemas::{SessionSearchRequest, ValidJson};
-use crate::server::session_export::{self, write_export};
+use crate::server::session_export::{self, write_export, ExportAttachmentPin};
 use crate::server::session_search::search_sessions;
 use crate::server::state::AppState;
 
+fn export_pins_for_owner(
+    session: &crate::server::sessions::Session,
+    owner: &str,
+    attachments: &crate::server::attachments::AttachmentStore,
+) -> Vec<ExportAttachmentPin> {
+    session
+        .attachment_pins
+        .iter()
+        .filter(|pin| pin.owner == owner)
+        .map(|pin| match attachments.owned_blob(owner, &pin.id) {
+            Some(blob) => ExportAttachmentPin {
+                id: pin.id.clone(),
+                magic_mime: blob.magic_mime,
+                sha256_prefix: blob.sha256.chars().take(12).collect(),
+                omitted: false,
+            },
+            None => ExportAttachmentPin {
+                id: pin.id.clone(),
+                magic_mime: String::new(),
+                sha256_prefix: String::new(),
+                omitted: true,
+            },
+        })
+        .collect()
+}
+
 pub async fn export_session(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     Path(session_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let id = crate::server::sessions::canonical_session_id(&session_id)
@@ -33,8 +60,10 @@ pub async fn export_session(
             "session id mismatch",
         ));
     }
-    write_export(&state.home, &session).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    let body = session_export::render(&session);
+    let owner = super::auth::context_owner(user);
+    let pins = export_pins_for_owner(&session, &owner, &state.attachments);
+    write_export(&state.home, &session, pins.clone()).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let body = session_export::render(&session, pins);
     let mut resp = Response::new(Body::from(body));
     *resp.status_mut() = StatusCode::OK;
     resp.headers_mut().insert(

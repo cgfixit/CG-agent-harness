@@ -367,9 +367,22 @@ pub async fn preview(
         &state,
         session.as_ref().map(|s| s.selected_skills.as_slice()).unwrap_or(&[]),
     )?;
+    let pinned_ids = session.as_ref().map(|s| s.pinned_ids_for(&owner)).unwrap_or_default();
+    crate::server::retrieval::refuse_forbidden_attachments(
+        crate::server::retrieval::RetrievalSurface::PromptPreview,
+        &req.attachment_ids,
+        &pinned_ids,
+    )
+    .map_err(|e| crate::server::attachments::upload_error(&e))?;
+    let live_pins: Vec<String> = pinned_ids
+        .iter()
+        .filter(|id| state.attachments.owned_blob(&owner, id).is_some())
+        .cloned()
+        .collect();
+    let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
     let attachment_fence = state
         .attachments
-        .fence_for(&owner, &req.attachment_ids)
+        .fence_for(&owner, &ids)
         .map_err(|e| crate::server::attachments::upload_error(&e))?;
     let inputs = PromptInputs {
         selected_skills: &selected,

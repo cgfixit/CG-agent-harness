@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use crate::common::tool_broker::assert_allowed;
 use crate::server::agent_policy::{available_profiles, resolve_check_profiles, run_id_re};
-use crate::server::errors::{ApiError, ApiResult};
+use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::schemas::*;
 use crate::server::state::{AppState, AGENT_RUN_TOOL};
 use crate::shim::{self, OpsRequest, ShimError, REAL_REPO_RUN_MAX_TIMEOUT_SEC};
@@ -230,6 +230,27 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, recurring: bool) -
     })
 }
 
+fn refuse_bound_session_pins(state: &AppState, owner: &str, req: &AgentRunRequest) -> ApiResult<()> {
+    let Some(binding) = &req.goal_stage else {
+        return Ok(());
+    };
+    let session = state
+        .store
+        .get(&binding.session_id)
+        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    let live_pins: Vec<String> = session
+        .pinned_ids_for(owner)
+        .into_iter()
+        .filter(|id| state.attachments.owned_blob(owner, id).is_some())
+        .collect();
+    crate::server::retrieval::refuse_forbidden_attachments(
+        crate::server::retrieval::RetrievalSurface::Agent,
+        &[],
+        &live_pins,
+    )
+    .map_err(|e| crate::server::attachments::upload_error(&e))
+}
+
 /// Synchronous: blocks until the child finishes (the verbatim console expects this).
 pub async fn agent_run(
     State(state): State<Arc<AppState>>,
@@ -242,14 +263,12 @@ pub async fn agent_run(
             "Goal-linked work uses the durable /api/agent/jobs workflow",
         ));
     }
+    let owner = super::auth::context_owner(user);
+    refuse_bound_session_pins(&state, &owner, &req)?;
     let prepared = prepare_run(&state, &req)?;
     let Json(mut result) = agentic_call(&state, prepared.ops).await?;
-    result["memory_suggestion"] = crate::server::structured_memory_suggest::coding_completed(
-        &state,
-        &super::auth::context_owner(user),
-        &req.instruction,
-        &result,
-    );
+    result["memory_suggestion"] =
+        crate::server::structured_memory_suggest::coding_completed(&state, &owner, &req.instruction, &result);
     Ok(Json(result))
 }
 
@@ -282,6 +301,7 @@ pub(crate) async fn start_job(
     schedule_id: Option<String>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let prepared = prepare_run_inner(&state, &req, schedule_id.is_some())?;
+    refuse_bound_session_pins(&state, &owner, &req)?;
     let job_id = crate::common::random_hex(16);
     let action = prepared.ops.action.clone();
     let task_state = state.clone();
