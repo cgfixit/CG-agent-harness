@@ -15,6 +15,7 @@ use crate::common::audit::Audit;
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::mcp::{call_stdio, mcp_err, namespaced, validate_server_name, validate_tool_name};
+use crate::common::mcp_policy::StdioCapabilities;
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::backend::{is_loopback_url, LOOPBACK_HOSTS};
 
@@ -36,6 +37,7 @@ pub struct DeclaredServer {
     pub url: Option<String>,
     pub tools: BTreeSet<String>,
     pub env: BTreeMap<String, String>,
+    pub capabilities: Option<StdioCapabilities>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +109,7 @@ impl McpRuntime {
                     Transport::Sse => "sse",
                 },
                 "tools": server.tools.iter().map(|tool| namespaced(&server.name, tool)).collect::<Vec<_>>(),
+                "capabilities": server.capabilities,
             })).collect::<Vec<_>>(),
         })
     }
@@ -121,6 +124,7 @@ impl McpRuntime {
         allowlist: &BTreeSet<String>,
         home: &Path,
         audit: &Audit,
+        worker_exe: &Path,
     ) -> Result<Value> {
         let refuse = |code: &str, message: String| {
             audit.log(json!({
@@ -171,6 +175,11 @@ impl McpRuntime {
                     self.timeout,
                     self.max_result_bytes,
                     Some(home),
+                    declared
+                        .capabilities
+                        .as_ref()
+                        .ok_or_else(|| HarnessError::config("MCP stdio capabilities are required"))?,
+                    worker_exe,
                 )
                 .await
                 {
@@ -180,6 +189,7 @@ impl McpRuntime {
                             "transport": "stdio",
                             "backend": outcome.backend,
                             "probe_reason": outcome.probe_reason,
+                            "capabilities": declared.capabilities,
                             "server": server,
                             "tool": tool,
                             "outcome": "ok",
@@ -199,6 +209,7 @@ impl McpRuntime {
                             "server": server,
                             "tool": tool,
                             "outcome": "error",
+                            "capabilities": declared.capabilities,
                         }));
                         Err(err)
                     }
@@ -324,6 +335,12 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
     }
     match transport {
         Transport::Stdio => {
+            let capabilities: StdioCapabilities =
+                serde_yaml_ng::from_value(get("capabilities").cloned().ok_or_else(|| {
+                    HarnessError::config("MCP stdio requires explicit versioned capabilities; see docs/MCP_CLIENT.md")
+                })?)
+                .map_err(|_| HarnessError::config("invalid MCP stdio capabilities"))?;
+            capabilities.validate()?;
             let argv = match get("command") {
                 Some(serde_yaml_ng::Value::Sequence(items)) => items
                     .iter()
@@ -344,8 +361,11 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
                     "mcp server '{name}' command must start with an absolute path"
                 )));
             }
-            let cwd = match get("cwd").and_then(|v| v.as_str()) {
-                Some(path) => {
+            let cwd = match get("cwd") {
+                Some(value) => {
+                    let path = value
+                        .as_str()
+                        .ok_or_else(|| HarnessError::config("MCP cwd must be an absolute path string"))?;
                     let cwd = PathBuf::from(path);
                     if !cwd.is_absolute() {
                         return Err(HarnessError::config(format!(
@@ -364,6 +384,7 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
                 url: None,
                 tools,
                 env,
+                capabilities: Some(capabilities),
             })
         }
         Transport::Sse => {
@@ -379,6 +400,7 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
                 url: Some(url),
                 tools,
                 env,
+                capabilities: None,
             })
         }
     }
@@ -580,4 +602,28 @@ async fn jsonrpc_post(
         .get("result")
         .cloned()
         .ok_or_else(|| mcp_err("MCP_PROTOCOL", "sse response missing result"))
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn stdio_never_invents_missing_or_malformed_capabilities() {
+        let base = "name: fixture\ntransport: stdio\ncommand: [/bin/echo]\ntools: [echo]\n";
+        for suffix in [
+            "",
+            "capabilities: null",
+            "capabilities: {}",
+            "capabilities: {version: 2, network: deny, containment: process_group}",
+            "capabilities: {version: 1, network: [example.org], containment: process_group}",
+            "capabilities: {version: 1, network: deny, containment: process_group, read_roots: [/]}",
+        ] {
+            let input = serde_yaml_ng::from_str(&format!("{base}{suffix}")).unwrap();
+            assert!(parse_server(&input).is_err(), "{suffix}");
+        }
+        let valid = "capabilities: {version: 1, network: deny, containment: process_group}";
+        let input = serde_yaml_ng::from_str(&format!("{base}{valid}")).unwrap();
+        assert!(parse_server(&input).is_ok());
+    }
 }

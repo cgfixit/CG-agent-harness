@@ -139,14 +139,17 @@ running portal.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/mcp` | Declared MCP servers and namespaced tools; does not auto-discover |
+| GET | `/api/mcp` | Declared MCP servers, namespaced tools and versioned stdio capability policies; does not auto-discover |
 | POST | `/api/mcp/call` | Call one declared MCP tool; `confirm` is never defaulted |
 
 SSE MCP URLs are DNS-pinned. Loopback SSE requires `mcp.sse_allow_loopback: true`.
 MCP tools are not attached to `/loop`. Stdio response headers are limited to 4 KiB,
 including unterminated lines. Child stderr is drained through a pipe, retaining at most 2 KiB in memory and
 512 Unicode characters in diagnostics. No stderr log file is created; the existing
-call timeout and process-group cleanup still bound the child lifetime.
+call timeout still applies. Stdio protection follows the declared
+[capability policy](MCP_CLIENT.md); no silent fallback to an unconfined process
+or a weaker network mode is allowed. The response reports declared policy,
+not a successful sandbox probe. `/tools mcp` renders that policy in the console.
 
 ## Coding agent
 

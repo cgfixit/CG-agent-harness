@@ -15,6 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use super::errors::{HarnessError, Result};
+use super::mcp_policy::{Containment, StdioCapabilities};
 use super::sandbox_wrap::{wrap_mcp_stdio, WrappedStdio};
 
 pub const SECRET_ENV: &[&str] = &[
@@ -105,6 +106,8 @@ pub struct StdioClient {
     stderr: Arc<Mutex<Vec<u8>>>,
     stderr_task: tokio::task::JoinHandle<()>,
     _wrap: WrappedStdio,
+    #[cfg(target_os = "linux")]
+    owner: Option<tokio::net::UnixStream>,
 }
 
 pub struct StdioOutcome {
@@ -130,12 +133,16 @@ async fn drain_stderr(mut pipe: tokio::process::ChildStderr, captured: Arc<Mutex
 }
 
 impl StdioClient {
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         argv: &[String],
         cwd: Option<&Path>,
         extra_env: &BTreeMap<String, String>,
         max_frame: usize,
         home: Option<&Path>,
+        capabilities: &StdioCapabilities,
+        worker_exe: &Path,
+        timeout: Duration,
     ) -> Result<Self> {
         if argv.is_empty() {
             return Err(mcp_err("MCP_STDIO", "stdio command is empty"));
@@ -144,7 +151,7 @@ impl StdioClient {
         if !program.is_absolute() {
             return Err(mcp_err("MCP_STDIO", "stdio command must be an absolute path"));
         }
-        let wrap = wrap_mcp_stdio(argv, cwd, home)?;
+        let wrap = wrap_mcp_stdio(argv, cwd, home, capabilities)?;
         let mut cmd = Command::new(&wrap.argv[0]);
         cmd.args(&wrap.argv[1..]);
         cmd.env_clear();
@@ -159,6 +166,21 @@ impl StdioClient {
             cmd.env(key, &scratch);
         }
         cmd.current_dir(&wrap.child_cwd);
+        #[cfg(target_os = "linux")]
+        let supervisor = if capabilities.containment == Containment::Strict {
+            Some(super::mcp_worker::prepare(
+                &mut cmd,
+                worker_exe,
+                timeout,
+                capabilities
+                    .limits
+                    .ok_or_else(|| mcp_err("MCP_CONTAINMENT_UNAVAILABLE", "strict limits missing"))?,
+            )?)
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "linux"))]
+        let _ = (worker_exe, timeout);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -175,8 +197,7 @@ impl StdioClient {
             .stderr
             .take()
             .ok_or_else(|| mcp_err("MCP_STDIO", "stdio stderr missing"))?;
-        let stderr_task = tokio::spawn(drain_stderr(pipe, stderr.clone()));
-        let stdin = child
+        let mut stdin = child
             .stdin
             .take()
             .ok_or_else(|| mcp_err("MCP_STDIO", "stdio stdin missing"))?;
@@ -184,17 +205,41 @@ impl StdioClient {
             .stdout
             .take()
             .ok_or_else(|| mcp_err("MCP_STDIO", "stdio stdout missing"))?;
+        #[cfg(target_os = "linux")]
+        let owner = match supervisor {
+            Some(supervisor) => Some(
+                tokio::time::timeout(timeout, supervisor.attach(&mut stdin))
+                    .await
+                    .map_err(|_| {
+                        mcp_err(
+                            "MCP_CONTAINMENT_UNAVAILABLE",
+                            "strict supervisor did not establish ownership",
+                        )
+                    })??,
+            ),
+            None => None,
+        };
+        #[cfg(not(target_os = "linux"))]
+        let _ = &mut stdin;
+        let backend = if capabilities.containment == Containment::Strict {
+            "linux-systemd-bwrap"
+        } else {
+            wrap.backend
+        };
+        let stderr_task = tokio::spawn(drain_stderr(pipe, stderr.clone()));
         Ok(Self {
             child,
             stdin,
             stdout: BufReader::new(stdout),
             next_id: 1,
             max_frame,
-            backend: wrap.backend,
+            backend,
             probe_reason: wrap.probe_reason.clone(),
             stderr,
             stderr_task,
             _wrap: wrap,
+            #[cfg(target_os = "linux")]
+            owner,
         })
     }
 
@@ -316,6 +361,8 @@ impl StdioClient {
 
 impl Drop for StdioClient {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        drop(self.owner.take());
         self.stderr_task.abort();
         #[cfg(unix)]
         {
@@ -343,9 +390,12 @@ pub async fn call_stdio(
     timeout: Duration,
     max_frame: usize,
     home: Option<&Path>,
+    capabilities: &StdioCapabilities,
+    worker_exe: &Path,
 ) -> Result<StdioOutcome> {
     tokio::time::timeout(timeout, async {
-        let mut client = StdioClient::spawn(argv, cwd, extra_env, max_frame, home).await?;
+        let mut client =
+            StdioClient::spawn(argv, cwd, extra_env, max_frame, home, capabilities, worker_exe, timeout).await?;
         let backend = client.backend;
         let probe_reason = client.probe_reason.clone();
         client.initialize().await?;

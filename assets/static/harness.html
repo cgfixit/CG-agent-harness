@@ -795,6 +795,29 @@ function renderToolsDiagram(tools, wired, total) {
   return lines.join('\n');
 }
 
+function renderMcpCapabilities(status) {
+  const lines = ['EXTERNAL MCP — ' + (status.enabled ? 'enabled' : 'disabled'),
+    'Declared policy; protection is checked again before each call.'];
+  for (const server of status.servers || []) {
+    lines.push('', server.name + ' · ' + server.transport,
+      'Tools: ' + (server.tools || []).join(', '));
+    const cap = server.capabilities;
+    if (!cap) { lines.push('Remote SSE: DNS-pinned URL policy'); continue; }
+    lines.push('Filesystem: confined; working directory and runtime files are readable',
+      'Read grants: ' + (cap.read_roots || []).join(', '),
+      'Write grants: owned scratch' + ((cap.write_roots || []).length ? ', ' + cap.write_roots.join(', ') : ''),
+      'Network: ' + (cap.network === 'deny' ? 'denied' : 'UNRESTRICTED — explicit operator grant'));
+    if (cap.containment === 'strict') {
+      lines.push('Lifecycle: strict service containment required; unavailable platforms refuse',
+        'Limits: ' + cap.limits.processes + ' processes, ' + cap.limits.memory_mb + ' MiB');
+    } else {
+      lines.push('Lifecycle: PROCESS GROUP EXCEPTION — runner death or detached descendants can escape cleanup');
+    }
+  }
+  if (!(status.servers || []).length) lines.push('No servers declared.');
+  return lines.join('\n');
+}
+
 function renderSkillsDiagram(skills, wired, total) {
   if (!skills || !skills.length) return 'HARNESS SKILLS — none';
   if (skills.length === 1) {
@@ -2021,8 +2044,13 @@ async function runSlash(line) {
           sys(table([
             ['/tools', 'diagram of harness tools that are registered (not proof of readiness)'],
             ['/tools all', 'include unwired / catalog rows'],
+            ['/tools mcp', 'external MCP grants and lifecycle exceptions'],
             ['/tools <name>', 'one-tool box diagram'],
           ], ['command', 'action']));
+          break;
+        }
+        if (arg === 'mcp') {
+          sys(renderMcpCapabilities(await api('/api/mcp')));
           break;
         }
         const inventory = await api('/api/tools');

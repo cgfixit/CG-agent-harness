@@ -19,20 +19,30 @@ the server or the shim.
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
 
 MCP stdio children are spawned from `src/common/mcp.rs` with a constructed
-environment (secret and linker-hijack names stripped). Unix Drop kills the
-process group (`killpg`) of the group leader created with `process_group(0)`,
-then `start_kill` on the direct child. Per backend: `linux-bwrap` /
-`linux-bwrap-fs` add `--die-with-parent`; `linux-netns` is the `unshare`
-process; `darwin-seatbelt` group-kills `sandbox-exec` and descendants, with a
-residual that a grandchild which left the group can survive; `windows-stdio`
-has no FS jail and grandchild survival is residual. `src/server` still contains
-no `Command::new`. The harness home and `Home::env_path()` (`.env`) are
-unreachable from MCP stdio children: cwd or a read root that is, is inside, or
-contains that home is refused (`MCP_HOME_REFUSED`); asserted in tests.
-Backends are named distinctly: `darwin-seatbelt`, `linux-bwrap` (FS+net),
-`linux-bwrap-fs` (FS only after `--unshare-net` EPERM/RTM_NEWADDR),
-`linux-netns`, `linux-unconfined`, `windows-stdio`. Probe failure class
-(`rtm_newaddr` / `missing_binary` / `eperm`) is audited on `mcp_stdio_spawn`.
+environment (secret and linker-hijack names stripped). Required per-server
+versioned capabilities select explicit read/write roots, network denial or an
+unrestricted grant, and strict containment or a process-group exception. Missing
+or invalid capability declarations fail closed; authority changes require restart.
+Filesystem confinement is mandatory. Linux probe failures never silently remove
+network/filesystem protection; Windows stdio is refused. `linux-bwrap-fs` only
+exists after an explicit unrestricted network grant. macOS uses `darwin-seatbelt`.
+
+Strict Linux calls use `linux-systemd-bwrap`: a private lifeline connects the
+harness to a transient systemd service, whose dedicated cgroup owns supervisor
+and descendants before tool execution. The worker validates actual membership
+and process/memory limits; non-delegated control files and bubblewrap mounts
+prevent child migration. Service-main exit and its external runtime bound kill
+the cgroup, including detached descendants. Strict mode on other hosts refuses.
+An explicit `process_group` exception keeps filesystem/network confinement but
+only kills the owned Unix group/direct child; runner death or detached children
+can escape cleanup. `/tools mcp` displays this limitation.
+
+`src/server` still contains no `Command::new`. The harness home and its `.env`
+are unreachable from MCP stdio children: command paths, cwd, and read/write
+roots overlapping that home are refused (`MCP_HOME_REFUSED`). Actual backend,
+probe result and declared capabilities are audited on `mcp_stdio_spawn`;
+refusals include the policy and error code. See `docs/MCP_CLIENT.md` and
+`docs/PROCESS_LIFECYCLE.md` for migration and precise residual limits.
 Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
 and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`

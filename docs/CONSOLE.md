@@ -358,6 +358,9 @@ scheduler. Prompt clipping is separate and remains explicitly labeled.
 
 `/tools` reports registered operations and capability information. `/tools all`
 includes entries that are not wired; `/tools <name>` filters the inventory.
+`/tools mcp` shows external MCP declarations, read/write grants, network policy,
+and explicit process-group exceptions. It does not execute a tool or prove that
+the selected sandbox is available. See [MCP capabilities](MCP_CLIENT.md).
 `/skills` defaults to wired entries, while `/skills all` also shows optional
 prompt files and other catalog entries. `/skills <name>` filters the display
 name, which can differ from the directory ID required by `/skill use`.

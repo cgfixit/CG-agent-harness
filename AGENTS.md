@@ -91,7 +91,11 @@ cloud proposers and no change to explicit confirm/reason or write gates.
 - MCP is opt-in (`mcp.enabled` literal true, declared `mcp.servers` only). Calls
   go through `POST /api/mcp/call` with `confirm: true`, the tool-broker
   allowlist, and DNS-pinned SSE. Stdio children are wrapped with the same
-  Seatbelt / bubblewrap helpers as agentic verification. Do not attach MCP
+  Seatbelt / bubblewrap helpers as agentic verification. Stdio requires explicit
+  versioned capabilities; no unconfined or network-weaker fallback. Linux strict
+  containment uses an externally owned systemd/cgroup service; other platforms
+  refuse strict mode. The explicit process-group exception has weaker cleanup.
+  See `docs/MCP_CLIENT.md`. Do not attach MCP
   tools to `/loop`. `GET /api/mcp` lists declared server/tool names to an
   authenticated session.
 - Native Ollama management is loopback-only (`GET /api/ollama/inventory`,

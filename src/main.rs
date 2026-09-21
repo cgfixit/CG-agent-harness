@@ -19,6 +19,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Private supervised MCP stdio worker; no network listener.
+    #[command(hide = true)]
+    McpStdioWorker,
     /// Account-authenticated web operations through the running portal.
     Web {
         #[arg(long)]
@@ -62,6 +65,7 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::McpStdioWorker => ExitCode::from(cgagentharness::common::mcp_worker::main()),
         Command::Web { url, action } => report(cgagentharness::server::client::web(action, url)),
         Command::Account { url, action } => report(cgagentharness::server::client::account(action, url)),
         Command::Tls { action } => report(cgagentharness::server::client::tls(action)),

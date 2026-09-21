@@ -221,6 +221,7 @@ pub async fn mcp_call(
             &state.mcp_tool_allowlist(),
             &state.home.root,
             &state.audit,
+            &state.shim.exe,
         )
         .await
         .map_err(|e| {
@@ -231,7 +232,9 @@ pub async fn mcp_call(
                 | "MCP_UNKNOWN_TOOL"
                 | "MCP_DISABLED"
                 | "MCP_SSRF_DENIED"
-                | "MCP_HOME_REFUSED" => StatusCode::FORBIDDEN,
+                | "MCP_HOME_REFUSED"
+                | "MCP_CAPABILITY_REFUSED"
+                | "MCP_CONTAINMENT_UNAVAILABLE" => StatusCode::FORBIDDEN,
                 "VALIDATION_ERROR" | "CONFIG_ERROR" => StatusCode::BAD_REQUEST,
                 "HARD_SANDBOX_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
                 "MCP_TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,
