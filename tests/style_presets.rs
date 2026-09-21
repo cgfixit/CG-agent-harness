@@ -27,7 +27,10 @@ async fn every_builtin_style_reaches_chat_and_off_reverts_without_touching_defau
         assert_eq!(set["origin"], "builtin");
         assert_eq!(set["loaded"], true);
         assert_eq!(set["truncated"], false);
-        assert_eq!(s.state.store.get(sid).unwrap().style.as_deref(), Some(name));
+        assert_eq!(
+            s.state.store.for_owner("local").get(sid).unwrap().style.as_deref(),
+            Some(name)
+        );
 
         let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
         assert_eq!(status, 200, "{name}: {preview}");
@@ -98,7 +101,7 @@ async fn missing_style_name_suggests_closest_builtin() {
     assert_eq!(code(&body), "STYLE_UNKNOWN");
     assert_eq!(body["detail"]["details"]["suggestion"], "concise");
     assert!(message(&body).contains("concise"));
-    assert!(s.state.store.get(sid).unwrap().style.is_none());
+    assert!(s.state.store.for_owner("local").get(sid).unwrap().style.is_none());
 }
 
 #[tokio::test]

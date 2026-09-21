@@ -45,7 +45,7 @@ where
 }
 
 fn manager(state: &AppState) -> ApiResult<&AuthManager> {
-    state.auth.as_ref().ok_or_else(|| {
+    state.auth.as_deref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "AUTH_DISABLED",

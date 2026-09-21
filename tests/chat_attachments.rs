@@ -405,7 +405,8 @@ async fn deleted_blob_drops_the_pin_and_chat_still_works() {
 #[tokio::test]
 async fn merge_pins_keep_the_other_owner_and_fence_for_rejects_cross_owner() {
     let dir = tempfile::tempdir().unwrap();
-    let sessions = cgagentharness::server::sessions::SessionStore::new(dir.path()).unwrap();
+    let sessions_root = cgagentharness::server::sessions::SessionStore::new(dir.path()).unwrap();
+    let sessions = sessions_root.for_owner("local");
     let attachments = cgagentharness::server::attachments::AttachmentStore::open(&dir.path().join("blobs")).unwrap();
     let a = attachments
         .store(

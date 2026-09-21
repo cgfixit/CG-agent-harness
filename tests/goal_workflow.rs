@@ -28,10 +28,10 @@ async fn goal_staging_is_durable_and_never_executes_or_confirms() {
     assert!(stage["request"]["confirm"].is_null());
     assert_eq!(stage["request"]["max_iterations"], 1);
     assert!(model.requests.lock().unwrap().is_empty());
-    assert!(s.state.jobs.list().is_empty());
+    assert!(s.state.jobs.list("local").is_empty());
     let reopened = cgagentharness::server::sessions::SessionStore::new(&s.home.join("sessions")).unwrap();
     assert_eq!(
-        reopened.get(&id).unwrap().goal_stage.unwrap()["stage_id"],
+        reopened.for_owner("local").get(&id).unwrap().goal_stage.unwrap()["stage_id"],
         stage["stage"]["stage_id"]
     );
     assert_eq!(
@@ -41,7 +41,7 @@ async fn goal_staging_is_durable_and_never_executes_or_confirms() {
     let mut req = stage["request"].clone();
     req["reason"] = json!("Review goal request");
     assert_eq!(s.post_json("/api/agent/jobs", req.clone()).await.0, 400);
-    assert!(s.state.jobs.list().is_empty());
+    assert!(s.state.jobs.list("local").is_empty());
     req["confirm"] = json!(true);
     assert_eq!(
         s.post_json("/api/agent/run", req.clone()).await.0,
@@ -51,7 +51,7 @@ async fn goal_staging_is_durable_and_never_executes_or_confirms() {
     s.post_json(&format!("/api/sessions/{id}/goal"), json!({"goal":"Changed goal"}))
         .await;
     assert_eq!(s.post_json("/api/agent/jobs", req).await.0, 409);
-    assert!(s.state.jobs.list().is_empty());
+    assert!(s.state.jobs.list("local").is_empty());
     assert_eq!(
         s.get_json(&format!("/api/sessions/{id}/goal-stage")).await.1["status"],
         "stale"
@@ -84,7 +84,7 @@ async fn goal_job_preserves_policy_refusal_and_cannot_replay_a_claimed_stage() {
         "disabled policy cannot produce a completed task"
     );
     assert_eq!(s.post_json("/api/agent/jobs", req).await.0, 409);
-    assert_eq!(s.state.jobs.list().len(), 1);
+    assert_eq!(s.state.jobs.list("local").len(), 1);
     assert!(model.requests.lock().unwrap().is_empty());
     let (_, task) = s.get_json(&format!("/api/sessions/{id}/goal-stage")).await;
     assert_eq!(task["status"], "failed");
@@ -92,7 +92,7 @@ async fn goal_job_preserves_policy_refusal_and_cannot_replay_a_claimed_stage() {
     assert_eq!(task["stage"]["declared_checks"], json!(["cargo-test"]));
     let recovered =
         cgagentharness::server::agent_jobs::JobStore::open(&s.home.join("data/agentic/console-jobs.json")).unwrap();
-    assert_eq!(recovered.get(job_id).unwrap()["status"], "failed");
+    assert_eq!(recovered.get("local", job_id).unwrap()["status"], "failed");
 }
 #[tokio::test]
 async fn unauthorized_profiles_and_revoked_tool_policy_do_not_claim_the_goal() {
@@ -113,7 +113,7 @@ async fn unauthorized_profiles_and_revoked_tool_policy_do_not_claim_the_goal() {
     assert_eq!(s.post_json("/api/agent/jobs", req.clone()).await.0, 400);
     req["checks"] = json!(["cargo-test"]);
     assert_eq!(s.post_json("/api/agent/jobs", req).await.0, 403);
-    assert!(s.state.jobs.list().is_empty());
+    assert!(s.state.jobs.list("local").is_empty());
     assert_eq!(
         s.get_json(&format!("/api/sessions/{id}/goal-stage")).await.1["status"],
         "staged"

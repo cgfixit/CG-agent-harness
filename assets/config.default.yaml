@@ -136,13 +136,20 @@ web:
 # Completion webhooks are explicit operator configuration and restart-only.
 notifications:
   enabled: false
-  webhook_url: ""
+  schema_version: 1
+  destinations: [] # max 8: explicit id, owner, enabled, url, events, use_bearer, rate_per_minute
+  webhook_url: "" # legacy global URL must be migrated explicitly; never invent an owner
   private_url_allowlist: [] # exact URLs only; loopback/RFC1918/ULA require this grant
-  queue_capacity: 128 # 1–512 pending events, best effort (not durable)
-  batch_size: 16 # 1–32 events per POST
-  batch_interval_sec: 30 # 1–3600; bounds notification frequency
-  max_attempts: 3 # 1–3, stable batch ID across retries
-  retry_delay_sec: 2 # 1–60
+  queue_capacity: 128 # 1–512 retained deliveries; pressure evicts terminal rows before refusing pending work
+  batch_size: 16 # 1–32 metadata events per POST
+  batch_interval_sec: 30 # 1–3600; initial batching delay
+  poll_interval_sec: 1 # 1–60; durable outbox scan
+  max_attempts: 3 # 1–3 per delivery/replay; IDs remain stable
+  retry_delay_sec: 2 # 1–60; exponential backoff base
+  max_backoff_sec: 300 # 1–3600; before bounded jitter
+  jitter_percent: 20 # 0–50; nonnegative random delay
+  retention_sec: 604800 # 60–2592000; pending and terminal delivery retention
+  max_replays: 3 # 0–10; explicit owner-confirmed replay cycles
   timeout_sec: 5 # 1–30, includes DNS and request
 
 # External MCP tools. Off until an operator declares servers. Never auto-discover.
@@ -426,3 +433,12 @@ structured_memory:
   # Drop lower-confidence candidates; omitted model confidence remains accepted.
   min_consolidation_confidence: 0.40
   auto_consolidation_idle_ms: 2000
+
+# Durable schedules: restart-only tuning, never execution/write authority.
+# New interval and cron schedules require an owner-bound preview receipt.
+scheduling:
+  poll_interval_ms: 1000       # 250–5000
+  dispatch_grace_secs: 5      # 5–30; older occurrences are skipped
+  preview_ttl_secs: 300       # 30–900; also expires at first occurrence
+  max_previews: 64            # 1–128 in-memory receipts
+  max_schedules: 32           # 1–128 durable rows

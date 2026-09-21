@@ -6,7 +6,7 @@ use tantivy::schema::{IndexRecordOption, Schema, TantivyDocument, TextFieldIndex
 use tantivy::{doc, Index};
 
 use crate::common::errors::{HarnessError, Result};
-use crate::server::sessions::SessionStore;
+use crate::server::sessions::OwnedSessionStore;
 
 const MAX_SESSIONS: usize = 200;
 const MAX_BYTES: usize = 2_000_000;
@@ -28,7 +28,7 @@ pub struct SessionHit {
     pub score: f32,
 }
 
-pub fn search_sessions(store: &SessionStore, query: &str) -> Result<Vec<SessionHit>> {
+pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec<SessionHit>> {
     let query = query.trim();
     if query.is_empty() || query.chars().count() > MAX_QUERY_CHARS {
         return Ok(Vec::new());

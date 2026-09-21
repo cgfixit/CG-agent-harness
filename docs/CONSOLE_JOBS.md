@@ -10,7 +10,7 @@ selects chat only and reports the separately configured planner model.
 its job ID in the URL fragment. `/agent job <id>` resumes monitoring after a
 refresh; sign in again if the account session expired. The optional harness key
 may remain empty and cannot restore account access.
-`/agent jobs` lists durable retained jobs, including interrupted entries after restart. Failed CLI results are
+`/agent jobs` lists your account's durable retained jobs, including interrupted entries after restart. Failed CLI results are
 failed jobs, with their error output retained. Completed results display the
 run record and verification output.
 
@@ -35,13 +35,55 @@ cannot satisfy console review.
 
 ## Schedules and completion notifications
 
-The guarded `/api/agent/schedules` API persists reviewed, goal-bound job requests
-and runs each occurrence through the same job preparation and write gates.
+Use the **Schedules** button after `/goal stage <branch>`. Review the staged
+request, enter a reason, explicitly check the authorization box, and choose an
+interval or cron calendar. **Preview next 5** shows local timestamps with UTC
+offsets and UTC equivalents. **Activate previewed schedule** consumes a short-lived,
+owner-bound receipt for that exact request. Editing the request or timing requires
+a new preview. Merely opening or previewing the form creates no schedule.
+
+The guarded API uses the same flow: `POST /api/agent/schedules/preview`, then
+`POST /api/agent/schedules` with its `preview_id` and the identical body:
+
+```json
+{
+  "schema_version": 1,
+  "schedule": {"kind": "cron", "expression": "0 9 * * MON-FRI", "timezone": "America/New_York"},
+  "request": {"goal_stage": {"session_id": "<owned session>", "stage_id": "<reviewed stage>"}, "instruction": "<reviewed instruction>", "branch": "<reviewed branch>", "commit_message": "<reviewed message>", "reason": "<operator reason>", "confirm": true}
+}
+```
+
+Use the complete request returned by the goal-stage API; this abbreviated example
+is not a replacement for that review. Intervals use `{"kind":"interval","seconds":3600}`
+(60–604800 seconds). The legacy request field `interval_secs` is also accepted,
+with the same mandatory preview; do not supply both forms. Cron uses five fields
+(minute, hour, day-of-month, month, weekday), supports lists/ranges/steps and weekday
+names, and uses Unix 0/7 for Sunday. To avoid differing cron day-match conventions,
+day-of-month or weekday must be literal `*`. Timezone defaults to UTC and accepts
+IANA names. Calendars end in 2100; expressions without a future occurrence refuse.
+
+Rows migrate to schema 1 without changing interval cadence or inventing owners.
+Ownerless legacy schedules stay hidden and cannot dispatch. Management is owner
+scoped; every occurrence rechecks the current enabled, non-bootstrap operator/admin
+owner, reviewed goal, budget, broker and execution/write gates. The existing run
+gate prevents overlap; a busy occurrence is consumed and skipped, never queued.
 `GET /api/agent/schedules/{schedule_id}` inspects a schedule;
-`POST /api/agent/schedules/{schedule_id}/cancel` stops future occurrences.
-Cancelling a schedule does not cancel an already started job; use the job's
-cancellation control separately. There is no schedule-editor slash command.
-Missed windows are skipped and restart does not catch up or replay work.
+`POST /api/agent/schedules/{schedule_id}/cancel` stops future dispatch. Cancellation
+and job registration serialize under the schedule lock. An already started job
+needs its separate cancellation control.
+
+Occurrence identity and the next UTC time persist atomically **before** dispatch.
+Restart skips all elapsed occurrences. During operation, dispatch has a five-second
+default polling grace; older work is skipped. Forward clock jumps skip missed work;
+backward jumps wait for the persisted next UTC time. Nonexistent DST wall times
+are skipped; an ambiguous time uses its first UTC mapping only. There is no catch-up.
+This is at-most-once dispatch: a crash after consumption can miss work. It is not
+exactly-once execution. `last_dispatch` distinguishes attempts, late skips and
+recovery skips; audit records give gate-refusal details.
+
+The `scheduling` section in `config.default.yaml` documents finite poll, grace,
+preview-expiry and inventory settings. They require restart and are outside the
+22-key limit-reload allowlist. Existing execution defaults remain closed.
 
 In a [webhook-capable build](SPEND_AND_NOTIFICATIONS.md), optional notifications
 cover terminal detached jobs started manually or by schedules: `finished`,
@@ -49,7 +91,7 @@ cover terminal detached jobs started manually or by schedules: `finished`,
 event. Recovered `interrupted` jobs are not announced. A schedule refused before
 job creation has no completion event; inspect `agent_schedule_failed` in audit.
 Notifications never approve, retry or change the outcome of a coding operation.
-Setup, metadata schema and best-effort delivery limits are in the
+Setup, durable metadata schema, recovery and finite delivery limits are in the
 [completion guide](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).
 
 ## Reproduce browser acceptance on macOS

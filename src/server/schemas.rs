@@ -795,17 +795,45 @@ impl Validate for AgentRunRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentScheduleCreate {
-    pub interval_secs: u64,
+    #[serde(default = "schedule_schema_version")]
+    pub schema_version: u32,
+    pub interval_secs: Option<u64>,
+    pub schedule: Option<crate::server::schedule_time::ScheduleSpec>,
+    pub preview_id: Option<String>,
     pub request: AgentRunRequest,
 }
-
+fn schedule_schema_version() -> u32 {
+    1
+}
+impl AgentScheduleCreate {
+    pub fn spec(&self) -> crate::common::errors::Result<crate::server::schedule_time::ScheduleSpec> {
+        use crate::server::schedule_time::ScheduleSpec;
+        let spec = match (&self.schedule, self.interval_secs) {
+            (Some(spec), None) if self.schema_version == 1 => spec.clone(),
+            (None, Some(seconds)) if self.schema_version == 1 => ScheduleSpec::Interval { seconds },
+            _ => {
+                return Err(crate::common::errors::HarnessError::new(
+                    "INVALID_SCHEDULE",
+                    "Specify exactly one version 1 schedule or interval_secs",
+                ))
+            }
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
+}
 impl Validate for AgentScheduleCreate {
     fn validate(&self) -> Vec<String> {
         let mut bad = self.request.validate();
-        if !(crate::server::agent_schedules::MIN_INTERVAL_SECS..=crate::server::agent_schedules::MAX_INTERVAL_SECS)
-            .contains(&self.interval_secs)
+        if self.spec().is_err() {
+            bad.push("schedule".into());
+        }
+        if self
+            .preview_id
+            .as_ref()
+            .is_some_and(|s| s.len() != 32 || !s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
         {
-            bad.push("interval_secs".into());
+            bad.push("preview_id".into());
         }
         if self.request.goal_stage.is_none() {
             bad.push("goal_stage".into());

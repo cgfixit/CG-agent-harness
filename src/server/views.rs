@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 63] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 68] = [
     ("analytics", "/analytics", "GET", "/api/analytics/summary", "retained session, token and coding-run analytics"),
     ("config-reload", "(Reload limits button)", "POST", "/api/config/reload", "administrator-only atomic reload of supported non-secret limits"),
     (
@@ -225,7 +225,21 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 63] = [
         "/session",
         "GET",
         "/api/sessions",
-        "list, create, switch, or rename sessions",
+        "list, create, switch, or rename your account-owned sessions",
+    ),
+    (
+        "session-legacy",
+        "Sessions: review legacy",
+        "GET",
+        "/api/sessions/legacy",
+        "admin-only metadata inventory of quarantined legacy sessions",
+    ),
+    (
+        "session-adopt",
+        "Sessions: adopt",
+        "POST",
+        "/api/sessions/{session_id}/adopt",
+        "admin explicit confirm/reason; own account only; clears coding approval",
     ),
     (
         "session-export",
@@ -239,7 +253,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 63] = [
         "/session search",
         "POST",
         "/api/sessions/search",
-        "local tantivy search of transcripts; snippets only; CSRF-guarded",
+        "local search of your transcripts; snippets only; CSRF-guarded",
     ),
     (
         "soul",
@@ -403,12 +417,21 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 63] = [
         "/api/agent/jobs/{job_id}/cancel",
         "abort a detached run (kills the child process)",
     ),
+    ("notification-status", "(Deliveries button)", "GET", "/api/notifications", "owned destination and retained delivery status; no job or message content"),
+    ("notification-replay", "(Deliveries button)", "POST", "/api/notifications/{delivery_id}/replay", "explicit owner-confirmed replay after current authority checks; never reruns a job"),
+    (
+        "agent-schedule-preview",
+        "(Schedules button)",
+        "POST",
+        "/api/agent/schedules/preview",
+        "preview five occurrences before owner-bound schedule activation",
+    ),
     (
         "agent-schedule-start",
-        "(API only)",
+        "(Schedules button)",
         "POST",
         "/api/agent/schedules",
-        "persist a cron interval that fires the same validated /api/agent/jobs body",
+        "activate a previewed interval or cron schedule using the reviewed jobs request",
     ),
     (
         "agent-schedule-cancel",
@@ -796,7 +819,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 63);
+        assert_eq!(HARNESS_SURFACES.len(), 68);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], HARNESS_SURFACES.len());
         assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");

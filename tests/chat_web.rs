@@ -86,7 +86,12 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
         "http://docs.example/docs/item?q=version"
     );
     assert_eq!(reply["usage"], json!({"prompt_tokens":5010,"completion_tokens":7}));
-    let session = s.state.store.get(reply["session_id"].as_str().unwrap()).unwrap();
+    let session = s
+        .state
+        .store
+        .for_owner("local")
+        .get(reply["session_id"].as_str().unwrap())
+        .unwrap();
     assert_eq!(
         session.token_calibration.unwrap().ratio,
         1.0,

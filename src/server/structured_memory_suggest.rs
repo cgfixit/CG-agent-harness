@@ -54,7 +54,6 @@ struct Job {
     input: String,
     output: String,
     created: Instant,
-    chat_epoch: u64,
 }
 
 #[derive(Default)]
@@ -62,7 +61,7 @@ struct Queue {
     jobs: VecDeque<Job>,
     worker: bool,
     running_owner: Option<String>,
-    chat_epoch: u64,
+    running_chat_cancelled: bool,
 }
 
 #[derive(Default)]
@@ -97,10 +96,12 @@ pub fn status(state: &AppState, owner: &str) -> Value {
     })
 }
 
-pub fn clear_chat_queue(state: &AppState) {
+pub fn clear_chat_queue(state: &AppState, owner: &str) {
     let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
-    queue.jobs.retain(|j| j.source != Source::Chat);
-    queue.chat_epoch = queue.chat_epoch.wrapping_add(1);
+    queue.jobs.retain(|j| j.source != Source::Chat || j.owner != owner);
+    if queue.running_owner.as_deref() == Some(owner) {
+        queue.running_chat_cancelled = true;
+    }
 }
 
 /// Called only after a successful durable chat exchange or completed coding outcome.
@@ -156,7 +157,6 @@ pub fn enqueue(
         Ok(episode) => episode.id,
         Err(err) => return json!({"queued":false,"reason":err.code}),
     };
-    let epoch = queue.chat_epoch;
     queue.jobs.push_back(Job {
         owner: owner.into(),
         episode: episode.clone(),
@@ -164,7 +164,6 @@ pub fn enqueue(
         input,
         output,
         created: Instant::now(),
-        chat_epoch: epoch,
     });
     if !queue.worker {
         queue.worker = true;
@@ -215,6 +214,7 @@ async fn worker(state: Arc<AppState>) {
             };
             let job = queue.jobs.pop_front().expect("nonempty queue");
             queue.running_owner = Some(job.owner.clone());
+            queue.running_chat_cancelled = false;
             (job, gate)
         };
         let (job, _gate) = job;
@@ -251,8 +251,7 @@ fn chat_cleared(state: &AppState, job: &Job) -> bool {
             .0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .chat_epoch
-            != job.chat_epoch
+            .running_chat_cancelled
 }
 
 async fn generate(state: &AppState, job: &Job) -> Result<()> {
@@ -317,7 +316,7 @@ async fn generate(state: &AppState, job: &Job) -> Result<()> {
             store.limits().min_consolidation_confidence,
         );
         let queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
-        if job.source == Source::Chat && queue.chat_epoch != job.chat_epoch {
+        if job.source == Source::Chat && queue.running_chat_cancelled {
             return Err(HarnessError::new("SUGGESTION_CANCELLED", "chat cleared"));
         }
         store.finish_consolidation_run(

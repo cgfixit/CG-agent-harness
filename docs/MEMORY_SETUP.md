@@ -204,7 +204,7 @@ To stop all derived capture while keeping manual facts, also close
 `/memory capture off`. To avoid opening structured storage entirely, set
 `enabled: false` and restart. Existing files are not deleted. **These settings do
 not disable ordinary chat-history saving:** successful exchanges still persist
-in shared `sessions/*.json` and bounded recent messages are used for the next
+in account-owned `sessions/*.json` and bounded recent messages are used for the next
 chat in that session. There is no structured-memory flag for disabling that
 session persistence. `/clear` clears the display; Sessions Clear has its separate
 deletion flow. It cancels waiting/in-flight chat suggestions but keeps existing
@@ -231,7 +231,7 @@ not a silent empty inject.
 **Force-include one prompt.** `/memory retrieve <query>`, or `retrieve: true`
 with optional `retrieve_query` on `/api/chat` and `/api/prompt/preview`. That
 flag is the explicit pick for that request: bounded FTS, recheck survivors,
-inject under the Phase 4 budget. Hits do not stick on the shared session.
+inject under the Phase 4 budget. Hits do not stick on the owned session.
 
 **Prompt budget.** Combined pinned-note + selected-fact body is 3000 characters
 (`structured_memory.pinned_prompt_chars` / `selected_fact_prompt_chars`, default

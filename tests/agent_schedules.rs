@@ -26,6 +26,15 @@ async fn staged_request(s: &TestServer) -> serde_json::Value {
     req
 }
 
+async fn preview_body(s: &TestServer, req: serde_json::Value) -> serde_json::Value {
+    let mut body = json!({"interval_secs":60,"request":req});
+    let (status, preview) = s.post_json("/api/agent/schedules/preview", body.clone()).await;
+    assert_eq!(status, 200, "{preview}");
+    assert_eq!(preview["occurrences"].as_array().unwrap().len(), 5);
+    body["preview_id"] = preview["preview_id"].clone();
+    body
+}
+
 #[tokio::test]
 async fn unreviewed_and_unbound_schedules_fail_closed() {
     let model = start_mock_model().await;
@@ -59,24 +68,26 @@ async fn one_minute_schedule_fires_once_across_restart_and_audits() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let req = staged_request(&s).await;
-    let (status, created) = s
-        .post_json("/api/agent/schedules", json!({"interval_secs": 60, "request": req}))
-        .await;
+    let (status, created) = s.post_json("/api/agent/schedules", preview_body(&s, req).await).await;
     assert_eq!(status, 201, "{created}");
     let schedule_id = created["schedule_id"].as_str().unwrap().to_string();
     let t0 = created["created_at"].as_f64().unwrap();
     cgagentharness::server::routes::agent::tick_schedules(&s.state, t0 + 30.0).await;
-    assert!(s.state.jobs.list().is_empty(), "mid-window must not fire");
+    assert!(s.state.jobs.list("local").is_empty(), "mid-window must not fire");
     let recovered = cgagentharness::server::agent_schedules::ScheduleStore::open(
         &s.home.join("data/agentic/console-schedules.json"),
     )
     .unwrap();
     assert!(recovered.due(t0 + 30.0).is_empty());
     cgagentharness::server::routes::agent::tick_schedules(&s.state, t0 + 60.0).await;
-    assert_eq!(s.state.jobs.list().len(), 1, "first due occurrence fires");
+    assert_eq!(s.state.jobs.list("local").len(), 1, "first due occurrence fires");
     cgagentharness::server::routes::agent::tick_schedules(&s.state, t0 + 60.0).await;
-    assert_eq!(s.state.jobs.list().len(), 1, "same occurrence must not double-fire");
-    let job_id = s.state.jobs.list()[0]["job_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        s.state.jobs.list("local").len(),
+        1,
+        "same occurrence must not double-fire"
+    );
+    let job_id = s.state.jobs.list("local")[0]["job_id"].as_str().unwrap().to_string();
     let job = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             let (_, j) = s.get_json(&format!("/api/agent/jobs/{job_id}")).await;
@@ -100,7 +111,7 @@ async fn one_minute_schedule_fires_once_across_restart_and_audits() {
         .await;
     assert_eq!(status, 200, "{cancelled}");
     cgagentharness::server::routes::agent::tick_schedules(&s.state, t0 + 120.0).await;
-    assert_eq!(s.state.jobs.list().len(), 1, "cancelled schedule must not fire");
+    assert_eq!(s.state.jobs.list("local").len(), 1, "cancelled schedule must not fire");
     let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
     assert!(audit.contains("agent_schedule_created"), "{audit}");
     assert!(audit.contains("agent_schedule_start"), "{audit}");
@@ -116,9 +127,7 @@ async fn schedule_create_list_cancel_round_trip() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let req = staged_request(&s).await;
-    let (status, created) = s
-        .post_json("/api/agent/schedules", json!({"interval_secs": 60, "request": req}))
-        .await;
+    let (status, created) = s.post_json("/api/agent/schedules", preview_body(&s, req).await).await;
     assert_eq!(status, 201, "{created}");
     let id = created["schedule_id"].as_str().unwrap();
     let (status, listed) = s.get_json("/api/agent/schedules").await;
@@ -135,4 +144,38 @@ async fn schedule_create_list_cancel_round_trip() {
         s.get_json(&format!("/api/agent/schedules/{id}")).await.1["status"],
         "cancelled"
     );
+}
+
+#[tokio::test]
+async fn cron_activation_requires_exact_fresh_single_use_preview_and_retains_fire_gates() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let req = staged_request(&s).await;
+    let mut body = json!({"schema_version":1,"schedule":{"kind":"cron","expression":"*/5 * * * *","timezone":"UTC"},"request":req});
+    assert_eq!(s.post_json("/api/agent/schedules", body.clone()).await.0, 400);
+    let (status, preview) = s.post_json("/api/agent/schedules/preview", body.clone()).await;
+    assert_eq!(status, 200, "{preview}");
+    assert!(s.state.schedules.list("local").is_empty());
+    body["preview_id"] = preview["preview_id"].clone();
+    let mut changed = body.clone();
+    changed["schedule"]["timezone"] = json!("America/New_York");
+    assert_eq!(s.post_json("/api/agent/schedules", changed).await.0, 400);
+    let (status, created) = s.post_json("/api/agent/schedules", body.clone()).await;
+    assert_eq!(status, 201, "{created}");
+    assert_eq!(created["next_fire_at"], preview["occurrences"][0]["at"]);
+    assert_eq!(created["next_occurrence_id"], preview["occurrences"][0]["identity"]);
+    assert_eq!(s.post_json("/api/agent/schedules", body).await.0, 400);
+    let next = created["next_fire_at"].as_f64().unwrap();
+    // Existing process-wide gate prohibits overlap; occurrence is consumed.
+    let held = s.state.agent_run_gate.claim("overlap-fixture").unwrap();
+    cgagentharness::server::routes::agent::tick_schedules(&s.state, next).await;
+    assert!(s.state.jobs.list("local").is_empty());
+    drop(held);
+    cgagentharness::server::routes::agent::tick_schedules(&s.state, next).await;
+    assert!(
+        s.state.jobs.list("local").is_empty(),
+        "busy occurrences are skipped, never retried"
+    );
+    let id = created["schedule_id"].as_str().unwrap();
+    assert!(s.state.schedules.get("local", id).unwrap().next_fire_at > next);
 }

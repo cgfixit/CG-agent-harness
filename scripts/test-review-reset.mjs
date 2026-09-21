@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const html = readFileSync(process.env.CGAH_CONSOLE || new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 const source = (start, end) => html.slice(html.indexOf(start), html.indexOf(end));
 const nodes = new Map(), messages = [], calls = [];
-let analyticsClears = 0;
+let analyticsClears = 0, scheduleClears = 0, notificationClears = 0;
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {value:'', files:[], textContent:'', replaceChildren(){this.textContent='';}, addEventListener(event, handler){this[event]=handler;}});
   return nodes.get(id);
@@ -16,6 +16,7 @@ const context = vm.createContext({
   reviewRevision:0, sessionRevision:1, sessionClearing:false, agentWatchGeneration:0,
   pendingAgentRun:null, shownAgentDiffs:new Map(), reviewedSoulProposal:null,
   currentSession:'fixture-session', sessionGoal:'fixture goal', promptHistory:{},
+  input:node('input'), loopAuto:false, retryAttachmentIds:null, stopLoop(){}, paintGoalLoop(){}, resetScheduleReview(){++scheduleClears;}, resetNotificationView(){++notificationClears;},
   currentStyle:'off', currentStyleIssue:null, inflightChat:null, sendBtn:{disabled:false},
   isLoopStopCommand:()=>false, AGENT_CLI_TIMEOUT_MS:100, sys:text=>messages.push(text), table:rows=>JSON.stringify(rows),
   abortInflightSearch(){}, clearPendingAttachments(){}, clearSpend(){}, clearAnalytics(){++analyticsClears;}, paintStyle(){},
@@ -44,6 +45,11 @@ const reset = () => {
 seed(); context.clearTranscript(); reset();
 seed(); await context.hAuthLogout.click(); reset();
 assert.equal(analyticsClears, 1, 'logout must invalidate analytics');
+assert.equal(scheduleClears, 2, 'clear transcript and logout must invalidate schedule review');
+assert.equal(notificationClears, 2, 'clear transcript and logout must invalidate delivery rows');
+assert.equal(context.currentSession,null);
+assert.equal(context.sessionGoal,'');
+assert.equal(context.input.value,'');
 context.respond = () => {throw new Error('hidden reviews must refuse before any request');};
 calls.length=0;
 for (const line of ['/agent confirm reason','/agent publish run reason','/soul apply proposal reason']) await context.runSlash(line);

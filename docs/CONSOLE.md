@@ -19,7 +19,7 @@ Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [
 
 | Capability | How it works |
 |---|---|
-| Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear all session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
+| Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear my session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
 | Persona, memory and prompt context | Inspect `/prompt`, edit or review proposals for shared `soul.md`, select per-session prompt skills, and save literal operator notes with `/memory`. `/memory on` includes those notes only. Optional structured facts, governed proposals, bounded episodes, facts-only FTS, and manual consolidation (#87) are a separate account-private store with gates on in fresh configuration; models may suggest, not silently write. Search is not inject. Facts enter `/prompt` only after an explicit pick (`selected_facts`, `/memory retrieve`, or `retrieve`) or the separately gated `auto_retrieval` path. Episodes are never injected. Manual consolidation writes pending proposals only. Chat explains these controls; the operator executes them. |
 | Chat model selection | Select an exact installed local model tag, or explicitly select `grok` / `claude` after an administrator saves the matching provider key and restarts. Cloud chat sends only the newly typed message; local history, memory, skills and web context stay local. |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
@@ -79,11 +79,12 @@ other accounts cannot inherit that selection. The reset controls have different 
 |---|---|---|
 | Clear the visible output | `/clear` | Saved messages, session ID and goal remain; later chat still receives recent history. Hidden staged reviews and loop state clear. |
 | Start a separate conversation | **+ new session** or `/session new <title>` | Old sessions, shared persona/notes/model selection, and your account's web selection remain. |
-| Delete all saved conversations | **Clear all session history**, immediately below **+ new session** | Shared notes/persona/web, model configuration, coding runs and audit records remain. |
+| Delete my saved conversations | **Clear my session history**, immediately below **+ new session** | Shared notes/persona/web, model configuration, coding runs and audit records remain. |
 
-For deletion, read the dialog, then choose **Delete all session history** to confirm
-or **Cancel** to keep the sessions. Confirmation stops active chat, deletes saved
+For deletion, read the dialog, then choose **Delete my session history** to confirm
+or **Cancel** to keep the sessions. Confirmation stops your active chat, deletes your saved
 session files/goals/skill selections/token totals and clears the visible conversation.
+Other accounts, unassigned legacy records and unreadable files are retained.
 A late response cannot recreate a deleted session. Send a new message or use
 `/session new` afterward. A storage failure is reported and may leave a partial
 deletion; resolve the reported storage problem before retrying.
@@ -92,10 +93,11 @@ This is file deletion, not secure disk erasure. Backups, copies retained by your
 model service, and transcript content already loaded in other open clients are
 outside its scope. Close or refresh those clients separately.
 
-The session store retains at most 500 messages per conversation. Normal chat sends
-at most the latest 20 prior messages within 8,000 characters; loop turns use eight
-within 4,000 characters. These are message counts, not user/assistant pairs.
-Stored history and lifetime token totals can therefore exceed what the model sees.
+The session store retains at most 500 messages per conversation. Local prompt
+history uses that retained window; compaction reduces overflow against the
+configured token budget while preserving the goal and recent messages. There is
+no separate 20-message/8,000-character history clip. Stored token totals can
+therefore exceed the compacted context sent to the model.
 
 Runtime `sessions/` directories, named `.CGagentHarness/` homes and dotenv files
 are Git-ignored in this repository. Avoid `git add -f` for private files: ignore

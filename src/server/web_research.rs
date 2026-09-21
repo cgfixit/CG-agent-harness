@@ -45,6 +45,11 @@ impl ResearchState {
         Ok(ResearchLease { state: self, token })
     }
     pub fn cancel(&self, owner: &str) -> Result<bool> {
+        self.cancel_with(owner, || {})
+    }
+    /// Keep the owner lease locked until provider cancellation is signalled.
+    /// A subsequent owner cannot start between the check and global abort.
+    pub(crate) fn cancel_with(&self, owner: &str, abort: impl FnOnce()) -> Result<bool> {
         let active = self
             .0
             .lock()
@@ -54,6 +59,7 @@ impl ResearchState {
                 return Err(error("WEB_PERMISSION_DENIED", "research belongs to another account"));
             }
             token.cancel();
+            abort();
             return Ok(true);
         }
         Ok(false)

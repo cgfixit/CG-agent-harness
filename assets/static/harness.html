@@ -132,6 +132,12 @@
   .sess-item .m { font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); }
 
   .reg-entry { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .legacy-session { display: grid; gap: 10px; padding: 12px 8px; }
+  .legacy-session label { display: block; font-size: 12px; }
+  .legacy-session input:not([type=checkbox]) { display: block; width: 100%; margin-top: 5px; padding: 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); }
+  .legacy-session input[type=checkbox] { margin-right: 6px; }
+  .legacy-session button { padding: 8px; border: 1px solid var(--accent-amber); border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; }
+  .legacy-session button:disabled { opacity: .6; cursor: wait; }
   .reg-entry .n { font-family: var(--mono); font-size: 11px; color: var(--accent-green); }
   .reg-entry .n.catalog { color: var(--accent-purple); }
   .reg-entry .d { font-size: 10.5px; color: var(--text-secondary); }
@@ -317,6 +323,17 @@
 #spendDialog table { width:100%;border-collapse:collapse;text-align:left; }
 #spendDialog th, #spendDialog td { padding:8px;border-bottom:1px solid var(--border); }
 #spendDialog td { overflow-wrap:anywhere; }
+:is(#scheduleDialog, #notificationDialog) { margin:auto; width:min(760px,94vw); max-height:88vh; overflow:auto; padding:24px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); border-radius:10px; }
+:is(#scheduleDialog, #notificationDialog)::backdrop { background:#0009; }
+:is(#scheduleDialog, #notificationDialog) h2, :is(#scheduleDialog, #notificationDialog) h3, :is(#scheduleDialog, #notificationDialog) p { margin-bottom:12px; }
+:is(#scheduleDialog, #notificationDialog) label { display:block; margin:12px 0; }
+:is(#scheduleDialog, #notificationDialog) input:not([type=checkbox]), :is(#scheduleDialog, #notificationDialog) select { background:var(--bg-secondary); color:inherit; border:1px solid var(--border); padding:7px; border-radius:4px; max-width:100%; width: min(420px,100%); }
+:is(#scheduleDialog, #notificationDialog) button { padding:8px 12px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:4px; cursor:pointer; }
+:is(#scheduleDialog, #notificationDialog) button:disabled { opacity:.45; cursor:default; }
+:is(#scheduleDialog, #notificationDialog) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
+:is(#scheduleDialog, #notificationDialog) pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; padding:12px; border:1px solid var(--border); }
+:is(#scheduleDialog, #notificationDialog) ol { padding-left:24px; margin:12px 0; }
+.schedule-row { border-top:1px solid var(--border); padding:12px 0; overflow-wrap:anywhere; }
 #sessionClearDialog { max-width:520px; }
 #sessionClearDialog button { padding:8px 12px; margin-right:8px; }
 #sessionClearConfirm { color:var(--accent-red); }
@@ -391,10 +408,12 @@
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
       </span>
       <button class="toggle" id="openAnalytics" type="button">Analytics</button>
+      <button class="toggle" id="openDeliveries" type="button">Deliveries</button>
+      <button class="toggle" id="openSchedules" type="button">Schedules</button>
       <button class="toggle" id="openSpend" type="button">Spend</button>
       <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
       <div class="pill model">model <b id="hModel">…</b></div>
-      <div class="pill" title="Total tokens across all saved sessions">all sessions · tokens <b id="hTokens">0</b></div>
+      <div class="pill" title="Total tokens across your saved sessions">your sessions · tokens <b id="hTokens">0</b></div>
       <div class="dot" id="hDot" title="server status"></div>
     </div>
   </div>
@@ -478,7 +497,7 @@
   <button id="spendNext" type="button">Next</button>
 </dialog>
 <dialog id="analyticsDialog" aria-labelledby="analyticsTitle" aria-describedby="analyticsDescription">
-  <div class="analytics-header"><div><h2 id="analyticsTitle">Analytics</h2><p id="analyticsDescription">Session, token and code history · shared on this machine</p></div>
+  <div class="analytics-header"><div><h2 id="analyticsTitle">Analytics</h2><p id="analyticsDescription">Your session history · shared spend and coding-run history</p></div>
     <div><button id="refreshAnalytics" type="button">Refresh</button> <button id="closeAnalytics" type="button" autofocus>Close</button></div></div>
   <div class="analytics-body">
     <p id="analyticsStatus" role="status" aria-live="polite"></p>
@@ -509,6 +528,31 @@
     <div class="analytics-pager"><button id="analyticsPrevious" type="button" disabled>Previous</button><span id="analyticsPage" role="status" aria-live="polite"></span><button id="analyticsNext" type="button" disabled>Next</button></div>
   </div>
 </dialog>
+<dialog id="scheduleDialog" aria-labelledby="scheduleTitle" aria-describedby="scheduleHelp">
+  <h2 id="scheduleTitle">Your schedules</h2>
+  <button id="closeSchedules" type="button" autofocus>Close</button><button id="refreshSchedules" type="button">Refresh schedules</button>
+  <p id="scheduleHelp">Stage a session goal with /goal stage &lt;branch&gt;, then review its request below. Each occurrence rechecks account authority, the reviewed goal, budgets and execution gates.</p>
+  <h3>New schedule</h3>
+  <pre id="scheduleRequest">No reviewed goal staged.</pre>
+  <label>Repeat <select id="scheduleKind"><option value="interval">Interval</option><option value="cron">Cron calendar</option></select></label>
+  <label id="scheduleIntervalLabel">Interval seconds <input id="scheduleSeconds" type="number" min="60" max="604800" value="3600"></label>
+  <div id="scheduleCronFields" hidden><label>Cron expression <input id="scheduleExpression" value="0 9 * * MON-FRI" maxlength="256"></label><label>Timezone <input id="scheduleTimezone" value="UTC" maxlength="64"></label>
+    <p>Five fields: minute, hour, day of month, month, weekday. Sunday is 0 or 7; names are accepted. Day of month or weekday must be *. Use an IANA zone such as America/New_York.</p></div>
+  <label>Reason <input id="scheduleReason" maxlength="1000" placeholder="Why should this reviewed goal recur?"></label>
+  <label><input type="checkbox" id="scheduleConfirm"> I reviewed this goal request and authorize recurring attempts under the existing gates.</label>
+  <button id="previewSchedule" type="button">Preview next 5</button><button id="activateSchedule" type="button" disabled>Activate previewed schedule</button>
+  <p id="scheduleStatus" role="status" aria-live="polite"></p><ol id="scheduleOccurrences" aria-label="Upcoming occurrences"></ol>
+  <p>Times include their UTC offset. Missed, overlapping and nonexistent local occurrences are skipped. Repeated wall times run at most once. Restart can miss a run; delivery is not guaranteed.</p>
+  <h3>Saved schedules</h3><div id="scheduleRows"></div>
+</dialog>
+<dialog id="notificationDialog" aria-labelledby="notificationTitle">
+  <h2 id="notificationTitle">Your completion deliveries</h2>
+  <button id="closeDeliveries" type="button" autofocus>Close</button><button id="refreshDeliveries" type="button">Refresh status</button>
+  <p>Metadata-only notifications for your terminal coding jobs. A replay resends the same delivery ID and never reruns the job. Receivers must deduplicate IDs.</p>
+  <p>Destinations and subscriptions require explicit owner-bound configuration in the private home's config.yaml and a restart. Pending attempts recheck grants and account authority; this panel grants no new destination.</p>
+  <p id="notificationStatus" role="status" aria-live="polite"></p>
+  <div id="notificationDestinations"></div><div id="notificationRows"></div>
+</dialog>
 <dialog id="passwordDialog" aria-labelledby="passwordTitle">
   <h2 id="passwordTitle">Change your password</h2>
   <p id="passwordHelp">Enter your current password and a new password of at least 12 characters.</p>
@@ -521,12 +565,12 @@
   </form>
 </dialog>
 <dialog id="sessionClearDialog" aria-labelledby="sessionClearTitle" aria-describedby="sessionClearDescription">
-  <h2 id="sessionClearTitle">Clear all session history?</h2>
-  <p id="sessionClearDescription">Permanently delete every saved chat session, including messages, titles, goals, selected skills and token totals. This cannot be undone.</p>
-  <p>Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless you also confirm the cascade below. Facts and proposals are never cleared here. Active chat will stop.</p>
+  <h2 id="sessionClearTitle">Clear my session history?</h2>
+  <p id="sessionClearDescription">Permanently delete your saved chat sessions, including messages, titles, goals, selected skills and token totals. Other accounts and unassigned legacy sessions are retained. This cannot be undone.</p>
+  <p>Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless you also confirm the cascade below. Facts and proposals are never cleared here. Your active chat will stop.</p>
   <p><label><input type="checkbox" id="sessionClearDerivedEpisodes"> Also delete this account's derived episodes that are not referenced by a pending proposal</label></p>
   <button id="sessionClearCancel" autofocus>Cancel</button>
-  <button id="sessionClearConfirm">Delete all session history</button>
+  <button id="sessionClearConfirm">Delete my session history</button>
   <p id="sessionClearFeedback" role="status"></p>
 </dialog>
 
@@ -1185,7 +1229,7 @@ function paintMemory() {
    takes a ticket from the one `styleRequestSeq` generation; a reply whose
    ticket is no longer the latest is discarded, whichever kind it is, so an
    older read can never repaint over a newer read or a confirmed write.
-   Sessions are shared portal resources: the catalog (an operator can add or
+   The style catalog is shared (an operator can add or
    remove `$CGAGENTHARNESS_HOME/styles/<name>.md` while the console is
    open) and the open session's selection may both change underneath the
    console, so each poll re-reads them. */
@@ -1277,12 +1321,51 @@ async function refreshSessions() {
   pane.appendChild(add);
   const clear = document.createElement('button');
   clear.id = 'clearSessionHistory'; clear.className = 'cmd-item';
-  clear.textContent = 'Clear all session history';
+  clear.textContent = 'Clear my session history';
   clear.addEventListener('click', () => {
     $('sessionClearFeedback').textContent = '';
     $('sessionClearDialog').showModal();
   });
   pane.appendChild(clear);
+  const legacy = document.createElement('button'); legacy.className = 'cmd-item';
+  legacy.textContent = 'Review unassigned legacy sessions (admin)';
+  const legacyRows = document.createElement('div');
+  legacy.addEventListener('click', async () => {
+    legacy.disabled = true; legacyRows.replaceChildren();
+    try {
+      const result = await api('/api/sessions/legacy');
+      if (revision !== sessionRevision || !legacyRows.isConnected) return;
+      const note = document.createElement('p');
+      note.textContent = 'These sessions predate account ownership. Adoption moves one into your account and clears its coding approval. Other accounts cannot read it. No sharing or owner reassignment is automatic.';
+      legacyRows.appendChild(note);
+      if (!result.sessions.length) note.textContent = 'No unassigned legacy sessions.';
+      for (const item of result.sessions) {
+        const form = document.createElement('form'); form.className = 'reg-entry legacy-session';
+        const title = document.createElement('p'); title.textContent = item.title + ' · ' + item.session_id;
+        const reasonLabel = document.createElement('label'); reasonLabel.textContent = 'Reason for adoption';
+        const reason = document.createElement('input'); reason.required = true; reason.maxLength = 512;
+        reasonLabel.appendChild(reason);
+        const confirmLabel = document.createElement('label');
+        const confirm = document.createElement('input'); confirm.type = 'checkbox'; confirm.required = true;
+        confirmLabel.append(confirm, document.createTextNode(' I am authorized to adopt this legacy session into my account.'));
+        const adopt = document.createElement('button'); adopt.type = 'submit'; adopt.textContent = 'Adopt into my account';
+        const feedback = document.createElement('p'); feedback.setAttribute('role', 'status');
+        form.append(title, reasonLabel, confirmLabel, adopt, feedback);
+        form.addEventListener('submit', async event => {
+          event.preventDefault();
+          if (revision !== sessionRevision || !confirm.checked || !reason.value.trim()) return;
+          adopt.disabled = true;
+          try {
+            await api('/api/sessions/' + encodeURIComponent(item.session_id) + '/adopt', 'POST', {confirm:true, reason:reason.value.trim()});
+            if (revision === sessionRevision) await refreshSessions();
+          } catch (error) { feedback.textContent = error.message; adopt.disabled = false; }
+        });
+        legacyRows.appendChild(form);
+      }
+    } catch (error) { if (revision === sessionRevision) legacyRows.textContent = error.message; }
+    finally { legacy.disabled = false; }
+  });
+  pane.append(legacy, legacyRows);
   data.sessions.forEach(s => {
     const el = document.createElement('div');
     el.className = 'sess-item' + (s.session_id === currentSession ? ' current' : '');
@@ -1636,6 +1719,8 @@ function clearTranscript() {
   // Hidden reviews must not remain armed after their display is cleared.
   pendingAgentRun = null;
   reviewedSoulProposal = null;
+  resetScheduleReview(true);
+  resetNotificationView();
 }
 
 $('sessionClearCancel').addEventListener('click', () => $('sessionClearDialog').close());
@@ -1652,7 +1737,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     const deleteDerived = !!$('sessionClearDerivedEpisodes').checked;
     const cleared = await api('/api/sessions/clear', 'POST', {
       confirm:true,
-      reason:'Operator confirmed Clear all session history',
+      reason:'Operator confirmed Clear my session history',
       delete_derived_episodes: deleteDerived
     });
     clearTranscript();
@@ -1672,7 +1757,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     const blobs = cleanup && cleanup.error
       ? (' Attachment cleanup incomplete: ' + String(cleanup.retained || 0) + ' blob(s) could not be removed (' + cleanup.error + ') and still count toward the quota; they are retried at the next server start.')
       : '';
-    sys('All saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept + blobs);
+    sys('Your saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept + blobs);
   } catch (e) {
     $('sessionClearFeedback').textContent = e.message || String(e);
   } finally {
@@ -2504,7 +2589,7 @@ async function runSlash(line) {
           break;
         }
         /* The style row must reflect the persisted state: settle queued
-           style writes and re-read the open session's shared selection. */
+           style writes and re-read the open session's selection. */
         await awaitStyleWrites();
         await refreshStyle(); paintStyle();
         sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider],
@@ -3211,6 +3296,146 @@ async function refreshSpend() {
     if (request === spendRequest && $('spendDialog').open) $('spendStatus').textContent = 'Spend unavailable: ' + e.message;
   }
 }
+/* ── owner-scoped delivery status and explicit replay ── */
+let notificationRevision = 0;
+function resetNotificationView() {
+  ++notificationRevision; $('notificationDialog').close();
+  $('notificationRows').replaceChildren(); $('notificationDestinations').replaceChildren(); $('notificationStatus').textContent='';
+}
+async function refreshDeliveries(message = '') {
+  const revision=++notificationRevision, session=sessionRevision;
+  const current=()=>revision===notificationRevision && session===sessionRevision && $('notificationDialog').open;
+  $('notificationStatus').textContent='Loading delivery status…';
+  try {
+    const data=await api('/api/notifications'); if(!current()) return;
+    $('notificationRows').replaceChildren(); $('notificationDestinations').replaceChildren();
+    $('notificationStatus').textContent=typeof message==='string' && message ? message : data.enabled ? 'Retained delivery metadata. In-flight requests may finish after a grant is revoked.' : 'Completion delivery is disabled. No outbound worker is running.';
+    for(const destination of data.destinations) {
+      const row=document.createElement('p');row.textContent=destination.id+' · '+(destination.authorized_now?'authorized':'disabled or revoked')+' · '+destination.events.join(', ')+' · '+destination.rate_per_minute+' batches/minute';$('notificationDestinations').append(row);
+    }
+    if(data.enabled && !data.deliveries.length) $('notificationRows').textContent='No retained deliveries for this account.';
+    for(const delivery of data.deliveries) {
+      const row=document.createElement('div');row.className='schedule-row';
+      const title=document.createElement('p');title.textContent=delivery.destination_id+' · '+delivery.state+' · job '+delivery.job_status+' · attempts '+delivery.attempts+' · replays '+delivery.replays;
+      const ids=document.createElement('p');ids.textContent='Job '+delivery.job_id+' · Delivery '+delivery.delivery_id;
+      row.append(title);row.append(ids);
+      if(delivery.last_code){const error=document.createElement('p');error.textContent='Last result: '+delivery.last_code;row.append(error);}
+      if(['failed','delivered'].includes(delivery.state)) {
+        const reasonLabel=document.createElement('label');reasonLabel.textContent='Replay reason ';const reason=document.createElement('input');reason.maxLength=1000;reason.placeholder='Why resend this notification?';reasonLabel.append(reason);
+        const confirmLabel=document.createElement('label');const confirm=document.createElement('input');confirm.type='checkbox';confirmLabel.append(confirm);confirmLabel.append(document.createTextNode(' I authorize resending this metadata with its existing delivery ID.'));
+        const button=document.createElement('button');button.type='button';button.textContent='Replay delivery';
+        button.addEventListener('click',async()=>{
+          if(!current()) return;
+          if(!confirm.checked||!reason.value.trim()){ $('notificationStatus').textContent='Enter a replay reason and explicitly confirm this delivery.';return; }
+          button.disabled=true;
+          try {
+            await api('/api/notifications/'+encodeURIComponent(delivery.delivery_id)+'/replay','POST',{reason:reason.value.trim(),confirm:confirm.checked});
+            if(current()) await refreshDeliveries('Delivery queued for replay. The coding job was not restarted.');
+          } catch(e){if(current()){$('notificationStatus').textContent=e.message;button.disabled=false;}}
+        });row.append(reasonLabel);row.append(confirmLabel);row.append(button);
+      }
+      $('notificationRows').append(row);
+    }
+  } catch(e){if(current()){$('notificationRows').replaceChildren();$('notificationDestinations').replaceChildren();$('notificationStatus').textContent=e.message;}}
+}
+$('openDeliveries').addEventListener('click',()=>{$('notificationDialog').showModal();refreshDeliveries();});
+$('closeDeliveries').addEventListener('click',resetNotificationView);
+$('notificationDialog').addEventListener('cancel',resetNotificationView);
+$('refreshDeliveries').addEventListener('click',refreshDeliveries);
+
+/* ── owned schedule preview and activation ── */
+let scheduleReview = null, scheduleRevision = 0, scheduleListRevision = 0;
+function resetScheduleReview(close = false) {
+  ++scheduleRevision; scheduleReview = null;
+  $('activateSchedule').disabled = true;
+  $('scheduleOccurrences').replaceChildren();
+  $('scheduleStatus').textContent = '';
+  if (close) {
+    $('scheduleDialog').close(); $('scheduleRows').replaceChildren();
+    $('scheduleRequest').textContent = 'No reviewed goal staged.';
+    $('scheduleReason').value = ''; $('scheduleConfirm').checked = false;
+    $('scheduleKind').value = 'interval';
+    for (const id of ['scheduleSeconds','scheduleExpression','scheduleTimezone']) $(id).value = $(id).defaultValue;
+    $('scheduleIntervalLabel').hidden = false; $('scheduleCronFields').hidden = true;
+  }
+}
+function scheduleBody() {
+  if (!pendingAgentRun || !pendingAgentRun.goal_stage) throw new Error('Stage and review a session goal first with /goal stage <branch>.');
+  const reason = $('scheduleReason').value.trim();
+  if (!reason || !$('scheduleConfirm').checked) throw new Error('Enter a reason and explicitly confirm the reviewed request.');
+  const schedule = $('scheduleKind').value === 'cron'
+    ? {kind:'cron',expression:$('scheduleExpression').value.trim(),timezone:$('scheduleTimezone').value.trim() || 'UTC'}
+    : {kind:'interval',seconds:Number($('scheduleSeconds').value)};
+  return {schema_version:1,schedule,request:{...pendingAgentRun,reason,confirm:$('scheduleConfirm').checked}};
+}
+async function refreshSchedules() {
+  const revision = sessionRevision, dialogRevision = ++scheduleListRevision;
+  try {
+    const data = await api('/api/agent/schedules');
+    if (revision !== sessionRevision || dialogRevision !== scheduleListRevision || !$('scheduleDialog').open) return;
+    const rows = $('scheduleRows'); rows.replaceChildren();
+    if (!data.schedules.length) { rows.textContent = 'No schedules for this account.'; return; }
+    for (const row of data.schedules) {
+      const item = document.createElement('div'); item.className = 'schedule-row';
+      const label = document.createElement('p');
+      const spec = row.schedule || {kind:'interval',seconds:row.interval_secs};
+      const cadence = spec.kind === 'cron' ? spec.expression + ' · ' + spec.timezone : 'Every ' + spec.seconds + ' seconds';
+      label.textContent = cadence + ' · ' + row.status + '\nNext UTC: ' + new Date(row.next_fire_at * 1000).toISOString() + '\n' + row.schedule_id + (row.last_dispatch ? '\nLast occurrence: ' + row.last_dispatch : '');
+      item.append(label);
+      if (row.status === 'active') {
+        const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel schedule';
+        cancel.addEventListener('click', async () => {
+          if (revision !== sessionRevision || dialogRevision !== scheduleListRevision) return;
+          cancel.disabled = true;
+          try { await api('/api/agent/schedules/' + encodeURIComponent(row.schedule_id) + '/cancel','POST',{}); if (revision === sessionRevision && dialogRevision === scheduleListRevision) { $('scheduleStatus').textContent = 'Schedule cancelled. Already-started jobs have a separate cancellation control.'; await refreshSchedules(); } }
+          catch (e) { if (revision === sessionRevision && dialogRevision === scheduleListRevision) { $('scheduleStatus').textContent = e.message; cancel.disabled = false; } }
+        });
+        item.append(cancel);
+      }
+      rows.append(item);
+    }
+  } catch (e) { if (revision === sessionRevision && dialogRevision === scheduleListRevision) $('scheduleStatus').textContent = e.message; }
+}
+$('openSchedules').addEventListener('click', () => {
+  resetScheduleReview(); $('scheduleConfirm').checked = false;
+  $('scheduleRequest').textContent = pendingAgentRun && pendingAgentRun.goal_stage ? JSON.stringify(pendingAgentRun,null,2) : 'No reviewed goal staged. Use /goal stage <branch>.';
+  $('scheduleDialog').showModal(); refreshSchedules();
+});
+$('closeSchedules').addEventListener('click', () => { resetScheduleReview(); $('scheduleDialog').close(); });
+$('scheduleDialog').addEventListener('cancel', () => resetScheduleReview());
+$('refreshSchedules').addEventListener('click', refreshSchedules);
+for (const id of ['scheduleKind','scheduleSeconds','scheduleExpression','scheduleTimezone','scheduleReason','scheduleConfirm']) {
+  $(id).addEventListener('input', () => {
+    resetScheduleReview();
+    const cron = $('scheduleKind').value === 'cron';
+    $('scheduleIntervalLabel').hidden = cron; $('scheduleCronFields').hidden = !cron;
+  });
+}
+$('previewSchedule').addEventListener('click', async () => {
+  resetScheduleReview(); const revision = scheduleRevision, session = sessionRevision, review = reviewRevision;
+  try {
+    const body = scheduleBody();
+    const result = await api('/api/agent/schedules/preview','POST',body);
+    if (revision !== scheduleRevision || session !== sessionRevision || review !== reviewRevision || !$('scheduleDialog').open || JSON.stringify(body) !== JSON.stringify(scheduleBody())) return;
+    scheduleReview = {body,id:result.preview_id,expires:result.expires_at,revision:session,review};
+    for (const occurrence of result.occurrences) { const li = document.createElement('li'); li.textContent = occurrence.local_time + ' · UTC ' + new Date(occurrence.at * 1000).toISOString(); $('scheduleOccurrences').append(li); }
+    $('scheduleStatus').textContent = 'Review these occurrences, then activate. Preview expires at ' + new Date(result.expires_at * 1000).toLocaleTimeString() + '.';
+    $('activateSchedule').disabled = false;
+  } catch (e) { if (revision === scheduleRevision && session === sessionRevision) $('scheduleStatus').textContent = e.message; }
+});
+$('activateSchedule').addEventListener('click', async () => {
+  const approved = scheduleReview, revision = scheduleRevision;
+  $('activateSchedule').disabled = true;
+  try {
+    if (!approved || approved.revision !== sessionRevision || approved.review !== reviewRevision || approved.expires * 1000 <= Date.now() || JSON.stringify(approved.body) !== JSON.stringify(scheduleBody())) throw new Error('The request changed or its preview expired. Preview again.');
+    await api('/api/agent/schedules','POST',{...approved.body,preview_id:approved.id});
+    if (revision !== scheduleRevision || approved.revision !== sessionRevision) return;
+    scheduleReview = null; $('scheduleConfirm').checked = false;
+    $('scheduleStatus').textContent = 'Schedule activated. Execution gates still apply to every occurrence.';
+    await refreshSchedules();
+  } catch (e) { if (revision === scheduleRevision) { scheduleReview = null; $('scheduleStatus').textContent = e.message; } }
+});
+
 $('openSpend').addEventListener('click', () => { $('spendDialog').showModal(); refreshSpend(); });
 $('reloadLimits').addEventListener('click', async () => {
   const button = $('reloadLimits'); button.disabled = true;
@@ -3536,7 +3761,11 @@ if (hAuthLogout) {
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
-    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++; window.__cyclawRole = null; await refreshStatus();
+    currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
+    $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;
+    promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
+    currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;
+    window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
     sendBtn.disabled = false;
   });

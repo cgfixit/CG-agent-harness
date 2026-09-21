@@ -262,7 +262,7 @@ set chat would send. Suggest still does not mutate canonical facts.
   column selectors in the user string cannot become FTS syntax.
 - **Search ≠ inject.** `GET /api/structured-memory/search` returns a small
   top-k with stable ids, revisions, provenance (`fts5`), and lexical score.
-  Hits are not written onto the shared session.
+  Hits are not written onto the owned session.
 - **Force-include** (`retrieve: true` / `/memory retrieve <query>`) is the
   explicit pick for that request: run bounded FTS, recheck survivors, inject
   under the Phase 4 budget. The flag does not persist.

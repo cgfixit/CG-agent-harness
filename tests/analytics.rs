@@ -42,7 +42,16 @@ async fn guarded_summary_matches_chat_ledger_and_sessions_with_disabled_code() {
     )
     .unwrap();
     let legacy = s.get_json("/api/analytics/summary").await.1;
-    assert_eq!(legacy["sessions_without_created_date"], 1);
+    assert_eq!(
+        legacy["sessions_without_created_date"], 0,
+        "unassigned legacy data is quarantined"
+    );
+    s.state.store.adopt_legacy("eeeeeeeeeeee", "local").unwrap();
+    let adopted = s.get_json("/api/analytics/summary").await.1;
+    assert_eq!(
+        adopted["sessions_without_created_date"], 1,
+        "adoption does not invent a creation date"
+    );
     assert_eq!(legacy["session_days"].as_array().unwrap().len(), 1);
 }
 

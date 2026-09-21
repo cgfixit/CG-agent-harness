@@ -189,7 +189,7 @@ async fn job_cancel_stops_observed_nested_sandbox_groups_and_preserves_a_sibling
         let _ = shim::run_argv(&argv, std::path::Path::new("/tmp"), Duration::from_secs(30)).await;
     });
     let store = cgagentharness::server::agent_jobs::JobStore::new();
-    store.insert_running("fixture", "real-repo-run", task);
+    store.insert_running("local", "fixture", "real-repo-run", task);
     let deadline = Instant::now() + Duration::from_secs(5);
     while !marker.exists() && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -207,7 +207,7 @@ async fn job_cancel_stops_observed_nested_sandbox_groups_and_preserves_a_sibling
     // SAFETY: process-group queries only, for test-owned processes.
     assert_ne!(unsafe { libc::getpgid(check) }, unsafe { libc::getpgid(wrapper) });
     assert!(running(check) && running(wrapper));
-    assert_eq!(store.cancel("fixture").unwrap()["status"], "cancelled");
+    assert_eq!(store.cancel("local", "fixture").unwrap()["status"], "cancelled");
     let deadline = Instant::now() + Duration::from_secs(2);
     while (running(check) || running(wrapper)) && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -223,5 +223,5 @@ async fn job_cancel_stops_observed_nested_sandbox_groups_and_preserves_a_sibling
     let _ = sibling.wait();
     assert!(stopped, "nested sandbox group survived job cancellation");
     assert!(sibling_survived, "cleanup must not target a sibling process");
-    assert_eq!(store.get("fixture").unwrap()["status"], "cancelled");
+    assert_eq!(store.get("local", "fixture").unwrap()["status"], "cancelled");
 }

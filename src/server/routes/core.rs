@@ -52,12 +52,17 @@ pub async fn status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
 ) -> Json<Value> {
-    if state.auth.is_some() && user.is_none_or(|u| u.role == "audit" || u.must_change_password) {
+    let owner = super::auth::context_owner(user.clone());
+    if state.auth.is_some()
+        && user
+            .as_ref()
+            .is_none_or(|u| u.role == "audit" || u.must_change_password)
+    {
         return Json(
             json!({"version":crate::VERSION,"auth_enabled":true,"api_key_optional":true,"status":"login required for operational details"}),
         );
     }
-    let sessions = state.store.list();
+    let sessions = state.store.for_owner(&owner).list();
     let total_tokens: u64 = sessions.iter().filter_map(|s| s["tokens"]["total"].as_u64()).sum();
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
     Json(json!({
@@ -91,10 +96,11 @@ pub async fn spend_summary(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// Compose existing reads without importing the agentic implementation or
 /// reading its records in the server. A disabled/failed child is unavailable,
 /// never evidence of zero runs. Listing retains its normal reconciliation.
-pub async fn analytics_summary(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+pub async fn analytics_summary(State(state): State<Arc<AppState>>, user: Caller) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let snapshot = state.clone();
     let local = tokio::task::spawn_blocking(move || {
-        let sessions = snapshot.store.list();
+        let sessions = snapshot.store.for_owner(&owner).list();
         let mut days = std::collections::BTreeMap::<String, u64>::new();
         let mut unknown_dates = 0_u64;
         let mut total_tokens = 0_u64;
@@ -275,16 +281,20 @@ pub async fn upload_attachments(
     })))
 }
 
-pub async fn list_sessions(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(json!({"sessions": state.store.list()}))
+pub async fn list_sessions(State(state): State<Arc<AppState>>, user: Caller) -> Json<Value> {
+    let owner = super::auth::context_owner(user.clone());
+    Json(json!({"sessions": state.store.for_owner(&owner).list()}))
 }
 
 pub async fn create_session(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     ValidJson(req): ValidJson<SessionCreateRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    let owner = super::auth::context_owner(user.clone());
     let session = state
         .store
+        .for_owner(&owner)
         .create(&state.current_model(), &req.title)
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     Ok((StatusCode::CREATED, Json(session.summary())))
@@ -295,13 +305,14 @@ pub async fn clear_sessions(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<SessionClearRequest>,
 ) -> ApiResult<Json<Value>> {
-    crate::server::structured_memory_suggest::clear_chat_queue(&state);
-    state.abort_chat();
+    let owner = super::auth::context_owner(user.clone());
+    crate::server::structured_memory_suggest::clear_chat_queue(&state, &owner);
+    let _ = state.chat_owner.cancel_with(&owner, || state.abort_chat());
     let deleted = state
         .store
+        .for_owner(&owner)
         .clear()
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    let owner = super::auth::context_owner(user);
     let mut derived_deleted = 0usize;
     let mut derived_retained = 0usize;
     if req.delete_derived_episodes {
@@ -349,9 +360,15 @@ pub async fn clear_sessions(
     })))
 }
 
-pub async fn get_session(State(state): State<Arc<AppState>>, Path(session_id): Path<String>) -> ApiResult<Json<Value>> {
+pub async fn get_session(
+    State(state): State<Arc<AppState>>,
+    user: Caller,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let session = state
         .store
+        .for_owner(&owner)
         .get(&session_id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let messages: Vec<Value> = session
@@ -369,11 +386,14 @@ pub async fn get_session(State(state): State<Arc<AppState>>, Path(session_id): P
 
 pub async fn rename_session(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(session_id): Path<String>,
     ValidJson(req): ValidJson<RenameRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let session = state
         .store
+        .for_owner(&owner)
         .rename(&session_id, Some(&req.title), None)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     Ok(Json(session.summary()))
@@ -381,11 +401,14 @@ pub async fn rename_session(
 
 pub async fn session_goal(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(session_id): Path<String>,
     ValidJson(req): ValidJson<GoalRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let session = state
         .store
+        .for_owner(&owner)
         .rename(&session_id, None, Some(&req.goal))
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let mut out = session.summary();
@@ -506,6 +529,7 @@ async fn chat_inner(
     req: ChatRequest,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     if req.loop_turn && req.session_id.as_deref().unwrap_or("").is_empty() {
         return Err(loop_error(
             "LOOP_REQUIRES_SESSION",
@@ -515,10 +539,12 @@ async fn chat_inner(
     let session = match req.session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => state
             .store
+            .for_owner(&owner)
             .get(id)
             .map_err(|e| ApiError::from_err(session_status(&e), &e))?,
         None => state
             .store
+            .for_owner(&owner)
             .create(&state.current_model(), "")
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
     };
@@ -612,7 +638,14 @@ async fn chat_inner(
         }
     };
 
-    let owner = super::auth::context_owner(user);
+    let chat_owner = state
+        .chat_owner
+        .start(&owner)
+        .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
+    tokio::select! {
+        biased;
+        _ = chat_owner.token.cancelled() => Err(ApiError::new(StatusCode::BAD_GATEWAY, "WEB_CANCELLED", "chat cancelled")),
+        result = async {
     let surface = if cloud_selected {
         crate::server::retrieval::RetrievalSurface::CloudChat
     } else if req.loop_turn {
@@ -976,7 +1009,7 @@ async fn chat_inner(
             reply.initial_prompt_tokens,
         )
     };
-    let recorded = state.store.record_exchange_inner(
+    let recorded = state.store.for_owner(&owner).record_exchange_inner(
         &session.session_id,
         &req.message,
         &reply.body_text,
@@ -991,6 +1024,7 @@ async fn chat_inner(
         let live = |id: &str| state.attachments.owned_blob(&owner, id).is_some();
         state
             .store
+            .for_owner(&owner)
             .merge_attachment_pins(&session.session_id, &owner, &req.attachment_ids, live)
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     }
@@ -1061,6 +1095,8 @@ async fn chat_inner(
             "dropped": recalled.preview_json()["dropped"],
         },
     })))
+        } => result,
+    }
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.
@@ -1082,11 +1118,18 @@ pub async fn cancel_chat(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    let cancelled = state
+        .chat_owner
+        .cancel_with(&owner, || state.abort_chat())
+        .map_err(|e| ApiError::from_err(StatusCode::FORBIDDEN, &e))?;
     state
         .web
         .chat_turn
-        .cancel(&super::auth::context_owner(user))
+        .cancel(&owner)
         .map_err(|e| ApiError::from_err(StatusCode::FORBIDDEN, &e))?;
-    state.abort_chat();
-    Ok(Json(json!({"cancelled": true})))
+    Ok(Json(json!({"cancelled": cancelled})))
 }
+
+// Account identity comes only from the guarded request extension.
+type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;

@@ -121,6 +121,19 @@ form — aliases and conversational phrasing only suggest, including retrieval
 that would otherwise start a chat. Slash-command tables:
 [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference).
 
+**Reviewed schedules.** The Schedules panel previews five occurrences before
+activating an owner-bound interval or cron calendar. IANA timezones, DST skips,
+persisted occurrence IDs and consume-before-dispatch recovery keep recurrence
+bounded; each attempt rechecks the existing goal and write gates. See
+[the scheduling guide](docs/CONSOLE_JOBS.md#schedules-and-completion-notifications).
+
+**Private sessions.** Sessions, transcript search/export, detached jobs and schedule
+management are scoped to the signed-in account. Older unassigned sessions stay
+quarantined until an administrator explicitly adopts them in **Sessions**;
+adoption clears previous coding approval. Persona, pinned notes, model selection,
+aggregate spend and underlying coding-run records remain shared portal resources.
+[Ownership and migration](docs/ACCOUNTS.md#session-ownership-and-legacy-adoption).
+
 **Soul and styles.** Fresh homes load a default soul that asks for
 human-readable plain text, with Markdown only on request. Existing saved
 personas are preserved. For local chat, `/style concise`, `beginner`,
@@ -134,8 +147,9 @@ Web research rules: [WEB.md](docs/WEB.md). The Spend view reports retained
 usage and available costs. **Estimate draft** previews the selected cloud model's
 input estimate and full output reservation; optional per-call caps can refuse
 generation. Claude counting sends only that draft. Optional completion webhooks send only job
-metadata and stay disabled until configured — including which feature PRs the
-installed build must contain:
+metadata through an owner-bound durable outbox and stay disabled until configured.
+The Deliveries panel inspects status and explicitly replays retained notifications
+without restarting jobs. Setup and recovery limits:
 [SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md). MCP stderr
 capture bounds: [PROCESS_LIFECYCLE.md](docs/PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics).
 External MCP stdio servers require explicit filesystem, network and lifecycle
@@ -195,6 +209,7 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 | Document | Purpose |
 |---|---|
 | [docs/CONSOLE.md](docs/CONSOLE.md) | Chat, soul, skills, slash-command tables |
+| [docs/ISSUE_102_ACCEPTANCE.md](docs/ISSUE_102_ACCEPTANCE.md) | Selected roadmap close-out, verification and residual scope |
 | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator navigation, spend/notifications and memory how-to |
 | [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging |
 | [docs/CHAT_STREAMING.md](docs/CHAT_STREAMING.md) | SSE chat streaming and `/loop stop` |

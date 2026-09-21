@@ -84,7 +84,7 @@ authorize tools, coding, or network. Pinned notes remain
 | Role | Allowed | Refused |
 |---|---|---|
 | Administrator (`admin`) | Normal harness work; users, roles, disable/reset; global credentials; web enablement and URL policy | Every operation lacking existing repository/write/approval/publication authorization |
-| Portal operator (`operator`) | Chat; enabled permitted fetch/search/research; shared sessions, notes, persona and authorized coding workflows; own password/logout | Users/roles, global keys, web enablement/allowlist changes, provider security configuration |
+| Portal operator (`operator`) | Chat; enabled permitted fetch/search/research; own sessions/jobs/schedules, shared notes/persona and authorized coding workflows; own password/logout | Users/roles, global keys, web enablement/allowlist changes, provider security configuration |
 | Auditor (`audit`) | Minimal status, designated redacted `/api/audit`, own password/logout | Chat/research, shared operational data, keys, user administration, other mutations |
 
 All operational API reads and writes require an account when enabled. Public
@@ -95,9 +95,12 @@ change, disabling, and deletion revoke that account's sessions. Audit request
 records identify the actor and matched route, without passwords, session tokens,
 query bodies, or keys; the auditor projection exposes only those redacted fields.
 
-This is a shared local portal, not tenant isolation: chat sessions, goals, jobs,
-run records, persona, notes, model selection and the public-page cache are shared
-resources available to authorized administrators/operators. Research questions,
+Sessions, transcript search/export, detached jobs and schedule management are
+account scoped. Unassigned legacy sessions require explicit administrator adoption;
+see [ownership and migration](ACCOUNTS.md#session-ownership-and-legacy-adoption).
+Remaining shared resources include agentic run records, aggregate spend, persona,
+pinned notes, model selection and the public-page cache. This is not universal
+tenant isolation. Research questions,
 model answers and transient controller state belong to the initiating request
 and account. Last fetched/injected web selections are scoped by persistent random
 account identity, so deleting and recreating a username cannot inherit them.
@@ -386,9 +389,10 @@ Completion webhooks add an optional `CGAGENTHARNESS_WEBHOOK_TOKEN` managed key
 in [supported builds](SPEND_AND_NOTIFICATIONS.md). It requires restart and does
 not select a model or arm coding. Its destination is configured separately from
 web-content permissions: exact private URL grants, validated/pinned DNS, no proxy
-or redirects. Only job ID, status and timestamps enter the event; no job text or
+or redirects. Only deduplication IDs, job ID, status and timestamps enter the event; no job text or
 receiver body is logged. See the [webhook guide](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook)
-for retries, audit status and in-memory queue loss on shutdown.
+for owned destinations, durable outbox recovery, explicit replay, finite retention
+and receiver deduplication. No inbound listener is created.
 
 ## Reproducible evidence
 

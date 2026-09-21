@@ -90,11 +90,17 @@ fn payload(state: &AppState, session_id: Option<&str>, name: Option<&str>, effec
     })
 }
 
-pub async fn catalog(State(state): State<Arc<AppState>>, Query(query): Query<StyleQuery>) -> ApiResult<Json<Value>> {
+pub async fn catalog(
+    State(state): State<Arc<AppState>>,
+    user: Caller,
+    Query(query): Query<StyleQuery>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let session = match query.session_id.as_deref().filter(|id| !id.is_empty()) {
         Some(id) => Some(
             state
                 .store
+                .for_owner(&owner)
                 .get(id)
                 .map_err(|e| ApiError::from_err(session_status(&e), &e))?,
         ),
@@ -111,12 +117,15 @@ pub async fn catalog(State(state): State<Arc<AppState>>, Query(query): Query<Sty
 
 pub async fn select(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     ValidJson(req): ValidJson<StyleRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let name = req.name.trim();
     if name.eq_ignore_ascii_case("off") {
         state
             .store
+            .for_owner(&owner)
             .set_style(&req.session_id, None)
             .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
         return Ok(Json(payload(
@@ -163,6 +172,7 @@ pub async fn select(
     }
     state
         .store
+        .for_owner(&owner)
         .set_style(&req.session_id, Some(load.name.as_str()))
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     Ok(Json(payload(
@@ -172,3 +182,6 @@ pub async fn select(
         "included in subsequent local chat turns and /prompt; cloud chat still sends only the new user message",
     )))
 }
+
+// Account identity comes only from the guarded request extension.
+type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;

@@ -24,7 +24,10 @@ async fn selected_skill_is_bounded_persisted_and_has_actual_inclusion_evidence()
     assert_eq!(status, 200, "{selected}");
     assert!(s.get_json(&path).await.1["last_result"].as_array().unwrap().is_empty());
     let reopened = cgagentharness::server::sessions::SessionStore::new(&s.home.join("sessions")).unwrap();
-    assert_eq!(reopened.get(id).unwrap().selected_skills, vec!["custom"]);
+    assert_eq!(
+        reopened.for_owner("local").get(id).unwrap().selected_skills,
+        vec!["custom"]
+    );
     let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":id})).await;
     assert_eq!(
         s.post_json("/api/chat", json!({"session_id":id,"message":"test selected context"}))

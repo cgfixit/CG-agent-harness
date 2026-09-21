@@ -128,15 +128,15 @@ struct PreparedRun {
     _chat_gate: Option<crate::server::generation_gate::GateGuard>,
 }
 
-fn prepare_run(state: &AppState, req: &AgentRunRequest) -> ApiResult<PreparedRun> {
-    prepare_run_inner(state, req, false)
+fn prepare_run(state: &AppState, req: &AgentRunRequest, owner: &str) -> ApiResult<PreparedRun> {
+    prepare_run_inner(state, req, owner, false)
 }
 
-fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, recurring: bool) -> ApiResult<PreparedRun> {
+fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recurring: bool) -> ApiResult<PreparedRun> {
     if recurring {
-        super::goals::validate_binding_recurring(state, req)?;
+        super::goals::validate_binding_recurring(state, req, owner)?;
     } else {
-        super::goals::validate_binding(state, req)?;
+        super::goals::validate_binding(state, req, owner)?;
     }
     let requested: Vec<String> = req
         .checks
@@ -236,6 +236,7 @@ fn refuse_bound_session_pins(state: &AppState, owner: &str, req: &AgentRunReques
     };
     let session = state
         .store
+        .for_owner(owner)
         .get(&binding.session_id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let live_pins: Vec<String> = session
@@ -265,7 +266,7 @@ pub async fn agent_run(
     }
     let owner = super::auth::context_owner(user);
     refuse_bound_session_pins(&state, &owner, &req)?;
-    let prepared = prepare_run(&state, &req)?;
+    let prepared = prepare_run(&state, &req, &owner)?;
     let Json(mut result) = agentic_call(&state, prepared.ops).await?;
     result["memory_suggestion"] =
         crate::server::structured_memory_suggest::coding_completed(&state, &owner, &req.instruction, &result);
@@ -291,16 +292,16 @@ pub async fn agent_job_create(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<AgentRunRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    start_job(state, req, super::auth::context_owner(user), None).await
+    start_job(state, req, super::auth::context_owner(user), None)
 }
 
-pub(crate) async fn start_job(
+pub(crate) fn start_job(
     state: Arc<AppState>,
     req: AgentRunRequest,
     owner: String,
     schedule_id: Option<String>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    let prepared = prepare_run_inner(&state, &req, schedule_id.is_some())?;
+    let prepared = prepare_run_inner(&state, &req, &owner, schedule_id.is_some())?;
     refuse_bound_session_pins(&state, &owner, &req)?;
     let job_id = crate::common::random_hex(16);
     let action = prepared.ops.action.clone();
@@ -308,6 +309,7 @@ pub(crate) async fn start_job(
     let task_job = job_id.clone();
     let instruction = req.instruction.clone();
     let task_schedule = schedule_id.clone();
+    let task_owner = owner.clone();
     let (registered, ready) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move {
         if ready.await.is_err() {
@@ -321,11 +323,11 @@ pub(crate) async fn start_job(
         } = prepared;
         let outcome = agentic_call(&task_state, ops).await.map(|Json(v)| v);
         task_state.jobs.finish(&task_job, outcome);
-        if let Some(job) = task_state.jobs.get(&task_job) {
+        if let Some(job) = task_state.jobs.get(&task_owner, &task_job) {
             if job["status"] == crate::server::agent_jobs::FINISHED {
                 crate::server::structured_memory_suggest::coding_completed(
                     &task_state,
-                    &owner,
+                    &task_owner,
                     &instruction,
                     &job["result"],
                 );
@@ -345,25 +347,30 @@ pub(crate) async fn start_job(
             }
         }
     });
-    state.jobs.try_insert_running(&job_id, &action, handle).map_err(|_| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "JOB_PERSIST_FAILED",
-            "Cannot durably register work; no worker was started",
-        )
-    })?;
+    state
+        .jobs
+        .try_insert_running(&owner, &job_id, &action, handle)
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "JOB_PERSIST_FAILED",
+                "Cannot durably register work; no worker was started",
+            )
+        })?;
     if let Some(binding) = &req.goal_stage {
         let claimed = if schedule_id.is_some() {
             state
                 .store
+                .for_owner(&owner)
                 .rebind_goal_stage(&binding.session_id, &binding.stage_id, &req, &job_id)
         } else {
             state
                 .store
+                .for_owner(&owner)
                 .claim_goal_stage(&binding.session_id, &binding.stage_id, &req, &job_id)
         };
         if let Err(error) = claimed {
-            state.jobs.cancel(&job_id);
+            state.jobs.cancel(&owner, &job_id);
             return Err(ApiError::from_err(StatusCode::CONFLICT, &error));
         }
     }
@@ -377,35 +384,57 @@ pub(crate) async fn start_job(
     ))
 }
 
+pub async fn schedule_preview(
+    State(state): State<Arc<AppState>>,
+    user: Caller,
+    ValidJson(body): ValidJson<AgentScheduleCreate>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    super::goals::validate_binding(&state, &body.request, &owner)?;
+    let spec = body
+        .spec()
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+    let request = serde_json::to_value(&body.request)
+        .map_err(|_| ApiError::bad_request("INVALID_SCHEDULE_REQUEST", "request could not be previewed"))?;
+    let result = state
+        .schedules
+        .preview(spec, request, &owner, crate::common::now_ts())
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+    Ok(Json(result))
+}
+
 pub async fn schedule_create(
     State(state): State<Arc<AppState>>,
-    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    user: Caller,
     ValidJson(body): ValidJson<AgentScheduleCreate>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    super::goals::validate_binding(&state, &body.request)?;
     let owner = super::auth::context_owner(user);
-    let request = serde_json::to_value(&body.request).map_err(|_| {
-        ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "INVALID_SCHEDULE_REQUEST",
-            "schedule request could not be stored",
-        )
-    })?;
+    super::goals::validate_binding(&state, &body.request, &owner)?;
+    let spec = body
+        .spec()
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+    let request = serde_json::to_value(&body.request)
+        .map_err(|_| ApiError::bad_request("INVALID_SCHEDULE_REQUEST", "request could not be stored"))?;
     let created = state
         .schedules
-        .create(body.interval_secs, request, &owner, crate::common::now_ts())
+        .activate(
+            body.preview_id.as_deref().unwrap_or(""),
+            spec,
+            request,
+            &owner,
+            crate::common::now_ts(),
+        )
         .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
-    state.audit.log(json!({
-        "event": "agent_schedule_created",
-        "schedule_id": created.schedule_id,
-        "interval_secs": created.interval_secs,
-    }));
+    state
+        .audit
+        .log(json!({"event":"agent_schedule_created","schedule_id":created.schedule_id,"schema_version":1}));
     Ok((StatusCode::CREATED, Json(created.to_json())))
 }
 
-pub async fn schedules_list(State(state): State<Arc<AppState>>) -> Json<Value> {
+pub async fn schedules_list(State(state): State<Arc<AppState>>, user: Caller) -> Json<Value> {
+    let owner = super::auth::context_owner(user);
     Json(json!({
-        "schedules": state.schedules.list().into_iter().map(|s| s.to_json()).collect::<Vec<_>>(),
+        "schedules": state.schedules.list(&owner).into_iter().map(|s| s.to_json()).collect::<Vec<_>>(),
     }))
 }
 
@@ -421,24 +450,28 @@ fn validated_schedule_id(schedule_id: &str) -> ApiResult<String> {
 
 pub async fn schedule_get(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(schedule_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     let id = validated_schedule_id(&schedule_id)?;
     state
         .schedules
-        .get(&id)
+        .get(&owner, &id)
         .map(|s| Json(s.to_json()))
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SCHEDULE_NOT_FOUND", "no such schedule"))
 }
 
 pub async fn schedule_cancel(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(schedule_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     let id = validated_schedule_id(&schedule_id)?;
     let v = state
         .schedules
-        .cancel(&id)
+        .cancel(&owner, &id)
         .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SCHEDULE_NOT_FOUND", "no such schedule"))?;
     state
@@ -447,61 +480,76 @@ pub async fn schedule_cancel(
     Ok(Json(v.to_json()))
 }
 
-/// Evaluate due schedules with a caller-supplied clock (tests inject `now`).
-pub async fn tick_schedules(state: &Arc<AppState>, now: f64) {
-    for due in state.schedules.due(now) {
-        let Some(_) = state.schedules.mark_attempted(&due.schedule_id, now) else {
-            continue;
-        };
-        state.audit.log(json!({
-            "event": "agent_schedule_start",
-            "schedule_id": due.schedule_id,
-        }));
-        let req = match crate::server::agent_schedules::parse_request(&due.request) {
-            Ok(req) => req,
-            Err(e) => {
-                state.audit.log(json!({
-                    "event": "agent_schedule_failed",
-                    "schedule_id": due.schedule_id,
-                    "error": e.message,
-                }));
-                continue;
-            }
-        };
-        match start_job(state.clone(), req, due.owner, Some(due.schedule_id.clone())).await {
-            Ok(_) => {}
-            Err(e) => {
-                state.audit.log(json!({
-                    "event": "agent_schedule_failed",
-                    "schedule_id": due.schedule_id,
-                    "error": e.body()["detail"]["code"],
-                }));
-            }
-        }
+/// Authority is rechecked at every occurrence, including legacy rows.
+fn schedule_owner_authorized(state: &AppState, owner: &str) -> bool {
+    match &state.auth {
+        Some(auth) => auth.list_users().iter().any(|user| {
+            user.user_id == owner
+                && !user.disabled
+                && !user.must_change_password
+                && matches!(user.role.as_str(), "admin" | "operator")
+        }),
+        None => owner == "local",
     }
 }
 
-pub async fn agent_job_get(State(state): State<Arc<AppState>>, Path(job_id): Path<String>) -> ApiResult<Json<Value>> {
+/// Evaluate due schedules with a caller-supplied clock (tests inject `now`).
+pub async fn tick_schedules(state: &Arc<AppState>, now: f64) {
+    for due in state.schedules.due(now) {
+        state.schedules.consume_and_dispatch(&due, now, || {
+            if !schedule_owner_authorized(state, &due.owner) {
+                state.audit.log(json!({"event":"agent_schedule_refused","schedule_id":due.schedule_id,"code":"SCHEDULE_OWNER_REVOKED"}));
+                return;
+            }
+            let req = match crate::server::agent_schedules::parse_request(&due.request) {
+                Ok(req) => req,
+                Err(e) => {
+                    state.audit.log(json!({"event":"agent_schedule_failed","schedule_id":due.schedule_id,"code":e.code}));
+                    return;
+                }
+            };
+            state.audit.log(json!({"event":"agent_schedule_start","schedule_id":due.schedule_id,"occurrence_id":due.next_occurrence_id}));
+            if let Err(e) = start_job(state.clone(), req, due.owner.clone(), Some(due.schedule_id.clone())) {
+                state.audit.log(json!({"event":"agent_schedule_failed","schedule_id":due.schedule_id,"code":e.body()["detail"]["code"]}));
+            }
+        });
+    }
+}
+
+pub async fn agent_job_get(
+    State(state): State<Arc<AppState>>,
+    user: Caller,
+    Path(job_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     let id = validated_job_id(&job_id)?;
     state
         .jobs
-        .get(&id)
+        .get(&owner, &id)
         .map(Json)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", "no such job"))
 }
 
-pub async fn agent_jobs_list(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(json!({"jobs": state.jobs.list(), "running": state.jobs.running_count()}))
+pub async fn agent_jobs_list(State(state): State<Arc<AppState>>, user: Caller) -> Json<Value> {
+    let owner = super::auth::context_owner(user);
+    let jobs = state.jobs.list(&owner);
+    let running = jobs
+        .iter()
+        .filter(|j| j["status"] == crate::server::agent_jobs::RUNNING)
+        .count();
+    Json(json!({"jobs": jobs, "running": running}))
 }
 
 pub async fn agent_job_cancel(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(job_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     let id = validated_job_id(&job_id)?;
     let v = state
         .jobs
-        .cancel(&id)
+        .cancel(&owner, &id)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", "no such job"))?;
     state.audit.log(json!({"event": "agent_job_cancelled", "job_id": id}));
     Ok(Json(v))
@@ -571,3 +619,6 @@ pub async fn agent_run_discard(
     ops.run_id = Some(checked);
     agentic_call(&state, ops).await
 }
+
+// Identity comes only from the guarded account extension.
+type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;

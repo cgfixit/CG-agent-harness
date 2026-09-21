@@ -31,6 +31,7 @@ pub const MAX_RETAINED_JOBS: usize = 32;
 
 pub struct Job {
     pub job_id: String,
+    pub owner: Option<String>,
     pub action: String,
     pub created_at: f64,
     pub finished_at: Option<f64>,
@@ -46,6 +47,8 @@ impl Job {
     pub fn to_json(&self) -> Value {
         let mut v = json!({
             "job_id": self.job_id,
+            "schema_version": if self.owner.is_some() { 1 } else { 0 },
+            "owner": self.owner,
             "action": self.action,
             "status": self.status,
             "created_at": self.created_at,
@@ -105,6 +108,26 @@ impl JobStore {
                     Some(CANCELLED) => CANCELLED,
                     _ => return Err(HarnessError::harness_config("invalid recovered job status")),
                 };
+                let owner = match (
+                    match row.get("schema_version") {
+                        None => 0,
+                        Some(version) => version
+                            .as_u64()
+                            .ok_or_else(|| HarnessError::harness_config("invalid recovered job version"))?,
+                    },
+                    match row.get("owner") {
+                        None | Some(Value::Null) => None,
+                        Some(value) => Some(
+                            value
+                                .as_str()
+                                .ok_or_else(|| HarnessError::harness_config("invalid recovered job owner"))?,
+                        ),
+                    },
+                ) {
+                    (0, None) => None,
+                    (1, Some(owner)) if crate::server::structured_memory::valid_owner(owner) => Some(owner.to_string()),
+                    _ => return Err(HarnessError::harness_config("invalid recovered job ownership")),
+                };
                 let error = row
                     .get("error")
                     .and_then(|e| Some((e["http_status"].as_u64()? as u16, json!({"detail": e["detail"]}))));
@@ -112,6 +135,7 @@ impl JobStore {
                     id.to_string(),
                     Job {
                         job_id: id.to_string(),
+                        owner,
                         action: row["action"].as_str().unwrap_or("real-repo-run").to_string(),
                         created_at: row["created_at"].as_f64().unwrap_or(0.0),
                         finished_at: if status == INTERRUPTED {
@@ -138,18 +162,42 @@ impl JobStore {
 
     pub fn with_notifications(mut self, notifications: Option<super::notifications::Notifier>) -> Self {
         self.notifications = notifications;
+        // Reconcile retained terminal evidence after a crash between job commit
+        // and outbox enqueue. Stable IDs suppress already retained deliveries.
+        for job in self.inner.lock().unwrap_or_else(|p| p.into_inner()).values() {
+            self.notify(job);
+        }
         self
     }
 
     fn notify(&self, job: &Job) {
-        if let (Some(notifier), Some(finished_at)) = (&self.notifications, job.finished_at) {
+        if let (Some(notifier), Some(finished_at), Some(owner)) = (&self.notifications, job.finished_at, &job.owner) {
+            if ![FINISHED, FAILED, CANCELLED].contains(&job.status) {
+                return;
+            }
             notifier.enqueue(super::notifications::Completion {
+                owner: owner.clone(),
                 job_id: job.job_id.clone(),
                 status: job.status.into(),
                 created_at: job.created_at,
                 finished_at,
             });
         }
+    }
+
+    pub fn notification_status(&self, owner: &str) -> Value {
+        self.notifications
+            .as_ref()
+            .map(|n| n.status(owner))
+            .unwrap_or_else(|| json!({"enabled":false,"destinations":[],"deliveries":[]}))
+    }
+    pub fn replay_notification(&self, owner: &str, id: &str) -> crate::common::errors::Result<()> {
+        self.notifications
+            .as_ref()
+            .ok_or_else(|| {
+                crate::common::errors::HarnessError::new("NOTIFICATIONS_DISABLED", "notification delivery is disabled")
+            })?
+            .replay(owner, id)
     }
 
     fn persist(&self, jobs: &BTreeMap<String, Job>) -> crate::common::errors::Result<()> {
@@ -167,19 +215,24 @@ impl JobStore {
     }
 
     /// Register a running job. Evicts the oldest terminal jobs beyond the cap.
-    pub fn insert_running(&self, job_id: &str, action: &str, handle: JoinHandle<()>) {
+    pub fn insert_running(&self, owner: &str, job_id: &str, action: &str, handle: JoinHandle<()>) {
         // Compatibility for in-memory fixture users; runtime routes use the
         // fallible entrypoint and never launch work before durable registration.
-        self.try_insert_running(job_id, action, handle)
+        self.try_insert_running(owner, job_id, action, handle)
             .expect("in-memory job registration");
     }
 
     pub fn try_insert_running(
         &self,
+        owner: &str,
         job_id: &str,
         action: &str,
         handle: JoinHandle<()>,
     ) -> crate::common::errors::Result<()> {
+        if !crate::server::structured_memory::valid_owner(owner) {
+            handle.abort();
+            return Err(crate::common::errors::HarnessError::harness_config("invalid job owner"));
+        }
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let terminal: Vec<(f64, String)> = g
             .values()
@@ -197,6 +250,7 @@ impl JobStore {
             job_id.to_string(),
             Job {
                 job_id: job_id.to_string(),
+                owner: Some(owner.to_string()),
                 action: action.to_string(),
                 created_at: crate::common::now_ts(),
                 finished_at: None,
@@ -256,14 +310,16 @@ impl JobStore {
         }
     }
 
-    pub fn get(&self, job_id: &str) -> Option<Value> {
+    pub fn get(&self, owner: &str, job_id: &str) -> Option<Value> {
         let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        g.get(job_id).map(Job::to_json)
+        g.get(job_id)
+            .filter(|j| j.owner.as_deref() == Some(owner))
+            .map(Job::to_json)
     }
 
-    pub fn list(&self) -> Vec<Value> {
+    pub fn list(&self, owner: &str) -> Vec<Value> {
         let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        let mut v: Vec<&Job> = g.values().collect();
+        let mut v: Vec<&Job> = g.values().filter(|j| j.owner.as_deref() == Some(owner)).collect();
         v.sort_by(|a, b| {
             b.created_at
                 .partial_cmp(&a.created_at)
@@ -275,9 +331,9 @@ impl JobStore {
     }
 
     /// Abort a running job. Returns the job's new state, or None if unknown.
-    pub fn cancel(&self, job_id: &str) -> Option<Value> {
+    pub fn cancel(&self, owner: &str, job_id: &str) -> Option<Value> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        let j = g.get_mut(job_id)?;
+        let j = g.get_mut(job_id).filter(|j| j.owner.as_deref() == Some(owner))?;
         let changed = j.status == RUNNING;
         if changed {
             if let Some(h) = j.handle.take() {
@@ -298,6 +354,19 @@ impl JobStore {
         Some(value)
     }
 
+    pub(crate) fn cancel_all_for_shutdown(&self) {
+        let owned: Vec<_> = self
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .filter_map(|j| j.owner.clone().map(|owner| (owner, j.job_id.clone())))
+            .collect();
+        for (owner, id) in owned {
+            self.cancel(&owner, &id);
+        }
+    }
+
     pub fn running_count(&self) -> usize {
         let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         g.values().filter(|j| j.status == RUNNING).count()
@@ -312,6 +381,23 @@ mod tests {
         tokio::spawn(async {})
     }
 
+    #[test]
+    fn legacy_jobs_are_quarantined_and_unknown_ownership_versions_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        let id = "d".repeat(32);
+        let mut record = json!({"job_id":id,"status":"finished","result":{"private":"legacy"}});
+        std::fs::write(&path, serde_json::to_vec(&vec![&record]).unwrap()).unwrap();
+        let old = JobStore::open(&path).unwrap();
+        assert!(old.list("local").is_empty());
+        assert!(old.get("local", &id).is_none());
+        for version in [json!(2), json!("1"), Value::Null] {
+            record["schema_version"] = version;
+            std::fs::write(&path, serde_json::to_vec(&vec![&record]).unwrap()).unwrap();
+            assert!(JobStore::open(&path).is_err());
+        }
+    }
+
     #[tokio::test]
     async fn restart_retains_results_but_never_reattaches_running_work() {
         let dir = tempfile::tempdir().unwrap();
@@ -320,19 +406,22 @@ mod tests {
         let running = "a".repeat(32);
         let finished = "b".repeat(32);
         store
-            .try_insert_running(&running, "real-repo-run", idle_handle())
+            .try_insert_running("local", &running, "real-repo-run", idle_handle())
             .unwrap();
         store
-            .try_insert_running(&finished, "real-repo-run", idle_handle())
+            .try_insert_running("local", &finished, "real-repo-run", idle_handle())
             .unwrap();
         store.finish(&finished, Ok(json!({"ok":true,"run_id":"fixture"})));
         drop(store);
         let recovered = JobStore::open(&path).unwrap();
         assert_eq!(recovered.running_count(), 0);
-        assert_eq!(recovered.get(&running).unwrap()["status"], INTERRUPTED);
-        assert_eq!(recovered.get(&finished).unwrap()["result"]["run_id"], "fixture");
+        assert_eq!(recovered.get("local", &running).unwrap()["status"], INTERRUPTED);
+        assert_eq!(
+            recovered.get("local", &finished).unwrap()["result"]["run_id"],
+            "fixture"
+        );
         recovered.finish(&running, Ok(json!({"ok":true})));
-        assert_eq!(recovered.get(&running).unwrap()["status"], INTERRUPTED);
+        assert_eq!(recovered.get("local", &running).unwrap()["status"], INTERRUPTED);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -355,21 +444,21 @@ mod tests {
                 std::fs::write(marker_in_task, "unsafe").unwrap();
             }
         });
-        assert!(store.try_insert_running(&id, "real-repo-run", handle).is_err());
+        assert!(store.try_insert_running("local", &id, "real-repo-run", handle).is_err());
         tokio::task::yield_now().await;
         assert!(!marker.exists());
-        assert!(store.get(&id).is_none());
+        assert!(store.get("local", &id).is_none());
     }
 
     #[tokio::test]
     async fn cli_failure_is_a_failed_job_with_its_result_preserved() {
         let store = JobStore::new();
-        store.insert_running("failed-child", "real-repo-run", idle_handle());
+        store.insert_running("local", "failed-child", "real-repo-run", idle_handle());
         store.finish(
             "failed-child",
             Ok(json!({"ok": false, "exit_code": 4, "stderr": "write refused"})),
         );
-        let value = store.get("failed-child").unwrap();
+        let value = store.get("local", "failed-child").unwrap();
         assert_eq!(value["status"], FAILED);
         assert_eq!(value["result"]["exit_code"], 4);
         assert_eq!(value["result"]["stderr"], "write refused");
@@ -378,16 +467,16 @@ mod tests {
     #[tokio::test]
     async fn lifecycle_running_finished_failed_cancelled() {
         let store = JobStore::new();
-        store.insert_running("a", "real-repo-run", idle_handle());
-        assert_eq!(store.get("a").unwrap()["status"], RUNNING);
+        store.insert_running("local", "a", "real-repo-run", idle_handle());
+        assert_eq!(store.get("local", "a").unwrap()["status"], RUNNING);
         assert_eq!(store.running_count(), 1);
         store.finish("a", Ok(json!({"ok": true})));
-        let a = store.get("a").unwrap();
+        let a = store.get("local", "a").unwrap();
         assert_eq!(a["status"], FINISHED);
         assert_eq!(a["result"]["ok"], true);
         assert!(a["finished_at"].is_number());
 
-        store.insert_running("b", "real-repo-run", idle_handle());
+        store.insert_running("local", "b", "real-repo-run", idle_handle());
         store.finish(
             "b",
             Err(ApiError::new(
@@ -396,32 +485,37 @@ mod tests {
                 "off",
             )),
         );
-        let b = store.get("b").unwrap();
+        let b = store.get("local", "b").unwrap();
         assert_eq!(b["status"], FAILED);
         assert_eq!(b["error"]["http_status"], 409);
         assert_eq!(b["error"]["detail"]["code"], "AGENTIC_DISABLED");
 
-        store.insert_running("c", "real-repo-run", tokio::spawn(std::future::pending()));
-        let c = store.cancel("c").unwrap();
+        store.insert_running("local", "c", "real-repo-run", tokio::spawn(std::future::pending()));
+        let c = store.cancel("local", "c").unwrap();
         assert_eq!(c["status"], CANCELLED);
         // A late finish after cancel does not resurrect the job.
         store.finish("c", Ok(json!({})));
-        assert_eq!(store.get("c").unwrap()["status"], CANCELLED);
-        assert!(store.cancel("nope").is_none());
-        assert_eq!(store.list().len(), 3);
+        assert_eq!(store.get("local", "c").unwrap()["status"], CANCELLED);
+        assert!(store.cancel("local", "nope").is_none());
+        assert_eq!(store.list("local").len(), 3);
     }
 
     #[tokio::test]
     async fn terminal_jobs_are_evicted_beyond_the_cap_but_running_ones_never() {
         let store = JobStore::new();
-        store.insert_running("keep-running", "real-repo-run", tokio::spawn(std::future::pending()));
+        store.insert_running(
+            "local",
+            "keep-running",
+            "real-repo-run",
+            tokio::spawn(std::future::pending()),
+        );
         for i in 0..(MAX_RETAINED_JOBS + 5) {
             let id = format!("j{i:03}");
-            store.insert_running(&id, "real-repo-run", idle_handle());
+            store.insert_running("local", &id, "real-repo-run", idle_handle());
             store.finish(&id, Ok(json!({})));
         }
         let ids: Vec<String> = store
-            .list()
+            .list("local")
             .iter()
             .map(|j| j["job_id"].as_str().unwrap().to_string())
             .collect();

@@ -237,6 +237,7 @@ pub async fn selection(
     let owner = owner(user);
     let session = state
         .store
+        .for_owner(&owner)
         .get(&session_id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let gates = current_gates(&state);
@@ -290,6 +291,7 @@ pub async fn select(
     }
     state
         .store
+        .for_owner(&owner)
         .select_facts(&session_id, &selected)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     audit(

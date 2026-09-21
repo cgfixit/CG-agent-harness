@@ -13,7 +13,9 @@ for five verified examples using isolated test data.
 
 The view is available to administrators who have replaced the bootstrap password
 and to portal operators. Auditors cannot read it. Sessions, spend and coding runs
-are shared portal resources, not private per-account histories. Existing explicit
+include account-owned session histories and shared aggregate spend/coding-run records.
+Session counts and token totals from sessions are owner filtered; the spend ledger
+and underlying run inventory remain portal-wide. Existing explicit
 legacy auth-disabled configuration keeps its existing local access semantics.
 
 ## Read the three sections
