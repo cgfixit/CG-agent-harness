@@ -24,6 +24,9 @@ const DEFAULT_MAX_FILE_BYTES: u64 = 524_288;
 const DEFAULT_MAX_HOME_BYTES: u64 = 8_388_608;
 const DEFAULT_MAX_FILES_PER_REQUEST: u64 = 8;
 const DEFAULT_MAX_CONCURRENT: u64 = 2;
+/// Multipart framing budget added to `max_files_per_request * max_file_bytes`
+/// for the notes HTTP body cap. Matches the attachments store's 256 KiB overhead.
+const NOTES_MULTIPART_OVERHEAD_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub struct NotesLimits {
@@ -73,6 +76,13 @@ impl NotesLimits {
                 8,
             )? as usize,
         })
+    }
+
+    pub fn max_request_bytes(&self) -> usize {
+        let n = (self.max_files_per_request as u64)
+            .saturating_mul(self.max_file_bytes)
+            .saturating_add(NOTES_MULTIPART_OVERHEAD_BYTES);
+        usize::try_from(n).unwrap_or(usize::MAX)
     }
 }
 
@@ -610,5 +620,24 @@ mod tests {
             .unwrap();
         let fence = wide.fence_for_query("local", "keep", MAX_WEB_CHARS).unwrap();
         assert!(fence.contains("injection_phrases="));
+    }
+
+    #[test]
+    fn request_byte_limit_covers_boot_legal_pairs() {
+        assert_eq!(
+            limits().max_request_bytes() as u64,
+            8 * 524_288 + NOTES_MULTIPART_OVERHEAD_BYTES
+        );
+        let max_legal = NotesLimits {
+            max_files_per_owner: 64,
+            max_file_bytes: 1_048_576,
+            max_home_bytes: 8_388_608,
+            max_files_per_request: 16,
+            max_concurrent_ingests: 2,
+        };
+        assert_eq!(
+            max_legal.max_request_bytes() as u64,
+            16 * 1_048_576 + NOTES_MULTIPART_OVERHEAD_BYTES
+        );
     }
 }

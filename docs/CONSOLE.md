@@ -528,9 +528,10 @@ the owner's documents with `GET /api/notes-corpus`, and deletes one with
 `DELETE /api/notes-corpus/{id}`. It has no dedicated console upload control.
 A new local message supplies the retrieval query, while `/prompt`
 shows the currently assembled local context. Notes remain separate from
-structured facts and pinned `/memory` notes. Currently the shared multipart
-parser limits each notes ingest to at most three files even if
-`notes_corpus.max_files_per_request` is higher ([#197](https://github.com/cgfixit/CG-agent-harness/issues/197)).
+structured facts and pinned `/memory` notes. Ingest honors
+`notes_corpus.max_files_per_request` (default 8, range 1–16). The HTTP body
+cap is that count times `max_file_bytes` plus 256 KiB of multipart overhead.
+Attachment uploads still cap at three files per request.
 
 ### Local history compaction
 
