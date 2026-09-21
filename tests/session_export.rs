@@ -65,7 +65,7 @@ async fn search_finds_a_phrase_and_open_list_still_hides_bodies() {
     assert_eq!(
         s.post_json(
             "/api/chat",
-            json!({"session_id": a_id, "message": "unique-alpha-needle"})
+            json!({"session_id": a_id, "message": format!("{} unique-alpha-needle", "é".repeat(21))})
         )
         .await
         .0,

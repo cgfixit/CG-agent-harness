@@ -174,9 +174,36 @@ fn snippet(text: &str, query: &str) -> String {
     let lower = text.to_lowercase();
     let q = query.to_lowercase();
     let idx = lower.find(&q).unwrap_or(0);
-    let start = idx.saturating_sub(40);
-    let chars: Vec<char> = text.chars().collect();
-    let start_c = text[..start.min(text.len())].chars().count();
-    let slice: String = chars.iter().skip(start_c).take(SNIPPET_CHARS).collect();
-    slice
+    // Map lowercase byte offsets back to original characters, including expansions.
+    let mut lowered_bytes = 0;
+    let match_char = text
+        .chars()
+        .take_while(|c| {
+            lowered_bytes += c.to_lowercase().map(char::len_utf8).sum::<usize>();
+            lowered_bytes <= idx
+        })
+        .count();
+    text.chars()
+        .skip(match_char.saturating_sub(40))
+        .take(SNIPPET_CHARS)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snippets_preserve_unicode_and_locate_case_expanded_matches() {
+        for prefix in ["é".repeat(21), "界".repeat(21), "🙂".repeat(21)] {
+            let text = format!("{prefix} needle");
+            assert_eq!(snippet(&text, "NEEDLE"), text);
+        }
+
+        // İ expands when lowercased; ΟΣ needs contextual final-sigma casing.
+        let text = format!("{} ΟΣ {}", "İ".repeat(200), "z".repeat(200));
+        let expected = format!("{} ΟΣ {}", "İ".repeat(39), "z".repeat(117));
+        assert_eq!(snippet(&text, "ος"), expected);
+        assert_eq!(snippet(&text, "ΟΣ").chars().count(), SNIPPET_CHARS);
+    }
 }
