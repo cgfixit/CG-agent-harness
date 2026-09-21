@@ -64,6 +64,8 @@ struct Destination {
     url: Url,
     private: bool,
     revision: String,
+    bearer: Option<String>,
+    bearer_hash: Option<String>,
 }
 struct Settings {
     destinations: Vec<Destination>,
@@ -78,7 +80,6 @@ struct Settings {
     retention: u64,
     max_replays: u64,
     timeout: Duration,
-    token: Option<String>,
 }
 fn invalid() -> HarnessError {
     HarnessError::config("invalid notifications configuration; use version 1 owned destinations, explicit subscriptions and finite limits; legacy webhook_url needs deliberate migration")
@@ -108,6 +109,95 @@ fn read_token(home: &Home) -> Result<Option<String>> {
     }
     Ok(token)
 }
+
+fn acceptable_secret(secret: &str) -> bool {
+    !secret.is_empty() && secret.len() <= 4096 && secret.bytes().all(|c| (0x21..=0x7e).contains(&c))
+}
+
+fn bearer_path(home: &Home) -> PathBuf {
+    home.data_dir().join("notifications/bearers.json")
+}
+
+fn revoked_path(home: &Home) -> PathBuf {
+    home.data_dir().join("notifications/revoked-owners.json")
+}
+
+fn read_optional_json(path: &std::path::Path) -> Result<Option<Value>> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+        Ok(_) => {
+            let bytes = read_private(path, 65_536)?;
+            Ok(Some(serde_json::from_slice(&bytes).map_err(|_| invalid())?))
+        }
+    }
+}
+
+fn revoked_owners(home: &Home) -> Result<BTreeSet<String>> {
+    let Some(value) = read_optional_json(&revoked_path(home))? else {
+        return Ok(BTreeSet::new());
+    };
+    if value.get("version").and_then(|v| v.as_u64()) != Some(1) {
+        return Err(invalid());
+    }
+    let owners = value.get("owners").and_then(|v| v.as_array()).ok_or_else(invalid)?;
+    let mut set = BTreeSet::new();
+    for owner in owners {
+        let owner = owner.as_str().ok_or_else(invalid)?;
+        if !super::structured_memory::valid_owner(owner) || !set.insert(owner.to_string()) {
+            return Err(invalid());
+        }
+    }
+    Ok(set)
+}
+
+fn bearer_tokens(home: &Home) -> Result<std::collections::BTreeMap<String, String>> {
+    let Some(value) = read_optional_json(&bearer_path(home))? else {
+        return Ok(std::collections::BTreeMap::new());
+    };
+    if value.get("version").and_then(|v| v.as_u64()) != Some(1) {
+        return Err(invalid());
+    }
+    let tokens = value.get("tokens").and_then(|v| v.as_object()).ok_or_else(invalid)?;
+    let mut map = std::collections::BTreeMap::new();
+    for (id, secret) in tokens {
+        let secret = secret.as_str().ok_or_else(invalid)?;
+        if id.is_empty()
+            || id.len() > 64
+            || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            || !acceptable_secret(secret)
+            || map.insert(id.clone(), secret.to_string()).is_some()
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(map)
+}
+
+/// Each `use_bearer` destination keeps its own secret. The house
+/// `CGAGENTHARNESS_WEBHOOK_TOKEN` is only the legacy secret for a single
+/// owner's bearer destinations. A second owner must bring its own secret.
+fn assign_bearers(home: &Home, destinations: &mut [Destination]) -> Result<()> {
+    let file = bearer_tokens(home)?;
+    let legacy = read_token(home)?;
+    let mut owners = BTreeSet::new();
+    for destination in destinations.iter().filter(|d| d.spec.enabled && d.spec.use_bearer) {
+        owners.insert(destination.spec.owner.clone());
+    }
+    for destination in destinations.iter_mut().filter(|d| d.spec.enabled && d.spec.use_bearer) {
+        let secret = if let Some(secret) = file.get(&destination.spec.id) {
+            secret.clone()
+        } else if owners.len() == 1 {
+            legacy.clone().ok_or_else(invalid)?
+        } else {
+            return Err(invalid());
+        };
+        destination.bearer_hash = Some(digest(secret.as_bytes()));
+        destination.bearer = Some(secret);
+    }
+    Ok(())
+}
+
 impl Settings {
     fn load(home: &Home, cfg: &AppConfig) -> Result<Self> {
         if cfg.get("notifications.schema_version").and_then(|v| v.as_u64()) != Some(1)
@@ -157,21 +247,27 @@ impl Settings {
             if url.fragment().is_some() || (url.scheme() != "https" && !private) {
                 return Err(invalid());
             }
-            let revision = digest(&serde_json::to_vec(&json!({"spec":spec,"private":private}))?);
             destinations.push(Destination {
                 spec,
                 url,
                 private,
-                revision,
+                revision: String::new(),
+                bearer: None,
+                bearer_hash: None,
             });
         }
-        let token = read_token(home)?;
-        if destinations.iter().any(|d| d.spec.enabled && d.spec.use_bearer) && token.is_none() {
-            return Err(invalid());
+        let revoked = revoked_owners(home)?;
+        for destination in &mut destinations {
+            if revoked.contains(&destination.spec.owner) {
+                destination.spec.enabled = false;
+            }
+            destination.revision = digest(&serde_json::to_vec(
+                &json!({"spec": destination.spec, "private": destination.private}),
+            )?);
         }
+        assign_bearers(home, &mut destinations)?;
         Ok(Self {
             destinations,
-            token,
             capacity: bounded(cfg, "notifications.queue_capacity", 1, 512)? as usize,
             batch_size: bounded(cfg, "notifications.batch_size", 1, 32)? as usize,
             batch_interval: bounded(cfg, "notifications.batch_interval_sec", 1, 3600)?,
@@ -189,6 +285,7 @@ impl Settings {
 struct Inner {
     outbox: Mutex<Outbox>,
     settings: Settings,
+    suppressed_owners: Mutex<BTreeSet<String>>,
     home: Home,
     config_path: PathBuf,
     auth: Option<Arc<AuthManager>>,
@@ -206,10 +303,12 @@ impl Notifier {
             return Err(invalid());
         }
         let settings = Settings::load(home, cfg)?;
+        let suppressed_owners = revoked_owners(home)?;
         let outbox = Outbox::open(&home.data_dir().join("notifications/outbox.json"))?;
         let inner = Arc::new(Inner {
             outbox: Mutex::new(outbox),
             settings,
+            suppressed_owners: Mutex::new(suppressed_owners),
             home: Home::at(home.root.clone()),
             config_path: cfg.path.clone(),
             auth,
@@ -244,8 +343,14 @@ impl Notifier {
     }
     pub fn status(&self, owner: &str) -> Value {
         let g = self.0.outbox.lock().unwrap_or_else(|p| p.into_inner());
+        let suppressed = self
+            .0
+            .suppressed_owners
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
         let destinations: Vec<_> = self.0.settings.destinations.iter().filter(|d| d.spec.owner == owner).map(|d|
-            json!({"id":d.spec.id,"enabled":d.spec.enabled,"authorized_now":self.0.authorized(d),"events":d.spec.events,"rate_per_minute":d.spec.rate_per_minute,"bearer_configured":d.spec.use_bearer})).collect();
+            json!({"id":d.spec.id,"enabled":d.spec.enabled && !suppressed.contains(&d.spec.owner),"authorized_now":self.0.authorized(d),"events":d.spec.events,"rate_per_minute":d.spec.rate_per_minute,"bearer_configured":d.spec.use_bearer})).collect();
         let deliveries: Vec<_> = g.data.deliveries.values().filter(|d| d.owner == owner).map(|d|
             json!({"delivery_id":d.delivery_id,"event_id":d.event_id,"destination_id":d.destination_id,"job_id":d.completion.job_id,"job_status":d.completion.status,"finished_at":d.completion.finished_at,"state":d.state,"attempts":d.attempts,"replays":d.replays,"next_attempt_at":d.next_attempt_at,"last_code":d.last_code})).collect();
         json!({"enabled":true,"destinations":destinations,"deliveries":deliveries,"semantics":"at_least_once_with_receiver_deduplication"})
@@ -292,12 +397,57 @@ impl Notifier {
             .log(json!({"event":"notification_replay","delivery_id":id}));
         Ok(())
     }
+
+    /// Stop this owner's destinations until an operator edits the grant and restarts.
+    /// Other owners are not written into the revocation file.
+    pub fn disable_owner(&self, owner: &str) -> Result<usize> {
+        if !super::structured_memory::valid_owner(owner) {
+            return Ok(0);
+        }
+        let path = revoked_path(&self.0.home);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+            }
+        }
+        let mut owners = revoked_owners(&self.0.home)?;
+        owners.insert(owner.to_string());
+        let body = serde_json::to_vec(&json!({"version": 1, "owners": owners}))?;
+        crate::common::atomic::write_atomic(&path, &body, Some(0o600))?;
+        self.0
+            .suppressed_owners
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(owner.to_string());
+        Ok(self
+            .0
+            .settings
+            .destinations
+            .iter()
+            .filter(|destination| destination.spec.owner == owner)
+            .count())
+    }
+
+    /// One worker pass. The background task calls the same sweep.
+    pub async fn poll_once(&self) {
+        self.0.tick().await;
+    }
 }
 impl Inner {
+    fn owner_suppressed(&self, owner: &str) -> bool {
+        self.suppressed_owners
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .contains(owner)
+    }
+
     /// Fresh disk checks can remove startup authority, never expand it. New
     /// destinations/credentials require restart; ordinary config reload adds none.
     fn authorized(&self, destination: &Destination) -> bool {
-        if !destination.spec.enabled {
+        if !destination.spec.enabled || self.owner_suppressed(&destination.spec.owner) {
             return false;
         }
         let owner_ok = match &self.auth {
@@ -321,10 +471,12 @@ impl Inner {
             Settings::load(&self.home, &cfg)
         })();
         current.is_ok_and(|s| {
-            s.destinations
-                .iter()
-                .any(|d| d.spec.enabled && d.spec.id == destination.spec.id && d.revision == destination.revision)
-                && (!destination.spec.use_bearer || s.token == self.settings.token)
+            s.destinations.iter().any(|d| {
+                d.spec.enabled
+                    && d.spec.id == destination.spec.id
+                    && d.revision == destination.revision
+                    && (!destination.spec.use_bearer || d.bearer_hash == destination.bearer_hash)
+            })
         })
     }
     fn enqueue(&self, event: Completion) -> std::result::Result<(), &'static str> {
@@ -505,7 +657,7 @@ impl Inner {
                         destination,
                         self.settings.timeout,
                         if destination.spec.use_bearer {
-                            self.settings.token.as_deref()
+                            destination.bearer.as_deref()
                         } else {
                             None
                         },
@@ -687,6 +839,8 @@ mod tests {
             url,
             private: true,
             revision: "fixture".into(),
+            bearer: Some("isolated-transport-fixture".into()),
+            bearer_hash: None,
         };
         assert_eq!(
             send_pinned(

@@ -142,14 +142,30 @@ to an arbitrary account. There is no portal endpoint that lets an account choose
 another owner or grant a destination. The local operator configures those grants;
 portal users inspect and replay only their own retained deliveries.
 
-Quoted `"true"` never enables the master gate. For `use_bearer: true`, save
-`CGAGENTHARNESS_WEBHOOK_TOKEN` through administrator **API Keys** or the private
-managed `.env`. The token must be printable non-space ASCII, at most 4096 bytes.
-An explicit environment value takes precedence, including an empty value. The
-single managed bearer is shared only by destinations that explicitly select it;
-use receiver-side authorization appropriate to those grants. No signing-secret
-or payload-content adapter is enabled implicitly. Credentials are absent from the
-outbox, status responses, event payloads and content-free delivery audit records.
+Quoted `"true"` never enables the master gate. For `use_bearer: true`, each
+destination has its own bearer. Put them in the private file
+`data/notifications/bearers.json` (mode `0600` on Unix):
+
+```json
+{"version":1,"tokens":{"build-alerts":"replace-with-a-destination-secret"}}
+```
+
+The secret is printable non-space ASCII, at most 4096 bytes. It is held in
+process memory for the outbound `Authorization` header and compared by SHA-256
+on every attempt. Replacing one destination's secret revokes that destination's
+pending rows (`authority_revoked`) and leaves every other destination's secret
+and deliveries alone. `CGAGENTHARNESS_WEBHOOK_TOKEN` remains only as a legacy
+bootstrap, and only when every enabled bearer destination belongs to one owner.
+A second owner's bearer destination is refused at startup unless `bearers.json`
+has that destination's own secret. The house token is never copied onto another
+owner. No signing-secret or payload-content adapter is enabled implicitly.
+Credentials are absent from the outbox, status responses, event payloads and
+content-free delivery audit records.
+
+Disabling or deleting an account cancels that owner's schedules and records the
+owner in `data/notifications/revoked-owners.json`. That owner's destinations
+stop. Other owners stay enabled. Turning the account back on does not restore
+those grants; edit the configuration and restart to do that deliberately.
 
 All settings require restart. Before each attempt/replay, the worker rereads the
 bounded regular configuration file and rechecks the current account, exact startup

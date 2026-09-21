@@ -413,3 +413,187 @@ async fn oversized_completion_is_dropped_without_persisting_sending_or_logging_c
     notifier.stop();
     task.abort();
 }
+
+fn two_destinations(
+    home: &Home,
+    alice_url: &str,
+    bob_url: &str,
+    alice: &str,
+    bob: &str,
+    bearer: bool,
+) -> cgagentharness::common::config::AppConfig {
+    config_with(
+        &home.root,
+        &[
+            ("notifications.enabled", "true"),
+            ("auth.enabled", "true"),
+            (
+                "notifications.destinations",
+                &json!([
+                    {"id":"alicehook","owner":alice,"enabled":true,"url":alice_url,"events":["finished"],"use_bearer":bearer,"rate_per_minute":120},
+                    {"id":"bobhook","owner":bob,"enabled":true,"url":bob_url,"events":["finished"],"use_bearer":bearer,"rate_per_minute":120}
+                ])
+                .to_string(),
+            ),
+            ("notifications.jitter_percent", "0"),
+            ("notifications.private_url_allowlist", &json!([alice_url, bob_url]).to_string()),
+            ("notifications.batch_interval_sec", "1"),
+            ("notifications.poll_interval_sec", "60"),
+            ("notifications.retry_delay_sec", "1"),
+        ],
+    )
+}
+
+async fn header_receiver() -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+    let records = Arc::new(Mutex::new(Vec::new()));
+    let saved = records.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture binds loopback only.
+    let url = format!("http://{}/hook", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this is an isolated HTTP receiver.
+    let router = Router::new().route(
+        "/hook",
+        post(move |headers: HeaderMap| {
+            let saved = saved.clone();
+            async move {
+                saved.lock().unwrap().push(
+                    headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("")
+                        .to_string(),
+                );
+                StatusCode::OK
+            }
+        }),
+    );
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (url, records, task)
+}
+
+#[tokio::test]
+async fn second_owner_bearer_without_its_own_secret_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::at(dir.path().join("home"));
+    home.ensure_layout().unwrap();
+    cgagentharness::common::atomic::write_atomic(
+        &home.env_path(),
+        b"export CGAGENTHARNESS_WEBHOOK_TOKEN='house-legacy-fixture'\n",
+        Some(0o600),
+    )
+    .unwrap();
+    let cfg = config_with(
+        &home.root,
+        &[
+            ("notifications.enabled", "true"),
+            ("auth.enabled", "false"),
+            (
+                "notifications.destinations",
+                &json!([
+                    {"id":"alicehook","owner":"user_alice","enabled":true,"url":"http://127.0.0.1:9/hook","events":["finished"],"use_bearer":true,"rate_per_minute":1},
+                    {"id":"bobhook","owner":"user_bob","enabled":true,"url":"http://127.0.0.1:9/hook","events":["finished"],"use_bearer":true,"rate_per_minute":1}
+                ])
+                .to_string(),
+            ),
+            (
+                "notifications.private_url_allowlist",
+                &json!(["http://127.0.0.1:9/hook"]).to_string(),
+            ),
+        ],
+    );
+    assert!(Notifier::start(&home, &cfg, None).is_err());
+}
+
+#[tokio::test]
+async fn rotating_one_bearer_revokes_only_that_destination() {
+    use cgagentharness::common::auth_store::AuthManager;
+    use cgagentharness::server::notifications::Completion;
+    let (alice_url, alice_hits, alice_task) = header_receiver().await;
+    let (bob_url, bob_hits, bob_task) = header_receiver().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::at(dir.path().join("home"));
+    home.ensure_layout().unwrap();
+    let bootstrap = config_with(
+        &home.root,
+        &[("auth.enabled", "true"), ("notifications.enabled", "false")],
+    );
+    let auth = Arc::new(AuthManager::open(&home.auth_path(), &bootstrap).unwrap());
+    auth.create_user("alice", &cgagentharness::common::random_hex(24), "admin")
+        .unwrap();
+    auth.create_user("bob", &cgagentharness::common::random_hex(24), "operator")
+        .unwrap();
+    let alice_id = auth.get_user("alice").unwrap().user_id;
+    let bob_id = auth.get_user("bob").unwrap().user_id;
+    let cfg = two_destinations(&home, &alice_url, &bob_url, &alice_id, &bob_id, true);
+    let bearers = home.data_dir().join("notifications");
+    std::fs::create_dir_all(&bearers).unwrap();
+    cgagentharness::common::atomic::write_atomic(
+        &bearers.join("bearers.json"),
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "tokens": {
+                "alicehook": "alice-dest-fixture-secret",
+                "bobhook": "bob-dest-fixture-secret"
+            }
+        }))
+        .unwrap()
+        .as_slice(),
+        Some(0o600),
+    )
+    .unwrap();
+    let notifier = Notifier::start(&home, &cfg, Some(auth)).unwrap().unwrap();
+    let now = cgagentharness::common::now_ts();
+    notifier.enqueue(Completion {
+        owner: alice_id.clone(),
+        job_id: format!("{:032x}", 1),
+        status: "finished".into(),
+        created_at: now,
+        finished_at: now,
+    });
+    notifier.enqueue(Completion {
+        owner: bob_id.clone(),
+        job_id: format!("{:032x}", 2),
+        status: "finished".into(),
+        created_at: now,
+        finished_at: now,
+    });
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    cgagentharness::common::atomic::write_atomic(
+        &bearers.join("bearers.json"),
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "tokens": {
+                "alicehook": "alice-dest-fixture-rotated",
+                "bobhook": "bob-dest-fixture-secret"
+            }
+        }))
+        .unwrap()
+        .as_slice(),
+        Some(0o600),
+    )
+    .unwrap();
+    notifier.poll_once().await;
+    let alice_rows = notifier.status(&alice_id)["deliveries"].as_array().unwrap().clone();
+    assert_eq!(alice_rows.len(), 1, "{alice_rows:?}");
+    assert_eq!(alice_rows[0]["state"], "revoked");
+    assert_eq!(alice_rows[0]["last_code"], "authority_revoked");
+    assert!(alice_hits.lock().unwrap().is_empty());
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while bob_hits.lock().unwrap().is_empty() {
+            notifier.poll_once().await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(bob_hits.lock().unwrap().as_slice(), ["Bearer bob-dest-fixture-secret"]);
+    assert_eq!(notifier.disable_owner(&alice_id).unwrap(), 1);
+    assert_eq!(notifier.status(&alice_id)["destinations"][0]["enabled"], false);
+    assert_eq!(notifier.status(&bob_id)["destinations"][0]["enabled"], true);
+    let revoked = std::fs::read_to_string(bearers.join("revoked-owners.json")).unwrap();
+    assert!(revoked.contains(&alice_id));
+    assert!(!revoked.contains(&bob_id));
+    notifier.stop();
+    alice_task.abort();
+    bob_task.abort();
+}

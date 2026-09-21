@@ -495,24 +495,48 @@ fn schedule_owner_authorized(state: &AppState, owner: &str) -> bool {
 
 /// Evaluate due schedules with a caller-supplied clock (tests inject `now`).
 pub async fn tick_schedules(state: &Arc<AppState>, now: f64) {
+    use crate::server::agent_schedules::{parse_request, DispatchOutcome};
     for due in state.schedules.due(now) {
-        state.schedules.consume_and_dispatch(&due, now, || {
-            if !schedule_owner_authorized(state, &due.owner) {
-                state.audit.log(json!({"event":"agent_schedule_refused","schedule_id":due.schedule_id,"code":"SCHEDULE_OWNER_REVOKED"}));
-                return;
-            }
-            let req = match crate::server::agent_schedules::parse_request(&due.request) {
-                Ok(req) => req,
-                Err(e) => {
-                    state.audit.log(json!({"event":"agent_schedule_failed","schedule_id":due.schedule_id,"code":e.code}));
-                    return;
+        let owner = due.owner.clone();
+        let schedule_id = due.schedule_id.clone();
+        let occurrence_id = due.next_occurrence_id.clone();
+        let request = due.request.clone();
+        state.schedules.consume_and_dispatch(
+            &due,
+            now,
+            || {
+                if !schedule_owner_authorized(state, &owner) {
+                    state.audit.log(json!({"event":"agent_schedule_refused","schedule_id":schedule_id,"code":"SCHEDULE_OWNER_REVOKED"}));
+                    return DispatchOutcome::Revoked;
                 }
-            };
-            state.audit.log(json!({"event":"agent_schedule_start","schedule_id":due.schedule_id,"occurrence_id":due.next_occurrence_id}));
-            if let Err(e) = start_job(state.clone(), req, due.owner.clone(), Some(due.schedule_id.clone())) {
-                state.audit.log(json!({"event":"agent_schedule_failed","schedule_id":due.schedule_id,"code":e.body()["detail"]["code"]}));
-            }
-        });
+                if let Err(error) = parse_request(&request) {
+                    state.audit.log(json!({"event":"agent_schedule_failed","schedule_id":schedule_id,"code":error.code}));
+                    return DispatchOutcome::Refused;
+                }
+                DispatchOutcome::Accepted
+            },
+            || {
+                if !schedule_owner_authorized(state, &owner) {
+                    state.audit.log(json!({"event":"agent_schedule_refused","schedule_id":schedule_id,"code":"SCHEDULE_OWNER_REVOKED"}));
+                    return DispatchOutcome::Revoked;
+                }
+                let req = match parse_request(&request) {
+                    Ok(req) => req,
+                    Err(error) => {
+                        state.audit.log(json!({"event":"agent_schedule_failed","schedule_id":schedule_id,"code":error.code}));
+                        return DispatchOutcome::Refused;
+                    }
+                };
+                state.audit.log(json!({"event":"agent_schedule_start","schedule_id":schedule_id,"occurrence_id":occurrence_id}));
+                match start_job(state.clone(), req, owner.clone(), Some(schedule_id.clone())) {
+                    Ok(_) => DispatchOutcome::Accepted,
+                    Err(error) => {
+                        state.audit.log(json!({"event":"agent_schedule_failed","schedule_id":schedule_id,"code":error.body()["detail"]["code"]}));
+                        DispatchOutcome::Refused
+                    }
+                }
+            },
+        );
     }
 }
 

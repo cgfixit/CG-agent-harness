@@ -322,6 +322,21 @@ impl AuthManager {
         self.set_disabled(username, true)
     }
 
+    /// The account stays present and must set a new password before automation runs.
+    pub fn require_password_change(&self, username: &str) -> Result<()> {
+        let canonical = Self::canonical(username);
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut db = stored.1.clone();
+        if !db.users.contains_key(&canonical) {
+            return Err(HarnessError::auth_user_not_found(&canonical));
+        }
+        if let Some(user) = db.users.get_mut(&canonical) {
+            user.must_change_password = true;
+        }
+        revoke_sessions_for(&mut db, &canonical);
+        self.persist(&mut stored, &db)
+    }
+
     pub fn enable_user(&self, username: &str) -> Result<()> {
         self.set_disabled(username, false)
     }

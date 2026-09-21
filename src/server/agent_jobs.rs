@@ -185,6 +185,10 @@ impl JobStore {
         }
     }
 
+    pub fn notifier(&self) -> Option<&super::notifications::Notifier> {
+        self.notifications.as_ref()
+    }
+
     pub fn notification_status(&self, owner: &str) -> Value {
         self.notifications
             .as_ref()

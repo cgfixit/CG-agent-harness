@@ -177,5 +177,7 @@ async fn cron_activation_requires_exact_fresh_single_use_preview_and_retains_fir
         "busy occurrences are skipped, never retried"
     );
     let id = created["schedule_id"].as_str().unwrap();
-    assert!(s.state.schedules.get("local", id).unwrap().next_fire_at > next);
+    let row = s.state.schedules.get("local", id).unwrap();
+    assert!(row.next_fire_at > next);
+    assert_ne!(row.last_dispatch.as_deref(), Some("attempted"));
 }

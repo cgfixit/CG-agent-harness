@@ -17,6 +17,17 @@ use crate::server::schemas::AgentRunRequest;
 
 pub const ACTIVE: &str = "active";
 pub const CANCELLED: &str = "cancelled";
+
+/// Result of one schedule occurrence after the row is still the due one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchOutcome {
+    /// `start_job` accepted a run handle.
+    Accepted,
+    /// The owner can no longer run automation.
+    Revoked,
+    /// The stored request or the run gate refused this occurrence.
+    Refused,
+}
 use super::schedule_time::Occurrence;
 pub use super::schedule_time::{ScheduleSpec, MAX_INTERVAL_SECS, MIN_INTERVAL_SECS};
 
@@ -132,16 +143,9 @@ impl ScheduleStore {
     }
 
     pub fn open_at(path: &Path, now: f64, settings: Settings) -> Result<Self> {
-        use std::io::Read;
+        prepare_schedule_dir(path)?;
         let mut rows = BTreeMap::new();
-        if path.exists() {
-            let mut text = String::new();
-            std::fs::File::open(path)?
-                .take(MAX_FILE_BYTES as u64 + 1)
-                .read_to_string(&mut text)?;
-            if text.len() > MAX_FILE_BYTES {
-                return Err(HarnessError::harness_config("schedule file exceeds its bound"));
-            }
+        if let Some(text) = read_schedule_text(path)? {
             let parsed: Vec<Schedule> = serde_json::from_str(&text)
                 .map_err(|_| HarnessError::harness_config("schedule file is invalid; preserve it for inspection"))?;
             if parsed.len() > settings.max_schedules {
@@ -384,6 +388,30 @@ impl ScheduleStore {
         Ok(Some(out))
     }
 
+    /// Cancel every active row for this owner. A foreign owner is left alone.
+    pub fn cancel_owner(&self, owner: &str) -> Result<usize> {
+        if !crate::server::structured_memory::valid_owner(owner) {
+            return Ok(0);
+        }
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let previous = g.clone();
+        let mut count = 0;
+        for row in g.values_mut() {
+            if row.owner == owner && row.status == ACTIVE {
+                row.status = CANCELLED.into();
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return Ok(0);
+        }
+        if let Err(error) = self.persist(&g) {
+            *g = previous;
+            return Err(error);
+        }
+        Ok(count)
+    }
+
     /// Active schedules whose next occurrence is due at `now`.
     pub fn due(&self, now: f64) -> Vec<Schedule> {
         let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
@@ -393,10 +421,17 @@ impl ScheduleStore {
             .collect()
     }
 
-    /// Consumption is durable before `dispatch`. Holding this lock through
-    /// synchronous job registration linearizes cancellation against dispatch.
-    /// A stale poll cannot consume a subsequent occurrence.
-    pub fn consume_and_dispatch<T>(&self, due: &Schedule, now: f64, dispatch: impl FnOnce() -> T) -> Option<T> {
+    /// `gate` runs before the occurrence is consumed. `start` runs only after
+    /// that consumption is durable, and only when the gate accepted a timely
+    /// occurrence. `last_dispatch = attempted` is written only when `start`
+    /// returns [`DispatchOutcome::Accepted`].
+    pub fn consume_and_dispatch(
+        &self,
+        due: &Schedule,
+        now: f64,
+        gate: impl FnOnce() -> DispatchOutcome,
+        start: impl FnOnce() -> DispatchOutcome,
+    ) -> Option<DispatchOutcome> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let row = g.get_mut(&due.schedule_id)?;
         if row.status != ACTIVE
@@ -407,11 +442,29 @@ impl ScheduleStore {
         {
             return None;
         }
+        let outcome = gate();
+        if outcome == DispatchOutcome::Revoked {
+            let previous = row.clone();
+            row.status = CANCELLED.into();
+            row.last_dispatch = Some("skipped_revoked".into());
+            row.last_fired_at = Some(row.next_fire_at);
+            row.last_occurrence_id = Some(row.next_occurrence_id.clone());
+            if self.persist(&g).is_err() {
+                g.insert(due.schedule_id.clone(), previous);
+                return None;
+            }
+            return Some(DispatchOutcome::Revoked);
+        }
         let previous = row.clone();
         let timely = now - row.next_fire_at <= self.settings.dispatch_grace_secs as f64;
         row.last_fired_at = Some(row.next_fire_at);
         row.last_occurrence_id = Some(row.next_occurrence_id.clone());
-        row.last_dispatch = Some(if timely { "attempted" } else { "skipped_late" }.into());
+        let reserved = if !timely && outcome != DispatchOutcome::Refused {
+            "skipped_late"
+        } else {
+            "skipped_refused"
+        };
+        row.last_dispatch = Some(reserved.into());
         match row.schedule.as_ref()?.next(now, row.created_at) {
             Ok(next) => {
                 row.next_fire_at = next.at;
@@ -423,18 +476,86 @@ impl ScheduleStore {
             g.insert(due.schedule_id.clone(), previous);
             return None;
         }
-        if timely {
-            Some(dispatch())
-        } else {
-            None
+        if outcome == DispatchOutcome::Refused || !timely {
+            return (outcome == DispatchOutcome::Refused).then_some(DispatchOutcome::Refused);
         }
+        let started = start();
+        if let Some(row) = g.get_mut(&due.schedule_id) {
+            match started {
+                DispatchOutcome::Accepted => row.last_dispatch = Some("attempted".into()),
+                DispatchOutcome::Revoked => {
+                    row.status = CANCELLED.into();
+                    row.last_dispatch = Some("skipped_revoked".into());
+                }
+                DispatchOutcome::Refused => row.last_dispatch = Some("skipped_refused".into()),
+            }
+        }
+        let _ = self.persist(&g);
+        Some(started)
     }
 
     #[cfg(test)]
-    fn mark_attempted(&self, id: &str, now: f64) -> Option<()> {
+    fn mark_attempted(&self, id: &str, now: f64) -> Option<DispatchOutcome> {
         let due = self.get("local", id)?;
-        self.consume_and_dispatch(&due, now, || ())
+        self.consume_and_dispatch(&due, now, || DispatchOutcome::Accepted, || DispatchOutcome::Accepted)
     }
+}
+
+fn prepare_schedule_dir(path: &Path) -> Result<()> {
+    let Some(parent) = path.parent() else {
+        return Err(HarnessError::harness_config("schedule file must be a regular file"));
+    };
+    std::fs::create_dir_all(parent)?;
+    let metadata = std::fs::symlink_metadata(parent)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(HarnessError::harness_config(
+            "schedule directory must be a real directory",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+fn read_schedule_text(path: &Path) -> Result<Option<String>> {
+    use std::io::Read;
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(HarnessError::harness_config(
+            "schedule file must be a regular non-linked file",
+        ));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(HarnessError::harness_config(
+            "schedule file must be a regular non-linked file",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    let mut text = String::new();
+    file.take(MAX_FILE_BYTES as u64 + 1).read_to_string(&mut text)?;
+    if text.len() > MAX_FILE_BYTES {
+        return Err(HarnessError::harness_config("schedule file exceeds its bound"));
+    }
+    Ok(Some(text))
 }
 
 pub fn parse_request(value: &Value) -> crate::common::errors::Result<AgentRunRequest> {
@@ -589,16 +710,19 @@ mod tests {
         let path = dir.path().join("schedules.json");
         let store = ScheduleStore::open_at(&path, 0.0, Settings::default()).unwrap();
         let row = store.create(60, req(), "local", 1000.0).unwrap();
-        assert_eq!(store.consume_and_dispatch(&row, 1060.0, || 1), Some(1));
         assert_eq!(
-            store.consume_and_dispatch(&row, 1120.0, || 2),
+            store.consume_and_dispatch(&row, 1060.0, || DispatchOutcome::Accepted, || DispatchOutcome::Accepted),
+            Some(DispatchOutcome::Accepted)
+        );
+        assert_eq!(
+            store.consume_and_dispatch(&row, 1120.0, || DispatchOutcome::Accepted, || DispatchOutcome::Accepted),
             None,
             "stale clone cannot consume next"
         );
         assert!(store.due(1040.0).is_empty(), "backward clock cannot replay");
         let due = store.due(1240.0).pop().unwrap();
         assert_eq!(
-            store.consume_and_dispatch(&due, 1240.0, || 3),
+            store.consume_and_dispatch(&due, 1240.0, || DispatchOutcome::Accepted, || DispatchOutcome::Accepted),
             None,
             "forward jump skips missed work"
         );
@@ -613,7 +737,75 @@ mod tests {
         );
         assert_eq!(recovered.last_dispatch.as_deref(), Some("skipped_downtime"));
         store.cancel("local", &row.schedule_id).unwrap();
-        assert_eq!(store.consume_and_dispatch(&recovered, 1360.0, || 4), None);
+        assert_eq!(
+            store.consume_and_dispatch(
+                &recovered,
+                1360.0,
+                || DispatchOutcome::Accepted,
+                || DispatchOutcome::Accepted
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn revoked_owner_is_cancelled_and_not_attempted() {
+        let store = ScheduleStore::new();
+        let created = store.create(60, req(), "local", 1_000.0).unwrap();
+        let due = store.due(1_060.0);
+        assert_eq!(
+            store.consume_and_dispatch(
+                &due[0],
+                1_060.0,
+                || DispatchOutcome::Revoked,
+                || { panic!("revoked occurrence must not start") }
+            ),
+            Some(DispatchOutcome::Revoked)
+        );
+        let row = store.get("local", &created.schedule_id).unwrap();
+        assert_eq!(row.status, CANCELLED);
+        assert_eq!(row.last_dispatch.as_deref(), Some("skipped_revoked"));
+        assert!(store.due(1_060.0).is_empty());
+        assert!(store.due(1_120.0).is_empty());
+    }
+
+    #[test]
+    fn refused_start_is_not_recorded_as_attempted() {
+        let store = ScheduleStore::new();
+        let created = store.create(60, req(), "user_owner", 1_000.0).unwrap();
+        let other = store.create(60, req(), "user_other", 1_000.0).unwrap();
+        let due = store
+            .due(1_060.0)
+            .into_iter()
+            .find(|row| row.owner == "user_owner")
+            .unwrap();
+        assert_eq!(
+            store.consume_and_dispatch(&due, 1_060.0, || DispatchOutcome::Accepted, || DispatchOutcome::Refused),
+            Some(DispatchOutcome::Refused)
+        );
+        let row = store.get("user_owner", &created.schedule_id).unwrap();
+        assert_ne!(row.last_dispatch.as_deref(), Some("attempted"));
+        assert_eq!(row.last_dispatch.as_deref(), Some("skipped_refused"));
+        assert_eq!(row.status, ACTIVE);
+        assert_eq!(store.cancel_owner("user_owner").unwrap(), 1);
+        assert_eq!(store.get("user_owner", &created.schedule_id).unwrap().status, CANCELLED);
+        assert_eq!(store.get("user_other", &other.schedule_id).unwrap().status, ACTIVE);
+        assert_eq!(store.cancel_owner("user_owner").unwrap(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn schedule_file_refuses_symlink_and_fifo() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schedules.json");
+        std::os::unix::fs::symlink(dir.path().join("absent"), &path).unwrap();
+        assert!(ScheduleStore::open(&path).is_err());
+        std::fs::remove_file(&path).unwrap();
+        let name = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        // SAFETY: `name` is a NUL-terminated path inside this temp directory.
+        // mkfifo creates the FIFO and does not follow an existing node.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(ScheduleStore::open(&path).is_err());
     }
 
     #[test]

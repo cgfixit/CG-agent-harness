@@ -65,8 +65,13 @@ IANA names. Calendars end in 2100; expressions without a future occurrence refus
 Rows migrate to schema 1 without changing interval cadence or inventing owners.
 Ownerless legacy schedules stay hidden and cannot dispatch. Management is owner
 scoped; every occurrence rechecks the current enabled, non-bootstrap operator/admin
-owner, reviewed goal, budget, broker and execution/write gates. The existing run
-gate prevents overlap; a busy occurrence is consumed and skipped, never queued.
+owner, reviewed goal, budget, broker and execution/write gates before the
+occurrence is consumed. A disabled account, or one that must change its password,
+cancels that owner's active rows (`last_dispatch=skipped_revoked`) so they stop
+coming due. Disabling or deleting the account does the same immediately, and
+does not touch another owner's rows. The existing run
+gate prevents overlap; a busy or unbound occurrence is consumed and skipped
+(`last_dispatch=skipped_refused`), never queued and never recorded as attempted.
 `GET /api/agent/schedules/{schedule_id}` inspects a schedule;
 `POST /api/agent/schedules/{schedule_id}/cancel` stops future dispatch. Cancellation
 and job registration serialize under the schedule lock. An already started job
@@ -78,8 +83,9 @@ default polling grace; older work is skipped. Forward clock jumps skip missed wo
 backward jumps wait for the persisted next UTC time. Nonexistent DST wall times
 are skipped; an ambiguous time uses its first UTC mapping only. There is no catch-up.
 This is at-most-once dispatch: a crash after consumption can miss work. It is not
-exactly-once execution. `last_dispatch` distinguishes attempts, late skips and
-recovery skips; audit records give gate-refusal details.
+exactly-once execution. `last_dispatch=attempted` means a job handle was
+accepted. Other values are `skipped_late`, `skipped_refused`, `skipped_revoked`
+and `skipped_downtime`. Audit records give gate-refusal details.
 
 The `scheduling` section in `config.default.yaml` documents finite poll, grace,
 preview-expiry and inventory settings. They require restart and are outside the

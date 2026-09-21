@@ -222,10 +222,20 @@ async fn accounts_cannot_read_mutate_search_export_or_schedule_foreign_sessions(
     assert!(s.state.jobs.get(&bob_id, &jid).is_none());
     assert!(s.state.jobs.cancel(&bob_id, &jid).is_none());
     s.state.jobs.cancel(&alice_id, &jid).unwrap();
-    // Revocation after activation is revalidated when the occurrence fires.
+    // Revocation after activation cancels the row. It does not start a job.
     s.state.auth.as_ref().unwrap().disable_user("alice").unwrap();
-    cgagentharness::server::routes::agent::tick_schedules(&s.state, schedule["next_fire_at"].as_f64().unwrap()).await;
-    assert_eq!(s.state.jobs.list(&alice_id).len(), 1);
+    let fire_at = schedule["next_fire_at"].as_f64().unwrap();
+    cgagentharness::server::routes::agent::tick_schedules(&s.state, fire_at).await;
+    cgagentharness::server::routes::agent::tick_schedules(&s.state, fire_at).await;
+    assert_eq!(
+        s.state.jobs.list(&alice_id).len(),
+        1,
+        "the earlier cancelled job stays; no schedule run starts"
+    );
+    assert!(s.state.schedules.due(fire_at).is_empty());
+    let row = s.state.schedules.get(&alice_id, sid).unwrap();
+    assert_eq!(row.status, "cancelled");
+    assert_eq!(row.last_dispatch.as_deref(), Some("skipped_revoked"));
     assert!(std::fs::read_to_string(s.home.join("logs/audit.jsonl"))
         .unwrap()
         .contains("SCHEDULE_OWNER_REVOKED"));
@@ -354,4 +364,98 @@ async fn foreign_cancel_and_clear_cannot_stop_an_active_generation() {
     };
     let (reply, ()) = tokio::join!(chat, controls);
     assert!(reply["session_id"].is_string());
+}
+
+async fn owned_schedule(s: &TestServer, cookie: &str) -> serde_json::Value {
+    let response = request(s, cookie, Method::POST, "/api/sessions", json!({})).await;
+    assert!(response.status().is_success());
+    let created: Value = response.json().await.unwrap();
+    let id = created["session_id"].as_str().unwrap();
+    json_request(
+        s,
+        cookie,
+        Method::POST,
+        &format!("/api/sessions/{id}/goal"),
+        json!({"goal":"Review arithmetic"}),
+    )
+    .await;
+    let stage = json_request(
+        s,
+        cookie,
+        Method::POST,
+        &format!("/api/sessions/{id}/goal-stage"),
+        json!({"branch":"codex/owner-fixture"}),
+    )
+    .await;
+    let mut run = stage["request"].clone();
+    run["confirm"] = json!(true);
+    run["reason"] = json!("fixture review");
+    let preview = json_request(
+        s,
+        cookie,
+        Method::POST,
+        "/api/agent/schedules/preview",
+        json!({"interval_secs":60,"request":run}),
+    )
+    .await;
+    json_request(
+        s,
+        cookie,
+        Method::POST,
+        "/api/agent/schedules",
+        json!({"interval_secs":60,"request":run,"preview_id":preview["preview_id"]}),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn password_change_between_activate_and_fire_cancels_the_schedule() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let (alice_id, alice) = account(&s, "alice", "admin").await;
+    let schedule = owned_schedule(&s, &alice).await;
+    let sid = schedule["schedule_id"].as_str().unwrap();
+    s.state.auth.as_ref().unwrap().require_password_change("alice").unwrap();
+    let fire_at = schedule["next_fire_at"].as_f64().unwrap();
+    cgagentharness::server::routes::agent::tick_schedules(&s.state, fire_at).await;
+    cgagentharness::server::routes::agent::tick_schedules(&s.state, fire_at).await;
+    assert!(s.state.jobs.list(&alice_id).is_empty());
+    assert!(s.state.schedules.due(fire_at).is_empty());
+    let row = s.state.schedules.get(&alice_id, sid).unwrap();
+    assert_eq!(row.status, "cancelled");
+    assert_eq!(row.last_dispatch.as_deref(), Some("skipped_revoked"));
+}
+
+#[tokio::test]
+async fn disabling_one_account_cancels_only_that_owners_schedules() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let (alice_id, alice) = account(&s, "alice", "admin").await;
+    let (bob_id, bob) = account(&s, "bob", "operator").await;
+    let alice_schedule = owned_schedule(&s, &alice).await;
+    let bob_schedule = owned_schedule(&s, &bob).await;
+    json_request(
+        &s,
+        &alice,
+        Method::POST,
+        "/api/auth/users/bob/disabled",
+        json!({"disabled": true}),
+    )
+    .await;
+    assert_eq!(
+        s.state
+            .schedules
+            .get(&bob_id, bob_schedule["schedule_id"].as_str().unwrap())
+            .unwrap()
+            .status,
+        "cancelled"
+    );
+    assert_eq!(
+        s.state
+            .schedules
+            .get(&alice_id, alice_schedule["schedule_id"].as_str().unwrap())
+            .unwrap()
+            .status,
+        "active"
+    );
 }
