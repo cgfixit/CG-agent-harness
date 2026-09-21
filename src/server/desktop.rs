@@ -145,6 +145,7 @@ fn start() -> anyhow::Result<()> {
             }
         });
         let app = app.route("/_desktop/ready", readiness);
+        let _mcp_listener = super::mcp_server::start(state.clone()).await?;
         let server = tokio::spawn(transport.serve(listener, app));
         send(
             json!({"protocol":PROTOCOL,"challenge":hello.challenge,"pid":std::process::id(),"port":port,

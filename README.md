@@ -158,6 +158,12 @@ strict mode requires a working systemd/cgroup v2 service; unsupported protection
 is refused. Existing declarations need migration before restart. See
 [MCP client policy](docs/MCP_CLIENT.md).
 
+The optional [private MCP memory gateway](docs/MCP_SERVER.md) uses a separate,
+default-off loopback listener and dedicated revocable machine keys. Enabling it
+publishes no tools until explicitly selected; the initial capabilities are
+owner-bound fact list/get/literal search only. It provides no memory writes,
+console login, chat, coding, or remote deployment authority.
+
 **Analytics.** The header button or `/analytics` opens searchable, independently
 paged token/cost, session and coding-run metrics with creation-date and outcome
 bars. Partial or unavailable data stays visible. See [analytics](docs/ANALYTICS.md) for scope, limits and the read-only API.

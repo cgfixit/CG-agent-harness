@@ -130,9 +130,14 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "unslop.enabled",
         "mcp.enabled",
         "mcp.sse_allow_loopback",
+        "mcp.server.enabled",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }
+    assert!(
+        cfg.str_list("mcp.server.tools").is_empty(),
+        "listener enablement must not grant tools"
+    );
     for gate in [
         "memory.enabled",
         "structured_memory.enabled",

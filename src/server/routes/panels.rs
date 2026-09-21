@@ -199,7 +199,9 @@ pub async fn web_inject(
 }
 
 pub async fn mcp_status(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(state.mcp.status())
+    let mut status = state.mcp.status();
+    status["memory_gateway"] = super::super::mcp_server::configuration_status(&state.cfg);
+    Json(status)
 }
 
 pub async fn mcp_call(

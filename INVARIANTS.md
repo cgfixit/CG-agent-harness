@@ -611,3 +611,26 @@ remain independent and fail closed as before.
 - Locked by: `tests/secure_portal.rs` (HTTP, actual SIGHUP, role/CSRF,
   atomic refusal, rate history and web response bounds), `config_reload` units,
   and the existing web/research tests.
+
+
+## Private MCP memory server is a separate authority boundary
+
+`mcp.server.enabled` is literal-true, default-off and independent of the outbound
+client. Disabled means no listener or automatic key-store initialization. Enabled
+local mode binds only to a loopback IP; it refuses non-loopback interfaces, foreign
+Host, Origin and forwarding headers. The console remains separately guarded.
+An empty tool list grants nothing. Only fact list/get/literal search are recognized,
+and every query uses the immutable owner in a current `memory:read` machine-key
+row. Inactive/foreign facts are unavailable. No writes, proposals, prompts, jobs,
+notes, spend, sessions or coding tools are published. I6 remains unchanged.
+
+Machine credentials use their own STRICT schema/version/initialized marker and
+private no-follow database. Only hashes of random 256-bit secrets persist; keys
+are not users or cookie sessions. The CLI mints/revokes with explicit confirm and
+reason using local filesystem authority. Table/rate/concurrency/body/result/time
+ceilings are finite; revocation is rechecked before reads. In-flight reads may
+finish. Human-account deletion does not implicitly revoke independent keys.
+Audits contain recognized tools, public IDs and coarse outcomes, never content.
+All gateway settings remain restart-only, outside the 22-key reload allowlist.
+A future remote exposure mode needs the explicit deployment acceptance in
+`docs/MCP_SERVER.md`; this implementation opens no LAN/public service or tunnel.

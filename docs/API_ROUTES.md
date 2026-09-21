@@ -137,6 +137,18 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 The `cgagentharness web` CLI family drives these same routes through the
 running portal.
 
+## Private MCP memory server
+
+The optional separate loopback listener accepts `POST /mcp` using dedicated
+machine bearer keys, never console cookies. It is not a console route and is
+not exposed by changing the portal's bind address. Default-off listener and
+empty tool grants are independent. Read-only tools are `memory_list_facts`,
+`memory_get_fact`, and literal-substring `memory_search`, each bound to the
+key row's owner and `memory:read` scope. Local CLI `mcp-key create/list/revoke`
+manages independent credentials. See [activation, limits and future exposure
+contract](MCP_SERVER.md). `GET /api/mcp` and `/tools mcp` also show gateway
+configuration; they do not probe or authorize that listener.
+
 ## MCP client
 
 | Method | Path | Purpose |
