@@ -25,6 +25,8 @@ Spend interpretation and completion-webhook configuration: [operator guide](SPEN
 | GET | `/api/registry` | Skill/persona registry listing |
 | GET | `/api/audit` | Audit events (administrator) |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |
+| GET | `/api/analytics/summary` | Composed spend/session/coding-run analytics for the account (`/analytics`; see [ANALYTICS.md](ANALYTICS.md)) |
+| POST | `/api/config/reload` | Reload the non-secret limits allowlist (administrator, CSRF-guarded; see [CONFIG_RELOAD.md](CONFIG_RELOAD.md)) |
 
 ## Accounts and sessions
 
@@ -63,6 +65,7 @@ session timeouts.
 | POST | `/api/prompt/preview` | Show the assembled system prompt (`/prompt`) |
 | POST | `/api/slash/parse` | Suggest-don't-guess slash normalizer; never executes mutations |
 | GET | `/api/spend/summary` | Guarded retained-history spend rollup with completeness, file statuses and skipped-row counts (read-time USD) |
+| POST | `/api/spend/predict` | Estimate an unsent cloud draft's cost before sending (Estimate draft; see [SPEND_AND_NOTIFICATIONS.md](SPEND_AND_NOTIFICATIONS.md)) |
 | GET, POST | `/api/sessions` | List your sessions or create an owned one |
 | GET | `/api/sessions/legacy` | Administrator metadata inventory of unassigned legacy sessions |
 | POST | `/api/sessions/{session_id}/adopt` | Administrator adopts into own account with confirmation/reason; clears prior goal-stage approval |
