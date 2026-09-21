@@ -24,6 +24,12 @@ fn hex_id(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 fn present(path: &Path) -> anyhow::Result<bool> {
+    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        return Err(refused());
+    }
+    let path = Path::new(raw.as_ref());
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -31,6 +37,12 @@ fn present(path: &Path) -> anyhow::Result<bool> {
     }
 }
 fn private_file(path: &Path) -> anyhow::Result<std::fs::File> {
+    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        return Err(refused());
+    }
+    let path = Path::new(raw.as_ref());
     if std::fs::symlink_metadata(path)
         .map_err(|_| refused())?
         .file_type()
@@ -439,4 +451,15 @@ pub fn run(command: KeyCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn present_refuses_parent_components() {
+        let err = present(Path::new("/tmp/harness/../mcp_keys.sqlite3")).unwrap_err();
+        assert!(err.to_string().contains("MCP_KEYS_REFUSED"));
+    }
 }
