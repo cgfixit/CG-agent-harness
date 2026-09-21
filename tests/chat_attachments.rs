@@ -37,6 +37,38 @@ async fn post_files(s: &TestServer, files: &[(&str, &[u8])]) -> (u16, serde_json
     (status, body)
 }
 
+async fn post_notes(s: &TestServer, files: &[(&str, &[u8])]) -> (u16, serde_json::Value) {
+    let (ct, body) = multipart(files);
+    let resp = s
+        .req(reqwest::Method::POST, "/api/notes-corpus")
+        .header("content-type", ct)
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    let body = resp
+        .json::<serde_json::Value>()
+        .await
+        .unwrap_or(serde_json::Value::Null);
+    (status, body)
+}
+
+fn note_files(n: usize) -> Vec<(String, Vec<u8>)> {
+    (0..n)
+        .map(|i| (format!("n{i}.md"), format!("note-{i} body").into_bytes()))
+        .collect()
+}
+
+async fn post_notes_n(s: &TestServer, n: usize) -> (u16, serde_json::Value) {
+    let owned = note_files(n);
+    let files: Vec<(&str, &[u8])> = owned
+        .iter()
+        .map(|(name, data)| (name.as_str(), data.as_slice()))
+        .collect();
+    post_notes(s, &files).await
+}
+
 fn session_json(home: &std::path::Path, session_id: &str) -> serde_json::Value {
     let path = home.join("sessions").join(format!("{session_id}.json"));
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
@@ -473,4 +505,53 @@ async fn notes_corpus_injects_local_chat_and_stays_off_loop() {
     let system = sent["messages"][0]["content"].as_str().unwrap();
     assert!(!system.contains("NOTES_CORPUS_NEEDLE"), "{system}");
     assert!(!system.contains("source=notes_corpus"));
+}
+
+#[tokio::test]
+async fn notes_ingest_honors_default_file_count() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, body) = post_notes_n(&s, 4).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body["count"].as_u64().unwrap() >= 4, "{body}");
+    let (status, body) = post_notes_n(&s, 8).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["count"], 8);
+    let (status, body) = post_notes_n(&s, 9).await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "NOTES_TOO_MANY");
+}
+
+#[tokio::test]
+async fn notes_ingest_honors_custom_file_count() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("notes_corpus.max_files_per_request", "2"),
+    )
+    .await;
+    let (status, body) = post_notes_n(&s, 2).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["count"], 2);
+    let (status, body) = post_notes_n(&s, 3).await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "NOTES_TOO_MANY");
+}
+
+#[tokio::test]
+async fn attachments_still_refuse_a_fourth_file() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, body) = post_files(
+        &s,
+        &[
+            ("a.md", b"one"),
+            ("b.md", b"two"),
+            ("c.md", b"three"),
+            ("d.md", b"four"),
+        ],
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "ATTACHMENT_TOO_MANY");
 }

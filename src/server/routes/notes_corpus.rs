@@ -42,7 +42,9 @@ pub async fn ingest_notes(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let limit = 9 * 1024 * 1024usize;
+    let limits = state.notes_corpus.limits();
+    let limit = limits.max_request_bytes();
+    let max_files = limits.max_files_per_request;
     let bytes = axum::body::to_bytes(req.into_body(), limit.saturating_add(1))
         .await
         .map_err(|_| {
@@ -56,7 +58,17 @@ pub async fn ingest_notes(
     let task_owner = owner.clone();
     let stored = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let files = attachments::parse_multipart(&bytes, &boundary)?;
+        let files = match attachments::parse_multipart_limited(&bytes, &boundary, max_files) {
+            Ok(files) => files,
+            Err(e) if e.code == "ATTACHMENT_TOO_MANY" => {
+                return Err(crate::common::errors::HarnessError::new(
+                    "NOTES_TOO_MANY",
+                    "too many notes files in this request",
+                )
+                .detail("limit", max_files as u64));
+            }
+            Err(e) => return Err(e),
+        };
         st.notes_corpus.store(&task_owner, &files)
     })
     .await

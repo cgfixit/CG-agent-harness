@@ -552,6 +552,10 @@ pub fn multipart_boundary(content_type: &str) -> Result<String> {
 }
 
 pub fn parse_multipart(body: &[u8], boundary: &str) -> Result<Vec<IncomingFile>> {
+    parse_multipart_limited(body, boundary, MAX_FILES_PER_REQUEST)
+}
+
+pub fn parse_multipart_limited(body: &[u8], boundary: &str, max_files: usize) -> Result<Vec<IncomingFile>> {
     let mut delim = Vec::with_capacity(boundary.len() + 4);
     delim.extend_from_slice(b"--");
     delim.extend_from_slice(boundary.as_bytes());
@@ -602,7 +606,7 @@ pub fn parse_multipart(body: &[u8], boundary: &str) -> Result<Vec<IncomingFile>>
         }
         rest = &rest[delim.len()..];
         if let Some(filename) = disposition_filename(headers) {
-            if files.len() >= MAX_FILES_PER_REQUEST {
+            if files.len() >= max_files {
                 return Err(too_many());
             }
             files.push(IncomingFile { filename, data });
@@ -996,11 +1000,9 @@ mod tests {
         assert_eq!(classify_file(&nul).unwrap_err().code, "ATTACHMENT_NUL");
     }
 
-    #[test]
-    fn fourth_file_is_rejected_by_the_parser() {
-        let boundary = "----testbound";
+    fn multipart_named(boundary: &str, names: &[&str]) -> Vec<u8> {
         let mut body = Vec::new();
-        for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+        for name in names {
             body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
             body.extend_from_slice(
                 format!("Content-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n\r\n").as_bytes(),
@@ -1008,7 +1010,27 @@ mod tests {
             body.extend_from_slice(b"hi\r\n");
         }
         body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        body
+    }
+
+    #[test]
+    fn fourth_file_is_rejected_by_the_parser() {
+        let boundary = "----testbound";
+        let body = multipart_named(boundary, &["a.txt", "b.txt", "c.txt", "d.txt"]);
         let err = parse_multipart(&body, boundary).unwrap_err();
+        assert_eq!(err.code, "ATTACHMENT_TOO_MANY");
+    }
+
+    #[test]
+    fn limited_parser_accepts_eight_and_rejects_ninth() {
+        let boundary = "----testbound";
+        let names_8: Vec<String> = (0..8).map(|i| format!("n{i}.md")).collect();
+        let names_8_ref: Vec<&str> = names_8.iter().map(String::as_str).collect();
+        let files = parse_multipart_limited(&multipart_named(boundary, &names_8_ref), boundary, 8).unwrap();
+        assert_eq!(files.len(), 8);
+        let names_9: Vec<String> = (0..9).map(|i| format!("n{i}.md")).collect();
+        let names_9_ref: Vec<&str> = names_9.iter().map(String::as_str).collect();
+        let err = parse_multipart_limited(&multipart_named(boundary, &names_9_ref), boundary, 8).unwrap_err();
         assert_eq!(err.code, "ATTACHMENT_TOO_MANY");
     }
 
