@@ -35,7 +35,8 @@ shape that `mlx_lm.server` emits:
 
 Loopback-only enforcement (`is_loopback_url`) is preserved on both — the security
 invariant holds. `docs/MODELS.md` already documents the `lmstudio` fallback example on
-port 1234 (`mlx_lm.server`'s default).
+port 1234 (the LM Studio convention this recipe's `mlx_lm.server --port 1234` explicitly
+binds to; `mlx_lm.server` itself defaults to port 8080 when no `--port` is given).
 
 ## The two things you must get right
 
