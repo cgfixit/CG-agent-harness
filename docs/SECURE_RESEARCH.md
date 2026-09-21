@@ -36,6 +36,12 @@ cannot run chat, research, coding, account administration, or key management.
 Replacement checks the current password and CSRF token and invalidates all old
 sessions. Normal administrative resets retain the ordinary password policy.
 
+Console authentication probes have a five-second deadline; login, legacy
+bootstrap, logout, and Users panel requests have a fifteen-second deadline.
+These cover the complete response body as well as headers, so a stalled JSON
+reply cannot leave the operation waiting indefinitely. A timeout does not prove
+that a submitted account change was rejected; refresh before retrying it.
+
 Each scrypt derivation uses about 128 MiB, so login and password operations
 are bounded by `auth.max_concurrent_operations` (default 2, accepted range 1–4);
 extra concurrent attempts wait for a permit rather than exhausting memory.
