@@ -65,7 +65,8 @@ The shipped tag is `qwen3.8:27b-mlx`; it is a default string, not an installatio
 check. A 27B model is not required just to use the app. Do not copy an example tag
 unless your inventory contains it. Chat uses `models.local_llm.base_url`; the
 planner uses `agentic.deepagent_github.base_url`. Both local paths require a
-loopback OpenAI-compatible service.
+loopback OpenAI-compatible service — which is also how a fine-tuned MLX model is
+served; see [FINETUNE.md](FINETUNE.md) for the QLoRA workflow.
 
 ### Exact-model diagnostics and optional fallback
 

@@ -1,0 +1,11 @@
+# Generated dataset (reproducible via build_dataset.py) — do not commit.
+data/
+# Training outputs.
+adapters/
+*.npz
+cgagent-fused/
+# Security scan artifacts.
+.secscan/
+# Python bytecode.
+__pycache__/
+*.pyc
