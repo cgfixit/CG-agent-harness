@@ -321,10 +321,13 @@ specified in [MEMORY_BENCHMARK_PLAN.md](MEMORY_BENCHMARK_PLAN.md).
 
 ## Session, token and code analytics
 
-Use `/analytics` in the console to view retained ledger usage, session token and
-message counts, creation-date bars and coding-run outcomes. **Refresh** rereads
-the data; Previous/Next limits each table to 100 rows. Close, Escape and account
-transitions clear the dialog. Disabled coding and incomplete ledgers remain
+Choose **Analytics** or use `/analytics` in the console to view retained ledger
+usage, session token and message counts, creation-date bars and coding-run outcomes. **Refresh** rereads
+the data; Previous/Next shows 25 rows in the selected section. Close, Escape and
+account transitions clear the dialog. Disabled coding and incomplete ledgers remain
 explicit; no inference or repository action is started. Histories are shared
 portal resources available to administrators and operators, not auditors. See
 [Analytics](ANALYTICS.md) for API fields, retention limits and interpretation.
+Section tabs support arrow keys; each keeps its own filter and 25-row page.
+Sessions can sort by tokens, creation date or title. The overview and charts
+always describe all retained records, including rows hidden by a filter.

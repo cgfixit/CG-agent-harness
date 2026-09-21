@@ -1,9 +1,15 @@
 # Session, token and coding analytics
 
-Enter `/analytics` in the native or browser console. **Refresh** rereads retained
-history; **Close** or Escape clears the dialog. Logout and login transitions
+Choose **Analytics** in the header or enter `/analytics` in the native or browser
+console. The overview shows retained session tokens, readable sessions and listed
+coding runs. A `+` on the run count means the list is truncated. **Refresh** rereads
+retained history and shows the time of the latest successful refresh. **Close** or
+Escape clears the dialog and returns focus to the opening control. Logout and login transitions
 invalidate cached results, including responses that arrive after the transition.
 The command is in the alphabetical Commands pane and `/help`.
+
+See the [native and browser screenshot gallery](../screenshots/analytics/README.md)
+for five verified examples using isolated test data.
 
 The view is available to administrators who have replaced the bootstrap password
 and to portal operators. Auditors cannot read it. Sessions, spend and coding runs
@@ -17,7 +23,8 @@ legacy auth-disabled configuration keeps its existing local access semantics.
   Partial files, skipped rows and stale rates retain the same warnings as
   [Spend](SPEND_AND_NOTIFICATIONS.md). Estimates are not invoices.
 - **Sessions:** readable retained session titles, message counts, input/output
-  and total tokens, and exchange counts, sorted by total tokens descending.
+  and total tokens, exchange counts and UTC creation dates. Sort by most tokens
+  (the default), newest creation or title. Missing creation dates stay unknown.
   Bars show the latest 14 recorded UTC **creation dates**, using existing
   `created_ts` metadata. They do not measure daily activity, file modification
   times or time spent in the app. Unknown dates are counted separately.
@@ -27,9 +34,18 @@ legacy auth-disabled configuration keeps its existing local access semantics.
   Missing metrics, including unreadable records or an older backend, display
   **Unknown**. Disabled or failed coding reads display **Unavailable**.
 
-Each table displays at most 100 rows per page. Previous/Next pages all three
-tables together; a shorter table can be empty on a later page. Run listing scans
-at most 4,097 directory entries to detect overflow and returns at most 128
+Choose **Tokens and cost**, **Sessions** or **Code** to inspect one section at a
+time. Arrow keys, Home and End move between section tabs. Each section keeps its
+own filter and page, so paging sessions does not hide a shorter token or run
+table. Filter by displayed values (including session IDs); **Clear filter**
+restores all rows. Each table shows at most 25 rows per page, with a visible record
+range. The overview and charts always cover all retained records, not just matches.
+Refresh preserves filters and clamps pages if the source shrinks. Closing or
+changing accounts clears filters, sorting and cached data. Tables scroll within
+the dialog; Close and Refresh stay at its top and page controls stay at its bottom.
+Empty, no-match and unavailable states are distinct.
+
+Run listing scans at most 4,097 directory entries to detect overflow and returns at most 128
 records. A truncated listing is marked partial, and its totals cover only the
 listed records. Session totals and ledger totals have different retention and
 accounting rules; they are shown separately and never added together.

@@ -271,15 +271,46 @@
   #harnessAuth .apikey { width: 160px; }
 #soulEditor, #sessionClearDialog, #spendDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
 #spendDialog { margin:auto;max-height:90vh; }
-#analyticsDialog { width:90%;max-width:1100px;max-height:90vh;margin:auto;padding:24px;background:#181b24;color:#eee;border:1px solid #667;overflow:auto; }
-#analyticsDialog h3 { margin-top:24px; }
-#analyticsDialog p { margin:12px 0; }
-#analyticsDialog button { padding:6px 12px;margin:4px 8px 4px 0; }
-#analyticsDialog .analytics-table { overflow:auto;max-height:40vh; }
-#analyticsDialog table { width:100%;border-collapse:collapse;text-align:left; }
-#analyticsDialog th, #analyticsDialog td { padding:8px;border-bottom:1px solid var(--border);overflow-wrap:anywhere; }
-#analyticsDialog .analytics-bars label { display:flex;justify-content:space-between;gap:12px;margin:4px 0; }
-#analyticsDialog meter { width:50%; }
+#analyticsDialog { width:calc(100% - 32px);max-width:1100px;max-height:92dvh;margin:auto;padding:0;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:12px;overflow:auto;box-shadow:0 24px 80px #0008; }
+#analyticsDialog::backdrop { background:#0009; }
+#analyticsDialog .analytics-header { position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 24px;background:var(--bg-secondary);border-bottom:1px solid var(--border); }
+#analyticsDialog h2 { font-size:20px; }
+#analyticsDialog h3 { font-size:16px;margin-bottom:8px; }
+#analyticsDialog p { margin:8px 0;color:#a4adba; }
+#analyticsDialog .analytics-body { padding:16px 24px 24px; }
+#analyticsDialog button, #analyticsDialog input, #analyticsDialog select { padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-primary); }
+#analyticsDialog button { cursor:pointer; }
+#analyticsDialog button:disabled { opacity:.45;cursor:default; }
+#analyticsDialog :focus-visible { outline:2px solid var(--accent-amber);outline-offset:2px; }
+#analyticsDialog .analytics-overview { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0; }
+#analyticsDialog .analytics-overview div { padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px; }
+#analyticsDialog dt { color:#a4adba; }
+#analyticsDialog dd { font-size:24px;font-weight:650;font-variant-numeric:tabular-nums;color:var(--accent-green);overflow-wrap:anywhere; }
+#analyticsDialog .analytics-tabs, #analyticsDialog .analytics-controls, #analyticsDialog .analytics-pager { display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:16px 0; }
+#analyticsDialog .analytics-pager { position:sticky;bottom:0;z-index:1;padding:12px 0;margin-bottom:0;background:var(--bg-primary);border-top:1px solid var(--border); }
+#analyticsDialog .analytics-tabs { border-bottom:1px solid var(--border);padding-bottom:12px; }
+#analyticsDialog [aria-selected="true"] { background:var(--accent-amber);border-color:var(--accent-amber);color:#000;font-weight:650; }
+#analyticsDialog .analytics-controls label { display:flex;align-items:center;gap:8px; }
+#analyticsDialog input { width:240px;max-width:100%; }
+#analyticsDialog .analytics-table { overflow:auto;max-height:40vh;border:1px solid var(--border);border-radius:6px; }
+#analyticsDialog .analytics-table:empty { border:0; }
+#analyticsDialog table { width:100%;border-collapse:collapse;text-align:left;font-variant-numeric:tabular-nums; }
+#analyticsDialog th, #analyticsDialog td { padding:10px 12px;border-bottom:1px solid var(--border);overflow-wrap:anywhere;min-width:88px; }
+#analyticsDialog th { position:sticky;top:0;background:var(--bg-secondary);font-size:11px;color:#a4adba; }
+#analyticsDialog tr:hover td { background:var(--bg-secondary); }
+#analyticsDialog .analytics-bars { display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px 24px;margin:12px 0; }
+#analyticsDialog .analytics-bars label { display:flex;justify-content:space-between;align-items:center;gap:12px; }
+#analyticsDialog meter { width:45%;accent-color:var(--accent-green); }
+#analyticsDialog .analytics-empty { padding:20px;text-align:center;border:1px dashed var(--border);border-radius:6px; }
+@media (max-width:600px) {
+  #analyticsDialog .analytics-header { padding:12px;align-items:flex-start; }
+  #analyticsDialog .analytics-body { padding:12px; }
+  #analyticsDialog .analytics-overview { gap:6px; }
+  #analyticsDialog .analytics-overview div { padding:8px; }
+  #analyticsDialog dd { font-size:18px; }
+  #analyticsDialog .analytics-controls label { width:100%;justify-content:space-between; }
+  #analyticsDialog input { width:70%; }
+}
 #spendDialog p { margin:12px 0; }
 #spendDialog button { padding:6px 12px;margin:4px 8px 4px 0; }
 #spendDialog .spend-table { overflow:auto;max-height:55vh; }
@@ -359,6 +390,7 @@
         <button class="toggle" id="hAuthPassword" type="button" hidden>change password</button>
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
       </span>
+      <button class="toggle" id="openAnalytics" type="button">Analytics</button>
       <button class="toggle" id="openSpend" type="button">Spend</button>
       <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
       <div class="pill model">model <b id="hModel">…</b></div>
@@ -445,20 +477,37 @@
   <span id="spendPage"></span>
   <button id="spendNext" type="button">Next</button>
 </dialog>
-<dialog id="analyticsDialog" aria-labelledby="analyticsTitle">
-  <h2 id="analyticsTitle">Session, token and code analytics</h2>
-  <p>Shared portal history on this machine. Readable retained sessions and coding runs, plus the retained spend ledger. No new inference is sent.</p>
-  <button id="refreshAnalytics" type="button">Refresh</button><button id="closeAnalytics" type="button">Close</button>
-  <p id="analyticsStatus" role="status" aria-live="polite"></p>
-  <section aria-labelledby="analyticsTokensTitle"><h3 id="analyticsTokensTitle">Tokens and cost</h3>
-    <p id="analyticsTokensStatus"></p><div id="analyticsTokens" class="analytics-table"></div></section>
-  <section aria-labelledby="analyticsSessionsTitle"><h3 id="analyticsSessionsTitle">Sessions</h3>
-    <p id="analyticsSessionsStatus"></p><div id="analyticsSessions" class="analytics-table"></div>
-    <p id="analyticsDaysStatus"></p><div id="analyticsDays" class="analytics-bars"></div></section>
-  <section aria-labelledby="analyticsCodeTitle"><h3 id="analyticsCodeTitle">Code</h3>
-    <p id="analyticsCodeStatus"></p><div id="analyticsOutcomes" class="analytics-bars"></div><div id="analyticsRuns" class="analytics-table"></div></section>
-  <button id="analyticsPrevious" type="button" disabled>Previous</button><span id="analyticsPage"></span>
-  <button id="analyticsNext" type="button" disabled>Next</button>
+<dialog id="analyticsDialog" aria-labelledby="analyticsTitle" aria-describedby="analyticsDescription">
+  <div class="analytics-header"><div><h2 id="analyticsTitle">Analytics</h2><p id="analyticsDescription">Session, token and code history · shared on this machine</p></div>
+    <div><button id="refreshAnalytics" type="button">Refresh</button> <button id="closeAnalytics" type="button" autofocus>Close</button></div></div>
+  <div class="analytics-body">
+    <p id="analyticsStatus" role="status" aria-live="polite"></p>
+    <dl class="analytics-overview" aria-label="Retained history overview">
+      <div><dt>Session tokens</dt><dd id="analyticsTotalTokens">—</dd></div>
+      <div><dt>Readable sessions</dt><dd id="analyticsTotalSessions">—</dd></div>
+      <div><dt>Listed coding runs</dt><dd id="analyticsTotalRuns">—</dd></div>
+    </dl>
+    <p>Retained history, not lifetime activity. Session and ledger totals are separate. No inference is sent.</p>
+    <div class="analytics-tabs" role="tablist" aria-label="Analytics sections">
+      <button id="analyticsTokensTab" role="tab" aria-controls="analyticsTokensPanel" aria-selected="true" type="button">Tokens and cost</button>
+      <button id="analyticsSessionsTab" role="tab" aria-controls="analyticsSessionsPanel" aria-selected="false" tabindex="-1" type="button">Sessions</button>
+      <button id="analyticsCodeTab" role="tab" aria-controls="analyticsCodePanel" aria-selected="false" tabindex="-1" type="button">Code</button>
+    </div>
+    <div class="analytics-controls">
+      <label>Filter <input id="analyticsFilter" type="search" placeholder="Day, provider or model" maxlength="200"></label>
+      <button id="analyticsClearFilter" type="button" hidden>Clear filter</button>
+      <label id="analyticsSortLabel" hidden>Sort sessions <select id="analyticsSort"><option value="tokens">Most tokens</option><option value="recent">Newest created</option><option value="title">Title A–Z</option></select></label>
+    </div>
+    <section id="analyticsTokensPanel" role="tabpanel" aria-labelledby="analyticsTokensTab" tabindex="0">
+      <h3>Tokens and cost</h3><p id="analyticsTokensStatus"></p><div id="analyticsTokens" class="analytics-table" tabindex="0" aria-label="Token and cost records"></div></section>
+    <section id="analyticsSessionsPanel" role="tabpanel" aria-labelledby="analyticsSessionsTab" tabindex="0" hidden>
+      <h3>Sessions</h3><p id="analyticsSessionsStatus"></p><div id="analyticsSessions" class="analytics-table" tabindex="0" aria-label="Session records"></div>
+      <p id="analyticsDaysStatus"></p><div id="analyticsDays" class="analytics-bars"></div></section>
+    <section id="analyticsCodePanel" role="tabpanel" aria-labelledby="analyticsCodeTab" tabindex="0" hidden>
+      <h3>Code</h3><p id="analyticsCodeStatus"></p><div id="analyticsOutcomes" class="analytics-bars"></div><div id="analyticsRuns" class="analytics-table" tabindex="0" aria-label="Coding run records"></div></section>
+    <p id="analyticsEmpty" class="analytics-empty" hidden></p>
+    <div class="analytics-pager"><button id="analyticsPrevious" type="button" disabled>Previous</button><span id="analyticsPage" role="status" aria-live="polite"></span><button id="analyticsNext" type="button" disabled>Next</button></div>
+  </div>
 </dialog>
 <dialog id="passwordDialog" aria-labelledby="passwordTitle">
   <h2 id="passwordTitle">Change your password</h2>
@@ -1619,8 +1668,7 @@ async function runSlash(line) {
   try {
     switch (cmd) {
       case 'analytics':
-        if (!$('analyticsDialog').open) $('analyticsDialog').showModal();
-        await refreshAnalytics();
+        await openAnalytics();
         break;
 
       case 'help':
@@ -3143,9 +3191,16 @@ $('spendPrevious').addEventListener('click', () => { if (spendPage > 0) { --spen
 $('spendNext').addEventListener('click', () => { if ((spendPage + 1) * 100 < spendRows.length) { ++spendPage; paintSpendPage(); } });
 /* End spend dashboard. */
 /* Analytics: retained portal data; no inference or write controls. */
-let analyticsRequest = 0, analyticsData = null, analyticsPage = 0;
+let analyticsRequest = 0, analyticsData = null, analyticsSection = 'Tokens', analyticsOpener = null;
+const analyticsSections = ['Tokens', 'Sessions', 'Code'];
+const analyticsPages = {Tokens:0, Sessions:0, Code:0}, analyticsFilters = {Tokens:'', Sessions:'', Code:''};
+const analyticsPageSize = 25;
 const analyticsCount = v => Number.isSafeInteger(v) && v >= 0 ? v : null;
-const analyticsNumber = v => analyticsCount(v) === null ? 'Unknown' : String(v);
+const analyticsNumber = v => analyticsCount(v) === null ? 'Unknown' : v.toLocaleString('en-US');
+const analyticsCreated = s => {
+  const d = typeof s.created_ts === 'number' && s.created_ts > 0 ? new Date(s.created_ts * 1000) : null;
+  return d && Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 16).replace('T', ' ') : 'Unknown';
+};
 function analyticsSessionDays(sessions) {
   const days = new Map();
   for (const s of sessions) {
@@ -3175,10 +3230,36 @@ async function loadAnalytics() {
   return {spend, sessions, status, code:runs.error ? runs : analyticsCode(runs),
     session_days:analyticsSessionDays(sessions.sessions || [])};
 }
-function analyticsTable(id, rows, headers) {
-  const node = table(rows.slice(analyticsPage * 100, (analyticsPage + 1) * 100), headers);
+function analyticsTable(id, rows, headers, section, available) {
+  const query = analyticsFilters[section].trim().toLocaleLowerCase();
+  const filtered = rows.filter(row => row.some(v => String(v ?? '').toLocaleLowerCase().includes(query)));
+  const pages = Math.max(1, Math.ceil(filtered.length / analyticsPageSize));
+  const page = analyticsPages[section] = Math.min(analyticsPages[section], pages - 1);
+  const node = table(filtered.slice(page * analyticsPageSize, (page + 1) * analyticsPageSize), headers);
   node.querySelectorAll('th').forEach(th => th.setAttribute('scope', 'col'));
-  $(id).replaceChildren(node);
+  $(id).replaceChildren(...(filtered.length ? [node] : []));
+  if (section !== analyticsSection) return;
+  $('analyticsPrevious').disabled = page === 0;
+  $('analyticsNext').disabled = page + 1 >= pages;
+  $('analyticsPage').textContent = filtered.length ? (page * analyticsPageSize + 1) + '–' + Math.min((page + 1) * analyticsPageSize, filtered.length) +
+    ' of ' + analyticsNumber(filtered.length) + ' records · Page ' + (page + 1) + ' of ' + pages + (query ? ' (filtered from ' + analyticsNumber(rows.length) + ')' : '') : '';
+  $('analyticsEmpty').hidden = filtered.length > 0;
+  $('analyticsEmpty').textContent = filtered.length ? '' : !available ? 'This source is unavailable. Check the details above, then Refresh to retry.' : query ?
+    'No matching records. Clear the filter to see all retained records.' : 'No readable ' + ({Tokens:'ledger rows', Sessions:'sessions', Code:'coding runs'})[section] + ' in retained history.';
+}
+function selectAnalyticsSection(section, focus = false) {
+  analyticsSection = section;
+  for (const name of analyticsSections) {
+    const selected = name === section, tab = $('analytics' + name + 'Tab');
+    tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
+    $('analytics' + name + 'Panel').hidden = !selected;
+  }
+  $('analyticsFilter').value = analyticsFilters[section];
+  $('analyticsFilter').placeholder = {Tokens:'Day, provider or model', Sessions:'Title, date or session ID', Code:'Run ID, status or reject code'}[section];
+  $('analyticsClearFilter').hidden = !analyticsFilters[section];
+  $('analyticsSortLabel').hidden = section !== 'Sessions';
+  paintAnalytics();
+  if (focus) $('analytics' + section + 'Tab').focus();
 }
 function analyticsBars(id, rows) {
   const target = $(id); target.replaceChildren();
@@ -3194,13 +3275,15 @@ function paintAnalytics() {
   const data = analyticsData, unavailable = d => 'Unavailable: ' + (d?.error?.message || 'source returned no usable data.');
   const spend = data.spend?.error ? {status:unavailable(data.spend), rows:[]} : spendSummaryView(data.spend || {});
   $('analyticsTokensStatus').textContent = spend.status;
-  analyticsTable('analyticsTokens', spend.rows, ['UTC day','Provider','Model','Calls','Input tokens','Output tokens','USD']);
+  analyticsTable('analyticsTokens', spend.rows, ['UTC day','Provider','Model','Calls','Input tokens','Output tokens','USD'], 'Tokens', Array.isArray(data.spend?.days) && !data.spend?.error);
   const sessions = Array.isArray(data.sessions?.sessions) ? [...data.sessions.sessions] : null;
-  if (sessions) sessions.sort((a,b) => (analyticsCount(b.tokens?.total) ?? -1) - (analyticsCount(a.tokens?.total) ?? -1));
-  $('analyticsSessionsStatus').textContent = sessions ? sessions.length + ' readable retained sessions; sorted by total tokens. Creation dates are not an activity history.' : unavailable(data.sessions);
-  analyticsTable('analyticsSessions', (sessions || []).map(s => [s.title || s.session_id, analyticsNumber(s.message_count),
+  if (sessions) sessions.sort((a,b) => $('analyticsSort').value === 'title' ? String(a.title || a.session_id).localeCompare(String(b.title || b.session_id)) :
+    $('analyticsSort').value === 'recent' ? (analyticsCreated(b) === 'Unknown' ? 0 : b.created_ts) - (analyticsCreated(a) === 'Unknown' ? 0 : a.created_ts) :
+    (analyticsCount(b.tokens?.total) ?? -1) - (analyticsCount(a.tokens?.total) ?? -1));
+  $('analyticsSessionsStatus').textContent = sessions ? analyticsNumber(sessions.length) + ' readable retained sessions. Creation dates are not an activity history; charts cover all retained records, including filtered-out rows.' : unavailable(data.sessions);
+  analyticsTable('analyticsSessions', (sessions || []).map(s => [(s.title ? s.title + ' · ' : '') + s.session_id, analyticsCreated(s), analyticsNumber(s.message_count),
     analyticsNumber(s.tokens?.prompt_tokens), analyticsNumber(s.tokens?.completion_tokens), analyticsNumber(s.tokens?.total), analyticsNumber(s.tokens?.exchanges)]),
-    ['Session','Messages','Input tokens','Output tokens','Total tokens','Exchanges']);
+    ['Session / ID','Created (UTC)','Messages','Input tokens','Output tokens','Total tokens','Exchanges'], 'Sessions', sessions !== null);
   const days = Array.isArray(data.session_days) ? data.session_days : [];
   analyticsBars('analyticsDays', days.slice(-14).map(d => ({label:d.day, count:d.count})));
   const dated = days.reduce((n,d) => n + d.count, 0);
@@ -3214,41 +3297,71 @@ function paintAnalytics() {
     'Iterations: ' + total('iterations') + '; changed-file occurrences across runs: ' + total('changed_file_count') + '. Unreadable records or older backends leave these totals unknown. No line-change statistics are recorded.' : unavailable(code);
   analyticsBars('analyticsOutcomes', [...outcomes].sort(([a],[b]) => a.localeCompare(b)).map(([label,count]) => ({label,count})));
   analyticsTable('analyticsRuns', (runs || []).map(r => [r.run_id, r.status, analyticsNumber(r.iterations), analyticsNumber(r.changed_file_count), r.reject_code || '—']),
-    ['Run','Status','Iterations','Changed files','Reject code']);
-  $('analyticsStatus').textContent = data.status?.error ? unavailable(data.status) :
-    'Model: ' + (data.status?.model || 'Unknown') + '; provider: ' + (data.status?.provider || 'Unknown') +
-    '; retained session tokens: ' + analyticsNumber(data.status?.total_tokens) + '. Ledger and session retention differ; totals are not added together.';
-  const pages = Math.max(1, Math.ceil(Math.max(spend.rows.length, sessions?.length || 0, runs?.length || 0) / 100));
-  $('analyticsPage').textContent = 'Page ' + (analyticsPage + 1) + ' of ' + pages + ' (100 rows per table)';
-  $('analyticsPrevious').disabled = analyticsPage === 0; $('analyticsNext').disabled = analyticsPage + 1 >= pages;
+    ['Run','Status','Iterations','Changed files','Reject code'], 'Code', runs !== null);
+  $('analyticsTotalTokens').textContent = analyticsNumber(data.status?.total_tokens);
+  $('analyticsTotalSessions').textContent = sessions ? analyticsNumber(sessions.length) : 'Unavailable';
+  $('analyticsTotalRuns').textContent = runs ? analyticsNumber(runs.length) + (code.truncated ? '+' : '') : 'Unavailable';
 }
-function clearAnalytics() {
-  ++analyticsRequest; analyticsData = null; analyticsPage = 0;
-  for (const id of ['analyticsStatus','analyticsTokensStatus','analyticsTokens','analyticsSessionsStatus','analyticsSessions',
-    'analyticsDaysStatus','analyticsDays','analyticsCodeStatus','analyticsOutcomes','analyticsRuns','analyticsPage']) $(id).replaceChildren();
+const analyticsContent = ['analyticsStatus','analyticsTotalTokens','analyticsTotalSessions','analyticsTotalRuns','analyticsTokensStatus','analyticsTokens','analyticsSessionsStatus','analyticsSessions',
+  'analyticsDaysStatus','analyticsDays','analyticsCodeStatus','analyticsOutcomes','analyticsRuns','analyticsPage','analyticsEmpty'];
+function resetAnalyticsContent() {
+  for (const id of analyticsContent) $(id).replaceChildren();
+  $('analyticsEmpty').hidden = true;
   $('analyticsPrevious').disabled = true; $('analyticsNext').disabled = true;
-  if ($('analyticsDialog').open) $('analyticsDialog').close();
+}
+
+function clearAnalytics() {
+  ++analyticsRequest; analyticsData = null;
+  for (const section of analyticsSections) { analyticsPages[section] = 0; analyticsFilters[section] = ''; }
+  $('analyticsSort').value = 'tokens'; selectAnalyticsSection('Tokens'); resetAnalyticsContent();
+  $('analyticsDialog').setAttribute('aria-busy', 'false'); $('refreshAnalytics').disabled = false;
+  if ($('analyticsDialog').open) { $('analyticsDialog').close(); analyticsOpener?.focus(); }
+  analyticsOpener = null;
+}
+async function openAnalytics(opener = input) {
+  if (!$('analyticsDialog').open) { analyticsOpener = opener; $('analyticsDialog').showModal(); }
+  await refreshAnalytics();
 }
 async function refreshAnalytics() {
   const request = ++analyticsRequest;
-  analyticsData = null; analyticsPage = 0;
-  for (const id of ['analyticsTokensStatus','analyticsTokens','analyticsSessionsStatus','analyticsSessions',
-    'analyticsDaysStatus','analyticsDays','analyticsCodeStatus','analyticsOutcomes','analyticsRuns','analyticsPage']) $(id).replaceChildren();
-  $('analyticsPrevious').disabled = true; $('analyticsNext').disabled = true;
+  analyticsData = null; resetAnalyticsContent();
+  $('analyticsDialog').setAttribute('aria-busy', 'true'); $('refreshAnalytics').disabled = true;
   $('analyticsStatus').textContent = 'Loading retained analytics…';
   try {
     const data = await loadAnalytics();
     if (request !== analyticsRequest || !$('analyticsDialog').open) return;
     analyticsData = data; paintAnalytics();
+    $('analyticsStatus').textContent = 'Updated ' + new Date().toLocaleTimeString() + ' · ' + (data.status?.error ? 'Model unavailable: ' + data.status.error.message :
+      (data.status?.model || 'Unknown model') + ' · ' + (data.status?.provider || 'Unknown provider'));
   } catch (e) {
-    if (request === analyticsRequest && $('analyticsDialog').open) $('analyticsStatus').textContent = 'Analytics unavailable: ' + e.message;
+    if (request === analyticsRequest && $('analyticsDialog').open) $('analyticsStatus').textContent = 'Analytics unavailable: ' + e.message + '. Refresh to retry.';
+  } finally {
+    if (request === analyticsRequest) { $('analyticsDialog').setAttribute('aria-busy', 'false'); $('refreshAnalytics').disabled = false; }
   }
 }
+$('openAnalytics').addEventListener('click', () => openAnalytics($('openAnalytics')));
 $('refreshAnalytics').addEventListener('click', refreshAnalytics);
 $('closeAnalytics').addEventListener('click', clearAnalytics);
 $('analyticsDialog').addEventListener('cancel', e => { e.preventDefault(); clearAnalytics(); });
-$('analyticsPrevious').addEventListener('click', () => { if (analyticsPage > 0) { --analyticsPage; paintAnalytics(); } });
-$('analyticsNext').addEventListener('click', () => { if (!$('analyticsNext').disabled) { ++analyticsPage; paintAnalytics(); } });
+for (const [index, section] of analyticsSections.entries()) {
+  const tab = $('analytics' + section + 'Tab');
+  tab.addEventListener('click', () => selectAnalyticsSection(section));
+  tab.addEventListener('keydown', e => {
+    const next = {ArrowRight:(index + 1) % 3, ArrowLeft:(index + 2) % 3, Home:0, End:2}[e.key];
+    if (next === undefined) return;
+    e.preventDefault(); selectAnalyticsSection(analyticsSections[next], true);
+  });
+}
+$('analyticsFilter').addEventListener('input', () => {
+  analyticsFilters[analyticsSection] = $('analyticsFilter').value; analyticsPages[analyticsSection] = 0;
+  $('analyticsClearFilter').hidden = !$('analyticsFilter').value; paintAnalytics();
+});
+$('analyticsClearFilter').addEventListener('click', () => {
+  analyticsFilters[analyticsSection] = ''; analyticsPages[analyticsSection] = 0; selectAnalyticsSection(analyticsSection); $('analyticsFilter').focus();
+});
+$('analyticsSort').addEventListener('change', () => { analyticsPages.Sessions = 0; paintAnalytics(); });
+$('analyticsPrevious').addEventListener('click', () => { if (analyticsPages[analyticsSection] > 0) { --analyticsPages[analyticsSection]; paintAnalytics(); } });
+$('analyticsNext').addEventListener('click', () => { if (!$('analyticsNext').disabled) { ++analyticsPages[analyticsSection]; paintAnalytics(); } });
 /* End analytics. */
 
 document.querySelectorAll('.side-tab').forEach(tab => {
