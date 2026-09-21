@@ -43,7 +43,10 @@ The harness home and any ancestor/descendant overlap are refused. The optional
 `cwd` is an additional read-only grant; omit it for an empty owned directory.
 The executable and fixed OS runtime files are readable. Script arguments do
 not grant their directories: declare scripts, modules and non-system runtimes
-explicitly. Only owned scratch and declared write roots are writable.
+explicitly. Host writes are limited to owned scratch and declared write roots.
+Linux also has private namespace storage (including `/tmp`); a write there does
+not modify a same-named host path. Tests check the host filesystem as well as
+the tool's result, including an unmounted host canary that must remain unchanged.
 
 `network: deny` is mandatory unless the operator explicitly selects
 `unrestricted`. Missing fields, unknown versions/fields/enums, invalid limits

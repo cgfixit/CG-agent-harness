@@ -255,6 +255,11 @@ async fn strict_containment_is_refused_before_the_declared_program_runs() {
 #[tokio::test]
 async fn explicit_roots_allow_inputs_and_scratch_but_deny_secrets_and_symlink_escapes() {
     let tmp = tempfile::tempdir().unwrap();
+    // An unmounted host directory differs from bubblewrap's private mount
+    // scaffolding under /tmp. Protect a real host canary in its own directory.
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("protected");
+    std::fs::write(&outside_file, "protected-host-content").unwrap();
     let input = tmp.path().join("input");
     let output = tmp.path().join("output");
     std::fs::create_dir(&input).unwrap();
@@ -277,13 +282,15 @@ async fn explicit_roots_allow_inputs_and_scratch_but_deny_secrets_and_symlink_es
         "arguments":{"reads":{"allowed":input.join("visible"),"secret":secret,
           "escape":input.join("escape"),"credential":server.state.home.env_path()},
           "writes":{"allowed_write":output.join("created"),"readonly":input.join("forbidden"),
-            "outside_write":tmp.path().join("forbidden")}}}))
+            "outside_write":outside_file,"private_alias":tmp.path().join("forbidden")}}}))
         .await;
     if !stdio_executed(status, &body) {
         return;
     }
     assert_eq!(status, 200, "{body}");
-    let result: Value = serde_json::from_str(body["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let mut result: Value = serde_json::from_str(body["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let alias = result.as_object_mut().unwrap().remove("private_alias").unwrap();
+    assert!(alias == "written" || alias == "denied", "{alias}");
     assert_eq!(
         result,
         json!({"allowed":"permitted-input","secret":"denied","escape":"denied",
@@ -296,6 +303,7 @@ async fn explicit_roots_allow_inputs_and_scratch_but_deny_secrets_and_symlink_es
     );
     assert!(!input.join("forbidden").exists());
     assert!(!tmp.path().join("forbidden").exists());
+    assert_eq!(std::fs::read_to_string(outside_file).unwrap(), "protected-host-content");
     let audit = std::fs::read_to_string(server.state.audit.path()).unwrap();
     assert!(!audit.contains("permitted-input") && !audit.contains("synthetic-credential"));
 }
