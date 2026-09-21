@@ -314,7 +314,7 @@ live outside the bundle, so replacing or uninstalling the app preserves them.
 
 | Home content | Purpose |
 |---|---|
-| `config.yaml` | Seeded configuration; edit existing mappings and restart |
+| `config.yaml` | Seeded configuration; edit existing mappings, reload supported limits or restart |
 | `harness.json` | Persisted chat model selection, soul/memory/web toggles and other console settings |
 | `soul.md`, `soul-history/`, `soul-pending-apply.json` | Optional persona, bounded backups/proposals, and temporary apply-recovery marker |
 | `skills/<id>/SKILL.md` | Runtime skill bodies; existing files are preserved |
@@ -339,8 +339,10 @@ Forwarded/proxy requests are unsupported. See [secure setup](SECURE_RESEARCH.md)
 Edit the **active home's** `config.yaml`, not the copy inside the app bundle or
 repository. Merge into existing mappings instead of appending duplicate YAML
 keys. Use literal `true`/`false` booleans: quoted `"true"` does not enable a gate.
-After file-based configuration changes, fully quit/relaunch the app or restart
-`serve`; closing the app window only hides it.
+For the [supported web/API limits](CONFIG_RELOAD.md), use **Reload limits** or
+Unix SIGHUP after editing. Other startup settings require a full quit/relaunch
+or `serve` restart; closing the app window only hides it. Existing coding-policy
+checks still reread disk at mutation boundaries.
 
 | Setting | Scope / persistence | How to verify |
 |---|---|---|

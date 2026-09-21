@@ -89,3 +89,8 @@ provider, not the complete conversation; retrieved content goes to the local mod
 account's selection; `/web deny` revokes a rule. Neither erases previously
 recorded conversations. Research/web selections are account scoped and the
 public-document cache is shared. See [secure web behavior and evidence](SECURE_RESEARCH.md).
+
+Administrators can reload the documented non-secret web/API limits after editing
+the active YAML. Existing web operations retain their snapshot; URL authority
+continues to be checked independently. `web.concurrency` requires restart.
+See [configuration reload](CONFIG_RELOAD.md) for the exact allowlist and bounds.

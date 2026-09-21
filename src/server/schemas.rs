@@ -57,6 +57,15 @@ pub trait Validate {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ConfigReloadRequest {}
+impl Validate for ConfigReloadRequest {
+    fn validate(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SpendPredictRequest {
     pub message: String,
     #[serde(default)]

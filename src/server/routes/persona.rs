@@ -344,7 +344,7 @@ pub async fn preview(
     }
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let owner = super::auth::context_owner(user);
-    let web = state.web.context_text(settings.web_enabled, &owner);
+    let web = state.web_snapshot().context_text(settings.web_enabled, &owner);
     let selections = req
         .selected_facts
         .as_ref()

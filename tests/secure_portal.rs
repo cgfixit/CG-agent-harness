@@ -54,6 +54,307 @@ async fn request(server: &TestServer, session: &str, method: Method, path: &str,
 }
 
 #[tokio::test]
+async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
+    let model = start_mock_model().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this content fixture binds only to loopback.
+    let addr = listener.local_addr().unwrap();
+    let content = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new().route("/page", axum::routing::get(|| async { "x".repeat(2000) })),
+        )
+        .await
+        .unwrap();
+    });
+    let options = ServerOptions {
+        web_resolve: Some(("reload.invalid".into(), addr)),
+        ..Default::default()
+    }
+    .with("auth.enabled", "true")
+    .with("api.rate_limit.max_requests", "1000")
+    .with("web.response_bytes", "4096");
+    let server = spawn_server(&model.base_url(), options).await;
+    let bootstrap = login(&server, "admin", "admin").await;
+    assert_eq!(
+        request(&server, &bootstrap, Method::POST, "/api/config/reload", json!({}))
+            .await
+            .status(),
+        403
+    );
+    let changed = request(
+        &server,
+        &bootstrap,
+        Method::POST,
+        "/api/auth/password",
+        json!({"current_password":"admin", "password":"reload-fixture-password"}),
+    )
+    .await;
+    assert_eq!(changed.status(), 200);
+    let admin = cookie(&changed);
+    for role in ["operator", "audit"] {
+        assert_eq!(
+            request(
+                &server,
+                &admin,
+                Method::POST,
+                "/api/auth/users",
+                json!({"username":role, "role":role, "password":"reload-fixture-password"})
+            )
+            .await
+            .status(),
+            200
+        );
+        let user = login(&server, role, "reload-fixture-password").await;
+        assert_eq!(
+            request(&server, &user, Method::POST, "/api/config/reload", json!({}))
+                .await
+                .status(),
+            403
+        );
+    }
+    assert_eq!(
+        server
+            .client
+            .post(server.url("/api/config/reload"))
+            .header("cookie", &admin)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        server
+            .req(Method::POST, "/api/config/reload")
+            .header("cookie", &admin)
+            .header("origin", "https://untrusted.invalid")
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        request(
+            &server,
+            &admin,
+            Method::POST,
+            "/api/config/reload",
+            json!({"web":{"pages":2}})
+        )
+        .await
+        .status(),
+        422
+    );
+
+    // Plain HTTP is limited to the owned loopback fixture through the test resolver.
+    let url = "http://reload.invalid/page"; // DevSkim: ignore DS137138 because this URL is mapped only to the loopback fixture above.
+    assert_eq!(
+        request(&server, &admin, Method::POST, "/api/web/allow", json!({"url":url}))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(
+        request(&server, &admin, Method::POST, "/api/web/fetch", json!({"url":url}))
+            .await
+            .status(),
+        200
+    );
+    let old_web = server.state.web_snapshot();
+    let mut cfg = server.state.cfg.raw.clone();
+    cfg["web"]["response_bytes"] = serde_yaml_ng::Value::from(1024);
+    cfg["api"]["harness_loop_rate_limit"]["max_tokens"] = serde_yaml_ng::Value::from(512);
+    std::fs::write(&server.state.cfg.path, serde_yaml_ng::to_string(&cfg).unwrap()).unwrap();
+    let response = request(&server, &admin, Method::POST, "/api/config/reload", json!({})).await;
+    assert_eq!(response.status(), 200);
+    let result: Value = response.json().await.unwrap();
+    assert_eq!(result["limits"]["revision"], 1);
+    assert_eq!(result["limits"]["web"]["response_bytes"], 1024);
+    assert_eq!(result["limits"]["loop_max_tokens"], 512);
+    assert_eq!(
+        old_web.limits.response_bytes, 4096,
+        "in-flight web snapshots keep their old limits"
+    );
+    assert_eq!(
+        code(
+            &request(&server, &admin, Method::POST, "/api/web/fetch", json!({"url":url}))
+                .await
+                .json::<Value>()
+                .await
+                .unwrap()
+        ),
+        "WEB_TOO_LARGE"
+    );
+    let repeat: Value = request(&server, &admin, Method::POST, "/api/config/reload", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(repeat["changed"], false);
+    assert_eq!(repeat["limits"]["revision"], 1);
+
+    let running = server.state.runtime_limits();
+    let valid = serde_yaml_ng::to_string(&cfg).unwrap();
+    let mut invalid = cfg.clone();
+    invalid["api"]["rate_limit"]["max_requests"] = serde_yaml_ng::Value::from(1);
+    invalid["web"]["pages"] = serde_yaml_ng::Value::from(0);
+    let mut restart = cfg.clone();
+    restart["auth"]["enabled"] = serde_yaml_ng::Value::from(false);
+    let mut unknown = cfg.clone();
+    unknown["private_reload_marker"] = serde_yaml_ng::Value::from("PRIVATE_RELOAD_TEXT");
+    for text in [
+        serde_yaml_ng::to_string(&invalid).unwrap(),
+        serde_yaml_ng::to_string(&restart).unwrap(),
+        serde_yaml_ng::to_string(&unknown).unwrap(),
+        "web: [PRIVATE_RELOAD_TEXT\n".into(),
+        format!("#PRIVATE_RELOAD_TEXT{}", "x".repeat(1_048_577)),
+    ] {
+        std::fs::write(&server.state.cfg.path, text).unwrap();
+        let response = request(&server, &admin, Method::POST, "/api/config/reload", json!({})).await;
+        assert_eq!(response.status(), 400);
+        assert!(!response.text().await.unwrap().contains("PRIVATE_RELOAD_TEXT"));
+        assert_eq!(
+            *server.state.runtime_limits(),
+            *running,
+            "refused reload cannot partially apply limits"
+        );
+    }
+    std::fs::write(&server.state.cfg.path, &valid).unwrap();
+    // A new loop call uses the reloaded generation cap, not the startup value.
+    let session = server
+        .state
+        .store
+        .create(&server.state.current_model(), "reload fixture")
+        .unwrap();
+    server
+        .state
+        .store
+        .rename(&session.session_id, None, Some("say hello"))
+        .unwrap();
+    let before = model.requests.lock().unwrap().len();
+    let reply = request(
+        &server,
+        &admin,
+        Method::POST,
+        "/api/chat",
+        json!({"session_id":session.session_id, "message":"continue", "loop":true}),
+    )
+    .await;
+    assert_eq!(reply.status(), 200, "{}", reply.text().await.unwrap());
+    assert_eq!(model.requests.lock().unwrap()[before]["max_tokens"], 512);
+
+    cfg["api"]["rate_limit"]["max_requests"] = serde_yaml_ng::Value::from(1);
+    std::fs::write(&server.state.cfg.path, serde_yaml_ng::to_string(&cfg).unwrap()).unwrap();
+    assert_eq!(
+        request(&server, &admin, Method::POST, "/api/config/reload", json!({}))
+            .await
+            .status(),
+        200
+    );
+    let refused = request(&server, &admin, Method::GET, "/api/sessions", Value::Null).await;
+    assert_eq!(refused.status(), 429, "retained hits must survive reload");
+    assert!(refused.headers().contains_key("retry-after"));
+    let audit = std::fs::read_to_string(server.home.join("logs/audit.jsonl")).unwrap();
+    assert!(audit.contains("config_reloaded") && audit.contains("config_reload_refused"));
+    assert!(!audit.contains("PRIVATE_RELOAD_TEXT"));
+    let legacy = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    assert_eq!(
+        legacy.post_json("/api/config/reload", json!({})).await.0,
+        403,
+        "auth-disabled homes have no HTTP admin authority"
+    );
+    content.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sighup_reloads_the_owned_server_and_invalid_reload_keeps_it_running() {
+    let model = start_mock_model().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config_with(
+        dir.path(),
+        &[
+            ("auth.enabled", "false"),
+            ("tls.enabled", "false"),
+            ("models.local_llm.base_url", &format!("\"{}\"", model.base_url())),
+            ("models.local_llm.warmup.enabled", "false"),
+            ("structured_memory.enabled", "false"),
+            ("api.rate_limit.max_requests", "1000"),
+        ],
+    );
+    let port = std::net::TcpListener::bind("127.0.0.1:0") // DevSkim: ignore DS162092 because this is an owned loopback fixture.
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut child = tokio::process::Command::new(BIN)
+        .args(["serve", "--port", &port.to_string()])
+        .env("CGAGENTHARNESS_HOME", dir.path())
+        .env("GROK_API_KEY", "")
+        .env("ANTHROPIC_API_KEY", "")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let url = format!("http://127.0.0.1:{port}/api/status"); // DevSkim: ignore DS162092 DS137138 because this is the owned loopback-only HTTP fixture.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if client.get(&url).send().await.is_ok() {
+                break;
+            }
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "fixture server exited during startup"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut next = cfg.raw.clone();
+    next["api"]["rate_limit"]["max_requests"] = serde_yaml_ng::Value::from(1);
+    let audit_path = dir.path().join("logs/audit.jsonl");
+    for (round, text, event, status) in [
+        (1, serde_yaml_ng::to_string(&next).unwrap(), "config_reloaded", 429),
+        (1, "web: [invalid".into(), "config_reload_refused", 429),
+        (2, serde_yaml_ng::to_string(&cfg.raw).unwrap(), "config_reloaded", 200),
+    ] {
+        std::fs::write(&cfg.path, text).unwrap();
+        // Only this test's owned child receives a signal.
+        assert_eq!(unsafe { libc::kill(child.id().unwrap() as i32, libc::SIGHUP) }, 0);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let audit = std::fs::read_to_string(&audit_path).unwrap_or_default();
+                if audit
+                    .lines()
+                    .filter(|line| line.contains(event) && line.contains("sighup"))
+                    .count()
+                    >= round
+                {
+                    break;
+                }
+                assert!(child.try_wait().unwrap().is_none(), "reload terminated the server");
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(client.get(&url).send().await.unwrap().status(), status);
+    }
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+}
+
+#[tokio::test]
 async fn https_bootstrap_roles_revocation_and_private_web_context() {
     let model = start_mock_model().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

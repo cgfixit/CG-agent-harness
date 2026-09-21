@@ -118,6 +118,7 @@ fn start() -> anyhow::Result<()> {
     let outcome = rt.block_on(async {
         options.config = Some(config);
         let (app, state) = super::build_app(options).await?;
+        let _reload = super::config_reload::install_sighup(&state)?;
         let transport = super::transport::Transport::load(&state.home, &state.cfg, "127.0.0.1")?;
         let scheme = transport.scheme();
         use base64::Engine;

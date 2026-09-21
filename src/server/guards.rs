@@ -46,15 +46,23 @@ pub fn is_loopback_peer(req: &Request<Body>) -> bool {
     }
 }
 
-pub fn retry_after_error(limiter: &RateLimiter, client: &str, code: &str, label: &str) -> ApiError {
-    let wait = limiter.retry_after_sec(client).ceil().max(1.0) as u64;
+pub fn retry_after_error(
+    limiter: &RateLimiter,
+    limits: &super::config_reload::RateBudget,
+    client: &str,
+    code: &str,
+    label: &str,
+) -> ApiError {
+    let wait = limiter
+        .retry_after_with_limits(client, limits.max_requests, limits.window_seconds)
+        .ceil()
+        .max(1.0) as u64;
     ApiError::new(
         StatusCode::TOO_MANY_REQUESTS,
         code,
         format!(
             "{label} ({} req / {}s); retry in {wait}s",
-            limiter.max_requests(),
-            limiter.window_seconds() as u64
+            limits.max_requests, limits.window_seconds as u64
         ),
     )
     .details(json!({"retry_after_sec": wait}))
@@ -63,9 +71,14 @@ pub fn retry_after_error(limiter: &RateLimiter, client: &str, code: &str, label:
 
 pub fn enforce_rate_limit(state: &AppState, req: &Request<Body>) -> Result<(), ApiError> {
     let ip = client_ip(req);
-    if !state.rate_limiter.allow(&ip) {
+    let live = state.runtime_limits();
+    if !state
+        .rate_limiter
+        .allow_with_limits(&ip, live.api.max_requests, live.api.window_seconds)
+    {
         return Err(retry_after_error(
             &state.rate_limiter,
+            &live.api,
             &ip,
             "RATE_LIMIT",
             "Rate limit exceeded",
@@ -185,6 +198,7 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 "/api/auth/whoami" | "/api/auth/password" | "/api/auth/logout"
             );
             let admin = path.starts_with("/api/auth/users")
+                || path == "/api/config/reload"
                 || path == "/api/keys"
                 || path == "/api/structured-memory/gates"
                 || matches!(path.as_str(), "/api/web/allow" | "/api/web/deny")

@@ -13,6 +13,7 @@ pub mod attachments;
 mod chat_web;
 pub mod client;
 pub mod compaction;
+pub mod config_reload;
 pub mod console;
 #[cfg(unix)]
 pub mod desktop;
@@ -81,9 +82,6 @@ use web_search::WebTool;
 
 pub const HOST_ENV: &str = "CGAGENTHARNESS_HARNESS_HOST";
 pub const PORT_ENV: &str = "CGAGENTHARNESS_HARNESS_PORT";
-const DEFAULT_LOOP_MAX_REQUESTS: u64 = 8;
-const DEFAULT_LOOP_WINDOW_SEC: f64 = 300.0;
-const DEFAULT_LOOP_MAX_TOKENS: u64 = 2048;
 
 fn validate_reply_budget(path: &str, value: u64, backend: &crate::llm::backend::ResolvedLocalBackend) -> Result<u64> {
     let maximum = compaction::MAX_REPLY_TOKENS / compaction::reply_reservation(backend, 1);
@@ -169,21 +167,9 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     let spend_file = crate::llm::spend::spend_path(&home.root, &cfg);
     let mut cloud_chat = CloudChat::from_config(&cfg)?;
     cloud_chat.attach_spend(spend_file.clone());
-    let rate_limiter = RateLimiter::new(
-        cfg.u64_or("api.rate_limit.max_requests", 60) as usize,
-        cfg.f64_or("api.rate_limit.window_seconds", 60.0).max(0.001),
-    );
-    let loop_rate_limiter = RateLimiter::new(
-        cfg.u64_or("api.harness_loop_rate_limit.max_requests", DEFAULT_LOOP_MAX_REQUESTS)
-            .max(1) as usize,
-        cfg.f64_or("api.harness_loop_rate_limit.window_seconds", DEFAULT_LOOP_WINDOW_SEC)
-            .max(0.001),
-    );
-    let loop_max_tokens = match cfg.u64_or("api.harness_loop_rate_limit.max_tokens", DEFAULT_LOOP_MAX_TOKENS) {
-        0 => DEFAULT_LOOP_MAX_TOKENS,
-        n => n,
-    };
-    let loop_max_tokens = validate_reply_budget("api.harness_loop_rate_limit.max_tokens", loop_max_tokens, &backend)?;
+    let runtime = config_reload::RuntimeLimits::load(&cfg, &backend)?;
+    let rate_limiter = RateLimiter::new(runtime.api.max_requests, runtime.api.window_seconds);
+    let loop_rate_limiter = RateLimiter::new(runtime.loop_rate.max_requests, runtime.loop_rate.window_seconds);
     let csrf_token = crate::common::random_urlsafe(32);
     let console_html = console::HARNESS_HTML.replace(console::CSRF_PLACEHOLDER, &csrf_token);
     let console_html_segments: Vec<String> = console_html
@@ -264,6 +250,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         mcp,
         home,
         cfg: cfg.clone(),
+        runtime: std::sync::RwLock::new(Arc::new(runtime)),
         settings: Mutex::new(settings),
         store,
         attachments,
@@ -277,7 +264,6 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         audit,
         rate_limiter,
         loop_rate_limiter,
-        loop_max_tokens,
         loop_inflight: Mutex::new(Default::default()),
         generation_gate: GenerationGate::new(),
         agent_run_gate: GenerationGate::new(),
@@ -369,6 +355,8 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
         let (app, state) = build_app(options).await?;
+        #[cfg(unix)]
+        let _reload = config_reload::install_sighup(&state)?;
         let transport = transport::Transport::load(&state.home, &state.cfg, &host)?;
         let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
         tracing::info!(

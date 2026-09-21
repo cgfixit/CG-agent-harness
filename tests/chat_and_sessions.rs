@@ -413,7 +413,7 @@ async fn zero_loop_reply_budget_keeps_the_legacy_default() {
 
     let (_, state) = cgagentharness::server::build_app(options).await.unwrap();
 
-    assert_eq!(state.loop_max_tokens, 2048);
+    assert_eq!(state.runtime_limits().loop_max_tokens, 2048);
 }
 
 #[tokio::test]
