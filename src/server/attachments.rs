@@ -330,6 +330,16 @@ impl AttachmentStore {
         ))
     }
 
+    pub fn owned_blob(&self, owner: &str, id: &str) -> Option<AttachmentBlob> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let manifest = self.load_manifest().ok()?;
+        manifest
+            .blobs
+            .iter()
+            .find(|blob| blob.id == id && blob.owner == owner)
+            .cloned()
+    }
+
     /// Removes every blob owned by `owner`. A row leaves the manifest only
     /// once its file is gone (or already absent); a blob whose unlink fails
     /// stays listed so it keeps counting toward the quota and a later
@@ -497,6 +507,7 @@ pub fn upload_error(err: &HarnessError) -> ApiError {
         // not retry the file as if it were malformed.
         "IO_ERROR" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "ATTACHMENT_NOT_FOUND" => axum::http::StatusCode::NOT_FOUND,
+        "ATTACHMENT_SURFACE_FORBIDDEN" => axum::http::StatusCode::BAD_REQUEST,
         _ => axum::http::StatusCode::BAD_REQUEST,
     };
     ApiError::from_err(status, err)
@@ -982,7 +993,16 @@ mod tests {
         assert!(fence_contains_contract(&fence));
         assert!(fence.contains("alpha"));
         assert!(store.fence_for("other", &[blobs[0].id.clone()]).is_err());
+        assert_eq!(
+            store.owned_blob("local", &blobs[0].id).as_ref().map(|b| b.id.as_str()),
+            Some(blobs[0].id.as_str())
+        );
+        assert!(store.owned_blob("other", &blobs[0].id).is_none());
+        assert!(store
+            .owned_blob("local", "00000000-0000-0000-0000-000000000000")
+            .is_none());
         assert_eq!(store.unlink_owner("local").unwrap(), 2);
+        assert!(store.owned_blob("local", &blobs[0].id).is_none());
         assert_eq!(store.blob_count(), 0);
         for blob in &blobs {
             assert!(!blob_path(tmp.path(), blob).unwrap().exists());

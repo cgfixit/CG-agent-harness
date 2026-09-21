@@ -14,6 +14,14 @@ use crate::server::sessions::{Message, Session, SESSION_ERROR_CODE};
 const META_OPEN: &str = "<!--cgagentharness-meta ";
 const META_CLOSE: &str = " -->";
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExportAttachmentPin {
+    pub id: String,
+    pub magic_mime: String,
+    pub sha256_prefix: String,
+    pub omitted: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExportHeader {
     pub session_id: String,
@@ -21,15 +29,18 @@ pub struct ExportHeader {
     pub created_ts: f64,
     pub model: String,
     pub goal: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_pins: Vec<ExportAttachmentPin>,
 }
 
-pub fn render(session: &Session) -> String {
+pub fn render(session: &Session, attachment_pins: Vec<ExportAttachmentPin>) -> String {
     let header = ExportHeader {
         session_id: session.session_id.clone(),
         title: session.title.clone(),
         created_ts: session.created_ts,
         model: session.model.clone(),
         goal: session.goal.clone(),
+        attachment_pins,
     };
     let meta = serde_json::to_string(&header).unwrap_or_else(|_| "{}".into());
     let mut out = String::new();
@@ -132,11 +143,11 @@ fn export_filename(n: u64) -> Result<PathBuf> {
     Ok(PathBuf::from(s))
 }
 
-pub fn write_export(home: &Home, session: &Session) -> Result<PathBuf> {
+pub fn write_export(home: &Home, session: &Session, attachment_pins: Vec<ExportAttachmentPin>) -> Result<PathBuf> {
     let n = crate::server::sessions::session_id_u64(&session.session_id)?;
     let dir = home.exports_dir();
     let path = dir.join(export_filename(n)?);
-    let bytes = render(session).into_bytes();
+    let bytes = render(session, attachment_pins).into_bytes();
     write_atomic(&path, &bytes, Some(0o600))?;
     Ok(path)
 }
@@ -172,6 +183,7 @@ mod tests {
             selected_facts: Vec::new(),
             last_prompt_skills: Vec::new(),
             goal_stage: None,
+            attachment_pins: Vec::new(),
         }
     }
 
@@ -182,11 +194,11 @@ mod tests {
         home.ensure_layout().unwrap();
         let mut s = session("hi");
         s.session_id = "../etc/passwd".into();
-        assert!(write_export(&home, &s).is_err());
+        assert!(write_export(&home, &s, Vec::new()).is_err());
         assert!(!home.exports_dir().join("../etc/passwd.md").exists());
         assert!(!home.exports_dir().join("aaaaaaaaaaaa.md").exists());
         let ok = session("hi");
-        let written = write_export(&home, &ok).unwrap();
+        let written = write_export(&home, &ok, Vec::new()).unwrap();
         assert_eq!(written.file_name().unwrap(), "aaaaaaaaaaaa.md");
         assert!(written.is_file());
     }
@@ -194,11 +206,34 @@ mod tests {
     #[test]
     fn round_trips_fences_headers_and_compaction_marker() {
         let s = session("```\n### user\nnot a header\n```\n<!--/cgagentharness-msg-->");
-        let md = render(&s);
+        let md = render(&s, Vec::new());
         let (header, messages) = parse(&md).unwrap();
         assert_eq!(header.session_id, "aaaaaaaaaaaa");
         assert_eq!(header.goal, "do the thing");
+        assert!(header.attachment_pins.is_empty());
         assert_eq!(messages[0].text, s.messages[0].text);
         assert_eq!(messages[1].text, "[session-compacted]\nkept");
+    }
+
+    #[test]
+    fn export_header_pins_omit_filename_and_body() {
+        let pins = vec![
+            ExportAttachmentPin {
+                id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+                magic_mime: "text/plain".into(),
+                sha256_prefix: "0123456789ab".into(),
+                omitted: false,
+            },
+            ExportAttachmentPin {
+                id: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff".into(),
+                magic_mime: String::new(),
+                sha256_prefix: String::new(),
+                omitted: true,
+            },
+        ];
+        let md = render(&session("secret-body"), pins.clone());
+        assert!(!md.contains("secret filename"));
+        let (header, _) = parse(&md).unwrap();
+        assert_eq!(header.attachment_pins, pins);
     }
 }

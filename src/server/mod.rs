@@ -26,6 +26,7 @@ pub mod memory_notes;
 pub mod notifications;
 pub mod prompts;
 pub mod request_log;
+pub mod retrieval;
 pub mod routes;
 pub mod schemas;
 pub mod session_export;
@@ -233,6 +234,15 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
             Ok(n) => audit.log(serde_json::json!({"event": "chat_attachments_swept", "removed": n})),
             Err(e) => audit.log(serde_json::json!({
                 "event": "chat_attachments_sweep_incomplete",
+                "code": e.code,
+                "message": e.message,
+            })),
+        }
+        match store.drop_attachment_pins_unless(|owner| owner == "local" || live.contains(owner)) {
+            Ok(0) => {}
+            Ok(n) => audit.log(serde_json::json!({"event": "chat_attachment_pins_swept", "removed": n})),
+            Err(e) => audit.log(serde_json::json!({
+                "event": "chat_attachment_pins_sweep_incomplete",
                 "code": e.code,
                 "message": e.message,
             })),

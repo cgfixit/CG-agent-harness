@@ -511,7 +511,8 @@ IDs once. A failed preview retains the pending IDs. Changing session or account
 clears the pending selection, so another session cannot silently reuse it.
 Uploads count toward the home quota until session-clear or owner cleanup.
 
-Only local chat receives attachment text. Cloud chat and `/loop` omit it, and
-coding requests do not accept attachment IDs. The preview is a local-chat
-snapshot, not proof that cloud chat or the coding planner receives that context.
+Local chat persists owner-scoped blob ids on the session (cap 12). Cloud chat,
+`/loop`, and `/agent` return `ATTACHMENT_SURFACE_FORBIDDEN` if those ids or
+request `attachment_ids` are present. The preview is a local-chat snapshot, not
+proof that cloud chat or the coding planner receives that context.
 Unsupported formats are refused. Clipped sections explicitly say they are incomplete.

@@ -499,6 +499,20 @@ async fn chat_inner(
     };
 
     let owner = super::auth::context_owner(user);
+    let surface = if cloud_selected {
+        crate::server::retrieval::RetrievalSurface::CloudChat
+    } else if req.loop_turn {
+        crate::server::retrieval::RetrievalSurface::Loop
+    } else {
+        crate::server::retrieval::RetrievalSurface::LocalChat
+    };
+    let live_pins: Vec<String> = session
+        .pinned_ids_for(&owner)
+        .into_iter()
+        .filter(|id| state.attachments.owned_blob(&owner, id).is_some())
+        .collect();
+    crate::server::retrieval::refuse_forbidden_attachments(surface, &req.attachment_ids, &live_pins)
+        .map_err(|e| attachments::upload_error(&e))?;
     let web_context = if cloud_selected {
         String::new()
     } else {
@@ -509,13 +523,14 @@ async fn chat_inner(
         .as_ref()
         .map(|items| super::structured_memory::selections_from_items(items))
         .unwrap_or_else(|| session.selected_facts.clone());
-    let attachment_fence = if cloud_selected || req.loop_turn {
-        String::new()
-    } else {
+    let attachment_fence = if crate::server::retrieval::allows_attachment_bytes(surface) {
+        let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
         state
             .attachments
-            .fence_for(&owner, &req.attachment_ids)
+            .fence_for(&owner, &ids)
             .map_err(|e| attachments::upload_error(&e))?
+    } else {
+        String::new()
     };
     let (pinned, facts, memory_budget, recalled, retrieval_error) = super::structured_memory::prompt_memory(
         &state,
@@ -812,6 +827,13 @@ async fn chat_inner(
         ),
     };
     let updated = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    if !cloud_selected && !req.loop_turn {
+        let live = |id: &str| state.attachments.owned_blob(&owner, id).is_some();
+        state
+            .store
+            .merge_attachment_pins(&session.session_id, &owner, &req.attachment_ids, live)
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    }
     if let Some((_, before, after, projected, compacted_projected, threshold, _)) = compaction {
         state.audit.log(json!({
             "event": "chat_session_compacted",

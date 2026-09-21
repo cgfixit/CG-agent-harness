@@ -51,7 +51,7 @@ session timeouts.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
-| POST | `/api/chat/attachments` | Store up to 3 text/DOCX files (txt/md/json/csv/log/docx, 15 MB each, 64 MB and 512-blob home quota; `attachments.max_concurrent_uploads` bodies in flight, else 503). UUID blobs at `0600`. Inlined only on local chat/`/prompt`, never cloud, `/loop`, or `/agent`. |
+| POST | `/api/chat/attachments` | Store up to 3 text/DOCX files (txt/md/json/csv/log/docx, 15 MB each, 64 MB and 512-blob home quota; `attachments.max_concurrent_uploads` bodies in flight, else 503). UUID blobs at `0600`. Local chat persists owner-scoped blob ids on the session (cap 12); cloud, `/loop`, and `/agent` return `ATTACHMENT_SURFACE_FORBIDDEN` if those ids or request `attachment_ids` are present. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
 | GET | `/api/ollama/inventory` | Live loopback tags plus configured-model readiness |
