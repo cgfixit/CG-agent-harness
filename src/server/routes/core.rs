@@ -211,6 +211,7 @@ pub async fn clear_sessions(
     }
     // Session clear is the operator's recovery path for a full attachment
     // quota, so an incomplete blob cleanup is reported rather than hidden.
+    let _ = state.notes_corpus.unlink_owner(&owner);
     let attachment_cleanup = match state.attachments.unlink_owner(&owner) {
         Ok(removed) => json!({"removed": removed}),
         Err(e) => {
@@ -523,15 +524,16 @@ async fn chat_inner(
         .as_ref()
         .map(|items| super::structured_memory::selections_from_items(items))
         .unwrap_or_else(|| session.selected_facts.clone());
-    let attachment_fence = if crate::server::retrieval::allows_attachment_bytes(surface) {
-        let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
-        state
-            .attachments
-            .fence_for(&owner, &ids)
-            .map_err(|e| attachments::upload_error(&e))?
-    } else {
-        String::new()
-    };
+    let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
+    let attachment_fence = crate::server::retrieval::assemble_local_untrusted(
+        surface,
+        &state.attachments,
+        &state.notes_corpus,
+        &owner,
+        &ids,
+        Some(req.message.as_str()),
+    )
+    .map_err(|e| attachments::upload_error(&e))?;
     let (pinned, facts, memory_budget, recalled, retrieval_error) = super::structured_memory::prompt_memory(
         &state,
         &owner,

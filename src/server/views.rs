@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 59] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 60] = [
     (
         "goal-stage",
         "/goal stage|task",
@@ -168,6 +168,13 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 59] = [
         "POST",
         "/api/chat/attachments",
         "store up to 3 text files for local chat; data, not instructions",
+    ),
+    (
+        "notes-corpus",
+        "file input",
+        "POST",
+        "/api/notes-corpus",
+        "store owner-jailed .md/.txt notes for local chat retrieval",
     ),
     (
         "goal",
@@ -780,7 +787,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 59);
+        assert_eq!(HARNESS_SURFACES.len(), 60);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], 59);
         assert_eq!(report["wired"], 59, "a catalog surface is unwired");

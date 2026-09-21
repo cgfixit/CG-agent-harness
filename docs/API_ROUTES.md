@@ -51,7 +51,10 @@ session timeouts.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
-| POST | `/api/chat/attachments` | Store up to 3 text/DOCX files (txt/md/json/csv/log/docx, 15 MB each, 64 MB and 512-blob home quota; `attachments.max_concurrent_uploads` bodies in flight, else 503). UUID blobs at `0600`. Local chat persists owner-scoped blob ids on the session (cap 12); cloud, `/loop`, and `/agent` return `ATTACHMENT_SURFACE_FORBIDDEN` if those ids or request `attachment_ids` are present. |
+| POST | `/api/chat/attachments` | Store up to 3 text/DOCX files (txt/md/json/csv/log/docx, 15 MB each, 64 MB and 512-blob home quota; `attachments.max_concurrent_uploads` bodies in flight, else 503). UUID blobs at `0600`. Local chat persists owner-scoped blob ids on the session (cap 12) and may BM25-chunk those blobs into the existing fence; cloud, `/loop`, and `/agent` return `ATTACHMENT_SURFACE_FORBIDDEN` if those ids or request `attachment_ids` are present. |
+| GET | `/api/notes-corpus` | List this owner's jailed `.md`/`.txt` notes (id, mime, sha prefix, bytes; no bodies, no host path). |
+| POST | `/api/notes-corpus` | Copy+classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` (caps in `notes_corpus.*`). Injected on local chat / preview only. |
+| DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
 | GET | `/api/ollama/inventory` | Live loopback tags plus configured-model readiness |
