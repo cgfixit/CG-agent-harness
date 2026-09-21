@@ -20,4 +20,4 @@ legacy ownership/cadence migration, no catch-up after restart, backward/forward
 clock shifts, stale poll snapshots, persistence refusal, preview binding/expiry,
 current owner revocation and existing run-gate overlap refusal.
 
-Final integrated acceptance is now recorded in [FINAL_ACCEPTANCE.md](FINAL_ACCEPTANCE.md).
+Final integrated acceptance is now recorded in [final acceptance](issue-102-final-acceptance.md).

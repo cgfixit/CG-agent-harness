@@ -25,4 +25,4 @@ private-file bounds, malformed/linked-file refusal, stable batches and real pinn
 transport to an otherwise unresolvable fixture hostname. The final combined acceptance linked below additionally covers the gateway
 and merged MCP lifecycle work together.
 
-Final integrated acceptance is now recorded in [FINAL_ACCEPTANCE.md](FINAL_ACCEPTANCE.md).
+Final integrated acceptance is now recorded in [final acceptance](issue-102-final-acceptance.md).

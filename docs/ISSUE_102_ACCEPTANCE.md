@@ -28,7 +28,7 @@ selected PRs merge and the accepted main revision passes the required checks.
 Main baseline: 650 tests/47 suites. This automation candidate: 671/48. Gateway:
 661/48. Combined: 682/49 plus 11 native desktop sidecar lifecycle/auth/home-lock
 tests. Strict Clippy, formatting, cargo-deny, actionlint and affected JavaScript
-contracts passed. See [screenshots and artifact provenance](../screenshots/issue-102/FINAL_ACCEPTANCE.md)
+contracts passed. See [screenshots and artifact provenance](screenshots/issue-102-final-acceptance.md)
 for Computer Use of adoption, calendar preview/activation/cancellation, delivery
 replay/revocation, account isolation and final logout timing reset.
 
