@@ -51,11 +51,12 @@ pip install -r finetune/requirements.txt   # mlx-vlm[train]
 bash finetune/train.sh
 ```
 
-This runs `mlx_vlm.lora` on the multimodal 4-bit base `mlx-community/Qwen3.8-27B-4bit`.
-QLoRA is automatic on the quantized base; the vision encoder is frozen (`--train-vision`
-off), so LoRA only adapts the language model. On an M5 Pro 48 GB, 600 iterations fit
-(~28–34 GB peak). If you hit an out-of-memory error, reduce `--max-seq-length` in
-`finetune/train.sh`.
+This runs `finetune/train.py` (a thin shim around `mlx_vlm.lora`) on the multimodal 4-bit base
+`mlx-community/Qwen3.8-27B-4bit`. The shim lets `--dataset` point at a local `.jsonl` (which
+`mlx_vlm.lora` cannot load directly). QLoRA is automatic on the quantized base; the vision
+encoder is frozen (`--train-vision` off), so LoRA only adapts the language model. On an M5
+Pro 48 GB, 600 iterations fit (~28–34 GB peak). If you hit an out-of-memory error, reduce
+`--max-seq-length` in `finetune/train.sh`.
 
 ## Step 4 — Serve the fine-tuned model on loopback (no fuse step)
 

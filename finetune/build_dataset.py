@@ -202,7 +202,7 @@ def write_train_script(out_path: Path, base_model: str = MLX_VLM_BASE_MODEL,
         "# Build:  python3 finetune/build_dataset.py --repos . --dataset --dataset-dir finetune/data\n"
         "set -euo pipefail\n"
         "cd \"$(dirname \"$0\")/..\"\n\n"
-        f"python -m mlx_vlm.lora \\\n"
+        f"python finetune/train.py \\\n"
         f"  --model-path {base_model} \\\n"
         f"  --dataset {dataset_dir}/train.jsonl \\\n"
         "  --iters 600 \\\n"

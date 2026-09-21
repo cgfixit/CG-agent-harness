@@ -91,8 +91,9 @@ services.
 1. **Build the dataset** — `python3 finetune/build_dataset.py --repos . --dataset
    --dataset-dir finetune/data` (20 curated Q&A + bounded code-reference pairs from 28
    significant files; mlx-vlm `{"messages": [...]}` format).
-2. **Train** — `bash finetune/train.sh` (runs `mlx_vlm.lora` on the multimodal 4-bit base;
-   `--train-vision` off → vision encoder frozen, LoRA adapts the language model).
+2. **Train** — `bash finetune/train.sh` (runs `finetune/train.py`, a thin shim around
+   `mlx_vlm.lora` that lets `--dataset` point at a local `.jsonl`; `--train-vision` off →
+   vision encoder frozen, LoRA adapts the language model).
 3. **Serve** — `mlx_vlm.server --model mlx-community/Qwen3.8-27B-4bit
    --adapter-path ./adapters --port 1234`. There is **no fuse step** — the adapter is
    applied live at serve time.
@@ -126,6 +127,10 @@ changes. This confirms the integration before you spend time training.
   cleanup is optional.
 - On 48 GB unified, 27B multimodal QLoRA peak is ~28–34 GB (4-bit base ~16 GB + adapter/
   Adam/activations) — fits with OS headroom, not guaranteed under heavy memory pressure.
+- **Local `.jsonl` dataset** — `finetune/train.py` is a thin shim: `mlx_vlm.lora` passes
+  `--dataset` straight to `datasets.load_dataset`, which does not auto-detect a local
+  `.jsonl` path. The shim routes `.jsonl` paths through the `json` builder (HuggingFace
+  Hub dataset ids still pass through unchanged).
 - The dataset is text-only Q&A (no images); that is correct for language-model LoRA on a
   VLM with the vision tower frozen. Do not add `--train-vision` unless you also supply
   image examples.

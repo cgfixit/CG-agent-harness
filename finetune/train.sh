@@ -7,8 +7,9 @@
 # the fine-tuned model keeps vision capability.
 #
 # No YAML config: mlx_vlm.lora takes CLI args (unlike mlx-lm).
-# Memory: 4-bit multimodal base ~16 GB + LoRA/Adam/activations ~28-34 GB peak.
-# batch_size 1 + grad_checkpoint keep peak down; fits 48 GB with OS headroom.
+# Uses finetune/train.py (a thin shim) so --dataset can point at a LOCAL .jsonl —
+# mlx_vlm.lora passes --dataset to datasets.load_dataset, which does not auto-detect
+# local jsonl; the shim routes .jsonl paths through the json builder. Hub ids still work.
 #
 # Setup:  python3 -m venv .venv && source .venv/bin/activate
 #         pip install -r finetune/requirements.txt
@@ -16,7 +17,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-python -m mlx_vlm.lora \
+python finetune/train.py \
   --model-path mlx-community/Qwen3.8-27B-4bit \
   --dataset finetune/data/train.jsonl \
   --iters 600 \
