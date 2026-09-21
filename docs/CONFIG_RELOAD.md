@@ -13,6 +13,7 @@ new snapshot; a web fetch/research/chat-tool operation already running keeps
 its original limits. Reload retains rate-limit hits and shared fetch capacity,
 locks and cancellation. Tightening a ceiling can immediately produce HTTP 429;
 SIGHUP can recover an HTTP ceiling that currently blocks the reload route.
+`Retry-After` waits for enough retained hits to expire under the new ceiling.
 Increasing a rate window cannot restore hits already expired under its former
 window. This is tuning, not a fresh quota allocation.
 
