@@ -94,7 +94,9 @@ ollama list
 Default endpoint is `http://127.0.0.1:11434/v1`. Select an **exact installed
 tag**. Seeded web budgets assume `OLLAMA_CONTEXT_LENGTH=32768` is set **before**
 the Ollama process starts. The harness sends no `num_ctx`. Set-and-verify:
-[MODELS.md](docs/MODELS.md).
+[MODELS.md](docs/MODELS.md). To fine-tune `qwen3.8:27b-mlx` on Apple Silicon
+and serve the fused model to chat **and** the coding planner, see
+[FINETUNE.md](docs/FINETUNE.md) and the [`finetune/`](finetune) toolchain.
 
 Sign in, replace the bootstrap password, then `/help`. The Commands pane and
 help list supported commands alphabetically, including required arguments and
