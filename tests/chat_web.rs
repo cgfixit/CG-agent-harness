@@ -48,7 +48,7 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
         if messages.last().unwrap()["role"]=="tool" {
             let result:Value=serde_json::from_str(messages.last().unwrap()["content"].as_str().unwrap()).unwrap();
             assert!(result["text"].as_str().unwrap().contains("FETCHED_ONLY_EVIDENCE"));
-            Json(common::ok_reply("Version 7, from http://docs.example/docs/item?q=version",5000,4))
+            Json(common::ok_reply("Version 7, from http://docs.example/docs/item?q=version",5000,4)) // DevSkim: ignore DS137138 because this synthetic response names a test URL resolved only to the loopback fixture.
         } else if body.get("tools").is_none() {
             Json(common::ok_reply("Web tools unavailable",10,2))
         } else {
