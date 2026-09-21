@@ -89,7 +89,11 @@ tag**. Seeded web budgets assume `OLLAMA_CONTEXT_LENGTH=32768` is set **before**
 the Ollama process starts. The harness sends no `num_ctx`. Set-and-verify:
 [MODELS.md](docs/MODELS.md).
 
-Sign in, replace the bootstrap password, then `/help`. Slash tables:
+Sign in, replace the bootstrap password, then `/help`. The Commands pane and
+help list supported commands alphabetically, including required arguments and
+modifiers. Clicking a menu entry fills the input without running it. Typos such
+as `/memroy` produce suggestions; corrections are not executed. Use the listed
+syntax rather than shell flags such as `--help` or `--dry-run`. Slash tables:
 [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference). Memory:
 [MEMORY_SETUP.md](docs/MEMORY_SETUP.md). Web:
 [WEB.md](docs/WEB.md). Troubleshooting:
