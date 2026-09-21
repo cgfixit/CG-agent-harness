@@ -15,6 +15,7 @@ debug/
 /cgagent-fused/
 /.venv/
 # ── In-tree Python scripts ────────────────────────────────────
+__pycache__/
 **pycache**/
 *.pyc
 # ── OS / editor ───────────────────────────────────────────────
