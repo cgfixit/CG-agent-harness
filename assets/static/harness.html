@@ -2725,7 +2725,8 @@ async function onSend() {
      clone/model/verification run for the same staged proposal.
      /loop stop is the exception: it must be accepted while a 27b turn is
      in flight so the operator can halt auto-continue. */
-  const text = input.value.trim();
+  const rawText = input.value;
+  const text = rawText.trim();
   if (!text) return;
   if (sendBtn.disabled) {
     if (isLoopStopCommand(text)) {
@@ -2746,7 +2747,7 @@ async function onSend() {
     return;
   }
   input.value = '';
-  if (text.startsWith('/')) { await runSlashMaybeFuzzy(text); return; }
+  if (text.startsWith('/')) { await runSlashMaybeFuzzy(rawText); return; }
   const files = attachInput && attachInput.files ? Array.from(attachInput.files) : [];
   if (files.length) {
     /* An attached file grounds a model turn; a line with attachments is
@@ -2965,9 +2966,11 @@ async function sendMaybeNlSearch(text) {
 async function runSlashMaybeFuzzy(text) {
   /* Keep cancellation available during auto-loop cooldown even if parsing
      is unavailable; no other command may bypass the server's parser. */
-  if (isLoopStopCommand(text)) { await runSlash('/loop stop'); return; }
+  if (isLoopStopCommand(text.trim())) { await runSlash('/loop stop'); return; }
+  const revision = sessionRevision, review = reviewRevision;
   try {
     const parsed = await api('/api/slash/parse', 'POST', { line: text });
+    if (revision !== sessionRevision || review !== reviewRevision || sessionClearing) return;
     if (parsed && parsed.kind === 'dispatch' && parsed.dispatch === true &&
         typeof parsed.canonical === 'string' && parsed.canonical.startsWith('/')) {
       if (parsed.notice) sys(parsed.notice);
@@ -2988,6 +2991,17 @@ async function runSlashMaybeFuzzy(text) {
 
 /* ── wiring ── */
 sendBtn.addEventListener('click', onSend);
+// A single-line input strips newlines during paste, before the parser sees
+// them. Refuse ambiguous memory pastes before the browser normalizes them.
+input.addEventListener('paste', e => {
+  const pasted = e.clipboardData && e.clipboardData.getData('text/plain');
+  if (!pasted) return;
+  const proposed = input.value.slice(0, input.selectionStart) + pasted + input.value.slice(input.selectionEnd);
+  if (/^\s*\/(?:memory|mem)(?:\s|$)/i.test(proposed) && /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(proposed)) {
+    e.preventDefault();
+    sys('memory paste refused: use one line without control characters; nothing was dispatched');
+  }
+});
 input.addEventListener('input', () => {
   promptHistory.index = promptHistory.prompts.length;
   promptHistory.draft = input.value;

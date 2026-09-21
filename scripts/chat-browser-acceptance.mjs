@@ -279,11 +279,19 @@ try {
  const beforeParserRefusals=mutationRequests().length;
  for(const response of ['suggest','error','invalid']){
   slashMode=response;
-  for(const command of ['/memory clear --help','/memory capture off --dry-run','/agent confirm --help'])await send(command);
+  for(const command of ['/memory clear --help','/memory capture off --dry-run','/memory please retrieve private preference','/agent confirm --help'])await send(command);
   assert.equal(mutationRequests().length,beforeParserRefusals,'parser '+response+' must not fall back to raw mutation dispatch');
   assert.ok(await evaluate('!!pendingAgentRun'),'declining a command must preserve the staged request');
  }
  assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("command not dispatched")'));
+ slashMode='suggest';
+ await evaluate('runSlashMaybeFuzzy("/memory clear\\n")');
+ assert.equal(requests.filter(r=>r[1]==='/api/slash/parse').at(-1)[2].line,'/memory clear\n','slash wrapper must preserve command boundaries');
+ for(const pasted of ['/memory\n clear','/memory clear\n','/memory\tclear']) {
+  assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain",'+JSON.stringify(pasted)+');return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'ambiguous memory paste must be prevented before native input normalization');
+ }
+ assert.equal(await evaluate('(()=>{input.value="/memory ";input.setSelectionRange(8,8);const data=new DataTransfer();data.setData("text/plain","clear\\n");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'partial paste must consider existing command text');
+ assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain","/memory search metric");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),true,'exact single-line paste remains available');
  slashMode='dispatch';await send('/agent cancel');
 
  mode='stream';const streamed=send('stream fixture');
@@ -393,7 +401,7 @@ try {
  assert.equal(requests.filter(r=>r[1]==='/api/chat/cancel').length,beforeHelpStop,'malformed stop commands must not trigger the cancellation exception');
  assert.ok(await evaluate('!!inflightChat'));
  await send('/LOOP   STOP');await generation;assert.equal(await evaluate('loopState'),null);
- mode='normal';await send('/loop auto');before=chatCount();const auto=send('/loop 3');await until('loopState && loopState.remaining === 2');slashMode='error';await send('/loop stop');await auto;assert.equal(chatCount(),before+1,'exact stop during cooldown works even when slash parsing is unavailable');slashMode='dispatch';
+ mode='normal';await send('/loop auto');before=chatCount();const auto=send('/loop 3');await until('loopState && loopState.remaining === 2');slashMode='error';await send('  /loop stop  ');await auto;assert.equal(chatCount(),before+1,'exact stop during cooldown works even when slash parsing is unavailable');slashMode='dispatch';
  await send('/loop auto');await send('/loop 2');await send('/goal clear');assert.equal(await evaluate('loopState'),null);assert.equal(await evaluate('sessionGoal'),'');
  await send('/goal Another goal');await send('/loop 2');await send('/session new');assert.equal(await evaluate('loopState'),null);
  const firstSession=[...sessions.values()][0];

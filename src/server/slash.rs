@@ -138,6 +138,19 @@ pub fn parse_line(input: &str) -> SlashParse {
         };
     }
 
+    // Memory commands are single-line operator intent, never pasted scripts.
+    let root = trimmed.split_whitespace().next().unwrap_or("");
+    if matches!(root.to_ascii_lowercase().as_str(), "/memory" | "/mem")
+        && input
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+    {
+        return suggest_only(
+            "memory commands require one line without control characters; not dispatched",
+            &[],
+        );
+    }
+
     let (primary, second_intent) = split_second_intent(trimmed);
     let mut parsed = parse_slash_primary(&primary);
     if let Some(other) = second_intent {
@@ -215,6 +228,9 @@ fn parse_slash_primary(line: &str) -> SlashParse {
             }
         }
     }
+    if cmd == "memory" && sub.is_none() && !after_cmd.is_empty() {
+        return suggest_only("unknown memory subcommand; not dispatched — use /help", &[]);
+    }
     if let Some(notice) = mutation_argument_refusal(cmd, sub.as_deref(), &args) {
         return suggest_only(notice, &[("help", 100)]);
     }
@@ -257,7 +273,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
         );
     }
 
-    let dispatch = !(mutation && fuzzy) && confidence >= DISPATCH_THRESHOLD;
+    let dispatch = !((mutation || cmd == "memory") && fuzzy) && confidence >= DISPATCH_THRESHOLD;
 
     if dispatch {
         SlashParse {
@@ -276,7 +292,9 @@ fn parse_slash_primary(line: &str) -> SlashParse {
             line: canonical.clone(),
             score: confidence,
         }];
-        if mutation && fuzzy {
+        if cmd == "memory" && fuzzy {
+            notice = Some("memory requires an exact command; suggestions were not dispatched".into());
+        } else if mutation && fuzzy {
             notice = Some(notice.unwrap_or_else(|| "mutation family matched from fuzzy input; not dispatched".into()));
         }
         suggestions.extend(nearby_commands(cmd).into_iter().map(|(c, s)| SlashSuggestion {
@@ -457,7 +475,7 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
     // Validate fixed operands before console dispatch so ignored extra text
     // cannot authorize an action. Keep free-form command payloads intact.
     let max_args = match (cmd, sub) {
-        ("memory", Some("on" | "off" | "clear"))
+        ("memory", Some("on" | "off" | "clear" | "proposals"))
         | ("soul", Some("on" | "off" | "edit" | "propose"))
         | ("skill", Some("clear"))
         | ("web", Some("on" | "off" | "inject" | "forget" | "cancel"))
@@ -489,6 +507,10 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
     };
     if max_args.is_some_and(|max| args.len() > max || args.iter().any(|arg| is_control_flag(arg))) {
         return Some("unsupported arguments; command not dispatched — use /help for syntax");
+    }
+
+    if cmd == "memory" && sub == Some("retrieve") && args.first().is_some_and(|arg| is_control_flag(arg)) {
+        return Some("retrieve starts a chat; help or dry-run flags are not supported — use /help");
     }
 
     let reason_start = match (cmd, sub) {
@@ -599,6 +621,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn all_fuzzy_memory_forms_are_suggestions_only() {
+        for line in [
+            "/memory please retrieve private preference",
+            "/memory can you search private preference",
+            "/memory please proposals",
+            "/memory consolidate insights from this session",
+            "/mem retrieve private preference",
+            "/mem",
+            "/memory something-unrecognized",
+        ] {
+            let parsed = parse_line(line);
+            assert!(!parsed.dispatch, "{line}: {parsed:?}");
+            assert_eq!(parsed.kind, SlashKind::Suggest);
+        }
+    }
+
+    #[test]
+    fn memory_control_characters_and_ignored_operands_never_dispatch() {
+        for line in [
+            "/memory\nclear",
+            "/memory\tclear",
+            "/memory clear\n",
+            "/memory\r\noff",
+            "/memory\u{2028}clear",
+            "/memory\u{2029}clear",
+            "/memory add first line\n/memory clear",
+            "/memory save first line\nsecond line :: reason",
+            "/memory proposals and then clear",
+            "/memory retrieve --help",
+            "/memory retrieve --dry-run private preference",
+        ] {
+            assert!(!parse_line(line).dispatch, "{line:?}");
+        }
+        for line in [
+            "/memory",
+            "/memory proposals",
+            "/MEMORY CAPTURE OFF",
+            "/memory retrieve private preference",
+            "/memory search private preference",
+            "/memory consolidate 123456789abcdef0123456789abcdef0",
+            "/memory add literal --help text",
+            "/memory save note :: operator requested",
+        ] {
+            assert!(parse_line(line).dispatch, "{line:?}");
+        }
+    }
+
+    #[test]
     fn exact_help_dispatches() {
         let p = parse_line("/help");
         assert!(p.dispatch);
@@ -626,17 +696,14 @@ mod tests {
     }
 
     #[test]
-    fn memory_consolidate_fixture_strips_filler_and_keeps_no_ids() {
+    fn memory_consolidate_fixture_suggests_without_inventing_ids() {
         let p = parse_line("/memory consolidate insights from this session to episodic memory");
         assert_eq!(p.command.as_deref(), Some("memory"));
         assert_eq!(p.sub.as_deref(), Some("consolidate"));
         assert!(p.rest.is_empty(), "invented ids: {}", p.rest);
         assert_eq!(p.canonical.as_deref(), Some("/memory consolidate"));
-        assert!(
-            p.dispatch,
-            "non-mutation consolidate with no ids should dispatch the existing explainer"
-        );
-        assert!(p.notice.as_deref().unwrap_or("").contains("episode ids"));
+        assert!(!p.dispatch, "conversational memory commands only suggest");
+        assert!(p.notice.as_deref().unwrap_or("").contains("not dispatched"));
     }
 
     #[test]
@@ -758,7 +825,7 @@ mod tests {
             (
                 "/memory please search notes from my session",
                 "/memory search notes from my session",
-                true,
+                false,
             ),
             (
                 "/memory please save The Who notes :: for my notes",

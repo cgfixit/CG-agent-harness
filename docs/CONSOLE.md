@@ -395,8 +395,19 @@ These are console commands, not shell commands: there are no GNU-style flags suc
 as `--help`, `--dry-run` or `--confirm`. Use `/help`, `/agent`, `/web help`,
 `/skills help` or `/tools help` to inspect supported syntax.
 
+Memory commands require an exact `/memory` root and subcommand (case-insensitive;
+ordinary spaces are allowed). `/mem`, typos and conversational forms such as
+`/memory please retrieve preferences` only suggest; they never read memory, start
+chat, toggle gates or write notes. Unknown subcommands and pasted multiline/control
+characters are refused. Retype the intended command on one line after reviewing a
+suggestion. Exact `/memory retrieve <query>` starts a model turn with explicit
+retrieval; `/memory search <query>` only lists candidates. Use `/memory` for status
+and `/help` for syntax. Exact save/remember still require `:: <reason>`; exact
+clear/forget still delete pinned notes, so inspect the command before sending.
+
 Typed slash commands require the server parser. A parser failure or invalid reply
-leaves the command unexecuted; inspect the Commands pane or retry. Exact `/loop stop`
+leaves the command unexecuted; inspect the Commands pane or retry. Pending parser
+responses are discarded after a session/account change or clearing the transcript. Exact `/loop stop`
 remains available to cancel chat continuation, including while the parser is
 unavailable. Extra words after that cancellation command do not trigger its local
 shortcut. Inspect results after every state-changing command. The detailed sections

@@ -16,7 +16,7 @@ const context = vm.createContext({
   pendingAgentRun:null, shownAgentDiffs:new Map(), reviewedSoulProposal:null,
   currentSession:'fixture-session', sessionGoal:'fixture goal', promptHistory:{},
   currentStyle:'off', currentStyleIssue:null, inflightChat:null, sendBtn:{disabled:false},
-  AGENT_CLI_TIMEOUT_MS:100, sys:text=>messages.push(text), table:rows=>JSON.stringify(rows),
+  isLoopStopCommand:()=>false, AGENT_CLI_TIMEOUT_MS:100, sys:text=>messages.push(text), table:rows=>JSON.stringify(rows),
   abortInflightSearch(){}, clearPendingAttachments(){}, clearSpend(){}, paintStyle(){},
   refreshStatus:async()=>{}, refreshHarnessAuth:async()=>{},
   fetchWithTimeout:async()=>({ok:true}), agentRecord:result=>result.parsed,
@@ -26,6 +26,7 @@ vm.runInContext([
   source('const reviewedPRBodies =', 'function isReviewableAgentDiff('),
   source('function isReviewableAgentDiff(', "$('sessionClearCancel')"),
   source('async function runSlash(', '/* ── chat ── */'),
+  source('async function runSlashMaybeFuzzy(', '/* ── wiring ── */'),
   source('async function watchAgentJob(', 'function showPendingAgentRun('),
   source('function showPendingAgentRun(', "agentPlanInput.addEventListener('change'"),
   source('if (hAuthLogout) {', 'const hAuthSetupBtn'),
@@ -103,3 +104,20 @@ assert.equal(calls[1][2].confirm,true);
 run("prBodyTarget='run'");node('agentPRBodyFile').files=[{size:12,text:async()=>'fresh PR body'}];
 await node('agentPRBodyFile').change();assert.equal(run("reviewedPRBodies.get('run')"),'fresh PR body');
 console.log('review reset: logout, clear, stale requests/files/polls, write refusal and fresh review passed');
+
+// Parsing is asynchronous too: a command cannot acquire a new session/account
+// or survive clearing its originating view while its parse response is pending.
+for (const boundary of ['session', 'review']) {
+  const pending=deferred(); calls.length=0;
+  context.respond=path=>path==='/api/slash/parse'?pending.promise:{count:0};
+  const command=context.runSlashMaybeFuzzy('/memory clear');
+  if(boundary==='session') context.sessionRevision++; else context.clearTranscript();
+  pending.resolve({kind:'dispatch',dispatch:true,canonical:'/memory clear'});
+  await command;
+  assert.equal(calls.filter(call=>call[0]==='/api/memory/clear').length,0,boundary+' boundary must invalidate pending slash dispatch');
+}
+calls.length=0;
+context.respond=path=>path==='/api/slash/parse'?{kind:'dispatch',dispatch:true,canonical:'/memory clear'}:{count:0};
+await context.runSlashMaybeFuzzy('/memory clear');
+assert.equal(calls.filter(call=>call[0]==='/api/memory/clear').length,1,'unchanged context still dispatches an exact command');
+console.log('pending slash responses respect session and review boundaries');
