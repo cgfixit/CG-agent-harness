@@ -62,7 +62,7 @@ Pro 48 GB, 600 iterations fit (~28–34 GB peak). If you hit an out-of-memory er
 
 ```bash
 mlx_vlm.server --model mlx-community/Qwen3.8-27B-4bit \
-  --adapter-path ./adapters --port 1234
+  --adapter-path ./adapters/cgagent-lora.safetensors --port 1234
 ```
 
 Leave this running in a terminal. `mlx_vlm.server` applies the adapter live — there is no

@@ -50,7 +50,7 @@ bash finetune/train.sh
 
 # 3. Serve the fine-tuned model (adapter applied live — no fuse step)
 mlx_vlm.server --model mlx-community/Qwen3.8-27B-4bit \
-  --adapter-path ./adapters --port 1234
+  --adapter-path ./adapters/cgagent-lora.safetensors --port 1234
 
 # 4. Wire BOTH model configs at the server (MLX as PRIMARY, not fallback)
 #    See docs/FINETUNE.md for the exact config block.

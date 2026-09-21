@@ -1,15 +1,8 @@
 #!/usr/bin/env bash
 # CG-Agent mlx-vlm QLoRA training (Apple Silicon / Metal, no CUDA).
-#
-# mlx-vlm fine-tunes the MULTIMODAL Qwen3.8-27B (Qwen3_5ForConditionalGeneration).
-# --train-vision is OFF by default: the vision encoder is frozen and preserved, and LoRA
-# only adapts the language model. Our text-only Q&A dataset trains the language model;
-# the fine-tuned model keeps vision capability.
-#
-# No YAML config: mlx_vlm.lora takes CLI args (unlike mlx-lm).
-# Uses finetune/train.py (a thin shim) so --dataset can point at a LOCAL .jsonl —
-# mlx_vlm.lora passes --dataset to datasets.load_dataset, which does not auto-detect
-# local jsonl; the shim routes .jsonl paths through the json builder. Hub ids still work.
+# mlx-vlm fine-tunes the MULTIMODAL Qwen3.8-27B; --train-vision is off so the
+# vision encoder is frozen and preserved — LoRA only adapts the language model.
+# No YAML config: mlx_vlm.lora takes CLI args.
 #
 # Setup:  python3 -m venv .venv && source .venv/bin/activate
 #         pip install -r finetune/requirements.txt

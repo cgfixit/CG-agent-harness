@@ -23,9 +23,11 @@ with `--train-vision` **off** (the default), the vision encoder is **frozen and 
 and LoRA only adapts the language model. The result is a fine-tuned model that keeps vision
 capability while the language model becomes repo-aware.
 
-The training base is `mlx-community/Qwen3.8-27B-4bit` — the 4-bit MLX multimodal build of the
-same Qwen3.8-27B (mlx-vlm format). The Ollama `qwen3.8:27b-mlx` tag is an Ollama registry
-blob that `mlx-vlm` cannot read; train on the MLX build, serve the fine-tuned result.
+The training base is `mlx-community/Qwen3.8-27B-4bit` — the closest trainable multimodal
+MLX build of the same Qwen3.8-27B (mlx-vlm format), **not** the Ollama `qwen3.8:27b-mlx`
+registry blob itself (mlx-vlm cannot read Ollama tags). Train on the MLX build, serve the
+fine-tuned result. The fine-tuned model is `qwen3.8:27b-mlx`-family — same Qwen3.8-27B
+multimodal base, with a repo-aware language model.
 
 ## The runtime path (already supported — verified)
 
@@ -91,12 +93,12 @@ services.
 1. **Build the dataset** — `python3 finetune/build_dataset.py --repos . --dataset
    --dataset-dir finetune/data` (20 curated Q&A + bounded code-reference pairs from 28
    significant files; mlx-vlm `{"messages": [...]}` format).
-2. **Train** — `bash finetune/train.sh` (runs `finetune/train.py`, a thin shim around
-   `mlx_vlm.lora` that lets `--dataset` point at a local `.jsonl`; `--train-vision` off →
-   vision encoder frozen, LoRA adapts the language model).
+2. **Train** — `bash finetune/train.sh` (creates `adapters/`, then runs `finetune/train.py`,
+   a thin shim around `mlx_vlm.lora` that lets `--dataset` point at a local `.jsonl`;
+   `--train-vision` off → vision encoder frozen, LoRA adapts the language model).
 3. **Serve** — `mlx_vlm.server --model mlx-community/Qwen3.8-27B-4bit
-   --adapter-path ./adapters --port 1234`. There is **no fuse step** — the adapter is
-   applied live at serve time.
+   --adapter-path ./adapters/cgagent-lora.safetensors --port 1234`. There is **no fuse
+   step** — the adapter is applied live at serve time.
 4. **Wire** — paste the config block above into `config.yaml`, restart the console.
 
 ## GGUF / Ollama-native alternative
@@ -134,5 +136,7 @@ changes. This confirms the integration before you spend time training.
 - The dataset is text-only Q&A (no images); that is correct for language-model LoRA on a
   VLM with the vision tower frozen. Do not add `--train-vision` unless you also supply
   image examples.
+- `valid.jsonl` is emitted for manual/future evaluation; `mlx_vlm.lora` does not
+  currently consume a validation split during training.
 - The dataset is intentionally small (20 Q&A + 28 code-refs). Expand `curated_qa.py` as
   the repo grows; the builder warns on drifted `SIGNIFICANT_FILES`.

@@ -24,8 +24,14 @@ _orig_load_dataset = datasets.load_dataset
 
 
 def _patched_load_dataset(path, *args, **kwargs):
-    """Route a local .jsonl path through the json builder; pass everything else through."""
+    """Route a local .jsonl path through the json builder; pass everything else through.
+
+    mlx_vlm.lora calls load_dataset(args.dataset, args.dataset_config or None, split=...),
+    so `args` may contain a leading None (the dataset config). Strip it for the json
+    builder route so load_dataset("json", None, data_files=..., split=...) is clean.
+    """
     if isinstance(path, str) and path.lower().endswith(".jsonl"):
+        args = tuple(a for a in args if a is not None)
         kwargs.setdefault("data_files", path)
         return _orig_load_dataset("json", *args, **kwargs)
     return _orig_load_dataset(path, *args, **kwargs)

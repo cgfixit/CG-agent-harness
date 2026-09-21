@@ -243,7 +243,7 @@ CURATED_QA: list[dict[str, str]] = [
         "which runs mlx_vlm.lora on the multimodal 4-bit base mlx-community/Qwen3.8-27B-4bit (--train-vision off, so "
         "the vision encoder is frozen and preserved; LoRA only adapts the language model). 3) There is no separate "
         "fuse step — mlx-vlm applies the adapter live at serve time. 4) Serve: mlx_vlm.server --model "
-        "mlx-community/Qwen3.8-27B-4bit --adapter-path ./adapters --port 1234 (OpenAI-compatible loopback). 5) Wire "
+        "mlx-community/Qwen3.8-27B-4bit --adapter-path ./adapters/cgagent-lora.safetensors --port 1234 (OpenAI-compatible loopback). 5) Wire "
         "BOTH configs at the server (MLX as primary): models.local_llm.provider=lmstudio, "
         "base_url=http://127.0.0.1:1234/v1, and agentic.deepagent_github.provider=openai_compatible, same base_url. "
         "The fine-tuned model keeps vision capability because the vision tower was frozen, not stripped."
@@ -258,6 +258,8 @@ CURATED_QA: list[dict[str, str]] = [
         "the Metal GPU with no CUDA dependency. For CG-Agent we use mlx-vlm (not mlx-lm) because the target "
         "qwen3.8:27b-mlx is multimodal (Qwen3_5ForConditionalGeneration, Text+Image): mlx-vlm.lora fine-tunes "
         "the language model of the VLM with --train-vision off, so the vision encoder is frozen and preserved. "
+        "The base is mlx-community/Qwen3.8-27B-4bit — the closest trainable multimodal MLX build of the same "
+        "Qwen3.8-27B, not the Ollama registry blob itself (mlx-vlm cannot read Ollama tags). "
         "mlx-lm cannot do this — it is text-only and strips the vision encoder. The CUDA association comes from "
         "the old NVIDIA ecosystem (Unsloth, bitsandbytes, PyTorch+PEFT). On an M5 Pro 48 GB, a 27B multimodal "
         "QLoRA fits: 4-bit base ~16 GB plus adapter/Adam/activations ~28-34 GB peak, with OS headroom."
@@ -268,7 +270,7 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "What is the GGUF/Ollama-native alternative to running mlx_vlm.server, and when would you use it?",
     "input": "",
     "output": (
-        "The primary serve path is mlx_vlm.server --model <base> --adapter-path ./adapters, which applies the "
+        "The primary serve path is mlx_vlm.server --model <base> --adapter-path ./adapters/cgagent-lora.safetensors, which applies the "
         "LoRA live (no fuse step) and exposes an OpenAI-compatible loopback API. If you instead want one Ollama "
         "process serving both chat and the planner, you must first fuse the adapter into the base weights "
         "manually (mlx-vlm has no fuse command — use llama.cpp or a manual safetensors merge), convert the fused "
