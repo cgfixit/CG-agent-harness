@@ -510,41 +510,103 @@ fn day_key(timestamp: &str) -> String {
     timestamp.chars().take(10).collect()
 }
 
-fn read_ledger_rows(path: &Path, rows: &mut Vec<Value>) {
-    if !path.exists() {
-        return;
-    }
-    let mut text = String::new();
-    match std::fs::File::open(path).and_then(|f| f.take(MAX_SUMMARY_BYTES + 1).read_to_string(&mut text)) {
-        Ok(_) if (text.len() as u64) <= MAX_SUMMARY_BYTES => {
-            for line in text.lines() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                if let Ok(v) = serde_json::from_str::<Value>(line) {
-                    rows.push(v);
-                }
-            }
-        }
-        Ok(_) => tracing::warn!("spend ledger exceeds the summary bound; refusing to roll up"),
-        Err(e) => tracing::warn!("spend ledger unreadable: {e}"),
-    }
+fn valid_ledger_row(row: &Value) -> bool {
+    row.is_object()
+        && ["provider", "model"].iter().all(|key| {
+            row.get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        })
+        && row
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .is_some_and(|s| time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).is_ok())
+        && [
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens",
+            "reasoning_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_5m_tokens",
+            "cache_creation_1h_tokens",
+            "vendor_cost_ticks",
+        ]
+        .iter()
+        .all(|key| row.get(key).is_none_or(|v| v.is_null() || v.as_u64().is_some()))
 }
 
-/// Read-time rollup by provider/model/UTC-day. Re-reads the append-only file
-/// plus the retained `.1` generation after rotation.
+fn read_ledger_rows(path: &Path, generation: &str, rows: &mut Vec<Value>) -> Value {
+    let mut report = json!({"generation": generation, "status": "read", "rows": 0, "skipped_rows": 0});
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(e) => {
+            report["status"] = json!(if e.kind() == std::io::ErrorKind::NotFound {
+                "missing"
+            } else {
+                "unreadable"
+            });
+            return report;
+        }
+    };
+    if !file.metadata().is_ok_and(|m| m.is_file()) {
+        report["status"] = json!("unreadable");
+        return report;
+    }
+    let mut bytes = Vec::new();
+    if file.take(MAX_SUMMARY_BYTES + 1).read_to_end(&mut bytes).is_err() {
+        report["status"] = json!("unreadable");
+        return report;
+    }
+    if bytes.len() as u64 > MAX_SUMMARY_BYTES {
+        report["status"] = json!("too_large");
+        return report;
+    }
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        report["status"] = json!("invalid_utf8");
+        return report;
+    };
+    let mut skipped = 0;
+    let start = rows.len();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        match serde_json::from_str::<Value>(line) {
+            Ok(row) if valid_ledger_row(&row) => rows.push(row),
+            _ => skipped += 1,
+        }
+    }
+    report["rows"] = json!(rows.len() - start);
+    report["skipped_rows"] = json!(skipped);
+    report
+}
+
+/// Roll up retained generations only. Corruption and I/O failures remain visible
+/// alongside any usable rows; they must never masquerade as a complete total.
 pub fn summarize_file(path: &Path) -> Value {
     warn_once_if_stale();
     let mut rows: Vec<Value> = Vec::new();
+    let mut files = Vec::new();
     if let Some(path) = refuse_parent_components(path) {
-        read_ledger_rows(&path, &mut rows);
+        files.push(read_ledger_rows(&path, "current", &mut rows));
         let mut rotated = path.into_os_string();
         rotated.push(".1");
         if let Some(previous) = refuse_parent_components(&PathBuf::from(rotated)) {
-            read_ledger_rows(&previous, &mut rows);
+            files.push(read_ledger_rows(&previous, "previous", &mut rows));
         }
     }
+    let skipped_rows: u64 = files.iter().filter_map(|f| f["skipped_rows"].as_u64()).sum();
+    let complete = files.len() == 2
+        && skipped_rows == 0
+        && files
+            .iter()
+            .all(|f| matches!(f["status"].as_str(), Some("read" | "missing")))
+        && !(files[0]["status"] == "missing" && files[1]["status"] != "missing");
     type GroupKey = (String, String, String);
     type GroupAgg = (UsageTokens, usize, Option<f64>);
     let mut groups: BTreeMap<GroupKey, GroupAgg> = BTreeMap::new();
@@ -594,7 +656,7 @@ pub fn summarize_file(path: &Path) -> Value {
                     "usd": usd,
                     "rate_unknown": est.rate_unknown,
                     "priced_as_of": est.priced_as_of,
-                    "usd_source": if usd.is_some() { "sum_of_rows" } else { est.usd_source },
+                    "usd_source": if usd.is_some() { "sum_of_rows" } else if provider == "local" { "local_unpriced" } else { "incomplete" },
                     "rates_stale": rates_are_stale(None),
                 }
             })
@@ -604,6 +666,10 @@ pub fn summarize_file(path: &Path) -> Value {
         "priced_as_of": priced_as_of(),
         "rates_stale": rates_are_stale(None),
         "stale_after_days": STALE_AFTER_DAYS,
+        "complete": complete,
+        "skipped_rows": skipped_rows,
+        "files": files,
+        "coverage": "retained_generations",
         "rows": rows.len(),
         "days": days,
         "note": "Local Ollama/OpenAI-compat rows are unpriced. Warmup, pull, and MCP broker dispatch are excluded from this ledger by definition (not billed inference). Dollars are read-time only; the JSONL never stores usd. TokenTally and compaction estimate_tokens are not USD.",
