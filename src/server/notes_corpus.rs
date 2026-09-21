@@ -498,22 +498,39 @@ fn note_rel(blob: &NoteBlob) -> Result<PathBuf> {
     Ok(PathBuf::from(owner_key).join(id.hyphenated().to_string()))
 }
 
+#[cfg(test)]
+thread_local! {
+    static FAIL_INDEX_BEFORE_RENAME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Atomic, mode-0600 write of `rel` performed entirely through the
+/// capability handle: a fresh temp name is created relative to the jail, the
+/// bytes are written and synced, and the temp is renamed over the target.
+/// The destination is never truncated before rename succeeds.
 fn write_in_jail(jail: &Dir, rel: &Path, data: &[u8]) -> Result<()> {
+    let io = |e: std::io::Error| HarnessError::new("IO_ERROR", format!("cannot write notes blob: {e}"));
+    let tmp = PathBuf::from(format!("{}.{}.tmp", rel.display(), Uuid::new_v4().simple()));
     let mut options = cap_std::fs::OpenOptions::new();
-    options.create(true).write(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use cap_std::fs::OpenOptionsExt;
         options.mode(BLOB_MODE);
     }
-    let mut file = jail
-        .open_with(rel, &options)
-        .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot write notes blob: {e}")))?;
-    file.write_all(data)
-        .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot write notes blob: {e}")))?;
-    file.sync_all()
-        .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot sync notes blob: {e}")))?;
-    Ok(())
+    let result = (|| {
+        let mut file = jail.open_with(&tmp, &options)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        #[cfg(test)]
+        if rel == Path::new(INDEX_NAME) && FAIL_INDEX_BEFORE_RENAME.with(|c| c.replace(false)) {
+            return Err(std::io::Error::other("injected notes index write failure"));
+        }
+        jail.rename(&tmp, jail, rel)
+    })();
+    if result.is_err() {
+        let _ = jail.remove_file(&tmp);
+    }
+    result.map_err(io)
 }
 
 fn unlink_all(jail: &Dir, rels: &[PathBuf]) {
@@ -639,5 +656,65 @@ mod tests {
             max_legal.max_request_bytes() as u64,
             16 * 1_048_576 + NOTES_MULTIPART_OVERHEAD_BYTES
         );
+    }
+
+    fn leftover_tmps(root: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
+                    out.push(path);
+                }
+            }
+        }
+        walk(root, &mut out);
+        out
+    }
+
+    #[test]
+    fn failed_index_replacement_keeps_previous_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("notes");
+        let store = NotesCorpus::open(&root, limits()).unwrap();
+        let first = store.store("alice", &[file("a.md", "keep-me")]).unwrap();
+        let sha = first[0].sha256.clone();
+        let id = first[0].id.clone();
+        FAIL_INDEX_BEFORE_RENAME.with(|c| c.set(true));
+        let err = store.store("alice", &[file("b.md", "second")]).unwrap_err();
+        assert_eq!(err.code, "IO_ERROR");
+        let listed = store.list_for_owner("alice").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, id);
+        assert_eq!(listed[0].sha256, sha);
+        let rel = note_rel(&listed[0]).unwrap();
+        let bytes = std::fs::read(root.join(&rel)).unwrap();
+        assert_eq!(sha256_bytes_hex(&bytes), sha);
+        let index: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join(INDEX_NAME)).unwrap()).unwrap();
+        assert_eq!(index["notes"].as_array().unwrap().len(), 1);
+        assert!(leftover_tmps(&root).is_empty(), "{:?}", leftover_tmps(&root));
+    }
+
+    #[test]
+    fn successful_write_is_0600_without_tmp() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("notes");
+        let store = NotesCorpus::open(&root, limits()).unwrap();
+        let blobs = store.store("alice", &[file("a.md", "keep-me")]).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let index_mode = std::fs::metadata(root.join(INDEX_NAME)).unwrap().permissions().mode() & 0o777;
+            assert_eq!(index_mode, 0o600);
+            let blob_path = root.join(note_rel(&blobs[0]).unwrap());
+            let blob_mode = std::fs::metadata(&blob_path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(blob_mode, 0o600);
+        }
+        assert!(leftover_tmps(&root).is_empty(), "{:?}", leftover_tmps(&root));
     }
 }
