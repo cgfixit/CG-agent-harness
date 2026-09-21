@@ -1484,6 +1484,10 @@ function showAgentRecord(rec) {
     ['pull request', rec.pr_url || '—'],
     ['error', rec.error || '—'],
   ], ['field', 'value']));
+  for (const trace of (rec.retrieval || [])) {
+    sys('repository retrieval, step ' + trace.step + ': indexed ' + trace.indexed_files + ' files / ' + trace.indexed_bytes + ' bytes' + (trace.limited ? ' (bounded selection)' : ''));
+    if (trace.files.length) sys(table(trace.files.map(file => [file.selection, file.sha256, String(file.token_reservation)]), ['selection', 'SHA-256', 'token reservation (UTF-8 bytes)']));
+  }
   shownAgentDiffs.delete(rec.run_id);
   if (rec.status === 'pending_decision' && typeof rec.diff === 'string' && rec.diff) {
     sys('candidate diff\n' + rec.diff);

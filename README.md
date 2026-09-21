@@ -137,6 +137,11 @@ installed build must contain:
 [SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md). MCP stderr
 capture bounds: [PROCESS_LIFECYCLE.md](docs/PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics).
 
+**Coding context.** Optional [repository retrieval](docs/CODING_PIPELINE.md#optional-repository-retrieval)
+selects bounded source excerpts for a local coding planner. It starts off,
+keeps source in the clone, and exposes selection/hash/budget evidence in each
+run. Review, checks and separate write approvals still apply.
+
 **Something broken?** Symptom table: [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Which version am I running?

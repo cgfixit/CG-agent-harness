@@ -321,6 +321,14 @@ agentic:
       - ".netrc"
       - "*.p12"
     max_write_budget_bytes: 100000
+    # Local coding planner only; missing/quoted/non-boolean enabled stays off.
+    retrieval:
+      enabled: false
+      max_files: 256 # Candidate paths examined per step; 1–1024.
+      max_index_bytes: 2000000 # UTF-8 content indexed per step; 1–16000000.
+      top_k: 3 # At most 1–8 additional files, after operator/model selections.
+      excerpt_lines: 40 # Inclusive line window; 1–200, also capped by existing read budgets.
+      token_budget: 2048 # 256–8192 conservative UTF-8 byte reservations, including excerpt headers.
     scan_code_shape: true
     max_handoff_chars: 200000
     workspace_root: "data/agentic/workspaces"

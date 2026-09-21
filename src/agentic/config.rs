@@ -158,6 +158,77 @@ pub struct DeepAgentConfig {
     pub planner_timeout_sec: u64,
     pub planner_max_tokens: u64,
     pub scan_code_shape: bool,
+    pub retrieval: RetrievalConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct RetrievalConfig {
+    pub enabled: bool,
+    pub max_files: usize,
+    pub max_index_bytes: usize,
+    pub top_k: usize,
+    pub excerpt_lines: usize,
+    pub token_budget: usize,
+}
+
+impl RetrievalConfig {
+    fn load(cfg: &AppConfig) -> Result<Self> {
+        let bound = |name: &str, default, min, max| -> Result<usize> {
+            let key = format!("agentic.deepagent_github.retrieval.{name}");
+            let value = match cfg.get(&key) {
+                None => default,
+                Some(v) => v.as_u64().ok_or_else(|| cfg_err(format!("{key} must be an integer")))?,
+            };
+            if !(min..=max).contains(&value) {
+                return Err(cfg_err(format!("{key} must be {min}..={max}")));
+            }
+            Ok(value as usize)
+        };
+        Ok(Self {
+            enabled: cfg.flag_is_true("agentic.deepagent_github.retrieval.enabled"),
+            max_files: bound("max_files", 256, 1, 1024)?,
+            max_index_bytes: bound("max_index_bytes", 2_000_000, 1, 16_000_000)?,
+            top_k: bound("top_k", 3, 1, 8)?,
+            excerpt_lines: bound("excerpt_lines", 40, 1, 200)?,
+            token_budget: bound("token_budget", 2048, 256, 8192)?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod retrieval_tests {
+    use super::*;
+
+    #[test]
+    fn retrieval_defaults_are_off_and_limits_are_strict() {
+        let parse = |yaml: &str| {
+            let cfg = AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
+            RetrievalConfig::load(&cfg)
+        };
+        assert!(!parse("{}").unwrap().enabled);
+        assert!(
+            !parse("agentic: {deepagent_github: {retrieval: {enabled: 'true'}}}")
+                .unwrap()
+                .enabled
+        );
+        for (field, values) in [
+            ("max_files", ["0", "1025", "'4'", "null"]),
+            ("max_index_bytes", ["0", "16000001", "true", "null"]),
+            ("top_k", ["0", "9", "1.5", "null"]),
+            ("excerpt_lines", ["0", "201", "false", "null"]),
+            ("token_budget", ["255", "8193", "'2048'", "null"]),
+        ] {
+            for value in values {
+                assert!(
+                    parse(&format!(
+                        "agentic: {{deepagent_github: {{retrieval: {{{field}: {value}}}}}}}"
+                    ))
+                    .is_err(),
+                    "{field}={value}"
+                );
+            }
+        }
+    }
 }
 
 impl DeepAgentConfig {
@@ -377,6 +448,7 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
         planner_timeout_sec: positive_int(cfg, &format!("{d}.planner_timeout_sec"), DEFAULT_PLANNER_TIMEOUT_SEC)?,
         planner_max_tokens: positive_int(cfg, &format!("{d}.planner_max_tokens"), DEFAULT_PLANNER_MAX_TOKENS)?,
         scan_code_shape: bool_field(cfg, &format!("{d}.scan_code_shape"), true)?,
+        retrieval: RetrievalConfig::load(cfg)?,
     };
     Ok(AgenticConfig {
         enabled,

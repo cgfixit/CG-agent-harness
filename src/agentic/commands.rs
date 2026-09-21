@@ -519,6 +519,11 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
             return Ok(exit_code_for(&e));
         }
     };
+    record.retrieval = result
+        .iterations
+        .iter()
+        .filter_map(|iteration| iteration.retrieval.clone())
+        .collect();
     if result.accepted {
         let changed = result.changed_files();
         let base_head = manifest::git_head(tools.worktree())?;

@@ -232,6 +232,24 @@ repository history.
 - Locked by: `src/agentic/real_repo_loop.rs` (`denied_read_basename`,
   `apply_model_read_request`) and `tests/real_repo_loop.rs`.
 
+Opt-in local repository retrieval reuses these clone reads and basename
+refusals. `agentic.deepagent_github.retrieval.enabled` must be literal true;
+cloud proposers cannot expand their declared read set through retrieval.
+A bounded Git inventory feeds a per-step Tantivy RAM index; ignored untracked
+files, metadata aliases, unsafe selectors, binaries, oversized files and
+injection-scanner hits are omitted. It never shares the public web index.
+Opened file descriptors must be regular files, and reads remain bounded even
+if a file grows after its metadata check. Each retrieved excerpt is re-read,
+bound to the indexed full-file SHA-256, scanned again and charged against
+existing read limits plus its configured UTF-8-byte token reservation.
+A changed hash omits that hit. Every new iteration rebuilds from current
+content, including edits from the prior attempt. Explicit selections keep
+priority. Run/audit traces contain path, line selection, hash and counts,
+not query or source bytes. Existing exact-edit, check and approval gates apply.
+
+- Locked by: `src/agentic/repo_retrieval.rs`, `src/agentic/edits.rs`,
+  `tests/real_repo_loop.rs` and the clone-jail regression suite.
+
 ## Nothing lands before it is judged
 
 Every proposed file is injection-scanned and code-shape-scanned, scope-checked
@@ -240,7 +258,8 @@ BEFORE candidate content is changed. Whole-proposal preflight precedes staging;
 application failures roll back installed replacements, and failed rollback is
 fatal/quarantined with recovery backups retained. This is not crash-atomic or
 an atomic compare-and-swap against a concurrent external writer. A file that
-exists and was not shown in full via `--read-file` is refused for whole-file
+exists and was not shown in full through declared or local retrieved context
+is refused for whole-file
 replacement rather than blindly replaced. Exact
 edits require a fresh full-file hash and unique original text in the displayed
 excerpt. Every attempt takes new snapshots; earlier writes grant no exemption.

@@ -33,6 +33,15 @@ Saved `SERPAPI_API_KEY` changes activate immediately; explicit process environme
 values take precedence. The fixed SerpAPI search endpoint needs no page URL grant.
 Public Google fallback and destination page fetching retain URL permission checks.
 
+Repository retrieval is opt-in under `agentic.deepagent_github.retrieval`
+(literal true only), inside the agentic child and only for local proposers.
+Reuse the Tantivy crate in a bounded per-step RAM index, never the web cache.
+Inventory stays under the clone capability; denied basenames, binary/oversized
+files and scanner hits are excluded. Re-read and verify the full hash before
+injection; operator/model read selections keep priority and existing budgets.
+Persist only retrieval metadata in run/audit traces. No new read authority for
+cloud proposers and no change to explicit confirm/reason or write gates.
+
 ## Traps
 
 - **Never** make the server reference `crate::agentic`; `tests/invariant_guard.rs`

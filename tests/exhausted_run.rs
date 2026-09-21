@@ -16,6 +16,7 @@ fn iteration(gates: &[&str]) -> RealRepoLoopIteration {
         format!("rejected: {}", rejected.join(", "))
     };
     RealRepoLoopIteration {
+        retrieval: None,
         step: 1,
         changed_files: Vec::new(),
         decision: RealRepoDecision {
