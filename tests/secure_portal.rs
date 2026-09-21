@@ -305,7 +305,7 @@ async fn sighup_reloads_the_owned_server_and_invalid_reload_keeps_it_running() {
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .unwrap();
-    let url = format!("http://127.0.0.1:{port}/api/status"); // DevSkim: ignore DS137138 because this is the owned loopback-only HTTP fixture.
+    let url = format!("http://127.0.0.1:{port}/api/status"); // DevSkim: ignore DS162092 DS137138 because this is the owned loopback-only HTTP fixture.
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             if client.get(&url).send().await.is_ok() {
