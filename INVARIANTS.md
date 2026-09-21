@@ -629,7 +629,9 @@ private no-follow database. Only hashes of random 256-bit secrets persist; keys
 are not users or cookie sessions. The CLI mints/revokes with explicit confirm and
 reason using local filesystem authority. Table/rate/concurrency/body/result/time
 ceilings are finite; revocation is rechecked before reads. In-flight reads may
-finish. Human-account deletion does not implicitly revoke independent keys.
+finish. Disabling or deleting an account sets `disabled=1` on that owner's
+machine keys and retires that owner's schedules and completion notifications.
+Key rows stay until an explicit key-id revoke.
 Audits contain recognized tools, public IDs and coarse outcomes, never content.
 All gateway settings remain restart-only, outside the 22-key reload allowlist.
 A future remote exposure mode needs the explicit deployment acceptance in
