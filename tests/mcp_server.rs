@@ -2,7 +2,11 @@
 mod common;
 use cgagentharness::{
     common::home::Home,
-    server::{mcp_keys::KeyStore, mcp_server, mcp_server_config::Settings},
+    server::{
+        mcp_keys::{KeyStore, OwnerCheck},
+        mcp_server,
+        mcp_server_config::Settings,
+    },
 };
 use common::*;
 use serde_json::{json, Value};
@@ -33,8 +37,13 @@ async fn fixture(tools: &str, extra: &[(&str, &str)]) -> (TestServer, mcp_server
     let s = spawn_server(&model.base_url(), opts).await;
     private_home(&s.state.home);
     let keys = KeyStore::open(&s.state.home, 8).unwrap();
-    let (_, alice) = keys.mint("user_alice", "Alice fixture").unwrap();
-    let (_, bob) = keys.mint("user_bob", "Bob fixture").unwrap();
+    let owners = ["user_alice".to_string(), "user_bob".to_string()];
+    let (_, alice) = keys
+        .mint("user_alice", "Alice fixture", OwnerCheck::EnabledOwners(&owners))
+        .unwrap();
+    let (_, bob) = keys
+        .mint("user_bob", "Bob fixture", OwnerCheck::EnabledOwners(&owners))
+        .unwrap();
     let gateway = mcp_server::start(s.state.clone()).await.unwrap().unwrap();
     (s, gateway, keys, alice, bob)
 }
@@ -287,15 +296,26 @@ fn key_store_hashes_caps_rotates_revokes_and_never_resets_initialized_data() {
     home.ensure_layout().unwrap();
     private_home(&home);
     let keys = KeyStore::open(&home, 1).unwrap();
-    let (info, secret) = keys.mint("user_owner", "fixture").unwrap();
+    let owners = [
+        "user_owner".to_string(),
+        "user_other".to_string(),
+        "user_new".to_string(),
+    ];
+    let (info, secret) = keys
+        .mint("user_owner", "fixture", OwnerCheck::EnabledOwners(&owners))
+        .unwrap();
     assert!(keys.authenticate(&secret).is_ok());
-    assert!(keys.mint("user_other", "second").is_err());
+    assert!(keys
+        .mint("user_other", "second", OwnerCheck::EnabledOwners(&owners))
+        .is_err());
     let bytes = std::fs::read(home.root.join("mcp_keys.sqlite3")).unwrap();
     assert!(!String::from_utf8_lossy(&bytes).contains(secret.split('.').nth(1).unwrap()));
     let second = KeyStore::open(&home, 1).unwrap();
     second.revoke(&info.key_id).unwrap();
     assert!(keys.authenticate(&secret).is_err());
-    let (_, replacement) = second.mint("user_new", "rotation").unwrap();
+    let (_, replacement) = second
+        .mint("user_new", "rotation", OwnerCheck::EnabledOwners(&owners))
+        .unwrap();
     assert!(keys.authenticate(&replacement).is_ok());
     assert_eq!(keys.list().unwrap().len(), 1);
     #[cfg(unix)]
@@ -313,6 +333,40 @@ fn key_store_hashes_caps_rotates_revokes_and_never_resets_initialized_data() {
     std::fs::remove_file(home.root.join("mcp_keys.sqlite3")).unwrap();
     assert!(KeyStore::open(&home, 1).is_err());
 }
+
+#[test]
+fn mint_requires_a_live_owner_and_account_disable_rejects_the_token() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = Home::at(temp.path().join("home"));
+    home.ensure_layout().unwrap();
+    private_home(&home);
+    let keys = KeyStore::open(&home, 8).unwrap();
+    assert!(keys
+        .mint("user_missing", "absent", OwnerCheck::EnabledOwners(&[]))
+        .is_err());
+    assert!(keys
+        .mint("user_disabled", "paused", OwnerCheck::EnabledOwners(&[]))
+        .is_err());
+    assert!(keys.mint("user_other", "no local", OwnerCheck::LocalOnly).is_err());
+    let (_, local) = keys.mint("local", "bootstrap", OwnerCheck::LocalOnly).unwrap();
+    assert!(keys.authenticate(&local).is_ok());
+    let enabled = ["user_owner".to_string(), "user_other".to_string()];
+    let (info, secret) = keys
+        .mint("user_owner", "fixture", OwnerCheck::EnabledOwners(&enabled))
+        .unwrap();
+    assert!(keys.authenticate(&secret).is_ok());
+    assert_eq!(keys.disable_owner("user_owner").unwrap(), 1);
+    assert!(keys.authenticate(&secret).is_err());
+    assert!(keys.authenticate(&local).is_ok(), "a foreign owner stays usable");
+    let (other, other_secret) = keys
+        .mint("user_other", "second", OwnerCheck::EnabledOwners(&enabled))
+        .unwrap();
+    assert!(keys.revoke(&other.key_id).unwrap());
+    assert!(keys.authenticate(&other_secret).is_err());
+    assert!(keys.revoke(&info.key_id).unwrap());
+    assert!(keys.authenticate(&secret).is_err());
+    assert_eq!(KeyStore::disable_owner_if_initialized(&home, "user_owner").unwrap(), 0);
+}
 #[test]
 fn invalid_store_schema_scope_and_config_fail_closed() {
     let temp = tempfile::tempdir().unwrap();
@@ -320,7 +374,13 @@ fn invalid_store_schema_scope_and_config_fail_closed() {
     home.ensure_layout().unwrap();
     private_home(&home);
     let keys = KeyStore::open(&home, 8).unwrap();
-    let (_, secret) = keys.mint("user_owner", "fixture").unwrap();
+    let (_, secret) = keys
+        .mint(
+            "user_owner",
+            "fixture",
+            OwnerCheck::EnabledOwners(&["user_owner".to_string()]),
+        )
+        .unwrap();
     let conn = rusqlite::Connection::open(home.root.join("mcp_keys.sqlite3")).unwrap();
     conn.execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE mcp_keys SET scopes='memory:write';")
         .unwrap();

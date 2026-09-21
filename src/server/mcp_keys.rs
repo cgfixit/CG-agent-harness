@@ -106,6 +106,22 @@ pub struct KeyStore {
     max_keys: usize,
 }
 
+/// Who may receive a new machine key.
+pub enum OwnerCheck<'a> {
+    /// `auth.enabled` is off. The only owner is `local`.
+    LocalOnly,
+    /// `auth.enabled` is on. The owner must be an existing enabled account id.
+    EnabledOwners(&'a [String]),
+}
+impl OwnerCheck<'_> {
+    fn allows(&self, owner: &str) -> bool {
+        match self {
+            Self::LocalOnly => owner == "local",
+            Self::EnabledOwners(owners) => owners.iter().any(|id| id == owner),
+        }
+    }
+}
+
 fn rows(conn: &Connection) -> anyhow::Result<Vec<KeyInfo>> {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
@@ -207,13 +223,17 @@ impl KeyStore {
         rows(&connect(&self.path)?)
     }
     /// Trusted local CLI authority supplies the namespace. No HTTP caller can choose it.
-    pub fn mint(&self, owner: &str, label: &str) -> anyhow::Result<(KeyInfo, String)> {
+    /// The owner must exist and be enabled. Auth-disabled homes may mint only `local`.
+    pub fn mint(&self, owner: &str, label: &str, owners: OwnerCheck<'_>) -> anyhow::Result<(KeyInfo, String)> {
         if !super::structured_memory::valid_owner(owner)
             || label.trim().is_empty()
             || label.chars().count() > 80
             || label.chars().any(char::is_control)
         {
             anyhow::bail!("MCP_KEY_INVALID: supply a valid owner ID and a label of 1-80 printable characters");
+        }
+        if !owners.allows(owner) {
+            anyhow::bail!("MCP_KEY_OWNER_REFUSED: owner must exist and be enabled");
         }
         let mut conn = connect(&self.path)?;
         let tx = conn
@@ -261,6 +281,32 @@ impl KeyStore {
             .map_err(|_| refused())?
             > 0)
     }
+
+    /// Disable every key for this owner. Key-id revocation stays available.
+    /// A read that already authenticated may finish; this is not an in-flight kill.
+    pub fn disable_owner(&self, owner: &str) -> anyhow::Result<usize> {
+        if !super::structured_memory::valid_owner(owner) || !present(&self.path)? {
+            return Ok(0);
+        }
+        let conn = connect(&self.path)?;
+        rows(&conn)?;
+        conn.execute(
+            "UPDATE mcp_keys SET disabled=1 WHERE owner_id=?1 AND disabled=0",
+            [owner],
+        )
+        .map_err(|_| refused())
+    }
+
+    /// No-op when this home has never initialized a machine-key database.
+    pub fn disable_owner_if_initialized(home: &Home, owner: &str) -> anyhow::Result<usize> {
+        let path = home.root.join("mcp_keys.sqlite3");
+        let marker = home.root.join("mcp_keys.initialized");
+        if !present(&path)? || !present(&marker)? {
+            return Ok(0);
+        }
+        Self { path, max_keys: 1 }.disable_owner(owner)
+    }
+
     pub fn authenticate(&self, token: &str) -> anyhow::Result<Principal> {
         // Always hash and compare, including unknown, disabled and malformed inputs.
         let (id, secret) = token
@@ -358,7 +404,24 @@ pub fn run(command: KeyCommand) -> anyhow::Result<()> {
             reason,
         } => {
             valid(confirm, &reason)?;
-            let (info, token) = store.mint(&owner, &label)?;
+            let enabled = if cfg.flag_is_true("auth.enabled") {
+                let accounts = crate::common::auth_store::AuthManager::open(&home.auth_path(), &cfg)
+                    .map_err(|_| anyhow::anyhow!("MCP_KEY_OWNER_REFUSED: account directory is unavailable"))?;
+                accounts
+                    .list_users()
+                    .into_iter()
+                    .filter(|user| !user.disabled)
+                    .map(|user| user.user_id)
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            let owners = if cfg.flag_is_true("auth.enabled") {
+                OwnerCheck::EnabledOwners(&enabled)
+            } else {
+                OwnerCheck::LocalOnly
+            };
+            let (info, token) = store.mint(&owner, &label, owners)?;
             audit.log(serde_json::json!({"event":"mcp_key_created","key_id":info.key_id}));
             println!("{}", serde_json::json!({"key":info,"token":token}));
         }

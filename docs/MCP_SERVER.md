@@ -69,19 +69,26 @@ unknown/disabled keys follow a dummy-hash comparison path. No password KDF runs
 per tool call. The dedicated `mcp_keys.sqlite3` uses a STRICT schema with its own
 `user_version=1` and `mcp_keys.initialized` marker. Auth and memory schemas are
 unchanged. On Unix, database and marker must be owned regular mode-0600 files,
-not symlinks or hard links. Missing initialized, corrupt, oversized or unknown
-schema storage refuses instead of recreating credentials. Windows relies on the
-operator account's private home ACL in addition to SQLite's no-follow opening.
+not symlinks or hard links, and the home directory mode is `0700`. Missing
+initialized, corrupt, oversized or unknown schema storage refuses instead of
+recreating credentials. Windows does not get those Unix mode checks and this
+build does not install a Windows ACL. Windows relies on the operator home's
+private ACL plus SQLite's no-follow opening. Unix `0700`/`0600` is not claimed
+on Windows.
 
 ```sh
 cgagentharness mcp-key list
 cgagentharness mcp-key revoke KEY_ID --confirm --reason 'Retire workstation access'
 ```
 
-Listing returns metadata only. Revocation is observed by every later request and
-rechecked before memory reads. A read already executing may finish. Deleting or
-disabling a human account does not revoke independent machine keys: revoke those
-keys explicitly. Owner binding is immutable; rotation requires minting another
+Listing returns metadata only. `mcp-key create` refuses an owner that does not
+exist or is disabled. When account authentication is off, the only owner it
+accepts is `local`. Disabling or deleting an account sets `disabled=1` on that
+owner's machine keys. Revoking one key by its public id still works and does
+not disable a different owner's keys. Revocation is observed by every later
+request and rechecked before memory reads. A read already executing may finish.
+That is not an instantaneous kill of the in-flight read. Owner binding is
+immutable; rotation requires minting another
 key. The table defaults to eight rows, with a hard ceiling of 32. At capacity,
 revoke an old key before minting; oldest disabled rows are removed during rotation.
 Content-free creation/revocation events remain in the bounded audit log.

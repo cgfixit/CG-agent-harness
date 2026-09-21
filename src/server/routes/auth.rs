@@ -257,7 +257,7 @@ pub async fn set_disabled(
     .map_err(|e| map_auth_error(&e))?;
     if body.disabled {
         if let Some(owner) = owner_id {
-            revoke_owner_automation(&state, &owner)?;
+            retire_disabled_owner(&state, &owner)?;
         }
     }
     Ok(Json(json!({"ok":true})))
@@ -274,6 +274,27 @@ fn revoke_owner_automation(state: &AppState, owner: &str) -> ApiResult<()> {
             .map_err(|error| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &error))?;
     }
     Ok(())
+}
+
+fn disable_machine_keys(state: &AppState, owner: &str) -> ApiResult<()> {
+    crate::server::mcp_keys::KeyStore::disable_owner_if_initialized(&state.home, owner).map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "MCP_KEYS_REFUSED",
+            "machine keys could not be disabled",
+        )
+    })?;
+    Ok(())
+}
+
+/// Account disable/delete retires both owner-scoped automation and that owner's
+/// machine keys. Each side runs even when the other fails; the first error is
+/// returned so a partial retirement stays visible.
+fn retire_disabled_owner(state: &AppState, owner: &str) -> ApiResult<()> {
+    let automation = revoke_owner_automation(state, owner);
+    let keys = disable_machine_keys(state, owner);
+    automation?;
+    keys
 }
 
 /// Audit accounts see only this fixed projection of request events. Model
@@ -443,7 +464,7 @@ pub async fn delete_user(
         .sweep_dead_owners(&|candidate| candidate == "local" || live.contains(candidate))
         .unwrap_or(0);
     if let Some(owner) = owner.as_deref() {
-        revoke_owner_automation(&state, owner)?;
+        retire_disabled_owner(&state, owner)?;
     }
     Ok(Json(json!({"ok": true, "attachment_cleanup": cleanup, "swept": swept})))
 }
