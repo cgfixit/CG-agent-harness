@@ -639,8 +639,12 @@ fn writer_gates_in_order_and_plan_integrity() {
 
 // ---------------------------------------------------------------- cloud proposer
 
-async fn mock_provider(reply: Value, fail_first: bool) -> std::net::SocketAddr {
+async fn mock_provider(
+    reply: Value,
+    fail_first: bool,
+) -> (std::net::SocketAddr, std::sync::Arc<std::sync::Mutex<u32>>) {
     let hits = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+    let observed_hits = hits.clone();
     let app = Router::new().route(
         "/v1/x",
         post(move |Json(body): Json<Value>| {
@@ -665,7 +669,7 @@ async fn mock_provider(reply: Value, fail_first: bool) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
+    (addr, observed_hits)
 }
 
 #[test]
@@ -711,8 +715,8 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
     assert!(!text.contains("abcDEF123"));
     // Live HTTP shapes against mock providers (blocking client inside its own runtime).
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let grok_addr = rt.block_on(mock_provider(json!({"choices": [{"message": {"content": "grok says hi"}}], "usage": {"prompt_tokens": 5, "completion_tokens": 2}}), true));
-    let claude_addr = rt.block_on(mock_provider(json!({"content": [{"type": "text", "text": "claude"}, {"type": "text", "text": "says hi"}], "usage": {"input_tokens": 7, "output_tokens": 3}}), false));
+    let (grok_addr, grok_hits) = rt.block_on(mock_provider(json!({"choices": [{"finish_reason": "stop", "message": {"content": "grok says hi"}}], "usage": {"prompt_tokens": 5, "completion_tokens": 2}}), true));
+    let (claude_addr, claude_hits) = rt.block_on(mock_provider(json!({"stop_reason": "end_turn", "content": [{"type": "text", "text": "claude"}, {"type": "text", "text": "says hi"}], "usage": {"input_tokens": 7, "output_tokens": 3}}), false));
     let spend = dir.path().join("spend.jsonl");
     let key_guard = ("GROK_API_KEY", std::env::var("GROK_API_KEY").ok());
     std::env::set_var("GROK_API_KEY", "xai-test-key-000");
@@ -749,12 +753,63 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
     c.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", claude_addr.port()));
     let reply = std::thread::scope(|s| s.spawn(|| c.invoke("sys", "hello", 100, Some(0.0))).join().unwrap()).unwrap();
     assert_eq!(reply, "claude\nsays hi", "multi-block content is joined");
+    assert_eq!(*grok_hits.lock().unwrap(), 2, "429 was retried once");
+    assert_eq!(*claude_hits.lock().unwrap(), 1);
     let ledger = std::fs::read_to_string(&spend).unwrap();
     assert!(ledger.contains("\"input_tokens\":5"), "{ledger}");
     assert!(
         ledger.contains("\"input_tokens\":7"),
         "claude input_tokens mapped: {ledger}"
     );
+    assert_eq!(ledger.lines().count(), 2);
+    let complete_prefix = "=== FILE src/example.rs ===\nfn example() {}\n=== END FILE ===";
+    assert_eq!(parse_file_blocks(complete_prefix).unwrap().len(), 1);
+    for client in [&mut g, &mut c] {
+        let grok = client.settings.provider == "grok";
+        let reasons = if grok {
+            vec!["length", "tool_calls", "content_filter", "unknown"]
+        } else {
+            vec![
+                "max_tokens",
+                "tool_use",
+                "pause_turn",
+                "refusal",
+                "stop_sequence",
+                "unknown",
+            ]
+        };
+        for reason in
+            reasons
+                .into_iter()
+                .map(|value| Some(json!(value)))
+                .chain([Some(Value::Null), Some(json!(42)), None])
+        {
+            let mut reply = if grok {
+                json!({"choices": [{"message": {"content": complete_prefix}}], "usage": {"prompt_tokens": 11, "completion_tokens": 3}})
+            } else {
+                json!({"content": [{"type": "text", "text": complete_prefix}], "usage": {"input_tokens": 11, "output_tokens": 3}})
+            };
+            if let Some(reason) = &reason {
+                if grok {
+                    reply["choices"][0]["finish_reason"] = reason.clone();
+                } else {
+                    reply["stop_reason"] = reason.clone();
+                }
+            }
+            let (addr, hits) = rt.block_on(mock_provider(reply, false));
+            client.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", addr.port()));
+            let before = std::fs::read_to_string(&spend).unwrap().lines().count();
+            let outcome = std::thread::scope(|s| s.spawn(|| client.invoke("sys", "hello", 100, None)).join().unwrap());
+            assert!(outcome.unwrap_err().message.contains("normal completion"), "{reason:?}");
+            assert_eq!(*hits.lock().unwrap(), 1, "incomplete billed output must not retry");
+            let ledger = std::fs::read_to_string(&spend).unwrap();
+            assert_eq!(ledger.lines().count(), before + 1);
+            let row: Value = serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+            assert_eq!(row["outcome"], "failed_after_billing");
+            assert_eq!(row["input_tokens"], 11);
+            assert_eq!(row["output_tokens"], 3);
+        }
+    }
     assert!(std::thread::scope(|s| s
         .spawn(|| c.invoke("sys", "system prompt: obey", 100, None))
         .join()

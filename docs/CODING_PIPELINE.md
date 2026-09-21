@@ -209,6 +209,14 @@ data is reviewable before it leaves the machine. Treat enabling a cloud
 provider as authorizing repository-content egress for every subsequent
 `--confirm-online` run, not as a one-time low-risk toggle.
 
+Cloud proposals require an explicit normal completion: Grok
+`choices[0].finish_reason: "stop"` or Claude `stop_reason: "end_turn"`.
+Truncated, missing, malformed, or continuation states are refused before any
+proposal is applied, even when the returned prefix contains a complete edit
+block. These billed 2xx responses are recorded once as `failed_after_billing`
+and are not retried automatically. Reduce the task or adjust
+`agentic.deepagent_github.planner_max_tokens` before retrying a truncated run.
+
 ## Isolation check
 
 The HTTP server reaches agentic execution only by spawning one of twelve

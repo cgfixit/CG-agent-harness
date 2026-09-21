@@ -297,6 +297,20 @@ impl ProposerClient for CloudProposerClient<'_> {
                     }
                 };
                 let usage = data.get("usage").cloned();
+                let completed = match provider.as_str() {
+                    "grok" => data.pointer("/choices/0/finish_reason").and_then(Value::as_str) == Some("stop"),
+                    "claude" => data.get("stop_reason").and_then(Value::as_str) == Some("end_turn"),
+                    _ => false,
+                };
+                if !completed {
+                    self.record_spend(usage.as_ref(), Some("failed_after_billing"));
+                    self.audit.log(json!({"event": "agentic_deepagent_cloud_model_failed", "provider": provider, "model": self.settings.model, "error_type": "IncompleteOutput", "attempts": attempts}));
+                    return Err(HarnessError::agentic(
+                        "cloud planner did not report a normal completion; this response was not applied",
+                    )
+                    .detail("provider", provider.clone())
+                    .detail("error_type", "IncompleteOutput"));
+                }
                 let content = self.extract_content(&data);
                 let empty = content.as_ref().is_none_or(|c| c.trim().is_empty());
                 if empty {
