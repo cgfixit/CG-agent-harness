@@ -382,11 +382,12 @@ try {
  await send('/session use '+firstSession.session_id);await arrow('ArrowUp');
  assert.equal(await evaluate('input.value'),'SAVED_PROMPT_54','recall survives a page reload');
  await send('/agent run codex/old Old staged work');
- await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}');
+ await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}; reviewedPRBodies.set("old", "body"); prBodyTarget="old"');
  await evaluate('document.querySelector("#pane-sessions .cmd-item").click()');
  await until('currentSession !== '+JSON.stringify(firstSession.session_id));
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("OLD_MESSAGE_")'),false,'new session clears the old transcript');
  assert.equal(await evaluate('pendingAgentRun'),null);assert.equal(await evaluate('shownAgentDiffs.size'),0);assert.equal(await evaluate('reviewedSoulProposal'),null);
+ assert.equal(await evaluate('reviewedPRBodies.size'),0);assert.equal(await evaluate('prBodyTarget'),'');
  // Model replies can finish despite cancellation; they must not switch the selected session back.
  await evaluate('window.originalFetch=window.fetch; window.fetch=(url,opts)=>window.originalFetch(url,String(url)==="/api/chat"?{...opts,signal:undefined}:opts)');
  mode='delay';const oldReply=send('OLD_INFLIGHT_MESSAGE');await until('!!inflightChat');
@@ -474,8 +475,13 @@ try {
  assert.equal(await evaluate('document.body.textContent.includes("fixture-secret-value-1234")'),false);
  await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
  await until('document.getElementById("pane-api-keys").textContent.includes("Saved: unset")');assert.equal(savedKey,'');
+ await send('/agent run codex/logout Reviewed before logout');
+ await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}; reviewedPRBodies.set("old", "body"); prBodyTarget="old"');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(await evaluate('currentSession'),null);
+ assert.equal(await evaluate('pendingAgentRun'),null);assert.equal(await evaluate('shownAgentDiffs.size'),0);
+ assert.equal(await evaluate('reviewedSoulProposal'),null);assert.equal(await evaluate('reviewedPRBodies.size'),0);
+ assert.equal(await evaluate('prBodyTarget'),'');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false,'restore login guidance after logout');
  // Authentication succeeds for an auditor even though the server denies operational sessions.
  await evaluate('document.getElementById("hAuthUser").value="audit-fixture";document.getElementById("hAuthPass").value="browser-auditor-password";document.getElementById("hAuthLogin").click()');

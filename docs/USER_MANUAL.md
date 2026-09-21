@@ -4,6 +4,16 @@ Start with [setup](../setup-guide.md) and [console commands](CONSOLE.md).
 [Accounts](ACCOUNTS.md) explains who can use each surface;
 [coding jobs](CONSOLE_JOBS.md) covers staging, monitoring and reviewed publication.
 
+## Review state and logout
+
+Logout, switching sessions, `/clear`, and clearing session history discard the
+console's staged coding request, remembered diff reviews, reviewed PR bodies,
+and reviewed persona proposals. Load and review them again before confirming,
+approving, publishing, or applying a proposal. Responses still arriving from the
+previous view cannot restore those reviews. Clearing this view stops its job
+monitoring; submitted jobs and saved run records remain on the server. Use
+`/agent jobs` or `/agent runs`, then inspect the selected job/run to resume review.
+
 ## Spend and completion notifications
 
 Open **Spend** in a supported build to inspect retained provider/model/day usage.

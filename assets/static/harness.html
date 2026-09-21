@@ -571,6 +571,7 @@ let memoryEnabled = false;
    Cleared on send, on /agent cancel, and on /clear. */
 let pendingAgentRun = null;
 const shownAgentDiffs = new Map();
+let reviewRevision = 0; // /clear invalidates reviews without changing the selected session.
 let sessionGoal = '';
 let loopAuto = false;
 const MAX_GOAL_CHARS = 2000;
@@ -1323,13 +1324,14 @@ function rememberAgentJob(id) {
   history.replaceState(null, '', '#agent-job=' + id);
 }
 async function watchAgentJob(id) {
-  const generation = ++agentWatchGeneration;
+  const generation = ++agentWatchGeneration, revision = sessionRevision;
+  const stale = () => generation !== agentWatchGeneration || revision !== sessionRevision;
   try {
     const settings = await api('/api/agent/checks');
     let previous = '';
-    while (generation === agentWatchGeneration) {
+    while (!stale()) {
       const job = await api('/api/agent/jobs/' + encodeURIComponent(id));
-      if (generation !== agentWatchGeneration) return;
+      if (stale()) return;
       if (job.status !== previous) sys('job ' + id + ': ' + job.status);
       previous = job.status;
       if (job.status !== 'running') {
@@ -1346,6 +1348,7 @@ async function watchAgentJob(id) {
       await new Promise(resolve => setTimeout(resolve, settings.poll_interval_ms));
     }
   } catch (err) {
+    if (stale()) return;
     sys('job monitoring paused; ID retained: ' + id + '. After restoring authentication use /agent job ' + id + '. A server restart loses its in-memory job handle and work may survive. (' + err.message + ')');
   }
 }
@@ -1398,12 +1401,13 @@ const prBodyInput = document.getElementById('agentPRBodyFile');
 let prBodyTarget = '';
 prBodyInput.addEventListener('change', async () => {
   const file = prBodyInput.files && prBodyInput.files[0];
-  const id = prBodyTarget;
+  const id = prBodyTarget, review = reviewRevision, revision = sessionRevision;
   prBodyInput.value = '';
   if (!file || !id) return;
   if (file.size > 65536) { sys('PR body exceeds 65536 bytes'); return; }
   try {
     const body = await file.text();
+    if (review !== reviewRevision || revision !== sessionRevision || id !== prBodyTarget) return;
     if (!body.trim() || new TextEncoder().encode(body).length > 65536) { sys('PR body must contain 1..65536 bytes'); return; }
     reviewedPRBodies.set(id, body);
     sys('PR body loaded for ' + id + '. Review the complete text below before /agent publish. Reselect after editing the file.\n' + body);
@@ -1461,8 +1465,12 @@ function showAgentRecord(rec) {
 }
 
 function clearTranscript() {
+  ++reviewRevision;
+  ++agentWatchGeneration;
   stream.textContent = '';
   shownAgentDiffs.clear();
+  reviewedPRBodies.clear();
+  prBodyTarget = '';
   // Hidden reviews must not remain armed after their display is cleared.
   pendingAgentRun = null;
   reviewedSoulProposal = null;
@@ -1525,6 +1533,8 @@ async function runSlash(line) {
   const cmd = parts[0].toLowerCase();
   const rest = parts.slice(1);
   const arg = rest.join(' ').trim();
+  const review = reviewRevision, revision = sessionRevision;
+  const staleReview = () => review !== reviewRevision || revision !== sessionRevision;
   try {
     switch (cmd) {
       case 'help':
@@ -1644,6 +1654,7 @@ async function runSlash(line) {
         if (sub === 'history') { const r = await api('/api/soul/document'); sys(table(r.versions.map(v => [v]), ['backup revision'])); break; }
         if (sub === 'review') {
           const r = await api('/api/soul/proposals/' + encodeURIComponent(rest[1] || ''));
+          if (staleReview()) break;
           reviewedSoulProposal = r; sys(JSON.stringify(r, null, 2)); break;
         }
         if (sub === 'apply' || sub === 'reject') {
@@ -1830,6 +1841,7 @@ async function runSlash(line) {
         if (action.startsWith('check:')) {
           if (!pendingAgentRun) { sys('Stage a coding request with /agent run before selecting a fixed check.'); break; }
           const r = await api('/api/skills/check', 'POST', {id:action});
+          if (staleReview()) break;
           pendingAgentRun.checks = [r.profile]; showPendingAgentRun();
           sys('Fixed check selected; nothing executed. /agent confirm <reason> uses existing authorization and sandbox limits.'); break;
         }
@@ -2001,6 +2013,7 @@ async function runSlash(line) {
         const sub = rest[0] || 'help';
         if (sub === 'checks') {
           const r = await api('/api/agent/checks');
+          if (staleReview()) break;
           if (rest.length === 1) {
             sys(table(r.profiles.map(p => [p.name, p.description]), ['profile', 'what it runs']));
           } else if (!pendingAgentRun) {
@@ -2024,6 +2037,7 @@ async function runSlash(line) {
             break;
           }
           const capabilities = await api('/api/agent/checks');
+          if (staleReview()) break;
           if (!capabilities.capabilities || !capabilities.capabilities.jobs || !capabilities.default_profile) { sys('server does not advertise the required job workflow'); break; }
           pendingAgentRun = {
             branch: branch,
@@ -2103,16 +2117,18 @@ async function runSlash(line) {
           sendBtn.disabled = true;
           try {
             const job = await api('/api/agent/jobs', 'POST', body);
+            if (staleReview()) break;
             if (!job.job_id) throw new Error('server did not return a job ID');
             if (pendingAgentRun === stagedRun) pendingAgentRun = null;
             rememberAgentJob(job.job_id);
             sys('job accepted: ' + job.job_id + '. You can refresh or use /agent stop ' + job.job_id + '.');
             watchAgentJob(job.job_id);
           } catch (err) {
+            if (staleReview()) break;
             sys('job submission failed — staged request kept. (' + err.message + ')');
             showPendingAgentRun();
           } finally {
-            sendBtn.disabled = false;
+            if (revision === sessionRevision) sendBtn.disabled = false;
           }
         } else if (sub === 'runs') {
           const result = agentRecord(await api('/api/agent/runs'));
@@ -2140,7 +2156,9 @@ async function runSlash(line) {
           try {
             if (sub === 'approve') {
               if (!rest.slice(2).join(' ').trim()) { sys('usage: /agent approve <run id> <reason for commit>'); break; }
-              const current = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_CLI_TIMEOUT_MS));
+              const result = await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_CLI_TIMEOUT_MS);
+              if (staleReview()) break;
+              const current = agentRecord(result);
               if (!current || current.run_id !== id) {
                 shownAgentDiffs.delete(id);
                 sys('approval withheld — could not load the requested run');
@@ -2163,22 +2181,23 @@ async function runSlash(line) {
             } else {
               r = await api('/api/agent/runs/' + encodeURIComponent(id) + '/decision', 'POST', { decision: sub, reason: rest.slice(2).join(' ').trim(), confirm: sub === 'approve' }, AGENT_CLI_TIMEOUT_MS);
             }
+            if (staleReview()) break;
             const rec = agentRecord(r);
             if (rec) showAgentRecord(rec);
           } finally {
-            sendBtn.disabled = false;
+            if (revision === sessionRevision) sendBtn.disabled = false;
           }
         } else if (sub === 'push') {
           const id = (rest[1] || '').trim();
           const why = rest.slice(2).join(' ').trim();
           if (!id || !why) { sys('usage: /agent push <run id> <reason for push>'); break; }
           const rec = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id) + '/push', 'POST', { reason: why, confirm: true }, AGENT_CLI_TIMEOUT_MS));
-          if (rec) showAgentRecord(rec);
+          if (!staleReview() && rec) showAgentRecord(rec);
         } else if (sub === 'discard') {
           const id = (rest[1] || '').trim();
           if (!id) { sys('usage: /agent discard <run id>'); break; }
           const rec = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id) + '/discard', 'POST', {}, AGENT_CLI_TIMEOUT_MS));
-          if (rec) showAgentRecord(rec);
+          if (!staleReview() && rec) showAgentRecord(rec);
         } else if (sub === 'pr-body') {
           const id = (rest[1] || '').trim();
           if (!/^[0-9a-f]{32}$/.test(id)) { sys('usage: /agent pr-body <run id>'); break; }
@@ -2194,7 +2213,7 @@ async function runSlash(line) {
             '/api/agent/runs/' + encodeURIComponent(id) + '/publish', 'POST', { reason: why, confirm: true, body },
             AGENT_CLI_TIMEOUT_MS,
           ));
-          if (rec) showAgentRecord(rec);
+          if (!staleReview() && rec) showAgentRecord(rec);
         } else {
           sys(table([
             ['/agent run claude/<topic> <task>', 'stage a run (sends nothing)'],
@@ -2233,11 +2252,13 @@ async function runSlash(line) {
         if (rest[0] === 'stage') {
           if (!currentSession || !sessionGoal) { sys('Set /goal <text> first.'); break; }
           const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage', 'POST', {branch:rest[1] || ''});
+          if (staleReview()) break;
           pendingAgentRun = r.request; showPendingAgentRun(); sys(r.next); break;
         }
         if (arg === 'task') {
           if (!currentSession) { sys('No active session.'); break; }
           const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage');
+          if (staleReview()) break;
           sys(JSON.stringify(r,null,2));
           if (r.status === 'staged' && r.stage) { pendingAgentRun = r.stage.request; showPendingAgentRun(); sys('Recovered staged request; review and explicitly confirm to run.'); }
           break;
@@ -3144,7 +3165,7 @@ if (hAuthLogout) {
         return;
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
-    $('stream').replaceChildren(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
+    clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
     currentSession = null; promptHistory.session = null; promptHistory.prompts = []; currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++; window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
     sendBtn.disabled = false;
