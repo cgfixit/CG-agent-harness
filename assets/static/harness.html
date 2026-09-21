@@ -271,6 +271,15 @@
   #harnessAuth .apikey { width: 160px; }
 #soulEditor, #sessionClearDialog, #spendDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
 #spendDialog { margin:auto;max-height:90vh; }
+#analyticsDialog { width:90%;max-width:1100px;max-height:90vh;margin:auto;padding:24px;background:#181b24;color:#eee;border:1px solid #667;overflow:auto; }
+#analyticsDialog h3 { margin-top:24px; }
+#analyticsDialog p { margin:12px 0; }
+#analyticsDialog button { padding:6px 12px;margin:4px 8px 4px 0; }
+#analyticsDialog .analytics-table { overflow:auto;max-height:40vh; }
+#analyticsDialog table { width:100%;border-collapse:collapse;text-align:left; }
+#analyticsDialog th, #analyticsDialog td { padding:8px;border-bottom:1px solid var(--border);overflow-wrap:anywhere; }
+#analyticsDialog .analytics-bars label { display:flex;justify-content:space-between;gap:12px;margin:4px 0; }
+#analyticsDialog meter { width:50%; }
 #spendDialog p { margin:12px 0; }
 #spendDialog button { padding:6px 12px;margin:4px 8px 4px 0; }
 #spendDialog .spend-table { overflow:auto;max-height:55vh; }
@@ -435,6 +444,21 @@
   <button id="spendPrevious" type="button">Previous</button>
   <span id="spendPage"></span>
   <button id="spendNext" type="button">Next</button>
+</dialog>
+<dialog id="analyticsDialog" aria-labelledby="analyticsTitle">
+  <h2 id="analyticsTitle">Session, token and code analytics</h2>
+  <p>Shared portal history on this machine. Readable retained sessions and coding runs, plus the retained spend ledger. No new inference is sent.</p>
+  <button id="refreshAnalytics" type="button">Refresh</button><button id="closeAnalytics" type="button">Close</button>
+  <p id="analyticsStatus" role="status" aria-live="polite"></p>
+  <section aria-labelledby="analyticsTokensTitle"><h3 id="analyticsTokensTitle">Tokens and cost</h3>
+    <p id="analyticsTokensStatus"></p><div id="analyticsTokens" class="analytics-table"></div></section>
+  <section aria-labelledby="analyticsSessionsTitle"><h3 id="analyticsSessionsTitle">Sessions</h3>
+    <p id="analyticsSessionsStatus"></p><div id="analyticsSessions" class="analytics-table"></div>
+    <p id="analyticsDaysStatus"></p><div id="analyticsDays" class="analytics-bars"></div></section>
+  <section aria-labelledby="analyticsCodeTitle"><h3 id="analyticsCodeTitle">Code</h3>
+    <p id="analyticsCodeStatus"></p><div id="analyticsOutcomes" class="analytics-bars"></div><div id="analyticsRuns" class="analytics-table"></div></section>
+  <button id="analyticsPrevious" type="button" disabled>Previous</button><span id="analyticsPage"></span>
+  <button id="analyticsNext" type="button" disabled>Next</button>
 </dialog>
 <dialog id="passwordDialog" aria-labelledby="passwordTitle">
   <h2 id="passwordTitle">Change your password</h2>
@@ -928,6 +952,7 @@ async function api(path, method, body, timeoutMs, onDelta, signal) {
     }
     const err = new Error(msg);
     err.code = code;
+    err.status = resp.status;
     err.details = typed && typed.details ? typed.details : {};
     const headerWait = parseInt(resp.headers.get('Retry-After') || '0', 10);
     const bodyWait = typed && typed.details && typed.details.retry_after_sec;
@@ -1265,6 +1290,7 @@ const COMMANDS = [
   ['/agent runs', 'list retained runs and reconcile interrupted ownership'],
   ['/agent status <run-id>', 'inspect a run and its complete diff'],
   ['/agent stop [job-id]', 'request cancellation; omitted ID uses the retained job; descendants may survive'],
+  ['/analytics', 'retained session, token and coding-run dashboard'],
   ['/api [set <KEY> <value>|clear <KEY>]', 'inspect or edit managed credentials; prefer API Keys password fields'],
   ['/clear', 'clear visible output, staged reviews and chat continuation; saved sessions remain'],
   ['/connectors', 'connector catalog'],
@@ -1592,6 +1618,11 @@ async function runSlash(line) {
   const staleReview = () => review !== reviewRevision || revision !== sessionRevision;
   try {
     switch (cmd) {
+      case 'analytics':
+        if (!$('analyticsDialog').open) $('analyticsDialog').showModal();
+        await refreshAnalytics();
+        break;
+
       case 'help':
         sys(table(COMMANDS.map(c => [c[0], c[1]]), ['command', 'action']));
         break;
@@ -3111,6 +3142,115 @@ $('spendDialog').addEventListener('cancel', clearSpend);
 $('spendPrevious').addEventListener('click', () => { if (spendPage > 0) { --spendPage; paintSpendPage(); } });
 $('spendNext').addEventListener('click', () => { if ((spendPage + 1) * 100 < spendRows.length) { ++spendPage; paintSpendPage(); } });
 /* End spend dashboard. */
+/* Analytics: retained portal data; no inference or write controls. */
+let analyticsRequest = 0, analyticsData = null, analyticsPage = 0;
+const analyticsCount = v => Number.isSafeInteger(v) && v >= 0 ? v : null;
+const analyticsNumber = v => analyticsCount(v) === null ? 'Unknown' : String(v);
+function analyticsSessionDays(sessions) {
+  const days = new Map();
+  for (const s of sessions) {
+    if (typeof s.created_ts !== 'number' || !Number.isFinite(s.created_ts) || s.created_ts <= 0) continue;
+    const date = new Date(s.created_ts * 1000);
+    if (!Number.isFinite(date.getTime())) continue;
+    const day = date.toISOString().slice(0, 10); days.set(day, (days.get(day) || 0) + 1);
+  }
+  return [...days].sort(([a], [b]) => a.localeCompare(b)).map(([day, count]) => ({day, count}));
+}
+function analyticsCode(envelope) {
+  return envelope?.ok === true && Array.isArray(envelope.parsed?.runs) ? envelope.parsed :
+    {error:{message:'Retained runs could not be read.'}};
+}
+async function loadAnalytics() {
+  try { return await api('/api/analytics/summary', 'GET', undefined, AGENT_CLI_TIMEOUT_MS); }
+  catch (e) { if (e.status !== 404) throw e; }
+  // Compatibility with a backend exposing the four original read sources.
+  const results = await Promise.allSettled([
+    api('/api/spend/summary', 'GET'), api('/api/sessions', 'GET'),
+    api('/api/status', 'GET'), api('/api/agent/runs', 'GET', undefined, AGENT_CLI_TIMEOUT_MS),
+  ]);
+  // A revoked account must not retain whichever private reads finished first.
+  for (const r of results) if (r.status === 'rejected' && [401, 403].includes(r.reason.status)) throw r.reason;
+  const value = r => r.status === 'fulfilled' ? r.value : {error:{message:r.reason.message}};
+  const [spend, sessions, status, runs] = results.map(value);
+  return {spend, sessions, status, code:runs.error ? runs : analyticsCode(runs),
+    session_days:analyticsSessionDays(sessions.sessions || [])};
+}
+function analyticsTable(id, rows, headers) {
+  const node = table(rows.slice(analyticsPage * 100, (analyticsPage + 1) * 100), headers);
+  node.querySelectorAll('th').forEach(th => th.setAttribute('scope', 'col'));
+  $(id).replaceChildren(node);
+}
+function analyticsBars(id, rows) {
+  const target = $(id); target.replaceChildren();
+  const maximum = Math.max(1, ...rows.map(r => r.count));
+  for (const row of rows) {
+    const label = document.createElement('label'); label.textContent = row.label + ': ' + row.count + ' ';
+    const bar = document.createElement('meter'); bar.min = 0; bar.max = maximum; bar.value = row.count;
+    bar.setAttribute('aria-label', row.label + ': ' + row.count); label.appendChild(bar); target.appendChild(label);
+  }
+}
+function paintAnalytics() {
+  if (!analyticsData) return;
+  const data = analyticsData, unavailable = d => 'Unavailable: ' + (d?.error?.message || 'source returned no usable data.');
+  const spend = data.spend?.error ? {status:unavailable(data.spend), rows:[]} : spendSummaryView(data.spend || {});
+  $('analyticsTokensStatus').textContent = spend.status;
+  analyticsTable('analyticsTokens', spend.rows, ['UTC day','Provider','Model','Calls','Input tokens','Output tokens','USD']);
+  const sessions = Array.isArray(data.sessions?.sessions) ? [...data.sessions.sessions] : null;
+  if (sessions) sessions.sort((a,b) => (analyticsCount(b.tokens?.total) ?? -1) - (analyticsCount(a.tokens?.total) ?? -1));
+  $('analyticsSessionsStatus').textContent = sessions ? sessions.length + ' readable retained sessions; sorted by total tokens. Creation dates are not an activity history.' : unavailable(data.sessions);
+  analyticsTable('analyticsSessions', (sessions || []).map(s => [s.title || s.session_id, analyticsNumber(s.message_count),
+    analyticsNumber(s.tokens?.prompt_tokens), analyticsNumber(s.tokens?.completion_tokens), analyticsNumber(s.tokens?.total), analyticsNumber(s.tokens?.exchanges)]),
+    ['Session','Messages','Input tokens','Output tokens','Total tokens','Exchanges']);
+  const days = Array.isArray(data.session_days) ? data.session_days : [];
+  analyticsBars('analyticsDays', days.slice(-14).map(d => ({label:d.day, count:d.count})));
+  const dated = days.reduce((n,d) => n + d.count, 0);
+  $('analyticsDaysStatus').textContent = sessions ? 'Latest 14 recorded UTC creation dates. Sessions without a usable date: ' + (sessions.length - dated) + '.' : '';
+  const code = data.code, runs = Array.isArray(code?.runs) ? code.runs : null;
+  const outcomes = new Map();
+  for (const run of runs || []) { const status = run.status || 'unknown'; outcomes.set(status, (outcomes.get(status) || 0) + 1); }
+  const total = key => runs.every(r => analyticsCount(r[key]) !== null) ? analyticsNumber(runs.reduce((n,r) => n + r[key], 0)) : 'Unknown';
+  $('analyticsCodeStatus').textContent = runs ? runs.length + ' listed runs. ' +
+    (code.truncated === true ? 'Partial: run listing is truncated. ' : code.truncated === false ? 'Retained run listing. ' : 'Listing completeness unknown. ') +
+    'Iterations: ' + total('iterations') + '; changed-file occurrences across runs: ' + total('changed_file_count') + '. Unreadable records or older backends leave these totals unknown. No line-change statistics are recorded.' : unavailable(code);
+  analyticsBars('analyticsOutcomes', [...outcomes].sort(([a],[b]) => a.localeCompare(b)).map(([label,count]) => ({label,count})));
+  analyticsTable('analyticsRuns', (runs || []).map(r => [r.run_id, r.status, analyticsNumber(r.iterations), analyticsNumber(r.changed_file_count), r.reject_code || '—']),
+    ['Run','Status','Iterations','Changed files','Reject code']);
+  $('analyticsStatus').textContent = data.status?.error ? unavailable(data.status) :
+    'Model: ' + (data.status?.model || 'Unknown') + '; provider: ' + (data.status?.provider || 'Unknown') +
+    '; retained session tokens: ' + analyticsNumber(data.status?.total_tokens) + '. Ledger and session retention differ; totals are not added together.';
+  const pages = Math.max(1, Math.ceil(Math.max(spend.rows.length, sessions?.length || 0, runs?.length || 0) / 100));
+  $('analyticsPage').textContent = 'Page ' + (analyticsPage + 1) + ' of ' + pages + ' (100 rows per table)';
+  $('analyticsPrevious').disabled = analyticsPage === 0; $('analyticsNext').disabled = analyticsPage + 1 >= pages;
+}
+function clearAnalytics() {
+  ++analyticsRequest; analyticsData = null; analyticsPage = 0;
+  for (const id of ['analyticsStatus','analyticsTokensStatus','analyticsTokens','analyticsSessionsStatus','analyticsSessions',
+    'analyticsDaysStatus','analyticsDays','analyticsCodeStatus','analyticsOutcomes','analyticsRuns','analyticsPage']) $(id).replaceChildren();
+  $('analyticsPrevious').disabled = true; $('analyticsNext').disabled = true;
+  if ($('analyticsDialog').open) $('analyticsDialog').close();
+}
+async function refreshAnalytics() {
+  const request = ++analyticsRequest;
+  analyticsData = null; analyticsPage = 0;
+  for (const id of ['analyticsTokensStatus','analyticsTokens','analyticsSessionsStatus','analyticsSessions',
+    'analyticsDaysStatus','analyticsDays','analyticsCodeStatus','analyticsOutcomes','analyticsRuns','analyticsPage']) $(id).replaceChildren();
+  $('analyticsPrevious').disabled = true; $('analyticsNext').disabled = true;
+  $('analyticsStatus').textContent = 'Loading retained analytics…';
+  try {
+    const data = await loadAnalytics();
+    if (request !== analyticsRequest || !$('analyticsDialog').open) return;
+    analyticsData = data; paintAnalytics();
+  } catch (e) {
+    if (request === analyticsRequest && $('analyticsDialog').open) $('analyticsStatus').textContent = 'Analytics unavailable: ' + e.message;
+  }
+}
+$('refreshAnalytics').addEventListener('click', refreshAnalytics);
+$('closeAnalytics').addEventListener('click', clearAnalytics);
+$('analyticsDialog').addEventListener('cancel', e => { e.preventDefault(); clearAnalytics(); });
+$('analyticsPrevious').addEventListener('click', () => { if (analyticsPage > 0) { --analyticsPage; paintAnalytics(); } });
+$('analyticsNext').addEventListener('click', () => { if (!$('analyticsNext').disabled) { ++analyticsPage; paintAnalytics(); } });
+/* End analytics. */
+
 document.querySelectorAll('.side-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.side-tab').forEach(t => t.classList.remove('active'));
@@ -3160,6 +3300,7 @@ async function refreshHarnessAuth() {
       if (data.must_change_password) openPasswordChange(true);
       return;
     }
+    clearAnalytics();
     const setup = await fetchWithTimeout('/api/auth/setup-status', {}, 5000);
     if (setup.ok) {
       const status = await setup.json();
@@ -3182,6 +3323,7 @@ if (hAuthLogin) {
     const user = document.getElementById('hAuthUser');
     const pass = document.getElementById('hAuthPass');
     const who = document.getElementById('hAuthWho');
+    clearAnalytics();
     try {
       const r = await fetchWithTimeout('/api/auth/login', {
         method: 'POST',
@@ -3221,6 +3363,7 @@ if (hAuthLogout) {
     sendBtn.disabled = true;
     clearPendingAttachments();
     clearSpend();
+    clearAnalytics();
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);

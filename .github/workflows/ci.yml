@@ -61,6 +61,8 @@ jobs:
           CHROME_BIN: /usr/bin/google-chrome
       - name: Console review reset contract
         run: node scripts/test-review-reset.mjs
+      - name: Analytics dashboard contract
+        run: node scripts/test-analytics.mjs
       - run: node --experimental-websocket scripts/chat-browser-acceptance.mjs
 
   fmt:

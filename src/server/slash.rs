@@ -12,6 +12,7 @@ use crate::server::schemas::{Validate, MAX_MESSAGE_LEN};
 const DISPATCH_THRESHOLD: u8 = 80;
 
 const COMMANDS: &[&str] = &[
+    "analytics",
     "help",
     "session",
     "prompt",
@@ -673,6 +674,15 @@ mod tests {
         let p = parse_line("/help");
         assert!(p.dispatch);
         assert_eq!(p.canonical.as_deref(), Some("/help"));
+        assert_eq!(p.kind, SlashKind::Dispatch);
+    }
+
+    #[test]
+    fn exact_analytics_dispatches_as_a_read() {
+        let p = parse_line("/analytics");
+        assert!(p.dispatch);
+        assert_eq!(p.confidence, 100);
+        assert_eq!(p.canonical.as_deref(), Some("/analytics"));
         assert_eq!(p.kind, SlashKind::Dispatch);
     }
 

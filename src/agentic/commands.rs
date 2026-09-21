@@ -621,7 +621,9 @@ fn cmd_real_repo_runs(ctx: &AgenticCtx) -> Result<u8> {
         match load_run(&directory, &id) {
             Ok(mut record) => {
                 super::run_store::reconcile_run(&directory, &mut record)?;
-                records.push(json!({"run_id":id,"status":record.status,"updated_at":record.updated_at,"error":record.error}));
+                records.push(json!({"run_id":id,"status":record.status,"updated_at":record.updated_at,
+                    "iterations":record.iterations,"changed_file_count":record.changed_files.len(),
+                    "reject_code":record.reject_code,"error":record.error}));
             }
             Err(_) => records.push(json!({"run_id":id,"status":"unreadable","error":"Retained record is unreadable; no action was taken."})),
         }

@@ -76,6 +76,12 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     let server = spawn_server(&model.base_url(), options).await;
     let bootstrap = login(&server, "admin", "admin").await;
     assert_eq!(
+        request(&server, &bootstrap, Method::GET, "/api/analytics/summary", json!({}))
+            .await
+            .status(),
+        403
+    );
+    assert_eq!(
         request(&server, &bootstrap, Method::POST, "/api/config/reload", json!({}))
             .await
             .status(),
@@ -105,6 +111,12 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
             200
         );
         let user = login(&server, role, "reload-fixture-password").await;
+        assert_eq!(
+            request(&server, &user, Method::GET, "/api/analytics/summary", json!({}))
+                .await
+                .status(),
+            if role == "audit" { 403 } else { 200 }
+        );
         assert_eq!(
             request(&server, &user, Method::POST, "/api/config/reload", json!({}))
                 .await

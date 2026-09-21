@@ -88,6 +88,62 @@ pub async fn spend_summary(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(crate::llm::spend::summarize_file(&state.spend_file))
 }
 
+/// Compose existing reads without importing the agentic implementation or
+/// reading its records in the server. A disabled/failed child is unavailable,
+/// never evidence of zero runs. Listing retains its normal reconciliation.
+pub async fn analytics_summary(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    let snapshot = state.clone();
+    let local = tokio::task::spawn_blocking(move || {
+        let sessions = snapshot.store.list();
+        let mut days = std::collections::BTreeMap::<String, u64>::new();
+        let mut unknown_dates = 0_u64;
+        let mut total_tokens = 0_u64;
+        for session in &sessions {
+            total_tokens = total_tokens.saturating_add(session["tokens"]["total"].as_u64().unwrap_or(0));
+            let date = session["created_ts"]
+                .as_f64()
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .and_then(|v| time::OffsetDateTime::from_unix_timestamp(v.floor() as i64).ok());
+            if let Some(date) = date {
+                *days.entry(date.date().to_string()).or_default() += 1;
+            } else {
+                unknown_dates += 1;
+            }
+        }
+        json!({
+            "spend":crate::llm::spend::summarize_file(&snapshot.spend_file),
+            "sessions":{"sessions":sessions},
+            "session_days":days.into_iter().map(|(day,count)| json!({"day":day,"count":count})).collect::<Vec<_>>(),
+            "sessions_without_created_date":unknown_dates,
+            "status":{"model":snapshot.current_model(),"provider":snapshot.current_provider(),"total_tokens":total_tokens},
+        })
+    });
+    let (local, runs) = tokio::join!(local, super::agent::agent_runs(State(state)));
+    let mut data = local.map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ANALYTICS_UNAVAILABLE",
+            "analytics snapshot could not be read",
+        )
+    })?;
+    data["code"] = match runs {
+        Ok(Json(envelope)) if envelope["ok"] == true && envelope["parsed"]["runs"].is_array() => {
+            let mut code = envelope["parsed"].clone();
+            let mut outcomes = std::collections::BTreeMap::<String, u64>::new();
+            for run in code["runs"].as_array().expect("array checked above") {
+                *outcomes
+                    .entry(run["status"].as_str().unwrap_or("unknown").to_string())
+                    .or_default() += 1;
+            }
+            code["outcomes"] = json!(outcomes);
+            code
+        }
+        Ok(_) => json!({"error":{"code":"AGENTIC_UNAVAILABLE","message":"Retained runs could not be read."}}),
+        Err(error) => json!({"error":{"code":error.code,"message":error.message}}),
+    };
+    Ok(Json(data))
+}
+
 pub async fn spend_predict(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
