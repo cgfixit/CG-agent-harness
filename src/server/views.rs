@@ -789,8 +789,8 @@ mod tests {
         }
         assert_eq!(HARNESS_SURFACES.len(), 60);
         let report = list_wired_tools(&registered);
-        assert_eq!(report["total"], 59);
-        assert_eq!(report["wired"], 59, "a catalog surface is unwired");
+        assert_eq!(report["total"], HARNESS_SURFACES.len());
+        assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");
         for t in report["tools"].as_array().unwrap() {
             assert_eq!(t["wired"], true, "{}", t["path"]);
         }
