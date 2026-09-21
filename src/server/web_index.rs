@@ -338,12 +338,26 @@ impl WebTool {
     }
 
     pub(super) async fn discover(&self, group: Option<&str>) -> Result<Coverage> {
+        self.discover_from(group, &[]).await
+    }
+
+    pub(super) async fn discover_from(&self, group: Option<&str>, starts: &[String]) -> Result<Coverage> {
         let start = Instant::now();
         let deadline = start + Duration::from_secs(self.limits.run_seconds);
         let policy = self.policy()?;
         let mut queue = VecDeque::new();
         let mut coverage = Coverage::default();
-        for rule in policy.rules.iter().filter(|r| group.is_none_or(|g| r.group == g)) {
+        // Explicit starts narrow this run, never add permissions. Validate all
+        // before any request, then recheck each destination at the read boundary.
+        for raw in starts {
+            policy.authorize(raw, group)?;
+        }
+        queue.extend(starts.iter().cloned().map(|u| (u, true)));
+        for rule in policy
+            .rules
+            .iter()
+            .filter(|r| starts.is_empty() && group.is_none_or(|g| r.group == g))
+        {
             let seeds = rule.start_urls();
             if seeds.is_empty() {
                 coverage
@@ -515,6 +529,67 @@ impl WebTool {
         }
     }
 
+    /// Multiple exact reads share the same limits and pacing as discovery. A
+    /// partial result names failures; it never implies the whole batch succeeded.
+    pub async fn fetch_many(
+        &self,
+        urls: &[String],
+        group: Option<&str>,
+        enabled: bool,
+        audit: &Audit,
+        owner: &str,
+    ) -> Result<Value> {
+        let policy = self.require_enabled(enabled)?;
+        if urls.is_empty() || urls.len() > super::web_policy::MAX_RULES || group.is_some_and(|g| !valid_group(g)) {
+            return Err(error("WEB_BAD_URL", "invalid batch or group"));
+        }
+        let mut targets = Vec::new();
+        for raw in urls {
+            let url = policy.authorize(raw, group)?.to_string();
+            if !targets.contains(&url) {
+                targets.push(url);
+            }
+        }
+        self.gate_tool("web_fetch", &targets, enabled, audit)?;
+        let _guard = self
+            .search_gate
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| error("WEB_BUSY", "a web read is already running"))?;
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(self.limits.run_seconds);
+        let mut coverage = Coverage::default();
+        let mut counts = BTreeMap::new();
+        let mut last = BTreeMap::new();
+        let mut pages = Vec::new();
+        for (index, target) in targets.iter().enumerate() {
+            if let Some(page) = self
+                .crawl_get(target, group, deadline, &mut coverage, &mut counts, &mut last)
+                .await
+            {
+                self.cache_page(&page, group)?;
+                coverage.searched.push(page.url.clone());
+                pages.push(page);
+            }
+            if coverage.budget_exhausted.is_some() {
+                coverage.unvisited.extend(targets[index..].iter().cloned());
+                break;
+            }
+        }
+        let policy = self.policy()?;
+        for page in &pages {
+            page.validate(&policy, group)?;
+        }
+        if let Some(first) = pages.first() {
+            self.store_last(first, group, owner)?;
+        }
+        coverage.elapsed_ms = start.elapsed().as_millis();
+        Ok(
+            json!({"pages":pages,"coverage":coverage,"complete":pages.len()==targets.len(),
+            "notice":"Exact requested URLs only. /web inject selects the first successful page; use /web research to synthesize multiple sources."}),
+        )
+    }
+
     pub async fn search(
         &self,
         query: &str,
@@ -523,6 +598,22 @@ impl WebTool {
         audit: &Audit,
         owner: &str,
     ) -> Result<Value> {
+        self.search_with_count(query, group, 12, enabled, audit, owner).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_with_count(
+        &self,
+        query: &str,
+        group: Option<&str>,
+        count: usize,
+        enabled: bool,
+        audit: &Audit,
+        owner: &str,
+    ) -> Result<Value> {
+        if !(1..=12).contains(&count) {
+            return Err(error("WEB_BAD_QUERY", "invalid result count"));
+        }
         if query.trim().is_empty() || query.chars().count() > 200 || group.is_some_and(|g| !valid_group(g)) {
             return Err(error("WEB_BAD_QUERY", "invalid query or source group"));
         }
@@ -543,7 +634,7 @@ impl WebTool {
         let selected = group.map(str::to_string);
         let found = tokio::task::spawn_blocking(move || {
             let _guard = guard;
-            retrieve(&pages, &policy, &q, selected.as_deref(), 12)
+            retrieve(&pages, &policy, &q, selected.as_deref(), count)
         })
         .await
         .map_err(|_| error("WEB_INDEX_FAILED", "passage search failed"))??;
@@ -614,8 +705,7 @@ mod tests {
         web.test_resolve = Some(("corpus.invalid".into(), address));
         let root = format!("http://corpus.invalid:{}/", address.port());
         let scope = format!("{root}docs/*");
-        web.allow_rule(&scope, "manuals", &[format!("{root}docs/")], true)
-            .unwrap();
+        web.allow_rule(&scope, "manuals", &[], true).unwrap();
         web.allow_rule(&format!("{root}robots.txt"), "manuals", &[], true)
             .unwrap();
         // Another group grants outside scope, but selected group must still refuse it.

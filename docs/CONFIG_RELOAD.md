@@ -47,7 +47,7 @@ selects its code fallback, which can differ from a fresh-home default.
 | `web.total_tokens` | 2,048–32,000 |
 | `web.research_seconds` | 10–1,800 |
 | `web.stale_seconds` | 60–31,536,000 |
-| `web.chat_tool_calls` | 1–5 |
+| `web.chat_tool_calls` | 1–10 |
 
 `web.concurrency` is **restart-only** because it sizes shared fetch permits.
 All other fields, including TLS, authentication, credentials, models, sandbox,

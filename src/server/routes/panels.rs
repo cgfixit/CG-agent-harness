@@ -57,10 +57,16 @@ fn web_err(e: &HarnessError) -> ApiError {
     };
     // Fixed public guidance only; upstream exception bodies never reach the UI.
     let message = match e.code.as_str() {
+        "WEB_BAD_URL" => "Use an exact HTTP(S) URL for fetch/check, not a wildcard or prose. Use /web research --url URL <question> for permitted internal links; /help web shows examples.",
+        "WEB_HOST_DENIED" => "This exact URL is outside the current shared-home allowlist. Run /web check URL; www and apex hosts are distinct. Only an administrator can grant a matching rule.",
+        "WEB_ALLOWLIST_EMPTY" => "No content URLs are permitted. An administrator must add an exact URL or explicit wildcard using /web allow.",
+        "WEB_GROUP_UNKNOWN" => "Unknown source group. /web status lists groups; add rules with /web allow PATTERN --group NAME.",
+        "WEB_POLICY_INVALID" => "Invalid URL rule, group or seed. Each seed must be inside a requested rule; the entire grant was refused.",
+        "WEB_DISABLED" => "Web access is disabled for this home. An administrator can enable it with /web on; URL permission is still required.",
         "WEB_GOOGLE_PERMISSION" => "Allow https://www.google.com/* before Google search. Exact homepage grants do not permit search URLs.",
-        "WEB_GOOGLE_BLOCKED" => "Public Google refused or redirected the request. Configure a SerpAPI key in API Keys, then restart.",
-        "WEB_GOOGLE_CHALLENGE" => "Public Google requires JavaScript or CAPTCHA. Configure a Google results (SerpAPI) key in API Keys, then restart.",
-        "WEB_GOOGLE_UNREADABLE" => "Google returned no recognizable result listing. Configure a SerpAPI key in API Keys, then restart.",
+        "WEB_GOOGLE_BLOCKED" => "Public Google refused or redirected the request. Configure a SerpAPI key in API Keys, then retry.",
+        "WEB_GOOGLE_CHALLENGE" => "Public Google requires JavaScript or CAPTCHA. Configure a Google results (SerpAPI) key in API Keys, then retry.",
+        "WEB_GOOGLE_UNREADABLE" => "Google returned no recognizable result listing. Configure a SerpAPI key in API Keys, then retry.",
         "WEB_SEARCH_KEY_REJECTED" => "The configured SerpAPI key was rejected. Check API Keys; no public fallback was attempted.",
         "WEB_SEARCH_QUOTA" => "SerpAPI quota or rate limit reached. No public fallback was attempted.",
         "WEB_SEARCH_PROVIDER" => "The configured search provider failed. No public fallback was attempted.",
@@ -114,7 +120,7 @@ pub async fn web_allow(
     let owner = super::auth::context_owner(user);
     state
         .web_snapshot()
-        .allow_rule(&req.url, &req.group, &req.seeds, web_enabled(&state))
+        .allow_rules(&req.patterns(), &req.group, &req.seeds, web_enabled(&state))
         .and_then(|_| state.web_snapshot().status(web_enabled(&state), &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -137,14 +143,31 @@ pub async fn web_deny(
 pub async fn web_fetch(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
-    ValidJson(req): ValidJson<WebUrlRequest>,
+    ValidJson(req): ValidJson<WebFetchRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
+    let web = state.web_snapshot();
+    if let Some(url) = req.url.as_deref().filter(|_| req.group.is_none()) {
+        return web
+            .fetch(url, enabled, &state.audit, &owner)
+            .await
+            .map(Json)
+            .map_err(|e| web_err(&e));
+    }
+    web.fetch_many(&req.targets(), req.group.as_deref(), enabled, &state.audit, &owner)
+        .await
+        .map(Json)
+        .map_err(|e| web_err(&e))
+}
+
+pub async fn web_check(
+    State(state): State<Arc<AppState>>,
+    ValidJson(req): ValidJson<WebFetchRequest>,
+) -> ApiResult<Json<Value>> {
     state
         .web_snapshot()
-        .fetch(&req.url, enabled, &state.audit, &owner)
-        .await
+        .check_urls(&req.targets(), req.group.as_deref(), web_enabled(&state))
         .map(Json)
         .map_err(|e| web_err(&e))
 }
@@ -180,7 +203,14 @@ pub async fn web_search(
     }
     state
         .web_snapshot()
-        .search(&req.query, req.group.as_deref(), enabled, &state.audit, &owner)
+        .search_with_count(
+            &req.query,
+            req.group.as_deref(),
+            req.count,
+            enabled,
+            &state.audit,
+            &owner,
+        )
         .await
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -261,7 +291,7 @@ pub async fn web_forget(
 
 pub async fn web_research(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
     let owner = super::auth::web_owner(&state, &req)?;
-    let ValidJson(body) = ValidJson::<WebSearchRequest>::from_request(req, &()).await?;
+    let ValidJson(body) = ValidJson::<WebResearchRequest>::from_request(req, &()).await?;
     if body.engine.as_deref().is_some_and(|v| v != "pages") {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -269,7 +299,7 @@ pub async fn web_research(State(state): State<Arc<AppState>>, req: Request<Body>
             "Dedicated research uses permitted pages",
         ));
     }
-    crate::server::web_research::run(state, &owner, &body.query, body.group.as_deref())
+    crate::server::web_research::run_from(state, &owner, &body.query, body.group.as_deref(), &body.urls)
         .await
         .map(Json)
         .map_err(|e| web_err(&e))

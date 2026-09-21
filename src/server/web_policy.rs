@@ -278,7 +278,9 @@ impl Rule {
             return self.seeds.clone();
         }
         match Pattern::parse(&self.pattern) {
-            Ok(p) if !p.subdomains && !p.subtree => vec![p.url.to_string()],
+            // The literal prefix ending in '/' is itself inside a path wildcard.
+            // Host wildcards still need an explicit concrete host seed.
+            Ok(p) if !p.subdomains => vec![p.url.to_string()],
             _ => Vec::new(),
         }
     }
@@ -530,7 +532,12 @@ mod tests {
         let mut value = serde_json::to_value(&p).unwrap();
         value["rules"][0]["pattern"] = serde_json::json!("https://example.com/docs/*");
         let wildcard = Policy::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
-        assert!(wildcard.rules[0].start_urls().is_empty());
+        assert_eq!(wildcard.rules[0].start_urls(), vec!["https://example.com/docs/"]);
+        assert!(wildcard.rules[0].permits(&canonical_url(&wildcard.rules[0].start_urls()[0]).unwrap()));
+        assert!(Rule::new("https://*.example.com/docs/*", "docs", &[])
+            .unwrap()
+            .start_urls()
+            .is_empty());
         value["rules"][0]["seeds"] = serde_json::json!(["https://other.test/"]);
         assert!(Policy::parse(&serde_json::to_vec(&value).unwrap()).is_err());
         for bad in [

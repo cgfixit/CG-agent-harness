@@ -559,7 +559,10 @@ pub struct WebSearchRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebRuleRequest {
-    pub url: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub urls: Vec<String>,
     #[serde(default = "web_default_group")]
     pub group: String,
     #[serde(default)]
@@ -572,7 +575,7 @@ fn web_default_group() -> String {
 
 impl Validate for WebRuleRequest {
     fn validate(&self) -> Vec<String> {
-        if len_ok(&self.url, 1, MAX_WEB_URL_LEN)
+        if valid_web_urls(&self.url, &self.urls)
             && super::web_policy::valid_group(&self.group)
             && self.seeds.len() <= 16
             && self.seeds.iter().all(|s| len_ok(s, 1, MAX_WEB_URL_LEN))
@@ -584,6 +587,72 @@ impl Validate for WebRuleRequest {
     }
 }
 
+impl WebRuleRequest {
+    pub fn patterns(&self) -> Vec<String> {
+        self.url.iter().cloned().chain(self.urls.iter().cloned()).collect()
+    }
+}
+
+fn valid_web_urls(url: &Option<String>, urls: &[String]) -> bool {
+    (url.is_some() && urls.is_empty() || url.is_none() && !urls.is_empty())
+        && urls.len() <= super::web_policy::MAX_RULES
+        && url.iter().chain(urls.iter()).all(|u| len_ok(u, 1, MAX_WEB_URL_LEN))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebFetchRequest {
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub urls: Vec<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+}
+impl Validate for WebFetchRequest {
+    fn validate(&self) -> Vec<String> {
+        if valid_web_urls(&self.url, &self.urls) && self.group.as_deref().is_none_or(super::web_policy::valid_group) {
+            vec![]
+        } else {
+            vec!["url/urls or group".into()]
+        }
+    }
+}
+impl WebFetchRequest {
+    pub fn targets(&self) -> Vec<String> {
+        self.url.iter().cloned().chain(self.urls.iter().cloned()).collect()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebResearchRequest {
+    pub query: String,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub urls: Vec<String>,
+    #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default = "search_count")]
+    pub count: usize,
+}
+impl Validate for WebResearchRequest {
+    fn validate(&self) -> Vec<String> {
+        if len_ok(&self.query, 1, MAX_WEB_QUERY_LEN)
+            && self.group.as_deref().is_none_or(super::web_policy::valid_group)
+            && self.urls.len() <= super::web_policy::MAX_RULES
+            && self.urls.iter().all(|u| len_ok(u, 1, MAX_WEB_URL_LEN))
+            && self.engine.as_deref().is_none_or(|v| v == "pages")
+            && (1..=10).contains(&self.count)
+        {
+            vec![]
+        } else {
+            vec!["query, group or starting URLs".into()]
+        }
+    }
+}
+
 fn search_count() -> usize {
     5
 }
@@ -591,6 +660,7 @@ fn search_count() -> usize {
 impl Validate for WebSearchRequest {
     fn validate(&self) -> Vec<String> {
         if len_ok(&self.query, 1, MAX_WEB_QUERY_LEN)
+            && self.group.as_deref().is_none_or(super::web_policy::valid_group)
             && (1..=10).contains(&self.count)
             && self.engine.as_deref().is_none_or(|v| matches!(v, "google" | "pages"))
         {

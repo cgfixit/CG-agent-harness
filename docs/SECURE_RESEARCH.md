@@ -207,8 +207,8 @@ suffix impostors or alternate ports. Scheme-relative discovered links
 resolve against the source and still require current permission.
 
 Legacy rows migrate only to the actual stored URL targets the old fetcher could
-request. A formerly implicit prefix becomes exact; add a wildcard and seed
-explicitly to permit discovery. Unknown legacy fields/invalid rows fail the whole
+request. A formerly implicit prefix becomes exact; add an explicit wildcard to
+permit discovery (a host wildcard also needs a concrete seed). Unknown legacy fields/invalid rows fail the whole
 migration. Reading legacy data normalizes it in memory; the next authorized
 mutation persists v1. Legacy unproven `web_context.txt`/`web_last.json` are never
 injected. Current selections use `tools/web_<account-hash>_{last,context}.json`.
@@ -219,8 +219,9 @@ With web enabled, ordinary chat can invoke `web_search` (Google keyword listings
 and `web_fetch` (an exact permitted public URL). They use standard OpenAI tool
 calls against the configured local model. No repository, shell, policy, account,
 key or other mutation tool is exposed. `/loop` remains tool-free. Invalid names,
-arguments, parallel calls and excess tool requests are refused. A turn allows
-at most `web.chat_tool_calls` (default 3, range 1–5), shares the chat timeout,
+arguments and excess tool requests are refused; batches are validated before
+their first read and executed sequentially. A turn allows
+at most `web.chat_tool_calls` (default 10, range 1–10), shares the chat timeout,
 and reserves estimated tokens against `web.total_tokens` before each model call.
 Reported usage sums all completed model calls; absent upstream usage remains
 marked unreported internally rather than being invented as actual token counts.
@@ -265,8 +266,8 @@ execute JavaScript, solve CAPTCHA, adopt browser cookies, or silently switch
 search engines. Challenges, redirects, unreadable output and transport failures
 are explicit failures. A keyed request's invalid-key, quota or upstream failure
 also stays explicit; public fallback occurs only when the active key is absent.
-Saving/clearing keys takes effect after restart; process environment overrides
-still apply. A test on this Mac returned a Google JavaScript challenge, so
+Saving/clearing the SerpAPI key takes effect immediately; process environment
+overrides still apply. A test on this Mac returned a Google JavaScript challenge, so
 credential-free success is not promised.
 
 The console renders actual provider/source information separately from the
@@ -283,7 +284,7 @@ dedicated `/web research` when checked quote references are required.
 
 A non-empty allowlist is an armed content surface: every granted origin or path
 is reachable by chat `web_fetch`, still bounded by `web.chat_tool_calls`
-(default 3). Fresh homes refuse page fetching with `WEB_ALLOWLIST_EMPTY`.
+(default 10). Fresh homes refuse page fetching with `WEB_ALLOWLIST_EMPTY`.
 Configured SerpAPI search uses its fixed provider endpoint without a page URL
 grant; listings do not authorize fetching their destinations. With no active
 SerpAPI key, public Google retains the URL-policy checks: an empty policy gives
@@ -302,17 +303,20 @@ preserved; absent or invalid legacy `web_enabled` fields remain off. Use `/web o
 remains required regardless of this switch. In chat:
 
 ```text
-/web allow https://example.com/docs/* docs https://example.com/docs/
-/web allow https://example.com/robots.txt docs
-/web pages group=docs widget_open
-/web research group=docs How does widget_open fail?
+/web allow https://example.com/docs/* https://example.com/robots.txt --group docs
+/web check https://example.com/docs/start --group docs
+/web pages --group docs widget_open
+/web research --group docs How does widget_open fail?
 /web cancel
 /web inject
 /web forget
 ```
 
-Wildcards are permissions, not crawl targets. Explicit URLs and configured seeds
-start bounded traversal. Robots is fetched only if separately permitted by the
+Wildcards are permissions, not fetch URLs. Explicit URLs, configured seeds, and
+the permitted literal prefix of a concrete-host path wildcard start bounded
+traversal. Host wildcards require explicit concrete seeds. `research --url URL`
+(repeatable) narrows a run without changing permission. Fresh research always
+attempts bounded discovery, even with cached matches. Robots is fetched only if permitted by the
 same content policy. Without permitted/readable robots, explicit seeds remain
 readable but discovered-link traversal stops. Relative links are parsed from HTML,
 deduplicated, paced per origin and restricted to the selected group. Robots

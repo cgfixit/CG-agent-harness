@@ -10,7 +10,8 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "cgagentharness",
     version,
-    about = "Loopback-only agentic coding harness console"
+    about = "Private local chat, permitted web research, and governed coding",
+    after_help = "QUICK START\n  cgagentharness serve                 Start the local console\n  cgagentharness account login NAME    Sign in to the running portal\n  cgagentharness web --help            URL permissions and research\n\nIn the console, /help opens the searchable command guide; /help web shows research examples.\nData lives in ~/.CGagentHarness (override: CGAGENTHARNESS_HOME). No web content is permitted until an administrator adds URL rules."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -28,7 +29,11 @@ enum Command {
     #[command(hide = true)]
     McpStdioWorker,
     /// Account-authenticated web operations through the running portal.
+    #[command(
+        after_help = "EXAMPLES (quote wildcard patterns in your shell)\n  cgagentharness web allow 'https://www.veeam.com/*' 'https://example.org/*' --group vendors\n  cgagentharness web check https://www.veeam.com/\n  cgagentharness web research --group vendors 'Compare the backup approaches'\n  cgagentharness web research --url https://www.veeam.com/ 'Summarize products and permitted internal links'\n\nRules and web on/off are shared by this home, not per session. Selected web context is account-private. *.example.org excludes example.org; exact www and apex hosts are distinct. Every destination needs a matching rule; redirects and private addresses are refused."
+    )]
     Web {
+        /// Portal origin (not a research target), for example https://127.0.0.1:8790.
         #[arg(long)]
         url: Option<String>,
         #[command(subcommand)]

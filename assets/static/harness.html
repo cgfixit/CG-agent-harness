@@ -121,6 +121,16 @@
   .cmd-item:hover { background: var(--bg-tertiary); }
   .cmd-item .c { color: var(--accent-blue); }
   .cmd-item .d { display: block; color: var(--text-muted); font-size: 10px; font-family: var(--sans); }
+  .command-guide { min-width: 0; line-height: 1.5; white-space: normal; }
+  .command-guide h3 { margin: 0 0 8px; }
+  .command-guide p { margin: 8px 0; }
+  .command-guide input[type=search] { box-sizing: border-box; width: 100%; padding: 9px; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; }
+  .help-topics { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+  .help-topics button { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
+  .command-guide .cmd-item { overflow-wrap: anywhere; font-size: 12px; padding: 8px; border: 1px solid var(--border); }
+  .command-guide .d { font-size: 12px; }
+  .command-guide summary { cursor: pointer; margin: 8px 0; }
+  .command-guide :focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
 
   .sess-item {
     padding: 7px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 3px;
@@ -959,15 +969,33 @@ function renderChatWebTools(events) {
 }
 
 function renderWebStatus(data) {
+  const box = document.createElement('div');
+  const intro = document.createElement('p');
+  intro.textContent = 'URL permissions and web on/off are shared by this home, not per session. Saved web context belongs to your account. Check an exact URL with /web check; every destination still needs permission.';
+  box.appendChild(intro);
   const rows = [
     ['enabled', data.enabled ? 'yes' : 'no (fail-closed)'],
-    ['allowlist', (data.allowlist && data.allowlist.length) ? data.allowlist.join('\n') : '(empty — /web allow <url>)'],
+    ['permission rules', (data.allowlist || []).length + ' — see groups below; empty denies content reads'],
     ['keyword search', data.search_provider || 'Google; /web pages for permitted-page passages'],
+    ['web calls per chat', Number.isInteger(data.limits?.chat_tool_calls) ? data.limits.chat_tool_calls + ' maximum; token and time limits also apply' : 'unknown'],
     ['injected', data.injected ? 'yes' : 'no'],
     ['context stored', data.context_stored ? 'yes' : 'no'],
     ['last extract', data.has_last ? (data.enabled ? 'yes — /web inject to put it in chat' : 'yes — /web on before injecting') : 'none'],
   ];
-  return table(rows, ['field', 'value']);
+  box.appendChild(table(rows, ['field', 'value']));
+  box.appendChild(table((data.rules || []).map(r => [r.group, r.pattern, (r.seeds || []).join('\n') || (r.pattern.includes('://*.') ? 'needs --seed URL' : 'literal URL/path prefix'), r.id]), ['group', 'permitted pattern', 'research starts', 'rule ID']));
+  box.appendChild(commandButton('/help web', 'Web syntax and examples'));
+  return box;
+}
+
+function renderWebCoverage(coverage = {}) {
+  const box=document.createElement('div'), p=document.createElement('p');
+  p.textContent=(coverage.searched||[]).length+' pages read · '+(coverage.refused||[]).length+' refused · '+(coverage.failed||[]).length+' failed · '+(coverage.skipped||[]).length+' skipped · '+(coverage.unvisited||[]).length+' unvisited'+(coverage.budget_exhausted ? ' · limit: '+coverage.budget_exhausted : '');
+  box.appendChild(p);
+  const details=document.createElement('details'), summary=document.createElement('summary'); summary.textContent='Coverage details'; details.appendChild(summary);
+  const rows=[];
+  for (const kind of ['searched','refused','failed','skipped','unvisited']) for (const row of coverage[kind]||[]) rows.push([kind,typeof row==='string' ? row : row.url||row.rule_id||'',typeof row==='object' ? row.code||'' : '']);
+  details.appendChild(table(rows,['outcome','URL / rule','reason'])); box.appendChild(details); return box;
 }
 
 /* ── API ── */
@@ -1472,7 +1500,7 @@ const COMMANDS = [
   ['/goal stage <branch>', 'explicitly stage the goal as a coding request'],
   ['/goal task', "inspect the goal's durable task linkage"],
   ['/harness', 'list retained harness optimizer runs; does not start one'],
-  ['/help', 'list commands in alphabetical order'],
+  ['/help [topic|search words|all]', 'searchable guide, topics, safe command insertion and examples'],
   ['/loop [n]|auto|stop', 'bounded chat continuation; auto toggles; stop also cancels streaming chat'],
   ['/memory [on|off]', 'show or toggle shared pinned notes in chat; separate from structured memory'],
   ['/memory add <note>', 'save a literal pinned note'],
@@ -1508,17 +1536,80 @@ const COMMANDS = [
   ['/tokens', 'current session token tally'],
   ['/tools [all|help|<name>]', 'registered runtime tools as a diagram; all includes the catalog'],
   ['/users', 'administer local harness accounts'],
-  ['/web [help|on|off]', 'show web status/help, or toggle fetching and saved context'],
-  ['/web allow <url-or-pattern> [group] [seed-url]', 'administrator grant for an exact URL or explicit wildcard'],
+  ['/web [status|help]', 'show shared-home rules, groups and your account-selected context'],
+  ['/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]', 'administrator: atomically grant exact URLs or explicit wildcards; repeat --seed for each seed'],
   ['/web cancel', 'cancel your bounded research request'],
+  ['/web check <URL> [URL ...] [--group name]', 'check exact URL permissions without fetching, DNS lookup or granting access'],
   ['/web deny <id-or-pattern>', 'administrator removal of a URL permission rule'],
-  ['/web fetch <url>', 'read a permitted URL'],
+  ['/web fetch <URL> [URL ...] [--group name]', 'bounded batch of exact permitted URLs, not wildcard patterns or prose'],
   ['/web forget', 'clear your injected web context'],
   ['/web inject', 'include your last fetched/page-search selection in chat'],
-  ['/web pages [group=name] <query>', 'search passages from permitted pages'],
-  ['/web research [group=name] <question>', 'bounded local-model research with cited passages'],
-  ['/web search [group=name] <query>', 'Google keyword results; a group selects permitted-page search instead'],
+  ['/web off', 'administrator: disable web for this home; preserve rules and stored context'],
+  ['/web on', 'administrator: enable web for this home; URL permission remains required'],
+  ['/web pages [--group name] <query>', 'discover permitted links and search page passages'],
+  ['/web research [--group name] [--url URL ...] <question>', 'multi-page local research with checked citations; repeat --url for each starting URL'],
+  ['/web search [--count 1..10] [--engine google|pages] [--group name] <query>', 'Google listings by default; a group selects permitted-page search'],
 ];
+
+const HELP_TOPICS = {
+  chat: {title:'Chat & models', roots:['model','style','prompt','tokens','loop','clear'], note:'Type normally to chat. Slash commands are operator actions; printing one in a model response does not run it.', examples:['/model','/style concise','/prompt','/loop stop']},
+  session: {title:'Sessions & goals', roots:['session','goal'], note:'Saved sessions belong to your account. /clear resets the visible conversation, not saved session files. Staging a goal does not authorize execution.', examples:['/session new Research notes','/session list','/session info','/goal Compare backup approaches']},
+  web: {title:'Web research', roots:['web'], note:'Allowlist and on/off are shared-home settings; only an administrator changes them. Saved selections are account-private. Exact URLs do not include other pages. A path wildcard https://www.veeam.com/* includes that host’s paths; *.example.org excludes the apex. No www rewriting, private addresses or redirects. Search listings never grant permission. Research follows only permitted links within page, time and byte limits; coverage is not exhaustive.', examples:['/web status','/web check https://www.veeam.com/','/web allow https://www.veeam.com/* https://example.org/* --group vendors','/web allow https://*.example.org/* --group docs --seed https://docs.example.org/','/web research --group vendors Compare the backup approaches','/web research --url https://www.veeam.com/ Summarize products and permitted internal links','/web fetch https://www.veeam.com/ https://example.org/','/web search --count 3 backup security']},
+  memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory search backup preferences','/memory proposals','/soul status']},
+  agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
+  tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
+  settings: {title:'Status & administration', roots:['status','analytics','api','users','help'], note:'Credentials belong in the API Keys password fields, not chat history. Administrator controls remain role- and CSRF-guarded.', examples:['/status','/analytics','/users','/help all']},
+};
+function commandPrefix(syntax) {
+  return syntax.split(' ').filter((word,index,all) => index === 0 || all.slice(1,index+1).every(w => /^[a-z-]+$/.test(w))).join(' ') + ' ';
+}
+function commandButton(line, label) {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'cmd-item';
+  b.textContent = label || line; b.title = 'Insert into the composer; does not execute';
+  b.addEventListener('click', () => { input.value = line; input.focus(); });
+  return b;
+}
+function helpMatches(filter) {
+  const q = filter.trim().toLowerCase().replace(/^\//,'');
+  if (!q || q === 'all') return COMMANDS;
+  const topic = HELP_TOPICS[q];
+  return COMMANDS.filter(([c,d]) => topic ? topic.roots.includes(c.slice(1).split(' ')[0]) : q.split(/\s+/).every(word => (c+' '+d).toLowerCase().includes(word)));
+}
+function renderHelp(topic = '', compact = false) {
+  const box = document.createElement('section'); box.className = 'command-guide'; box.setAttribute('aria-label','Command guide');
+  const title = document.createElement('h3'); title.textContent = 'Command guide'; box.appendChild(title);
+  const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click to insert a command, then review and send. <…> is required; […] is optional. Suggestions never execute.'; box.appendChild(note);
+  const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Search commands, e.g. web, session, --group'; search.setAttribute('aria-label','Search commands'); search.value = topic; box.appendChild(search);
+  const topics = document.createElement('div'); topics.className = 'help-topics'; box.appendChild(topics);
+  for (const [key,t] of Object.entries(HELP_TOPICS)) {
+    const b = document.createElement('button'); b.type='button'; b.textContent=t.title;
+    b.addEventListener('click', () => { search.value=key; paint(); }); topics.appendChild(b);
+  }
+  const all = document.createElement('button'); all.type='button'; all.textContent='All commands'; all.addEventListener('click',()=>{search.value='all';paint();}); topics.appendChild(all);
+  const content = document.createElement('div'); box.appendChild(content);
+  function paint() {
+    content.replaceChildren();
+    const q = search.value.trim().toLowerCase().replace(/^\//,'');
+    const selected = HELP_TOPICS[q] || Object.values(HELP_TOPICS).find(t=>t.roots.includes(q));
+    if (selected) {
+      const guidance = document.createElement('p'); guidance.textContent=selected.note; content.appendChild(guidance);
+      const examples = document.createElement('details'); const summary=document.createElement('summary'); summary.textContent='Examples — insert, review, then send'; examples.appendChild(summary);
+      examples.open=!compact; selected.examples.forEach(e=>examples.appendChild(commandButton(e))); content.appendChild(examples);
+    }
+    if (!q && !compact) {
+      const start=document.createElement('p'); start.textContent='Choose a topic above, or start here:'; content.appendChild(start);
+      ['/status','/session new','/web status','/help web','/memory proposals','/agent help'].forEach(c=>content.appendChild(commandButton(c)));
+      return;
+    }
+    const rows=helpMatches(q); const count=document.createElement('p'); count.setAttribute('role','status'); count.textContent=rows.length ? rows.length+' matching commands' : 'No commands match. Try a topic or a shorter phrase.'; content.appendChild(count);
+    rows.forEach(([c,d])=>{
+      const b=commandButton(commandPrefix(c)); b.replaceChildren();
+      const syntax=document.createElement('span'); syntax.className='c'; syntax.textContent=c;
+      const desc=document.createElement('span'); desc.className='d'; desc.textContent=d; b.append(syntax,desc); content.appendChild(b);
+    });
+  }
+  search.addEventListener('input',paint); paint(); return box;
+}
 
 function renderKeys(keys) {
   sys(table(keys.map(k => [k.name, k.saved_configured ? k.saved_masked : '(unset)',
@@ -1529,15 +1620,7 @@ function renderKeys(keys) {
 
 function buildCommands() {
   const pane = $('pane-commands');
-  COMMANDS.forEach(([c, d]) => {
-    const b = document.createElement('button');
-    b.className = 'cmd-item';
-    const inner = document.createElement('span'); inner.className = 'c'; inner.textContent = c;
-    const desc = document.createElement('span'); desc.className = 'd'; desc.textContent = d;
-    b.appendChild(inner); b.appendChild(desc);
-    b.addEventListener('click', () => { input.value = c.split(' ')[0] + ' '; input.focus(); });
-    pane.appendChild(b);
-  });
+  pane.replaceChildren(renderHelp('',true));
 }
 
 /* ── agentic coding runs ── */
@@ -1779,7 +1862,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
 });
 
 /* ── slash commands ── */
-async function runSlash(line) {
+async function runSlash(line, webCommand) {
   if (sessionClearing) return;
   const parts = line.slice(1).split(/\s+/).filter(Boolean);
   if (!parts.length) {
@@ -1798,7 +1881,7 @@ async function runSlash(line) {
         break;
 
       case 'help':
-        sys(table(COMMANDS.map(c => [c[0], c[1]]), ['command', 'action']));
+        sys(renderHelp(arg === '--help' || arg === '-h' ? '' : arg));
         break;
 
       case 'session': {
@@ -2176,32 +2259,37 @@ async function runSlash(line) {
       }
 
       case 'web': {
-        const sub = rest[0] || 'status';
-        if (sub === 'help') {
-          sys(table(COMMANDS.filter(([command]) => command.startsWith('/web ')), ['command', 'action']));
-          break;
+        // Only the shared server grammar decides operands and flags. A direct
+        // programmatic caller must go through the same parser, never split a URL
+        // or silently discard trailing words here.
+        if (!webCommand) {
+          const parsed = await api('/api/slash/parse', 'POST', {line});
+          if (staleReview()) break;
+          if (!parsed.dispatch || !parsed.web) { sys(parsed.notice || 'Command not dispatched; use /help web.'); break; }
+          webCommand = parsed.web;
         }
+        const sub = webCommand.action, body = webCommand.body;
         if (sub === 'on' || sub === 'off') {
-          sys(renderWebStatus(await api('/api/web', 'POST', { enabled: sub === 'on' })));
+          sys(renderWebStatus(await api('/api/web', 'POST', body)));
           break;
         }
         if (sub === 'allow') {
-          const url = rest[1] || '';
-          if (!url || rest.length > 4) { sys('usage: /web allow <url-or-pattern> [group] [seed-url]'); break; }
-          sys(renderWebStatus(await api('/api/web/allow', 'POST', { url, group: rest[2] || 'default', seeds: rest[3] ? [rest[3]] : [] })));
+          sys(renderWebStatus(await api('/api/web/allow', 'POST', body)));
           break;
         }
         if (sub === 'deny') {
-          const url = rest.slice(1).join(' ').trim();
-          if (!url) { sys('usage: /web deny <id-or-pattern>'); break; }
-          sys(renderWebStatus(await api('/api/web/deny', 'POST', { url: url })));
+          sys(renderWebStatus(await api('/api/web/deny', 'POST', body)));
+          break;
+        }
+        if (sub === 'check') {
+          const result = await api('/api/web/check', 'POST', body);
+          sys(table((result.checks || []).map(c=>[c.url,c.permitted ? (c.enabled ? 'Permitted by URL policy' : 'Permitted rule, but web is OFF') : 'Denied: '+c.code,(c.rule_ids||[]).join(', ')]), ['exact URL','permission','matching rules']),result.notice);
           break;
         }
         if (sub === 'fetch') {
-          const url = rest.slice(1).join(' ').trim();
-          if (!url) { sys('usage: /web fetch <https://host/path>'); break; }
-          const page = await api('/api/web/fetch', 'POST', { url: url });
-          sys((page.text || '').slice(0, 2000), (page.url || url) + ' · ' + (page.chars || 0) + ' chars');
+          const result = await api('/api/web/fetch', 'POST', body, 190000);
+          for (const page of result.pages || []) sys((page.text || '').slice(0,2000),page.url+' · '+(page.chars||0)+' source chars · preview limited to 2,000 chars');
+          sys(renderWebCoverage(result.coverage),result.notice);
           break;
         }
         if (sub === 'cancel') {
@@ -2209,24 +2297,22 @@ async function runSlash(line) {
           break;
         }
         if (sub === 'search' || sub === 'pages' || sub === 'research') {
-          const args = rest.slice(1);
-          const group = args[0] && args[0].startsWith('group=') ? args.shift().slice(6) : null;
-          const q = args.join(' ').trim();
-          if (!q) { sys('usage: /web ' + sub + ' [group=name] ' + (sub === 'research' ? '<question>' : '<query>')); break; }
+          const q = body.query;
           if (sub === 'research') {
             sys('research started; /web cancel stops your request');
-            const result = await api('/api/web/research', 'POST', { query: q, group }, 1810000);
+            const result = await api('/api/web/research', 'POST', body, 1810000);
             const answer = result.answer || {};
             for (const kind of ['supported', 'conflicts', 'inferences']) {
               const claims = answer[kind] || [];
               if (claims.length) sys(kind + '\n' + claims.map(c => c.text + '\n' + c.citations.map(x => '[' + x.id + '] “' + x.quote + '”').join('\n')).join('\n\n'));
             }
-            sys('Missing: ' + (answer.missing || []).join('; ') + '\nWarnings: ' + (result.warnings || []).join(', '));
-            sys(table((result.passages || []).map(p => [p.id, p.url, p.text]), ['citation', 'source', 'original extract']));
-            sys(JSON.stringify({ coverage: result.coverage, usage: result.usage, stale_passages: result.stale_passages }, null, 2), 'bounded research; completeness is not asserted');
+            if ((answer.missing||[]).length || (result.warnings||[]).length) sys('Missing: ' + (answer.missing || []).join('; ') + '\nWarnings: ' + (result.warnings || []).join(', '));
+            const sources=document.createElement('details'), summary=document.createElement('summary'); summary.textContent='Sources and original extracts ('+(result.passages||[]).length+')'; sources.appendChild(summary);
+            sources.appendChild(table((result.passages || []).map(p => [p.id, p.url, p.text]), ['citation', 'source', 'original extract'])); sys(sources);
+            sys(renderWebCoverage(result.coverage),'Bounded research; not an exhaustive site summary.');
             break;
           }
-          const found = await api('/api/web/search', 'POST', { query: q, group, engine: sub === 'search' && !group ? 'google' : 'pages' }, 190000);
+          const found = await api('/api/web/search', 'POST', body, 190000);
           if (found.results) {
             sys(renderSearchResults(found));
             break;
@@ -2235,15 +2321,16 @@ async function runSlash(line) {
             (h.snippets || []).map(s => [h.url, s]));
           if (!rows.length) {
             sys('No matching passages for: ' + q + '. This searches permitted pages, not Google. Use /web search <keywords> for Google. Cleared last extract and injected context.');
-            sys(JSON.stringify({coverage:found.coverage, errors:found.errors, cache_errors:found.cache_errors}, null, 2));
+            sys(renderWebCoverage(found.coverage));
           } else {
             sys(table(rows, ['url', 'snippet']));
+            sys(renderWebCoverage(found.coverage));
           }
           break;
         }
         if (sub === 'inject') {
-          const r = await api('/api/web/inject', 'POST');
-          sys('last extract will be in the next chat prompt (' + (r.chars || 0) + ' chars)');
+          await api('/api/web/inject', 'POST');
+          sys('Your last fetched/page-search extract is selected for later local chat. /prompt previews the bounded context. This does not run a summary or select the multi-source research answer; a batch fetch selects its first successful page. /web forget clears the selection.');
           break;
         }
         if (sub === 'forget') {
@@ -2251,7 +2338,8 @@ async function runSlash(line) {
           sys('cleared injected web extract');
           break;
         }
-        sys(renderWebStatus(await api('/api/web')));
+        if (sub === 'status') sys(renderWebStatus(await api('/api/web')));
+        else sys('Unknown web action; nothing dispatched. Use /help web.');
         break;
       }
 
@@ -3193,12 +3281,13 @@ async function runSlashMaybeFuzzy(text) {
         typeof parsed.canonical === 'string' && parsed.canonical.startsWith('/')) {
       if (parsed.notice) sys(parsed.notice);
       if (parsed.canonical !== text) sys('normalized: ' + parsed.canonical);
-      await runSlash(parsed.canonical);
+      await runSlash(parsed.canonical, parsed.web);
       return;
     }
     if (parsed && parsed.kind === 'suggest' && parsed.dispatch === false && Array.isArray(parsed.suggestions)) {
-      const extra = parsed.suggestions.map(function (s) { return s.line; }).join('\n');
-      sys((parsed.notice || 'did not dispatch') + (extra ? '\n' + extra : ''));
+      const box=document.createElement('div'), notice=document.createElement('p'); notice.textContent=parsed.notice || 'Did not dispatch'; box.appendChild(notice);
+      parsed.suggestions.forEach(s=>{if (typeof s.line==='string') box.appendChild(commandButton(s.line));});
+      sys(box,'Suggestions only — click to edit, then explicitly send.');
       return;
     }
     throw new Error('invalid slash-parser response');
@@ -3215,9 +3304,9 @@ input.addEventListener('paste', e => {
   const pasted = e.clipboardData && e.clipboardData.getData('text/plain');
   if (!pasted) return;
   const proposed = input.value.slice(0, input.selectionStart) + pasted + input.value.slice(input.selectionEnd);
-  if (/^\s*\/(?:memory|mem)(?:\s|$)/i.test(proposed) && /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(proposed)) {
+  if (/^\s*\/(?:memory|mem|web)(?:\s|$)/i.test(proposed) && /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(proposed)) {
     e.preventDefault();
-    sys('memory paste refused: use one line without control characters; nothing was dispatched');
+    sys('memory/web paste refused: use one line without control characters; nothing was dispatched');
   }
 });
 input.addEventListener('input', () => {

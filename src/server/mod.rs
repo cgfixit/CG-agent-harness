@@ -52,6 +52,7 @@ pub mod style;
 pub mod tool_inventory;
 pub mod transport;
 pub mod views;
+mod web_command;
 mod web_google;
 pub mod web_index;
 pub mod web_intent;

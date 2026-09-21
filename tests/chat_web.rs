@@ -11,6 +11,87 @@ use std::sync::{
 };
 
 #[tokio::test]
+async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_prefix_execution() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let r = reads.clone();
+    let fixture=Router::new().route("/docs/{page}",get(move || {let r=r.clone();async move {r.fetch_add(1,Ordering::SeqCst); ([("content-type","text/plain")],"BATCH_BACKUP_EVIDENCE")}}))
+        .route("/v1/chat/completions",post(|Json(body):Json<Value>|async move {
+            let messages=body["messages"].as_array().unwrap();
+            let mode=messages.iter().find(|m|m["role"]=="user").unwrap()["content"].as_str().unwrap();
+            let finished=messages.last().unwrap()["role"]=="tool";
+            if finished && mode!="cumulative" {
+                let tool_messages:Vec<_>=messages.iter().filter(|m|m["role"]=="tool").collect();
+                assert_eq!(tool_messages.len(),2);
+                assert!(tool_messages.iter().all(|m|m["content"].as_str().unwrap().contains("BATCH_BACKUP_EVIDENCE")));
+                return Json(common::ok_reply("Compared both fetched sources.",20,5));
+            }
+            let mut calls:Vec<_>=(0..if mode=="overlimit" {4}else{2}).map(|i|json!({"id":format!("batch_{i}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{i}")}).to_string()}})).collect();
+            if mode=="duplicate" { calls[1]["id"]=calls[0]["id"].clone(); }
+            if mode=="malformed" { calls[1]["function"]["arguments"]=json!("{}"); }
+            if mode=="denied" { calls[1]["function"]["arguments"]=json!(json!({"url":"http://docs.example/private"}).to_string()); }
+            Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":calls}}],"usage":{"prompt_tokens":10,"completion_tokens":3}}))
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, fixture).await.unwrap();
+    });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default().with("web.chat_tool_calls", "3")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+            .await
+            .0,
+        200
+    );
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"compare"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Compared both fetched sources.");
+    assert_eq!(reply["web_tools"].as_array().unwrap().len(), 2);
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    for (mode, code) in [
+        ("overlimit", "WEB_TOOL_LIMIT"),
+        ("duplicate", "WEB_TOOL_RESPONSE"),
+        ("malformed", "WEB_TOOL_ARGUMENTS"),
+    ] {
+        let (status, reply) = s.post_json("/api/chat", json!({"message":mode})).await;
+        assert_eq!(status, 502, "{reply}");
+        assert_eq!(common::code(&reply), code, "{reply}");
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            2,
+            "no valid prefix reads before malformed/over-budget suffix refusal"
+        );
+        assert!(!s.state.generation_gate.is_held());
+    }
+    let (_, reply) = s.post_json("/api/chat", json!({"message":"cumulative"})).await;
+    assert_eq!(common::code(&reply), "WEB_TOOL_LIMIT");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        4,
+        "two calls plus two more exceeds total budget three"
+    );
+    let (_, reply) = s.post_json("/api/chat", json!({"message":"denied"})).await;
+    assert!(
+        reply["reply"].as_str().unwrap().contains("Earlier reads succeeded"),
+        "{reply}"
+    );
+    assert_eq!(reply["web_tools"][1]["code"], "WEB_HOST_DENIED");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        5,
+        "a permitted call cannot authorize its denied sibling"
+    );
+    task.abort();
+}
+
+#[tokio::test]
 async fn loop_prompt_does_not_advertise_tools_even_with_web_enabled() {
     let model = common::start_mock_model().await;
     let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
@@ -267,7 +348,7 @@ async fn chat_empty_allowlist_refuses_fetch_and_search() {
 }
 
 /// After an administrator grants a fixture-origin rule, `web_fetch` succeeds
-/// within `web.chat_tool_calls` (default 3). The N+1 model tool request is
+/// within `web.chat_tool_calls` (default 10). The N+1 model tool request is
 /// refused with `WEB_TOOL_LIMIT` and the generation gate is released.
 #[tokio::test]
 async fn chat_origin_grant_fetches_within_bound_and_refuses_n_plus_one() {
@@ -296,11 +377,13 @@ async fn chat_origin_grant_fetches_within_bound_and_refuses_n_plus_one() {
         &model.base_url(),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default().with("web.pace_ms", "100")
+            ..common::ServerOptions::default()
+                .with("web.pace_ms", "100")
+                .with("models.local_llm.max_tokens", "256")
         },
     )
     .await;
-    assert_eq!(s.state.web.limits.chat_tool_calls, 3, "shipped default N");
+    assert_eq!(s.state.web.limits.chat_tool_calls, 10, "shipped default N");
     assert_eq!(
         s.post_json("/api/web/allow", json!({"url": "http://docs.example/*"}))
             .await

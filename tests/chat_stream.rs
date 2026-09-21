@@ -61,6 +61,84 @@ async fn start(s: &TestServer, id: &str, message: &str) -> reqwest::Response {
         .await
         .unwrap()
 }
+
+#[tokio::test]
+async fn multiple_streamed_tools_reach_reads_and_keep_the_total_call_budget() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let read_counter = reads.clone();
+    let fixture = Router::new()
+        .route("/docs/{page}", axum::routing::get(move || {
+            let reads=read_counter.clone();
+            async move { reads.fetch_add(1, Ordering::SeqCst); ([("content-type","text/plain")],"STREAMED_SOURCE") }
+        }))
+        .route("/v1/chat/completions", axum::routing::post(|Json(request):Json<Value>| async move {
+            assert_eq!(request["stream"],true);
+            let messages=request["messages"].as_array().unwrap();
+            let finished=messages.last().unwrap()["role"]=="tool";
+            let delta=if finished {
+                let results:Vec<_>=messages.iter().filter(|m|m["role"]=="tool").collect();
+                assert_eq!(results.len(),2);
+                for (i,result) in results.iter().enumerate() {
+                    assert_eq!(result["tool_call_id"],format!("call_{i}"));
+                    assert!(result["content"].as_str().unwrap().contains("STREAMED_SOURCE"));
+                }
+                json!({"content":"Both streamed reads succeeded."})
+            } else {
+                assert_eq!(request["parallel_tool_calls"],true);
+                let over=messages.last().unwrap()["content"]=="overlimit";
+                let calls:Vec<_>=(0..if over {4}else{2}).map(|index|json!({"index":index,"id":format!("call_{index}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{index}")}).to_string()}})).collect();
+                json!({"tool_calls":calls})
+            };
+            let frames = vec![
+                json!({"choices":[{"index":0,"delta":delta,"finish_reason":if finished {"stop"} else {"tool_calls"}}]}).to_string(),
+                json!({"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}).to_string(),
+                "[DONE]".into(),
+            ];
+            Sse::new(futures_util::stream::iter(frames.into_iter().map(|frame|Ok::<_,std::convert::Infallible>(Event::default().data(frame)))))
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, fixture).await.unwrap();
+    });
+    let s = spawn_server(
+        &format!("http://{address}/v1"),
+        ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..ServerOptions::default().with("web.chat_tool_calls", "3")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+            .await
+            .0,
+        200
+    );
+    for (message, expected) in [("compare", "done"), ("overlimit", "error")] {
+        let (_, session) = s.post_json("/api/sessions", json!({})).await;
+        let id = session["session_id"].as_str().unwrap();
+        let response = start(&s, id, message).await.text().await.unwrap();
+        let events = events(&response);
+        let last = events.last().unwrap();
+        assert_eq!(last["type"], expected, "{response}");
+        if expected == "done" {
+            assert_eq!(last["data"]["reply"], "Both streamed reads succeeded.");
+            assert_eq!(last["data"]["web_tools"].as_array().unwrap().len(), 2);
+            assert_eq!(s.state.store.for_owner("local").get(id).unwrap().messages.len(), 2);
+        } else {
+            assert!(response.contains("WEB_TOOL_LIMIT"), "{response}");
+            assert!(s.state.store.for_owner("local").get(id).unwrap().messages.is_empty());
+        }
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            2,
+            "over-budget batches cannot execute a valid prefix"
+        );
+        assert!(!s.state.generation_gate.is_held());
+    }
+    task.abort();
+}
 fn events(text: &str) -> Vec<Value> {
     text.lines()
         .filter_map(|line| line.strip_prefix("data: "))

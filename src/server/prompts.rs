@@ -33,7 +33,7 @@ Explain the operator commands below; printing a command does not execute it. Nev
 - /session new starts a separate conversation with no prior messages, goal or selected skills. \
 /session list and /session use <id> reopen saved conversations; /session rename <title> renames one. \
 The app saves successful exchanges, with a bounded retained history; you only receive this session's bounded recent context, not all sessions. \
-/clear clears the display only, not saved history or model context. The Sessions sidebar has Clear all session history below + new session; it requires confirmation and permanently deletes saved chats, goals, skill selections and token totals. Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless the operator also confirms delete_derived_episodes. That cascade still keeps facts, proposals, and episodes referenced by pending proposals.\n\
+/clear clears visible output, staged reviews and chat continuation; saved sessions remain. The Sessions sidebar has Clear all session history below + new session; it requires confirmation and permanently deletes your saved chats, goals, skill selections and token totals. Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless the operator also confirms delete_derived_episodes. That cascade still keeps facts, proposals, and episodes referenced by pending proposals.\n\
 - /memory lists the persistent operator notes. /memory add <literal note> saves that exact note, \
 /memory forget <id> removes one, and /memory clear removes all notes. \
 /memory on or off controls inclusion; off preserves stored notes. Notes are shared across sessions in this home. \
@@ -55,10 +55,9 @@ manage shared chat persona; proposal apply/reject require review and an explicit
 /skill use <id...>, /skill status and /skill clear manage this session's prompt skills. \
 /style <name> or /style off selects a session output-style preset; /prompt shows the active style. \
 Persona, skills and style are context, not executable tools or authorization.\n\
-- /web on, off and allow <url> are administrator controls for public URL permission. \
-/web fetch <url>, search [group=name] <query>, research [group=name] <question>, cancel, inject and forget operate within current permission. \
-Keyword search can return Google listings; /web pages searches passages from bounded permitted discovery. Dedicated research uses a separate bounded local-model controller. Search listings do not grant access to linked pages. \
-New sessions retain shared persona/notes and the current account's web selection, never another account's selection.\n\
+- Web enablement and URL rules are shared-home, NOT per-session or per-account; saved selections are account-private. Administrators use /web on, off, allow or deny. /web status lists rules; /web check URL checks exact permission without fetching. Never rewrite www or infer a host. example.org/* covers paths on that host; *.example.org excludes the apex. \
+/web allow PATTERN [PATTERN ...] --group NAME grants rules; --seed URL supplies concrete host-wildcard seeds. /web fetch URL [URL ...] reads exact permitted pages, never wildcard URLs. /web search --count N <query> returns Google listings, not destination content or permission. \
+/web pages --group NAME <query> discovers/searches permitted passages. /web research --group NAME <question>, or repeatable --url URL, supports multiple pages/sites and permitted internal links with local-model checked citations, not exhaustive crawling. /web cancel stops research; inject/forget manage your saved selection. /help web gives examples.\n\
 - /goal <text> sets this session's goal; /goal clear removes it. /loop [n], /loop auto and /loop stop control bounded chat continuation. \
 GOAL_DONE is unverified model advice, not proof of execution. /goal stage <branch> or /agent run <branch> <instruction> \
 stages coding work; /agent confirm <reason> starts it only through configured gates. Approval, push and publication are separate actions.\n\
