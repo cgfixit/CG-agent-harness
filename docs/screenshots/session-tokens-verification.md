@@ -2,6 +2,12 @@
 
 Verified locally on 2026-09-21 before commit/push/draft publication.
 
+After native acceptance, the five screenshots and this report were moved from
+`screenshots/session-tokens/` directly into `docs/screenshots/` at the operator's
+request. Image and runtime source bytes are unchanged. The source manifest below
+describes the original acceptance layout, before this documentation-only relocation;
+it is not a claim that renaming evidence paths reproduces the same whole-tree hash.
+
 ## Reproducer and scope
 
 The existing backend persisted `Session.tally` per session, but the header used
