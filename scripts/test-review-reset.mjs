@@ -25,6 +25,7 @@ const context = vm.createContext({
   api:async(...args)=>{calls.push(args);return context.respond(...args);},
 });
 vm.runInContext([
+  source('let sessionTokenRevision =', 'async function refreshStatus()'),
   source('const reviewedPRBodies =', 'function isReviewableAgentDiff('),
   source('function isReviewableAgentDiff(', "$('sessionClearCancel')"),
   source('async function runSlash(', '/* ── chat ── */'),

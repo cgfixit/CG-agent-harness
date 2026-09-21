@@ -67,6 +67,8 @@ jobs:
         run: node scripts/test-schedule-review.mjs
       - name: Analytics dashboard contract
         run: node scripts/test-analytics.mjs
+      - name: Session token display contract
+        run: node scripts/test-session-tokens.mjs
       - run: node --experimental-websocket scripts/chat-browser-acceptance.mjs
 
   fmt:
