@@ -10,9 +10,17 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(windows)]
+use super::windows_job::JobChild as Child;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::Command;
+#[cfg(not(windows))]
+use tokio::process::{Child, ChildStdin, ChildStdout};
+#[cfg(windows)]
+type ChildStdin = tokio::fs::File;
+#[cfg(windows)]
+type ChildStdout = tokio::fs::File;
 
 use super::errors::{HarnessError, Result};
 use super::mcp_policy::{Containment, StdioCapabilities};
@@ -119,7 +127,7 @@ pub struct StdioOutcome {
 // Preserve at most 512 Unicode characters. Drain excess bytes so stderr cannot
 // block a valid response, without storing an unbounded log on disk or in RAM.
 const STDERR_BYTES: usize = 512 * 4;
-async fn drain_stderr(mut pipe: tokio::process::ChildStderr, captured: Arc<Mutex<Vec<u8>>>) {
+async fn drain_stderr(mut pipe: impl tokio::io::AsyncRead + Unpin, captured: Arc<Mutex<Vec<u8>>>) {
     let mut chunk = [0u8; 8192];
     loop {
         let Ok(n) = pipe.read(&mut chunk).await else { break };
@@ -158,7 +166,17 @@ impl StdioClient {
         for (key, value) in filter_env(extra_env) {
             cmd.env(key, value);
         }
+        #[cfg(not(windows))]
         cmd.env("PATH", "/usr/bin:/bin");
+        #[cfg(windows)]
+        {
+            // Native executables use an absolute path. A fixed OS directory is
+            // sufficient for Windows DLL resolution; no operator PATH is inherited.
+            let system = super::windows_job::windows_directory()
+                .map_err(|_| mcp_err("MCP_STDIO", "Windows directory is unavailable"))?;
+            cmd.env("SystemRoot", &system);
+            cmd.env("PATH", system.join("System32"));
+        }
         cmd.env("LANG", "C");
         cmd.env("LC_ALL", "C");
         let scratch = wrap.scratch.display().to_string();
@@ -189,15 +207,34 @@ impl StdioClient {
         {
             cmd.process_group(0);
         }
+        #[cfg(not(windows))]
         let mut child = cmd
             .spawn()
             .map_err(|_| mcp_err("MCP_STDIO", "cannot spawn stdio MCP child"))?;
+        #[cfg(windows)]
+        let mut child = {
+            if capabilities.containment != Containment::JobObject {
+                return Err(mcp_err(
+                    "MCP_CONTAINMENT_UNAVAILABLE",
+                    "Windows MCP requires the explicit job_object exception",
+                ));
+            }
+            let limits = capabilities
+                .limits
+                .ok_or_else(|| mcp_err("MCP_CONTAINMENT_UNAVAILABLE", "Job Object limits missing"))?;
+            Child::spawn(cmd.as_std(), limits.processes, limits.memory_mb).map_err(|_| {
+                mcp_err(
+                    "MCP_CONTAINMENT_UNAVAILABLE",
+                    "cannot atomically create MCP child in Job Object",
+                )
+            })?
+        };
         let stderr = Arc::new(Mutex::new(Vec::new()));
         let pipe = child
             .stderr
             .take()
             .ok_or_else(|| mcp_err("MCP_STDIO", "stdio stderr missing"))?;
-        let mut stdin = child
+        let stdin = child
             .stdin
             .take()
             .ok_or_else(|| mcp_err("MCP_STDIO", "stdio stdin missing"))?;
@@ -205,6 +242,14 @@ impl StdioClient {
             .stdout
             .take()
             .ok_or_else(|| mcp_err("MCP_STDIO", "stdio stdout missing"))?;
+        #[cfg(not(windows))]
+        let mut stdin = stdin;
+        #[cfg(windows)]
+        let (mut stdin, stdout, pipe) = (
+            tokio::fs::File::from_std(stdin),
+            tokio::fs::File::from_std(stdout),
+            tokio::fs::File::from_std(pipe),
+        );
         #[cfg(target_os = "linux")]
         let owner = match supervisor {
             Some(supervisor) => Some(

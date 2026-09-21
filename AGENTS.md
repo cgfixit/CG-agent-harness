@@ -95,6 +95,8 @@ cloud proposers and no change to explicit confirm/reason or write gates.
   versioned capabilities; no unconfined or network-weaker fallback. Linux strict
   containment uses an externally owned systemd/cgroup service; other platforms
   refuse strict mode. The explicit process-group exception has weaker cleanup.
+  Windows `job_object` is an explicit trusted-server exception requiring unrestricted
+  filesystem/network grants; it provides process ownership, not data isolation.
   See `docs/MCP_CLIENT.md`. Do not attach MCP
   tools to `/loop`. `GET /api/mcp` lists declared server/tool names to an
   authenticated session.

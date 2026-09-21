@@ -41,6 +41,7 @@ fn fixture_capabilities() -> StdioCapabilities {
     }
     StdioCapabilities {
         version: 1,
+        filesystem: Default::default(),
         read_roots: roots,
         write_roots: vec![],
         network: NetworkPolicy::Deny,

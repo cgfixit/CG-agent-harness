@@ -149,7 +149,7 @@ notifications:
 # SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop.
 # stdio command[0] must be an absolute path. Calls require confirm: true.
 # Each stdio entry requires capabilities version 1; missing/invalid grants fail
-# closed. See docs/MCP_CLIENT.md for read_roots, write_roots, network, containment
+# closed. See docs/MCP_CLIENT.md for filesystem, read_roots, write_roots, network, containment
 # and strict process/memory limits. These authority settings require restart.
 mcp:
   enabled: false

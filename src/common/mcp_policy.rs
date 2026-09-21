@@ -18,6 +18,17 @@ pub enum Containment {
     Strict,
     /// Explicit exception: cleanup requires the harness to remain alive.
     ProcessGroup,
+    /// Windows process ownership only; requires the explicit trusted-server exception.
+    JobObject,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesystemPolicy {
+    #[default]
+    Confined,
+    /// Per-server operator exception. No filesystem secrecy or integrity boundary.
+    Unrestricted,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -31,6 +42,8 @@ pub struct ResourceLimits {
 #[serde(deny_unknown_fields)]
 pub struct StdioCapabilities {
     pub version: u32,
+    #[serde(default)]
+    pub filesystem: FilesystemPolicy,
     #[serde(default)]
     pub read_roots: Vec<PathBuf>,
     #[serde(default)]
@@ -48,11 +61,24 @@ impl StdioCapabilities {
                 "MCP capabilities require version 1 and at most 16 roots",
             ));
         }
+        if self.containment == Containment::JobObject {
+            if self.filesystem != FilesystemPolicy::Unrestricted
+                || self.network != NetworkPolicy::Unrestricted
+                || !self.read_roots.is_empty()
+                || !self.write_roots.is_empty()
+            {
+                return Err(HarnessError::config("job_object requires explicit unrestricted filesystem and network, with no root grants; use only for trusted Windows servers"));
+            }
+        } else if self.filesystem != FilesystemPolicy::Confined {
+            return Err(HarnessError::config(
+                "unrestricted filesystem is only supported by the explicit Windows job_object exception",
+            ));
+        }
         match (self.containment, self.limits) {
-            (Containment::Strict, Some(limits))
+            (Containment::Strict | Containment::JobObject, Some(limits))
                 if (8..=128).contains(&limits.processes) && (64..=4096).contains(&limits.memory_mb) => {}
             (Containment::ProcessGroup, None) => {}
-            _ => return Err(HarnessError::config("strict MCP containment requires limits: processes 8-128, memory_mb 64-4096; process_group cannot promise these aggregate limits")),
+            _ => return Err(HarnessError::config("strict/job_object MCP containment requires limits: processes 8-128, memory_mb 64-4096; process_group cannot promise these aggregate limits")),
         }
         for root in self.read_roots.iter().chain(&self.write_roots) {
             if !root.is_absolute()
@@ -154,4 +180,36 @@ mod tests {
             .validate_resolved_root(Path::new("/srv/tool-inputs"), None)
             .is_ok());
     }
+}
+#[test]
+fn windows_exception_cannot_imply_confined_filesystem_or_network() {
+    let valid = serde_json::json!({
+        "version":1,"filesystem":"unrestricted","network":"unrestricted",
+        "containment":"job_object","limits":{"processes":8,"memory_mb":256}
+    });
+    serde_json::from_value::<StdioCapabilities>(valid.clone())
+        .unwrap()
+        .validate()
+        .unwrap();
+    for (key, value) in [
+        ("filesystem", serde_json::json!("confined")),
+        ("network", serde_json::json!("deny")),
+        ("read_roots", serde_json::json!(["/srv/input"])),
+        ("write_roots", serde_json::json!(["/srv/output"])),
+        ("containment", serde_json::json!("strict")),
+        ("limits", serde_json::Value::Null),
+    ] {
+        let mut invalid = valid.clone();
+        invalid[key] = value;
+        assert!(serde_json::from_value::<StdioCapabilities>(invalid)
+            .unwrap()
+            .validate()
+            .is_err());
+    }
+    let mut missing = valid;
+    missing.as_object_mut().unwrap().remove("filesystem");
+    assert!(serde_json::from_value::<StdioCapabilities>(missing)
+        .unwrap()
+        .validate()
+        .is_err());
 }

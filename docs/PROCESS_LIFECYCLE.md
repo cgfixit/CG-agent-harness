@@ -70,9 +70,26 @@ is a separate operator grant, not an HTTP hostname allowlist.
 
 macOS refuses strict lifecycle containment. An explicit `process_group`
 exception retains Seatbelt filesystem/network protection, but runner death and
-detached descendants can escape cleanup. Windows stdio is refused because the
-required filesystem/network confinement is unavailable. These refusals do not
-change the existing coding executor's separate platform behavior.
+detached descendants can escape cleanup. Windows refuses confined/strict stdio.
+Its explicit `job_object` trusted-server exception atomically assigns an unnamed,
+non-inheritable Job Object through `PROC_THREAD_ATTRIBUTE_JOB_LIST` during
+`CreateProcessW` (Windows 10 / Server 2016 or newer). No child instruction runs
+before membership exists. A handle allowlist contains only the three child pipe
+ends; the Job Object has kill-on-close, active-process and aggregate memory
+limits, with neither breakaway flag set. Cancellation/deadline/protocol failure
+closes the client and kills the job. Abrupt runner exit closes the kernel handle
+without relying on Rust destructors. Detached descendants remain members.
+
+This exception grants unrestricted filesystem/network access and cannot contain
+requests delegated to another Windows service (for example WMI/COM). It is for
+trusted servers, not hostile-code isolation. There is no OS wall-clock timer on
+the Windows job; the harness request deadline requires a responsive runtime.
+The focused native acceptance observes live child/grandchild process handles,
+heartbeat progress, denied breakaway, actual process/memory limits, nine exit
+paths and a fresh successful call after each. It does not establish filesystem
+or network isolation. The coding executor retains its separate older Job Object
+implementation; its spawn-then-assign behavior does not gain the MCP atomic
+creation guarantee from this change.
 
 Strict mode bounds process memory/count and lifetime; it does not impose a
 scratch disk quota. A hard-killed harness may leave its private temporary

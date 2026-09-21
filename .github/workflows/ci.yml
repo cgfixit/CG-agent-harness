@@ -220,6 +220,45 @@ jobs:
           test_binary="$(python3 -c 'import json; print(next(x["executable"] for x in map(json.loads, open("/tmp/mcp-build.jsonl")) if x.get("target", {}).get("name") == "mcp_lifecycle" and x.get("executable")))')"
           sudo env -i PATH=/usr/bin:/bin CGAH_REQUIRE_LINUX_LIFECYCLE=1 "$test_binary" --nocapture --test-threads=1
 
+  windows-mcp-lifecycle:
+    name: Windows MCP Job Object lifecycle (required)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the unchanged baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: .windows-baseline
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the unchanged Windows baseline first
+        shell: pwsh
+        run: cargo check --locked --manifest-path .windows-baseline/Cargo.toml
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      - name: Required native process ownership and crash cleanup
+        shell: pwsh
+        run: |
+          $env:CGAH_WINDOWS_PYTHON = (Get-Command python.exe).Source
+          cargo test --locked --test mcp_windows -- --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        env:
+          CGAH_REQUIRE_WINDOWS_MCP: "1"
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
+          CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
+
   invariant-guard:
     name: invariant guard (I6 source scan)
     runs-on: ubuntu-latest

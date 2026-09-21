@@ -23,8 +23,8 @@ environment (secret and linker-hijack names stripped). Required per-server
 versioned capabilities select explicit read/write roots, network denial or an
 unrestricted grant, and strict containment or a process-group exception. Missing
 or invalid capability declarations fail closed; authority changes require restart.
-Filesystem confinement is mandatory. Linux probe failures never silently remove
-network/filesystem protection; Windows stdio is refused. `linux-bwrap-fs` only
+Filesystem confinement is the default. Linux probe failures never silently remove
+network/filesystem protection; Windows confined stdio is refused. `linux-bwrap-fs` only
 exists after an explicit unrestricted network grant. macOS uses `darwin-seatbelt`.
 
 Strict Linux calls use `linux-systemd-bwrap`: a private lifeline connects the
@@ -37,8 +37,17 @@ An explicit `process_group` exception keeps filesystem/network confinement but
 only kills the owned Unix group/direct child; runner death or detached children
 can escape cleanup. `/tools mcp` displays this limitation.
 
+Windows supports a separate, explicit trusted-server exception: `job_object`
+requires `filesystem: unrestricted`, `network: unrestricted`, no root grants and
+process/memory limits. The unnamed non-inheritable Job Object is assigned during
+CreateProcess through JOB_LIST before any child code runs. Kill-on-close applies
+to normal descendants, including detached processes; neither breakaway flag is
+set. Only the three child pipe handles are inherited. This exception provides no
+filesystem/home secrecy or network isolation and cannot confine work delegated
+to an outside OS service. It is never an automatic fallback.
+
 `src/server` still contains no `Command::new`. The harness home and its `.env`
-are unreachable from MCP stdio children: command paths, cwd, and read/write
+are unreachable from confined MCP stdio children: command paths, cwd, and read/write
 roots overlapping that home are refused (`MCP_HOME_REFUSED`). Actual backend,
 probe result and declared capabilities are audited on `mcp_stdio_spawn`;
 refusals include the policy and error code. See `docs/MCP_CLIENT.md` and
