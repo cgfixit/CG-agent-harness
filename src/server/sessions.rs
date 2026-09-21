@@ -1,5 +1,5 @@
 //! JSON-backed chat session store with per-session token tallies.
-//! Port of `harness/sessions.py`; on-disk shape unchanged.
+//! Version 1 records carry an owner; older unassigned records stay quarantined.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -93,6 +93,11 @@ pub struct AttachmentPin {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
+    /// Zero/missing identifies legacy shared data; adoption is explicit.
+    #[serde(default)]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub owner: Option<String>,
     pub session_id: String,
     #[serde(default)]
     pub title: String,
@@ -110,7 +115,7 @@ pub struct Session {
     /// Local prompt-usage calibration is scoped to a backend URL and model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_calibration: Option<crate::server::compaction::TokenCalibration>,
-    /// Operator /goal. Never in `summary()` because GET /api/sessions is open.
+    /// Operator /goal. Never returned in the metadata-only session inventory.
     #[serde(default)]
     pub goal: String,
     #[serde(default)]
@@ -126,18 +131,19 @@ pub struct Session {
     pub last_prompt_skills: Vec<Value>,
     #[serde(default)]
     pub goal_stage: Option<Value>,
-    /// Sticky per-owner blob ids. `owner` is on each pin because sessions are
-    /// shared portal resources; only this owner's live blobs are inlined on
-    /// local chat and prompt preview.
+    /// Sticky per-owner blob ids. Preserve original pin ownership on legacy
+    /// adoption; only the caller's live blobs enter local chat or preview.
     #[serde(default)]
     pub attachment_pins: Vec<AttachmentPin>,
 }
 
 impl Session {
-    /// Deliberately carries NO message content (the list route is open).
+    /// Metadata only; normal inventory is filtered to the caller owner.
     pub fn summary(&self) -> Value {
         json!({
             "session_id": self.session_id,
+            "owner": self.owner,
+            "legacy_shared": self.owner.is_none(),
             "title": self.title,
             "created_ts": self.created_ts,
             "model": self.model,
@@ -190,38 +196,7 @@ impl SessionStore {
         Ok(self.dir.join(format!("{session_id}.json")))
     }
 
-    pub fn create(&self, model: &str, title: &str) -> Result<Session> {
-        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let now = time::OffsetDateTime::now_utc();
-        let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
-        let stamp = now.format(&fmt).unwrap_or_default();
-        let title = if title.trim().is_empty() {
-            format!("session {stamp}")
-        } else {
-            title.trim().to_string()
-        };
-        let session = Session {
-            session_id: crate::common::random_hex(SESSION_ID_CHARS / 2),
-            title,
-            created_ts: crate::common::now_ts(),
-            model: model.to_string(),
-            messages: Vec::new(),
-            prompt_history: Vec::new(),
-            tally: TokenTally::default(),
-            token_calibration: None,
-            goal: String::new(),
-            selected_skills: Vec::new(),
-            style: None,
-            selected_facts: Vec::new(),
-            last_prompt_skills: Vec::new(),
-            goal_stage: None,
-            attachment_pins: Vec::new(),
-        };
-        self.write(&session)?;
-        Ok(session)
-    }
-
-    pub fn get(&self, session_id: &str) -> Result<Session> {
+    fn get_raw(&self, session_id: &str) -> Result<Session> {
         let path = self.path_for(session_id)?;
         if !path.exists() {
             return Err(session_error("unknown session", session_id));
@@ -238,6 +213,21 @@ impl SessionStore {
                 format!("unreadable session file: {session_id}.json"),
             )
         })?;
+        if session.session_id != session_id
+            || !matches!(
+                (session.schema_version, session.owner.as_deref()),
+                (0, None) | (1, Some(_))
+            )
+            || session
+                .owner
+                .as_deref()
+                .is_some_and(|owner| !crate::server::structured_memory::valid_owner(owner))
+        {
+            return Err(session_error(
+                "invalid session identity or ownership version",
+                session_id,
+            ));
+        }
         if session.prompt_history.is_empty() {
             session.prompt_history = session
                 .messages
@@ -266,7 +256,7 @@ impl SessionStore {
     /// are cached per path and re-parsed only when the file's (mtime, len)
     /// stamp changes, so the open list route does not re-read every session
     /// body on each poll.
-    pub fn list(&self) -> Vec<Value> {
+    fn list_all(&self) -> Vec<Value> {
         let mut entries: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
         if let Ok(rd) = std::fs::read_dir(&self.dir) {
             for e in rd.flatten() {
@@ -297,6 +287,14 @@ impl SessionStore {
             let summary = std::fs::read_to_string(&p)
                 .ok()
                 .and_then(|text| serde_json::from_str::<Session>(&text).ok())
+                .filter(|session| {
+                    session.session_id == p.file_stem().unwrap().to_string_lossy()
+                        && match (session.schema_version, session.owner.as_deref()) {
+                            (0, None) => true,
+                            (1, Some(owner)) => crate::server::structured_memory::valid_owner(owner),
+                            _ => false,
+                        }
+                })
                 .map(|session| session.summary());
             match summary {
                 Some(summary) => {
@@ -311,6 +309,164 @@ impl SessionStore {
         // Drop rows for deleted sessions so the cache cannot grow unbounded.
         cache.retain(|p, _| live.contains(p));
         out
+    }
+
+    pub(crate) fn drop_attachment_pins_for_owner(&self, owner: &str) -> Result<usize> {
+        self.filter_attachment_pins(|pin| pin.owner != owner)
+    }
+
+    pub(crate) fn drop_attachment_pins_unless(&self, live: impl Fn(&str) -> bool) -> Result<usize> {
+        self.filter_attachment_pins(|pin| live(&pin.owner))
+    }
+
+    fn filter_attachment_pins(&self, keep: impl Fn(&AttachmentPin) -> bool) -> Result<usize> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut ids = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&self.dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if p.extension().and_then(|s| s.to_str()) == Some("json") && id_re().is_match(stem) {
+                    // Rebuild from the integer so a directory stem cannot carry `../`
+                    // into `path_for` / `join`. Skip names the parser refuses.
+                    let Ok(id) = canonical_session_id(stem) else {
+                        continue;
+                    };
+                    ids.push(id);
+                }
+            }
+        }
+        let mut removed = 0usize;
+        for id in ids {
+            let Ok(mut session) = self.get_raw(&id) else {
+                continue;
+            };
+            let before = session.attachment_pins.len();
+            session.attachment_pins.retain(|pin| keep(pin));
+            let n = before - session.attachment_pins.len();
+            if n > 0 {
+                self.write(&session)?;
+                removed += n;
+            }
+        }
+        Ok(removed)
+    }
+
+    fn write(&self, session: &Session) -> Result<()> {
+        let path = self.path_for(&session.session_id)?;
+        let payload = serde_json::to_value(session)?;
+        // Chat history can carry pasted secrets; pin 0600 explicitly instead of
+        // depending on the staging temp file's default permissions.
+        write_json_atomic_mode(&path, &payload, 0o600)
+            .map_err(|_| HarnessError::new(PERSIST_ERROR_CODE, "could not persist session"))?;
+        self.summaries.lock().unwrap_or_else(|p| p.into_inner()).remove(&path);
+        Ok(())
+    }
+    pub fn for_owner(&self, owner: &str) -> OwnedSessionStore<'_> {
+        OwnedSessionStore {
+            store: self,
+            owner: owner.to_string(),
+        }
+    }
+
+    /// Metadata only. The route permits administrators (or explicit local mode).
+    pub fn legacy_summaries(&self) -> Vec<Value> {
+        self.list_all()
+            .into_iter()
+            .filter(|row| row["owner"].is_null())
+            .collect()
+    }
+
+    pub fn adopt_legacy(&self, id: &str, owner: &str) -> Result<Session> {
+        if !crate::server::structured_memory::valid_owner(owner) {
+            return Err(session_error("invalid session owner", id));
+        }
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get_raw(id)?;
+        if session.owner.is_some() {
+            return Err(session_error("session is not unassigned legacy data", id));
+        }
+        session.schema_version = 1;
+        session.owner = Some(owner.to_string());
+        // Adoption transfers data, never another operator's execution approval.
+        session.goal_stage = None;
+        self.write(&session)?;
+        Ok(session)
+    }
+}
+
+/// All normal reads and mutations require an owner-bearing storage view. Raw
+/// inventory is private; callers cannot accidentally search a shared store.
+pub struct OwnedSessionStore<'a> {
+    store: &'a SessionStore,
+    owner: String,
+}
+impl std::ops::Deref for OwnedSessionStore<'_> {
+    type Target = SessionStore;
+    fn deref(&self) -> &Self::Target {
+        self.store
+    }
+}
+impl OwnedSessionStore<'_> {
+    pub fn get(&self, id: &str) -> Result<Session> {
+        let session = self.store.get_raw(id)?;
+        if !crate::server::structured_memory::valid_owner(&self.owner)
+            || session.owner.as_deref() != Some(self.owner.as_str())
+        {
+            return Err(session_error("unknown session", id));
+        }
+        Ok(session)
+    }
+    pub fn list(&self) -> Vec<Value> {
+        if !crate::server::structured_memory::valid_owner(&self.owner) {
+            return vec![];
+        }
+        self.store
+            .list_all()
+            .into_iter()
+            .filter(|row| row["owner"].as_str() == Some(self.owner.as_str()))
+            .collect()
+    }
+    fn write(&self, session: &Session) -> Result<()> {
+        if session.schema_version != 1 || session.owner.as_deref() != Some(self.owner.as_str()) {
+            return Err(session_error("session ownership changed", &session.session_id));
+        }
+        self.store.write(session)
+    }
+    pub fn create(&self, model: &str, title: &str) -> Result<Session> {
+        if !crate::server::structured_memory::valid_owner(&self.owner) {
+            return Err(session_error("invalid session owner", ""));
+        }
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let now = time::OffsetDateTime::now_utc();
+        let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
+        let stamp = now.format(&fmt).unwrap_or_default();
+        let title = if title.trim().is_empty() {
+            format!("session {stamp}")
+        } else {
+            title.trim().to_string()
+        };
+        let session = Session {
+            schema_version: 1,
+            owner: Some(self.owner.clone()),
+            session_id: crate::common::random_hex(SESSION_ID_CHARS / 2),
+            title,
+            created_ts: crate::common::now_ts(),
+            model: model.to_string(),
+            messages: Vec::new(),
+            prompt_history: Vec::new(),
+            tally: TokenTally::default(),
+            token_calibration: None,
+            goal: String::new(),
+            selected_skills: Vec::new(),
+            style: None,
+            selected_facts: Vec::new(),
+            last_prompt_skills: Vec::new(),
+            goal_stage: None,
+            attachment_pins: Vec::new(),
+        };
+        self.write(&session)?;
+        Ok(session)
     }
 
     /// Serialize deletion with every writer. Late replies re-read the missing
@@ -339,8 +495,11 @@ impl SessionStore {
                 let name = entry?.file_name();
                 let Some(name) = name.to_str() else { continue };
                 let session_file = name.strip_suffix(".json").is_some_and(|id| id_re().is_match(id));
-                let staged_file = name.starts_with(".staged.") && name.ends_with(".tmp");
-                if session_file || staged_file {
+                if session_file && dir.symlink_metadata(name)?.is_dir() {
+                    return Err(std::io::Error::other("session file is a directory"));
+                }
+                // Unassigned/corrupt/interrupted writes are retained for explicit inspection.
+                if session_file && self.get(name.strip_suffix(".json").unwrap()).is_ok() {
                     dir.remove_file(name)?;
                     count += usize::from(session_file);
                 }
@@ -525,47 +684,6 @@ impl SessionStore {
         Ok(session)
     }
 
-    pub fn drop_attachment_pins_for_owner(&self, owner: &str) -> Result<usize> {
-        self.filter_attachment_pins(|pin| pin.owner != owner)
-    }
-
-    pub fn drop_attachment_pins_unless(&self, live: impl Fn(&str) -> bool) -> Result<usize> {
-        self.filter_attachment_pins(|pin| live(&pin.owner))
-    }
-
-    fn filter_attachment_pins(&self, keep: impl Fn(&AttachmentPin) -> bool) -> Result<usize> {
-        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let mut ids = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(&self.dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if p.extension().and_then(|s| s.to_str()) == Some("json") && id_re().is_match(stem) {
-                    // Rebuild from the integer so a directory stem cannot carry `../`
-                    // into `path_for` / `join`. Skip names the parser refuses.
-                    let Ok(id) = canonical_session_id(stem) else {
-                        continue;
-                    };
-                    ids.push(id);
-                }
-            }
-        }
-        let mut removed = 0usize;
-        for id in ids {
-            let Ok(mut session) = self.get(&id) else {
-                continue;
-            };
-            let before = session.attachment_pins.len();
-            session.attachment_pins.retain(|pin| keep(pin));
-            let n = before - session.attachment_pins.len();
-            if n > 0 {
-                self.write(&session)?;
-                removed += n;
-            }
-        }
-        Ok(removed)
-    }
-
     pub fn stage_goal(
         &self,
         id: &str,
@@ -655,17 +773,6 @@ impl SessionStore {
         stage["max_iterations"] = json!(request.max_iterations);
         self.write(&session)
     }
-
-    fn write(&self, session: &Session) -> Result<()> {
-        let path = self.path_for(&session.session_id)?;
-        let payload = serde_json::to_value(session)?;
-        // Chat history can carry pasted secrets; pin 0600 explicitly instead of
-        // depending on the staging temp file's default permissions.
-        write_json_atomic_mode(&path, &payload, 0o600)
-            .map_err(|_| HarnessError::new(PERSIST_ERROR_CODE, "could not persist session"))?;
-        self.summaries.lock().unwrap_or_else(|p| p.into_inner()).remove(&path);
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -694,9 +801,21 @@ mod tests {
         let private = outside.path().join("private.json");
         std::fs::write(&private, "keep").unwrap();
         let dir = home.path().join("sessions");
-        let store = SessionStore::new(&dir).unwrap();
+        let store_root = SessionStore::new(&dir).unwrap();
+        let store = store_root.for_owner("local");
         symlink(&private, dir.join("aaaaaaaaaaaa.json")).unwrap();
+        let mine = store.create("fixture", "mine").unwrap();
+        let foreign = store_root
+            .for_owner("user_foreign")
+            .create("fixture", "foreign")
+            .unwrap();
         assert_eq!(store.clear().unwrap(), 1);
+        assert!(!dir.join(format!("{}.json", mine.session_id)).exists());
+        assert!(dir.join(format!("{}.json", foreign.session_id)).exists());
+        assert!(std::fs::symlink_metadata(dir.join("aaaaaaaaaaaa.json"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(std::fs::read_to_string(&private).unwrap(), "keep");
         std::fs::create_dir(dir.join("bbbbbbbbbbbb.json")).unwrap();
         assert!(store.clear().is_err());
@@ -710,7 +829,8 @@ mod tests {
     #[test]
     fn session_files_are_written_owner_only() {
         let home = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let store_root = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let store = store_root.for_owner("local");
         let session = store.create("m", "alpha").unwrap();
         let mode = std::fs::metadata(store.path_for(&session.session_id).unwrap())
             .unwrap()
@@ -723,7 +843,8 @@ mod tests {
     #[test]
     fn compacted_exchange_keeps_goal_and_first_user_message() {
         let home = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let store_root = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let store = store_root.for_owner("local");
         let mut session = store.create("m", "alpha").unwrap();
         store
             .rename(&session.session_id, None, Some("ship the parser"))
@@ -779,7 +900,8 @@ mod list_cache_tests {
     #[test]
     fn summaries_are_cached_and_re_parsed_only_after_a_rewrite() {
         let home = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let store_root = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let store = store_root.for_owner("local");
         let a = store.create("m", "alpha").unwrap();
         let b = store.create("m", "beta").unwrap();
         assert_eq!(store.list().len(), 2);
@@ -827,7 +949,8 @@ mod list_cache_tests {
     #[test]
     fn a_corrupt_session_file_is_skipped_and_not_cached() {
         let home = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let store_root = SessionStore::new(&home.path().join("sessions")).unwrap();
+        let store = store_root.for_owner("local");
         let a = store.create("m", "alpha").unwrap();
         let path = store.path_for(&a.session_id).unwrap();
         std::fs::write(&path, "{not json").unwrap();
@@ -839,9 +962,13 @@ mod list_cache_tests {
             format!("{{\"session_id\":\"{}\",\"title\":\"fixed\"}}", a.session_id),
         )
         .unwrap();
-        let list = store.list();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0]["title"], "fixed");
+        assert!(
+            store.list().is_empty(),
+            "repair without an owner is quarantined, not silently assigned"
+        );
+        let legacy = store_root.legacy_summaries();
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0]["title"], "fixed");
     }
 }
 
@@ -851,7 +978,8 @@ mod prompt_history_tests {
     #[test]
     fn last_fifty_prompts_persist_independently_and_legacy_logs_restore_history() {
         let dir = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(dir.path()).unwrap();
+        let store_root = SessionStore::new(dir.path()).unwrap();
+        let store = store_root.for_owner("local");
         let session = store.create("fixture", "history").unwrap();
         for i in 0..55 {
             store
@@ -872,7 +1000,8 @@ mod prompt_history_tests {
         // Model-context compaction may replace messages but must not erase keyboard history.
         saved.messages.clear();
         store.write(&saved).unwrap();
-        let reopened = SessionStore::new(dir.path()).unwrap();
+        let reopened_root = SessionStore::new(dir.path()).unwrap();
+        let reopened = reopened_root.for_owner("local");
         assert_eq!(
             reopened.get(&session.session_id).unwrap().prompt_history,
             saved.prompt_history
@@ -913,7 +1042,8 @@ mod attachment_pin_tests {
     #[test]
     fn merge_keeps_other_owners_and_fifo_caps_this_owner() {
         let dir = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(dir.path()).unwrap();
+        let store_root = SessionStore::new(dir.path()).unwrap();
+        let store = store_root.for_owner("local");
         let session = store.create("fixture", "pins").unwrap();
         store
             .merge_attachment_pins(&session.session_id, "bob", &["b1".into()], live_all)
@@ -939,7 +1069,8 @@ mod attachment_pin_tests {
     #[test]
     fn dead_blobs_are_dropped_and_missing_ids_are_not_pinned() {
         let dir = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(dir.path()).unwrap();
+        let store_root = SessionStore::new(dir.path()).unwrap();
+        let store = store_root.for_owner("local");
         let session = store.create("fixture", "pins").unwrap();
         store
             .merge_attachment_pins(&session.session_id, "local", &["live".into(), "gone".into()], |id| {
@@ -955,13 +1086,15 @@ mod attachment_pin_tests {
     #[test]
     fn pins_round_trip_across_a_new_store_and_legacy_json() {
         let dir = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(dir.path()).unwrap();
+        let store_root = SessionStore::new(dir.path()).unwrap();
+        let store = store_root.for_owner("local");
         let session = store.create("fixture", "pins").unwrap();
         store
             .merge_attachment_pins(&session.session_id, "local", &["keep-me".into()], live_all)
             .unwrap();
         drop(store);
-        let reopened = SessionStore::new(dir.path()).unwrap();
+        let reopened_root = SessionStore::new(dir.path()).unwrap();
+        let reopened = reopened_root.for_owner("local");
         let loaded = reopened.get(&session.session_id).unwrap();
         assert_eq!(loaded.pinned_ids_for("local"), vec!["keep-me".to_string()]);
         let mut value = serde_json::to_value(&loaded).unwrap();
@@ -974,7 +1107,8 @@ mod attachment_pin_tests {
     #[test]
     fn filter_skips_non_canonical_stems_and_does_not_escape_the_session_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(dir.path()).unwrap();
+        let store_root = SessionStore::new(dir.path()).unwrap();
+        let store = store_root.for_owner("local");
         let session = store.create("fixture", "pins").unwrap();
         store
             .merge_attachment_pins(&session.session_id, "alice", &["keep".into()], live_all)
@@ -1008,7 +1142,8 @@ mod attachment_pin_tests {
     #[test]
     fn compacted_exchange_keeps_pins() {
         let dir = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(dir.path()).unwrap();
+        let store_root = SessionStore::new(dir.path()).unwrap();
+        let store = store_root.for_owner("local");
         let session = store.create("fixture", "pins").unwrap();
         store
             .merge_attachment_pins(&session.session_id, "local", &["sticky".into()], live_all)

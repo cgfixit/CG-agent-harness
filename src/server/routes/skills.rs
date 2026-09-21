@@ -65,9 +65,15 @@ pub fn resolve(state: &AppState, ids: &[String]) -> ApiResult<Vec<(String, Strin
     }
     Ok(out)
 }
-pub async fn selection(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+pub async fn selection(
+    State(state): State<Arc<AppState>>,
+    user: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let session = state
         .store
+        .for_owner(&owner)
         .get(&id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let available = resolve(&state, &session.selected_skills);
@@ -79,13 +85,16 @@ pub async fn selection(State(state): State<Arc<AppState>>, Path(id): Path<String
 }
 pub async fn select(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(id): Path<String>,
     ValidJson(req): ValidJson<SelectionRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let resolved = resolve(&state, &req.ids)?;
     let ids: Vec<String> = resolved.iter().map(|(id, _)| id.clone()).collect();
     state
         .store
+        .for_owner(&owner)
         .select_skills(&id, &ids)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     Ok(Json(
@@ -119,3 +128,6 @@ pub async fn check(ValidJson(req): ValidJson<CheckRequest>) -> ApiResult<Json<Va
         "execution":"/api/agent/jobs","results":"/api/agent/jobs/{job_id}","limits":"existing coding-job iteration, time, output and sandbox bounds"}),
     ))
 }
+
+// Account identity comes only from the guarded request extension.
+type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;

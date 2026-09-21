@@ -14,7 +14,7 @@ migration, shared resources, last-admin protection and recovery](SECURE_RESEARCH
 
 | Account | Portal work | Administrative changes |
 |---|---|---|
-| Administrator (`admin`) | Chat, permitted research, shared sessions/jobs and separately authorized coding | Users, roles, reset/disable, global keys and web policy |
+| Administrator (`admin`) | Chat, permitted research, own sessions/jobs and separately authorized coding | Users, roles, reset/disable, global keys and web policy |
 | Portal operator (`operator`) | Same permitted operational resources and coding gates | Own password/logout only |
 | Auditor (`audit`) | Minimal status and designated redacted audit entries | Own password/logout only; no chat/research/jobs |
 
@@ -44,3 +44,32 @@ origin. Both clients enforce the same account/CSRF/TLS boundaries as the console
 Backup and recovery must preserve `auth.sqlite3` and `auth.initialized` together;
 do not delete them to recreate `admin/admin`. A legacy pending-password account
 uses its existing recovery flow, while malformed initialized storage refuses startup.
+
+## Session ownership and legacy adoption
+
+New sessions use schema version 1 and the authenticated account's random `user_id`.
+Listing, loading, search, export, chat, prompt preview, goals, skills and style
+selection enforce that owner. An administrator does not automatically inherit
+another account's sessions. Auth-disabled homes use the explicit `local` owner;
+enabling authentication does not silently move that data into a human account.
+
+Sessions without an owner are unassigned legacy shared data. They remain on disk,
+are hidden from ordinary reads/search/export, and survive **Clear my session
+history**. In **Sessions**, an administrator can choose **Review unassigned legacy
+sessions (admin)**, inspect metadata, enter a reason, confirm authorization and
+choose **Adopt into my account**. Adoption preserves the transcript and old blob
+pin owners but clears the prior goal-stage coding approval. The administrator
+must stage and review coding work again. There is no implicit sharing or account
+reassignment. Unknown-schema, unreadable and interrupted staged files remain for
+manual recovery; clearing history cannot invent their owner.
+
+Detached job and schedule management uses the same owner boundary. Old ownerless
+job records remain on disk outside account APIs. Schedule dispatch rechecks the
+current account role and disabled/password-change state; revocation stops later
+occurrences. Account deletion does not reassign retained records to a newly
+created account with the same username.
+
+These boundaries do not provide universal multi-tenant isolation. Persona,
+pinned notes, selected model, aggregate spend, the public-page cache, and underlying
+agentic run records remain shared among authorized portal operators/admins.
+The dedicated machine gateway does not inherit console authority.

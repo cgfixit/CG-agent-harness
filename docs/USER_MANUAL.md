@@ -169,7 +169,7 @@ Facts only. Episode summaries are not indexed.
   `retrieve` / `retrieve_query` set. Same fields on `/api/chat` and
   `/api/prompt/preview` are the explicit pick **for that prompt**: bounded
   FTS, recheck survivors, inject under the recall budget. Hits do not stick
-  on the shared session.
+  on the owned session.
 
 `/prompt` shows session-selected facts when recall is on. A retrieve preview
 is `POST /api/prompt/preview` with `retrieve` / `retrieve_query` — the same

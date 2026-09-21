@@ -159,6 +159,8 @@ mod tests {
 
     fn session(text: &str) -> Session {
         Session {
+            schema_version: 1,
+            owner: Some("local".into()),
             session_id: "aaaaaaaaaaaa".into(),
             title: "t".into(),
             created_ts: 1.5,

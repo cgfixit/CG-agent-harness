@@ -61,6 +61,10 @@ jobs:
           CHROME_BIN: /usr/bin/google-chrome
       - name: Console review reset contract
         run: node scripts/test-review-reset.mjs
+      - name: Delivery replay review guards
+        run: node scripts/test-delivery-review.mjs
+      - name: Schedule preview boundaries
+        run: node scripts/test-schedule-review.mjs
       - name: Analytics dashboard contract
         run: node scripts/test-analytics.mjs
       - run: node --experimental-websocket scripts/chat-browser-acceptance.mjs
@@ -230,35 +234,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
-      - name: Check out the unchanged baseline
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-          path: .windows-baseline
-          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: dev-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Verify main with only the four Windows compiler repairs
-        shell: pwsh
-        # Temporary baseline probe: the previous unchanged-main run recorded
-        # four Unix-only declarations failing Windows -D warnings. Apply only
-        # their compatibility diff; no MCP feature code enters this baseline.
-        run: |
-          git diff --output=windows-main-fixes.patch $env:BASE_REVISION HEAD -- src/server/transport.rs src/server/mod.rs src/server/attachments.rs src/server/notes_corpus.rs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ((Get-Item windows-main-fixes.patch).Length -gt 0) {
-            git -C .windows-baseline apply ../windows-main-fixes.patch
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          cargo check --locked --manifest-path .windows-baseline/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        env:
-          BASE_REVISION: ${{ github.event.pull_request.base.sha || github.sha }}
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target
       - name: Required native process ownership and crash cleanup
         shell: pwsh
         run: |

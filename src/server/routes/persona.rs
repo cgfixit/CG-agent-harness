@@ -333,17 +333,17 @@ pub async fn preview(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<PreviewRequest>,
 ) -> ApiResult<PrivateJson> {
+    let owner = super::auth::context_owner(user.clone());
     let session = req
         .session_id
         .as_deref()
-        .map(|id| state.store.get(id))
+        .map(|id| state.store.for_owner(&owner).get(id))
         .transpose()
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     if let Some(content) = &req.soul_content {
         validate_content(&state, content)?;
     }
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    let owner = super::auth::context_owner(user);
     let web = state.web_snapshot().context_text(settings.web_enabled, &owner);
     let selections = req
         .selected_facts

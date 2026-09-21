@@ -29,7 +29,14 @@ async fn new_session_isolates_history_goal_and_skills_but_keeps_explicit_shared_
     assert_ne!(fresh, id);
     assert_eq!(second["message_count"], 0);
     assert_eq!(second["tokens"]["total"], 0);
-    assert!(s.state.store.get(fresh).unwrap().selected_skills.is_empty());
+    assert!(s
+        .state
+        .store
+        .for_owner("local")
+        .get(fresh)
+        .unwrap()
+        .selected_skills
+        .is_empty());
     for enabled in [true, false] {
         s.post_json("/api/memory", serde_json::json!({"enabled":enabled})).await;
         let (_, preview) = s
@@ -70,7 +77,7 @@ async fn new_session_isolates_history_goal_and_skills_but_keeps_explicit_shared_
         "disabling inclusion preserves notes"
     );
     assert_eq!(
-        s.state.store.get(id).unwrap().messages.len(),
+        s.state.store.for_owner("local").get(id).unwrap().messages.len(),
         2,
         "old sessions are preserved"
     );
@@ -320,7 +327,17 @@ async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_cal
         let (status, first) = s.post_json("/api/chat", json!({"message":"first"})).await;
         assert_eq!(status, 200, "{first}");
         let id = first["session_id"].as_str().unwrap();
-        assert_eq!(s.state.store.get(id).unwrap().token_calibration.unwrap().ratio, 2.0);
+        assert_eq!(
+            s.state
+                .store
+                .for_owner("local")
+                .get(id)
+                .unwrap()
+                .token_calibration
+                .unwrap()
+                .ratio,
+            2.0
+        );
         let tool_tokens = requests
             .lock()
             .unwrap()
@@ -333,6 +350,7 @@ async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_cal
             let previous = s
                 .state
                 .store
+                .for_owner("local")
                 .get(id)
                 .unwrap()
                 .messages
@@ -342,6 +360,7 @@ async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_cal
             for _ in 0..10 {
                 s.state
                     .store
+                    .for_owner("local")
                     .record_exchange(
                         id,
                         &"界".repeat(400),
@@ -352,7 +371,7 @@ async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_cal
                     )
                     .unwrap();
             }
-            let session = s.state.store.get(id).unwrap();
+            let session = s.state.store.for_owner("local").get(id).unwrap();
             let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":id})).await;
             let system = preview["prompt"].as_str().unwrap();
             let history = prompt_history(&session);
@@ -373,7 +392,7 @@ async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_cal
             if let Some(previous) = previous {
                 assert!(sent[0]["messages"][1]["content"].as_str().unwrap().contains(&previous));
             }
-            let saved = s.state.store.get(id).unwrap();
+            let saved = s.state.store.for_owner("local").get(id).unwrap();
             assert_eq!(saved.messages[0].text, "first");
             assert_eq!(
                 saved.token_calibration.unwrap().ratio,
@@ -381,12 +400,15 @@ async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_cal
                 "summary usage must not inflate calibration"
             );
         }
-        let calibration = s.state.store.get(id).unwrap().token_calibration;
+        let calibration = s.state.store.for_owner("local").get(id).unwrap().token_calibration;
         let (status, _) = s
             .post_json("/api/chat", json!({"session_id":id,"message":"missing"}))
             .await;
         assert_eq!(status, 200);
-        assert_eq!(s.state.store.get(id).unwrap().token_calibration, calibration);
+        assert_eq!(
+            s.state.store.for_owner("local").get(id).unwrap().token_calibration,
+            calibration
+        );
         let path = s.home.join("sessions").join(format!("{id}.json"));
         let before = std::fs::read(&path).unwrap();
         assert_eq!(
@@ -397,7 +419,10 @@ async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_cal
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
         let reopened = cgagentharness::server::sessions::SessionStore::new(&s.home.join("sessions")).unwrap();
-        assert_eq!(reopened.get(id).unwrap().token_calibration, calibration);
+        assert_eq!(
+            reopened.for_owner("local").get(id).unwrap().token_calibration,
+            calibration
+        );
     }
     task.abort();
 }
@@ -430,6 +455,7 @@ async fn irreducible_prompt_is_rejected_without_rewriting_the_session() {
     for i in 0..6 {
         s.state
             .store
+            .for_owner("local")
             .record_exchange(sid, &format!("old-user-{i}"), "old-reply", "fixture", &usage, &[])
             .unwrap();
     }
@@ -494,6 +520,7 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
     for i in 0..10 {
         s.state
             .store
+            .for_owner("local")
             .record_exchange(
                 sid,
                 &format!("user-{i}-{}", "u".repeat(490)),
@@ -516,6 +543,7 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
     assert!(
         !s.state
             .store
+            .for_owner("local")
             .get(sid)
             .unwrap()
             .messages
@@ -529,7 +557,7 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
         .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
         .await;
     assert_eq!(status, 200, "{body}");
-    let session = s.state.store.get(sid).unwrap();
+    let session = s.state.store.for_owner("local").get(sid).unwrap();
     assert!(session.messages.iter().any(|message| message
         .text
         .starts_with(cgagentharness::server::compaction::COMPACT_PREFIX)));
@@ -557,11 +585,13 @@ async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
     let usage = cgagentharness::server::sessions::TokenTally::default();
     s.state
         .store
+        .for_owner("local")
         .record_exchange(sid, "UNIQUE_FIRST_USER_TURN", "ack", "fixture", &usage, &[])
         .unwrap();
     for i in 0..40 {
         s.state
             .store
+            .for_owner("local")
             .record_exchange(
                 sid,
                 &format!("user-{i}-{}", "n".repeat(120)),
@@ -575,6 +605,7 @@ async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
     let stored_chars: usize = s
         .state
         .store
+        .for_owner("local")
         .get(sid)
         .unwrap()
         .messages
@@ -590,7 +621,7 @@ async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
         .post_json("/api/chat", json!({"session_id":sid,"message":"continue"}))
         .await;
     assert_eq!(status, 200, "{body}");
-    let session = s.state.store.get(sid).unwrap();
+    let session = s.state.store.for_owner("local").get(sid).unwrap();
     assert_eq!(session.messages[0].text, "UNIQUE_FIRST_USER_TURN");
     assert!(session.messages.iter().any(|message| message
         .text
@@ -1081,23 +1112,25 @@ async fn clear_session_history_requires_intent_and_cannot_be_resurrected() {
         json!({"confirm":"true","reason":"test"}),
     ] {
         assert_eq!(s.post_json("/api/sessions/clear", body).await.0, 422);
-        assert!(s.state.store.get(id).is_ok());
+        assert!(s.state.store.for_owner("local").get(id).is_ok());
     }
     assert_eq!(s.post_json("/api/sessions/clear", intent.clone()).await.0, 200);
-    assert!(s.state.store.list().is_empty());
+    assert!(s.state.store.for_owner("local").list().is_empty());
     assert!(!sessions.join(format!("{id}.json")).exists());
-    assert!(!sessions.join("ffffffffffff.json").exists());
-    assert!(!sessions.join(".staged.fixture.tmp").exists());
+    // Unknown ownership cannot authorize destructive cleanup of corrupt or staged data.
+    assert!(sessions.join("ffffffffffff.json").exists());
+    assert!(sessions.join(".staged.fixture.tmp").exists());
     assert_eq!(std::fs::read_to_string(sessions.join("keep.txt")).unwrap(), "unrelated");
     assert_eq!(s.get_json("/api/memory").await.1["count"], 1);
     assert_eq!(s.open_get("/api/status").await.1["total_tokens"], 0);
     assert!(s
         .state
         .store
+        .for_owner("local")
         .record_exchange(id, "late", "late", "fixture", &Default::default(), &[])
         .is_err());
-    assert!(s.state.store.rename(id, Some("late"), None).is_err());
-    assert!(s.state.store.list().is_empty());
+    assert!(s.state.store.for_owner("local").rename(id, Some("late"), None).is_err());
+    assert!(s.state.store.for_owner("local").list().is_empty());
     assert_eq!(s.post_json("/api/sessions/clear", intent).await.0, 200);
     assert_eq!(s.post_json("/api/sessions", json!({})).await.0, 201);
 }

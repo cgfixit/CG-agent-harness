@@ -16,10 +16,11 @@ The installed source must contain the corresponding changes:
 | Bounded MCP stderr diagnostics | [PR #178](https://github.com/cgfixit/CG-agent-harness/pull/178), described in [process lifecycle](PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics) |
 | Optional completion webhooks | [PR #179](https://github.com/cgfixit/CG-agent-harness/pull/179) |
 
-A green draft PR is not a release. These docs depend on those changes being
-merged before release. Verify the bundle's `Contents/Resources/COMMIT` or your
-source checkout; the Cargo package version alone does not identify capabilities.
-The spend ledger and persisted schedules predate these four changes.
+The original spend and best-effort notification changes above are on main.
+The current source adds the versioned durable outbox described below. Check the
+installed bundle's `Contents/Resources/COMMIT` or source checkout; the Cargo
+package version alone does not identify capabilities. `GET /api/notifications`
+and version-2 event envelopes identify this delivery interface.
 
 The `/analytics` dialog reuses this ledger summary alongside session and coding-run
 metrics. It keeps the same completeness and pricing semantics; see
@@ -111,83 +112,156 @@ Provider contract: [Claude token counting](https://platform.claude.com/docs/en/b
 
 ## Configure a completion webhook
 
-Notifications are **disabled by default**. In the active home's `config.yaml`,
-configure a receiver you control and explicitly enable the literal YAML boolean:
+Notifications are **disabled by default**. The active home's `config.yaml` needs
+an explicit destination owner, subscriptions and enablement. Obtain the account's
+stable `user_id` from administrator account management; username is not an owner ID.
+Only deliberately auth-disabled homes use `local`.
 
 ```yaml
 notifications:
   enabled: true
-  webhook_url: "https://receiver.example.com/harness-completions"
+  schema_version: 1
+  destinations:
+    - id: build-alerts
+      owner: user_REPLACE_WITH_CURRENT_ACCOUNT_ID
+      enabled: true
+      url: "https://receiver.example.com/harness-completions"
+      events: [finished, failed, cancelled]
+      use_bearer: true
+      rate_per_minute: 20
+  webhook_url: ""
   private_url_allowlist: []
 ```
 
-Replace the example URL before enabling. Quoted `"true"` does not enable a gate.
-For bearer authentication, save `CGAGENTHARNESS_WEBHOOK_TOKEN` through the
-administrator **API Keys** control or the active home's private `.env` file.
-The optional token must be printable non-space ASCII, at most 4096 bytes.
-Explicit process environment values take precedence, including an empty value.
-Fully restart the backend or Cmd-Q/relaunch the app after changing any webhook
-setting or token. Saving the key does not activate or test a receiver.
+Replace the example values before enabling. There are at most eight destinations;
+IDs are unique, 1–64 ASCII letters/digits/underscores/hyphens. Subscriptions are
+explicit and limited to terminal job states. Each destination's rate is 1–120
+batches/minute. A legacy global `webhook_url` must be migrated deliberately; the
+backend refuses an enabled nonempty legacy URL instead of assigning its authority
+to an arbitrary account. There is no portal endpoint that lets an account choose
+another owner or grant a destination. The local operator configures those grants;
+portal users inspect and replay only their own retained deliveries.
 
-Destination policy is separate from web-content permissions. Public receivers
-require HTTPS unless their exact URL is explicitly granted. Loopback, RFC1918
-and IPv6 unique-local destinations require an exact entry in
-`notifications.private_url_allowlist` (at most eight URLs); an exact grant can
-also permit HTTP. Use HTTPS when sending a bearer. Link-local and mapped IPv6
-addresses remain refused even with a grant. All DNS answers are checked (at most
-32) and pinned for each attempt. Proxy inheritance and redirects are disabled;
-a redirect is not followed to another destination.
+Quoted `"true"` never enables the master gate. For `use_bearer: true`, each
+destination has its own bearer. Put them in the private file
+`data/notifications/bearers.json` (mode `0600` on Unix):
 
-All settings below live under `notifications`; defaults are usually sufficient:
+```json
+{"version":1,"tokens":{"build-alerts":"replace-with-a-destination-secret"}}
+```
+
+The secret is printable non-space ASCII, at most 4096 bytes. It is held in
+process memory for the outbound `Authorization` header and compared by SHA-256
+on every attempt. Replacing one destination's secret revokes that destination's
+pending rows (`authority_revoked`) and leaves every other destination's secret
+and deliveries alone. `CGAGENTHARNESS_WEBHOOK_TOKEN` remains only as a legacy
+bootstrap, and only when every enabled bearer destination belongs to one owner.
+A second owner's bearer destination is refused at startup unless `bearers.json`
+has that destination's own secret. The house token is never copied onto another
+owner. No signing-secret or payload-content adapter is enabled implicitly.
+Credentials are absent from the outbox, status responses, event payloads and
+content-free delivery audit records.
+
+Disabling or deleting an account cancels that owner's schedules and records the
+owner in `data/notifications/revoked-owners.json`. That owner's destinations
+stop. Other owners stay enabled. Turning the account back on does not restore
+those grants; edit the configuration and restart to do that deliberately.
+
+All settings require restart. Before each attempt/replay, the worker rereads the
+bounded regular configuration file and rechecks the current account, exact startup
+destination revision, subscription/grant and selected credential. Disk changes can
+revoke startup authority but cannot add it. Removing/changing a destination or
+disabling/deleting/demoting its owner stops subsequent attempts; an already in-flight
+request may finish. Malformed config refuses delivery. The ordinary 22-key config
+reload allowlist remains unchanged. These are outbound requests only: no listener,
+callback commands, tunnel or public memory API is created.
+
+Public receivers require HTTPS. Loopback, RFC1918 and IPv6 unique-local receivers
+need an exact URL in `notifications.private_url_allowlist` (maximum eight).
+Explicitly granted private receivers may use HTTP; public-address HTTP is refused
+even if the URL was listed. Prefer HTTPS for bearer confidentiality. Link-local
+and mapped IPv6 remain refused. Each attempt validates every DNS answer (maximum
+32) and pins the result; proxies, connection reuse, implicit client retries and
+redirects are disabled. Neither receiver bodies nor destination URLs enter audit.
 
 | Setting | Default | Accepted range |
 |---|---:|---:|
-| `queue_capacity` | 128 | 1–512 events |
-| `batch_size` | 16 | 1–32 events |
-| `batch_interval_sec` | 30 | 1–3600 seconds |
-| `max_attempts` | 3 | 1–3 attempts per batch |
-| `retry_delay_sec` | 2 | 1–60 seconds |
-| `timeout_sec` | 5 | 1–30 seconds per attempt, including DNS |
+| `queue_capacity` | 128 | 1–512 retained delivery rows |
+| `batch_size` | 16 | 1–32 events per POST |
+| `batch_interval_sec` | 30 | 1–3600 initial batching delay |
+| `poll_interval_sec` | 1 | 1–60 outbox scan interval |
+| `max_attempts` | 3 | 1–3 attempts per delivery/replay |
+| `retry_delay_sec` | 2 | 1–60 exponential backoff base |
+| `max_backoff_sec` | 300 | 1–3600 seconds before jitter |
+| `jitter_percent` | 20 | 0–50% additional random delay |
+| `retention_sec` | 604800 | 60–2592000 seconds |
+| `max_replays` | 3 | 0–10 explicit replay cycles |
+| `timeout_sec` | 5 | 1–30 seconds including DNS |
 
-## Payload and delivery limits
+## Durable payload and recovery
 
-Only terminal detached coding jobs produce events: `finished`, `failed` and
-`cancelled`, whether started manually or by a schedule. Chat replies and recovered
-`interrupted` jobs do not. A schedule refused before job creation has no event.
-Repeated finish/cancel operations do not enqueue the same transition again.
-
-The JSON envelope contains a version, a batch ID and minimal events, for example:
+Only `finished`, `failed` and `cancelled` detached jobs produce completion events.
+Chat, recovered `interrupted` jobs and schedules refused before job creation do
+not. Events remain metadata-only; richer fields are not implemented. A batch is:
 
 ```json
 {
-  "version": 1,
-  "batch_id": "0123456789abcdef0123456789abcdef",
-  "events": [
-    {
-      "job_id": "example-job-id",
-      "status": "finished",
-      "created_at": 1790000000.0,
-      "finished_at": 1790000010.0
-    }
-  ]
+  "version": 2,
+  "batch_id": "<digest of delivery IDs in this batch>",
+  "events": [{
+    "event_id": "<stable digest of owner-bound terminal metadata>",
+    "delivery_id": "<stable event/destination/revision digest>",
+    "job_id": "<job ID>",
+    "status": "finished",
+    "created_at": 1790000000.0,
+    "finished_at": 1790000010.0
+  }]
 }
 ```
 
-Timestamps are Unix seconds. Events contain no prompts, goals, repository names,
-results or errors. `X-CGAgentHarness-Batch-ID` carries the same batch ID; the
-optional bearer goes in `Authorization`. No receiver response body is logged.
+Timestamps are Unix seconds. Prompts, goals, transcripts, memory, source, repository
+names, results, raw errors and owner identities are absent. The batch ID is also
+sent as `X-CGAgentHarness-Batch-ID`. **Deduplicate by delivery ID**, because retry
+batch membership can change. Explicit replay preserves that ID and event ID.
 
-HTTP 2xx completes delivery. HTTP 429, 5xx and transport/DNS/timeout failures may
-retry, at most `max_attempts` total. Other responses stop delivery. Retries retain
-the batch ID; a lost response can cause duplicates, so receivers should
-deduplicate it. The queue and batches are bounded and in memory. Overflow,
-exhausted retries or process exit can lose notifications. There is no durable
-outbox, restart replay or guarantee that every job produces a delivered event.
+The private `data/notifications/outbox.json` uses schema 1 and atomic replacement
+at mode `0600` (directory `0700` on Unix). Attempts and per-destination rate timing
+persist before networking; successful/failed responses are persisted afterward.
+Restart resumes retained pending deliveries. Retained terminal jobs are reconciled
+to cover a crash after job persistence but before enqueue; their stable IDs suppress
+retained duplicates. First enabling a destination can therefore deliver recent
+retained terminal jobs for its owner and selected subscriptions.
 
-Inspect `notification_delivery` audit records for attempt, event count, success,
-coarse result code and retry disposition; `notification_dropped` reports queue
-unavailability. Destination URLs, bearer values and receiver bodies are not
-included. Inspect the retained job with `/agent job <id>` for the authoritative
-outcome. Delivery failure never changes that outcome; do not rerun a coding job
-just to resend a notification. See [job and schedule recovery](CONSOLE_JOBS.md#schedules-and-completion-notifications)
-and [troubleshooting](TROUBLESHOOTING.md).
+This is **at-least-once delivery with finite retries and retention**, not an
+exactly-once guarantee. A timeout or crash after receiver acceptance may resend.
+A crash during the last allowed attempt can leave an exhausted failure whose
+receipt is unknown; inspect the receiver before explicit replay. File data is
+synced before replacement and Unix directory ordering is synced. Power-loss
+behavior still depends on the storage/filesystem. Run one backend per home.
+
+HTTP 2xx completes delivery. HTTP 429, 5xx, DNS and transport/timeouts may retry;
+other statuses fail. Attempts, backoff, jitter, rate and payload size (64 KiB) are
+bounded. Expired rows are pruned. Under capacity pressure the oldest terminal row
+can be evicted; if all rows are pending, new deliveries are refused and audited.
+Reconciliation can resend an evicted terminal record still present in retained
+jobs; the stable delivery ID lets the receiver deduplicate it. Outbox write failures
+and overflow never change a job result. Bounded retention cannot guarantee delivery
+of every lifetime job.
+
+## Inspect and replay without rerunning a job
+
+Open **Deliveries** and **Refresh status**. The panel lists only the acting owner's
+destinations and retained metadata, with state, attempts, replays and coarse result
+codes. It exposes no destination URL, token or job result. A failed/delivered row
+can be replayed with a reason and explicit checkbox; current authority and finite
+replay/retention limits still apply. Pending, revoked, expired and evicted deliveries
+cannot be replayed. A revoked destination revision needs a new deliberate grant,
+not a replay bypass.
+
+The guarded APIs are `GET /api/notifications` and
+`POST /api/notifications/{delivery_id}/replay` with `{"reason":"…","confirm":true}`.
+Foreign IDs return `DELIVERY_NOT_FOUND`; a machine memory key grants neither route.
+Replay returns `job_restarted: false` and never creates or modifies a coding job.
+Audit events `notification_delivery`, `notification_replay`, `notification_dropped`,
+`notification_evicted` and `notification_store_failed` record bounded metadata.
+The retained job remains authoritative for the coding outcome.

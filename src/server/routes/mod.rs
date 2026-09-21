@@ -6,6 +6,7 @@ pub mod auth;
 pub mod core;
 pub mod goals;
 pub mod notes_corpus;
+pub mod notifications;
 pub mod ollama;
 pub mod panels;
 pub mod persona;
@@ -25,7 +26,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 94] = [
+pub const REGISTERED_PATHS: [&str; 99] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -74,6 +75,8 @@ pub const REGISTERED_PATHS: [&str; 94] = [
     "/api/spend/predict",
     "/api/sessions",
     "/api/sessions/search",
+    "/api/sessions/legacy",
+    "/api/sessions/{session_id}/adopt",
     "/api/sessions/clear",
     "/api/sessions/{session_id}",
     "/api/sessions/{session_id}/export",
@@ -109,7 +112,10 @@ pub const REGISTERED_PATHS: [&str; 94] = [
     "/api/agent/jobs",
     "/api/agent/jobs/{job_id}",
     "/api/agent/jobs/{job_id}/cancel",
+    "/api/notifications",
+    "/api/notifications/{delivery_id}/replay",
     "/api/agent/schedules",
+    "/api/agent/schedules/preview",
     "/api/agent/schedules/{schedule_id}",
     "/api/agent/schedules/{schedule_id}/cancel",
     "/api/harness/runs",
@@ -245,6 +251,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/spend/predict", post(core::spend_predict))
         .route("/api/sessions", post(core::create_session))
         .route("/api/sessions/search", post(session_io::search_session_transcripts))
+        .route("/api/sessions/legacy", get(session_io::legacy_sessions))
+        .route("/api/sessions/{session_id}/adopt", post(session_io::adopt_session))
         .route("/api/sessions/clear", post(core::clear_sessions))
         .route("/api/sessions/{session_id}", get(core::get_session))
         .route("/api/sessions/{session_id}/export", get(session_io::export_session))
@@ -283,6 +291,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/agent/schedules",
             get(agent::schedules_list).post(agent::schedule_create),
         )
+        .route("/api/notifications", get(notifications::status))
+        .route("/api/notifications/{delivery_id}/replay", post(notifications::replay))
+        .route("/api/agent/schedules/preview", post(agent::schedule_preview))
         .route("/api/agent/schedules/{schedule_id}", get(agent::schedule_get))
         .route(
             "/api/agent/schedules/{schedule_id}/cancel",
@@ -364,7 +375,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 94);
+        assert_eq!(REGISTERED_PATHS.len(), 99);
 
         let all = registered_paths();
         assert!(

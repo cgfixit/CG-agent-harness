@@ -26,7 +26,7 @@ retained messages, without appending duplicate copies. Switching cancels the
 browser's current generation wait and ignores late replies from older selections.
 Hidden coding/proposal reviews are cleared, so an unseen review cannot remain
 armed. New/switch actions preserve saved sessions. `/clear` clears the display only.
-To delete saved chats, choose **Clear all session history** below **+ new session**
+To delete saved chats, choose **Clear my session history** below **+ new session**
 in the Sessions sidebar and confirm. This stops chat and removes session files,
 goals, skill selections and token totals; shared notes/persona/web and coding runs remain.
 Derived structured-memory episodes remain unless you also confirm that cascade;

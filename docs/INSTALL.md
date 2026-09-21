@@ -419,7 +419,7 @@ not a general environment-variable editor or connector credential vault.
 | Key | Purpose |
 |---|---|
 | `CGAGENTHARNESS_API_KEY` | Optional compatibility metadata; never grants account access |
-| `CGAGENTHARNESS_WEBHOOK_TOKEN` | Optional completion-webhook bearer; restart after saving. Requires [webhook-capable build and configuration](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook) |
+| `CGAGENTHARNESS_WEBHOOK_TOKEN` | Legacy bearer for a single owner's completion webhooks. A second owner needs `data/notifications/bearers.json`. Restart after saving. See [webhook configuration](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook) |
 | `GH_TOKEN` | GitHub CLI and its Git credential helper after restart; repository approvals still apply |
 | `GROK_API_KEY` | Optional explicit Grok chat and governed cloud coding planner |
 | `ANTHROPIC_API_KEY` | Optional explicit Claude chat and governed cloud coding planner |

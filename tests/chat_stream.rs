@@ -97,7 +97,7 @@ async fn incremental_delivery_commits_only_completed_exchange_with_and_without_t
             .unwrap();
         let mut text = String::from_utf8(first.to_vec()).unwrap();
         assert!(text.contains("hello "), "first delta: {text}");
-        assert!(s.state.store.get(id).unwrap().messages.is_empty());
+        assert!(s.state.store.for_owner("local").get(id).unwrap().messages.is_empty());
         while let Some(chunk) = response.chunk().await.unwrap() {
             text.push_str(std::str::from_utf8(&chunk).unwrap());
         }
@@ -107,7 +107,7 @@ async fn incremental_delivery_commits_only_completed_exchange_with_and_without_t
         assert_eq!(done["data"]["reply"], "hello world");
         assert_eq!(done["data"]["usage"]["prompt_tokens"], 3);
         assert_eq!(done["data"]["tally"]["total"], 5);
-        assert_eq!(s.state.store.get(id).unwrap().messages.len(), 2);
+        assert_eq!(s.state.store.for_owner("local").get(id).unwrap().messages.len(), 2);
         released(&s, &active).await;
     }
     task.abort();
@@ -133,7 +133,7 @@ async fn disconnect_and_explicit_cancel_stop_upstream_without_saving_partial_tex
                 drop(response);
             }
             released(&s, &active).await;
-            assert!(s.state.store.get(id).unwrap().messages.is_empty());
+            assert!(s.state.store.for_owner("local").get(id).unwrap().messages.is_empty());
         }
     }
     task.abort();
@@ -155,7 +155,7 @@ async fn streamed_tool_calls_keep_url_policy_and_malformed_output_never_commits_
             assert_eq!(last["data"]["web_tools"][0]["code"], "WEB_ALLOWLIST_EMPTY");
         } else {
             assert_eq!(last["type"], "error");
-            assert!(s.state.store.get(id).unwrap().messages.is_empty());
+            assert!(s.state.store.for_owner("local").get(id).unwrap().messages.is_empty());
         }
         released(&s, &active).await;
     }

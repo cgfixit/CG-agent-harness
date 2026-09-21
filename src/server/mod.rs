@@ -26,12 +26,14 @@ pub mod headers;
 pub mod mcp;
 pub mod memory_notes;
 pub mod notes_corpus;
+mod notification_outbox;
 pub mod notifications;
 pub mod passage_index;
 pub mod prompts;
 pub mod request_log;
 pub mod retrieval;
 pub mod routes;
+pub mod schedule_time;
 pub mod schemas;
 pub mod session_export;
 pub mod session_search;
@@ -153,7 +155,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     let auth = if cfg.flag_is_true("auth.enabled") {
         let mgr = AuthManager::open(&home.auth_path(), &cfg)?;
         mgr.bootstrap_if_empty()?;
-        Some(mgr)
+        Some(Arc::new(mgr))
     } else {
         None
     };
@@ -195,8 +197,12 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     let mut mcp = McpRuntime::from_config(&cfg)?;
     mcp.test_resolve = opts.web_test_resolve;
     let jobs = agent_jobs::JobStore::open(&home.data_dir().join("agentic/console-jobs.json"))?
-        .with_notifications(notifications::Notifier::start(&home, &cfg)?);
-    let schedules = agent_schedules::ScheduleStore::open(&home.data_dir().join("agentic/console-schedules.json"))?;
+        .with_notifications(notifications::Notifier::start(&home, &cfg, auth.clone())?);
+    let schedules = agent_schedules::ScheduleStore::open_at(
+        &home.data_dir().join("agentic/console-schedules.json"),
+        crate::common::now_ts(),
+        agent_schedules::Settings::from_config(&cfg)?,
+    )?;
     let structured_memory = if cfg.flag_is_true("structured_memory.enabled") {
         Some(StructuredMemoryStore::open(&home.structured_memory_path(), &cfg)?)
     } else {
@@ -247,6 +253,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         structured_memory,
         structured_gates: Mutex::new(structured_gates),
         web,
+        chat_owner: web_research::ResearchState::default(),
         mcp,
         home,
         cfg: cfg.clone(),
@@ -297,7 +304,9 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     {
         let sched = state.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(
+                sched.schedules.settings.poll_interval_ms,
+            ));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;

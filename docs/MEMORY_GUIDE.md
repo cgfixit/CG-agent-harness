@@ -14,14 +14,14 @@ Paths below are relative to the active Harness home (`CGAGENTHARNESS_HOME`).
 
 | Kind | How it is saved / scope | How it is used later |
 |---|---|---|
-| Chat history | Successful exchanges are written to `sessions/*.json`; shared portal resource | Bounded recent messages from the selected session accompany subsequent chat. This is not a durable-fact extractor. |
+| Chat history | Successful exchanges are written to `sessions/*.json`; account-owned, with unassigned legacy data quarantined | Bounded recent messages from the selected session accompany subsequent chat. This is not a durable-fact extractor. |
 | Pinned notes | `/memory add <literal text>` writes `memory/notes.json`; shared home | `/memory on` includes notes in the prompt; `/memory off` retains them but stops inclusion. Maximum 20 notes, 500 characters each. |
 | Persona / soul | `soul.md`; shared home; edit/save or reviewed `/soul apply <id> <reason>` | `/soul on|off` controls prompt inclusion. Persona guidance is distinct from account-private facts. |
 | Canonical structured facts | Private `memory/structured.sqlite3`; `/memory save`, governed fact HTTP writes, or approved proposals | List through the facts API; select for explicit recall or use separately gated facts-only retrieval. Saving does not itself enable prompt inclusion. |
 | Pending proposals | Same private SQLite store; a model or operator may propose | Memory panel shows content, action, category, sources and revision. Pending text is never recalled into chat. Apply/Reject requires a reason. |
 | Episodes | Private bounded metadata from successful captured chat; coding metadata when coding suggestions are enabled; optional human `semantic_summary` | Provenance and consolidation input. Never injected into chat or indexed by FTS. Metadata is not a durable fact. |
 | Facts search index | Derived, contentless FTS5 index in the structured store | Lexical search over facts only. No embeddings, vector database, episode search or RAG fusion. |
-| Coding jobs / run records | Existing shared operational records | Evidence about a coding run, not automatically injected memory. The new hook only uses the initiating account's current completed run. |
+| Detached coding jobs / run records | Owner-scoped jobs; shared underlying pipeline run records | Evidence about a coding run, not automatically injected memory. The new hook only uses the initiating account's current completed run. |
 
 `session_summary` and `insight` are fact/proposal categories, not new storage
 systems. A generated summary covers **one completed turn or run**, not an unseen

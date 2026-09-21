@@ -63,10 +63,12 @@ session timeouts.
 | POST | `/api/prompt/preview` | Show the assembled system prompt (`/prompt`) |
 | POST | `/api/slash/parse` | Suggest-don't-guess slash normalizer; never executes mutations |
 | GET | `/api/spend/summary` | Guarded retained-history spend rollup with completeness, file statuses and skipped-row counts (read-time USD) |
-| GET, POST | `/api/sessions` | List sessions or create one |
+| GET, POST | `/api/sessions` | List your sessions or create an owned one |
+| GET | `/api/sessions/legacy` | Administrator metadata inventory of unassigned legacy sessions |
+| POST | `/api/sessions/{session_id}/adopt` | Administrator adopts into own account with confirmation/reason; clears prior goal-stage approval |
 | POST | `/api/sessions/search` | Local transcript search; case-insensitive matches with Unicode-safe snippets of at most 160 characters |
-| POST | `/api/sessions/clear` | Delete all sessions |
-| GET | `/api/sessions/{session_id}` | Load one session |
+| POST | `/api/sessions/clear` | Delete owned sessions; retain foreign, legacy, corrupt and staged files |
+| GET | `/api/sessions/{session_id}` | Load one owned session |
 | GET | `/api/sessions/{session_id}/export` | Markdown export; also written 0o600 under home/exports |
 | POST | `/api/sessions/{session_id}/rename` | Rename |
 | POST | `/api/sessions/{session_id}/goal` | Set the session goal |
@@ -158,10 +160,13 @@ not a successful sandbox probe. `/tools mcp` renders that policy in the console.
 | GET | `/api/github/status` | GitHub credential and write-gate posture |
 | GET | `/api/agent/checks` | Check-profile names the browser may request |
 | POST | `/api/agent/run` | Synchronous run; check names map to fixed argv |
-| GET, POST | `/api/agent/jobs` | List detached jobs or start one |
+| GET, POST | `/api/agent/jobs` | List owned detached jobs or start one |
 | GET | `/api/agent/jobs/{job_id}` | Job status |
 | POST | `/api/agent/jobs/{job_id}/cancel` | Cancel a job |
-| GET, POST | `/api/agent/schedules` | List persisted schedules or create one (reviewed goal required) |
+| GET | `/api/notifications` | Owned destinations and retained delivery metadata; no URLs, credentials or job content |
+| POST | `/api/notifications/{delivery_id}/replay` | Confirmed owner replay within current grants/limits; never reruns a job |
+| POST | `/api/agent/schedules/preview` | Preview five interval/cron occurrences; return a bounded owner-bound activation receipt |
+| GET, POST | `/api/agent/schedules` | List owned schedules or activate the exact previewed, owned reviewed-goal request |
 | GET | `/api/agent/schedules/{schedule_id}` | One schedule |
 | POST | `/api/agent/schedules/{schedule_id}/cancel` | Cancel a schedule |
 | GET | `/api/agent/runs` | Retained run records |
@@ -177,29 +182,21 @@ into a child process; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
 
 ## Completion webhooks
 
-`notifications.enabled: true` enables a restart-only, best-effort notifier for
-terminal detached jobs (manual or scheduled). It is disabled by default. Set
-`notifications.webhook_url` to an HTTPS receiver. An exact entry in
-`notifications.private_url_allowlist` is required for loopback/private targets;
-that grant also permits HTTP for a local receiver. DNS is checked and pinned on
-every attempt. Link-local/metadata addresses, proxies and redirects are refused.
-Web content grants do not grant notification destinations, or vice versa.
+`notifications.enabled: true` activates the private bounded outbox for explicitly
+owned destinations and terminal-job subscriptions. It remains default-off and
+restart-only. Configure schema 1 `destinations`; a nonempty legacy global
+`webhook_url` refuses enablement until deliberately migrated. Account users cannot
+supply another owner through the status/replay APIs.
 
-Each JSON POST contains `version: 1`, a `batch_id` and `events`. Each event has only
-`job_id`, terminal `status` (`finished`, `failed`, `cancelled`), `created_at` and
-`finished_at` Unix timestamps. It contains no goal, instruction, repository,
-result, error text or credentials. An optional `CGAGENTHARNESS_WEBHOOK_TOKEN`
-is sent as a bearer header; save it in **API Keys** or the private managed `.env`
-file, then restart. Explicit process environment takes precedence.
+Version-2 JSON batches contain only stable event/delivery IDs, job ID, terminal
+status and timestamps. Every attempt rechecks current destination/account grants,
+validates and pins DNS, refuses proxies/redirects and requires HTTPS for public
+receivers. Exact private URL grants can permit private HTTP. Credentials are
+selected explicitly from the protected managed environment and never enter status,
+outbox records, payloads or audit.
 
-The finite queue batches at most `batch_size` events after `batch_interval_sec`.
-A 2xx response succeeds. Transport/DNS timeouts, 429 and 5xx receive at most
-`max_attempts` total attempts (maximum three); other statuses, including redirects,
-stop immediately. Retries use the same JSON body and `X-CGAgentHarness-Batch-ID`.
-Receivers should deduplicate that ID: a lost response can cause duplicate delivery.
-Queue overflow and final failure are audited without changing job outcomes.
-
-The queue is in memory: process exit can lose pending events, and startup does
-not replay old terminal jobs or emit recovered `interrupted` records. This is a
-completion hint, not a durable job log; the existing job and audit stores remain
-authoritative. No Telegram integration or real external receiver is required.
+Attempts and per-destination rate state persist before dispatch. Retained jobs
+reconcile an enqueue crash gap on restart. Finite retries, retention, bounded queue
+pressure and explicit replay use at-least-once delivery; receivers deduplicate by
+stable delivery ID. Replay never restarts a job. See the complete configuration,
+crash semantics and bounds in [SPEND_AND_NOTIFICATIONS.md](SPEND_AND_NOTIFICATIONS.md).

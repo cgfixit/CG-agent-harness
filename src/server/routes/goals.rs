@@ -27,11 +27,14 @@ impl Validate for StageRequest {
 }
 pub async fn stage(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StageRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let session = state
         .store
+        .for_owner(&owner)
         .get(&id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     if session.goal.trim().is_empty() {
@@ -41,7 +44,7 @@ pub async fn stage(
         ));
     }
     if let Some(job_id) = session.goal_stage.as_ref().and_then(|s| s["job_id"].as_str()) {
-        if state.jobs.get(job_id).is_some_and(|j| j["status"] == "running") {
+        if state.jobs.get(&owner, job_id).is_some_and(|j| j["status"] == "running") {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "GOAL_RUNNING",
@@ -55,21 +58,22 @@ pub async fn stage(
     let record = json!({"stage_id":stage_id,"goal":session.goal,"request":request,"job_id":null,"created_at":crate::common::now_ts()});
     state
         .store
+        .for_owner(&owner)
         .stage_goal(&id, &session.goal, session.goal_stage.as_ref(), &record)
         .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
     Ok(Json(
         json!({"stage":record,"request":request,"executed":false,"next":"Review request/checks; /agent confirm <reason>. Approval, push and publication remain separate."}),
     ))
 }
-pub fn validate_binding(state: &AppState, req: &AgentRunRequest) -> ApiResult<()> {
-    validate_binding_inner(state, req, false)
+pub fn validate_binding(state: &AppState, req: &AgentRunRequest, owner: &str) -> ApiResult<()> {
+    validate_binding_inner(state, req, owner, false)
 }
 
-pub fn validate_binding_recurring(state: &AppState, req: &AgentRunRequest) -> ApiResult<()> {
-    validate_binding_inner(state, req, true)
+pub fn validate_binding_recurring(state: &AppState, req: &AgentRunRequest, owner: &str) -> ApiResult<()> {
+    validate_binding_inner(state, req, owner, true)
 }
 
-fn validate_binding_inner(state: &AppState, req: &AgentRunRequest, recurring: bool) -> ApiResult<()> {
+fn validate_binding_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recurring: bool) -> ApiResult<()> {
     let Some(binding) = &req.goal_stage else { return Ok(()) };
     if !req.confirm || req.reason.trim().is_empty() {
         return Err(ApiError::bad_request(
@@ -78,16 +82,19 @@ fn validate_binding_inner(state: &AppState, req: &AgentRunRequest, recurring: bo
         ));
     }
     let result = if recurring {
-        state.store.validate_goal_binding_recurring(
+        state.store.for_owner(owner).validate_goal_binding_recurring(
             &binding.session_id,
             &binding.stage_id,
             &req.instruction,
             &req.branch,
         )
     } else {
-        state
-            .store
-            .validate_goal_binding(&binding.session_id, &binding.stage_id, &req.instruction, &req.branch)
+        state.store.for_owner(owner).validate_goal_binding(
+            &binding.session_id,
+            &binding.stage_id,
+            &req.instruction,
+            &req.branch,
+        )
     };
     result.map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))
 }
@@ -106,9 +113,15 @@ pub fn completion_state(record: &Value) -> &'static str {
         _ => "unverified",
     }
 }
-pub async fn status(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+pub async fn status(
+    State(state): State<Arc<AppState>>,
+    user: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user.clone());
     let session = state
         .store
+        .for_owner(&owner)
         .get(&id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let Some(stage) = session.goal_stage else {
@@ -116,7 +129,7 @@ pub async fn status(State(state): State<Arc<AppState>>, Path(id): Path<String>) 
     };
     let mut out = json!({"stage":stage,"status":"staged","completion":"Model text never establishes completion; local completion requires checked candidate evidence and operator approval.","auto_resume":false});
     if let Some(job_id) = stage["job_id"].as_str() {
-        match state.jobs.get(job_id) {
+        match state.jobs.get(&owner, job_id) {
             Some(job) => {
                 out["status"] = job["status"].clone();
                 if let Some(run_id) = job["result"]["parsed"]["run_id"].as_str() {
@@ -143,6 +156,9 @@ pub async fn status(State(state): State<Arc<AppState>>, Path(id): Path<String>) 
     }
     Ok(Json(out))
 }
+
+// Account identity comes only from the guarded request extension.
+type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;
 
 #[cfg(test)]
 mod tests {

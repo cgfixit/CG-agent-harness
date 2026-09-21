@@ -45,7 +45,7 @@ where
 }
 
 fn manager(state: &AppState) -> ApiResult<&AuthManager> {
-    state.auth.as_ref().ok_or_else(|| {
+    state.auth.as_deref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "AUTH_DISABLED",
@@ -248,13 +248,32 @@ pub async fn set_disabled(
     require_user_admin(&actor(&state, &req)?)?;
     let ValidJson(body) = ValidJson::<AuthDisabledRequest>::from_request(req, &()).await?;
     let mgr = manager(&state)?;
+    let owner_id = mgr.get_user(&username).map(|user| user.user_id);
     (if body.disabled {
         mgr.disable_user(&username)
     } else {
         mgr.enable_user(&username)
     })
     .map_err(|e| map_auth_error(&e))?;
+    if body.disabled {
+        if let Some(owner) = owner_id {
+            revoke_owner_automation(&state, &owner)?;
+        }
+    }
     Ok(Json(json!({"ok":true})))
+}
+
+fn revoke_owner_automation(state: &AppState, owner: &str) -> ApiResult<()> {
+    state
+        .schedules
+        .cancel_owner(owner)
+        .map_err(|error| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &error))?;
+    if let Some(notifier) = state.jobs.notifier() {
+        notifier
+            .disable_owner(owner)
+            .map_err(|error| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &error))?;
+    }
+    Ok(())
 }
 
 /// Audit accounts see only this fixed projection of request events. Model
@@ -423,6 +442,9 @@ pub async fn delete_user(
         .attachments
         .sweep_dead_owners(&|candidate| candidate == "local" || live.contains(candidate))
         .unwrap_or(0);
+    if let Some(owner) = owner.as_deref() {
+        revoke_owner_automation(&state, owner)?;
+    }
     Ok(Json(json!({"ok": true, "attachment_cleanup": cleanup, "swept": swept})))
 }
 

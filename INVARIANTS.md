@@ -79,8 +79,10 @@ SQLite is authoritative after transactional legacy migration; corrupt, empty or
 missing initialized storage never recreates default credentials. Failed commits
 never publish an in-memory account mutation. Private account identity scopes web
 selection and structured memory (facts, governed proposals, and optional
-episodes). Shared portal
-sessions/jobs/pinned notes/persona remain explicitly shared. Structured memory
+episodes), sessions, detached jobs and schedule management. Unassigned legacy
+sessions are quarantined until explicit admin adoption into the acting account,
+which clears prior coding approval. Pinned notes/persona, model selection,
+spend and agentic run records remain explicitly shared. Structured memory
 uses authenticated `user_id`, the documented `local` namespace from
 `context_owner` when accounts are disabled, or labeled `user_*` fixture owners. Canonical facts change only through
 an explicit human confirm+reason path; proposals may suggest but never apply
@@ -475,20 +477,31 @@ bodies are not echoed.
 
 ## Session export and transcript search stay on the machine
 
-`GET /api/sessions` remains an open summary list with no message bodies and no
-goal. Markdown export (`GET /api/sessions/{session_id}/export`) and transcript
-search (`POST /api/sessions/search`) sit on the CSRF-guarded router like
-`GET /api/sessions/{session_id}`. Export writes `{home}/exports/{id}.md` at
-`0o600` and returns the same bytes. Search rebuilds a request-local Tantivy
-RAM index over session JSON; it does not write the web cache or a second
-search crate. Hits are session id plus a bounded snippet. Sessions remain
-shared portal resources: any operator or admin who can load a session can
-export or search it. Transcripts never leave the machine.
+`GET /api/sessions` returns the acting owner's metadata without message bodies
+or goals. Normal storage queries require an `OwnedSessionStore`; search, export,
+chat, prompt preview, styles, skills, selected facts and goal bindings use it.
+`GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at `0600`
+and returns the same bytes. Search uses a request-local Tantivy RAM index of
+owned sessions. It never writes to the web cache or sends transcripts off-machine.
 
-- Locked by: `src/server/session_export.rs`,
-  `src/server/session_search.rs`,
-  `src/server/routes/session_io.rs`,
-  `tests/session_export.rs`.
+Records without schema/owner are legacy shared data. They stay outside normal
+reads and clear-history. An administrator can inspect metadata at
+`GET /api/sessions/legacy`, then `POST /api/sessions/{id}/adopt` with explicit
+`confirm: true` and a reason to adopt into their own account. Adoption clears
+`goal_stage`; no owner can be supplied in the request. Explicit auth-off mode
+uses `local`. Corrupt, unknown-schema, foreign and interrupted staged files remain
+untouched by account clear-history. A late turn cannot recreate a deleted session.
+Chat cancellation and pending chat-suggestion cleanup affect only the initiator.
+
+Detached jobs and schedule reads/cancellation are owner checked inside their
+stores. Legacy ownerless jobs remain unavailable through account APIs; startup
+marks any old running record interrupted. Schedule dispatch rechecks the current
+account's enabled, non-bootstrap operator/admin authority. Deleting/recreating an
+account never transfers its old random owner identity.
+
+- Locked by: `src/server/sessions.rs`, `src/server/session_search.rs`,
+  `src/server/routes/session_io.rs`, `tests/session_export.rs`,
+  `tests/owner_isolation.rs`.
 
 ## Scheduled agentic runs cannot skip reviewed-goal or write gates
 
@@ -496,9 +509,13 @@ A persisted schedule (`$CGAGENTHARNESS_HOME/data/agentic/console-schedules.json`
 `0o600`) fires the same validated request as `POST /api/agent/jobs` through
 `prepare_run`. Creating a schedule without a bound/reviewed `goal_stage` fails
 closed. `confirm` is never defaulted; write gates stay closed. Each occurrence
-is consumed before the job starts (at-most-once): `next_fire_at` / `last_fired_at`
-survive process restart, a restart mid-window does not fire, and missed windows
-are skipped rather than caught up. Cancelled schedules do not fire; cancelling
+is consumed before the job starts (at-most-once): versioned interval/cron specs,
+occurrence identity and `next_fire_at` / `last_fired_at`
+survive process restart. Elapsed work is skipped at startup; normal polling has
+a bounded grace. New activation requires a single-use owner-bound preview of the
+exact reviewed request. Calendar gaps skip and repeated wall times select only
+the first UTC mapping. Stale poll snapshots cannot consume a future occurrence.
+The store lock serializes cancellation with synchronous job registration. Cancelled schedules do not fire; cancelling
 the resulting job still makes `JobStore::finish` a no-op. Start, complete, and
 fail are audited via `Audit::log` (JSONL, never raises).
 
@@ -550,17 +567,27 @@ create no spend rows. This is an estimate, never a guaranteed invoice ceiling.
 
 ## Completion notifications do not grant job or content authority
 
-`notifications.enabled` is literal-true, default-off and restart-only. The shared
-JobStore emits terminal transitions once per process; repeated finish/cancel calls
-cannot create another event. An in-memory bounded queue delivers only job ID,
-status and timestamps to the explicitly configured webhook. It never sends job
-instructions/results, repository names, errors, or model context. Optional bearer
-credentials use the private managed environment store and are stripped from MCP
-child environments. Every DNS answer is validated and pinned before sending;
-private destinations require an exact configured URL grant, and redirects are
-never followed. Failed deliveries/overflow are audited and never change a job's
-result. Retries are bounded to three with a stable batch ID. No durable delivery
-or replay after restart is claimed. I6 and all execution/write gates are unchanged.
+`notifications.enabled` is literal-true, default-off and restart-only. Explicit
+versioned destinations bind a stable account owner, subscriptions, exact target,
+credential selection and rate. No global URL receives an invented owner. The
+private bounded outbox atomically persists stable event/delivery identity and
+attempt/rate timing before networking, then records the result. Retained terminal
+jobs reconcile the job-commit/enqueue crash gap; no completed coding job is rerun.
+
+Only job IDs, terminal status, timestamps and deduplication IDs leave the process.
+Status/replay storage methods require the acting owner. Replay additionally needs
+explicit reason/confirmation and has finite count/retention limits. Every attempt
+and replay rechecks startup destination authority against current disk grants and
+current enabled operator/admin owner. Disk changes only revoke until restart;
+in-flight requests may finish. Credentials stay in the protected managed environment.
+
+All DNS answers are validated/pinned, redirects/proxies are disabled, public
+receivers require HTTPS and private receivers require exact URL grants. Retries
+remain at most three per cycle. Delivery is at least once within finite bounds:
+receiver deduplication is required after timeout/crash/replay. Pressure, expiry or
+storage failures are explicit and never change job authority/outcomes. No payload
+content adapter or inbound listener is enabled. The 22-key reload allowlist and I6
+remain unchanged. See `docs/SPEND_AND_NOTIFICATIONS.md` for crash/retention limits.
 
 ## Reload changes limits, not authority
 

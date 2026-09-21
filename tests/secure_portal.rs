@@ -236,14 +236,17 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     }
     std::fs::write(&server.state.cfg.path, &valid).unwrap();
     // A new loop call uses the reloaded generation cap, not the startup value.
+    let owner = server.state.auth.as_ref().unwrap().get_user("admin").unwrap().user_id;
     let session = server
         .state
         .store
+        .for_owner(&owner)
         .create(&server.state.current_model(), "reload fixture")
         .unwrap();
     server
         .state
         .store
+        .for_owner(&owner)
         .rename(&session.session_id, None, Some("say hello"))
         .unwrap();
     let before = model.requests.lock().unwrap().len();

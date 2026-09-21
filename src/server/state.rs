@@ -76,6 +76,7 @@ pub struct AppState {
     pub runtime: std::sync::RwLock<Arc<super::config_reload::RuntimeLimits>>,
     pub settings: Mutex<HarnessSettings>,
     pub store: SessionStore,
+    pub chat_owner: super::web_research::ResearchState,
     pub attachments: AttachmentStore,
     pub notes_corpus: crate::server::notes_corpus::NotesCorpus,
     pub notes_ingest_permits: Arc<tokio::sync::Semaphore>,
@@ -97,7 +98,7 @@ pub struct AppState {
     /// Snapshot of `CGAGENTHARNESS_API_KEY` at build time (tests inject it).
     pub api_key: Option<String>,
     pub key_file_sources: BTreeSet<String>,
-    pub auth: Option<AuthManager>,
+    pub auth: Option<Arc<AuthManager>>,
     /// Limits concurrent memory-hard scrypt derivations for this app instance.
     pub auth_operation_permits: Arc<tokio::sync::Semaphore>,
     /// Limits attachment upload bodies held in memory at once.

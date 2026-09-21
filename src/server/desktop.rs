@@ -188,11 +188,7 @@ fn start() -> anyhow::Result<()> {
             }
         }
         state.abort_chat();
-        for job in state.jobs.list() {
-            if let Some(id) = job["job_id"].as_str() {
-                state.jobs.cancel(id);
-            }
-        }
+        state.jobs.cancel_all_for_shutdown();
         server.abort();
         let _ = server.await;
         // Permit cancellation guards and their bounded native cleanup to run.
