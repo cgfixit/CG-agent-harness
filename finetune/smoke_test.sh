@@ -17,20 +17,20 @@ MOCK_LOG="$(mktemp)"
 CONFIG_DIR="$(mktemp -d)"
 trap 'kill "${MOCK_PID:-}" 2>/dev/null || true; rm -rf "$CONFIG_DIR" "$MOCK_LOG"' EXIT
 
-echo "==> 1/4  start mock OpenAI server on 127.0.0.1:${PORT} (model=${MODEL})"
+echo "==> 1/4  start mock OpenAI server on 127.0.0.1:${PORT} (model=${MODEL})"  # DevSkim: ignore DS162092 because this smoke binds the mock to loopback only.
 python3 finetune/mock_server.py --port "$PORT" --model "$MODEL" >"$MOCK_LOG" 2>&1 &
 MOCK_PID=$!
 sleep 1
-curl -sf "http://127.0.0.1:${PORT}/v1/models" | head -c 200; echo
+curl -sf "http://127.0.0.1:${PORT}/v1/models" | head -c 200; echo  # DevSkim: ignore DS162092 because this smoke probes the loopback mock only.
 
 echo "==> 2/4  write a config pointing BOTH model paths at the mock (MLX as primary)"
 cat > "$CONFIG_DIR/config.yaml" <<YAML
 server:
-  bind: "127.0.0.1:8790"
+  bind: "127.0.0.1:8790"  # DevSkim: ignore DS162092 because this smoke config binds the harness to loopback only.
 models:
   local_llm:
     provider: "lmstudio"
-    base_url: "http://127.0.0.1:${PORT}/v1"
+    base_url: "http://127.0.0.1:${PORT}/v1"  # DevSkim: ignore DS162092 because this smoke points chat at the loopback mock.
     model: "${MODEL}"
     reasoning_effort: "none"
   cloud_chat:
@@ -38,7 +38,7 @@ models:
 agentic:
   deepagent_github:
     provider: "openai_compatible"
-    base_url: "http://127.0.0.1:${PORT}/v1"
+    base_url: "http://127.0.0.1:${PORT}/v1"  # DevSkim: ignore DS162092 because this smoke points the planner at the loopback mock.
     model: "${MODEL}"
     allow_cloud_providers: false
 YAML
@@ -53,9 +53,7 @@ timeout 20 "$BIN" --config "$CONFIG_DIR/config.yaml" serve &
 SRV_PID=$!
 sleep 3
 # Send a trivial chat turn to the console's chat endpoint (adjust route per build).
-curl -sf -X POST "http://127.0.0.1:8790/api/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"ping"}' || echo "(chat route may differ by build — check server logs)"
+curl -sf -X POST "http://127.0.0.1:8790/api/chat" -H "Content-Type: application/json" -d '{"message":"ping"}' || echo "(chat route may differ by build — check server logs)"  # DevSkim: ignore DS162092 because this smoke chats with the loopback console only.
 sleep 1
 kill "$SRV_PID" 2>/dev/null || true
 

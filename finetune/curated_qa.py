@@ -109,7 +109,7 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "What is the loopback-only chat invariant and how is it enforced?",
     "input": "",
     "output": (
-        "CG-Agent talks to local model servers only on loopback (127.0.0.1 / localhost / ::1). "
+        "CG-Agent talks to local model servers only on loopback (127.0.0.1 / localhost / ::1). "  # DevSkim: ignore DS162092 because this Q&A documents the loopback-only invariant.
         "is_loopback_url (src/llm/backend.rs) enforces this for models.local_llm.base_url and "
         "agentic.deepagent_github.base_url; local_endpoint (src/llm/inventory.rs) additionally rejects "
         "URLs with credentials, query, or fragment. The inventory probe never probes external endpoints "
@@ -242,7 +242,7 @@ CURATED_QA: list[dict[str, str]] = [
         "finetune/lora_config.yaml (QLoRA auto-detected on the 4-bit MLX base; base frozen, adapter trained "
         "full-precision). 3) Fuse: mlx_lm.fuse --model malekoo/Qwen3.8-27B-MLX-4bit --adapter-path ./adapters "
         "--save-path ./cgagent-fused. 4) Serve: mlx_lm.server --model ./cgagent-fused --port 1234. 5) Wire BOTH "
-        "configs at the server (MLX as primary): models.local_llm.provider=lmstudio, base_url=http://127.0.0.1:1234/v1, "
+        "configs at the server (MLX as primary): models.local_llm.provider=lmstudio, base_url=http://127.0.0.1:1234/v1, "  # DevSkim: ignore DS162092 because this Q&A documents the loopback MLX bind.
         "and agentic.deepagent_github.provider=openai_compatible, same base_url. Always fuse before serving — "
         "Ollama cannot hot-load an MLX adapter."
     ),
@@ -268,7 +268,7 @@ CURATED_QA: list[dict[str, str]] = [
         "Instead of keeping mlx_lm.server running as a separate loopback process, you can re-export the fused "
         "model to GGUF and register it in Ollama: ollama create cgagent-fused -f finetune/Modelfile.cgagent "
         "(after GGUF conversion via llama.cpp). Then set models.local_llm.provider=ollama, "
-        "base_url=http://127.0.0.1:11434/v1, model=cgagent-fused. Use this when you want one process (Ollama) "
+        "base_url=http://127.0.0.1:11434/v1, model=cgagent-fused. Use this when you want one process (Ollama) "  # DevSkim: ignore DS162092 because this Q&A documents the loopback Ollama bind.
         "serving both chat and the planner, or when mlx_lm.server's per-request latency is a concern. The "
         "loopback mlx_lm.server path is the alternative — it preserves MLX optimizations and avoids GGUF "
         "conversion's small quality loss."
@@ -281,7 +281,7 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "How do you smoke-test that CG-Agent can use a fused MLX model without Rust changes?",
     "input": "",
     "output": (
-        "Run finetune/mock_server.py on 127.0.0.1:1235 — it answers GET /v1/models with the configured id "
+        "Run finetune/mock_server.py on 127.0.0.1:1235 — it answers GET /v1/models with the configured id "  # DevSkim: ignore DS162092 because this Q&A documents the loopback smoke mock.
         "and POST /v1/chat/completions with finish_reason=stop. Then point both configs at it as primary "
         "(models.local_llm.provider=lmstudio, agentic.deepagent_github.provider=openai_compatible, same "
         "loopback base_url), cargo build --release, boot the console, send a chat, and run a real-repo "

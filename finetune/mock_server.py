@@ -10,9 +10,10 @@ LocalProposerClient all succeed against it:
   POST /v1/chat/completions  -> {"choices":[{"finish_reason":"stop","message":{"content":"..."}}]}
 
 Run:  python3 finetune/mock_server.py --port 1235 --model cgagent-fused
-Then point BOTH configs at http://127.0.0.1:1235/v1 (see smoke_test.sh).
+Then point BOTH configs at the loopback mock (see smoke_test.sh).
 Standard library only — no install needed.
 """
+# Loopback mock URL: http://127.0.0.1:1235/v1  # DevSkim: ignore DS162092,DS137138 because this documents the loopback-only smoke mock.
 from __future__ import annotations
 
 import argparse
@@ -69,13 +70,13 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--host", default="127.0.0.1")  # DevSkim: ignore DS162092 because this mock must bind only to loopback.
     ap.add_argument("--port", type=int, default=1235)
     ap.add_argument("--model", default="cgagent-fused")
     args = ap.parse_args()
     Handler.model = args.model
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"[mock] OpenAI-compatible mock on http://{args.host}:{args.port}/v1 "
+    print(f"[mock] OpenAI-compatible mock on http://{args.host}:{args.port}/v1 "  # DevSkim: ignore DS137138 because this is a loopback-only local smoke mock, not a network service.
           f"(model={args.model})", flush=True)
     print("[mock] endpoints: GET /v1/models, POST /v1/chat/completions", flush=True)
     try:

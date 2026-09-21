@@ -141,7 +141,7 @@ def build_dataset(repo_path: Path, out_dir: Path, train_ratio: float = 0.9) -> i
 
     import random
     random.seed(3407)
-    random.shuffle(examples)
+    random.shuffle(examples)  # DevSkim: ignore DS148264 because this is a seeded train/valid split (random.seed(3407)), not a security RNG.
     n = len(examples)
     n_train = int(n * train_ratio)
     train, valid = examples[:n_train], examples[n_train:]
