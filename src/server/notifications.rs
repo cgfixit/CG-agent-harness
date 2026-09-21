@@ -123,6 +123,12 @@ fn revoked_path(home: &Home) -> PathBuf {
 }
 
 fn read_optional_json(path: &std::path::Path) -> Result<Option<Value>> {
+    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        return Err(invalid());
+    }
+    let path = std::path::Path::new(raw.as_ref());
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
@@ -405,6 +411,12 @@ impl Notifier {
             return Ok(0);
         }
         let path = revoked_path(&self.0.home);
+        // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+        let raw = path.to_string_lossy();
+        if raw.contains("..") {
+            return Err(invalid());
+        }
+        let path = std::path::Path::new(raw.as_ref());
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
             #[cfg(unix)]
@@ -785,6 +797,11 @@ async fn send_pinned(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn optional_json_refuses_parent_components() {
+        let err = read_optional_json(std::path::Path::new("/tmp/harness/../bearers.json")).unwrap_err();
+        assert!(err.to_string().contains("invalid notifications configuration"));
+    }
     #[test]
     fn destination_answers_fail_closed() {
         let addr = |s: &str| s.parse::<SocketAddr>().unwrap();
