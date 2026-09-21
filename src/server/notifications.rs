@@ -428,7 +428,7 @@ impl Notifier {
         let mut owners = revoked_owners(&self.0.home)?;
         owners.insert(owner.to_string());
         let body = serde_json::to_vec(&json!({"version": 1, "owners": owners}))?;
-        crate::common::atomic::write_atomic(&path, &body, Some(0o600))?;
+        crate::common::atomic::write_atomic(path, &body, Some(0o600))?;
         self.0
             .suppressed_owners
             .lock()
