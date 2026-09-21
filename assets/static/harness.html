@@ -803,13 +803,22 @@ function renderMcpCapabilities(status) {
       'Tools: ' + (server.tools || []).join(', '));
     const cap = server.capabilities;
     if (!cap) { lines.push('Remote SSE: DNS-pinned URL policy'); continue; }
-    lines.push('Filesystem: confined; working directory and runtime files are readable',
-      'Read grants: ' + (cap.read_roots || []).join(', '),
-      'Write grants: owned scratch' + ((cap.write_roots || []).length ? ', ' + cap.write_roots.join(', ') : ''),
-      'Network: ' + (cap.network === 'deny' ? 'denied' : 'UNRESTRICTED — explicit operator grant'));
+    if (cap.filesystem === 'unrestricted') {
+      lines.push('Filesystem: UNRESTRICTED — trusted-server exception, including account-accessible secrets',
+        'Read/write access: all paths permitted by the Windows account');
+    } else {
+      lines.push('Filesystem: confined; working directory and runtime files are readable',
+        'Read grants: ' + (cap.read_roots || []).join(', '),
+        'Write grants: owned scratch' + ((cap.write_roots || []).length ? ', ' + cap.write_roots.join(', ') : ''));
+    }
+    lines.push('Network: ' + (cap.network === 'deny' ? 'denied' : 'UNRESTRICTED — explicit operator grant'));
     if (cap.containment === 'strict') {
       lines.push('Lifecycle: strict service containment required; unavailable platforms refuse',
         'Limits: ' + cap.limits.processes + ' processes, ' + cap.limits.memory_mb + ' MiB');
+    } else if (cap.containment === 'job_object') {
+      lines.push('Lifecycle: Windows Job Object; descendants terminate on runner exit, breakaway denied',
+        'Limits: ' + cap.limits.processes + ' processes, ' + cap.limits.memory_mb + ' MiB',
+        'No filesystem or network isolation. Calls to outside Windows services are outside this boundary.');
     } else {
       lines.push('Lifecycle: PROCESS GROUP EXCEPTION — runner death or detached descendants can escape cleanup');
     }

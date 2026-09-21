@@ -279,6 +279,12 @@ pub fn wrap_mcp_stdio(
     capabilities: &StdioCapabilities,
 ) -> Result<WrappedStdio> {
     let (mut read_roots, write_roots) = capabilities.resolve_roots(home)?;
+    if capabilities.containment == Containment::JobObject && !cfg!(windows) {
+        return Err(HarnessError::new(
+            "MCP_CONTAINMENT_UNAVAILABLE",
+            "job_object is a Windows-only trusted-server exception",
+        ));
+    }
     if let Some(home) = home {
         let runtime_roots: Vec<&str> = if cfg!(target_os = "macos") {
             MACOS_OS_RO_DIRS.to_vec()
@@ -333,14 +339,22 @@ pub fn wrap_mcp_stdio(
     read_roots.push(program.clone());
     let mut command = argv.to_vec();
     command[0] = program.to_string_lossy().into_owned();
-    let (wrapped, backend, probe_reason) = wrap_argv(
-        &command,
-        &child_cwd,
-        scratch.path(),
-        &read_roots,
-        &write_roots,
-        capabilities.network,
-    )?;
+    let (wrapped, backend, probe_reason) = if capabilities.containment == Containment::JobObject {
+        (
+            command,
+            "windows-job-object-unrestricted",
+            "Explicit trusted-server exception: unrestricted filesystem and network; Job Object process and memory bounds only".into(),
+        )
+    } else {
+        wrap_argv(
+            &command,
+            &child_cwd,
+            scratch.path(),
+            &read_roots,
+            &write_roots,
+            capabilities.network,
+        )?
+    };
     Ok(WrappedStdio {
         argv: wrapped,
         backend,
@@ -463,6 +477,7 @@ mod tests {
     fn macos_stdio_wrap_uses_seatbelt() {
         let capabilities = StdioCapabilities {
             version: 1,
+            filesystem: Default::default(),
             read_roots: vec![],
             write_roots: vec![],
             network: NetworkPolicy::Deny,

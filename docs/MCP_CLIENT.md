@@ -27,6 +27,7 @@ mcp:
       tools: [lookup]
       capabilities:
         version: 1
+        filesystem: confined
         read_roots: [/srv/mcp/server.py, /srv/documents]
         write_roots: []
         network: deny
@@ -39,7 +40,7 @@ mcp:
 Replace these example paths with existing, deliberately granted paths. At most
 16 read/write roots are accepted. Roots must be absolute, cannot contain `..`
 or name the filesystem root, and are canonicalized again for every invocation.
-The harness home and any ancestor/descendant overlap are refused. The optional
+For confined policies (the default), the harness home and any ancestor/descendant overlap are refused. The optional
 `cwd` is an additional read-only grant; omit it for an empty owned directory.
 The executable and fixed OS runtime files are readable. Script arguments do
 not grant their directories: declare scripts, modules and non-system runtimes
@@ -64,6 +65,8 @@ when its network namespace probe fails.
 | `process_group`, macOS | Seatbelt filesystem/network policy; explicit weaker lifecycle exception |
 | `process_group`, Linux | bubblewrap filesystem policy and selected network policy; explicit weaker lifecycle exception |
 | `process_group`, Windows | refuses; required filesystem confinement is unavailable |
+| `job_object`, Windows | explicit trusted-server exception; unrestricted filesystem/network, atomic process-tree ownership and resource limits |
+| `job_object`, macOS / Linux | refuses before execution |
 
 Strict limits are required: `processes` 8–128 and `memory_mb` 64–4096. The
 process count includes supervisor/runtime processes and the memory cap covers
@@ -78,6 +81,37 @@ with `process_group` and omit `limits`. This exception promises neither
 aggregate resource limits nor cleanup after runner death or detached descendant
 escape. `/tools mcp` displays the exception. Do not describe it as strict
 containment. See [lifecycle details and acceptance](PROCESS_LIFECYCLE.md).
+
+## Explicit Windows trusted-server exception
+
+Windows cannot enforce this client's filesystem/network sandbox policy. Only
+for a trusted server, an operator can deliberately declare:
+
+```yaml
+capabilities:
+  version: 1
+  filesystem: unrestricted
+  network: unrestricted
+  containment: job_object
+  limits: {processes: 8, memory_mb: 256}
+```
+
+Use an absolute native `.exe` command; batch files are refused. Read/write root
+lists must be empty because they cannot restrict this mode. Missing
+`filesystem` defaults to `confined` and therefore refuses this exception.
+Process limits use the same finite ranges as strict Linux; memory covers the
+whole job. The backend is reported as `windows-job-object-unrestricted`.
+The console explicitly warns that account-accessible secrets are readable.
+Scrubbing environment variables and checking declared command/cwd paths do not
+prevent this trusted program from opening other paths or contacting services.
+
+Membership exists before the first child instruction. Normal detached children
+cannot break away, and the OS terminates job members when the runner exits even
+without cleanup code. Windows services outside the job (including WMI/COM) are
+outside this guarantee. A responsive harness enforces the request deadline;
+this is not an OS wall-clock timer or a hostile-code sandbox. No fallback,
+model output or hot reload can choose this exception. Future AppContainer/VM
+isolation requires a separate implementation and acceptance.
 
 ## Inspect and troubleshoot
 

@@ -23,6 +23,8 @@ pub mod ratelimit;
 pub mod repo_paths;
 pub mod sandbox_wrap;
 pub mod tool_broker;
+#[cfg(windows)]
+pub mod windows_job;
 
 /// Current Unix time as f64 seconds (the shape CyClaw stores in its JSON files).
 pub fn now_ts() -> f64 {

@@ -29,6 +29,7 @@ mod linux {
         ];
         let policy = StdioCapabilities {
             version: 1,
+            filesystem: Default::default(),
             read_roots: vec![fixture],
             write_roots: vec![directory.into()],
             network: NetworkPolicy::Deny,
