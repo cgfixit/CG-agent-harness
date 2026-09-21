@@ -354,6 +354,8 @@ impl JobStore {
         Some(value)
     }
 
+    // The native sidecar and its shutdown owner exist only on Unix.
+    #[cfg(unix)]
     pub(crate) fn cancel_all_for_shutdown(&self) {
         let owned: Vec<_> = self
             .inner

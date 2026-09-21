@@ -5,15 +5,15 @@ use reqwest::{Method, Response};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const PASSWORD: &str = "owner-isolation-fixture-password"; // Synthetic test-only account credential.
 async fn account(server: &TestServer, name: &str, role: &str) -> (String, String) {
     let auth = server.state.auth.as_ref().unwrap();
-    auth.create_user(name, PASSWORD, role).unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    auth.create_user(name, &password, role).unwrap();
     let owner = auth.get_user(name).unwrap().user_id;
     let response = server
         .client
         .post(server.url("/api/auth/login"))
-        .json(&json!({"username":name,"password":PASSWORD}))
+        .json(&json!({"username":name,"password":password}))
         .send()
         .await
         .unwrap();

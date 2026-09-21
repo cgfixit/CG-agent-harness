@@ -311,8 +311,8 @@ async fn current_account_revocation_stops_an_owned_destination() {
     home.ensure_layout().unwrap();
     let base = config(&home, &url);
     let auth = Arc::new(AuthManager::open(&home.auth_path(), &base).unwrap());
-    auth.create_user("delivery-owner", "isolated-notification-fixture-password", "operator")
-        .unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    auth.create_user("delivery-owner", &password, "operator").unwrap();
     let owner = auth.get_user("delivery-owner").unwrap().user_id;
     let mut raw = base.raw.clone();
     raw["auth"]["enabled"] = serde_yaml_ng::Value::Bool(true);
