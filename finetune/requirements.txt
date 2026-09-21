@@ -1,8 +1,5 @@
-# Python deps for the fine-tune toolchain.
-# The builder (build_dataset.py) and mock server (mock_server.py) use only the
-# standard library — no install needed for those.
-#
-# Training requires mlx-lm (Apple Silicon only). Install in a venv on the Mac:
-#   python3 -m venv .venv && source .venv/bin/activate
-#   pip install -r finetune/requirements.txt
-mlx-lm>=0.22.0
+# Training-only dependencies for the CG-Agent mlx-vlm QLoRA fine-tune.
+# Install in a venv on the Mac:  pip install -r finetune/requirements.txt
+# The dataset builder (build_dataset.py) and mock server (mock_server.py) use only the
+# Python standard library — they need none of these.
+mlx-vlm[train]>=0.6.8

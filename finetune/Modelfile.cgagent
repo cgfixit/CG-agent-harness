@@ -3,14 +3,16 @@
 # Two uses:
 #  1. System-prompt path (no training): FROM qwen3.8:27b-mlx + the CG-Agent system
 #     prompt. `ollama create cgagent -f finetune/Modelfile.cgagent` gives you the
-#     stock model with repo-aware prompting.
-#  2. GGUF re-export path (after fine-tuning): fuse the MLX adapter, convert the
-#     fused model to GGUF (llama.cpp convert), then `ollama create cgagent-fused -f
+#     stock multimodal model with repo-aware prompting.
+#  2. GGUF re-export path (after fine-tuning): mlx-vlm has no fuse command, so you
+#     must fuse the LoRA into the base weights manually (llama.cpp or a safetensors
+#     merge), convert the fused model to GGUF, then `ollama create cgagent-fused -f
 #     finetune/Modelfile.cgagent` after changing FROM to your fused GGUF file.
 #
-# A fine-tuned MLX adapter is NOT attached here — Ollama cannot hot-load an MLX
-# adapter. For the live-MLX path, serve the fused model with mlx_lm.server and
-# point models.local_llm / agentic.deepagent_github at the loopback URL instead.
+# The fine-tuned LoRA is NOT served via Ollama here. The primary serve path is
+# `mlx_vlm.server --model mlx-community/Qwen3.8-27B-4bit --adapter-path ./adapters`
+# (loopback, OpenAI-compatible, adapter applied live — no fuse step). Wire both
+# models.local_llm and agentic.deepagent_github at that loopback URL instead.
 FROM qwen3.8:27b-mlx
 PARAMETER temperature 0.2
 PARAMETER num_ctx 32768

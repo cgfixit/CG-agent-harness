@@ -10,8 +10,9 @@ Sourced from the live repo (main, 2026-09-20): src/agentic/, src/llm/,
 src/server/, src/common/, setup-guide.md, docs/MODELS.md, docs/CODING_PIPELINE.md,
 INVARIANTS.md. Each claim is verifiable against the cited module/function.
 
-Target: MacBook Pro M5 Pro, 48 GB unified, qwen3.8:27b-mlx base, mlx_lm.lora QLoRA.
-Schema: each entry is {"instruction": str, "input": str, "output": str} -> MLX ChatML.
+Target: MacBook Pro M5 Pro, 48 GB unified, multimodal qwen3.8:27b-mlx family, mlx-vlm QLoRA
+(vision encoder frozen, language model adapted). Schema: each entry is
+{"instruction": str, "input": str, "output": str} -> mlx-vlm {"messages": [...]}.
 """
 
 from __future__ import annotations
@@ -238,13 +239,14 @@ CURATED_QA: list[dict[str, str]] = [
     "input": "",
     "output": (
         "1) Build the dataset: python finetune/build_dataset.py --repos . --dataset --dataset-dir finetune/data "
-        "(emits train.jsonl/valid.jsonl in MLX ChatML {\"text\": ...} format). 2) Train: mlx_lm.lora --config "
-        "finetune/lora_config.yaml (QLoRA auto-detected on the 4-bit MLX base; base frozen, adapter trained "
-        "full-precision). 3) Fuse: mlx_lm.fuse --model malekoo/Qwen3.8-27B-MLX-4bit --adapter-path ./adapters "
-        "--save-path ./cgagent-fused. 4) Serve: mlx_lm.server --model ./cgagent-fused --port 1234. 5) Wire BOTH "
-        "configs at the server (MLX as primary): models.local_llm.provider=lmstudio, base_url=http://127.0.0.1:1234/v1, "
-        "and agentic.deepagent_github.provider=openai_compatible, same base_url. Always fuse before serving — "
-        "Ollama cannot hot-load an MLX adapter."
+        "(emits train.jsonl/valid.jsonl in mlx-vlm {\"messages\": [...]} format). 2) Train: bash finetune/train.sh, "
+        "which runs mlx_vlm.lora on the multimodal 4-bit base mlx-community/Qwen3.8-27B-4bit (--train-vision off, so "
+        "the vision encoder is frozen and preserved; LoRA only adapts the language model). 3) There is no separate "
+        "fuse step — mlx-vlm applies the adapter live at serve time. 4) Serve: mlx_vlm.server --model "
+        "mlx-community/Qwen3.8-27B-4bit --adapter-path ./adapters --port 1234 (OpenAI-compatible loopback). 5) Wire "
+        "BOTH configs at the server (MLX as primary): models.local_llm.provider=lmstudio, "
+        "base_url=http://127.0.0.1:1234/v1, and agentic.deepagent_github.provider=openai_compatible, same base_url. "
+        "The fine-tuned model keeps vision capability because the vision tower was frozen, not stripped."
     ),
 },
 
@@ -253,25 +255,27 @@ CURATED_QA: list[dict[str, str]] = [
     "input": "",
     "output": (
         "LoRA the technique is not CUDA-specific. Apple's MLX framework implements LoRA and QLoRA natively on "
-        "the Metal GPU with no CUDA dependency — mlx_lm.lora trains LoRA/DoRA/full, and QLoRA is automatic when "
-        "the base model is quantized (point --model at a 4-bit MLX base). The CUDA association comes from the "
-        "old ecosystem (Unsloth, bitsandbytes, PyTorch+PEFT on NVIDIA). On an M5 Pro 48 GB, a 27B QLoRA fits: "
-        "4-bit base ~16-18 GB plus adapter/Adam/activations ~24-28 GB peak, with OS headroom. Ollama still "
-        "cannot hot-load an MLX adapter — fuse first, then serve via mlx_lm.server or re-export to GGUF."
+        "the Metal GPU with no CUDA dependency. For CG-Agent we use mlx-vlm (not mlx-lm) because the target "
+        "qwen3.8:27b-mlx is multimodal (Qwen3_5ForConditionalGeneration, Text+Image): mlx-vlm.lora fine-tunes "
+        "the language model of the VLM with --train-vision off, so the vision encoder is frozen and preserved. "
+        "mlx-lm cannot do this — it is text-only and strips the vision encoder. The CUDA association comes from "
+        "the old NVIDIA ecosystem (Unsloth, bitsandbytes, PyTorch+PEFT). On an M5 Pro 48 GB, a 27B multimodal "
+        "QLoRA fits: 4-bit base ~16 GB plus adapter/Adam/activations ~28-34 GB peak, with OS headroom."
     ),
 },
 
 {
-    "instruction": "What is the GGUF/Ollama-native alternative to running mlx_lm.server, and when would you use it?",
+    "instruction": "What is the GGUF/Ollama-native alternative to running mlx_vlm.server, and when would you use it?",
     "input": "",
     "output": (
-        "Instead of keeping mlx_lm.server running as a separate loopback process, you can re-export the fused "
-        "model to GGUF and register it in Ollama: ollama create cgagent-fused -f finetune/Modelfile.cgagent "
-        "(after GGUF conversion via llama.cpp). Then set models.local_llm.provider=ollama, "
-        "base_url=http://127.0.0.1:11434/v1, model=cgagent-fused. Use this when you want one process (Ollama) "
-        "serving both chat and the planner, or when mlx_lm.server's per-request latency is a concern. The "
-        "loopback mlx_lm.server path is the alternative — it preserves MLX optimizations and avoids GGUF "
-        "conversion's small quality loss."
+        "The primary serve path is mlx_vlm.server --model <base> --adapter-path ./adapters, which applies the "
+        "LoRA live (no fuse step) and exposes an OpenAI-compatible loopback API. If you instead want one Ollama "
+        "process serving both chat and the planner, you must first fuse the adapter into the base weights "
+        "manually (mlx-vlm has no fuse command — use llama.cpp or a manual safetensors merge), convert the fused "
+        "model to GGUF, then ollama create cgagent-fused -f finetune/Modelfile.cgagent (set FROM to your GGUF). "
+        "Then set models.local_llm.provider=ollama, base_url=http://127.0.0.1:11434/v1, model=cgagent-fused. The "
+        "live mlx_vlm.server path is simpler and preserves MLX optimizations; the GGUF path avoids a second "
+        "process but adds a manual fusion + conversion step with a small quality loss."
     ),
 },
 
