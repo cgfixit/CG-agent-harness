@@ -57,6 +57,16 @@ models:
       base_url: "http://127.0.0.1:1234/v1"  # DevSkim: ignore DS162092 - LM Studio loopback only; non-loopback refused at runtime
       model: "qwen3.8-27b-instruct"
       probe_timeout_sec: 1.5
+    # ── MLX QLoRA fine-tuned model (opt-in) ─────────────────────────────────
+    # To use a fused MLX model served by `mlx_lm.server --port 1234`, set it as
+    # PRIMARY (not fallback — the fallback above only wins if this primary is
+    # not installed). Example:
+    #   provider: "lmstudio"
+    #   base_url: "http://127.0.0.1:1234/v1"   # DevSkim: ignore DS162092 - loopback only
+    #   model: "cgagent-fused"                 # exact id mlx_lm.server reports
+    # Repoint `agentic.deepagent_github` too (provider: "openai_compatible",
+    # same base_url) so the coding planner uses the fine-tune as well.
+    # See docs/FINETUNE.md and finetune/ for the full workflow.
 
 # Local chat prompt compaction. Trigger is estimated next-prompt size, not
 # lifetime TokenTally.total. System prompt and session.goal are never compacted.

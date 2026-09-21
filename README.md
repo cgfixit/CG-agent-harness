@@ -91,7 +91,10 @@ export OLLAMA_CONTEXT_LENGTH=32768   # seeded web budgets assume this value
 ollama list                          # select an EXACT installed tag in the harness
 ```
 
-Set-and-verify procedure: [MODELS.md](docs/MODELS.md).
+Set-and-verify procedure: [MODELS.md](docs/MODELS.md). To fine-tune
+`qwen3.8:27b-mlx` on Apple Silicon and serve the fused model to chat **and**
+the coding planner, see [FINETUNE.md](docs/FINETUNE.md) and the
+[`finetune/`](finetune) toolchain.
 
 ### First run
 
