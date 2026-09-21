@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import sys
 import threading
+import time
 
 
 TOOLS = (
@@ -97,6 +99,67 @@ def _handle(message):
                 payload = {"text": open(path, encoding="utf-8").read()}
             except OSError as exc:
                 payload = {"error": str(exc)}
+        elif name == "fs_probe":
+            payload = {}
+            for key, path in args.get("reads", {}).items():
+                try:
+                    with open(path, encoding="utf-8") as stream:
+                        payload[key] = stream.read(1024)
+                except OSError:
+                    payload[key] = "denied"
+            for key, path in args.get("writes", {}).items():
+                try:
+                    with open(path, "w", encoding="utf-8") as stream:
+                        stream.write("fixture-write")
+                    payload[key] = "written"
+                except OSError:
+                    payload[key] = "denied"
+            with open(os.path.join(os.environ["TMPDIR"], "scratch-probe"), "w", encoding="utf-8") as stream:
+                stream.write("scratch")
+            payload["scratch"] = "written"
+        elif name == "network_probe":
+            try:
+                with socket.create_connection(("127.0.0.1", int(args["port"])), timeout=1):
+                    payload = {"connected": True}
+            except OSError:
+                payload = {"connected": False}
+        elif name == "lifecycle_start":
+            # Linux-only adversarial fixture: the grandchild leaves the original
+            # process group, then proves it actually runs by updating a heartbeat.
+            directory = args["directory"]
+            child = os.fork()
+            if child == 0:
+                os.setsid()
+                grandchild = os.fork()
+                if grandchild == 0:
+                    os.setsid()
+                    while True:
+                        with open(os.path.join(directory, "heartbeat"), "w", encoding="utf-8") as stream:
+                            stream.write(str(time.monotonic_ns()))
+                        time.sleep(0.05)
+                while True:
+                    time.sleep(1)
+            with open("/proc/self/cgroup", encoding="utf-8") as stream:
+                group = next(line[3:].strip() for line in stream if line.startswith("0::"))
+            migration_denied = False
+            try:
+                with open("/sys/fs/cgroup/cgroup.procs", "w", encoding="utf-8") as stream:
+                    stream.write(str(os.getpid()))
+            except OSError:
+                migration_denied = True
+            payload = {"group": group, "migration_denied": migration_denied}
+        elif name == "process_limit":
+            count = 0
+            for _ in range(160):
+                try:
+                    child = os.fork()
+                except OSError:
+                    break
+                if child == 0:
+                    threading.Event().wait(60)
+                    os._exit(0)
+                count += 1
+            payload = {"created": count, "limit_enforced": count < 160}
         else:
             return {
                 "jsonrpc": "2.0",

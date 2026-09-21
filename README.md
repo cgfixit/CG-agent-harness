@@ -138,6 +138,11 @@ metadata and stay disabled until configured — including which feature PRs the
 installed build must contain:
 [SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md). MCP stderr
 capture bounds: [PROCESS_LIFECYCLE.md](docs/PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics).
+External MCP stdio servers require explicit filesystem, network and lifecycle
+capabilities. `/tools mcp` shows grants and any process-group exception. Linux
+strict mode requires a working systemd/cgroup v2 service; unsupported protection
+is refused. Existing declarations need migration before restart. See
+[MCP client policy](docs/MCP_CLIENT.md).
 
 **Analytics.** The header button or `/analytics` opens searchable, independently
 paged token/cost, session and coding-run metrics with creation-date and outcome

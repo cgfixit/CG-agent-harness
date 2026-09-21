@@ -189,9 +189,36 @@ jobs:
             --env CI=true --env RUSTFLAGS="-D warnings" \
             --env RUSTUP_TOOLCHAIN=1.88.0 --env CARGO_TARGET_DIR=/tmp/target \
             --env CGAH_REQUIRE_LINUX_BWRAP=1 \
+            --env CGAH_REQUIRE_LINUX_MCP=1 \
             rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 \
             sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3
-                    cargo test --test linux_bwrap --locked -- --nocapture'
+                    cargo test --test linux_bwrap --test mcp_client --locked -- --nocapture'
+
+  linux-mcp-lifecycle:
+    name: Linux MCP service lifecycle (required)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Build the native lifecycle fixture
+        run: cargo test --locked --test mcp_lifecycle --no-run --message-format=json > /tmp/mcp-build.jsonl
+      - name: Required service ownership, resource limits and crash cleanup
+        # Ephemeral hosted machine, no secrets or operator configuration. Root
+        # permits namespace creation and uses the existing system service manager.
+        # The product never invokes sudo or installs a privileged service.
+        run: |
+          test_binary="$(python3 -c 'import json; print(next(x["executable"] for x in map(json.loads, open("/tmp/mcp-build.jsonl")) if x.get("target", {}).get("name") == "mcp_lifecycle" and x.get("executable")))')"
+          sudo env -i PATH=/usr/bin:/bin CGAH_REQUIRE_LINUX_LIFECYCLE=1 "$test_binary" --nocapture --test-threads=1
 
   invariant-guard:
     name: invariant guard (I6 source scan)

@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use super::errors::{HarnessError, Result};
+use super::mcp_policy::{Containment, NetworkPolicy, StdioCapabilities};
 use super::process::{self, RunSpec};
 
 fn wrap_err(message: impl Into<String>) -> HarnessError {
@@ -26,6 +27,19 @@ const LINUX_OS_RO_FILES: &[&str] = &[
     "/etc/os-release",
     "/etc/localtime",
     "/etc/hosts",
+];
+const MACOS_OS_RO_DIRS: &[&str] = &[
+    "/System",
+    "/usr/bin",
+    "/usr/lib",
+    "/usr/libexec",
+    "/usr/share",
+    "/bin",
+    "/sbin",
+    "/dev",
+    "/Library/Developer/CommandLineTools",
+    "/Applications/Xcode.app/Contents/Developer",
+    "/private/var/db/dyld",
 ];
 
 pub struct WrappedStdio {
@@ -83,6 +97,16 @@ pub fn seatbelt_profile(cwd: &Path, tmpdir: Option<&Path>) -> String {
 }
 
 pub fn seatbelt_profile_with_inputs(cwd: &Path, tmpdir: Option<&Path>, read_roots: &[PathBuf]) -> String {
+    seatbelt_profile_with_grants(cwd, tmpdir, read_roots, &[], NetworkPolicy::Deny)
+}
+
+fn seatbelt_profile_with_grants(
+    cwd: &Path,
+    tmpdir: Option<&Path>,
+    read_roots: &[PathBuf],
+    write_roots: &[PathBuf],
+    network: NetworkPolicy,
+) -> String {
     let esc = |p: &Path| {
         dunce::canonicalize(p)
             .unwrap_or(p.to_path_buf())
@@ -92,34 +116,37 @@ pub fn seatbelt_profile_with_inputs(cwd: &Path, tmpdir: Option<&Path>, read_root
             .replace('"', "\\\"")
     };
     let mut roots = vec![cwd.to_path_buf()];
-    for root in [
-        "/System",
-        "/usr/bin",
-        "/usr/lib",
-        "/usr/libexec",
-        "/usr/share",
-        "/bin",
-        "/sbin",
-        "/dev",
-        "/Library/Developer/CommandLineTools",
-        "/Applications/Xcode.app/Contents/Developer",
-        "/private/var/db/dyld",
-    ] {
+    for root in MACOS_OS_RO_DIRS {
         roots.push(PathBuf::from(root));
     }
     if let Some(tmp) = tmpdir {
         roots.push(tmp.to_path_buf());
     }
     roots.extend_from_slice(read_roots);
+    roots.extend_from_slice(write_roots);
     let reads = roots
         .iter()
         .map(|p| format!("(subpath \"{}\")", esc(p)))
         .collect::<Vec<_>>()
         .join(" ");
-    let writes = tmpdir
-        .map(|p| format!("(deny file-write* (require-not (subpath \"{}\")))", esc(p)))
-        .unwrap_or_else(|| "(deny file-write*)".into());
-    format!("(version 1)\n(allow default)\n(deny network*)\n(deny file-read-data (require-not (require-any (literal \"/\") (literal \"/private/etc/ssl/openssl.cnf\") {reads})))\n{writes}\n")
+    let writable = tmpdir
+        .into_iter()
+        .chain(write_roots.iter().map(PathBuf::as_path))
+        .map(|p| format!("(subpath \"{}\")", esc(p)))
+        .collect::<Vec<_>>();
+    let writes = if writable.is_empty() {
+        "(deny file-write*)".into()
+    } else if writable.len() == 1 {
+        format!("(deny file-write* (require-not {}))", writable[0])
+    } else {
+        format!("(deny file-write* (require-not (require-any {})))", writable.join(" "))
+    };
+    let network = if network == NetworkPolicy::Deny {
+        "(deny network*)\n"
+    } else {
+        ""
+    };
+    format!("(version 1)\n(allow default)\n{network}(deny file-read-data (require-not (require-any (literal \"/\") (literal \"/private/etc/ssl/openssl.cnf\") {reads})))\n{writes}\n")
 }
 
 pub fn canonical_existing(path: &Path) -> std::result::Result<PathBuf, String> {
@@ -142,7 +169,7 @@ pub fn bwrap_argv(
     scratch: &Path,
     read_roots: &[PathBuf],
 ) -> std::result::Result<Vec<String>, String> {
-    bwrap_argv_inner(bwrap, argv, cwd, scratch, read_roots, true)
+    bwrap_argv_inner(bwrap, argv, cwd, scratch, read_roots, &[], true)
 }
 
 fn bwrap_argv_inner(
@@ -151,6 +178,7 @@ fn bwrap_argv_inner(
     cwd: &Path,
     scratch: &Path,
     read_roots: &[PathBuf],
+    write_roots: &[PathBuf],
     unshare_net: bool,
 ) -> std::result::Result<Vec<String>, String> {
     let candidate = canonical_existing(cwd)?;
@@ -200,6 +228,14 @@ fn bwrap_argv_inner(
             resolved.display().to_string(),
         ]);
     }
+    for root in write_roots {
+        let resolved = canonical_existing(root)?;
+        out.extend([
+            "--bind".into(),
+            resolved.display().to_string(),
+            resolved.display().to_string(),
+        ]);
+    }
     out.extend([
         "--bind".into(),
         scratch_dir.display().to_string(),
@@ -236,39 +272,40 @@ pub fn exclusive_scratch_probe(probe: &Path) -> std::result::Result<(), String> 
     Ok(())
 }
 
-pub fn command_read_roots(argv: &[String], cwd: Option<&Path>) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(cwd) = cwd {
-        roots.push(cwd.to_path_buf());
-    }
-    for item in argv {
-        let path = Path::new(item);
-        if !path.is_absolute() {
-            continue;
-        }
-        let Ok(canon) = dunce::canonicalize(path) else {
-            continue;
+pub fn wrap_mcp_stdio(
+    argv: &[String],
+    cwd: Option<&Path>,
+    home: Option<&Path>,
+    capabilities: &StdioCapabilities,
+) -> Result<WrappedStdio> {
+    let (mut read_roots, write_roots) = capabilities.resolve_roots(home)?;
+    if let Some(home) = home {
+        let runtime_roots: Vec<&str> = if cfg!(target_os = "macos") {
+            MACOS_OS_RO_DIRS.to_vec()
+        } else if cfg!(target_os = "linux") {
+            LINUX_OS_RO_DIRS.iter().chain(LINUX_OS_RO_FILES).copied().collect()
+        } else {
+            vec![]
         };
-        if let Some(parent) = canon.parent() {
-            roots.push(parent.to_path_buf());
+        for root in runtime_roots {
+            refuse_home_overlap(Path::new(root), home)?;
         }
-        for prefix in ["/opt/homebrew", "/usr/local"] {
-            if canon.starts_with(prefix) {
-                roots.push(PathBuf::from(prefix));
-            }
-        }
-        roots.push(canon);
     }
-    roots
-}
-
-pub fn wrap_mcp_stdio(argv: &[String], cwd: Option<&Path>, home: Option<&Path>) -> Result<WrappedStdio> {
+    if capabilities.containment == Containment::Strict && !cfg!(target_os = "linux") {
+        return Err(HarnessError::new(
+            "MCP_CONTAINMENT_UNAVAILABLE",
+            "Strict MCP containment requires the Linux service supervisor; this platform refuses strict stdio",
+        ));
+    }
     let scratch = tempfile::Builder::new()
         .prefix("cgah-mcp-scratch-")
         .tempdir()
         .map_err(|e| wrap_err(format!("sandbox scratch: {e}")))?;
     let (child_cwd, candidate) = match cwd {
-        Some(path) => (path.to_path_buf(), None),
+        Some(path) => (
+            canonical_existing(path).map_err(|_| wrap_err("MCP cwd is unavailable"))?,
+            None,
+        ),
         None => {
             let dir = tempfile::Builder::new()
                 .prefix("cgah-mcp-cwd-")
@@ -278,8 +315,8 @@ pub fn wrap_mcp_stdio(argv: &[String], cwd: Option<&Path>, home: Option<&Path>) 
             (path, Some(dir))
         }
     };
+    capabilities.validate_resolved_root(&child_cwd, home)?;
     if let Some(home) = home {
-        refuse_home_overlap(&child_cwd, home)?;
         for item in argv {
             let path = Path::new(item);
             if path.is_absolute() {
@@ -287,13 +324,23 @@ pub fn wrap_mcp_stdio(argv: &[String], cwd: Option<&Path>, home: Option<&Path>) 
             }
         }
     }
-    let read_roots = command_read_roots(argv, Some(&child_cwd));
-    if let Some(home) = home {
-        for root in &read_roots {
-            refuse_home_overlap(root, home)?;
-        }
+    if !child_cwd.is_dir() {
+        return Err(wrap_err("MCP cwd must be a directory"));
     }
-    let (wrapped, backend, probe_reason) = wrap_argv(argv, &child_cwd, scratch.path(), &read_roots)?;
+    let program = argv.first().ok_or_else(|| wrap_err("MCP command is empty"))?;
+    let program = canonical_existing(Path::new(program)).map_err(|_| wrap_err("MCP executable is unavailable"))?;
+    capabilities.validate_resolved_root(&program, home)?;
+    read_roots.push(program.clone());
+    let mut command = argv.to_vec();
+    command[0] = program.to_string_lossy().into_owned();
+    let (wrapped, backend, probe_reason) = wrap_argv(
+        &command,
+        &child_cwd,
+        scratch.path(),
+        &read_roots,
+        &write_roots,
+        capabilities.network,
+    )?;
     Ok(WrappedStdio {
         argv: wrapped,
         backend,
@@ -307,39 +354,13 @@ pub fn wrap_mcp_stdio(argv: &[String], cwd: Option<&Path>, home: Option<&Path>) 
 
 /// Same probe `LinuxBubblewrapSandbox::new` uses. Presence of `bwrap` is not enough:
 /// GitHub Actions often fails `bwrap` with `Failed RTM_NEWADDR`. Cached per process.
-#[derive(Clone)]
-pub struct LinuxBwrap {
-    pub path: PathBuf,
-    pub unshare_net: bool,
-    pub net_err: Option<String>,
-}
-
-/// Agentic verification requires network isolation. MCP stdio may fall back to
-/// FS-only bwrap when `--unshare-net` is EPERM (GitHub Actions).
+/// Agentic verification and network-denied MCP both require the full backend.
 pub fn probe_linux_bwrap() -> std::result::Result<PathBuf, String> {
     static CACHED: OnceLock<std::result::Result<PathBuf, String>> = OnceLock::new();
-    CACHED
-        .get_or_init(|| probe_linux_bwrap_kind(true).map(|found| found.path))
-        .clone()
+    CACHED.get_or_init(|| probe_linux_bwrap_kind(true)).clone()
 }
 
-fn probed_linux_bwrap() -> std::result::Result<LinuxBwrap, String> {
-    static CACHED: OnceLock<std::result::Result<LinuxBwrap, String>> = OnceLock::new();
-    CACHED.get_or_init(probe_linux_bwrap_uncached).clone()
-}
-
-fn probe_linux_bwrap_uncached() -> std::result::Result<LinuxBwrap, String> {
-    match probe_linux_bwrap_kind(true) {
-        Ok(found) => Ok(found),
-        Err(net_err) => {
-            let mut found = probe_linux_bwrap_kind(false).map_err(|fs_err| format!("{net_err}; fs-only: {fs_err}"))?;
-            found.net_err = Some(net_err);
-            Ok(found)
-        }
-    }
-}
-
-fn probe_linux_bwrap_kind(unshare_net: bool) -> std::result::Result<LinuxBwrap, String> {
+fn probe_linux_bwrap_kind(unshare_net: bool) -> std::result::Result<PathBuf, String> {
     let path = process::which("bwrap").ok_or_else(|| "bwrap not found".to_string())?;
     let path = dunce::canonicalize(&path).map_err(|e| format!("bwrap path {}: {e}", path.display()))?;
     let tmp = tempfile::Builder::new()
@@ -350,7 +371,15 @@ fn probe_linux_bwrap_kind(unshare_net: bool) -> std::result::Result<LinuxBwrap, 
     let scratch = tmp.path().join("scratch");
     std::fs::create_dir(&candidate).map_err(|e| format!("bwrap probe candidate: {e}"))?;
     std::fs::create_dir(&scratch).map_err(|e| format!("bwrap probe scratch: {e}"))?;
-    let wrapped = bwrap_argv_inner(&path, &["/bin/true".into()], &candidate, &scratch, &[], unshare_net)?;
+    let wrapped = bwrap_argv_inner(
+        &path,
+        &["/bin/true".into()],
+        &candidate,
+        &scratch,
+        &[],
+        &[],
+        unshare_net,
+    )?;
     match process::run(RunSpec {
         argv: &wrapped,
         cwd: None,
@@ -358,52 +387,10 @@ fn probe_linux_bwrap_kind(unshare_net: bool) -> std::result::Result<LinuxBwrap, 
         timeout: Duration::from_secs(5),
         stdin: None,
     }) {
-        Ok(out) if out.status == Some(0) => Ok(LinuxBwrap {
-            path,
-            unshare_net,
-            net_err: None,
-        }),
+        Ok(out) if out.status == Some(0) => Ok(path),
         Ok(out) => Err(format!("bwrap probe failed (status {:?}): {}", out.status, out.stderr)),
         Err(e) => Err(format!("bwrap probe: {e}")),
     }
-}
-
-fn linux_unshare_prefix() -> Option<Vec<String>> {
-    static CACHED: OnceLock<Option<Vec<String>>> = OnceLock::new();
-    CACHED.get_or_init(linux_unshare_prefix_uncached).clone()
-}
-
-fn linux_unshare_prefix_uncached() -> Option<Vec<String>> {
-    let path = process::which("unshare")?;
-    let path = dunce::canonicalize(&path).ok()?;
-    let probe = |extra: &[&str]| -> bool {
-        let mut argv = vec![path.display().to_string()];
-        argv.extend(extra.iter().map(|s| (*s).to_string()));
-        argv.push("/bin/true".into());
-        matches!(
-            process::run(RunSpec {
-                argv: &argv,
-                cwd: None,
-                env: None,
-                timeout: Duration::from_secs(5),
-                stdin: None,
-            }),
-            Ok(out) if out.status == Some(0)
-        )
-    };
-    if probe(&["--net"]) {
-        return Some(vec![path.display().to_string(), "--net".into(), "--".into()]);
-    }
-    if probe(&["--user", "--map-root-user", "--net"]) {
-        return Some(vec![
-            path.display().to_string(),
-            "--user".into(),
-            "--map-root-user".into(),
-            "--net".into(),
-            "--".into(),
-        ]);
-    }
-    None
 }
 
 fn wrap_argv(
@@ -411,54 +398,45 @@ fn wrap_argv(
     cwd: &Path,
     scratch: &Path,
     read_roots: &[PathBuf],
+    write_roots: &[PathBuf],
+    network: NetworkPolicy,
 ) -> Result<(Vec<String>, &'static str, String)> {
     if cfg!(target_os = "macos") {
         let sandbox_exec = canonical_bin("sandbox-exec")?;
         let mut out = vec![
             sandbox_exec.display().to_string(),
             "-p".into(),
-            seatbelt_profile_with_inputs(cwd, Some(scratch), read_roots),
+            seatbelt_profile_with_grants(cwd, Some(scratch), read_roots, write_roots, network),
             "--".into(),
         ];
         out.extend(argv.iter().cloned());
         return Ok((out, "darwin-seatbelt", "sandbox-exec".into()));
     }
     if cfg!(target_os = "linux") {
-        match probed_linux_bwrap() {
-            Ok(found) => {
-                let wrapped = bwrap_argv_inner(&found.path, argv, cwd, scratch, read_roots, found.unshare_net)
-                    .map_err(|e| wrap_err(format!("bwrap argv: {e}")))?;
-                let backend = if found.unshare_net {
-                    "linux-bwrap"
-                } else {
-                    "linux-bwrap-fs"
-                };
-                let reason = if found.unshare_net {
-                    "bwrap --unshare-net".into()
-                } else {
-                    let detail = found.net_err.as_deref().unwrap_or("bwrap --unshare-net failed");
-                    format!("{}: {detail}; using fs-only", classify_probe_err(detail))
-                };
-                return Ok((wrapped, backend, reason));
-            }
-            Err(err) => {
-                if let Some(mut prefix) = linux_unshare_prefix() {
-                    prefix.extend(argv.iter().cloned());
-                    return Ok((
-                        prefix,
-                        "linux-netns",
-                        format!("{}: {err}; unshare --net", classify_probe_err(&err)),
-                    ));
-                }
-                return Ok((
-                    argv.to_vec(),
-                    "linux-unconfined",
-                    format!("{}: {err}; unshare unavailable", classify_probe_err(&err)),
-                ));
-            }
+        let deny_network = network == NetworkPolicy::Deny;
+        let path = if deny_network {
+            probe_linux_bwrap()
+        } else {
+            probe_linux_bwrap_kind(false)
         }
+        .map_err(|e| {
+            HarnessError::sandbox_unavailable(format!("MCP capabilities unavailable: {}", classify_probe_err(&e)))
+        })?;
+        let wrapped = bwrap_argv_inner(&path, argv, cwd, scratch, read_roots, write_roots, deny_network)
+            .map_err(|e| wrap_err(format!("bwrap argv: {e}")))?;
+        return Ok((
+            wrapped,
+            if deny_network { "linux-bwrap" } else { "linux-bwrap-fs" },
+            if deny_network {
+                "network denied".into()
+            } else {
+                "operator granted unrestricted network".into()
+            },
+        ));
     }
-    Ok((argv.to_vec(), "windows-stdio", "windows".into()))
+    Err(HarnessError::sandbox_unavailable(
+        "MCP filesystem confinement is unavailable on this platform",
+    ))
 }
 
 #[cfg(test)]
@@ -483,7 +461,15 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_stdio_wrap_uses_seatbelt() {
-        let wrapped = wrap_mcp_stdio(&["/bin/echo".into(), "ok".into()], None, None).expect("wrap");
+        let capabilities = StdioCapabilities {
+            version: 1,
+            read_roots: vec![],
+            write_roots: vec![],
+            network: NetworkPolicy::Deny,
+            containment: Containment::ProcessGroup,
+            limits: None,
+        };
+        let wrapped = wrap_mcp_stdio(&["/bin/echo".into(), "ok".into()], None, None, &capabilities).expect("wrap");
         assert_eq!(wrapped.backend, "darwin-seatbelt");
         let bin = Path::new(&wrapped.argv[0]);
         assert!(bin.is_absolute(), "{:?}", wrapped.argv);
@@ -501,5 +487,24 @@ mod tests {
         let parent = home.path().parent().unwrap();
         let err = refuse_home_overlap(parent, home.path()).unwrap_err();
         assert_eq!(err.code, "MCP_HOME_REFUSED");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_home_must_not_be_exposed_by_fixed_runtime_grants() {
+        let policy: StdioCapabilities = serde_json::from_value(serde_json::json!({
+            "version":1,"network":"deny","containment":"process_group"
+        }))
+        .unwrap();
+        let result = wrap_mcp_stdio(
+            &["/bin/true".into()],
+            None,
+            Some(Path::new("/usr/share/cgah-fixture-home")),
+            &policy,
+        );
+        assert_eq!(
+            result.err().expect("runtime grant must not expose home").code,
+            "MCP_HOME_REFUSED"
+        );
     }
 }

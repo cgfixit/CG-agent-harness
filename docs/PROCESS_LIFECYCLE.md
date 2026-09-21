@@ -1,4 +1,4 @@
-# Unix subprocess lifetime and capture
+# Subprocess lifetime and capture
 
 The synchronous argv runner and Unix server shim share one subprocess owner.
 Pipe reads and stdin writes are nonblocking and share the operation deadline.
@@ -31,7 +31,7 @@ macOS descendant enumeration. The non-Unix runners retain their prior behavior;
 these Unix capture/lifetime claims do not apply to Windows.
 
 Filesystem and network denial are separate boundaries. There is still no
-per-run disk quota or general memory/process-count limit. Kernel calls and
+per-run disk quota or general memory/process-count limit for the synchronous runner. Kernel calls and
 cleanup/reaping can add time beyond the requested deadline. Use isolated
 fixtures and inspect surviving work after interruption; the console correctly
 keeps its descendant-survival warning.
@@ -51,7 +51,44 @@ to 4 KiB. The configured `mcp.timeout_sec` and existing child/process-group clea
 still apply. A diagnostic prefix does not prove complete capture or descendant
 containment. See [troubleshooting](TROUBLESHOOTING.md).
 
+### Explicit MCP lifecycle policy
+
+Every stdio server must declare [capabilities](MCP_CLIENT.md). In Linux strict
+mode, a transient systemd service owns the supervisor and bubblewrap child in a
+dedicated cgroup v2 hierarchy. The service sets aggregate process and memory
+limits, disables delegation, protects cgroup control files, and kills the whole
+group when its main process ends. A private, authenticated Unix socket detects
+loss of the harness independently of MCP stdin. The worker checks its actual
+cgroup membership and enforced limits before launching the tool. The external
+manager also bounds service lifetime if either process stalls or dies.
+
+Bubblewrap denies host service/control paths and creates a PID namespace;
+`setsid()` cannot leave the service cgroup. Requested roots, working directory
+and executable cannot expose host `/proc`, `/sys`, `/run`, `/var/run` or `/dev`.
+The child receives its own `/proc` and minimal `/dev`. `network: unrestricted`
+is a separate operator grant, not an HTTP hostname allowlist.
+
+macOS refuses strict lifecycle containment. An explicit `process_group`
+exception retains Seatbelt filesystem/network protection, but runner death and
+detached descendants can escape cleanup. Windows stdio is refused because the
+required filesystem/network confinement is unavailable. These refusals do not
+change the existing coding executor's separate platform behavior.
+
+Strict mode bounds process memory/count and lifetime; it does not impose a
+scratch disk quota. A hard-killed harness may leave its private temporary
+directories on disk. It does not automatically delete operator-granted outputs.
+
 ## Evidence
+
+`tests/mcp_client.rs` requires actual allowed reads/writes and denied secret,
+symlink and network probes in the dedicated Linux bubblewrap job and on macOS.
+`tests/mcp_lifecycle.rs` runs in the required native Linux service job. It proves
+that a detached grandchild runs before cancellation, Drop, protocol failure,
+tool crash, deadline, harness SIGKILL and supervisor SIGKILL; then checks the
+cgroup is empty, its heartbeat stops and the next invocation succeeds. It also
+checks aggregate memory/process settings, migration denial and process-limit
+enforcement. Ordinary runners report that native service acceptance was not
+executed; only the required job can establish that result.
 
 `tests/process_lifecycle.rs` exercises inherited pipes in both runners, blocked
 stdin, output overflow, complete JSON/diagnostic output and exit status, and a
