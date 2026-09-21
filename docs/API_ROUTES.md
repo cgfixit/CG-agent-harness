@@ -61,7 +61,7 @@ session timeouts.
 | POST | `/api/slash/parse` | Suggest-don't-guess slash normalizer; never executes mutations |
 | GET | `/api/spend/summary` | Guarded retained-history spend rollup with completeness, file statuses and skipped-row counts (read-time USD) |
 | GET, POST | `/api/sessions` | List sessions or create one |
-| POST | `/api/sessions/search` | Local transcript search; snippets only |
+| POST | `/api/sessions/search` | Local transcript search; case-insensitive matches with Unicode-safe snippets of at most 160 characters |
 | POST | `/api/sessions/clear` | Delete all sessions |
 | GET | `/api/sessions/{session_id}` | Load one session |
 | GET | `/api/sessions/{session_id}/export` | Markdown export; also written 0o600 under home/exports |
