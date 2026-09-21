@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 61] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 62] = [
     ("config-reload", "(Reload limits button)", "POST", "/api/config/reload", "administrator-only atomic reload of supported non-secret limits"),
     (
         "goal-stage",
@@ -345,6 +345,13 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 61] = [
         "GET",
         "/api/spend/summary",
         "guarded per-provider/model/day inference rollup; dollars at read time only",
+    ),
+    (
+        "spend-predict",
+        "(Spend dialog)",
+        "POST",
+        "/api/spend/predict",
+        "estimate the typed cloud message and reserve configured output; no generation or ledger write",
     ),
     (
         "registry",
@@ -788,7 +795,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 61);
+        assert_eq!(HARNESS_SURFACES.len(), 62);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], HARNESS_SURFACES.len());
         assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");

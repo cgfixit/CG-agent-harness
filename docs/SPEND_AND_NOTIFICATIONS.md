@@ -58,6 +58,53 @@ precedence when present; otherwise supported models use the bundled rate table.
 Rates older than 30 days are marked stale. A displayed USD subtotal covers only
 priced evidence; consult the provider's own billing records for reconciliation.
 
+## Estimate a cloud draft and configure a per-call cap
+
+Select `grok` or `claude` with `/model use`, type an ordinary message without
+sending it, then choose **Spend → Estimate draft**. The response reports the
+model, input estimate source, reserved output, dated rate and cap decision.
+Local inference remains unpriced. Closing the dialog or logging out clears the
+estimate; editing the draft requires a fresh estimate. This feature requires a
+build exposing `POST /api/spend/predict`, beyond the original ledger-only view.
+
+Claude sends the draft to its fixed `messages/count_tokens` endpoint using the
+same model/message body as generation. The default deadline is 2 seconds across
+headers and body; errors, malformed or oversized responses fall back to the
+labelled heuristic. Grok uses rounded-up UTF-8 bytes/4 without a counting call.
+**Bytes/4 can undercount CJK.** The local Qwen calibration is not a cloud
+estimator. Neither history, attachments, memory, skills nor web context is sent.
+Provider credentials and enabled provider configuration are still required.
+
+Merge into `models.cloud_chat` in the active home's YAML and restart:
+
+```yaml
+models:
+  cloud_chat:
+    count_timeout_sec: 2
+    max_usd_per_call: null
+    budget_on_heuristic: false
+```
+
+`count_timeout_sec` accepts 0.1–10 seconds. A null or absent cap leaves calls
+ungated; a configured cap must be a finite positive USD number. The estimate
+uses the existing exact-model rate table and reserves **all** configured
+`max_tokens` output tokens without cache credit. Unknown rates stay unpriced
+and cannot enforce a cost cap. With known rates, a Claude vendor estimate can
+refuse generation above the cap. Applying the cap to Grok or Claude fallback
+requires explicit literal `budget_on_heuristic: true`; quoted `"true"` is off.
+A stale rate is shown as stale, not automatically refreshed. Estimates are not
+a guaranteed bill ceiling or a monthly spending limit.
+
+Every cloud chat rechecks immediately before generation. A refusal returns
+`CLOUD_CHAT_BUDGET` (HTTP 422); change the message/cap deliberately before retrying.
+Counting and refusal do not append ledger rows. The authenticated, CSRF-guarded
+API accepts `{"message":"your draft","model":"grok"}`; omitting `model` uses
+the current selection. Messages must be nonblank and at most 32,768 characters.
+It shares the generation gate and returns `CHAT_BUSY` during another model
+operation. Audit entries contain estimate metadata, never draft text or keys.
+
+Provider contract: [Claude token counting](https://platform.claude.com/docs/en/build-with-claude/token-counting).
+
 ## Configure a completion webhook
 
 Notifications are **disabled by default**. In the active home's `config.yaml`,

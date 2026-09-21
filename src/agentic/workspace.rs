@@ -347,6 +347,27 @@ impl<'a> RepoWorkspace<'a> {
 
     // ------------------------------------------------------------ reads
 
+    /// Git's bounded, extension-disabled path inventory; content still goes
+    /// through the clone capability in `read_file`. Never recurse into submodules.
+    pub(crate) fn retrieval_paths(&self) -> Result<Vec<String>> {
+        let paths = self.run_git(
+            "ls-files",
+            &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            30,
+            &[],
+        )?;
+        Ok(paths
+            .split_terminator('\0')
+            .filter_map(|raw| {
+                let path = self.read_target(raw).ok()?;
+                // Path text is inserted into line selectors and prompt headers.
+                (path == raw && !path.contains('#') && !path.chars().any(char::is_control)).then_some(path)
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect())
+    }
+
     /// Validate a repo-relative read target (never "cleaned"; see `repo_paths`).
     fn read_target(&self, target: &str) -> Result<String> {
         let rel = crate::common::repo_paths::canonical_repo_relative_path(target).ok_or_else(|| {
@@ -390,7 +411,8 @@ impl<'a> RepoWorkspace<'a> {
         if meta.len() > self.max_read_bytes {
             return Err(self.read_denied(target, "exceeds max_read_bytes"));
         }
-        let data = open_nofollow(&self.dir, &rel).map_err(|_| self.read_denied(target, "escape or missing"))?;
+        let data = open_nofollow(&self.dir, &rel, self.max_read_bytes.saturating_add(1))
+            .map_err(|_| self.read_denied(target, "escape or missing"))?;
         if data.len() as u64 > self.max_read_bytes {
             return Err(self.read_denied(target, "exceeds max_read_bytes"));
         }
@@ -970,7 +992,8 @@ impl StagedReplacement {
     }
 
     fn current(&self) -> std::io::Result<Option<Vec<u8>>> {
-        match open_nofollow(&self.parent, &self.leaf) {
+        let max_bytes = self.original.as_ref().map_or(0, Vec::len).max(self.replacement.len());
+        match open_nofollow(&self.parent, &self.leaf, max_bytes as u64 + 1) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
@@ -1022,20 +1045,30 @@ fn open_jail_dir(dest: &Path) -> Result<cap_std::fs::Dir> {
 }
 
 #[cfg(unix)]
-fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str) -> std::io::Result<Vec<u8>> {
+fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str, limit: u64) -> std::io::Result<Vec<u8>> {
     use cap_std::fs::OpenOptionsExt;
     use std::io::Read;
     let mut opts = cap_std::fs::OpenOptions::new();
-    opts.read(true).custom_flags(libc::O_NOFOLLOW);
-    let mut f = dir.open_with(rel, &opts)?;
+    opts.read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    let f = dir.open_with(rel, &opts)?;
+    if !f.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
     let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
+    f.take(limit).read_to_end(&mut buf)?;
     Ok(buf)
 }
 
 #[cfg(not(unix))]
-fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str) -> std::io::Result<Vec<u8>> {
-    dir.read(rel)
+fn open_nofollow(dir: &cap_std::fs::Dir, rel: &str, limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let f = dir.open(rel)?;
+    if !f.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    let mut buf = Vec::new();
+    f.take(limit).read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 #[cfg(test)]

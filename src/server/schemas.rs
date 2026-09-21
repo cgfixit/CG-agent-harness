@@ -64,6 +64,27 @@ impl Validate for ConfigReloadRequest {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpendPredictRequest {
+    pub message: String,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+impl Validate for SpendPredictRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if !len_ok(&self.message, 1, MAX_MESSAGE_LEN) || self.message.trim().is_empty() {
+            bad.push("message".into());
+        }
+        if self.model.as_ref().is_some_and(|m| !len_ok(m, 1, MAX_MODEL_LEN)) {
+            bad.push("model".into());
+        }
+        bad
+    }
+}
+
 fn len_ok(s: &str, min: usize, max: usize) -> bool {
     let n = s.chars().count();
     n >= min && n <= max

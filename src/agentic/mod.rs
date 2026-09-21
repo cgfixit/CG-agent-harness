@@ -16,6 +16,7 @@ pub mod governance;
 pub mod proposer;
 pub mod real_repo_loop;
 pub mod registry;
+pub mod repo_retrieval;
 pub mod run_store;
 pub mod unslop;
 pub mod workspace;

@@ -422,6 +422,9 @@
   <p>Retained ledger history, grouped by provider, model and UTC day. Local inference is unpriced; amounts are recorded vendor costs or estimates, not invoices.</p>
   <button id="refreshSpend" type="button">Refresh</button>
   <button id="closeSpend" type="button">Close</button>
+  <p>Estimate the current unsent draft for the selected cloud model. Claude receives that text for token counting. History and attachments are excluded; local inference is unpriced.</p>
+  <button id="predictSpend" type="button">Estimate draft</button>
+  <p id="spendPrediction" role="status" aria-live="polite"></p>
   <p id="spendStatus" role="status" aria-live="polite"></p>
   <div class="spend-table">
     <table><caption>Inference usage and cost</caption>
@@ -1485,6 +1488,10 @@ function showAgentRecord(rec) {
     ['pull request', rec.pr_url || '—'],
     ['error', rec.error || '—'],
   ], ['field', 'value']));
+  for (const trace of (rec.retrieval || [])) {
+    sys('repository retrieval, step ' + trace.step + ': indexed ' + trace.indexed_files + ' files / ' + trace.indexed_bytes + ' bytes' + (trace.limited ? ' (bounded selection)' : ''));
+    if (trace.files.length) sys(table(trace.files.map(file => [file.selection, file.sha256, String(file.token_reservation)]), ['selection', 'SHA-256', 'token reservation (UTF-8 bytes)']));
+  }
   shownAgentDiffs.delete(rec.run_id);
   if (rec.status === 'pending_decision' && typeof rec.diff === 'string' && rec.diff) {
     sys('candidate diff\n' + rec.diff);
@@ -3018,7 +3025,7 @@ input.addEventListener('keydown', e => {
     e.preventDefault(); recallPrompt(e.key === 'ArrowUp' ? -1 : 1);
   }
 });
-/* Spend dashboard: one guarded read on open/refresh, no polling or mutations. */
+/* Spend dashboard: guarded ledger reads; cloud draft counting is an explicit action. */
 function spendSummaryView(data) {
   const complete = data.complete === true;
   let status = complete ? 'Complete for retained ledger files.' : data.complete === false
@@ -3036,6 +3043,31 @@ function spendSummaryView(data) {
   return {status, rows};
 }
 let spendRequest = 0, spendRows = [], spendPage = 0;
+let spendPredictionRequest = 0;
+async function predictSpend() {
+  const draft = input.value.trim();
+  if (!draft || draft.startsWith('/')) {
+    $('spendPrediction').textContent = 'Type an ordinary chat message, then choose Estimate draft.'; return;
+  }
+  const request = ++spendPredictionRequest;
+  $('predictSpend').disabled = true;
+  $('spendPrediction').textContent = 'Estimating the draft; no generation is sent…';
+  try {
+    const p = await api('/api/spend/predict', 'POST', {message: draft});
+    if (request !== spendPredictionRequest || !$('spendDialog').open) return;
+    if (input.value.trim() !== draft) { $('spendPrediction').textContent = 'Draft changed. Estimate it again.'; return; }
+    const amount = typeof p.usd === 'number' && Number.isFinite(p.usd) ? '$' + p.usd.toFixed(6) : 'Unpriced (unknown model rate)';
+    const source = p.estimate_source === 'vendor_count' ? 'Provider token estimate; actual usage may differ.' : 'Rough bytes/4 input estimate; may undercount CJK.';
+    const gate = p.max_usd_per_call == null ? 'No budget gate configured.' : !p.budget_applies
+      ? 'Configured cap does not apply to this estimate.' : p.budget_exceeded ? 'Over configured cap; generation would be refused.' : 'Within configured cap.';
+    $('spendPrediction').textContent = p.model + ': ' + amount + ' with ' + p.input_tokens + ' estimated input tokens and ' +
+      p.reserved_output_tokens + ' output tokens reserved. ' + source + ' ' + gate + ' No cache discount or guaranteed bill ceiling. Rates: ' + p.priced_as_of + (p.rates_stale ? ' (stale).' : '.');
+  } catch (e) {
+    if (request === spendPredictionRequest && $('spendDialog').open) $('spendPrediction').textContent = 'Estimate unavailable: ' + e.message;
+  } finally {
+    if (request === spendPredictionRequest) $('predictSpend').disabled = false;
+  }
+}
 function paintSpendPage() {
   const body = $('spendRows'); body.replaceChildren();
   for (const row of spendRows.slice(spendPage * 100, (spendPage + 1) * 100)) {
@@ -3048,6 +3080,7 @@ function paintSpendPage() {
   $('spendPage').textContent = spendRows.length ? 'Page ' + (spendPage + 1) + ' of ' + Math.ceil(spendRows.length / 100) : '';
 }
 function clearSpend() {
+  ++spendPredictionRequest; $('spendPrediction').textContent = ''; $('predictSpend').disabled = false;
   ++spendRequest; spendRows = []; spendPage = 0; paintSpendPage();
   $('spendStatus').textContent = ''; $('spendDialog').close();
 }
@@ -3072,6 +3105,7 @@ $('reloadLimits').addEventListener('click', async () => {
   finally { button.disabled = false; }
 });
 $('refreshSpend').addEventListener('click', refreshSpend);
+$('predictSpend').addEventListener('click', predictSpend);
 $('closeSpend').addEventListener('click', clearSpend);
 $('spendDialog').addEventListener('cancel', clearSpend);
 $('spendPrevious').addEventListener('click', () => { if (spendPage > 0) { --spendPage; paintSpendPage(); } });

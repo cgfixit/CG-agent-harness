@@ -60,6 +60,32 @@ async fn spend_summary_is_csrf_guarded() {
     assert_ne!(status, 200);
 }
 
+#[tokio::test]
+async fn prediction_is_guarded_bounded_and_never_sends_local_or_attached_context() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let response = s
+        .client
+        .post(format!("{}/api/spend/predict", s.base))
+        .json(&json!({"message":"private"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
+    let (status, body) = s.post_json("/api/spend/predict", json!({"message":"private"})).await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["detail"]["code"], "SPEND_LOCAL_UNPRICED");
+    for body in [
+        json!({"message":" "}),
+        json!({"message":"x".repeat(32769)}),
+        json!({"message":"private","attachment_ids":[]}),
+        json!({"message":"private","selected_facts":[]}),
+    ] {
+        assert_eq!(s.post_json("/api/spend/predict", body).await.0, 422);
+    }
+    assert!(!s.home.join("logs/spend.jsonl").exists());
+}
+
 #[test]
 fn summary_distinguishes_empty_corrupt_unreadable_and_oversized_generations() {
     let dir = tempfile::tempdir().unwrap();

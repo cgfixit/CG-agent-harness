@@ -43,6 +43,15 @@ and cancellation across snapshots. `web.concurrency` cannot hot-reload.
 Existing per-mutation coding-policy disk checks are independent and still apply.
 See `docs/CONFIG_RELOAD.md` before changing either boundary.
 
+Repository retrieval is opt-in under `agentic.deepagent_github.retrieval`
+(literal true only), inside the agentic child and only for local proposers.
+Reuse the Tantivy crate in a bounded per-step RAM index, never the web cache.
+Inventory stays under the clone capability; denied basenames, binary/oversized
+files and scanner hits are excluded. Re-read and verify the full hash before
+injection; operator/model read selections keep priority and existing budgets.
+Persist only retrieval metadata in run/audit traces. No new read authority for
+cloud proposers and no change to explicit confirm/reason or write gates.
+
 ## Traps
 
 - **Never** make the server reference `crate::agentic`; `tests/invariant_guard.rs`
@@ -102,7 +111,12 @@ See `docs/CONFIG_RELOAD.md` before changing either boundary.
   `GET /api/spend/summary` is the rollup. `usage_reported` is honest (both
   counts must be JSON numbers). Empty-text 2xx still records
   `failed_after_billing`. Completeness is for retained generations, not lifetime
-  billing; unknown/local costs are not zero. The dashboard is read-only.
+  billing; unknown/local costs are not zero. The ledger view is read-only.
+  Explicit `POST /api/spend/predict` counts only the supplied cloud draft: Claude
+  vendor count with bounded fallback, Grok UTF-8 bytes/4. It creates no ledger
+  row. Reserve full output without cache credit; cap missing/null is ungated,
+  and heuristic gating requires literal `budget_on_heuristic: true`. Unknown
+  rates stay unpriced; local tokenizer calibration never controls cloud spend.
 - Completion webhooks are default-off, restart-only and metadata-only. Keep retries
   at most three, exact private destination grants, DNS pinning and no redirects.
   Delivery failure must not change a job outcome. Operator contracts and build
