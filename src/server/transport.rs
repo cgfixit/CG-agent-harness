@@ -63,12 +63,14 @@ pub fn read_material(path: &Path, private: bool) -> Result<Vec<u8>> {
 }
 
 fn private_directory(path: &Path) -> Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
+    let builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
-    {
+    let builder = {
+        let mut builder = builder;
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
-    }
+        builder
+    };
     match builder.create(path) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}

@@ -31,6 +31,7 @@ pub const MAX_HOME_BLOBS: usize = 512;
 const MULTIPART_OVERHEAD: u64 = 256 * 1024;
 pub const MAX_REQUEST_BYTES: u64 = MAX_FILE_BYTES * MAX_FILES_PER_REQUEST as u64 + MULTIPART_OVERHEAD;
 const MAX_LOSSY_REPLACEMENTS: usize = 32;
+#[cfg(unix)]
 const BLOB_MODE: u32 = 0o600;
 const INDEX_NAME: &str = "index.json";
 
