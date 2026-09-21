@@ -162,7 +162,7 @@ mcp:
   # Separate inbound gateway: no listener or capabilities until explicitly selected.
   server:
     enabled: false
-    host: 127.0.0.1
+    host: 127.0.0.1 # DevSkim: ignore DS162092 because the private gateway contract requires loopback-only binding.
     port: 8791
     tools: []
     max_keys: 8
