@@ -18,6 +18,7 @@ use crate::server::attachments::{blob_section, wrap_fence, IncomingFile, Verifie
 use crate::server::passage_index::{chunk_text, retrieve_passages, PassageDoc, SourceKind};
 
 const INDEX_NAME: &str = "index.json";
+#[cfg(unix)]
 const BLOB_MODE: u32 = 0o600;
 const DEFAULT_MAX_FILES_PER_OWNER: u64 = 64;
 const DEFAULT_MAX_FILE_BYTES: u64 = 524_288;
