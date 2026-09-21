@@ -24,9 +24,9 @@ model — only config.
 | `curated_qa.py` | 20 hand-written Q&A — the reasoning core (architecture, gates, sanitize_handoff, loopback, structured memory, the two-config reality, MLX path). |
 | `build_dataset.py` | Emits `train.jsonl` / `valid.jsonl` (MLX ChatML `{"text": ...}`) from the curated Q&A + bounded code-reference pairs. Warns loudly on drifted `SIGNIFICANT_FILES`. |
 | `lora_config.yaml` | `mlx_lm.lora` QLoRA config (4-bit base, batch 1, grad_checkpoint, rank 16). |
-| `Modelfile.cgagent` | Ollama Modelfile — system-prompt path (stock model) **or** GGUF re-export path (fused model). |
+| `Modelfile.cgagent` | Ollama Modelfile for a GGUF re-export of a fused model. No SYSTEM prompt — persona lives in the harness. |
 | `mock_server.py` | Minimal OpenAI-compatible mock (`/v1/models`, `/v1/chat/completions`) for the smoke test. Stdlib only. |
-| `smoke_test.sh` | Runbook: start mock, build, boot, send a chat, confirm the resolver + planner hit the mock. |
+| `smoke_test.sh` | Runbook: owned `CGAGENTHARNESS_HOME`, `serve --host/--port`, one chat; mock POST after boot is the proof. |
 | `requirements.txt` | `mlx-lm` (training only; builder + mock are stdlib). |
 
 ## Quickstart

@@ -1,9 +1,11 @@
 # Generated dataset (reproducible via build_dataset.py) — do not commit.
 data/
-# Training outputs.
+# Training outputs (this directory). Docs also create ./adapters, ./cgagent-fused,
+# and .venv at the repo root — those are ignored from the root .gitignore.
 adapters/
 *.npz
 cgagent-fused/
+.venv/
 # Security scan artifacts.
 .secscan/
 # Python bytecode.

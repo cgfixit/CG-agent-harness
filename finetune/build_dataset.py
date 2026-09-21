@@ -29,8 +29,9 @@ from pathlib import Path
 
 try:
     from curated_qa import CURATED_QA  # type: ignore[import]
-except Exception:  # standalone fallback if curated_qa.py is absent
-    CURATED_QA = []
+except Exception as exc:
+    print(f"[!] failed to import curated_qa (refusing an empty curated set): {exc}", file=sys.stderr)
+    sys.exit(1)
 
 # ─── Repo identity ────────────────────────────────────────────────────────────
 
@@ -74,29 +75,6 @@ SIGNIFICANT_FILES: list[str] = [
 
 # CG-Agent has no RAG indexer (that is CyClaw's job), so there is no corpus build
 # here. This list exists only so a future multi-repo builder can reuse it.
-
-CYCLAW_SYSTEM_PROMPT = """You are CG-Agent's internal assistant with deep knowledge of the CG-agent-harness Rust codebase.
-
-CG-Agent (github.com/CGFixIT/CG-agent-harness) is a loopback-only agentic coding console — the Rust
-successor to CyClaw's Python harness/. Three invariants:
-1. Loopback-only — all local model traffic stays on-machine (is_loopback_url); cloud egress is explicit and gated.
-2. Model output is a proposal, not authority — the harness bounds, validates, and gates every mutation.
-3. Defense-in-depth — retrieval + NFKC injection filtering + sanitize_handoff + the six cloud gates.
-
-Module map:
-- src/agentic/ — the coding pipeline: real_repo_loop (plan->edit->check), cloud_proposer (CloudProposerClient + sanitize_handoff), proposer (LocalProposerClient), commands, governance, edits, workspace, run_store.
-- src/llm/ — model layer: backend (resolve_local_backend), ollama, openai_chat (ChatClient), openai_stream, inventory (model_readiness), cloud_chat (Grok/Claude), spend.
-- src/server/ — axum console: mod, chat_web, sessions, session_export, session_search, structured_memory_*, web_*, agent_jobs, agent_schedules, console, compaction.
-- src/common/ — config (AppConfig), injection, auth_*, audit, local_tls, sandbox_wrap, ratelimit.
-
-Two local-model configs: models.local_llm.* (chat/structured-memory/compaction/web) and
-agentic.deepagent_github.* (the coding planner, LocalProposerClient). Both accept an OpenAI-compatible
-loopback endpoint; repoint BOTH to use a fine-tuned model for chat AND coding. Cloud chat (grok/claude)
-is separate and gated.
-
-When answering, reference specific files/functions. Follow the three invariants. Never propose changes
-that bypass loopback enforcement, the bounded-edit gates, sanitize_handoff, or the approval flow.
-"""
 
 
 # ─── Dataset ──────────────────────────────────────────────────────────────────
@@ -196,12 +174,9 @@ def write_lora_config(out_path: Path, base_model: str = "malekoo/Qwen3.8-27B-MLX
 
 def build_modelfile(out_path: Path, model_tag: str = "qwen3.8:27b-mlx",
                     num_ctx: int = 32768, temperature: float = 0.2) -> None:
-    """Ollama Modelfile. NOTE: a fine-tuned MLX adapter is NOT attached here — Ollama
-    cannot hot-load an MLX adapter. This is the system-prompt path (stock model + prompt)
-    OR the GGUF re-export path (fuse -> GGUF -> ollama create with this Modelfile)."""
+    """Ollama Modelfile for a GGUF re-export. Persona lives in the harness, not here."""
     lines = [
         f"FROM {model_tag}",
-        f'SYSTEM """{CYCLAW_SYSTEM_PROMPT}"""',
         f"PARAMETER temperature {temperature}",
         f"PARAMETER num_ctx {num_ctx}",
         "PARAMETER top_p 0.9",
@@ -228,9 +203,9 @@ def main() -> None:
     args = ap.parse_args()
 
     repo_path = Path(args.repos).resolve()
-    if not repo_path.exists():
-        print(f"[!] repo path not found: {repo_path}")
-        return
+    if not repo_path.is_dir():
+        print(f"[!] repo path not found: {repo_path}", file=sys.stderr)
+        sys.exit(1)
 
     if not any([args.dataset, args.modelfile, args.lora_config]):
         args.dataset = True

@@ -17,6 +17,12 @@ sessions/
 .env.*
 !.env.example
 
+# Fine-tune local artifacts created at repo root by docs/FINETUNE.md
+# (mlx_lm.lora adapter_path ./adapters, fuse --save-path ./cgagent-fused, .venv).
+/adapters/
+/cgagent-fused/
+/.venv/
+
 # Running the in-tree python scripts (scripts/*.py) byte-compiles them here.
 __pycache__/
 *.pyc

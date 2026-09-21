@@ -1,16 +1,14 @@
-# CG-Agent Ollama Modelfile.
+# CG-Agent Ollama Modelfile for a GGUF re-export of a fused MLX model.
 #
-# Two uses:
-#  1. System-prompt path (no training): FROM qwen3.8:27b-mlx + the CG-Agent system
-#     prompt. `ollama create cgagent -f finetune/Modelfile.cgagent` gives you the
-#     stock model with repo-aware prompting.
-#  2. GGUF re-export path (after fine-tuning): fuse the MLX adapter, convert the
-#     fused model to GGUF (llama.cpp convert), then `ollama create cgagent-fused -f
-#     finetune/Modelfile.cgagent` after changing FROM to your fused GGUF file.
+# A fine-tuned MLX adapter cannot be attached here — Ollama cannot hot-load an
+# MLX adapter. Fuse first, convert the fused model to GGUF (llama.cpp), then
+# `ollama create cgagent-fused -f finetune/Modelfile.cgagent` after changing
+# FROM to that GGUF file.
 #
-# A fine-tuned MLX adapter is NOT attached here — Ollama cannot hot-load an MLX
-# adapter. For the live-MLX path, serve the fused model with mlx_lm.server and
-# point models.local_llm / agentic.deepagent_github at the loopback URL instead.
+# This file does not ship a SYSTEM prompt. Persona and loopback contracts live
+# in the harness (soul.md / planner prompts), not in Ollama. For the live-MLX
+# path, serve the fused model with mlx_lm.server and point models.local_llm /
+# agentic.deepagent_github at the loopback URL instead.
 FROM qwen3.8:27b-mlx
 PARAMETER temperature 0.2
 PARAMETER num_ctx 32768

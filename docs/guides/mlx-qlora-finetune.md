@@ -17,10 +17,13 @@ Confirm CG-Agent can use an OpenAI-compatible loopback endpoint with no Rust cha
 bash finetune/smoke_test.sh
 ```
 
-This starts `finetune/mock_server.py`, points both `models.local_llm` and
-`agentic.deepagent_github` at it, builds the harness (`cargo build --release`), and
-sends a chat. If the mock logs a `GET /v1/models` and a `POST /v1/chat/completions`,
-the path works. Skip this only if you have already confirmed it.
+This starts `finetune/mock_server.py`, exports `CGAGENTHARNESS_HOME` to an owned
+temp home (`serve` accepts only `--host` / `--port`), points both
+`models.local_llm` and `agentic.deepagent_github` at the mock, builds the harness
+(`cargo build --release`), and sends one authenticated chat. The script's own
+`GET /v1/models` is mock liveness only. If chat succeeds, the mock must log a
+real `POST /v1/chat/completions` after harness boot. Skip this only if you have
+already confirmed it.
 
 ## Step 1 — Build the dataset
 
@@ -87,7 +90,16 @@ agentic:
     base_url: "http://127.0.0.1:1234/v1"
     model: "cgagent-fused"
     allow_cloud_providers: false
+    providers:
+      grok:
+        enabled: false
+      claude:
+        enabled: false
 ```
+
+`load_agentic_config` rejects parent-off plus any enabled cloud-provider child.
+Disable every enabled `providers.*` child when the parent is false, or the home
+will fail to load against a default config.
 
 Then restart the console. **Both** blocks must point at the server — `models.local_llm`
 for chat, `agentic.deepagent_github` for the coding planner. Setting MLX as fallback is

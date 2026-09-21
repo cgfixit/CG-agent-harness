@@ -66,7 +66,16 @@ agentic:
     base_url: "http://127.0.0.1:1234/v1"              # same server
     model: "cgagent-fused"
     allow_cloud_providers: false
+    providers:
+      grok:
+        enabled: false
+      claude:
+        enabled: false
 ```
+
+`load_agentic_config` rejects parent-off plus any enabled cloud-provider child.
+When setting `allow_cloud_providers: false`, also disable every enabled
+`providers.*` child (today `grok` and `claude`) or the home will fail to load.
 
 Both `base_url`s must be loopback. Restart the console to re-evaluate after changing
 services.
@@ -95,10 +104,13 @@ the live-MLX path; avoids a second process.
 ## Verification (do this before training)
 
 Run `bash finetune/smoke_test.sh` — it starts `finetune/mock_server.py` (an
-OpenAI-compatible mock), points both configs at it, builds the harness, and sends a
-chat. If the mock logs both a `GET /v1/models` (inventory probe) and a
-`POST /v1/chat/completions` (chat + planner), the loopback path works with no Rust
-changes. This confirms the integration before you spend time training.
+OpenAI-compatible mock), exports `CGAGENTHARNESS_HOME` to an owned temp home
+(`serve` accepts only `--host` / `--port`; there is no global `--config`), points
+both configs at the mock, builds the harness, and sends one authenticated chat.
+The smoke's own `GET /v1/models` is mock liveness only, not resolver proof. If
+chat succeeds, the mock must log a real `POST /v1/chat/completions` after harness
+boot; if chat fails, the script prints that clearly. Planner `/api/agent/run`
+coverage is out of scope for this smoke.
 
 ## Notes & caveats
 

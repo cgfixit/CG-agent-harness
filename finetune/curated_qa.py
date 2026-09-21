@@ -6,7 +6,7 @@ loopback-only agentic coding console — the Rust successor to CyClaw's Python
 harness/. These Q&A teach a model to REASON about CG-Agent's architecture,
 security model, and local-MLX fine-tuning path — not to memorize files.
 
-Sourced from the live repo (main, 2026-09-20): src/agentic/, src/llm/,
+Sourced from the live repo (main, 2026-09-21): src/agentic/, src/llm/,
 src/server/, src/common/, setup-guide.md, docs/MODELS.md, docs/CODING_PIPELINE.md,
 INVARIANTS.md. Each claim is verifiable against the cited module/function.
 
@@ -55,11 +55,13 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "Explain the real-repo coding loop and its stages.",
     "input": "",
     "output": (
-        "The real-repo loop (src/agentic/real_repo_loop.rs) is a bounded plan->edit->check->feedback cycle. "
-        "A planner proposes an approach; the loop applies edits to the real working tree (edits.rs, "
-        "BoundedEdits), runs checks (build/test/lint), and feeds results back for the next iteration. It "
-        "is deliberately bounded — the model's output is a proposal, not authority: the harness validates, "
-        "scopes, and gates every mutation. The loop never bypasses retrieval, audit, or approval gates."
+        "The real-repo loop (src/agentic/real_repo_loop.rs::run_real_repo_loop) is a bounded "
+        "plan->edit->check->feedback cycle against a jailed RepoWorkspace clone. commands.rs clones the "
+        "configured repo into <home>/data/agentic/workspaces (workspace.rs::RepoWorkspace::clone); edits "
+        "land only in that clone via apply_proposal, never in the caller's real working tree. Model output "
+        "is a proposal, not authority: injection/code-shape/scope/budget are judged before any write, "
+        "checks run in the hard sandbox, and the loop never commits — decide/push/publish are later "
+        "human steps that still require --reason and --confirm."
     ),
 },
 
@@ -86,7 +88,9 @@ CURATED_QA: list[dict[str, str]] = [
         "master cloud gate (agentic.deepagent_github.allow_cloud_providers) and a per-run --confirm-online. "
         "A cloud turn sends only the handoff payload, never local history, skills, memory, or web context. "
         "Both the master gate and the specific provider flag (grok/claude) must be true for that provider "
-        "to be usable; a provider with the master gate off is treated as not configured."
+        "to be selected (DeepAgentConfig::cloud_provider). load_agentic_config rejects parent-off plus "
+        "child-enabled, so disabling the master gate also requires providers.grok.enabled and "
+        "providers.claude.enabled to be false or the home will fail to load."
     ),
 },
 
@@ -94,12 +98,13 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "What is sanitize_handoff and why does it exist?",
     "input": "",
     "output": (
-        "sanitize_handoff (src/agentic/cloud_proposer.rs, pub fn) scrubs the handoff payload before any "
-        "egress to a cloud provider. The handoff contains only: the instruction, an approved plan, prior "
-        "feedback, bounded source excerpts, and fetched PR/issue context. Sanitization strips anything that "
-        "could leak identity, secrets, or excessive local context — the soul/identity preamble is "
-        "intentionally omitted so identity never leaves the box. This is the confused-deputy defense: even "
-        "with cloud credentials, the agent cannot exfiltrate the user's local environment."
+        "sanitize_handoff (src/agentic/cloud_proposer.rs) is a bounded egress filter, not a general "
+        "privacy wipe. It refuses when the prompt exceeds max_handoff_chars, refuses when Scanner matches "
+        "a banned injection pattern, applies Redactors regexes (configured email/IP/secrets-like), and "
+        "writes an audit row. It does not strip 'anything that could leak identity or local context'. "
+        "Omitting operator soul/identity from a cloud handoff is an assembly choice in the caller "
+        "(local planner prompts may attach DEFAULT_SOUL; local persona edits are not implicitly sent "
+        "to a cloud coding provider) — not sanitize_handoff magic."
     ),
 },
 
@@ -122,12 +127,13 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "How does CG-Agent defend against prompt injection in tool/skill output?",
     "input": "",
     "output": (
-        "src/common/injection.rs normalizes (NFKC) and screens tool/skill output for injection markers "
-        "before it re-enters the model context. The prompt-context path is governed: prompt_context "
-        "requires explicit /skill use, and the governed catalog has no execution adapter — tool output is "
-        "treated as untrusted data, not instructions. The six cloud-coding gates plus sanitize_handoff "
-        "extend this defense to any egress path. This is defense-in-depth: retrieval + injection filtering "
-        "+ bounded egress."
+        "Chat web tools are bounded separately from injection.rs. chat_web.rs clips web_fetch text, labels "
+        "it 'Untrusted fetched page text; excerpt may be truncated.', and appends the serialized JSON as "
+        "a role: tool message. Scanner is not applied to that tool output before re-entry. injection.rs "
+        "Scanner (optional NFKC/homoglyph normalize via scan_normalized) is used on other trust "
+        "boundaries: sanitize_handoff outbound prompts, proposed-file governance, and operator "
+        "soul/style/memory/attachment writes. Treat tool JSON as untrusted data; do not claim a universal "
+        "pre-reentry scan on the chat web path."
     ),
 },
 
@@ -151,12 +157,14 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "Describe the structured memory subsystem and its parts.",
     "input": "",
     "output": (
-        "Structured memory (src/server/structured_memory*.rs) is the durable, queryable memory layer with "
-        "five cooperating modules: structured_memory.rs (core), _fts.rs (full-text search over notes), "
-        "_auto.rs (automatic note extraction from turns), _consolidate.rs (merge/dedupe notes), and "
-        "_suggest.rs (surface relevant notes into context). It sits on SQLite (rusqlite bundled) and keeps "
-        "memory local — no cloud sync. Memory is separate from identity and from control flow, mirroring "
-        "CyClaw's identity != memory != topology invariant."
+        "Structured memory (src/server/structured_memory*.rs) stores account-private facts, governed "
+        "proposals, and optional episodes — not generic notes (pinned /memory notes are a separate store). "
+        "FTS5 indexes facts only. The consolidator turns selected episodes into pending proposals only and "
+        "never silently applies facts. auto_suggest_chat / auto_suggest_coding may create pending "
+        "summaries/insights for the initiating owner; they never scan shared archives or auto-apply facts. "
+        "Gates ship true in assets/config.default.yaml today (enabled, episode_capture, explicit_recall, "
+        "retrieval, auto_retrieval, consolidation, auto_consolidation, auto_suggest_*). Fact writes still "
+        "require confirm + reason; quoted YAML \"true\" is OFF (flag_is_true)."
     ),
 },
 
@@ -281,13 +289,13 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "How do you smoke-test that CG-Agent can use a fused MLX model without Rust changes?",
     "input": "",
     "output": (
-        "Run finetune/mock_server.py on 127.0.0.1:1235 — it answers GET /v1/models with the configured id "  # DevSkim: ignore DS162092 because this Q&A documents the loopback smoke mock.
-        "and POST /v1/chat/completions with finish_reason=stop. Then point both configs at it as primary "
-        "(models.local_llm.provider=lmstudio, agentic.deepagent_github.provider=openai_compatible, same "
-        "loopback base_url), cargo build --release, boot the console, send a chat, and run a real-repo "
-        "loop. If the resolver selects the mock, state.chat calls it, and the planner hits /chat/completions "
-        "with the configured model, no Rust changes are needed. The mock confirms the OpenAI-compatible "
-        "loopback path end-to-end before you spend time training."
+        "Run finetune/smoke_test.sh: it starts finetune/mock_server.py on 127.0.0.1:1235, exports "  # DevSkim: ignore DS162092 because this Q&A documents the loopback smoke mock.
+        "CGAGENTHARNESS_HOME to an owned temp home (no serve --config; Serve accepts only --host/--port), "
+        "points both configs at the mock as primary, boots `cgagentharness serve --host 127.0.0.1 --port "  # DevSkim: ignore DS162092 because this Q&A documents the loopback serve bind.
+        "8790`, and sends one authenticated chat. The smoke's own GET /v1/models is liveness only — not "
+        "resolver proof (fallback off means resolve_local_backend returns primary without probing). If "
+        "chat succeeds, the mock must log a real POST /v1/chat/completions after harness boot; if chat "
+        "fails, say so. This smoke does not cover /api/agent/run or LocalProposerClient."
     ),
 },
 
@@ -297,12 +305,13 @@ CURATED_QA: list[dict[str, str]] = [
     "instruction": "What are CG-Agent's core design invariants?",
     "input": "",
     "output": (
-        "Three invariants, mirroring CyClaw: (1) loopback-only — all local model traffic stays on-machine, "
-        "enforced by is_loopback_url; cloud egress is explicit and gated. (2) Model output is a proposal, "
-        "not authority — the harness bounds, validates, and gates every mutation (bounded edits, the "
-        "plan->edit->check loop, approval gates). (3) Defense-in-depth — retrieval + NFKC injection "
-        "filtering + sanitize_handoff + the six cloud gates layer so no single bypass compromises the "
-        "system. Identity, memory, and control flow remain separate concerns."
+        "Harness invariants (code + INVARIANTS.md, not CyClaw I1–I5): (1) loopback-only — local model "
+        "traffic stays on-machine (is_loopback_url); cloud egress is explicit and gated. (2) Model output "
+        "is a proposal, not authority — edits land only in a jailed RepoWorkspace clone after "
+        "injection/scope/budget gates; decide/push/publish still need --reason and --confirm. (3) "
+        "Defense-in-depth — I6 isolation, the HTTP guard chain, clone jail, sanitize_handoff "
+        "(size/Scanner/Redactors/audit), and the cloud-provider gates. injection.rs does not screen every "
+        "chat tool result before re-entry. Identity, structured facts, and control flow stay separate."
     ),
 },
 
