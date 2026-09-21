@@ -666,7 +666,7 @@ async fn mock_provider(
             }
         }),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (addr, observed_hits)
@@ -734,7 +734,7 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
         spend.clone(),
     )
     .unwrap();
-    g.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", grok_addr.port()));
+    g.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", grok_addr.port())); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
     let reply = std::thread::scope(|s| s.spawn(|| g.invoke("sys", "hello", 100, Some(0.0))).join().unwrap()).unwrap();
     assert_eq!(reply, "grok says hi", "429 with Retry-After was retried");
     let mut c = CloudProposerClient::new(
@@ -750,7 +750,7 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
         spend.clone(),
     )
     .unwrap();
-    c.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", claude_addr.port()));
+    c.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", claude_addr.port())); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
     let reply = std::thread::scope(|s| s.spawn(|| c.invoke("sys", "hello", 100, Some(0.0))).join().unwrap()).unwrap();
     assert_eq!(reply, "claude\nsays hi", "multi-block content is joined");
     assert_eq!(*grok_hits.lock().unwrap(), 2, "429 was retried once");
@@ -797,7 +797,7 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
                 }
             }
             let (addr, hits) = rt.block_on(mock_provider(reply, false));
-            client.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", addr.port()));
+            client.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", addr.port())); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
             let before = std::fs::read_to_string(&spend).unwrap().lines().count();
             let outcome = std::thread::scope(|s| s.spawn(|| client.invoke("sys", "hello", 100, None)).join().unwrap());
             assert!(outcome.unwrap_err().message.contains("normal completion"), "{reason:?}");
