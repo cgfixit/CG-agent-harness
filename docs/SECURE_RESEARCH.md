@@ -345,8 +345,11 @@ so validators reduce transferred bytes but do not eliminate request count.
 
 Dedicated research searches the index, asks the configured local model for at
 most 3 additional subqueries in 2 rounds, performs at most one bounded crawl,
-and synthesizes at most about 3,000 evidence tokens. Default total model allowance
-is 16,000 tokens and deadline 300 seconds. Provider-reported usage is counted;
+and synthesizes at most about 6,000 evidence tokens. Default total model allowance
+is 28,000 tokens and deadline 300 seconds. (A constrained window that cannot reach
+`OLLAMA_CONTEXT_LENGTH=32768` should instead configure `web.total_tokens: 16000`
+and `web.evidence_tokens: 3000`; see [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama).)
+Provider-reported usage is counted;
 otherwise UTF-8 bytes/4 plus overhead is explicitly estimated, with incomplete
 output charged conservatively. Model output is bounded JSON, never executable
 commands or privileged tools. Original question plus focused subqueries are
