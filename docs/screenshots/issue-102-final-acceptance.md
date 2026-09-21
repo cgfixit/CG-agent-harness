@@ -41,7 +41,7 @@ It preceded the final form-timing reset fix; the backend behavior is unchanged.
   sees only its own session and no administrator schedules or delivery records.
 
 Earlier phase-specific screenshots and artifact hashes remain documented in
-[ownership](OWNERSHIP.md), [scheduling](SCHEDULING.md) and [deliveries](DELIVERIES.md).
+[ownership](issue-102-ownership.md), [scheduling](issue-102-scheduling.md) and [deliveries](issue-102-deliveries.md).
 They are historical evidence, not screenshots of the final binary.
 
 ## Deterministic acceptance
