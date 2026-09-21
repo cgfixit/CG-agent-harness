@@ -14,6 +14,12 @@ model is served by `mlx_lm.server` on `127.0.0.1:1234` and wired into the config
 new Rust model backend is required. The work is: build a dataset, train, fuse, serve,
 and repoint two config blocks.
 
+The checked-in recipe targets `malekoo/Qwen3.8-27B-MLX-4bit`; an installed
+Ollama tag does not establish that these are the same weights. Base-model
+matching and a successful adapter training/fusion run remain unverified (see
+the current [tooling warning](../finetune/README.md)). The mock smoke below
+proves chat protocol compatibility only.
+
 ## The runtime path (already supported — verified)
 
 Two independent local-model configurations both accept an OpenAI-compatible loopback
@@ -22,7 +28,7 @@ shape that `mlx_lm.server` emits:
 
 - **`models.local_llm.*`** — chat, structured memory, compaction, web research. Provider
   accepts `ollama` | `lmstudio`. Resolved in `src/llm/backend.rs::resolve_local_backend`;
-  the `ChatClient` is built from the resolved backend in `src/server/state.rs`.
+  the `ChatClient` is built from the resolved backend in `src/server/mod.rs`.
 - **`agentic.deepagent_github.*`** — the coding planner (`LocalProposerClient`). Provider
   accepts `ollama` | `openai_compatible` (`src/agentic/config.rs`,
   `VALID_DEEPAGENT_PROVIDERS`). `base_url` must be loopback (`is_loopback_url`).
@@ -79,6 +85,12 @@ When setting `allow_cloud_providers: false`, also disable every enabled
 
 Both `base_url`s must be loopback. Restart the console to re-evaluate after changing
 services.
+
+The compatible-backend chat path reserves twice its output ceiling for prompt
+safety, even with `reasoning_effort: "none"` in YAML (that field is sent only
+to Ollama). Keep chat and `/loop` ceilings at most 12952; the defaults 4096 and
+2048 already fit. Summary tuning and usage calibration apply here too; see
+[local history compaction](CONSOLE.md#local-history-compaction).
 
 ## Workflow
 

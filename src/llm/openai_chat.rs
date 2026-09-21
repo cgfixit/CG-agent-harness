@@ -27,6 +27,9 @@ pub struct ChatResult {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub usage_reported: bool,
+    /// First request only, never the sum of a multi-call web turn. Numeric,
+    /// positive prompt usage is needed for session estimator calibration.
+    pub initial_prompt_tokens: Option<u64>,
 }
 
 pub struct ChatClient {
@@ -61,6 +64,10 @@ pub(crate) fn token_count(v: Option<&Value>) -> u64 {
         Some(Value::String(s)) => s.trim().parse::<u64>().unwrap_or(0),
         _ => 0,
     }
+}
+
+pub(crate) fn initial_prompt_tokens(parsed: &Value) -> Option<u64> {
+    parsed["usage"]["prompt_tokens"].as_u64().filter(|n| *n > 0)
 }
 
 /// Extract body text + usage or fail with a typed error (never echoes the body).
@@ -104,6 +111,7 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         prompt_tokens,
         completion_tokens,
         usage_reported,
+        initial_prompt_tokens: initial_prompt_tokens(parsed),
     })
 }
 

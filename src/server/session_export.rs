@@ -177,6 +177,7 @@ mod tests {
             ],
             prompt_history: Vec::new(),
             tally: TokenTally::default(),
+            token_calibration: None,
             goal: "do the thing".into(),
             selected_skills: Vec::new(),
             style: None,

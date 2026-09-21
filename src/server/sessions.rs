@@ -107,6 +107,9 @@ pub struct Session {
     pub prompt_history: Vec<String>,
     #[serde(default)]
     pub tally: TokenTally,
+    /// Local prompt-usage calibration is scoped to a backend URL and model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_calibration: Option<crate::server::compaction::TokenCalibration>,
     /// Operator /goal. Never in `summary()` because GET /api/sessions is open.
     #[serde(default)]
     pub goal: String,
@@ -205,6 +208,7 @@ impl SessionStore {
             messages: Vec::new(),
             prompt_history: Vec::new(),
             tally: TokenTally::default(),
+            token_calibration: None,
             goal: String::new(),
             selected_skills: Vec::new(),
             style: None,
@@ -356,7 +360,16 @@ impl SessionStore {
         usage: &TokenTally,
         prompt_skills: &[Value],
     ) -> Result<Session> {
-        self.record_exchange_inner(session_id, user_text, assistant_text, model, usage, prompt_skills, None)
+        self.record_exchange_inner(
+            session_id,
+            user_text,
+            assistant_text,
+            model,
+            usage,
+            prompt_skills,
+            None,
+            None,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -379,11 +392,12 @@ impl SessionStore {
             usage,
             prompt_skills,
             Some((keep_recent, summary.to_string())),
+            None,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn record_exchange_inner(
+    pub(crate) fn record_exchange_inner(
         &self,
         session_id: &str,
         user_text: &str,
@@ -392,6 +406,7 @@ impl SessionStore {
         usage: &TokenTally,
         prompt_skills: &[Value],
         compact: Option<(usize, String)>,
+        calibration: Option<crate::server::compaction::TokenCalibration>,
     ) -> Result<Session> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
@@ -417,6 +432,9 @@ impl SessionStore {
             session.messages.drain(0..drop);
         }
         session.model = model.to_string();
+        if let Some(calibration) = calibration {
+            session.token_calibration = Some(calibration);
+        }
         session.last_prompt_skills = prompt_skills.to_vec();
         session.tally.prompt_tokens += usage.prompt_tokens;
         session.tally.completion_tokens += usage.completion_tokens;

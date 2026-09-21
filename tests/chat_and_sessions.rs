@@ -211,6 +211,198 @@ async fn reply_budget_that_consumes_prompt_headroom_fails_at_startup() {
 }
 
 #[tokio::test]
+async fn reasoning_and_compatible_backends_enforce_the_effective_reply_reservation() {
+    for (provider, effort) in [("ollama", "high"), ("ollama", "null"), ("lmstudio", "none")] {
+        for path in ["models.local_llm.max_tokens", "api.harness_loop_rate_limit.max_tokens"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = cgagentharness::common::home::Home::at(tmp.path().join("home"));
+            home.ensure_layout().unwrap();
+            let cfg = config_with(
+                &home.root,
+                &[
+                    ("auth.enabled", "false"),
+                    ("models.local_llm.provider", provider),
+                    ("models.local_llm.reasoning_effort", effort),
+                    (path, "12953"),
+                ],
+            );
+            let mut options = cgagentharness::server::AppOptions::new(home);
+            options.config = Some(cfg);
+            let error = cgagentharness::server::build_app(options)
+                .await
+                .err()
+                .expect("oversized effective reservation");
+            assert_eq!(error.code, "CONFIG_ERROR");
+            assert!(
+                error.message.contains(&format!("{path} must be from 1 to 12952")),
+                "{error:?}"
+            );
+        }
+    }
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("models.local_llm.reasoning_effort", "high")
+            .with("models.local_llm.max_tokens", "12952")
+            .with("chat.compact_prompt_tokens", "4096"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled":false})).await;
+    let (status, body) = s.post_json("/api/chat", json!({"message":"hi"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(model.last_request().unwrap()["max_tokens"], 12952);
+    let (status, body) = s.post_json("/api/chat", json!({"message":"x".repeat(20000)})).await;
+    assert_eq!(status, 422, "doubling must also reach projection: {body}");
+    assert_eq!(body["detail"]["details"]["limit_tokens"], 30000);
+}
+
+#[tokio::test]
+async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_calibration() {
+    use axum::{routing::post, Json, Router};
+    use cgagentharness::server::{compaction, routes::core::prompt_history, sessions::TokenTally};
+    use std::sync::{Arc, Mutex};
+    let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let captured = requests.clone();
+    let router = Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<serde_json::Value>| {
+            let captured = captured.clone();
+            async move {
+                captured.lock().unwrap().push(body.clone());
+                let messages = body["messages"].as_array().unwrap();
+                let last = messages.last().unwrap()["content"].as_str().unwrap();
+                let estimate = messages
+                    .iter()
+                    .map(|m| compaction::estimate_tokens(m["content"].as_str().unwrap()))
+                    .sum::<u64>()
+                    + body
+                        .get("tools")
+                        .map(|t| compaction::estimate_tokens(&t.to_string()))
+                        .unwrap_or(0);
+                let summary = messages[0]["content"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("Summarize this chat history");
+                let answer = if summary {
+                    format!("{}TAIL_FACT", "決定".repeat(450))
+                } else {
+                    "ok".into()
+                };
+                let mut reply = ok_reply(&answer, estimate * 2, 2);
+                if last == "missing" {
+                    reply.as_object_mut().unwrap().remove("usage");
+                }
+                (
+                    if last == "fail" {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        axum::http::StatusCode::OK
+                    },
+                    Json(reply),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = spawn_server(
+        &url,
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", "16000")
+            .with("chat.compact_keep_messages", "2")
+            .with("compaction.summary_max_tokens", "1024"),
+    )
+    .await;
+    for web in [false, true] {
+        s.post_json("/api/web", json!({"enabled":web})).await;
+        let (status, first) = s.post_json("/api/chat", json!({"message":"first"})).await;
+        assert_eq!(status, 200, "{first}");
+        let id = first["session_id"].as_str().unwrap();
+        assert_eq!(s.state.store.get(id).unwrap().token_calibration.unwrap().ratio, 2.0);
+        let tool_tokens = requests
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("tools")
+            .map(|t| compaction::estimate_tokens(&t.to_string()))
+            .unwrap_or(0);
+        for cycle in 0..2 {
+            let previous = s
+                .state
+                .store
+                .get(id)
+                .unwrap()
+                .messages
+                .iter()
+                .find(|m| m.text.starts_with(compaction::COMPACT_PREFIX))
+                .map(|m| m.text.clone());
+            for _ in 0..10 {
+                s.state
+                    .store
+                    .record_exchange(
+                        id,
+                        &"界".repeat(400),
+                        &"界".repeat(400),
+                        "fixture",
+                        &TokenTally::default(),
+                        &[],
+                    )
+                    .unwrap();
+            }
+            let session = s.state.store.get(id).unwrap();
+            let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":id})).await;
+            let system = preview["prompt"].as_str().unwrap();
+            let history = prompt_history(&session);
+            let raw = compaction::projected_prompt_tokens(system, &history, "next", 4096, 1.0, tool_tokens);
+            let calibrated = compaction::projected_prompt_tokens(system, &history, "next", 4096, 2.0, tool_tokens);
+            assert!(
+                raw < 16000 && calibrated > 16000,
+                "cycle {cycle}: raw={raw} calibrated={calibrated}"
+            );
+            let start = requests.lock().unwrap().len();
+            let (status, body) = s
+                .post_json("/api/chat", json!({"session_id":id,"message":"next"}))
+                .await;
+            assert_eq!(status, 200, "{body}");
+            let sent = requests.lock().unwrap()[start..].to_vec();
+            assert_eq!(sent.len(), 2, "one summary followed by one reply");
+            assert_eq!(sent[0]["max_tokens"], 1024);
+            if let Some(previous) = previous {
+                assert!(sent[0]["messages"][1]["content"].as_str().unwrap().contains(&previous));
+            }
+            let saved = s.state.store.get(id).unwrap();
+            assert_eq!(saved.messages[0].text, "first");
+            assert_eq!(
+                saved.token_calibration.unwrap().ratio,
+                2.0,
+                "summary usage must not inflate calibration"
+            );
+        }
+        let calibration = s.state.store.get(id).unwrap().token_calibration;
+        let (status, _) = s
+            .post_json("/api/chat", json!({"session_id":id,"message":"missing"}))
+            .await;
+        assert_eq!(status, 200);
+        assert_eq!(s.state.store.get(id).unwrap().token_calibration, calibration);
+        let path = s.home.join("sessions").join(format!("{id}.json"));
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(
+            s.post_json("/api/chat", json!({"session_id":id,"message":"fail"}))
+                .await
+                .0,
+            502
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let reopened = cgagentharness::server::sessions::SessionStore::new(&s.home.join("sessions")).unwrap();
+        assert_eq!(reopened.get(id).unwrap().token_calibration, calibration);
+    }
+    task.abort();
+}
+
+#[tokio::test]
 async fn zero_loop_reply_budget_keeps_the_legacy_default() {
     let tmp = tempfile::tempdir().unwrap();
     let home = cgagentharness::common::home::Home::at(tmp.path().join("home"));
@@ -250,8 +442,9 @@ async fn irreducible_prompt_is_rejected_without_rewriting_the_session() {
 
     assert_eq!(status, 422, "{body}");
     assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
-    assert_eq!(body["detail"]["details"]["limit_tokens"], 8192);
-    assert!(body["detail"]["details"]["compacted_tokens"].as_u64().unwrap() > 8192);
+    let limit = body["detail"]["details"]["limit_tokens"].as_u64().unwrap();
+    assert!(limit > 8192, "web tool definitions get their own prompt headroom");
+    assert!(body["detail"]["details"]["compacted_tokens"].as_u64().unwrap() > limit);
     assert!(model.requests.lock().unwrap().is_empty());
     assert_eq!(std::fs::read(path).unwrap(), before);
     let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
@@ -281,6 +474,8 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
         &[],
         "next",
         4096,
+        1.0,
+        0,
     );
     let threshold = base + 1500;
     assert!(threshold < 30_000, "fixture prompt unexpectedly large: {base}");
