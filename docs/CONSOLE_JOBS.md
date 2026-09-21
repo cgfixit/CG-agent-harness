@@ -33,6 +33,25 @@ and preview it. `/agent publish <run id> <reason>` sends that reviewed text.
 Reselect after any file edit; refresh clears staged bodies. A truncated diff
 cannot satisfy console review.
 
+## Schedules and completion notifications
+
+The guarded `/api/agent/schedules` API persists reviewed, goal-bound job requests
+and runs each occurrence through the same job preparation and write gates.
+`GET /api/agent/schedules/{schedule_id}` inspects a schedule;
+`POST /api/agent/schedules/{schedule_id}/cancel` stops future occurrences.
+Cancelling a schedule does not cancel an already started job; use the job's
+cancellation control separately. There is no schedule-editor slash command.
+Missed windows are skipped and restart does not catch up or replay work.
+
+In a [webhook-capable build](SPEND_AND_NOTIFICATIONS.md), optional notifications
+cover terminal detached jobs started manually or by schedules: `finished`,
+`failed`, and `cancelled`. Repeated finish/cancel calls do not create a second
+event. Recovered `interrupted` jobs are not announced. A schedule refused before
+job creation has no completion event; inspect `agent_schedule_failed` in audit.
+Notifications never approve, retry or change the outcome of a coding operation.
+Setup, metadata schema and best-effort delivery limits are in the
+[completion guide](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).
+
 ## Reproduce browser acceptance on macOS
 
 Requires a built release binary, Python 3, Node with built-in WebSocket support,

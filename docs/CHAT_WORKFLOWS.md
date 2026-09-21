@@ -1,5 +1,7 @@
 # Chat, persona, skills and goal controls
 
+Spend and job-completion operations: [operator guide](SPEND_AND_NOTIFICATIONS.md).
+
 Slash-command tables: [CONSOLE.md](CONSOLE.md#78-slash-command-quick-reference).
 
 Chat continuation and executable coding jobs are separate operations. A goal,
@@ -83,7 +85,7 @@ gate for the running process: `capture`, `recall`, `retrieval`,
 `auto-suggest-coding`. `/memory auto-suggest-chat|auto-suggest-coding on|off`
 control whether completed work is queued for
 review (`suggestion_mode: summaries|insights|both`); they require store + capture,
-ship false, and never auto-approve. These summaries cover the current turn/run,
+ship true for fresh homes (existing off choices remain off), and never auto-approve. These summaries cover the current turn/run,
 not unseen session history. See [MEMORY_GUIDE.md](MEMORY_GUIDE.md) and
 [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 Included notes are real stored content, not placeholders. Model answers can still

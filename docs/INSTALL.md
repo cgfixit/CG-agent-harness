@@ -355,6 +355,8 @@ After file-based configuration changes, fully quit/relaunch the app or restart
 | Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
 | Managed credentials | Home `.env`, loaded at process startup on Unix; inherited values win | `/api` reports presence/masked tail, not proof of provider authentication |
+| Spend ledger and dashboard | Retained `logs/spend.jsonl` and `.1`; dashboard state is page memory only | [Completeness and pricing](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero) |
+| Completion webhooks | `notifications.*` plus optional managed bearer; restart-only; queue is not durable | [Setup, destination rules and delivery audit](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook) |
 | Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |
 
 For output style, use [response style](CONSOLE.md#74-customize-response-style) before tuning generation parameters.
@@ -411,6 +413,8 @@ not a general environment-variable editor or connector credential vault.
 | Key | Purpose |
 |---|---|
 | `CGAGENTHARNESS_API_KEY` | Optional compatibility metadata; never grants account access |
+| `CGAGENTHARNESS_WEBHOOK_TOKEN` | Optional completion-webhook bearer; restart after saving. Requires [webhook-capable build and configuration](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook) |
+| `GH_TOKEN` | GitHub CLI and its Git credential helper after restart; repository approvals still apply |
 | `GROK_API_KEY` | Optional explicit Grok chat and governed cloud coding planner |
 | `ANTHROPIC_API_KEY` | Optional explicit Claude chat and governed cloud coding planner |
 | `DEEPAGENT_API_KEY` | Bearer credential for a configured non-Ollama compatible local planner |
@@ -455,6 +459,11 @@ Console jobs are saved in `data/agentic/console-jobs.json`, retaining up to 32
 terminal jobs plus an active one within 16 MiB. After restart, a formerly running
 console job becomes interrupted; it is not reattached or resumed. `/agent jobs`
 shows retained handles and `/agent job <id>` inspects one.
+
+Schedules are separately persisted in `data/agentic/console-schedules.json`;
+occurrences are consumed before launch and missed windows are skipped. See
+[schedules and completion notifications](CONSOLE_JOBS.md#schedules-and-completion-notifications).
+Notifications do not replace job records, and queued deliveries are lost on exit.
 
 `/agent runs` inspects separate durable run records. On Unix, a released worker
 lease permits reconciliation to interrupted; a live lease stays running.

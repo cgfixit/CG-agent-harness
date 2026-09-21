@@ -91,7 +91,12 @@ Public Google fallback and destination page fetching retain URL permission check
   rows are unpriced. Pull/warmup/MCP dispatch are not ledger events. Guarded
   `GET /api/spend/summary` is the rollup. `usage_reported` is honest (both
   counts must be JSON numbers). Empty-text 2xx still records
-  `failed_after_billing`.
+  `failed_after_billing`. Completeness is for retained generations, not lifetime
+  billing; unknown/local costs are not zero. The dashboard is read-only.
+- Completion webhooks are default-off, restart-only and metadata-only. Keep retries
+  at most three, exact private destination grants, DNS pinning and no redirects.
+  Delivery failure must not change a job outcome. Operator contracts and build
+  requirements: `docs/SPEND_AND_NOTIFICATIONS.md`.
 - Prefer a small unit test with `#[cfg(test)] mod tests` beside the function
   over another integration test when the thing under test is a pure parser or
   matcher (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`'
