@@ -650,7 +650,7 @@ mod tests {
             routing::post,
             Router,
         };
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this owned test receiver must bind only to loopback.
         let address = listener.local_addr().unwrap();
         let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count = hits.clone();
@@ -673,7 +673,7 @@ mod tests {
         });
         // .invalid never resolves. Only the validated pinned loopback address
         // can reach this owned fixture; RefuseDns forbids any fallback lookup.
-        let url = Url::parse(&format!("http://receiver.invalid:{}/hook", address.port())).unwrap();
+        let url = Url::parse(&format!("http://receiver.invalid:{}/hook", address.port())).unwrap(); // DevSkim: ignore DS137138 because the test pins this nonresolving hostname to its owned loopback HTTP receiver.
         let mut destination = Destination {
             spec: DestinationSpec {
                 id: "fixture".into(),

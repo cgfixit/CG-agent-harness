@@ -620,7 +620,7 @@ mod tests {
     fn legacy_interval_migrates_without_inventing_an_owner() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("schedules.json");
-        let raw = json!([{"schedule_id":"0123456789abcdef0123456789abcdef","interval_secs":60,"request":{},"next_fire_at":1060.0,"last_fired_at":null,"created_at":1000.0,"status":"active"}]);
+        let raw = json!([{"schedule_id":"0123456789abcdef0123456789abcdef","interval_secs":60,"request":{},"next_fire_at":1060.0,"last_fired_at":null,"created_at":1000.0,"status":"active"}]); // DevSkim: ignore DS173237 because this migration fixture is a public schedule ID, not a credential.
         std::fs::write(&path, serde_json::to_vec(&raw).unwrap()).unwrap();
         let store = ScheduleStore::open_at(&path, 1030.0, Settings::default()).unwrap();
         assert!(store.list("local").is_empty());
