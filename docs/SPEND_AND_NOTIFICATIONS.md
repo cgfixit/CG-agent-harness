@@ -21,6 +21,10 @@ merged before release. Verify the bundle's `Contents/Resources/COMMIT` or your
 source checkout; the Cargo package version alone does not identify capabilities.
 The spend ledger and persisted schedules predate these four changes.
 
+The `/analytics` dialog reuses this ledger summary alongside session and coding-run
+metrics. It keeps the same completeness and pricing semantics; see
+[Analytics](ANALYTICS.md).
+
 ## Read spend without mistaking missing data for zero
 
 Open **Spend**, then **Refresh** to read `GET /api/spend/summary`. Previous/Next

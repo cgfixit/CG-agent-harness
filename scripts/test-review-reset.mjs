@@ -5,6 +5,7 @@ import vm from 'node:vm';
 const html = readFileSync(process.env.CGAH_CONSOLE || new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 const source = (start, end) => html.slice(html.indexOf(start), html.indexOf(end));
 const nodes = new Map(), messages = [], calls = [];
+let analyticsClears = 0;
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {value:'', files:[], textContent:'', replaceChildren(){this.textContent='';}, addEventListener(event, handler){this[event]=handler;}});
   return nodes.get(id);
@@ -17,7 +18,7 @@ const context = vm.createContext({
   currentSession:'fixture-session', sessionGoal:'fixture goal', promptHistory:{},
   currentStyle:'off', currentStyleIssue:null, inflightChat:null, sendBtn:{disabled:false},
   isLoopStopCommand:()=>false, AGENT_CLI_TIMEOUT_MS:100, sys:text=>messages.push(text), table:rows=>JSON.stringify(rows),
-  abortInflightSearch(){}, clearPendingAttachments(){}, clearSpend(){}, paintStyle(){},
+  abortInflightSearch(){}, clearPendingAttachments(){}, clearSpend(){}, clearAnalytics(){++analyticsClears;}, paintStyle(){},
   refreshStatus:async()=>{}, refreshHarnessAuth:async()=>{},
   fetchWithTimeout:async()=>({ok:true}), agentRecord:result=>result.parsed,
   api:async(...args)=>{calls.push(args);return context.respond(...args);},
@@ -42,6 +43,7 @@ const reset = () => {
 };
 seed(); context.clearTranscript(); reset();
 seed(); await context.hAuthLogout.click(); reset();
+assert.equal(analyticsClears, 1, 'logout must invalidate analytics');
 context.respond = () => {throw new Error('hidden reviews must refuse before any request');};
 calls.length=0;
 for (const line of ['/agent confirm reason','/agent publish run reason','/soul apply proposal reason']) await context.runSlash(line);

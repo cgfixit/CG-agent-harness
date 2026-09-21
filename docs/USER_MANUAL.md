@@ -318,3 +318,13 @@ requests do not execute it. `/memory add` remains shared literal pinned notes;
 `/memory remember` remains a summary attachment. Disabling structured automation
 does not disable ordinary chat-history persistence. The next benchmark task is
 specified in [MEMORY_BENCHMARK_PLAN.md](MEMORY_BENCHMARK_PLAN.md).
+
+## Session, token and code analytics
+
+Use `/analytics` in the console to view retained ledger usage, session token and
+message counts, creation-date bars and coding-run outcomes. **Refresh** rereads
+the data; Previous/Next limits each table to 100 rows. Close, Escape and account
+transitions clear the dialog. Disabled coding and incomplete ledgers remain
+explicit; no inference or repository action is started. Histories are shared
+portal resources available to administrators and operators, not auditors. See
+[Analytics](ANALYTICS.md) for API fields, retention limits and interpretation.
