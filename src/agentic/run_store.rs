@@ -46,6 +46,8 @@ pub struct RealRepoRunRecord {
     #[serde(default)]
     pub iterations: u64,
     #[serde(default)]
+    pub retrieval: Vec<super::repo_retrieval::RetrievalTrace>,
+    #[serde(default)]
     pub error: Option<String>,
     #[serde(default)]
     pub reject_code: Option<String>,
@@ -83,6 +85,7 @@ impl RealRepoRunRecord {
             commit_message: None,
             changed_files: Vec::new(),
             iterations: 0,
+            retrieval: Vec::new(),
             error: None,
             reject_code: None,
             reject_detail: None,

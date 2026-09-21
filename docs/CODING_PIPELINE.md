@@ -183,6 +183,63 @@ switch set for new processes, or revoke `agentic.writes_enabled` in YAML to bloc
 mutation boundaries in an active child. Neither action cancels an already executing
 Git command or check. Scope/budget changes also refuse later writes until a fresh invocation.
 
+## Optional repository retrieval
+
+To supply relevant files without hand-selecting every path, merge this into
+the active home's existing `agentic.deepagent_github` mapping and restart:
+
+```yaml
+agentic:
+  deepagent_github:
+    retrieval:
+      enabled: true
+      max_files: 256
+      max_index_bytes: 2000000
+      top_k: 3
+      excerpt_lines: 40
+      token_budget: 2048
+```
+
+It ships **off**; absent, quoted or non-boolean `enabled` stays off. This is
+local-planner-only and grants no execution authority. The same staged request,
+`/agent confirm <reason>`, sandboxed checks, diff review and separate approval
+steps remain necessary. Cloud planners never receive automatically retrieved
+files. `/agent read` and accepted local model READ requests take priority.
+
+The child lists tracked and non-ignored untracked paths in the target clone,
+examines at most `max_files` candidate paths in lexical order, and uses the
+existing Tantivy engine in a separate RAM index. It scans bounded UTF-8 source,
+then retrieves at most `top_k` additional files using up to 32 query terms with
+path boosting. Excerpts center on matching words; this is lexical matching,
+not embeddings or guaranteed whole-repository coverage. A large repository,
+unrelated synonyms or a very long single line may need explicit file windows.
+There is no durable index: each step rebuilds from current content. A capability
+re-read must match the indexed full-file SHA-256 before the excerpt is included.
+Same-size edits within one timestamp tick therefore cannot reuse stale content.
+
+| Setting | Accepted range | Bound |
+|---|---:|---|
+| `max_files` | 1–1024 | Candidate paths examined per step, including paths later excluded |
+| `max_index_bytes` | 1–16,000,000 | Total indexed UTF-8 source bytes per step |
+| `top_k` | 1–8 | Additional candidate files |
+| `excerpt_lines` | 1–200 | Maximum line window, also clipped by character budgets |
+| `token_budget` | 256–8192 | Conservative UTF-8-byte reservation including rendered headers |
+
+Reservations are not vendor token usage. Existing 4,000-character per-file and
+12,000-character aggregate read limits still apply. The full-file read ceiling,
+clone capability and denied-basename rules apply before indexing. Leaf symlinks,
+paths escaping the clone, `.git` name-equivalent segments, binary/invalid UTF-8, oversized files, unsafe path text and
+injection-scanner hits are excluded. Ignored untracked files are not enumerated;
+tracked files remain candidates even if a later ignore rule names them. This
+is not a general secret scanner: secrets can appear in arbitrary source files.
+
+`/agent status <run-id>` displays each step's indexed counts, whether a bound
+limited selection, and a table of selected lines, full-file SHA-256 and reserved
+bytes. The run record and audit retain only this metadata. Source is not copied
+to the public web cache or indexed with sessions/structured memory. Review the
+actual diff; retrieval does not approve it or enable whole-file replacement
+when only an excerpt was shown.
+
 ## Cloud planner data egress
 
 With `deepagent_github.allow_cloud_providers`

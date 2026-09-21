@@ -10,7 +10,7 @@ use super::workspace::{canonical_repo_path, fs_equiv_path, RepoWorkspace};
 
 pub struct Snapshot {
     pub original: String,
-    visible: String,
+    pub(crate) visible: String,
     complete: bool,
 }
 
@@ -22,9 +22,19 @@ pub struct ReadContext {
 /// Existing read selectors also accept an explicit inclusive line window.
 /// Byte content is preserved, including CRLF, so the hash/old-text bind reality.
 pub fn collect(tools: &RepoWorkspace<'_>, selectors: &[String]) -> ReadContext {
+    collect_checked(tools, selectors, &BTreeMap::new(), MAX_TOTAL_READ_CHARS)
+}
+
+/// Re-read retrieved hits through the same jail; changed content is a miss.
+pub(crate) fn collect_checked(
+    tools: &RepoWorkspace<'_>,
+    selectors: &[String],
+    expected_hashes: &BTreeMap<String, String>,
+    max_chars: usize,
+) -> ReadContext {
     let mut rendered = Vec::new();
     let mut snapshots = BTreeMap::new();
-    let mut remaining = MAX_TOTAL_READ_CHARS;
+    let mut remaining = max_chars.min(MAX_TOTAL_READ_CHARS);
     for selector in selectors {
         if remaining == 0 {
             rendered.push(format!("[{selector} omitted: total context budget reached]"));
@@ -56,6 +66,10 @@ pub fn collect(tools: &RepoWorkspace<'_>, selectors: &[String]) -> ReadContext {
             ));
             continue;
         };
+        let hash = crate::common::sha256_hex(&original);
+        if expected_hashes.get(&path).is_some_and(|expected| expected != &hash) {
+            continue;
+        }
         let window: String = original
             .split_inclusive('\n')
             .skip(start - 1)
@@ -68,7 +82,6 @@ pub fn collect(tools: &RepoWorkspace<'_>, selectors: &[String]) -> ReadContext {
         }
         remaining = remaining.saturating_sub(visible.chars().count());
         let complete = visible == original;
-        let hash = crate::common::sha256_hex(&original);
         rendered.push(format!(
             "--- EXISTING FILE: {path} ---\nsha256: {hash}\nselection: {selector}; complete: {complete}\n{visible}\n--- END EXISTING FILE ---{}",
             if complete { "" } else { "\n[omitted or truncated context: use exact edits only]" }
@@ -181,6 +194,24 @@ pub fn parse(response: &str, context: &ReadContext, max_bytes: usize) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_retrieved_hash_changed_before_collection_is_a_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let cfg =
+            crate::common::config::AppConfig::from_str(crate::common::config::AppConfig::embedded_default(), &path)
+                .unwrap();
+        let ctx = crate::agentic::ctx::AgenticCtx::new(cfg, &path).unwrap();
+        let tools = RepoWorkspace::open_existing(&ctx, dir.path()).unwrap();
+        let hashes = BTreeMap::from([("parser.rs".into(), crate::common::sha256_hex("old text"))]);
+        std::fs::write(dir.path().join("parser.rs"), "new text").unwrap();
+        let selected = ["parser.rs".into()];
+        let stale = collect_checked(&tools, &selected, &hashes, MAX_TOTAL_READ_CHARS);
+        assert!(stale.snapshots.is_empty());
+        assert!(stale.rendered.is_empty());
+        assert!(collect(&tools, &selected).rendered.contains("new text"));
+    }
 
     #[test]
     fn refuses_trailing_partial_or_mixed_markers_and_overlapping_old_text() {
