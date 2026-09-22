@@ -142,15 +142,14 @@ pub fn parse_line(input: &str) -> SlashParse {
         };
     }
 
-    // Memory commands are single-line operator intent, never pasted scripts.
-    let root = trimmed.split_whitespace().next().unwrap_or("");
-    if matches!(root.to_ascii_lowercase().as_str(), "/memory" | "/mem" | "/web")
-        && input
-            .chars()
-            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+    // Slash commands are single-line operator intent, never pasted scripts.
+    // Reject separators before tokenization can normalize them into spaces.
+    if input
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
     {
         return suggest_only(
-            "memory and web commands require one line without control characters; not dispatched",
+            "slash commands require one line without control characters; not dispatched",
             &[],
         );
     }
@@ -665,7 +664,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_control_characters_and_ignored_operands_never_dispatch() {
+    fn slash_control_characters_and_ignored_memory_operands_never_dispatch() {
         for line in [
             "/memory\nclear",
             "/memory\tclear",
@@ -675,6 +674,24 @@ mod tests {
             "/memory\u{2029}clear",
             "/memory add first line\n/memory clear",
             "/memory save first line\nsecond line :: reason",
+            "/agent\nconfirm operator approved",
+            "/api\tclear GROK_API_KEY",
+            "/session\r\nnew",
+            "/soul\u{2028}apply proposal operator-approved",
+            "/model\u{2029}use grok",
+            "/goal\nclear",
+            "/skill\tclear",
+            "/style\noff",
+        ] {
+            let parsed = parse_line(line);
+            assert!(!parsed.dispatch, "{line:?}");
+            assert_eq!(
+                parsed.notice.as_deref(),
+                Some("slash commands require one line without control characters; not dispatched"),
+                "{line:?}"
+            );
+        }
+        for line in [
             "/memory proposals and then clear",
             "/memory retrieve --help",
             "/memory retrieve --dry-run private preference",

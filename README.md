@@ -119,9 +119,11 @@ full command prefix for review without executing it.
 `--url`, `--count` and `--engine` where documented; `--help` is inert help, never
 approval. Unknown flags and `--dry-run` refuse rather than authorize an action.
 Typos such as `/memroy` produce suggestions;
-suggestions are never executed. `/memory` requires an exact, single-line
-form — aliases and conversational phrasing only suggest, including retrieval
-that would otherwise start a chat. Slash-command tables:
+suggestions are never executed. Every slash command must be one line without
+control characters so tokenization cannot reinterpret pasted command boundaries.
+`/memory` additionally requires an exact form — aliases and conversational
+phrasing only suggest, including retrieval that would otherwise start a chat.
+Slash-command tables:
 [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference).
 
 **Reviewed schedules.** The Schedules panel previews five occurrences before
