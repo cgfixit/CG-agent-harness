@@ -25,10 +25,10 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
                 assert!(tool_messages.iter().all(|m|m["content"].as_str().unwrap().contains("BATCH_BACKUP_EVIDENCE")));
                 return Json(common::ok_reply("Compared both fetched sources.",20,5));
             }
-            let mut calls:Vec<_>=(0..if mode=="overlimit" {4}else{2}).map(|i|json!({"id":format!("batch_{i}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{i}")}).to_string()}})).collect();
+            let mut calls:Vec<_>=(0..if mode=="overlimit" {4}else{2}).map(|i|json!({"id":format!("batch_{i}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{i}")}).to_string()}})).collect(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
             if mode=="duplicate" { calls[1]["id"]=calls[0]["id"].clone(); }
             if mode=="malformed" { calls[1]["function"]["arguments"]=json!("{}"); }
-            if mode=="denied" { calls[1]["function"]["arguments"]=json!(json!({"url":"http://docs.example/private"}).to_string()); }
+            if mode=="denied" { calls[1]["function"]["arguments"]=json!(json!({"url":"http://docs.example/private"}).to_string()); } // DevSkim: ignore DS137138 because this synthetic URL tests permission refusal against the loopback fixture.
             Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":calls}}],"usage":{"prompt_tokens":10,"completion_tokens":3}}))
         }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

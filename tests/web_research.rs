@@ -110,7 +110,7 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
     );
     // Explicit starting URLs narrow evidence as well as discovery, even when
     // another authorized source is already present in the shared page cache.
-    let one = format!("http://research.invalid:{}/one", address.port());
+    let one = format!("http://research.invalid:{}/one", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
     let (_, narrow) = s
         .post_json("/api/web/research", json!({"query":"retry connections","urls":[one]}))
         .await;

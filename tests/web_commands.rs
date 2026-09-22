@@ -22,7 +22,7 @@ async fn batch_grants_checks_and_fetches_preserve_permission_and_atomicity() {
             }
         }),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
         axum::serve(listener, fixture).await.unwrap();
@@ -39,7 +39,7 @@ async fn batch_grants_checks_and_fetches_preserve_permission_and_atomicity() {
     let (_, parsed) = s
         .post_json(
             "/api/slash/parse",
-            json!({"line":"/web allow http://docs.example/docs/* https://www.veeam.com/* --group vendors"}),
+            json!({"line":"/web allow http://docs.example/docs/* https://www.veeam.com/* --group vendors"}), // DevSkim: ignore DS137138 because the synthetic HTTP URL resolves only to the loopback fixture.
         )
         .await;
     assert_eq!(parsed["dispatch"], true, "{parsed}");
