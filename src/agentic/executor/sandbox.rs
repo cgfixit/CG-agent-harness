@@ -312,120 +312,127 @@ fn prefer_linux_sandbox_from(
 /// Windows Job Object with KILL_ON_JOB_CLOSE: a process-tree kill boundary.
 pub struct WindowsJobObjectSandbox;
 
+/// `JobChild` requires an absolute native executable. A bare name resolves
+/// through the check's own `PATH` (else the process `PATH`), as `Command` did.
+#[cfg(windows)]
+fn resolve_windows_exe(program: &str, env: &BTreeMap<String, String>) -> Option<std::path::PathBuf> {
+    let path = Path::new(program);
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+    if path.components().count() != 1 {
+        return None;
+    }
+    let name = if path.extension().is_some() {
+        program.to_string()
+    } else {
+        format!("{program}.exe")
+    };
+    let search = env
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+        .map(|(_, value)| value.clone())
+        .or_else(|| std::env::var("PATH").ok())?;
+    std::env::split_paths(&search)
+        .map(|dir| dir.join(&name))
+        .find(|candidate| candidate.is_file())
+}
+
 #[cfg(windows)]
 impl HardSandbox for WindowsJobObjectSandbox {
     fn run(&self, argv: &[String], cwd: &Path, env: &BTreeMap<String, String>, timeout_sec: u64) -> SandboxOutcome {
         use std::io::Read;
-        use std::os::windows::io::AsRawHandle;
-        use std::process::{Command, Stdio};
-        use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-            TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use crate::common::process::MAX_CAPTURE_BYTES;
+        use crate::common::windows_job::JobChild;
+
+        let refused = |stderr: String| SandboxOutcome {
+            exit_code: -2,
+            stdout: String::new(),
+            stderr,
+            timed_out: false,
         };
-        // SAFETY: plain Win32 job-object calls with a zeroed struct.
-        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-        if job.is_null() {
-            return SandboxOutcome {
-                exit_code: -2,
-                stdout: String::new(),
-                stderr: "CreateJobObjectW failed".into(),
-                timed_out: false,
-            };
-        }
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-        info.BasicLimitInformation.ActiveProcessLimit = 32;
-        let ok = unsafe {
-            SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &mut info as *mut _ as *mut core::ffi::c_void,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )
+        let Some(program) = resolve_windows_exe(&argv[0], env) else {
+            return refused(format!("could not execute '{}': no native .exe found", argv[0]));
         };
-        if ok == 0 {
-            unsafe { CloseHandle(job) };
-            return SandboxOutcome {
-                exit_code: -2,
-                stdout: String::new(),
-                stderr: "SetInformationJobObject failed".into(),
-                timed_out: false,
-            };
-        }
-        let mut cmd = Command::new(&argv[0]);
-        cmd.args(&argv[1..])
-            .current_dir(cwd)
-            .env_clear()
-            .envs(env.iter())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
+        let mut cmd = std::process::Command::new(&program);
+        cmd.args(&argv[1..]).current_dir(cwd).env_clear().envs(env.iter());
+        // The kernel places the child in the kill-on-close job during
+        // CreateProcess (JOB_LIST), before any of its code runs. Assigning after
+        // spawn left a window in which its descendants escaped the job.
+        let mut child = match JobChild::spawn(&cmd, 32, None) {
+            Ok(child) => child,
             Err(e) => {
-                unsafe { CloseHandle(job) };
-                return SandboxOutcome {
-                    exit_code: -2,
-                    stdout: String::new(),
-                    stderr: format!("could not execute '{}': {e}", argv[0]),
-                    timed_out: false,
-                };
+                return refused(format!(
+                    "could not execute '{}' inside a Job Object; refusing unconstrained run: {e}",
+                    argv[0]
+                ))
             }
         };
-        let assigned = unsafe { AssignProcessToJobObject(job, child.as_raw_handle() as _) };
-        if assigned == 0 {
-            let _ = child.kill();
-            let _ = child.wait();
-            unsafe { CloseHandle(job) };
-            return SandboxOutcome {
-                exit_code: -2,
-                stdout: String::new(),
-                stderr: "AssignProcessToJobObject failed; refusing unconstrained run".into(),
-                timed_out: false,
-            };
-        }
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let out_t = std::thread::spawn(move || {
-            let mut b = Vec::new();
-            if let Some(mut s) = stdout {
-                let _ = s.read_to_end(&mut b);
-            }
-            String::from_utf8_lossy(&b).into_owned()
-        });
-        let err_t = std::thread::spawn(move || {
-            let mut b = Vec::new();
-            if let Some(mut s) = stderr {
-                let _ = s.read_to_end(&mut b);
-            }
-            String::from_utf8_lossy(&b).into_owned()
-        });
+        drop(child.stdin.take());
+        // One combined capture bound, as on unix: overflow is refused, not truncated.
+        let total = Arc::new(AtomicUsize::new(0));
+        let overflow = Arc::new(AtomicBool::new(false));
+        let reader = |pipe: Option<std::fs::File>| {
+            let (total, overflow) = (total.clone(), overflow.clone());
+            std::thread::spawn(move || {
+                let mut kept = Vec::new();
+                let Some(mut pipe) = pipe else { return kept };
+                let mut buffer = [0u8; 8192];
+                loop {
+                    let n = match pipe.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => break,
+                    };
+                    if total.fetch_add(n, Ordering::SeqCst) + n > MAX_CAPTURE_BYTES {
+                        overflow.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    kept.extend_from_slice(&buffer[..n]);
+                }
+                kept
+            })
+        };
+        let out_t = reader(child.stdout.take());
+        let err_t = reader(child.stderr.take());
         let started = std::time::Instant::now();
         let mut timed_out = false;
         let status = loop {
+            if overflow.load(Ordering::SeqCst) {
+                let _ = child.start_kill();
+                break None;
+            }
             match child.try_wait() {
-                Ok(Some(s)) => break Some(s),
-                Ok(None) => {
-                    if started.elapsed() >= Duration::from_secs(timeout_sec) {
-                        unsafe { TerminateJobObject(job, 1) };
-                        let _ = child.wait();
-                        timed_out = true;
-                        break None;
-                    }
-                    std::thread::sleep(Duration::from_millis(15));
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if started.elapsed() >= Duration::from_secs(timeout_sec) => {
+                    let _ = child.start_kill();
+                    timed_out = true;
+                    break None;
                 }
+                Ok(None) => std::thread::sleep(Duration::from_millis(15)),
                 Err(_) => {
-                    unsafe { TerminateJobObject(job, 1) };
-                    let _ = child.wait();
+                    let _ = child.start_kill();
                     break None;
                 }
             }
         };
-        unsafe { CloseHandle(job) };
-        let so = out_t.join().unwrap_or_default();
-        let se = err_t.join().unwrap_or_default();
+        // Dropping the child terminates and closes the job: any descendant still
+        // running is killed, which also closes the pipes the readers wait on.
+        drop(child);
+        let so = String::from_utf8_lossy(&out_t.join().unwrap_or_default()).into_owned();
+        let se = String::from_utf8_lossy(&err_t.join().unwrap_or_default()).into_owned();
+        if overflow.load(Ordering::SeqCst) {
+            return SandboxOutcome {
+                exit_code: -3,
+                stdout: String::new(),
+                stderr: format!("output exceeded {MAX_CAPTURE_BYTES} bytes; incomplete output refused"),
+                timed_out: false,
+            };
+        }
         if timed_out {
             return SandboxOutcome {
                 exit_code: -1,
