@@ -10,7 +10,13 @@ const ctx = vm.createContext({$, Number, currentSession:'new', sessionRevision:0
   statusTimer:null, statusBackoffMs:15000, STATUS_BASE_INTERVAL:15000, STATUS_MAX_INTERVAL:120000,
   apiKeyInput:null, window:{}, soulEnabled:false, soulStatus:{}, memoryEnabled:false,
   paintSoul(){}, paintMemory(){}, paintStyle(){}, refreshStyle:async()=>{}, scheduleStatusRefresh(){},
-  api:async path => { if (path === '/api/status') return {total_tokens:999}; if (fail) throw Error('unavailable'); return session; },
+  api:async path => {
+    if (path === '/api/status') return {total_tokens:999};
+    if (String(path).includes('/api/sessions/')) throw Error('session detail is not the token poll');
+    if (fail) throw Error('unavailable');
+    if (path !== '/api/sessions') throw Error('unexpected ' + path);
+    return {sessions:[{session_id: ctx.currentSession, tokens: session.tokens}]};
+  },
 });
 const helperStart = html.indexOf('let sessionTokenRevision =');
 if (helperStart !== -1) vm.runInContext(html.slice(helperStart, html.indexOf('async function refreshStatus()', helperStart)), ctx);
@@ -39,8 +45,11 @@ for (const boundary of ['switch','completion','logout','newer refresh']) {
   if (boundary === 'switch') { ctx.currentSession = 'new'; ctx.sessionRevision++; ctx.paintSessionTokens({total:0}); }
   if (boundary === 'completion') ctx.paintSessionTokens({total:42});
   if (boundary === 'logout') { ctx.currentSession = null; ctx.sessionRevision++; ctx.paintSessionTokens({total:0}); }
-  if (boundary === 'newer refresh') { ctx.api = async()=>({tokens:{total:42}}); await ctx.refreshSessionTokens(); }
-  old.resolve({tokens:{total:17}}); await pending;
+  if (boundary === 'newer refresh') {
+    ctx.api = async () => ({sessions:[{session_id: ctx.currentSession, tokens:{total:42}}]});
+    await ctx.refreshSessionTokens();
+  }
+  old.resolve({sessions:[{session_id:'old', tokens:{total:17}}]}); await pending;
   assert.equal($('hTokens').textContent, ['switch','logout'].includes(boundary) ? '0' : '42', boundary+' must invalidate late usage');
 }
 console.log('session tokens: selected tally, zero, unavailable, switch, completion, logout and stale refresh passed');
