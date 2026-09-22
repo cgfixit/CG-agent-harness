@@ -1192,8 +1192,11 @@ async function refreshSessionTokens() {
   const current = () => ticket === sessionTokenRevision && revision === sessionRevision && session === currentSession;
   if (!session) { paintSessionTokens({total:0}); return; }
   try {
-    const s = await api('/api/sessions/' + encodeURIComponent(session));
-    if (current()) paintSessionTokens(s.tokens);
+    const data = await api('/api/sessions');
+    if (!current()) return;
+    const rows = Array.isArray(data.sessions) ? data.sessions : [];
+    const row = rows.find(item => item && item.session_id === session);
+    paintSessionTokens(row ? row.tokens : null);
   } catch (e) {
     if (current()) paintSessionTokens(null);
   }
