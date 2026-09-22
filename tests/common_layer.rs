@@ -456,6 +456,21 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
         "revoked, not merely refused once"
     );
 
+    // The slide and the revocation are committed, not only held in memory.
+    let s3 = mgr.login("op", "operator-password-2").unwrap();
+    *now.lock().unwrap() += 43200.0 - 1.0;
+    assert!(mgr.validate_session(&s3.session_id).is_some(), "the idle window slides");
+    *now.lock().unwrap() += 43200.0 - 1.0;
+    let mut durable = AuthManager::open(&dir.path().join("auth.json"), &cfg).unwrap();
+    let c = now.clone();
+    durable.set_clock(Box::new(move || *c.lock().unwrap()));
+    assert!(durable.validate_session(&s3.session_id).is_some(), "the slide reached disk");
+    *now.lock().unwrap() -= 2.0 * (43200.0 - 1.0);
+    assert!(
+        durable.validate_session(&s2.session_id).is_none(),
+        "the revocation reached disk"
+    );
+
     // Persisted and reloadable; file is 0600 on unix.
     let reopened = AuthManager::open(&dir.path().join("auth.json"), &cfg).unwrap();
     assert!(reopened.get_user("op").is_some());

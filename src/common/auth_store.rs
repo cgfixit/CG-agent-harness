@@ -457,26 +457,22 @@ impl AuthManager {
         let key = authn::hash_token(session_id);
         let now = self.now();
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
-        let idle = self.idle_timeout_sec;
-        let outcome = match db.sessions.get_mut(&key) {
-            None => return None,
-            Some(row) if row.revoked => return None,
-            Some(row) => {
-                if now >= row.expires_ts || now >= row.last_seen_ts + idle {
-                    row.revoked = true;
-                    None
-                } else {
-                    row.last_seen_ts = now;
-                    Some(SessionInfo {
-                        session_id: session_id.to_string(),
-                        username: row.username.clone(),
-                    })
-                }
-            }
-        };
-        self.persist(&mut stored, &db).ok()?;
-        outcome.filter(|info| db.users.get(&info.username).is_some_and(|user| !user.disabled))
+        let row = stored.1.sessions.get(&key).filter(|row| !row.revoked)?;
+        let expired = now >= row.expires_ts || now >= row.last_seen_ts + self.idle_timeout_sec;
+        let last_seen_ts = if expired { row.last_seen_ts } else { now };
+        let username = row.username.clone();
+        // Committed before visible, like `persist`, but only this row is written.
+        sqlite::touch_session(&stored.0, &key, last_seen_ts, expired).ok()?;
+        let row = stored.1.sessions.get_mut(&key)?;
+        row.last_seen_ts = last_seen_ts;
+        row.revoked = expired;
+        if expired || stored.1.users.get(&username).is_none_or(|user| user.disabled) {
+            return None;
+        }
+        Some(SessionInfo {
+            session_id: session_id.to_string(),
+            username,
+        })
     }
 
     pub fn logout(&self, session_id: &str) -> Result<bool> {
