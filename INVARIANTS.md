@@ -235,6 +235,7 @@ fails to resolve rather than being followed; the leaf is additionally opened
 with `O_NOFOLLOW` (unix). 256 KB cap, UTF-8 required.
 
 - Locked by: `tests/agentic_foundations.rs::write_jail_refuses_escapes_and_reports_landed_paths`,
+  `apply_proposal_refuses_jail_escapes_and_oversize_content` (the loop's write path),
   `read_jail_refuses_symlink_escapes_without_following_the_leaf`,
   `read_jail_refuses_dotgit_metadata`.
 - This closes the canonicalize-then-open TOCTOU window the port previously

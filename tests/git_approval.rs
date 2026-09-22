@@ -135,8 +135,16 @@ fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
     }
     std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
     let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
-    approve(&ctx, &ws, &["target.txt".into()]).unwrap();
-    ws.push_branch("codex/exact-tree", "separate fixture push", true)
+    let origin = ws.origin_url().unwrap();
+    let approved = approve(&ctx, &ws, &["target.txt".into()]).unwrap();
+    let commit = approved["approved_commit"].as_str().unwrap();
+    // Author and committer are forced, whatever the host's git identity.
+    let forced = "CGagentHarness Agent <cgagentharness-agent@users.noreply.github.com>";
+    assert_eq!(
+        git(&["log", "-1", "--format=%an <%ae>|%cn <%ce>", commit], &dest),
+        format!("{forced}|{forced}")
+    );
+    ws.push_approved("codex/exact-tree", commit, &origin, "separate fixture push", true)
         .unwrap();
     for hook in [
         "post-checkout",
