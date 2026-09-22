@@ -28,8 +28,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Authentication response deadline contract
-        run: node scripts/test-auth-deadlines.mjs
+      - name: Console contract scripts (every scripts/test-*.mjs)
+        # A glob, so a new contract script cannot be added without running;
+        # an empty match hands node the literal pattern and fails.
+        run: |
+          for t in scripts/test-*.mjs; do
+            echo "== $t"
+            node "$t"
+          done
       - name: Resolve Chrome binary
         run: |
           set -euo pipefail
@@ -59,16 +65,6 @@ jobs:
           resolve /usr/bin/google-chrome
         env:
           CHROME_BIN: /usr/bin/google-chrome
-      - name: Console review reset contract
-        run: node scripts/test-review-reset.mjs
-      - name: Delivery replay review guards
-        run: node scripts/test-delivery-review.mjs
-      - name: Schedule preview boundaries
-        run: node scripts/test-schedule-review.mjs
-      - name: Analytics dashboard contract
-        run: node scripts/test-analytics.mjs
-      - name: Session token display contract
-        run: node scripts/test-session-tokens.mjs
       - run: node --experimental-websocket scripts/chat-browser-acceptance.mjs
 
   fmt:
@@ -155,7 +151,11 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo fetch --locked --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml
       - name: Test
-        run: cargo test --all-targets --locked -- --nocapture
+        # Seatbelt always exists on macOS runners, so the check-sandbox smoke
+        # must not skip there. Linux coverage runs in linux-bwrap below.
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then export CGAH_REQUIRE_CHECK_SANDBOX=1; fi
+          cargo test --all-targets --locked -- --nocapture
         env:
           # The operator's real keys must never reach a CI test process.
           GROK_API_KEY: ""
@@ -196,9 +196,11 @@ jobs:
             --env RUSTUP_TOOLCHAIN=1.88.0 --env CARGO_TARGET_DIR=/tmp/target \
             --env CGAH_REQUIRE_LINUX_BWRAP=1 \
             --env CGAH_REQUIRE_LINUX_MCP=1 \
+            --env CGAH_REQUIRE_CHECK_SANDBOX=1 \
             rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 \
-            sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3
-                    cargo test --test linux_bwrap --test mcp_client --locked -- --nocapture'
+            sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3 git
+                    cargo test --test linux_bwrap --test mcp_client --locked -- --nocapture
+                    cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture'
 
   linux-mcp-lifecycle:
     name: Linux MCP service lifecycle (required)
@@ -280,52 +282,6 @@ jobs:
           DEEPAGENT_API_KEY: ""
           CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
 
-  smoke-real-repo-run:
-    name: real-repo-run smoke (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: dev-${{ runner.os }}
-          # Only main writes the cache: PR runs restore main's entry instead of
-          # each branch saving its own and evicting the others (10 GB repo cap).
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: |
-          git config --global user.email "ci@example.invalid"
-          git config --global user.name "CI"
-      - name: Prepare native Cargo fixture (network allowed only here)
-        if: runner.os == 'macOS'
-        run: |
-          cargo fetch --locked
-          cargo fetch --locked --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml
-      - name: Required native Cargo sandbox acceptance (no skip)
-        if: runner.os == 'macOS'
-        run: cargo test --test macos_cargo --locked --offline -- --nocapture
-        env:
-          GROK_API_KEY: ""
-          ANTHROPIC_API_KEY: ""
-          DEEPAGENT_API_KEY: ""
-          CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
-      # Legacy text smoke prints a SKIP line on a host with no hard sandbox; the
-      # required macOS Cargo gate above fails if sandbox execution is unavailable.
-      - run: cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture
-        env:
-          GROK_API_KEY: ""
-          ANTHROPIC_API_KEY: ""
-          DEEPAGENT_API_KEY: ""
-          CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
-
   deny:
     name: cargo deny (advisories, licenses, bans)
     runs-on: ubuntu-latest
@@ -340,24 +296,3 @@ jobs:
         with:
           command: check
           arguments: --all-features
-
-  msrv:
-    name: MSRV check (rust-version in Cargo.toml)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-        with:
-          toolchain: "1.88"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: msrv
-          # Only main writes the cache: PR runs restore main's entry instead of
-          # each branch saving its own and evicting the others (10 GB repo cap).
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo check --all-targets --locked
