@@ -349,10 +349,15 @@ impl WebTool {
         let mut coverage = Coverage::default();
         // Explicit starts narrow this run, never add permissions. Validate all
         // before any request, then recheck each destination at the read boundary.
+        // Queue the canonical fetch identity: authorize strips fragments and
+        // folds equivalent spellings, so raw-string identity would fetch twice.
+        let mut queued = BTreeSet::new();
         for raw in starts {
-            policy.authorize(raw, group)?;
+            let url = policy.authorize(raw, group)?.to_string();
+            if queued.insert(url.clone()) {
+                queue.push_back((url, true));
+            }
         }
-        queue.extend(starts.iter().cloned().map(|u| (u, true)));
         for rule in policy
             .rules
             .iter()
@@ -364,16 +369,21 @@ impl WebTool {
                     .skipped
                     .push(json!({"rule_id":rule.id,"code":"WEB_SEED_REQUIRED"}));
             }
-            queue.extend(seeds.into_iter().map(|u| (u, true)));
+            for seed in seeds {
+                let url = match policy.authorize(&seed, group) {
+                    Ok(url) => url.to_string(),
+                    Err(_) => seed,
+                };
+                if queued.insert(url.clone()) {
+                    queue.push_back((url, true));
+                }
+            }
         }
-        let mut seen = BTreeSet::new();
+        let mut fetched = BTreeSet::new();
         let mut site_counts: BTreeMap<String, usize> = BTreeMap::new();
         let mut site_last: BTreeMap<String, Instant> = BTreeMap::new();
         let mut robots: BTreeMap<String, Option<String>> = BTreeMap::new();
         while let Some((raw, explicit)) = queue.pop_front() {
-            if !seen.insert(raw.clone()) {
-                continue;
-            }
             let url = match self.policy()?.authorize(&raw, group) {
                 Ok(u) => u,
                 Err(e) => {
@@ -381,6 +391,9 @@ impl WebTool {
                     continue;
                 }
             };
+            if !fetched.insert(url.to_string()) {
+                continue;
+            }
             let origin = url.origin().ascii_serialization();
             // Robots is an ordinary content request: same policy, DNS and budget.
             // A path-restricted rule does not implicitly authorize /robots.txt.
@@ -447,13 +460,16 @@ impl WebTool {
                         coverage.budget_exhausted.get_or_insert("candidate_limit".into());
                         break;
                     }
-                    if !seen.contains(link) {
-                        match self.policy()?.authorize(link, group) {
-                            Ok(_) => queue.push_back((link.clone(), false)),
-                            Err(e) => {
-                                if coverage.refused.len() < 256 {
-                                    coverage.refused.push(json!({"url":link,"code":e.code}));
-                                }
+                    match self.policy()?.authorize(link, group) {
+                        Ok(next) => {
+                            let next_url = next.to_string();
+                            if queued.insert(next_url.clone()) {
+                                queue.push_back((next_url, false));
+                            }
+                        }
+                        Err(e) => {
+                            if coverage.refused.len() < 256 {
+                                coverage.refused.push(json!({"url":link,"code":e.code}));
                             }
                         }
                     }
@@ -761,6 +777,79 @@ mod tests {
         let (_, errors) = web.cached_pages(None).unwrap();
         assert!(errors.iter().any(|e| e["code"] == "WEB_EVIDENCE_INVALID"));
         assert_eq!(web.policy().unwrap().revision, revision);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn equivalent_start_urls_fetch_once_and_still_visit_a_new_link() {
+        let page_hits = Arc::new(AtomicUsize::new(0));
+        let other_hits = Arc::new(AtomicUsize::new(0));
+        let pages = page_hits.clone();
+        let others = other_hits.clone();
+        let fixture = Router::new()
+            .route(
+                "/robots.txt",
+                get(|| async { ([("content-type", "text/plain")], "User-agent: *\nAllow: /\n") }),
+            )
+            .route(
+                "/docs/page",
+                get(move || {
+                    let pages = pages.clone();
+                    async move {
+                        pages.fetch_add(1, Ordering::SeqCst);
+                        (
+                            [("content-type", "text/html")],
+                            "<title>Once</title><a href='/docs/page#again'>Same</a><a href='/docs/other'>Other</a>",
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/docs/other",
+                get(move || {
+                    let others = others.clone();
+                    async move {
+                        others.fetch_add(1, Ordering::SeqCst);
+                        (
+                            [("content-type", "text/html")],
+                            "<title>Other</title><p>distinct source</p>",
+                        )
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, fixture).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str("web: {pace_ms: 100}", Path::new("config.yaml")).unwrap();
+        crate::common::atomic::write_json_atomic(
+            &dir.path().join("web_allowlist.json"),
+            &json!({"version":1,"rules":[]}),
+        )
+        .unwrap();
+        let mut web = WebTool::new(dir.path(), &cfg).unwrap();
+        web.test_resolve = Some(("corpus.invalid".into(), address));
+        let root = format!("http://corpus.invalid:{}/", address.port());
+        web.allow_rule(&format!("{root}docs/*"), "manuals", &[], true).unwrap();
+        web.allow_rule(&format!("{root}robots.txt"), "manuals", &[], true)
+            .unwrap();
+        let page = format!("{root}docs/page");
+        let coverage = web
+            .discover_from(
+                Some("manuals"),
+                &[
+                    format!("{page}#a"),
+                    format!("{page}#b"),
+                    format!("http://CORPUS.invalid:{}/docs/page#c", address.port()),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(page_hits.load(Ordering::SeqCst), 1, "{coverage:?}");
+        assert_eq!(other_hits.load(Ordering::SeqCst), 1, "{coverage:?}");
+        assert_eq!(coverage.searched, vec![page, format!("{root}docs/other")]);
         server.abort();
     }
 
