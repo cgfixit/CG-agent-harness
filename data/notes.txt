@@ -1,1 +1,41 @@
- 
+Verify and determine use cases where to use what:
+
+Context on 48 GB is just "whatever's left after the weights fit." Your 27B is too big to hold a large KV cache, which is exactly why it's capped at 32k. To get more context, drop to the 7B–8B class — those support 128k and leave ~40 GB for the cache, so 128k runs comfortably and you can even push toward 192–256k.
+
+--
+
+Bottom line: **smaller model wins.** Context on 48 GB is just "whatever's left after the weights fit." Your 27B is too big to hold a large KV cache, which is exactly why it's capped at 32k. To get *more* context, drop to the **7B–8B class** — those support 128k and leave ~40 GB for the cache, so 128k runs comfortably and you can even push toward 192–256k.
+
+**The immediate answer — you already have it:**
+
+The `qwen2.5:7b` (4.7 GB) on this machine supports **128k context**. On 48 GB you could even raise it past that. No download needed:
+
+```
+OLLAMA_CONTEXT=131072 ollama run qwen2.5:7b
+# or bake it in:
+PARAMETER num_ctx 131072
+```
+
+That alone takes you from 32k → 128k, zero RAM pressure (weights + cache ≈ 18 GB of your 48 GB).
+
+**The math (why small = more context):**
+
+KV cache grows linearly with context length. Budget for cache on this box ≈ 48 GB − weights − ~4 GB overhead.
+
+| Model class | Weights | Max context | Fits 48 GB at full context? |
+|---|---|---|---|
+| **7–8B** (Qwen2.5-7B, Qwen3-8B, Llama3.1-8B) | ~5 GB | **128k** | ✅ easily, ~18 GB total — *most context* |
+| 14B (Qwen2.5-Coder-14B, Qwen3-14B) | ~9 GB | 128k | ✅ ~33 GB total |
+| 20B (GPT-OSS-20B, MoE) | ~13 GB | 128k | ✅ but tight |
+| **32B / 27B (what you run)** | ~18 GB | 128k advertised | ❌ ~50 GB needed → **capped at 32k** |
+clearly I need to revisit memory pressure outside of a vmware context although prob similar
+
+**Recommendation for this harness (coding agent):**
+
+- **Best all-round:** `qwen3:8b` — strong general + coding, 128k, ~5 GB.
+- **Coding-optimized:** `qwen2.5-coder:7b` or `qwen2.5-coder:14b` — 128k, tuned for code. 14B still fits.
+- **Strongest agent in the class:** `gpt-oss:20b` — 128k, ~13 GB, fits but less headroom.
+
+One caveat on "more context": 128k is where these models are actually *trained/extended* to. Pushing a 7B to 256k fits in RAM but quality degrades past the trained window — 128k is the real sweet spot on 48 GB.
+
+Want me to pull one of these and wire it into the harness's model list with `num_ctx 131072`? That needs a network download (a few GB), so I'll ask before running it.
