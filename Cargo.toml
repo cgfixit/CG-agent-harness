@@ -77,6 +77,11 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 proptest = "1.6"
+# I6 is enforced by parsing `use` trees in tests/invariant_guard.rs, not by
+# scanning for substrings: `use crate::{agentic as pipeline}` defeats a substring
+# scan. syn is already in the lock graph via the derive macros, so this adds no
+# new crates to the build.
+syn = { version = "2", default-features = false, features = ["full", "parsing", "visit"] }
 
 # scrypt at n=2^17 is unusably slow unoptimized; optimize dependencies even in dev/test.
 [profile.dev.package."*"]

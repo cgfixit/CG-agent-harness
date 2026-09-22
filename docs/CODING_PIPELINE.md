@@ -278,13 +278,17 @@ and are not retried automatically. Reduce the task or adjust
 
 The HTTP server reaches agentic execution only by spawning one of twelve
 whitelisted actions through `src/shim`. The bar is wider than the server module:
-`tests/invariant_guard.rs` scans all four console-side trees — `src/server`,
-`src/shim`, `src/llm` and `src/common` — for four literal substrings
-(`crate::agentic`, `agentic::`, `super::agentic`, `use crate::agentic`), and
-scans the pipeline for four matching substrings back. It is a literal-text
-scan, not a full import-graph analysis: a grouped or aliased form such as
-`use crate::{agentic as pipeline}` would not contain any of those substrings
-and would not be caught. Child exit codes are the entire
+`tests/invariant_guard.rs` checks all four console-side trees — `src/server`,
+`src/shim`, `src/llm` and `src/common` — two ways, and checks the pipeline the
+same two ways back. First, four literal substrings (`crate::agentic`,
+`agentic::`, `super::agentic`, `use crate::agentic`), which catch an inline
+path used without an import. Second, every `use` item is parsed and each
+identifier it binds is compared against the far side, so a grouped, nested or
+renamed import — `use crate::{agentic as pipeline}` — is caught even though it
+contains none of those substrings. The parse covers imports inside inline `mod`
+blocks and function bodies, and `syn` skips comments, so a doc comment naming
+the far side (how the duplicated constants document each other) stays legal.
+Child exit codes are the entire
 interface: `0` ok, `2` failed, `3` env/config, `4` write refused. A non-zero
 child exit is HTTP 200 with `ok=false`; only shim failures map to 400/502/504
 and a disabled layer to 409.
