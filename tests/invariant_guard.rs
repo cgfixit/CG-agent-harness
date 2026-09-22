@@ -27,6 +27,86 @@ fn read_tree(dir: &Path) -> Vec<(String, String)> {
     out
 }
 
+/// Same walk, but the source is handed back verbatim. The substring needles
+/// need comments stripped; `syn` skips comments itself, so the parsed checks
+/// take the real file and cannot be fooled by a `//` line inside a raw string.
+fn read_tree_raw(dir: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for entry in walkdir::WalkDir::new(dir).into_iter().flatten() {
+        if entry.path().extension().and_then(|e| e.to_str()) == Some("rs") {
+            out.push((
+                entry.path().display().to_string(),
+                std::fs::read_to_string(entry.path()).unwrap(),
+            ));
+        }
+    }
+    assert!(!out.is_empty(), "no sources under {}", dir.display());
+    out
+}
+
+/// Every identifier a `use` tree names, including the pre-alias left side of a
+/// rename and every branch of a brace group.
+///
+/// This is what closes the bypass the substring needles cannot see:
+/// `use crate::{agentic as pipeline};` contains none of `"crate::agentic"`,
+/// `"agentic::"`, `"super::agentic"` or `"use crate::agentic"`, yet it binds
+/// the pipeline into a server-side module under a new name. Here it yields
+/// `["crate", "agentic", "pipeline"]` and the boundary check sees `agentic`.
+fn use_tree_idents(tree: &syn::UseTree, out: &mut Vec<String>) {
+    match tree {
+        syn::UseTree::Path(p) => {
+            out.push(p.ident.to_string());
+            use_tree_idents(&p.tree, out);
+        }
+        syn::UseTree::Name(n) => out.push(n.ident.to_string()),
+        syn::UseTree::Rename(r) => {
+            // The real module first: the alias is what a later reader sees, but
+            // the left side is what actually crossed the boundary.
+            out.push(r.ident.to_string());
+            out.push(r.rename.to_string());
+        }
+        syn::UseTree::Glob(_) => {}
+        syn::UseTree::Group(g) => {
+            for item in &g.items {
+                use_tree_idents(item, out);
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct UseIdents(Vec<String>);
+
+impl<'ast> syn::visit::Visit<'ast> for UseIdents {
+    fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
+        use_tree_idents(&node.tree, &mut self.0);
+    }
+}
+
+/// Idents bound by every `use` in a file, including imports nested inside inline
+/// `mod` blocks and function bodies (`syn::visit` walks both).
+fn use_idents(path: &str, text: &str) -> Vec<String> {
+    let file = syn::parse_file(text).unwrap_or_else(|e| panic!("{path} does not parse as Rust: {e}"));
+    let mut visitor = UseIdents::default();
+    syn::visit::visit_file(&mut visitor, &file);
+    visitor.0
+}
+
+/// Fail if any `use` in `dir` names a module on the far side of the I6 boundary,
+/// under any spelling: direct, grouped, nested, glob-suffixed or renamed.
+fn assert_no_use_crosses(dir: &Path, forbidden: &[&str]) {
+    for (path, text) in read_tree_raw(dir) {
+        let idents = use_idents(&path, &text);
+        for name in forbidden {
+            assert!(
+                !idents.iter().any(|i| i == name),
+                "{path} imports {name:?} across the I6 boundary \
+                 (a renamed or grouped `use` still crosses it)"
+            );
+        }
+    }
+}
+
 fn root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
@@ -42,6 +122,8 @@ fn server_side_never_references_agentic() {
                 );
             }
         }
+        // The needles above miss every aliased spelling; this does not.
+        assert_no_use_crosses(&root().join(sub), &["agentic"]);
     }
 }
 
@@ -75,6 +157,8 @@ fn agentic_side_never_references_server_or_shim() {
             assert!(!text.contains(needle), "{path} references {needle:?}");
         }
     }
+    // Reverse direction, same bypass: `use crate::{server as console};`.
+    assert_no_use_crosses(&root().join("agentic"), &["server", "shim"]);
 }
 
 #[test]
@@ -334,4 +418,68 @@ fn console_asset_is_verbatim_with_both_placeholders() {
             "the console keeps the API key out of storage ({api})"
         );
     }
+}
+
+/// The bypass this guard exists to close, pinned as a fixture.
+///
+/// Every source below is a spelling that imports `agentic` into a server-side
+/// module. The four legacy substring needles miss the aliased and grouped ones
+/// entirely — `assert_alias_is_invisible_to_needles` proves that rather than
+/// asserting it in prose — so the parsed check is the only thing standing
+/// between `use crate::{agentic as pipeline};` and a green build.
+#[test]
+fn aliased_and_grouped_imports_across_the_boundary_are_caught() {
+    const LEGACY_NEEDLES: [&str; 4] = ["crate::agentic", "agentic::", "super::agentic", "use crate::agentic"];
+
+    // Sources that must be rejected, and whether the legacy needles see them.
+    let crossings: [(&str, &str); 7] = [
+        ("renamed in a group", "use crate::{agentic as pipeline};"),
+        ("renamed directly", "use crate::agentic as pipeline;"),
+        ("grouped with a sibling", "use crate::{agentic as p, common};"),
+        ("nested group", "use crate::{agentic::{writer as w}};"),
+        ("glob under a rename", "use crate::agentic::writer::*;"),
+        (
+            "inside an inline module",
+            "mod inner { use crate::{agentic as pipeline}; }",
+        ),
+        ("inside a function body", "fn f() { use crate::{agentic as pipeline}; }"),
+    ];
+    for (label, src) in crossings {
+        let idents = use_idents(label, src);
+        assert!(
+            idents.iter().any(|i| i == "agentic"),
+            "{label}: {src:?} crosses the boundary but the parsed check missed it"
+        );
+    }
+
+    // The reverse direction has the same shape.
+    for src in ["use crate::{server as console};", "use crate::{shim as edge};"] {
+        let idents = use_idents("reverse", src);
+        assert!(
+            idents.iter().any(|i| i == "server" || i == "shim"),
+            "{src:?} crosses the boundary but the parsed check missed it"
+        );
+    }
+
+    // A doc or line comment may still NAME the far side: that is how the
+    // deliberately duplicated constants document each other.
+    for src in [
+        "//! see crate::agentic::run_store::RUN_ID_PATTERN\nfn f() {}",
+        "/// mirrors crate::agentic::config::DEFAULT_PLANNER_TIMEOUT_SEC\npub const X: u64 = 1;",
+    ] {
+        assert!(
+            use_idents("comment", src).is_empty(),
+            "a comment naming the far side must stay legal: {src:?}"
+        );
+    }
+
+    // Do not let this test rot into a tautology: if the legacy needles ever grow
+    // to cover the grouped rename, this assertion is the one that should be
+    // updated, deliberately, rather than the parser being quietly dropped.
+    let aliased = "use crate::{agentic as pipeline};";
+    assert!(
+        !LEGACY_NEEDLES.iter().any(|n| aliased.contains(n)),
+        "the legacy substring needles now cover {aliased:?}; \
+         re-check whether the parsed guard is still the load-bearing one"
+    );
 }
