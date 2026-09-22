@@ -5,6 +5,7 @@ description: |
 compatibility: |
   Requires: ripgrep, git (for diff context)
   Context: Cargo project with INVARIANTS.md, AGENTS.md, README.md, assets/config.default.yaml
+disable-model-invocation: true
 ---
 
 # Documentation drift check
