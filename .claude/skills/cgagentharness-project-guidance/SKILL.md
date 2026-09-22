@@ -62,7 +62,7 @@ Core paths always require an invariant statement in the PR body when touched:
 |---|---|
 | `cgagentharness-project-guidance` | Start of substantive repository work (this file) |
 | `fable-protocol` | Evidence-first discipline before costly code/security/CI/GitHub claims |
-| `cgagentharness-invariant-guard` | Before merging core-path security diffs; first gate of a harness security review |
+| `cgagentharness-invariant-guard` | Before merging core-path security diffs; first gate of a harness security review. Manual-only: `disable-model-invocation: true`, so ask the operator to run `/cgagentharness-invariant-guard` rather than self-loading it |
 | `cgagentharness-gotchas` | Install/verify, desktop packaging, Chrome acceptance CI, clippy fights, write-gate debugging, "hangs" / false greens |
 | `cgagentharness-write-policy-redteam` | Hardening or changing writer, write gates, git approval, shim argv encoding, or clone jail |
 | `cgagentharness-config-guard` | Before merging `assets/config.default.yaml` changes; when asked to check config |

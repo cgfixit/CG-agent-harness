@@ -15,6 +15,7 @@ compatibility: |
   Requires: git, ripgrep
   Context: Cargo project with README.md, AGENTS.md, INVARIANTS.md,
   setup-guide.md, docs/*.md (including docs/USER_MANUAL.md)
+disable-model-invocation: true
 ---
 
 # doc-sync — fix documentation drift against origin

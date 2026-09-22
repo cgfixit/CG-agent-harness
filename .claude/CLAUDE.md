@@ -16,9 +16,11 @@ root-level `CLAUDE.md` exists (the root file was renamed to `AGENTS.md`). Do not
 
 Before substantive work, load `.claude/skills/cgagentharness-project-guidance/SKILL.md`
 (`/cgagentharness-project-guidance`). For evidence-first / security-sensitive claims, load
-`fable-protocol` (`/fable-protocol`). Before merging core-path security diffs, load
-`cgagentharness-invariant-guard` (`/cgagentharness-invariant-guard`). For session traps (Chrome CI,
-CSRF names, YAML `"true"`, Seatbelt), load `cgagentharness-gotchas` (`/cgagentharness-gotchas`).
+`fable-protocol` (`/fable-protocol`). Before merging core-path security diffs, ask the operator to
+run `cgagentharness-invariant-guard` (`/cgagentharness-invariant-guard`) — it ships
+`disable-model-invocation: true`, so Claude cannot self-load it; it must be invoked explicitly by a
+human. For session traps (Chrome CI, CSRF names, YAML `"true"`, Seatbelt), load
+`cgagentharness-gotchas` (`/cgagentharness-gotchas`).
 
 ### Additional skills (security / parity / optimize)
 
@@ -30,10 +32,10 @@ CSRF names, YAML `"true"`, Seatbelt), load `cgagentharness-gotchas` (`/cgagentha
 
 ### New documentation & verification skills
 
-- `cgagentharness-doc-sync` (`/cgagentharness-doc-sync`) — verify docs stay in sync with code; check shim actions, config gates, routes, guard chain, CSRF contracts, and hardcoded values
+- `cgagentharness-doc-sync` (`/cgagentharness-doc-sync`) — verify docs stay in sync with code; check shim actions, config gates, routes, guard chain, CSRF contracts, and hardcoded values. Manual-only (`disable-model-invocation: true`); ask the operator to run it
 - `cgagentharness-verify-deps` (`/cgagentharness-verify-deps`) — verify Cargo dependencies, advisories, licenses, locked versions, unsafe code, and toolchain match
 - `cgagentharness-runtime-invariant-check` (`/cgagentharness-runtime-invariant-check`) — verify core security invariants (I6, guard chain, CSRF, write gates, RUN_ID_PATTERN sync, clone jail)
-- `doc-sync` (`/doc-sync`) — actively fix doc drift (README/AGENTS/setup-guide/docs) against `origin/main` or the active branch's upstream; writes edits (companion to the read-only `cgagentharness-doc-sync`)
+- `doc-sync` (`/doc-sync`) — actively fix doc drift (README/AGENTS/setup-guide/docs) against `origin/main` or the active branch's upstream; writes edits (companion to the read-only `cgagentharness-doc-sync`). Manual-only (`disable-model-invocation: true`); ask the operator to run it
 - `dep-sync` (`/dep-sync`) — actively fix Rust dependency/toolchain/build/deploy drift (Cargo manifests/locks, `rust-toolchain.toml`, `deny.toml`, CI/release YAML) against `origin/main` or the active branch's upstream; writes edits (companion to the read-only `cgagentharness-verify-deps`)
 
 Authoritative contracts: `INVARIANTS.md`, `AGENTS.md`, `assets/config.default.yaml`.

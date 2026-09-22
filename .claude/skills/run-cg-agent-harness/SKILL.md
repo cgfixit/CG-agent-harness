@@ -1,6 +1,7 @@
 ---
 name: run-cg-agent-harness
 description: Build, run, drive, screenshot, and smoke-test the cgagentharness console (Rust axum server + browser UI) on a headless Linux box with a fake local model. Use when asked to run, start, launch, screenshot, or verify the harness/console/server end-to-end.
+disable-model-invocation: true
 ---
 
 # Run and verify the harness

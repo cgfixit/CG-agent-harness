@@ -1,6 +1,7 @@
 ---
 name: cgagentharness-invariant-guard
 description: Assert CG-agent-harness security invariants still hold against the current tree or a diff. Use before merging changes to src/shim, guards/headers, writer, sandbox, workspace, or assets/config.default.yaml; when asked to check invariants; or as the first gate of a harness security review.
+disable-model-invocation: true
 ---
 
 # CG-agent-harness Invariant Guard
