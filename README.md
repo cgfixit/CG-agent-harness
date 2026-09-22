@@ -9,7 +9,7 @@ open in a browser. Local chat stays on loopback. Cloud chat requires provider
 setup and selection; web reads require the account and content permissions
 described in [WEB.md](docs/WEB.md).
 
-![CG Agent Harness running on macOS](docs/screenshots/CG-Agent-1.png)
+![CG Agent Harness running on macOS](docs/screenshots/image.png)
 
 ## What it does
 

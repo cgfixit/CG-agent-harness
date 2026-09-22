@@ -26,4 +26,4 @@ hashes, platform, fixture/live distinction and verification limitations.
 - [CG-Agent-Mobile.png](CG-Agent-Mobile.png)
 - [CG-mobile.png](CG-mobile.png)
 - [app-ss.png](app-ss.png)
-- [Image.png](Image.png)
+- [image.png](image.png)
