@@ -97,4 +97,6 @@ exit-4 paths still hold. Skill completion ≠ publish authorization.
 - Never weaken security to pass the redteam.
 - Do not invent `probes.yaml` as required; cite Rust tests. FUTURE YAML = labeled
   companion only.
-- Pair with `cgagentharness-invariant-guard` before merging core-path diffs.
+- Pair with `cgagentharness-invariant-guard` before merging core-path diffs — it's
+  manual-only (`disable-model-invocation: true`); ask the operator to run
+  `/cgagentharness-invariant-guard`.
