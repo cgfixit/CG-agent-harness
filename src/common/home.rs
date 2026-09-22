@@ -22,7 +22,7 @@
 //!   tmp/               staged shim temp files
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -126,9 +126,6 @@ impl Home {
     }
     pub fn skills_dir(&self) -> PathBuf {
         self.root.join("skills")
-    }
-    pub fn styles_dir(&self) -> PathBuf {
-        self.root.join("styles")
     }
     pub fn tools_dir(&self) -> PathBuf {
         self.root.join("tools")
@@ -340,11 +337,6 @@ pub fn validate_port(raw: &str) -> Result<u16> {
 
 pub fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
-}
-
-/// Is `path` inside `root` (lexically, after normalizing both)?
-pub fn path_within(path: &Path, root: &Path) -> bool {
-    path.starts_with(root)
 }
 
 #[cfg(test)]
