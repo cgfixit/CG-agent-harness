@@ -464,7 +464,10 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     let mut durable = AuthManager::open(&dir.path().join("auth.json"), &cfg).unwrap();
     let c = now.clone();
     durable.set_clock(Box::new(move || *c.lock().unwrap()));
-    assert!(durable.validate_session(&s3.session_id).is_some(), "the slide reached disk");
+    assert!(
+        durable.validate_session(&s3.session_id).is_some(),
+        "the slide reached disk"
+    );
     *now.lock().unwrap() -= 2.0 * (43200.0 - 1.0);
     assert!(
         durable.validate_session(&s2.session_id).is_none(),
