@@ -1600,7 +1600,7 @@ function helpMatches(filter) {
 function renderHelp(topic = '', compact = false) {
   const box = document.createElement('section'); box.className = 'command-guide'; box.setAttribute('aria-label','Command guide');
   const title = document.createElement('h3'); title.textContent = 'Command guide'; box.appendChild(title);
-  const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click to insert a command, then review and send. <…> is required; […] is optional. Suggestions never execute.'; box.appendChild(note);
+  const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click to insert a command, then review and send. <…> is required; […] is optional. Commands must be one line without control characters. Suggestions never execute.'; box.appendChild(note);
   const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Search commands, e.g. web, session, --group'; search.setAttribute('aria-label','Search commands'); search.value = topic; box.appendChild(search);
   const topics = document.createElement('div'); topics.className = 'help-topics'; box.appendChild(topics);
   for (const [key,t] of Object.entries(HELP_TOPICS)) {
@@ -3325,14 +3325,14 @@ async function runSlashMaybeFuzzy(text) {
 /* ── wiring ── */
 sendBtn.addEventListener('click', onSend);
 // A single-line input strips newlines during paste, before the parser sees
-// them. Refuse ambiguous memory pastes before the browser normalizes them.
+// them. Refuse ambiguous slash-command pastes before the browser normalizes them.
 input.addEventListener('paste', e => {
   const pasted = e.clipboardData && e.clipboardData.getData('text/plain');
   if (!pasted) return;
   const proposed = input.value.slice(0, input.selectionStart) + pasted + input.value.slice(input.selectionEnd);
-  if (/^\s*\/(?:memory|mem|web)(?:\s|$)/i.test(proposed) && /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(proposed)) {
+  if (/^\s*\//.test(proposed) && /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(proposed)) {
     e.preventDefault();
-    sys('memory/web paste refused: use one line without control characters; nothing was dispatched');
+    sys('slash-command paste refused: use one line without control characters; nothing was dispatched');
   }
 });
 input.addEventListener('input', () => {

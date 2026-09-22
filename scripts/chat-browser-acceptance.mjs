@@ -309,11 +309,11 @@ try {
  slashMode='suggest';
  await evaluate('runSlashMaybeFuzzy("/memory clear\\n")');
  assert.equal(requests.filter(r=>r[1]==='/api/slash/parse').at(-1)[2].line,'/memory clear\n','slash wrapper must preserve command boundaries');
- for(const pasted of ['/memory\n clear','/memory clear\n','/memory\tclear','/web allow https://example.org/*\n/web on']) {
-  assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain",'+JSON.stringify(pasted)+');return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'ambiguous memory paste must be prevented before native input normalization');
+ for(const pasted of ['/memory\n clear','/memory clear\n','/memory\tclear','/web allow https://example.org/*\n/web on','/agent\nconfirm operator-approved','/api\tclear GROK_API_KEY','/session\u2028new']) {
+  assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain",'+JSON.stringify(pasted)+');return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'ambiguous slash-command paste must be prevented before native input normalization');
  }
  assert.equal(await evaluate('(()=>{input.value="/memory ";input.setSelectionRange(8,8);const data=new DataTransfer();data.setData("text/plain","clear\\n");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'partial paste must consider existing command text');
- assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain","/memory search metric");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),true,'exact single-line paste remains available');
+ assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain","/agent cancel");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),true,'exact single-line paste remains available');
  slashMode='dispatch';await send('/agent cancel');
 
  mode='stream';const streamed=send('stream fixture');

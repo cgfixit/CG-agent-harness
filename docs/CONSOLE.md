@@ -402,16 +402,18 @@ for editing, never execution. Examples and fuzzy suggestions also only insert.
 Web commands support the flags below; `--help` opens help without mutation.
 Unknown flags, `--dry-run` and `--confirm` cannot authorize an action. These are
 console commands, not a shell: no expansion, substitution or scripts are run.
+Every slash command must be one line without control characters. The parser
+refuses embedded separators before tokenization can reinterpret them as spaces.
 
 Memory commands require an exact `/memory` root and subcommand (case-insensitive;
 ordinary spaces are allowed). `/mem`, typos and conversational forms such as
 `/memory please retrieve preferences` only suggest; they never read memory, start
-chat, toggle gates or write notes. Unknown subcommands and pasted multiline/control
-characters are refused. Retype the intended command on one line after reviewing a
-suggestion. Exact `/memory retrieve <query>` starts a model turn with explicit
-retrieval; `/memory search <query>` only lists candidates. Use `/memory` for status
-and `/help` for syntax. Exact save/remember still require `:: <reason>`; exact
-clear/forget still delete pinned notes, so inspect the command before sending.
+chat, toggle gates or write notes. Unknown subcommands are refused. Retype the
+intended command after reviewing a suggestion. Exact `/memory retrieve <query>`
+starts a model turn with explicit retrieval; `/memory search <query>` only lists
+candidates. Use `/memory` for status and `/help` for syntax. Exact save/remember
+still require `:: <reason>`; exact clear/forget still delete pinned notes, so
+inspect the command before sending.
 
 Typed slash commands require the server parser. A parser failure or invalid reply
 leaves the command unexecuted; inspect the Commands pane or retry. Pending parser
