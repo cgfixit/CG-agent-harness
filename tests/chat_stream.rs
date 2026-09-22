@@ -86,7 +86,7 @@ async fn multiple_streamed_tools_reach_reads_and_keep_the_total_call_budget() {
             } else {
                 assert_eq!(request["parallel_tool_calls"],true);
                 let over=messages.last().unwrap()["content"]=="overlimit";
-                let calls:Vec<_>=(0..if over {4}else{2}).map(|index|json!({"index":index,"id":format!("call_{index}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{index}")}).to_string()}})).collect();
+                let calls:Vec<_>=(0..if over {4}else{2}).map(|index|json!({"index":index,"id":format!("call_{index}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{index}")}).to_string()}})).collect(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
                 json!({"tool_calls":calls})
             };
             let frames = vec![
@@ -96,13 +96,13 @@ async fn multiple_streamed_tools_reach_reads_and_keep_the_total_call_budget() {
             ];
             Sse::new(futures_util::stream::iter(frames.into_iter().map(|frame|Ok::<_,std::convert::Infallible>(Event::default().data(frame)))))
         }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
         axum::serve(listener, fixture).await.unwrap();
     });
     let s = spawn_server(
-        &format!("http://{address}/v1"),
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
         ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
             ..ServerOptions::default().with("web.chat_tool_calls", "3")
@@ -110,7 +110,7 @@ async fn multiple_streamed_tools_reach_reads_and_keep_the_total_call_budget() {
     )
     .await;
     assert_eq!(
-        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because this synthetic grant resolves only to the loopback fixture.
             .await
             .0,
         200
