@@ -72,7 +72,8 @@ Verdict: safe to merge / fix required: ...
   without an authorized change set.
 - Never open a shipped gate to green a convenience path.
 - Never weaken `flag_is_true` or ship quoted `"true"` as ON.
-- Pair with `cgagentharness-invariant-guard` for core-path merges.
+- Pair with `cgagentharness-invariant-guard` for core-path merges — it's manual-only
+  (`disable-model-invocation: true`); ask the operator to run `/cgagentharness-invariant-guard`.
 - No CyClaw soul/RAG/triple-gate transplantation; this is harness config only.
 - Skill ≠ publish authorization.
 

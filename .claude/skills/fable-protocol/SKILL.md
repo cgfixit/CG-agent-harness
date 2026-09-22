@@ -237,8 +237,9 @@ Under `.codex/skills/` (when landed): `fable-protocol` (this discipline, compres
 `cgagentharness-gotchas` (session traps), plus `cgagentharness-optimize`,
 `cgagentharness-release`, `cgagentharness-verify` for their named jobs. Load
 project-guidance first on substantive work; load gotchas before install/verify/
-desktop packaging/Chrome acceptance; load invariant-guard before merging core-path
-diffs.
+desktop packaging/Chrome acceptance; before merging core-path diffs, ask the
+operator to run `/cgagentharness-invariant-guard` — it ships
+`disable-model-invocation: true`, so Claude cannot self-load it.
 
 ### 8.8 Desktop / release / verify caveats
 

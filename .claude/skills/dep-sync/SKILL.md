@@ -114,8 +114,10 @@ succeed.
 List: base ref compared against, exact version/config diffs applied per file,
 commands run with exit codes, and any pin from `docs/DEPENDENCIES.md` you
 deliberately left untouched and why. If `docs/DEPENDENCIES.md` itself now
-states a stale version number as a result of this sync, hand that off to
-`doc-sync` (or fix it in the same pass if it's a one-line number change).
+states a stale version number as a result of this sync, fix it in the same
+pass if it's a one-line number change, or ask the operator to run `/doc-sync`
+for a larger rewrite — `doc-sync` is manual-only (`disable-model-invocation: true`),
+so Claude cannot self-load it.
 
 Skill selection here does not authorize push/merge — follow this repo's PR
 conventions (draft PR, `[infra]` or `[security]` prefix as appropriate,

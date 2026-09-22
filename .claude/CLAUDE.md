@@ -27,7 +27,7 @@ human. For session traps (Chrome CI, CSRF names, YAML `"true"`, Seatbelt), load
 - `cgagentharness-write-policy-redteam` (`/cgagentharness-write-policy-redteam`) — writer / confirm+reason / clone jail / hostile argv
 - `verification-specialist` (`/verification-specialist`) — try to break a supplied change (no tree mutation)
 - `cgagentharness-config-guard` (`/cgagentharness-config-guard`) — `assets/config.default.yaml` fail-closed contracts
-- `cgagentharness-parity` (`/cgagentharness-parity`) — `docs/parity/*` + `scripts/parity-status.py` (CyClaw↔harness)
+- `cgagentharness-parity` (`/cgagentharness-parity`) — `docs/parity/*` + `scripts/parity-status.py` (CyClaw↔harness). Manual-only (`disable-model-invocation: true`); ask the operator to run it
 - `cgagentharness-optimize` (`/cgagentharness-optimize`, Claude deep) — deep optimize playbook; Codex twin for short runs
 
 ### New documentation & verification skills

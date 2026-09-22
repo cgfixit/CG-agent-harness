@@ -199,10 +199,11 @@ Zero kept chunks after dedup is success.
 ## Notes
 
 - Evidence-first (pair with `fable-protocol`).
-- Before core-path PRs: `cgagentharness-invariant-guard`.
+- Before core-path PRs: ask the operator to run `/cgagentharness-invariant-guard`
+  (manual-only, `disable-model-invocation: true`).
 - Config edits: `cgagentharness-config-guard`.
 - Write-surface hardening: `cgagentharness-write-policy-redteam`.
-- Parity ledger work: `cgagentharness-parity` — never weaken harness to match
-  CyClaw product policy.
+- Parity ledger work: ask the operator to run `/cgagentharness-parity` (manual-only,
+  `disable-model-invocation: true`) — never weaken harness to match CyClaw product policy.
 - Independent adversarial verify of a supplied patch:
   `verification-specialist` (not a substitute for `cgagentharness-verify` smoke).

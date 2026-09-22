@@ -1,6 +1,7 @@
 ---
 name: cgagentharness-parity
 description: Maintain CyClaw↔CG-agent-harness parity contracts without weakening harness invariants. Use when updating docs/parity/*, running scripts/parity-status.py, or reconciling port ledgers with code truth.
+disable-model-invocation: true
 ---
 
 # Parity (harness-only)
