@@ -18,6 +18,10 @@ if [[ -n "$(git status --porcelain --untracked-files=normal)" && "${CGAH_ALLOW_D
 fi
 export MACOSX_DEPLOYMENT_TARGET=12.0
 export RUSTUP_AUTO_INSTALL=0
+# Explicit-target release builds compile host-side proc-macro dylibs alongside
+# target artifacts. Stripping those build dependencies can make rustc unable to
+# load their metadata; shipped backend and desktop binaries remain stripped.
+export CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none
 if [[ "$architecture" == universal ]]; then
   for target in aarch64-apple-darwin x86_64-apple-darwin; do
     cargo build --release --locked --target "$target"
