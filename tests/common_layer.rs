@@ -417,6 +417,19 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     *now.lock().unwrap() += 10.0;
     let ok = mgr.login("admin", "first-admin-password").unwrap();
     assert!(mgr.validate_session(&ok.session_id).is_some());
+    // The idle slide is committed, not only held in memory: from disk, the
+    // session is live only if the slid `last_seen_ts` was written.
+    *now.lock().unwrap() += 43200.0 - 1.0;
+    assert!(mgr.validate_session(&ok.session_id).is_some(), "the idle window slides");
+    *now.lock().unwrap() += 43200.0 - 1.0;
+    let mut slid = AuthManager::open(&dir.path().join("auth.json"), &cfg).unwrap();
+    let c = now.clone();
+    slid.set_clock(Box::new(move || *c.lock().unwrap()));
+    assert!(
+        slid.validate_session(&ok.session_id).is_some(),
+        "the slide reached disk"
+    );
+    drop(slid);
     assert!(mgr.logout(&ok.session_id).unwrap());
     assert!(!mgr.logout(&ok.session_id).unwrap());
     assert!(mgr.validate_session(&ok.session_id).is_none());
@@ -456,19 +469,11 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
         "revoked, not merely refused once"
     );
 
-    // The slide and the revocation are committed, not only held in memory.
-    let s3 = mgr.login("op", "operator-password-2").unwrap();
-    *now.lock().unwrap() += 43200.0 - 1.0;
-    assert!(mgr.validate_session(&s3.session_id).is_some(), "the idle window slides");
-    *now.lock().unwrap() += 43200.0 - 1.0;
+    // The revocation is committed, not only held in memory: from disk, at a
+    // time inside s2's idle window, only the stored `revoked` flag refuses it.
     let mut durable = AuthManager::open(&dir.path().join("auth.json"), &cfg).unwrap();
     let c = now.clone();
     durable.set_clock(Box::new(move || *c.lock().unwrap()));
-    assert!(
-        durable.validate_session(&s3.session_id).is_some(),
-        "the slide reached disk"
-    );
-    *now.lock().unwrap() -= 2.0 * (43200.0 - 1.0);
     assert!(
         durable.validate_session(&s2.session_id).is_none(),
         "the revocation reached disk"
