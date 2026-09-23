@@ -3,6 +3,7 @@ mod common;
 use cgagentharness::agentic::{
     ctx::AgenticCtx,
     edits::Proposal,
+    executor::manifest,
     real_repo_loop::FinalizeParams,
     run_store::{save_run, RealRepoRunRecord},
     workspace::RepoWorkspace,
@@ -116,17 +117,6 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
         ("agentic.deepagent_github.max_write_budget_bytes", "1", "policy_scope"),
     ] {
         armed(dir.path(), &[(field, value)]); // same already-open workspace, changed policy
-        for result in [
-            ws.write_file("target.txt", "denied", "r", true),
-            ws.checkout_branch("codex/denied", "r", true),
-            ws.add(&["target.txt".into()], "r", true),
-            ws.commit("denied", "r", true),
-            ws.push_branch("codex/write-policy", "r", true),
-        ] {
-            let error = result.unwrap_err();
-            assert_eq!(error.code, "AGENTIC_WRITE_REFUSED");
-            assert_eq!(error.details["failed_gate"], gate);
-        }
         for (op, error) in production("r", true) {
             let error = error.unwrap_or_else(|| panic!("{op} ran under revoked {gate}"));
             assert_eq!(error.code, "AGENTIC_WRITE_REFUSED", "{op}");
@@ -152,21 +142,12 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
     }
     armed(dir.path(), &[]);
     for (reason, confirm, gate) in [(" ", true, "reason"), ("r", false, "confirm")] {
-        for result in [
-            ws.write_file("target.txt", "denied", reason, confirm),
-            ws.add(&["target.txt".into()], reason, confirm),
-            ws.commit("denied", reason, confirm),
-            ws.push_branch("codex/write-policy", reason, confirm),
-        ] {
-            assert_eq!(result.unwrap_err().details["failed_gate"], gate);
-        }
         for (op, error) in production(reason, confirm) {
             let error = error.unwrap_or_else(|| panic!("{op} ran without {gate}"));
             assert_eq!(error.details["failed_gate"], gate, "{op}");
         }
     }
     std::fs::write(ctx.config_path.clone(), "agentic: [invalid]").unwrap();
-    assert!(ws.write_file("target.txt", "denied", "r", true).is_err());
     // The refusal must come from the config reload itself (exit 3), not from a
     // later check such as commit_accepted's missing acceptance digest.
     for (op, error) in production("r", true) {
@@ -174,7 +155,6 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
         assert_eq!(error.code, "AGENTIC_CONFIG_INVALID", "{op}: {}", error.message);
     }
     std::fs::remove_file(&ctx.config_path).unwrap();
-    assert!(ws.add(&["target.txt".into()], "r", true).is_err());
     for (op, error) in production("r", true) {
         let error = error.unwrap_or_else(|| panic!("{op} ran with no config"));
         assert_eq!(error.code, "CONFIG_ERROR", "{op}: {}", error.message);
@@ -200,20 +180,26 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
         .push_approved("main", &head, &origin, "reviewed fixture", true)
         .unwrap_err();
     assert!(error.message.contains("valid approved commit"), "{error:?}");
-    ws.write_file("target.txt", "approved\n", "reviewed fixture", true)
+    // Control: with the policy armed, the same production calls commit and push.
+    std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+    let (_, digest) = manifest::build_manifest(&dest, &changed, "fixture", &head).unwrap();
+    let commit = ws
+        .commit_accepted(&FinalizeParams {
+            branch_name: "codex/policy-control",
+            commit_message: "fixture change",
+            acceptance_digest: Some(&digest),
+            acceptance_base_head: Some(&head),
+            ..finalize("reviewed fixture", true, &changed)
+        })
         .unwrap();
-    ws.add(&["target.txt".into()], "reviewed fixture", true).unwrap();
-    ws.commit("fixture change", "reviewed fixture", true).unwrap();
-    assert_ne!(git(&["rev-parse", "HEAD"], &dest), head);
+    assert_ne!(commit, head);
     assert!(
         git(&["branch", "--list", "codex/*"], &bare).is_empty(),
         "commit never pushes"
     );
-    ws.push_branch("codex/write-policy", "separate push", true).unwrap();
-    assert_eq!(
-        git(&["rev-parse", "refs/heads/codex/write-policy"], &bare),
-        git(&["rev-parse", "HEAD"], &dest)
-    );
+    ws.push_approved("codex/policy-control", &commit, &origin, "separate push", true)
+        .unwrap();
+    assert_eq!(git(&["rev-parse", "refs/heads/codex/policy-control"], &bare), commit);
 }
 
 #[test]

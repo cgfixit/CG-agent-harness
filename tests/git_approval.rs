@@ -173,7 +173,14 @@ fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
         ws.diff(false).is_err(),
         "unsafe local configuration must refuse inspection"
     );
-    assert!(ws.add(&["target.txt".into()], "reviewed fixture", true).is_err());
+    // Approval starts by reading HEAD and building the manifest; both refuse.
+    let error = manifest::git_head(&dest)
+        .and_then(|head| manifest::build_manifest(&dest, &["target.txt".into()], "fixture", &head))
+        .unwrap_err();
+    assert!(
+        error.message.contains("unsupported local Git configuration"),
+        "unsafe local configuration must refuse approval: {error:?}"
+    );
     assert!(!marker.exists(), "clean filter executed outside sandbox");
 }
 
