@@ -222,7 +222,7 @@ impl StdioClient {
             let limits = capabilities
                 .limits
                 .ok_or_else(|| mcp_err("MCP_CONTAINMENT_UNAVAILABLE", "Job Object limits missing"))?;
-            Child::spawn(cmd.as_std(), limits.processes, limits.memory_mb).map_err(|_| {
+            Child::spawn(cmd.as_std(), limits.processes, Some(limits.memory_mb)).map_err(|_| {
                 mcp_err(
                     "MCP_CONTAINMENT_UNAVAILABLE",
                     "cannot atomically create MCP child in Job Object",

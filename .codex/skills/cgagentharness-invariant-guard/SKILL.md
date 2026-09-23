@@ -54,7 +54,7 @@ Core paths that always trigger this skill:
    | Shipped gates closed | `invariant_guard::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
    | Write-policy / kill switch | `real_repo_loop::writer_gates_in_order_and_plan_integrity`, `invariant_guard::writer_kill_switch_is_and_not_or` |
    | Git / approval binding | `real_repo_loop::loop_iterates_on_feedback_then_accepts_and_finalizes`, `agentic_foundations::manifest_digest_binds_files_and_head` |
-   | Clone / read jail | `agentic_foundations::write_jail_refuses_escapes_and_reports_landed_paths`, `read_jail_refuses_symlink_escapes_without_following_the_leaf` |
+   | Clone / read jail | `agentic_foundations::apply_proposal_refuses_jail_escapes_and_oversize_content`, `read_jail_refuses_symlink_escapes_without_following_the_leaf` |
    | Argv / confirm / run_id | `shim_and_agent_routes` hostile-argv matrix |
    | Detached jobs lockstep | `invariant_guard::agent_run_and_jobs_share_prepare_run`, job cancel/finish tests in `shim_and_agent_routes` |
    | CSRF placeholders | `invariant_guard::console_asset_is_verbatim_with_both_placeholders` |

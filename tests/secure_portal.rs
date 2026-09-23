@@ -447,7 +447,10 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
     let bootstrap = cookie(&response);
     let header = response.headers()["set-cookie"].to_str().unwrap();
     assert!(header.contains("; Secure") && header.contains("HttpOnly") && header.contains("SameSite=Strict"));
-    assert_eq!(response.json::<Value>().await.unwrap()["must_change_password"], true);
+    let login_body = response.json::<Value>().await.unwrap();
+    assert_eq!(login_body["must_change_password"], true);
+    // Request CSRF is the process token in the console page; login returns none.
+    assert!(login_body.get("csrf_token").is_none(), "{login_body}");
     for path in ["/api/keys", "/api/sessions", "/api/web/allow", "/api/auth/users"] {
         let response = request(&server, &bootstrap, Method::POST, path, json!({})).await;
         assert_eq!(response.status(), 403);

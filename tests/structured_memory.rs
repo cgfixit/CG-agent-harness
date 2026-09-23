@@ -1702,7 +1702,18 @@ async fn chat_wins_auto_contention_and_disable_stops_new_claims() {
     assert_eq!(chat_result.0, 200, "{}", chat_result.1);
     wait_until(|| !s.state.generation_gate.is_held(), "gate released after first chat").await;
     model.set_delay_ms(0);
-    let _ = blocked;
+    // Let the worker consolidate the episode staged while chat held the gate.
+    // Otherwise it keeps re-claiming the gate for it, and the second chat can
+    // lose that race and get CHAT_BUSY instead of holding the gate.
+    model.set_reply(consolidator_reply(&blocked, "Staged while chat held the gate"));
+    wait_until(
+        || {
+            store_of(&s).get_episode("local", &blocked).unwrap().consolidation_state == "done"
+                && !s.state.generation_gate.is_held()
+        },
+        "worker drained the episode staged during the first chat",
+    )
+    .await;
 
     model.set_delay_ms(800);
     model.set_reply(ok_reply("still holding", 1, 1));

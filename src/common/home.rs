@@ -22,11 +22,11 @@
 //!   tmp/               staged shim temp files
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::atomic::write_json_atomic;
+use super::atomic::{write_atomic, write_json_atomic};
 use super::config::AppConfig;
 use super::errors::{HarnessError, Result};
 
@@ -127,9 +127,6 @@ impl Home {
     pub fn skills_dir(&self) -> PathBuf {
         self.root.join("skills")
     }
-    pub fn styles_dir(&self) -> PathBuf {
-        self.root.join("styles")
-    }
     pub fn tools_dir(&self) -> PathBuf {
         self.root.join("tools")
     }
@@ -184,10 +181,16 @@ impl Home {
                 write_json_atomic(&policy, &serde_json::json!({"version": 1, "rules": []}))?;
             }
             self.seed_default_soul()?;
-            std::fs::write(self.config_path(), AppConfig::embedded_default())?;
+            // Atomic: a truncated seed that still parses would read as a legacy
+            // home with no `auth`/`tls` section, and exists() never re-seeds it.
+            write_atomic(&self.config_path(), AppConfig::embedded_default().as_bytes(), None)?;
         }
         if !self.registry_path().exists() {
-            std::fs::write(self.registry_path(), include_str!("../../assets/skills_registry.json"))?;
+            write_atomic(
+                &self.registry_path(),
+                include_str!("../../assets/skills_registry.json").as_bytes(),
+                None,
+            )?;
         }
         self.seed_skills();
         Ok(())
@@ -340,11 +343,6 @@ pub fn validate_port(raw: &str) -> Result<u16> {
 
 pub fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
-}
-
-/// Is `path` inside `root` (lexically, after normalizing both)?
-pub fn path_within(path: &Path, root: &Path) -> bool {
-    path.starts_with(root)
 }
 
 #[cfg(test)]

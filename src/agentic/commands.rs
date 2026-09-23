@@ -536,7 +536,6 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         record.iterations = result.iterations.len() as u64;
         record.acceptance_digest = Some(digest);
         record.acceptance_base_head = Some(base_head);
-        tools.release();
     } else {
         let raw = result
             .iterations
