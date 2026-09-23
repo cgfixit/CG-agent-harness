@@ -190,7 +190,7 @@ single elements or temp files, never as separate argv tokens.
 
 ## Every write to a repository is gated
 
-Repository mutation boundaries (checkout, file write, add, commit, push) and
+Repository mutation boundaries (proposal apply, approval commit, push) and
 PR execution reload `config.yaml` and require `agentic.enabled`, write mode,
 `writes_enabled`, `deepagent_github.enabled`, `allow_git_write_tools`, a nonblank
 human reason, and explicit confirmation. The emergency disable switch is AND-ed
@@ -234,8 +234,8 @@ the previous one (`openat` semantics), so a symlink pointing outside the clone
 fails to resolve rather than being followed; the leaf is additionally opened
 with `O_NOFOLLOW` (unix). 256 KB cap, UTF-8 required.
 
-- Locked by: `tests/agentic_foundations.rs::write_jail_refuses_escapes_and_reports_landed_paths`,
-  `apply_proposal_refuses_jail_escapes_and_oversize_content` (the loop's write path),
+- Locked by: `tests/agentic_foundations.rs::apply_proposal_refuses_jail_escapes_and_oversize_content`
+  (the loop's only file write), `workspace_reads_and_inspection_stay_inside_the_clone`,
   `read_jail_refuses_symlink_escapes_without_following_the_leaf`,
   `read_jail_refuses_dotgit_metadata`.
 - This closes the canonicalize-then-open TOCTOU window the port previously
