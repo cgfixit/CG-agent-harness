@@ -1060,8 +1060,11 @@ async fn real_repo_run_smoke_end_to_end() {
     )
     .unwrap();
     let env: Vec<(&str, &str)> = vec![("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")];
-    let sandbox_ok = cgagentharness::agentic::executor::production_sandbox().is_ok();
-    if !sandbox_ok {
+    if let Err(e) = cgagentharness::agentic::executor::production_sandbox() {
+        // CI sets this where a sandbox exists, so a broken backend cannot pass as a skip.
+        if std::env::var_os("CGAH_REQUIRE_CHECK_SANDBOX").is_some() {
+            panic!("hard check sandbox required; cannot skip: {}", e.message);
+        }
         eprintln!("SKIP real_repo_run_smoke: no hard sandbox on this host (fail-closed by design)");
         return;
     }
