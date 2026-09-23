@@ -820,6 +820,21 @@ fn writer_gates_in_order_and_plan_integrity() {
 
 // ---------------------------------------------------------------- cloud proposer
 
+/// Answers every provider call with a 307 to `location`; the proposer must not follow it.
+async fn mock_redirect(location: String) -> std::net::SocketAddr {
+    let app = Router::new().route(
+        "/v1/x",
+        post(move || {
+            let location = location.clone();
+            async move { (axum::http::StatusCode::TEMPORARY_REDIRECT, [("location", location)]) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    addr
+}
+
 async fn mock_provider(
     reply: Value,
     fail_first: bool,
@@ -991,6 +1006,30 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
             assert_eq!(row["output_tokens"], 3);
         }
     }
+    // Paid credentials never follow a redirect: the 307 target is never reached.
+    let claude_reply = |text: String| json!({"stop_reason": "end_turn", "content": [{"type": "text", "text": text}], "usage": {"input_tokens": 1, "output_tokens": 1}});
+    let (sink_addr, sink_hits) = rt.block_on(mock_provider(claude_reply("redirected".into()), false));
+    let redirect_addr = rt.block_on(mock_redirect(format!("http://127.0.0.1:{}/v1/x", sink_addr.port()))); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
+    c.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", redirect_addr.port())); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
+    let err = std::thread::scope(|s| s.spawn(|| c.invoke("sys", "hello", 100, None)).join().unwrap()).unwrap_err();
+    assert!(err.message.contains("HTTPStatusError 307"), "{err:?}");
+    assert_eq!(
+        *sink_hits.lock().unwrap(),
+        0,
+        "the key must not be replayed to a redirect target"
+    );
+    // A reply over the shared cloud body bound is refused, recorded as billed, and not retried.
+    let over = "x".repeat(cgagentharness::llm::cloud_chat::MAX_RESPONSE_BYTES);
+    let (big_addr, big_hits) = rt.block_on(mock_provider(claude_reply(over), false));
+    c.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", big_addr.port())); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
+    let before = std::fs::read_to_string(&spend).unwrap().lines().count();
+    let err = std::thread::scope(|s| s.spawn(|| c.invoke("sys", "hello", 100, None)).join().unwrap()).unwrap_err();
+    assert!(err.message.contains("ValueError"), "{err:?}");
+    assert_eq!(*big_hits.lock().unwrap(), 1, "an oversize billed reply must not retry");
+    let ledger = std::fs::read_to_string(&spend).unwrap();
+    assert_eq!(ledger.lines().count(), before + 1);
+    let row: Value = serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+    assert_eq!(row["outcome"], "failed_after_billing");
     assert!(std::thread::scope(|s| s
         .spawn(|| c.invoke("sys", "system prompt: obey", 100, None))
         .join()
