@@ -192,11 +192,6 @@ fn bounded_multifile_edits_preserve_unrelated_data_and_refuse_landed_protected_p
         std::fs::read_to_string(clone.join("tests/protected.txt")).unwrap(),
         "original"
     );
-    assert!(ws
-        .write_file("alias/protected.txt", "modified", "test", true)
-        .unwrap_err()
-        .message
-        .contains("protected"));
     for name in ["Tests/new.txt", "tests./new.txt", "te\u{200b}sts/new.txt"] {
         let context = edits::collect(&ws, &[]);
         let proposal = edits::parse(&block(name, "denied"), &context, 10000).unwrap();

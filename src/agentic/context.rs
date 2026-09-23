@@ -132,22 +132,6 @@ pub fn fetch_issue_context(ctx: &AgenticCtx, number: i64) -> Result<Value> {
     Ok(json!({"repo": ctx.acfg.repo, "number": number, "issue": issue, "governance_findings": findings}))
 }
 
-pub fn fetch_pr_list(ctx: &AgenticCtx, max_items: u64) -> Result<Value> {
-    guard_read_op(ctx, "pr_list")?;
-    let mut shortlist = list_with_more(ctx, "pr_list", max_items)?;
-    let fields = shortlist_title_fields(&shortlist, "items");
-    shortlist["governance_findings"] = json!(injection_findings(ctx, &ctx.acfg.repo, None, &fields));
-    Ok(shortlist)
-}
-
-pub fn fetch_issue_list(ctx: &AgenticCtx, max_items: u64) -> Result<Value> {
-    guard_read_op(ctx, "issue_list")?;
-    let mut shortlist = list_with_more(ctx, "issue_list", max_items)?;
-    let fields = shortlist_title_fields(&shortlist, "items");
-    shortlist["governance_findings"] = json!(injection_findings(ctx, &ctx.acfg.repo, None, &fields));
-    Ok(shortlist)
-}
-
 pub fn fetch_repo_context(ctx: &AgenticCtx) -> Result<Value> {
     guard_read_op(ctx, "repo_view")?;
     let overview = read(ctx, "repo_view", None, 30)?["data"].clone();

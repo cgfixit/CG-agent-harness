@@ -103,7 +103,7 @@ harness-only. Never weaken security posture.
        argv; free-text crosses as `--opt=value` or temp files, never separate
        argv tokens. `confirm` is never defaulted.
      - **Write gates:** `deepagent_github.allow_git_write_tools` (ships false)
-       gates write_file/add/commit/push_branch; `agentic.enabled` + mode +
+       gates proposal apply, approval commit and push; `agentic.enabled` + mode +
        `writes_enabled` + human reason + per-call `confirm` gate `gh pr create`;
        `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` is AND-ed kill switch only.
      - **Clone jail:** name-equivalence refusal → resolve → containment →

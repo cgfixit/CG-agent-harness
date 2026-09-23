@@ -135,8 +135,19 @@ fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
     }
     std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
     let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
-    approve(&ctx, &ws, &["target.txt".into()]).unwrap();
-    ws.push_branch("codex/exact-tree", "separate fixture push", true)
+    let origin = ws.origin_url().unwrap();
+    let approved = approve(&ctx, &ws, &["target.txt".into()]).unwrap();
+    let commit = approved["approved_commit"].as_str().unwrap();
+    // Author and committer are forced to the configured agent identity (the
+    // default, or the CGAGENTHARNESS_AGENT_COMMIT_* overrides), whatever the
+    // host's or the clone's git identity.
+    let id = cgagentharness::common::identity::identity().unwrap();
+    let forced = format!("{} <{}>", id.commit_name, id.commit_email);
+    assert_eq!(
+        git(&["log", "-1", "--format=%an <%ae>|%cn <%ce>", commit], &dest),
+        format!("{forced}|{forced}")
+    );
+    ws.push_approved("codex/exact-tree", commit, &origin, "separate fixture push", true)
         .unwrap();
     for hook in [
         "post-checkout",
@@ -162,7 +173,14 @@ fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
         ws.diff(false).is_err(),
         "unsafe local configuration must refuse inspection"
     );
-    assert!(ws.add(&["target.txt".into()], "reviewed fixture", true).is_err());
+    // Approval starts by reading HEAD and building the manifest; both refuse.
+    let error = manifest::git_head(&dest)
+        .and_then(|head| manifest::build_manifest(&dest, &["target.txt".into()], "fixture", &head))
+        .unwrap_err();
+    assert!(
+        error.message.contains("unsupported local Git configuration"),
+        "unsafe local configuration must refuse approval: {error:?}"
+    );
     assert!(!marker.exists(), "clean filter executed outside sandbox");
 }
 

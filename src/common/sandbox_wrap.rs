@@ -374,6 +374,12 @@ pub fn probe_linux_bwrap() -> std::result::Result<PathBuf, String> {
     CACHED.get_or_init(|| probe_linux_bwrap_kind(true)).clone()
 }
 
+/// The network-allowed probe, cached the same way (failures included).
+fn probe_linux_bwrap_networked() -> std::result::Result<PathBuf, String> {
+    static CACHED: OnceLock<std::result::Result<PathBuf, String>> = OnceLock::new();
+    CACHED.get_or_init(|| probe_linux_bwrap_kind(false)).clone()
+}
+
 fn probe_linux_bwrap_kind(unshare_net: bool) -> std::result::Result<PathBuf, String> {
     let path = process::which("bwrap").ok_or_else(|| "bwrap not found".to_string())?;
     let path = dunce::canonicalize(&path).map_err(|e| format!("bwrap path {}: {e}", path.display()))?;
@@ -431,7 +437,7 @@ fn wrap_argv(
         let path = if deny_network {
             probe_linux_bwrap()
         } else {
-            probe_linux_bwrap_kind(false)
+            probe_linux_bwrap_networked()
         }
         .map_err(|e| {
             HarnessError::sandbox_unavailable(format!("MCP capabilities unavailable: {}", classify_probe_err(&e)))

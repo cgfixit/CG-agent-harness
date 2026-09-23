@@ -1,4 +1,4 @@
-//! Jailed clone: reads, path-validated writes, and four fixed git subcommands.
+//! Jailed clone: reads, path-validated proposal writes, and fixed git subcommands.
 //! Port of `agentic/deepagent_github/repo_workspace.py`.
 //!
 //! Reads: per-segment `.git` name-equivalence refusal, then a capability `Dir`
@@ -6,7 +6,7 @@
 //! can never escape and there is no canonicalize-then-open window) plus `O_NOFOLLOW`
 //! on the leaf (unix). Writes:
 //! canonical path -> per-segment `.git` name-equivalence refusal -> resolve
-//! (strict for `add`; dangling-leaf-aware for `write_file`) -> containment ->
+//! (strict for approved paths; dangling-leaf-aware for new proposal files) -> containment ->
 //! landed-path vs the real `.git` dir -> return the LANDED relative path.
 //! Every mutation reloads the write policy and requires explicit human intent.
 
@@ -422,71 +422,7 @@ impl<'a> RepoWorkspace<'a> {
             .map_err(|_| HarnessError::agentic(format!("'{target}' is not valid UTF-8 text")).detail("target", target))
     }
 
-    /// Stat one path (existence + kind) without reading it.
-    pub fn stat_file(&self, target: &str) -> Result<Value> {
-        let rel = self.read_target(target)?;
-        let meta = self
-            .dir
-            .metadata(&rel)
-            .map_err(|_| HarnessError::agentic(format!("cannot stat '{target}'")).detail("target", target))?;
-        self.audit
-            .log(json!({"event": "agentic_repo_workspace_read", "op": "stat_file", "target": target}));
-        Ok(json!({"path": target, "is_file": meta.is_file(), "is_dir": meta.is_dir(), "size": meta.len()}))
-    }
-
     // ------------------------------------------------------------ writes
-
-    pub fn checkout_branch(&self, name: &str, reason: &str, confirm: bool) -> Result<Value> {
-        let tool = "checkout_branch";
-        self.require_write(tool, reason, confirm)?;
-        let id = identity::identity()?;
-        if !id.branch_is_valid(name) {
-            return Err(self.deny(
-                tool,
-                &format!(
-                    "branch name must start with one of [{}] and use only [A-Za-z0-9._/-] after the slash",
-                    id.allowed_prefixes_help()
-                ),
-                Some(name),
-            ));
-        }
-        self.run_git(tool, &["checkout", "-b", name], DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[])?;
-        self.audit
-            .log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "branch": name}));
-        Ok(json!({"branch": name}))
-    }
-
-    /// Write one text file (create or overwrite) inside the clone.
-    pub fn write_file(&self, target: &str, content: &str, reason: &str, confirm: bool) -> Result<Value> {
-        let tool = "write_file";
-        self.require_write(tool, reason, confirm)?;
-        let encoded = content.as_bytes();
-        if encoded.len() > self.max_write_bytes {
-            return Err(self
-                .deny(tool, "write content exceeds max_write_bytes", Some(target))
-                .detail("bytes", encoded.len() as u64));
-        }
-        let relative = self.validate_write_path(tool, target, false)?;
-        for path in [target, &relative] {
-            if super::real_repo_loop::matches_protected_path(path, &self.ctx.acfg.deepagent.protected_write_paths) {
-                return Err(self.deny(tool, "protected write destination", Some(path)));
-            }
-        }
-        let path = self.dest.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
-        let written = (|| {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&path, encoded)
-        })();
-        if let Err(e) = written {
-            return Err(self
-                .deny(tool, "git path is not writable in the clone", Some(target))
-                .detail("error_type", e.kind().to_string()));
-        }
-        self.audit.log(json!({"event": "agentic_repo_workspace_write", "target": relative, "bytes": encoded.len(), "sha256": crate::common::sha256_bytes_hex(encoded)}));
-        Ok(json!({"target": relative, "bytes": encoded.len()}))
-    }
 
     /// Validate the whole proposal, stage replacements through retained parent
     /// capabilities, then rename. Ordinary failures roll back installed files.
@@ -606,45 +542,6 @@ impl<'a> RepoWorkspace<'a> {
             }
         }
         Ok((parent, leaf.to_string()))
-    }
-
-    pub fn add(&self, paths: &[String], reason: &str, confirm: bool) -> Result<Value> {
-        let tool = "add";
-        self.require_write(tool, reason, confirm)?;
-        if paths.is_empty() {
-            return Err(self.deny(tool, "git add requires at least one path", None));
-        }
-        let mut validated = Vec::new();
-        for p in paths {
-            validated.push(self.validate_write_path(tool, p, true)?);
-        }
-        super::git::require_raw_paths(&self.dest, &validated)?;
-        let mut args = vec!["add", "--"];
-        args.extend(validated.iter().map(|s| s.as_str()));
-        self.run_git(tool, &args, DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[])?;
-        self.audit
-            .log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "paths": validated}));
-        Ok(json!({"paths": validated}))
-    }
-
-    /// Commit staged changes with the configured committer identity, `--no-verify`.
-    pub fn commit(&self, message: &str, reason: &str, confirm: bool) -> Result<Value> {
-        let tool = "commit";
-        self.require_write(tool, reason, confirm)?;
-        if message.trim().is_empty() {
-            return Err(self.deny(tool, "commit message must be a non-empty string", None));
-        }
-        let id = identity::identity()?;
-        let email = format!("user.email={}", id.commit_email);
-        let name = format!("user.name={}", id.commit_name);
-        self.run_git(
-            tool,
-            &["-c", &email, "-c", &name, "commit", "--no-verify", "-m", message],
-            DEFAULT_GIT_WRITE_TIMEOUT_SEC,
-            &[],
-        )?;
-        self.audit.log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "message_sha256": crate::common::sha256_hex(message)}));
-        Ok(json!({}))
     }
 
     /// Build a commit from reviewed raw blobs in an owned index. Refuse a dirty
@@ -770,19 +667,6 @@ impl<'a> RepoWorkspace<'a> {
         Ok(commit)
     }
 
-    /// Explicit direct API push; lifecycle callers must use push_approved with
-    /// the commit and destination persisted at acceptance.
-    pub fn push_branch(&self, name: &str, reason: &str, confirm: bool) -> Result<Value> {
-        self.require_write("push_branch", reason, confirm)?;
-        if !identity::identity()?.branch_is_valid(name) {
-            return Err(self.deny("push_branch", "invalid branch", None));
-        }
-        let origin = self.origin_url()?;
-        let reference = format!("refs/heads/{name}");
-        let commit = self.run_git("approved_source", &["rev-parse", "--verify", &reference], 30, &[])?;
-        self.push_approved(name, commit.trim(), &origin, reason, confirm)
-    }
-
     pub fn origin_url(&self) -> Result<String> {
         let remote = self.run_git("origin", &["config", "--get", "remote.origin.url"], 30, &[])?;
         let remote = remote.trim().to_string();
@@ -893,9 +777,6 @@ impl<'a> RepoWorkspace<'a> {
         Ok(paths)
     }
 
-    /// Retain the clone (no held handles to release in this port).
-    pub fn release(&self) {}
-
     /// Delete the clone (its parent temp directory) from disk.
     pub fn close(&self) {
         if let Some(parent) = self.dest.parent() {
@@ -906,11 +787,9 @@ impl<'a> RepoWorkspace<'a> {
     /// Production dispose after `run_real_repo_loop`. A failed rollback keeps
     /// the clone and `.cgah-backup-*` preimages for later discard.
     pub fn close_after_loop(&self, error: Option<&HarnessError>) {
-        if error.is_some_and(is_proposal_rollback_quarantine) {
-            self.release();
-            return;
+        if !error.is_some_and(is_proposal_rollback_quarantine) {
+            self.close();
         }
-        self.close();
     }
 }
 

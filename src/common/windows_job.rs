@@ -193,8 +193,9 @@ impl Drop for Attributes {
 }
 
 impl JobChild {
-    pub fn spawn(command: &Command, processes: u32, memory_mb: u32) -> io::Result<Self> {
-        if !(8..=128).contains(&processes) || !(64..=4096).contains(&memory_mb) {
+    /// `memory_mb: None` sets no job memory limit (verification checks never had one).
+    pub fn spawn(command: &Command, processes: u32, memory_mb: Option<u32>) -> io::Result<Self> {
+        if !(8..=128).contains(&processes) || memory_mb.is_some_and(|m| !(64..=4096).contains(&m)) {
             return Err(invalid("invalid Job Object resource limits"));
         }
         let path = std::path::Path::new(command.get_program());
@@ -222,12 +223,14 @@ impl JobChild {
         }
         let job = unsafe { OwnedHandle::from_raw_handle(raw) };
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        limits.BasicLimitInformation.LimitFlags =
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS | JOB_OBJECT_LIMIT_JOB_MEMORY;
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
         limits.BasicLimitInformation.ActiveProcessLimit = processes;
-        limits.JobMemoryLimit = (u64::from(memory_mb) * 1024 * 1024)
-            .try_into()
-            .map_err(|_| invalid("memory limit does not fit this platform"))?;
+        if let Some(memory_mb) = memory_mb {
+            limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+            limits.JobMemoryLimit = (u64::from(memory_mb) * 1024 * 1024)
+                .try_into()
+                .map_err(|_| invalid("memory limit does not fit this platform"))?;
+        }
         // SAFETY: owned job and correctly sized initialized limit structure.
         if unsafe {
             SetInformationJobObject(

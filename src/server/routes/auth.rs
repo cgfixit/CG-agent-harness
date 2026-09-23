@@ -1,5 +1,7 @@
-//! `/api/auth/*`: per-user sessions and RBAC. Port of `harness/auth_routes.py`.
-//! Every route returns 503 `AUTH_DISABLED` unless `auth.enabled` is the literal true.
+//! `/api/auth/*`: per-user sessions and RBAC, plus `/api/audit`. Port of
+//! `harness/auth_routes.py`. The account routes return 503 `AUTH_DISABLED`
+//! unless `auth.enabled` is the literal true; `/api/audit` reads the audit log
+//! without the account store.
 
 use std::sync::Arc;
 
@@ -175,8 +177,7 @@ pub async fn bootstrap_password(State(state): State<Arc<AppState>>, req: Request
         manager(&st).and_then(|m| m.bootstrap_set_password(&body.password).map_err(|e| map_auth_error(&e)))
     })
     .await?;
-    let mut resp =
-        Json(json!({"username": result.username, "role": ROLE_ADMIN, "csrf_token": result.csrf_token})).into_response();
+    let mut resp = Json(json!({"username": result.username, "role": ROLE_ADMIN})).into_response();
     set_cookie(&mut resp, &result.session_id, secure);
     Ok(resp)
 }
@@ -202,7 +203,9 @@ pub async fn login(
     state
         .audit
         .log(json!({"event":"account.login", "actor":result.username,"outcome":"success"}));
-    let mut resp = Json(json!({"username": result.username, "role": role, "csrf_token": result.csrf_token,"must_change_password":must_change_password})).into_response();
+    let mut resp =
+        Json(json!({"username": result.username, "role": role, "must_change_password": must_change_password}))
+            .into_response();
     set_cookie(&mut resp, &result.session_id, scheme.is_some_and(|s| s.0 .0 == "https"));
     Ok(resp)
 }

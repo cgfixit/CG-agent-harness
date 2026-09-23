@@ -2,12 +2,33 @@
 mod common;
 use cgagentharness::agentic::{
     ctx::AgenticCtx,
+    edits::Proposal,
+    executor::manifest,
+    real_repo_loop::FinalizeParams,
     run_store::{save_run, RealRepoRunRecord},
     workspace::RepoWorkspace,
 };
 use common::*;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// The production approve call for `target.txt`. The gate runs before any of
+/// these values are read, so a refusal names the gate, not a bad parameter.
+fn finalize<'a>(reason: &'a str, confirm: bool, changed: &'a [String]) -> FinalizeParams<'a> {
+    FinalizeParams {
+        reason,
+        confirm,
+        branch_name: "codex/write-policy",
+        commit_message: "denied",
+        changed_files: changed,
+        decision: "approve",
+        protected_write_paths: &[],
+        run_id: "fixture",
+        acceptance_digest: None,
+        acceptance_base_head: None,
+    }
+}
 
 fn armed(home: &Path, extra: &[(&str, &str)]) -> AgenticCtx {
     let overrides = vec![
@@ -54,6 +75,30 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
     let publication = json!({"op":"pr_create", "repo":ctx.acfg.repo, "reason":"r", "params":{"head":"codex/write-policy"}, "would_run":[]});
     let head = git(&["rev-parse", "HEAD"], &dest);
     let index = std::fs::read(dest.join(".git/index")).unwrap();
+    // The production write path: apply (loop), approve (decide) and push.
+    let origin = ws.origin_url().unwrap();
+    let changed = vec!["target.txt".to_string()];
+    let proposal = Proposal {
+        files: BTreeMap::from([("target.txt".to_string(), "denied".to_string())]),
+        originals: BTreeMap::from([("target.txt".to_string(), Some("hello\n".to_string()))]),
+    };
+    let production = |reason: &str, confirm: bool| {
+        [
+            (
+                "apply_proposal",
+                ws.apply_proposal(&proposal, &[], reason, confirm).err(),
+            ),
+            (
+                "commit_accepted",
+                ws.commit_accepted(&finalize(reason, confirm, &changed)).err(),
+            ),
+            (
+                "push_approved",
+                ws.push_approved("codex/write-policy", &head, &origin, reason, confirm)
+                    .err(),
+            ),
+        ]
+    };
     for (field, value, gate) in [
         ("agentic.enabled", "false", "enabled"),
         ("agentic.mode", "read", "mode"),
@@ -72,16 +117,10 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
         ("agentic.deepagent_github.max_write_budget_bytes", "1", "policy_scope"),
     ] {
         armed(dir.path(), &[(field, value)]); // same already-open workspace, changed policy
-        for result in [
-            ws.write_file("target.txt", "denied", "r", true),
-            ws.checkout_branch("codex/denied", "r", true),
-            ws.add(&["target.txt".into()], "r", true),
-            ws.commit("denied", "r", true),
-            ws.push_branch("codex/write-policy", "r", true),
-        ] {
-            let error = result.unwrap_err();
-            assert_eq!(error.code, "AGENTIC_WRITE_REFUSED");
-            assert_eq!(error.details["failed_gate"], gate);
+        for (op, error) in production("r", true) {
+            let error = error.unwrap_or_else(|| panic!("{op} ran under revoked {gate}"));
+            assert_eq!(error.code, "AGENTIC_WRITE_REFUSED", "{op}");
+            assert_eq!(error.details["failed_gate"], gate, "{op}");
         }
         assert_eq!(
             cgagentharness::agentic::writer::execute_write(&ctx, &publication, true, 1)
@@ -103,34 +142,64 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
     }
     armed(dir.path(), &[]);
     for (reason, confirm, gate) in [(" ", true, "reason"), ("r", false, "confirm")] {
-        for result in [
-            ws.write_file("target.txt", "denied", reason, confirm),
-            ws.add(&["target.txt".into()], reason, confirm),
-            ws.commit("denied", reason, confirm),
-            ws.push_branch("codex/write-policy", reason, confirm),
-        ] {
-            assert_eq!(result.unwrap_err().details["failed_gate"], gate);
+        for (op, error) in production(reason, confirm) {
+            let error = error.unwrap_or_else(|| panic!("{op} ran without {gate}"));
+            assert_eq!(error.details["failed_gate"], gate, "{op}");
         }
     }
     std::fs::write(ctx.config_path.clone(), "agentic: [invalid]").unwrap();
-    assert!(ws.write_file("target.txt", "denied", "r", true).is_err());
+    // The refusal must come from the config reload itself (exit 3), not from a
+    // later check such as commit_accepted's missing acceptance digest.
+    for (op, error) in production("r", true) {
+        let error = error.unwrap_or_else(|| panic!("{op} ran with an invalid config"));
+        assert_eq!(error.code, "AGENTIC_CONFIG_INVALID", "{op}: {}", error.message);
+    }
     std::fs::remove_file(&ctx.config_path).unwrap();
-    assert!(ws.add(&["target.txt".into()], "r", true).is_err());
+    for (op, error) in production("r", true) {
+        let error = error.unwrap_or_else(|| panic!("{op} ran with no config"));
+        assert_eq!(error.code, "CONFIG_ERROR", "{op}: {}", error.message);
+    }
+    assert_eq!(std::fs::read_to_string(dest.join("target.txt")).unwrap(), "hello\n");
+    assert_eq!(git(&["rev-parse", "HEAD"], &dest), head);
+    assert!(git(&["branch", "--list", "codex/*"], &bare).is_empty());
     armed(dir.path(), &[]);
-    ws.write_file("target.txt", "approved\n", "reviewed fixture", true)
+    // Past the gate, production approval and push still refuse bad names.
+    for (branch, message) in [("main2", "fixture"), ("codex/write-policy", "   ")] {
+        let params = FinalizeParams {
+            branch_name: branch,
+            commit_message: message,
+            ..finalize("reviewed fixture", true, &changed)
+        };
+        let error = ws.commit_accepted(&params).unwrap_err();
+        assert!(
+            error.message.contains("invalid branch or empty commit message"),
+            "{error:?}"
+        );
+    }
+    let error = ws
+        .push_approved("main", &head, &origin, "reviewed fixture", true)
+        .unwrap_err();
+    assert!(error.message.contains("valid approved commit"), "{error:?}");
+    // Control: with the policy armed, the same production calls commit and push.
+    std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+    let (_, digest) = manifest::build_manifest(&dest, &changed, "fixture", &head).unwrap();
+    let commit = ws
+        .commit_accepted(&FinalizeParams {
+            branch_name: "codex/policy-control",
+            commit_message: "fixture change",
+            acceptance_digest: Some(&digest),
+            acceptance_base_head: Some(&head),
+            ..finalize("reviewed fixture", true, &changed)
+        })
         .unwrap();
-    ws.add(&["target.txt".into()], "reviewed fixture", true).unwrap();
-    ws.commit("fixture change", "reviewed fixture", true).unwrap();
-    assert_ne!(git(&["rev-parse", "HEAD"], &dest), head);
+    assert_ne!(commit, head);
     assert!(
         git(&["branch", "--list", "codex/*"], &bare).is_empty(),
         "commit never pushes"
     );
-    ws.push_branch("codex/write-policy", "separate push", true).unwrap();
-    assert_eq!(
-        git(&["rev-parse", "refs/heads/codex/write-policy"], &bare),
-        git(&["rev-parse", "HEAD"], &dest)
-    );
+    ws.push_approved("codex/policy-control", &commit, &origin, "separate push", true)
+        .unwrap();
+    assert_eq!(git(&["rev-parse", "refs/heads/codex/policy-control"], &bare), commit);
 }
 
 #[test]

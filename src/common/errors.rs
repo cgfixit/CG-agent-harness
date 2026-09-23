@@ -134,14 +134,3 @@ impl From<serde_json::Error> for HarnessError {
 }
 
 pub type Result<T> = std::result::Result<T, HarnessError>;
-
-/// Raise `AGENTIC_ERROR` unless `value` is non-empty after trimming.
-pub fn require_non_empty(value: &str, field_name: &str) -> Result<()> {
-    if value.trim().is_empty() {
-        return Err(
-            HarnessError::agentic(format!("{field_name} must be a non-empty string"))
-                .with_details(json!({"field": field_name})),
-        );
-    }
-    Ok(())
-}

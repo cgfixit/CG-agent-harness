@@ -11,6 +11,7 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::process::pid_alive;
 
 use super::ctx::AgenticCtx;
+use super::writer;
 
 const LOCK_STALE_SEC: f64 = 60.0;
 
@@ -286,24 +287,25 @@ impl<'a> SkillRegistry<'a> {
         }))
     }
 
-    /// Atomically add/update a skill, enforcing every gate.
-    pub fn apply_skill(&mut self, spec: &SkillSpec, reason: &str) -> Result<Value> {
+    /// Atomically add/update a skill, enforcing every gate. The write policy is
+    /// re-read from `config.yaml` here, not taken from the startup snapshot, and
+    /// the disable-only kill switch is AND-ed, as for repository writes.
+    pub fn apply_skill(&mut self, spec: &SkillSpec, reason: &str, confirm: bool) -> Result<Value> {
         spec.validate()?;
         if reason.trim().is_empty() {
             return Err(rerr("apply_skill requires a non-empty human reason").detail("name", spec.name.clone()));
         }
-        if !self.ctx.acfg.enabled {
-            return Err(rerr("apply_skill requires agentic.enabled=true")
-                .detail("name", spec.name.clone())
-                .detail("failed_gate", "enabled"));
-        }
-        if !(self.ctx.acfg.is_write_mode() && self.ctx.acfg.writes_enabled) {
-            return Err(
-                rerr("apply_skill requires agentic.mode='write' and agentic.writes_enabled=true")
-                    .detail("name", spec.name.clone())
-                    .detail("mode", self.ctx.acfg.mode.clone())
-                    .detail("writes_enabled", self.ctx.acfg.writes_enabled),
-            );
+        let cfg = crate::common::config::AppConfig::load(&self.ctx.config_path)?;
+        let current = super::config::load_agentic_config(&cfg, &self.ctx.home_root)?;
+        writer::require_write_policy(&current, &self.ctx.audit, "apply_skill", reason, confirm)?;
+        if !writer::execution_enabled() {
+            return Err(writer::refuse(
+                &self.ctx.audit,
+                "Agentic write execution is disabled",
+                "apply_skill",
+                "execution_enabled",
+                reason,
+            ));
         }
         let canonical = spec.canonical();
         let flags = self.scan(&canonical);
