@@ -575,9 +575,10 @@ CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 The disposable home avoids colliding with a running app's home lock. Use a unique
 `--port` if a leftover `serve` already owns `:8790`. This is the
 same invocation as [verify](INSTALL.md#11-verify-your-setup): formatting, Clippy with
-warnings denied, tests (planner keys blanked), and a release build.
-`scripts/verify-local.sh` uses `--locked` for its release build; its Clippy and
-test invocations are not locked, and it does not set `CARGO_NET_OFFLINE`.
+warnings denied, tests (planner keys blanked), the CI contract scripts, and a release build.
+`scripts/verify-local.sh` passes `--locked` to Clippy, the tests and the release
+build, so a stale `Cargo.lock` fails the run instead of being rewritten; it does
+not set `CARGO_NET_OFFLINE`.
 It runs cargo-deny only when installed; record a skipped audit and run the
 dependency policy separately when needed. Tests include required native Cargo sandbox and process tests.
 An outer tool sandbox can prevent nested Seatbelt; run native acceptance from
