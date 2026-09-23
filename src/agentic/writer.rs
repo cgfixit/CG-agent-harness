@@ -132,7 +132,7 @@ pub fn build_write_argv(op: &str, repo: &str, params: &Value, gh_bin: &str) -> R
     }
 }
 
-fn refuse(audit: &Audit, msg: &str, op: &str, gate: &str, reason: &str) -> HarnessError {
+pub(crate) fn refuse(audit: &Audit, msg: &str, op: &str, gate: &str, reason: &str) -> HarnessError {
     audit.log(json!({"event": "agentic_write_refused", "op": op, "gate": gate, "reason": reason}));
     HarnessError::write_refused(msg)
         .detail("op", op)

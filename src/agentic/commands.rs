@@ -231,7 +231,7 @@ fn cmd_apply_skill(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         body: read_body(opts)?,
     };
     let mut reg = SkillRegistry::open(ctx)?;
-    match reg.apply_skill(&spec, opts.get("reason").unwrap_or("")) {
+    match reg.apply_skill(&spec, opts.get("reason").unwrap_or(""), opts.flag("confirm")) {
         Ok(result) => {
             print_json(&result);
             Ok(EXIT_OK)
