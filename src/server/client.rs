@@ -231,7 +231,7 @@ impl Portal {
         let mut bytes = Vec::new();
         response.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
         anyhow::ensure!(bytes.len() <= 4 * 1024 * 1024, "portal response exceeds bound");
-        let mut data: Value = serde_json::from_slice(&bytes)?;
+        let data: Value = serde_json::from_slice(&bytes)?;
         if !status.is_success() {
             // Server errors are structured, but arbitrary backend detail is not
             // copied into terminal diagnostics that could contain credentials.
@@ -273,9 +273,6 @@ impl Portal {
                 )?;
                 self.cookie = cookie;
             }
-        }
-        if let Some(map) = data.as_object_mut() {
-            map.remove("csrf_token");
         }
         Ok(data)
     }
