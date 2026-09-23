@@ -201,19 +201,6 @@ impl ChatClient {
 
     /// Standard OpenAI tool protocol; the server validates and executes the
     /// narrow read-only tool schema. This client never dispatches a tool.
-    pub async fn chat_with_tools(
-        &self,
-        system: &str,
-        messages: &[Value],
-        model: &str,
-        max_tokens: u64,
-        temperature: f64,
-        tools: &[Value],
-    ) -> Result<Value> {
-        self.chat_with_tools_stream(system, messages, model, max_tokens, temperature, tools, None)
-            .await
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub async fn chat_with_tools_stream(
         &self,

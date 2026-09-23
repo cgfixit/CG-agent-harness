@@ -26,10 +26,6 @@ impl GovernanceFinding {
             message: message.into(),
         }
     }
-
-    pub fn as_gate_string(&self) -> String {
-        format!("{}: {}: {}", self.severity, self.code, self.message)
-    }
 }
 
 fn re(pattern: &str) -> regex::Regex {

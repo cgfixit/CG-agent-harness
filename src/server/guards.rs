@@ -1,6 +1,6 @@
 //! Loopback, rate, origin, account authorization and CSRF boundaries.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -261,11 +261,6 @@ pub async fn guarded(State(state): State<Arc<AppState>>, req: Request<Body>, nex
 
 pub async fn auth_sess(state: State<Arc<AppState>>, req: Request<Body>, next: Next) -> Response {
     guarded(state, req, next).await
-}
-
-/// Peer IP as an `IpAddr` when known.
-pub fn peer_ip(req: &Request<Body>) -> Option<IpAddr> {
-    req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip())
 }
 
 #[cfg(test)]

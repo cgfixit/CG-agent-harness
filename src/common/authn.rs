@@ -131,14 +131,6 @@ pub fn is_pending_password_record(record: &str) -> bool {
     record.starts_with(PENDING_HASH_PREFIX)
 }
 
-/// Record of a discarded secret, marked unusable until `set_password`.
-pub fn hash_pending_placeholder() -> Result<String> {
-    Ok(format!(
-        "{PENDING_HASH_PREFIX}{}",
-        hash_password(&generate_bootstrap_password())?
-    ))
-}
-
 /// `(ok, needs_rehash)`. Malformed records return `(false, false)` instead of erroring.
 pub fn verify_password(password: &str, record: &str) -> (bool, bool) {
     if let Some(inner) = record.strip_prefix(PENDING_HASH_PREFIX) {
@@ -210,9 +202,4 @@ pub fn new_csrf_token() -> String {
 
 pub fn hash_token(token: &str) -> String {
     super::sha256_hex(token)
-}
-
-/// 18 raw bytes -> 24 base64url chars: comfortably above `MIN_PASSWORD_LEN`.
-pub fn generate_bootstrap_password() -> String {
-    super::random_urlsafe(18)
 }
