@@ -167,13 +167,17 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
     }
     std::fs::write(ctx.config_path.clone(), "agentic: [invalid]").unwrap();
     assert!(ws.write_file("target.txt", "denied", "r", true).is_err());
+    // The refusal must come from the config reload itself (exit 3), not from a
+    // later check such as commit_accepted's missing acceptance digest.
     for (op, error) in production("r", true) {
-        assert!(error.is_some(), "{op} ran with an invalid config");
+        let error = error.unwrap_or_else(|| panic!("{op} ran with an invalid config"));
+        assert_eq!(error.code, "AGENTIC_CONFIG_INVALID", "{op}: {}", error.message);
     }
     std::fs::remove_file(&ctx.config_path).unwrap();
     assert!(ws.add(&["target.txt".into()], "r", true).is_err());
     for (op, error) in production("r", true) {
-        assert!(error.is_some(), "{op} ran with no config");
+        let error = error.unwrap_or_else(|| panic!("{op} ran with no config"));
+        assert_eq!(error.code, "CONFIG_ERROR", "{op}: {}", error.message);
     }
     assert_eq!(std::fs::read_to_string(dest.join("target.txt")).unwrap(), "hello\n");
     assert_eq!(git(&["rev-parse", "HEAD"], &dest), head);

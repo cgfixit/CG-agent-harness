@@ -138,8 +138,11 @@ fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
     let origin = ws.origin_url().unwrap();
     let approved = approve(&ctx, &ws, &["target.txt".into()]).unwrap();
     let commit = approved["approved_commit"].as_str().unwrap();
-    // Author and committer are forced, whatever the host's git identity.
-    let forced = "CGagentHarness Agent <cgagentharness-agent@users.noreply.github.com>";
+    // Author and committer are forced to the configured agent identity (the
+    // default, or the CGAGENTHARNESS_AGENT_COMMIT_* overrides), whatever the
+    // host's or the clone's git identity.
+    let id = cgagentharness::common::identity::identity().unwrap();
+    let forced = format!("{} <{}>", id.commit_name, id.commit_email);
     assert_eq!(
         git(&["log", "-1", "--format=%an <%ae>|%cn <%ce>", commit], &dest),
         format!("{forced}|{forced}")
