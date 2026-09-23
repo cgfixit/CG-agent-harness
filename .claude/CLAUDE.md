@@ -140,8 +140,11 @@ boundary; a changed repo/workspace/scope/budget refuses rather than continuing o
 - `assets/config.default.yaml` is embedded and holds every tunable; no hardcoded tunables elsewhere.
 - Home is `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`, must be absolute). Never write outside it
   except into a clone the pipeline made.
-- All write gates ship closed (`agentic.enabled`, `mode`, `writes_enabled`, `deepagent_github.enabled`,
-  `allow_git_write_tools`); `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` enforces it.
+- The closed write gates are `agentic.enabled`, `deepagent_github.enabled` and
+  `deepagent_github.allow_git_write_tools`, all shipped `false`;
+  `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` enforces it.
+  `agentic.mode: "write"` and `writes_enabled: true` ship open: they are required for a write but
+  cannot arm one alone, so do not describe them as closed defaults.
   Quoted YAML `"true"` is OFF for every gate (`flag_is_true`). `confirm` is never defaulted on;
   `reason` is never optional on a write. `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` is AND-ed with
   `EXECUTION_ENABLED` and can only disable.
