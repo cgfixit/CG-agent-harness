@@ -150,6 +150,65 @@ mod windows {
         unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) }
     }
 
+    /// The agentic check sandbox: a detached descendant started by a check
+    /// belongs to the check's job and dies when the check finishes.
+    #[test]
+    fn check_sandbox_job_reclaims_a_detached_descendant() {
+        use cgagentharness::agentic::executor::sandbox::WindowsJobObjectSandbox;
+        use cgagentharness::agentic::executor::HardSandbox;
+        if std::env::var_os("CGAH_REQUIRE_WINDOWS_MCP").is_none() {
+            eprintln!("native Windows acceptance belongs to the required runner");
+            return;
+        }
+        let python = std::env::var("CGAH_WINDOWS_PYTHON").expect("native Python executable required");
+        let dir = tempfile::tempdir().unwrap();
+        let env = BTreeMap::from([("SystemRoot".to_string(), std::env::var("SystemRoot").unwrap())]);
+        let script = "import pathlib, subprocess, sys, time\n\
+            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP\n\
+            p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'], \
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)\n\
+            pathlib.Path('grandchild.pid').write_text(str(p.pid))\n\
+            time.sleep(3)\n";
+        let argv = vec![python, "-c".to_string(), script.to_string()];
+        let cwd = dir.path().to_path_buf();
+        let run = std::thread::spawn(move || WindowsJobObjectSandbox.run(&argv, &cwd, &env, 60));
+        let pid_file = dir.path().join("grandchild.pid");
+        until("descendant pid", || {
+            std::fs::read_to_string(&pid_file).is_ok_and(|s| s.trim().parse::<u32>().is_ok())
+        });
+        let pid: u32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        let descendant = process(pid);
+        assert_eq!(
+            state(&descendant),
+            WAIT_TIMEOUT,
+            "descendant is alive while the check runs"
+        );
+        let outcome = run.join().unwrap();
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        until("check job reclaims its descendant", || {
+            state(&descendant) == WAIT_OBJECT_0
+        });
+    }
+
+    #[test]
+    fn check_sandbox_refuses_output_over_the_capture_bound() {
+        use cgagentharness::agentic::executor::sandbox::WindowsJobObjectSandbox;
+        use cgagentharness::agentic::executor::HardSandbox;
+        if std::env::var_os("CGAH_REQUIRE_WINDOWS_MCP").is_none() {
+            eprintln!("native Windows acceptance belongs to the required runner");
+            return;
+        }
+        let python = std::env::var("CGAH_WINDOWS_PYTHON").expect("native Python executable required");
+        let dir = tempfile::tempdir().unwrap();
+        let env = BTreeMap::from([("SystemRoot".to_string(), std::env::var("SystemRoot").unwrap())]);
+        let over = cgagentharness::common::process::MAX_CAPTURE_BYTES + 1;
+        let script = format!("import sys; sys.stdout.write('x' * {over})");
+        let argv = vec![python, "-c".to_string(), script];
+        let outcome = WindowsJobObjectSandbox.run(&argv, dir.path(), &env, 60);
+        assert_eq!(outcome.exit_code, -3, "{outcome:?}");
+        assert!(outcome.stderr.contains("incomplete output refused"), "{outcome:?}");
+    }
+
     #[test]
     fn job_reclaims_detached_descendants_on_every_exit_path() {
         if std::env::var_os("CGAH_REQUIRE_WINDOWS_MCP").is_none() {
