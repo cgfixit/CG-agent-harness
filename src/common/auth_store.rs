@@ -81,7 +81,6 @@ pub struct UserSummary {
 pub struct LoginResult {
     pub username: String,
     pub session_id: String,
-    pub csrf_token: String,
     pub expires_ts: f64,
 }
 
@@ -387,13 +386,15 @@ impl AuthManager {
             return Err(HarnessError::new("AUTH_LIMIT", "active session limit reached"));
         }
         let session_id = authn::new_session_id();
-        let csrf_token = authn::new_csrf_token();
+        // The sessions schema still requires a csrf_hash. Nothing returns or
+        // checks it: request CSRF is the process token in the console page.
+        let csrf_hash = authn::hash_token(&authn::new_csrf_token());
         let expires_ts = now + self.absolute_timeout_sec;
         db.sessions.insert(
             authn::hash_token(&session_id),
             SessionRow {
                 username: username.to_string(),
-                csrf_hash: authn::hash_token(&csrf_token),
+                csrf_hash,
                 created_ts: now,
                 last_seen_ts: now,
                 expires_ts,
@@ -403,7 +404,6 @@ impl AuthManager {
         Ok(LoginResult {
             username: username.to_string(),
             session_id,
-            csrf_token,
             expires_ts,
         })
     }

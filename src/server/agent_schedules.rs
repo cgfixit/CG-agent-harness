@@ -667,19 +667,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn persist_failure_does_not_keep_a_created_or_consumed_row() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("schedules.json");
         let store = ScheduleStore::open(&path).unwrap();
         let created = store.create(60, req(), "local", 0.0).unwrap();
-        struct Reset<'a>(&'a std::path::Path);
-        impl Drop for Reset<'_> {
-            fn drop(&mut self) {
-                let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
-            }
-        }
-        let _reset = Reset(dir.path());
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        // A directory at the target fails the atomic rename for every uid; a
+        // read-only mode does not stop root (CAP_DAC_OVERRIDE).
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("occupied"), b"x").unwrap();
         assert!(store.create(60, req(), "local", 1.0).is_err());
         assert_eq!(store.list("local").len(), 1);
         assert!(store.mark_attempted(&created.schedule_id, 60.0).is_none());

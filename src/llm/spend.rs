@@ -246,11 +246,6 @@ fn warn_once_if_stale() {
     );
 }
 
-#[cfg(test)]
-pub fn reset_stale_warning_for_tests() {
-    STALE_WARNED.store(false, Ordering::SeqCst);
-}
-
 pub fn estimate_usd(model: &str, tokens: &UsageTokens, provider: &str) -> UsdEstimate {
     let priced = priced_as_of();
     if provider == "local" {

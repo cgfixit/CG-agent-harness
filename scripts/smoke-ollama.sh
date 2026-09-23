@@ -95,6 +95,10 @@ curl_account -fsS "$BASE/api/agent/checks" | grep -q 'cargo-test'
 
 echo "== live model turn ($MODEL_URL)"
 if ! curl -fsS -m 3 "$MODEL_URL/v1/models" >/dev/null 2>&1; then
+  if [[ "${SMOKE_REQUIRE_MODEL:-0}" == "1" ]]; then
+    echo "model server not reachable at $MODEL_URL; the live chat turn is required (SKIP_LIVE=1 skips it)" >&2
+    exit 1
+  fi
   echo "model server not reachable at $MODEL_URL; skipping the live chat turn"
   exit 0
 fi

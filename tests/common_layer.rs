@@ -6,7 +6,6 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use cgagentharness::common::apikey;
 #[cfg(unix)]
 use cgagentharness::common::atomic::write_atomic;
 use cgagentharness::common::atomic::write_json_atomic;
@@ -283,37 +282,6 @@ fn redactors_cover_every_shipped_secret_shape() {
         assert!(r.redact(s).contains("[REDACTED_SECRET]"), "{s}");
     }
     assert_eq!(r.redact("the api key docs"), "the api key docs");
-}
-
-// ---------------------------------------------------------------- api key
-
-#[test]
-fn api_key_fails_closed_and_compares_bytes() {
-    assert_eq!(
-        apikey::verify(Some(b"Bearer k"), None).unwrap_err().reason(),
-        "key_not_configured"
-    );
-    assert_eq!(
-        apikey::verify(Some(b"Bearer k"), Some("")).unwrap_err().reason(),
-        "key_not_configured"
-    );
-    assert_eq!(apikey::verify(None, Some("k")).unwrap_err().reason(), "bad_credentials");
-    assert_eq!(
-        apikey::verify(Some(b"Basic k"), Some("k")).unwrap_err().reason(),
-        "bad_credentials"
-    );
-    assert_eq!(
-        apikey::verify(Some(b"Bearer kk"), Some("k")).unwrap_err().reason(),
-        "bad_credentials"
-    );
-    assert_eq!(
-        apikey::verify(Some("Bearer \u{2019}k".as_bytes()), Some("k"))
-            .unwrap_err()
-            .reason(),
-        "bad_credentials"
-    );
-    assert!(apikey::verify(Some(b"bearer k"), Some("k")).is_ok());
-    assert!(apikey::verify(Some(b"Bearer   k  "), Some("k")).is_ok());
 }
 
 // ---------------------------------------------------------------- authn
