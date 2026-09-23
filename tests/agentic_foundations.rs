@@ -12,6 +12,7 @@ use std::path::Path;
 
 use cgagentharness::agentic::config::{load_agentic_config, resolve_data_path};
 use cgagentharness::agentic::ctx::AgenticCtx;
+use cgagentharness::agentic::edits::Proposal;
 use cgagentharness::agentic::executor::manifest::{build_manifest, git_head, verify_manifest};
 #[cfg(unix)]
 use cgagentharness::agentic::executor::sandbox::production_sandbox;
@@ -193,6 +194,58 @@ fn canonical_and_dotgit_helpers() {
         assert!(!is_dotgit_name(name), "{name:?}");
     }
     assert_eq!(fs_equiv_path("Tests/./Unit\\x.py."), "tests/unit/x.py");
+}
+
+/// The same jail on the path production writes take: `apply_proposal` is the
+/// loop's only file write, so its own checks must refuse every escape above.
+#[cfg(unix)]
+#[test]
+fn apply_proposal_refuses_jail_escapes_and_oversize_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let clone = seeded_clone(dir.path());
+    let cfg = config_with(
+        dir.path(),
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+        ],
+    );
+    let ctx = AgenticCtx::new(cfg, &dir.path().join("config.yaml")).unwrap();
+    let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+    let git_config = std::fs::read(clone.join(".git/config")).unwrap();
+    let propose = |path: &str, original: Option<&str>, content: String| Proposal {
+        files: BTreeMap::from([(path.to_string(), content)]),
+        originals: BTreeMap::from([(path.to_string(), original.map(str::to_string))]),
+    };
+    for bad in [
+        "../outside.txt",
+        "/tmp/abs.txt",
+        "-x.txt",
+        ".git/config",
+        ".GIT/hooks/pre-commit",
+        "sub/.git/config",
+        "git~1/config",
+        ".git./x",
+        "a/../../x",
+    ] {
+        let proposal = propose(bad, None, "x".into());
+        assert!(
+            ws.apply_proposal(&proposal, &[], "fixture mutation", true).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(!dir.path().join("outside.txt").exists());
+    assert!(!clone.join("-x.txt").exists());
+    assert_eq!(std::fs::read(clone.join(".git/config")).unwrap(), git_config);
+    let big = propose("big.txt", None, "x".repeat(256_001));
+    let error = ws.apply_proposal(&big, &[], "fixture mutation", true).unwrap_err();
+    assert!(error.message.contains("max_write_bytes"), "{error:?}");
+    assert!(!clone.join("big.txt").exists());
+    // Control: the same call lands a valid edit, so the refusals are the jail's.
+    let edit = propose("target.txt", Some("hello\n"), "changed\n".into());
+    ws.apply_proposal(&edit, &[], "fixture mutation", true).unwrap();
+    assert_eq!(std::fs::read_to_string(clone.join("target.txt")).unwrap(), "changed\n");
 }
 
 #[cfg(unix)]
