@@ -81,7 +81,6 @@ pub struct UserSummary {
 pub struct LoginResult {
     pub username: String,
     pub session_id: String,
-    pub csrf_token: String,
     pub expires_ts: f64,
 }
 
@@ -387,13 +386,15 @@ impl AuthManager {
             return Err(HarnessError::new("AUTH_LIMIT", "active session limit reached"));
         }
         let session_id = authn::new_session_id();
-        let csrf_token = authn::new_csrf_token();
+        // The sessions schema still requires a csrf_hash. Nothing returns or
+        // checks it: request CSRF is the process token in the console page.
+        let csrf_hash = authn::hash_token(&authn::new_csrf_token());
         let expires_ts = now + self.absolute_timeout_sec;
         db.sessions.insert(
             authn::hash_token(&session_id),
             SessionRow {
                 username: username.to_string(),
-                csrf_hash: authn::hash_token(&csrf_token),
+                csrf_hash,
                 created_ts: now,
                 last_seen_ts: now,
                 expires_ts,
@@ -403,7 +404,6 @@ impl AuthManager {
         Ok(LoginResult {
             username: username.to_string(),
             session_id,
-            csrf_token,
             expires_ts,
         })
     }
@@ -457,26 +457,22 @@ impl AuthManager {
         let key = authn::hash_token(session_id);
         let now = self.now();
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
-        let idle = self.idle_timeout_sec;
-        let outcome = match db.sessions.get_mut(&key) {
-            None => return None,
-            Some(row) if row.revoked => return None,
-            Some(row) => {
-                if now >= row.expires_ts || now >= row.last_seen_ts + idle {
-                    row.revoked = true;
-                    None
-                } else {
-                    row.last_seen_ts = now;
-                    Some(SessionInfo {
-                        session_id: session_id.to_string(),
-                        username: row.username.clone(),
-                    })
-                }
-            }
-        };
-        self.persist(&mut stored, &db).ok()?;
-        outcome.filter(|info| db.users.get(&info.username).is_some_and(|user| !user.disabled))
+        let row = stored.1.sessions.get(&key).filter(|row| !row.revoked)?;
+        let expired = now >= row.expires_ts || now >= row.last_seen_ts + self.idle_timeout_sec;
+        let last_seen_ts = if expired { row.last_seen_ts } else { now };
+        let username = row.username.clone();
+        // Committed before visible, like `persist`, but only this row is written.
+        sqlite::touch_session(&stored.0, &key, last_seen_ts, expired).ok()?;
+        let row = stored.1.sessions.get_mut(&key)?;
+        row.last_seen_ts = last_seen_ts;
+        row.revoked = expired;
+        if expired || stored.1.users.get(&username).is_none_or(|user| user.disabled) {
+            return None;
+        }
+        Some(SessionInfo {
+            session_id: session_id.to_string(),
+            username,
+        })
     }
 
     pub fn logout(&self, session_id: &str) -> Result<bool> {
