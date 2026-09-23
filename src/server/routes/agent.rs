@@ -1,6 +1,7 @@
-//! `/api/github/status` and the seven `/api/agent/*` routes. Port of
-//! `harness/agent_routes.py`. Every call crosses the shim; a non-zero CLI exit
-//! is a successful shim call (HTTP 200 with `ok=false`).
+//! `/api/github/status` and the `/api/agent/*` routes: check profiles, runs,
+//! detached jobs and schedules. Port of `harness/agent_routes.py`. Pipeline
+//! work crosses the shim; a non-zero CLI exit is a successful shim call
+//! (HTTP 200 with `ok=false`).
 
 use std::sync::Arc;
 

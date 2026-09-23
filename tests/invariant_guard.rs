@@ -200,6 +200,25 @@ fn duplicated_constants_still_agree() {
     assert!(!cgagentharness::shim::ACTIONS.contains(&"__sleep"));
 }
 
+/// rust-toolchain.toml overrides every CI toolchain input, so its channel is
+/// the only compiler CI proves; it must stay the declared MSRV.
+#[test]
+fn pinned_toolchain_is_the_declared_rust_version() {
+    let read = |name: &str| std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(name)).unwrap();
+    let value = |text: &str, key: &str| {
+        text.lines().find_map(|line| {
+            let rest = line.trim().strip_prefix(key)?.trim_start().strip_prefix('=')?.trim();
+            Some(rest.strip_prefix('"')?.strip_suffix('"')?.to_string())
+        })
+    };
+    let channel = value(&read("rust-toolchain.toml"), "channel").expect("rust-toolchain.toml channel");
+    let msrv = value(&read("Cargo.toml"), "rust-version").expect("Cargo.toml rust-version");
+    assert_eq!(
+        channel, msrv,
+        "bump both together, or add a CI job that builds with RUSTUP_TOOLCHAIN=<rust-version>"
+    );
+}
+
 #[test]
 fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     let cfg = cgagentharness::common::config::AppConfig::from_str(

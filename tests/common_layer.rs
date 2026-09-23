@@ -6,7 +6,6 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use cgagentharness::common::apikey;
 #[cfg(unix)]
 use cgagentharness::common::atomic::write_atomic;
 use cgagentharness::common::atomic::write_json_atomic;
@@ -285,37 +284,6 @@ fn redactors_cover_every_shipped_secret_shape() {
     assert_eq!(r.redact("the api key docs"), "the api key docs");
 }
 
-// ---------------------------------------------------------------- api key
-
-#[test]
-fn api_key_fails_closed_and_compares_bytes() {
-    assert_eq!(
-        apikey::verify(Some(b"Bearer k"), None).unwrap_err().reason(),
-        "key_not_configured"
-    );
-    assert_eq!(
-        apikey::verify(Some(b"Bearer k"), Some("")).unwrap_err().reason(),
-        "key_not_configured"
-    );
-    assert_eq!(apikey::verify(None, Some("k")).unwrap_err().reason(), "bad_credentials");
-    assert_eq!(
-        apikey::verify(Some(b"Basic k"), Some("k")).unwrap_err().reason(),
-        "bad_credentials"
-    );
-    assert_eq!(
-        apikey::verify(Some(b"Bearer kk"), Some("k")).unwrap_err().reason(),
-        "bad_credentials"
-    );
-    assert_eq!(
-        apikey::verify(Some("Bearer \u{2019}k".as_bytes()), Some("k"))
-            .unwrap_err()
-            .reason(),
-        "bad_credentials"
-    );
-    assert!(apikey::verify(Some(b"bearer k"), Some("k")).is_ok());
-    assert!(apikey::verify(Some(b"Bearer   k  "), Some("k")).is_ok());
-}
-
 // ---------------------------------------------------------------- authn
 
 #[test]
@@ -417,6 +385,19 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     *now.lock().unwrap() += 10.0;
     let ok = mgr.login("admin", "first-admin-password").unwrap();
     assert!(mgr.validate_session(&ok.session_id).is_some());
+    // The idle slide is committed, not only held in memory: from disk, the
+    // session is live only if the slid `last_seen_ts` was written.
+    *now.lock().unwrap() += 43200.0 - 1.0;
+    assert!(mgr.validate_session(&ok.session_id).is_some(), "the idle window slides");
+    *now.lock().unwrap() += 43200.0 - 1.0;
+    let mut slid = AuthManager::open(&dir.path().join("auth.json"), &cfg).unwrap();
+    let c = now.clone();
+    slid.set_clock(Box::new(move || *c.lock().unwrap()));
+    assert!(
+        slid.validate_session(&ok.session_id).is_some(),
+        "the slide reached disk"
+    );
+    drop(slid);
     assert!(mgr.logout(&ok.session_id).unwrap());
     assert!(!mgr.logout(&ok.session_id).unwrap());
     assert!(mgr.validate_session(&ok.session_id).is_none());
@@ -454,6 +435,16 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     assert!(
         mgr.validate_session(&s2.session_id).is_none(),
         "revoked, not merely refused once"
+    );
+
+    // The revocation is committed, not only held in memory: from disk, at a
+    // time inside s2's idle window, only the stored `revoked` flag refuses it.
+    let mut durable = AuthManager::open(&dir.path().join("auth.json"), &cfg).unwrap();
+    let c = now.clone();
+    durable.set_clock(Box::new(move || *c.lock().unwrap()));
+    assert!(
+        durable.validate_session(&s2.session_id).is_none(),
+        "the revocation reached disk"
     );
 
     // Persisted and reloadable; file is 0600 on unix.

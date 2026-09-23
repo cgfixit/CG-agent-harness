@@ -98,13 +98,6 @@ impl AppConfig {
         }
     }
 
-    pub fn i64_opt(&self, dotted: &str) -> Option<i64> {
-        match self.get(dotted) {
-            Some(Value::Number(n)) => n.as_i64(),
-            _ => None,
-        }
-    }
-
     pub fn bool_opt(&self, dotted: &str) -> Option<bool> {
         match self.get(dotted) {
             Some(Value::Bool(b)) => Some(*b),

@@ -19,7 +19,8 @@ const CLAUDE_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_TIMEOUT_SEC: f64 = 90.0;
 const DEFAULT_MAX_TOKENS: u64 = 4096;
-const MAX_RESPONSE_BYTES: usize = 4_194_304;
+/// Body bound for a paid cloud-provider reply; every cloud client uses it.
+pub const MAX_RESPONSE_BYTES: usize = 4_194_304;
 
 /// Pre-call estimate, never measured usage or a guaranteed invoice ceiling.
 #[derive(Debug, serde::Serialize)]

@@ -1,6 +1,6 @@
 //! Loopback, rate, origin, account authorization and CSRF boundaries.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -156,7 +156,8 @@ pub fn enforce_same_origin(req: &Request<Body>) -> Result<(), ApiError> {
     Ok(())
 }
 
-pub fn enforce_api_key_or_optional(_state: &AppState, req: &Request<Body>) -> Result<(), ApiError> {
+/// The peer must be a direct loopback connection with no forwarding headers.
+pub fn enforce_direct_loopback(req: &Request<Body>) -> Result<(), ApiError> {
     if is_loopback_peer(req) && !looks_proxied(req.headers()) {
         return Ok(());
     }
@@ -177,7 +178,7 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
     }
     if let Err(e) = enforce_rate_limit(&state, &req)
         .and_then(|_| enforce_same_origin(&req))
-        .and_then(|_| enforce_api_key_or_optional(&state, &req))
+        .and_then(|_| enforce_direct_loopback(&req))
     {
         return e.into_response();
     }
@@ -257,15 +258,6 @@ pub async fn guarded(State(state): State<Arc<AppState>>, req: Request<Body>, nex
         return axum::response::IntoResponse::into_response(e);
     }
     next.run(req).await
-}
-
-pub async fn auth_sess(state: State<Arc<AppState>>, req: Request<Body>, next: Next) -> Response {
-    guarded(state, req, next).await
-}
-
-/// Peer IP as an `IpAddr` when known.
-pub fn peer_ip(req: &Request<Body>) -> Option<IpAddr> {
-    req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip())
 }
 
 #[cfg(test)]
