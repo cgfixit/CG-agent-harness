@@ -548,6 +548,34 @@ fn manifest_digest_binds_files_and_head() {
 // ---------------------------------------------------------------- registry
 
 #[test]
+fn apply_skill_cli_honours_the_write_kill_switch() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = enabled_ctx(dir.path(), &[]);
+    let registry_file = dir.path().join("data/agentic/skills_registry.json");
+    let args = [
+        "apply-skill",
+        "--name=tidy",
+        "--desc=d",
+        "--body=b",
+        "--reason=r",
+        "--confirm",
+    ];
+    let home = dir.path().to_str().unwrap();
+    for (kill, code) in [("1", 4), ("0", 0)] {
+        let env = [
+            ("CGAGENTHARNESS_AGENTIC_WRITE_DISABLE", kill),
+            ("CGAGENTHARNESS_HOME", home),
+            ("GROK_API_KEY", ""),
+            ("ANTHROPIC_API_KEY", ""),
+            ("DEEPAGENT_API_KEY", ""),
+        ];
+        let (got, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+        assert_eq!(got, code, "kill={kill}: {out} {err}");
+        assert_eq!(registry_file.exists(), kill == "0", "kill={kill}");
+    }
+}
+
+#[test]
 fn registry_propose_apply_gates_and_lock() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = enabled_ctx(dir.path(), &[]);
@@ -581,27 +609,60 @@ fn registry_propose_apply_gates_and_lock() {
     assert_eq!(p["safe_to_apply"], false);
     assert!(p["governance_score"].as_i64().unwrap() <= 20);
     assert_eq!(
-        reg.apply_skill(&evil, "r").unwrap_err().code,
+        reg.apply_skill(&evil, "r", true).unwrap_err().code,
         "PROMPT_INJECTION_BLOCKED"
     );
-    assert!(reg.apply_skill(&spec, "  ").unwrap_err().message.contains("reason"));
-    let applied = reg.apply_skill(&spec, "because").unwrap();
+    assert!(reg
+        .apply_skill(&spec, "  ", true)
+        .unwrap_err()
+        .message
+        .contains("reason"));
+    let unconfirmed = reg.apply_skill(&spec, "because", false).unwrap_err();
+    assert_eq!(unconfirmed.code, "AGENTIC_WRITE_REFUSED");
+    assert_eq!(unconfirmed.details["failed_gate"], "confirm");
+    assert_eq!(reg.version(), 0, "an unconfirmed apply must not write");
+    let applied = reg.apply_skill(&spec, "because", true).unwrap();
     assert_eq!(applied["version"], 1);
     let reopened = SkillRegistry::open(&ctx).unwrap();
     assert_eq!(reopened.list_skills(), vec!["tidy"]);
     assert_eq!(reopened.get_skill("tidy").unwrap()["reason"], "because");
+    // The gates are read from config.yaml at apply time, not from the snapshot
+    // `reg` was opened with: revoking writes on disk refuses the next apply.
+    let registry_file = dir.path().join("data/agentic/skills_registry.json");
+    let before = std::fs::read(&registry_file).unwrap();
+    config_with(
+        dir.path(),
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+            ("agentic.writes_enabled", "false"),
+        ],
+    );
+    let revoked = reg.apply_skill(&spec, "again", true).unwrap_err();
+    assert_eq!(revoked.details["failed_gate"], "writes_enabled");
+    std::fs::remove_file(dir.path().join("config.yaml")).unwrap();
+    assert!(
+        reg.apply_skill(&spec, "again", true).is_err(),
+        "a missing config must refuse"
+    );
+    assert_eq!(
+        std::fs::read(&registry_file).unwrap(),
+        before,
+        "refusals must not write"
+    );
     // Gates: master switch, mode, writes_enabled.
     let off = enabled_ctx(dir.path(), &[("agentic.writes_enabled", "false")]);
     assert!(SkillRegistry::open(&off)
         .unwrap()
-        .apply_skill(&spec, "r")
+        .apply_skill(&spec, "r", true)
         .unwrap_err()
         .message
         .contains("writes_enabled"));
     let read_mode = enabled_ctx(dir.path(), &[("agentic.mode", "\"read\"")]);
     assert!(SkillRegistry::open(&read_mode)
         .unwrap()
-        .apply_skill(&spec, "r")
+        .apply_skill(&spec, "r", true)
         .unwrap_err()
         .message
         .contains("mode"));
@@ -609,7 +670,7 @@ fn registry_propose_apply_gates_and_lock() {
     let disabled = AgenticCtx::new(cfg, &dir.path().join("config.yaml")).unwrap();
     assert!(SkillRegistry::open(&disabled)
         .unwrap()
-        .apply_skill(&spec, "r")
+        .apply_skill(&spec, "r", true)
         .unwrap_err()
         .message
         .contains("enabled"));
