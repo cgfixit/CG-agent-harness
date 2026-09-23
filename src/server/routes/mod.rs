@@ -144,7 +144,15 @@ pub fn registered_paths() -> BTreeSet<String> {
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
-    // Open routes: no key, no origin check, no CSRF, no rate limit.
+    // Request order, outermost first: request_log (when enabled) ->
+    // security_headers -> trusted_host (loopback Host/authority) -> account_gate
+    // -> the per-router CSRF layer -> handler.
+    // account_gate covers every `/api/` path: rate limit -> same-origin ->
+    // direct loopback/no proxy -> account/RBAC (with auth enabled, only
+    // /api/status and the setup-status, login and bootstrap-password routes
+    // are reachable without a session). `/` and `/static/*` skip account_gate.
+    //
+    // Reads: account_gate only, no CSRF.
     let open = Router::new()
         .route("/", get(super::console::console))
         .route("/static/{name}", get(super::console::static_asset))
@@ -160,7 +168,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/agent/checks", get(agent::agent_checks))
         .route("/api/harness/runs", get(panels::harness_runs));
 
-    // Guarded: rate limit -> same-origin -> API key -> CSRF.
+    // Mutations and guarded reads: account_gate, then the process CSRF token.
     let guarded = Router::new()
         .route("/api/config/reload", post(core::reload_config))
         .route(
@@ -303,6 +311,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route_layer(middleware::from_fn_with_state(state.clone(), guards::guarded));
 
+    // Session bootstrap and account reads: account_gate only, no CSRF.
     let auth_open = Router::new()
         .route("/api/auth/setup-status", get(auth::setup_status))
         .route("/api/auth/bootstrap-password", post(auth::bootstrap_password))
@@ -310,7 +319,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/auth/whoami", get(auth::whoami))
         .route("/api/auth/users", get(auth::list_users));
 
-    let auth_sess = Router::new()
+    // Account mutations: account_gate, then the process CSRF token.
+    let auth_guarded = Router::new()
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/password", post(auth::change_password))
         .route("/api/auth/users/{username}/disabled", post(auth::set_disabled))
@@ -318,14 +328,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/auth/users/{username}/password", post(auth::set_password))
         .route("/api/auth/users/{username}/role", post(auth::set_role))
         .route("/api/auth/users/{username}", delete(auth::delete_user))
-        .route_layer(middleware::from_fn_with_state(state.clone(), guards::auth_sess));
+        .route_layer(middleware::from_fn_with_state(state.clone(), guards::guarded));
 
     let request_log = state.request_log;
     let app = Router::new()
         .merge(open)
         .merge(guarded)
         .merge(auth_open)
-        .merge(auth_sess)
+        .merge(auth_guarded)
         .layer(middleware::from_fn_with_state(state.clone(), guards::account_gate))
         .layer(middleware::from_fn(super::headers::trusted_host))
         .layer(middleware::from_fn(super::headers::security_headers));

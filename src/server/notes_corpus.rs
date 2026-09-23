@@ -356,7 +356,10 @@ impl NotesCorpus {
         match self.jail.read(INDEX_NAME) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|_| HarnessError::new("IO_ERROR", "notes_corpus index is not valid JSON")),
-            Err(_) => Ok(Manifest::default()),
+            // Only a missing index is empty. Any other read failure must not
+            // look like "no notes": the next save would drop every other row.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Manifest::default()),
+            Err(e) => Err(HarnessError::new("IO_ERROR", format!("cannot read notes index: {e}"))),
         }
     }
 
@@ -604,6 +607,28 @@ mod tests {
         assert!(!fence.contains("a.md"));
         store.unlink_id("alice", &alice[0].id).unwrap();
         assert!(store.list_for_owner("alice").unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_index_fails_closed_instead_of_dropping_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("notes");
+        let store = NotesCorpus::open(&root, limits()).unwrap();
+        store.store("alice", &[file("a.md", "alice note")]).unwrap();
+        // An index the jail refuses to follow is unreadable but not missing;
+        // unlike a mode change, this holds when the tests run as root.
+        let index = root.join(INDEX_NAME);
+        let outside = dir.path().join("outside.json");
+        std::fs::rename(&index, &outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &index).unwrap();
+        let err = store.store("bob", &[file("b.md", "bob note")]).unwrap_err();
+        assert_eq!(err.code, "IO_ERROR");
+        assert!(store.unlink_owner("alice").is_err());
+        std::fs::remove_file(&index).unwrap();
+        std::fs::rename(&outside, &index).unwrap();
+        assert_eq!(store.list_for_owner("alice").unwrap().len(), 1);
+        assert!(store.list_for_owner("bob").unwrap().is_empty());
     }
 
     #[test]

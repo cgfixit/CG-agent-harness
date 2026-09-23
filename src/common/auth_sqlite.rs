@@ -325,6 +325,22 @@ pub(super) fn persist(conn: &mut Connection, db: &AuthDb) -> Result<()> {
     tx.commit().map_err(sql)
 }
 
+/// Session lookups slide `last_seen_ts` or revoke an expired row on every
+/// guarded request; that one-row change is committed alone rather than through
+/// the full rewrite above.
+pub(super) fn touch_session(conn: &Connection, token_hash: &str, last_seen_ts: f64, revoked: bool) -> Result<()> {
+    let changed = conn
+        .execute(
+            "UPDATE sessions SET last_seen_ts=?1, revoked=?2 WHERE token_hash=?3",
+            params![last_seen_ts, revoked, token_hash],
+        )
+        .map_err(sql)?;
+    if changed != 1 {
+        return Err(invalid("session row is missing from the account database"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

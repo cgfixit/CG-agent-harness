@@ -87,9 +87,10 @@ the Windows job; the harness request deadline requires a responsive runtime.
 The focused native acceptance observes live child/grandchild process handles,
 heartbeat progress, denied breakaway, actual process/memory limits, nine exit
 paths and a fresh successful call after each. It does not establish filesystem
-or network isolation. The coding executor retains its separate older Job Object
-implementation; its spawn-then-assign behavior does not gain the MCP atomic
-creation guarantee from this change.
+or network isolation. The coding executor's check sandbox uses the same
+`JobChild` path, so its checks are also assigned to the kill-on-close job during
+`CreateProcess` (32-process limit, no job memory limit). It is likewise a
+process-tree kill boundary only, not filesystem or network isolation.
 
 Strict mode bounds process memory/count and lifetime; it does not impose a
 scratch disk quota. A hard-killed harness may leave its private temporary

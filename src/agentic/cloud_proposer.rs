@@ -7,6 +7,7 @@
 //! (`--confirm-online`) belong to the caller; 3-4 are asserted by
 //! `settings_for`, 5 (key presence) by `CloudProposerClient::new`.
 
+use std::io::Read;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -54,6 +55,17 @@ pub fn cloud_key_available(provider: &str) -> bool {
         .and_then(|env| std::env::var(env).ok())
         .map(|v| !v.trim().is_empty())
         .unwrap_or(false)
+}
+
+/// A JSON reply within the cloud-chat body bound; oversize or malformed is `None`.
+fn bounded_json(resp: reqwest::blocking::Response) -> Option<Value> {
+    let cap = crate::llm::cloud_chat::MAX_RESPONSE_BYTES;
+    let mut body = Vec::new();
+    resp.take(cap as u64 + 1).read_to_end(&mut body).ok()?;
+    if body.len() > cap {
+        return None;
+    }
+    serde_json::from_slice(&body).ok()
 }
 
 fn require_cloud_key(provider: &str) -> Result<String> {
@@ -125,7 +137,12 @@ impl<'a> CloudProposerClient<'a> {
         spend_file: std::path::PathBuf,
     ) -> Result<Self> {
         let key = require_cloud_key(&settings.provider)?;
+        // Do not delegate paid credentials to ambient HTTP(S)_PROXY, and never
+        // follow a redirect: reqwest keeps custom headers such as `x-api-key`
+        // on a cross-host hop, stripping only Authorization and cookies.
         let http = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(settings.timeout_sec.max(1)))
             .build()
             .map_err(|e| HarnessError::agentic(format!("cannot build http client: {e}")))?;
@@ -288,9 +305,9 @@ impl ProposerClient for CloudProposerClient<'_> {
                 }
             };
             if let Some(resp) = response {
-                let data: Value = match resp.json() {
-                    Ok(v) => v,
-                    Err(_) => {
+                let data: Value = match bounded_json(resp) {
+                    Some(v) => v,
+                    None => {
                         self.record_spend(None, Some("failed_after_billing"));
                         return Err(HarnessError::agentic("cloud proposer invocation failed (ValueError)")
                             .detail("provider", provider.clone()));
