@@ -6,6 +6,8 @@ all-features = true
 
 [advisories]
 version = 2
+# Same as the backend: report unsound advisories on transitive crates too.
+unsound = "all"
 ignore = []
 
 [licenses]
