@@ -7,7 +7,7 @@ A local harness for **chat, permitted web research, and reviewed coding**,
 written in Rust. Runs as a universal macOS app or as a standalone server you
 open in a browser. Local chat stays on loopback. Cloud chat requires provider
 setup and selection; web reads require the account and content permissions
-described in [WEB.md](docs/WEB.md).
+described in [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions).
 
 ![CG Agent Harness running on macOS](docs/screenshots/image.png)
 
@@ -17,7 +17,7 @@ described in [WEB.md](docs/WEB.md).
 |---|---|---|
 | **Local chat** | Chat against an OpenAI-compatible **loopback** model server (Ollama by default), with local history, memory, skills, attachments and web context. `/loop` continues chat toward a session goal. | On |
 | **Cloud chat** | Explicitly selecting `grok` or `claude` routes through a separate cloud path after provider setup. Sends **only the new user message** — no local history, memory, skills, attachments or web context. Not available for `/loop`. | Off until a provider is configured |
-| **Web research** | Google listings, URL fetch and page research under configurable budgets and URL rules. | Governed by [WEB.md](docs/WEB.md) |
+| **Web research** | Google listings, URL fetch and page research under configurable budgets and URL rules. | Governed by [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions) |
 | **Coding pipeline** | `/agent` drives a separate planner/executor loop. Ships closed behind **six gates**, including a per-run `--confirm-online`. Enabling the planner permits **repository-content egress**. | Off — read [CODING_PIPELINE.md](docs/CODING_PIPELINE.md) first |
 
 Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
@@ -137,7 +137,7 @@ management are scoped to the signed-in account. Older unassigned sessions stay
 quarantined until an administrator explicitly adopts them in **Sessions**;
 adoption clears previous coding approval. Persona, pinned notes, model selection,
 aggregate spend and underlying coding-run records remain shared portal resources.
-[Ownership and migration](docs/ACCOUNTS.md#session-ownership-and-legacy-adoption).
+[Ownership and migration](docs/SECURE_RESEARCH.md#session-ownership-and-legacy-adoption).
 
 **Soul and styles.** Fresh homes load a default soul that asks for
 human-readable plain text, with Markdown only on request. Existing saved
@@ -148,7 +148,7 @@ in fresh sessions. These are model instructions, not guaranteed formatting.
 Details: [Chat workflows](docs/CHAT_WORKFLOWS.md#inspect-and-edit-the-chat-prompt).
 
 **Memory, web, spend.** Memory enable steps: [MEMORY_SETUP.md](docs/MEMORY_SETUP.md).
-Web research rules: [WEB.md](docs/WEB.md). The Spend view reports retained
+Web research rules: [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#search-fetch-and-research). The Spend view reports retained
 usage and available costs. **Estimate draft** previews the selected cloud model's
 input estimate and full output reservation; optional per-call caps can refuse
 generation. Claude counting sends only that draft. Optional completion webhooks send only job
@@ -226,7 +226,7 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 | [docs/CHAT_STREAMING.md](docs/CHAT_STREAMING.md) | SSE chat streaming and `/loop stop` |
 | [docs/MEMORY_SETUP.md](docs/MEMORY_SETUP.md) | Enable steps for pinned notes and structured memory |
 | [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Facts, proposals, episodes, explicit recall, facts-only FTS |
-| [docs/WEB.md](docs/WEB.md) | Google listings, URL fetch, page research |
+| [docs/SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#search-fetch-and-research) | Google listings, URL fetch, page research |
 | [docs/SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md) | Spend completeness, webhook setup, retries and privacy |
 
 ### Coding pipeline and process control
@@ -244,8 +244,7 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 
 | Document | Purpose |
 |---|---|
-| [docs/SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) | HTTPS, SQLite migration, roles, URL rules, API keys |
-| [docs/ACCOUNTS.md](docs/ACCOUNTS.md) | Roles, login, Terminal account commands |
+| [docs/SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) | Accounts, roles, login, HTTPS, SQLite migration, URL rules, API keys |
 | [INVARIANTS.md](INVARIANTS.md) | Process isolation, guard chain, write policy, clone jail, sandbox |
 | [SECURITY.md](SECURITY.md) | Supported surface and how to report a vulnerability |
 

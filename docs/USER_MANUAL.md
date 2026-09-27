@@ -1,7 +1,7 @@
 # Operator manual
 
 Start with [setup](../setup-guide.md) and [console commands](CONSOLE.md).
-[Accounts](ACCOUNTS.md) explains who can use each surface;
+[Accounts](SECURE_RESEARCH.md#roles) explains who can use each surface;
 [coding jobs](CONSOLE_JOBS.md) covers staging, monitoring and reviewed publication.
 
 ## Review state and logout
