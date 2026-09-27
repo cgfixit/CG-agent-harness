@@ -216,7 +216,7 @@ restoration through the guarded edit flow.
 | Fixed check | `/skill check:cargo-test` | Selects a known check for an already staged coding request; no immediate execution |
 | Governed catalog entry | `/skills all` | Inventory only unless an implemented adapter says otherwise |
 | Codex development skill | Repository `.codex/skills` or Codex personal skill directory | Guides Codex maintaining the repository; not automatically an app runtime skill |
-| Claude Code development skill | Repository `.claude/skills`; registered shortcuts in `.claude/commands` | Guides Claude Code maintaining the repository; not an app command |
+| Claude Code development skill | Repository `.claude/skills` | Guides Claude Code maintaining the repository; not an app command |
 
 To add optional context, create a local file in the **actual active home**, e.g.
 `skills/review-notes/SKILL.md`. Use a normal directory and file within the home;
