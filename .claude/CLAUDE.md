@@ -1,168 +1,45 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Loaded every session: only what most tasks need. Full manual (follow it literally): `AGENTS.md`.
+Contracts: `INVARIANTS.md`. This file lives in `.claude/` because a root `CLAUDE.md` fails
+`tests/invariant_guard.rs`.
 
-## Why this file lives in `.claude/`
+**Truth order:** code > `assets/config.default.yaml` > `INVARIANTS.md` > `AGENTS.md` > `README.md`.
+When prose and code disagree, fix the prose in the same PR.
 
-`tests/invariant_guard.rs::readme_does_not_link_to_missing_claude_md` fails the build if a
-root-level `CLAUDE.md` exists (the root file was renamed to `AGENTS.md`). Do not create one.
-`AGENTS.md` is the tool-neutral operating manual and must be followed literally; read
-`INVARIANTS.md` before touching `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`,
-`src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`, or
-`assets/config.default.yaml`. Truth precedence: code > `assets/config.default.yaml` >
-`INVARIANTS.md` > `AGENTS.md` > `README.md`.
-
-## Harness agent skills
-
-Before substantive work, load `.claude/skills/cgagentharness-project-guidance/SKILL.md`
-(`/cgagentharness-project-guidance`). For evidence-first / security-sensitive claims, load
-`fable-protocol` (`/fable-protocol`). Before merging core-path security diffs, ask the operator to
-run `cgagentharness-invariant-guard` (`/cgagentharness-invariant-guard`) — it ships
-`disable-model-invocation: true`, so Claude cannot self-load it; it must be invoked explicitly by a
-human. For session traps (Chrome CI, CSRF names, YAML `"true"`, Seatbelt), load
-`cgagentharness-gotchas` (`/cgagentharness-gotchas`).
-
-### Additional skills (security / parity / optimize)
-
-- `cgagentharness-write-policy-redteam` (`/cgagentharness-write-policy-redteam`) — writer / confirm+reason / clone jail / hostile argv
-- `verification-specialist` (`/verification-specialist`) — try to break a supplied change (no tree mutation)
-- `cgagentharness-config-guard` (`/cgagentharness-config-guard`) — `assets/config.default.yaml` fail-closed contracts
-- `cgagentharness-parity` (`/cgagentharness-parity`) — `docs/parity/*` + `scripts/parity-status.py` (CyClaw↔harness). Manual-only (`disable-model-invocation: true`); ask the operator to run it
-- `cgagentharness-optimize` (`/cgagentharness-optimize`, Claude deep) — deep optimize playbook; Codex twin for short runs
-
-### New documentation & verification skills
-
-- `cgagentharness-doc-sync` (`/cgagentharness-doc-sync`) — verify docs stay in sync with code; check shim actions, config gates, routes, guard chain, CSRF contracts, and hardcoded values. Manual-only (`disable-model-invocation: true`); ask the operator to run it
-- `cgagentharness-verify-deps` (`/cgagentharness-verify-deps`) — verify Cargo dependencies, advisories, licenses, locked versions, unsafe code, and toolchain match
-- `cgagentharness-runtime-invariant-check` (`/cgagentharness-runtime-invariant-check`) — verify core security invariants (I6, guard chain, CSRF, write gates, RUN_ID_PATTERN sync, clone jail)
-- `doc-sync` (`/doc-sync`) — actively fix doc drift (README/AGENTS/setup-guide/docs) against `origin/main` or the active branch's upstream; writes edits (companion to the read-only `cgagentharness-doc-sync`). Manual-only (`disable-model-invocation: true`); ask the operator to run it
-- `dep-sync` (`/dep-sync`) — actively fix Rust dependency/toolchain/build/deploy drift (Cargo manifests/locks, `rust-toolchain.toml`, `deny.toml`, CI/release YAML) against `origin/main` or the active branch's upstream; writes edits (companion to the read-only `cgagentharness-verify-deps`)
-
-Authoritative contracts: `INVARIANTS.md`, `AGENTS.md`, `assets/config.default.yaml`.
-Existing: `.codex/skills/cgagentharness-{optimize,release,verify}/`.
-
-These are repository guidance skills for agents editing this tree, not runtime `/api/skills`
-plugins served by the console. Selecting or loading a skill does not authorize push, merge, or
-release — existing user authorization governs publication.
-
-## Commands
-
-Rust 1.88 (pinned in `rust-toolchain.toml`), edition 2021, single crate `cgagentharness`.
-
-```bash
-cargo build --all-targets --locked
+## Before pushing
+```sh
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo deny check                                   # advisories/licenses/bans (deny.toml)
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
-cargo test --test shim_and_agent_routes            # one integration test file
-cargo test --test real_repo_loop real_repo_run_smoke_end_to_end -- --nocapture   # one test
-cargo test --test invariant_guard                  # fast source-scan guard; run after any structural change
-SKIP_LIVE=1 scripts/verify-local.sh                # fmt + clippy + deny (if installed) + tests + release build
-CGAH_TEST_BINARY=target/debug/cgagentharness python3 scripts/test-desktop-backend.py  # stdlib-only backend contract suite
-cargo run -- serve                                 # HTTPS + account login; see docs/SECURE_RESEARCH.md
-scripts/check-pr-template.sh                       # validate PR body before opening a PR
+cargo deny check
 ```
+Rust 1.88 is pinned. Always blank those three keys; never assert on a real key.
+After structural changes, `cargo test --test invariant_guard` is the fast check.
 
-- Always blank `GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY` when running tests; a real
-  `GROK_API_KEY` exists on the maintainer's machine and tests must not assert on it.
-- Tests drive a real `git` but need no global identity: `tests/common/mod.rs::git`
-  neutralizes `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM` and seed repos set
-  `user.name`/`user.email` locally.
-- `[profile.dev.package."*"] opt-level=3` in `Cargo.toml` is load-bearing (scrypt n=2^17); do not remove.
-- `tests/macos_cargo.rs` is macOS-only and needs
-  `cargo fetch --locked --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml` first.
-- `desktop/` is a separate Tauri crate (own `Cargo.lock`, Rust 1.90, not a workspace member). Build it
-  with `cd desktop && cargo ...`; packaging is `scripts/package-desktop.sh` (macOS only, see `docs/DESKTOP.md`).
-- If `cargo clippy` resolves to an old rustup proxy: `CLIPPY=/opt/homebrew/bin/cargo-clippy scripts/verify-local.sh`.
+## Rules CI catches late, or not at all
+- **I6:** `src/{server,shim,llm,common}` never import `crate::agentic` under any alias;
+  `src/agentic` never imports server or shim. Cross only via `shim::ACTIONS`; a new action
+  changes `ACTIONS`, `agentic/commands.rs::dispatch` and the guard's whitelist together.
+- **Core paths:** `src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`,
+  `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`. Read `INVARIANTS.md` first,
+  put an invariant statement in the PR, and ask the operator to run the manual-only
+  `/cgagentharness-invariant-guard` before merge.
+- **Write gates:** `agentic.enabled`, `deepagent_github.enabled`, `deepagent_github.allow_git_write_tools`
+  ship `false`. Quoted `"true"` is off. `confirm` is never defaulted; `reason` is never optional.
+- **The browser never supplies a command:** check-profile names map to fixed argv; free text
+  crosses as one `--opt=value` element or a temp file.
+- New route → `REGISTERED_PATHS`. `/api/agent/run` and `/api/agent/jobs` both go through `prepare_run`.
+- Never rename `__CYCLAW_CSRF_TOKEN__`, `__CYCLAW_CSP_NONCE__` or `X-CyClaw-CSRF`. Never "dedupe"
+  `RUN_ID_PATTERN`, the planner/check timeouts or the check-profile table across the boundary.
+- The harness writes only inside `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`) or a pipeline-owned
+  clone; keep new code that way.
 
-## Architecture
-
-One self-reexecuting binary (`src/main.rs`): public `serve`, `account`, `web`, and `tls`;
-hidden `agentic` (spawned only by the shim) and `desktop` (Unix sidecar over inherited pipes).
-Account/web CLI operations use the protected service; TLS maintenance is local-owner administration.
-
-### I6: process isolation (the rule everything else hangs on)
-
-```
-src/server  src/shim  src/llm  src/common     <- console side; NEVER references `agentic::`
-        |
-   src/shim/mod.rs: 12-action whitelist (`shim::ACTIONS`) -> argv -> spawns
-   `current_exe() agentic <action>` as a CHILD PROCESS with a hard timeout
-        |
-src/agentic                                   <- pipeline side; NEVER references server or shim
-```
-
-- `tests/invariant_guard.rs` scans source in both directions and fails the build on a violation.
-  Add server behavior in `src/server`; cross the boundary only via the shim and CLI whitelist.
-- Exit codes are the interface: `0` ok, `2` failed, `3` env/config, `4` write refused. A non-zero child
-  exit is HTTP 200 with `ok=false`; only shim failures map to 400/502/504, disabled-layer banner to 409.
-- New shim action = extend `shim::ACTIONS`, the action match in `src/agentic/commands.rs::dispatch`, and the
-  invariant guard's whitelist assertion, together.
-- Constants duplicated on purpose across the boundary and kept in sync by tests (do not "dedupe"):
-  `RUN_ID_PATTERN` (server `agent_policy` vs agentic `run_store`), planner/check timeouts (shim vs
-  agentic), the check-profile table.
-
-### Server (`src/server`)
-
-- Guard chain on every operator route, order is load-bearing:
-  `rate limit -> same-origin -> direct loopback/no proxy -> account/RBAC -> mutation CSRF`.
-  Public login/minimal status still get early guards. Fresh auth/TLS are true; the optional
-  harness key grants no authority. Lives in `guards.rs`/`headers.rs`; locked by
-  `tests/auth_guards.rs`, `tests/secure_portal.rs` and `tests/security_headers.rs`.
-- `routes/mod.rs::REGISTERED_PATHS` feeds `/api/tools`'s "wired" report. A new route must be added
-  there (and `views.rs` if the console lists it) or it shows as unwired.
-- The browser never supplies a command: `POST /api/agent/run` carries check-profile NAMES and
-  `agent_policy.rs` maps them to fixed argv. Free text crosses the shim as `--opt=value` single
-  elements or temp files, never separate argv tokens.
-- `/api/agent/run` (sync) and `/api/agent/jobs` (detached, `agent_jobs.rs`) must both go through
-  `agent::prepare_run`; the guard test checks this.
-- The console UI is one asset, `assets/static/harness.html`, served verbatim. Placeholders
-  `__CYCLAW_CSRF_TOKEN__` / `__CYCLAW_CSP_NONCE__` and the `X-CyClaw-CSRF` header are contractual.
-- `src/llm` resolves an OpenAI-compatible local backend (default Ollama at `127.0.0.1:11434/v1`).
-
-### Agentic pipeline (`src/agentic`)
-
-`real_repo_loop.rs` drives: clone into `<home>/data/agentic/workspaces` (`workspace.rs`) ->
-plan (`proposer.rs` / `cloud_proposer.rs`) -> bounded edits (`edits.rs`; injection, budget and
-protected-path decisions in `real_repo_loop.rs`, rechecked by `workspace.rs::apply_proposal`;
-clone jail via `cap_std`) -> sandboxed checks (`executor/sandbox.rs`:
-Seatbelt / `unshare --net` / Job Object; no backend = exit 3) -> feedback into the next attempt.
-Runs are retained by `run_store.rs`; `decide` (local commit), `push`, and `publish` (draft PR via
-`gh_client.rs`) are separate actions, each requiring `--reason=<why> --confirm`.
-`writer.rs` is the GitHub write gate for the one executable op (`pr_create`, always `--draft`),
-not the edit preflight; `protected_write_paths` is a refusal list, not an allowed scope. Combined
-`decide --push/--publish` is refused. `governance.rs` reloads `config.yaml` at every mutation
-boundary; a changed repo/workspace/scope/budget refuses rather than continuing on a stale snapshot.
-
-### Config and home
-
-- `assets/config.default.yaml` is embedded and holds every tunable; no hardcoded tunables elsewhere.
-- Home is `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`, must be absolute). Never write outside it
-  except into a clone the pipeline made.
-- The closed write gates are `agentic.enabled`, `deepagent_github.enabled` and
-  `deepagent_github.allow_git_write_tools`, all shipped `false`;
-  `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` enforces it.
-  `agentic.mode: "write"` and `writes_enabled: true` ship open: they are required for a write but
-  cannot arm one alone, so do not describe them as closed defaults.
-  Quoted YAML `"true"` is OFF for every gate (`flag_is_true`). `confirm` is never defaulted on;
-  `reason` is never optional on a write. `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1` is AND-ed with
-  `EXECUTION_ENABLED` and can only disable.
-
-### Tests
-
-Integration tests live in `tests/` and spin up the axum app via `tower`; the key files are
-`invariant_guard.rs`, `shim_and_agent_routes.rs` (hostile-argv matrix), `write_policy.rs`,
-`real_repo_loop.rs`, `exact_edits.rs`, `agentic_foundations.rs` (clone jail, sandbox),
-`auth_guards.rs`. For a pure parser or matcher, prefer a `#[cfg(test)] mod tests` beside the function
-over a new integration test.
-
-## PR conventions
-
-- Branch `claude/<feature>` (kebab-case; allowlist is `TEMPLATE_BRANCH_PREFIXES` in `src/common/identity.rs`).
-- Title `[prefix] - Short sentence`, prefixes: `[invariant] [security] [infra] [fix] [docs] [harness] [agentic] [test] [feat]`.
-- Draft PR, one concern, body from `.github/PULL_REQUEST_TEMPLATE.md`, validated with
-  `scripts/check-pr-template.sh`. Touching a core path requires an explicit invariant statement in the body.
-- The `review gate` check (`.github/workflows/review-gate.yml`) fails while any review
-  thread is unresolved or a Codex review is running: fix-and-push or reply-and-resolve every thread.
-- Quality bar before pushing: fmt, clippy `-D warnings`, `cargo test --all-targets`, `cargo deny check` all green.
+## Docs, tests, PRs
+- Edit the section that owns a topic; don't create `.md` files. Evidence and closeouts go in
+  the PR body; screenshots go in `docs/screenshots/`.
+- Prefer a `#[cfg(test)]` test beside a pure function over a new `tests/` file.
+- Branch `claude/<kebab-topic>`; title `[prefix] - Sentence`, where prefix is one of
+  invariant, security, infra, fix, docs, harness, agentic, test, feat.
+  Draft, one concern, body from `.github/PULL_REQUEST_TEMPLATE.md`, checked with `scripts/check-pr-template.sh`.
+- Loading a skill never authorizes push, merge or release.
