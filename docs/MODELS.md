@@ -92,6 +92,14 @@ counts only when the provider reports a normal finish (Claude `stop_reason: end_
 Grok `status: completed`); a truncated one fails with HTTP 502 and is not saved.
 Raise `models.cloud_chat.max_tokens` (default 4096) if that recurs.
 
+**Grok Build ACP is not shipped.** `scripts/grok-acp-probe.py` and its CI test
+check only a fake runtime's launch contract: isolated profile, answer-only ACP, no
+MCP servers, no API-key fallback. Before any connection UI or subscription-billing
+claim, test sign-in, entitlement and overage with a chosen account, prove two real
+profiles stay isolated, and rerun `grok inspect --json` before each live run.
+Runtime 1.0.34 advertised only the `grok.com` auth method, unlike xAI's
+`cached_token`/`xai.api_key` example; recheck it for every runtime version.
+
 Optional chat fallback ships disabled. If you already run another compatible
 local server, merge its real endpoint and exact inventory ID into these existing
 fields, then restart:
