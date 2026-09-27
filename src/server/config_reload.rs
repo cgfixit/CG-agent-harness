@@ -78,12 +78,24 @@ impl RuntimeLimits {
             0 => 2048,
             n => n,
         };
+        let web = Limits::load(cfg)?;
+        // Startup and every reload pass through here, so a web budget that cannot
+        // hold a usable chat prompt is reported where the operator changed it.
+        let reservation = super::compaction::reply_reservation(
+            backend,
+            cfg.u64_or("models.local_llm.max_tokens", super::compaction::DEFAULT_REPLY_TOKENS),
+        );
+        let tool_tokens =
+            super::compaction::estimate_tokens(&serde_json::to_string(&super::chat_web::tools()).unwrap_or_default());
+        if let Some(warning) = super::compaction::web_budget_warning(web.total_tokens, reservation, tool_tokens) {
+            tracing::warn!("{warning}");
+        }
         Ok(Self {
             revision: 0,
             api: RateBudget::load(cfg, "api.rate_limit", 60, 60.0)?,
             loop_rate: RateBudget::load(cfg, "api.harness_loop_rate_limit", 8, 300.0)?,
             loop_max_tokens: super::validate_reply_budget(key, cap, backend)?,
-            web: Limits::load(cfg)?,
+            web,
         })
     }
 }

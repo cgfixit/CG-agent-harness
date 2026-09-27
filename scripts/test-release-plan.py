@@ -83,7 +83,7 @@ class ReleasePlanTests(unittest.TestCase):
             {"tag_name": "v0.1.0", "draft": False, "prerelease": False},
             {"commit": {"tree": {"sha": "old"}}},
             {"commit": {"tree": {"sha": "new"}}},
-            {"workflow_runs": [{"head_sha": "a" * 40, "conclusion": "success"}]},
+            {"workflow_runs": [{"head_sha": "a" * 40, "conclusion": "success", "event": "push"}]},
             [{"name": "v0.1.0"}], [{"tag_name": "v0.1.0"}],
         ]
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,6 +132,19 @@ class ReleasePlanTests(unittest.TestCase):
     def test_bundle_payload_must_be_a_runs_list(self):
         with self.assertRaises(ValueError):
             module.bundle_succeeded([], "a" * 40)
+
+    def test_only_push_or_dispatch_bundle_runs_count(self):
+        def runs(**overrides):
+            run = {"head_sha": "a" * 40, "conclusion": "success", "event": "push"}
+            run.update(overrides)
+            return {"workflow_runs": [run]}
+        self.assertTrue(module.bundle_succeeded(runs(), "a" * 40))
+        self.assertTrue(module.bundle_succeeded(runs(event="workflow_dispatch"), "a" * 40))
+        # A docs-only pull_request run skips every job but still reports success.
+        for bad in ({"event": "pull_request"}, {"event": None}, {"conclusion": "failure"},
+                    {"head_sha": "b" * 40}):
+            with self.subTest(run=bad):
+                self.assertFalse(module.bundle_succeeded(runs(**bad), "a" * 40))
 
     def test_api_errors_are_not_unchanged_success(self):
         with patch.object(module.subprocess, "check_output", side_effect=subprocess.CalledProcessError(1, "gh")):

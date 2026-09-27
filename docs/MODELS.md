@@ -87,7 +87,10 @@ chosen from configuration, including the fallback tag. For local chat, check the
 selected name against the endpoint actually in use. For explicit cloud chat, use
 `/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only
 after an administrator saves the matching key and restarts. Cloud selection sends
-only the newly typed message and does not change the coding planner.
+only the newly typed message and does not change the coding planner. A cloud reply
+counts only when the provider reports a normal finish (Claude `stop_reason: end_turn`,
+Grok `status: completed`); a truncated one fails with HTTP 502 and is not saved.
+Raise `models.cloud_chat.max_tokens` (default 4096) if that recurs.
 
 Optional chat fallback ships disabled. If you already run another compatible
 local server, merge its real endpoint and exact inventory ID into these existing
