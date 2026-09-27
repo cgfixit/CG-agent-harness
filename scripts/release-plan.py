@@ -14,8 +14,11 @@ def api(path):
 def bundle_succeeded(runs, sha):
     if not isinstance(runs, dict) or not isinstance(runs.get("workflow_runs"), list):
         raise ValueError("Expected workflow runs list")
+    # Only push and dispatch runs package: a docs-only pull_request run skips
+    # every Bundle job yet still concludes "success".
     return any(
         run.get("head_sha") == sha and run.get("conclusion") == "success"
+        and run.get("event") in ("push", "workflow_dispatch")
         for run in runs["workflow_runs"]
     )
 
