@@ -664,10 +664,10 @@ mod tests {
             server.write_all(b"\n").await.unwrap();
             server
         });
-        assert_eq!(
-            Session::new(read, write, 1024).read().await.unwrap(),
-            json!("x".repeat(1022))
-        );
+        let frame = tokio::time::timeout(Duration::from_secs(5), Session::new(read, write, 1024).read())
+            .await
+            .expect("a CRLF split across writes still completes the frame");
+        assert_eq!(frame.unwrap(), json!("x".repeat(1022)));
         drop(writer.await.unwrap());
     }
 
