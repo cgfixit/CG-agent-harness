@@ -404,8 +404,10 @@ overflow. The effective trigger is
 `max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
 calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions are also
 included in the calibrated input estimate. Web-enabled chat tightens the trigger
-toward `web.total_tokens - 2 * effective_reply_reservation`, without going below
-that floor; the web dispatcher independently enforces its total budget.
+toward `web.total_tokens - effective_reply_reservation` (the projection already
+carries one reservation, so a web prompt keeps room for two replies), without going
+below that floor; the web dispatcher independently enforces its total budget.
+Startup and reload warn when fewer than 4096 input tokens would remain.
 Resolved Ollama with explicit `reasoning_effort: "none"` reserves the reply
 ceiling once. Other reasoning settings, missing settings and compatible
 backends reserve it twice in startup validation, compaction and web dispatch.
@@ -437,6 +439,7 @@ bodies.
   `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`,
   `tests/chat_and_sessions.rs::observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_calibration`,
   `tests/chat_and_sessions.rs::reasoning_and_compatible_backends_enforce_the_effective_reply_reservation`,
+  `tests/chat_and_sessions.rs::web_chat_charges_the_reply_reservation_once_against_the_web_budget`,
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
   `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,
@@ -536,9 +539,12 @@ the existing audit spend sink. Rows store provider, model, source
 `vendor_cost_ticks` (`TICKS_PER_USD = 10_000_000_000`); otherwise the dated
 rate table; incomplete usage and unknown models stay unpriced; local rows are
 always `local_unpriced`. `usage_reported` is true only when both input and
-output counts parsed as JSON numbers. HTTP 2xx with empty text still appends
-`outcome: failed_after_billing` then errors the chat. `TokenTally` and
-local prompt/compaction token estimates are context budgets, not USD.
+output counts parsed as JSON numbers. HTTP 2xx with empty text, or a cloud reply
+the provider did not report as finished (Claude `stop_reason` other than
+`end_turn`, Grok `status` other than `completed`), still appends
+`outcome: failed_after_billing` then errors the chat; the text is never shown or
+saved. `TokenTally` and local prompt/compaction token estimates are context
+budgets, not USD.
 `PRICED_AS_OF` is the oldest `_RATE_VERIFIED` date; a table older than 30 days
 warns once per process and does not fail the chat. Guarded
 `GET /api/spend/summary` rolls up the same file by provider/model/UTC-day with
