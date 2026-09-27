@@ -6,7 +6,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 
@@ -196,6 +196,133 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
         .await;
     assert_eq!(off["reply"], "Web tools unavailable");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
+    server.abort();
+}
+
+/// A tool round sends the whole prompt again with the result. Web chat must keep
+/// that follow-up inside web.total_tokens: clip a fetched page to the room left,
+/// and stop offering tools once even a minimal result would not fit. Before, the
+/// fetch ran and the follow-up call failed with WEB_TOKEN_BUDGET (502).
+#[tokio::test]
+async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let last_prompt = Arc::new(AtomicU64::new(0));
+    let offered = Arc::new(AtomicBool::new(false));
+    let (read_count, prompt_seen, tools_seen) = (reads.clone(), last_prompt.clone(), offered.clone());
+    let router = Router::new()
+        .route(
+            "/docs/item",
+            get(move || {
+                let reads = read_count.clone();
+                async move {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    ([("content-type", "text/plain")], "PAGE_EVIDENCE ".repeat(2000))
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let (prompt_seen, tools_seen) = (prompt_seen.clone(), tools_seen.clone());
+                async move {
+                    // Report the real prompt size so the web budget charges what was sent.
+                    let prompt = (body["messages"].to_string().len()
+                        + body.get("tools").map_or(0, |tools| tools.to_string().len()))
+                        as u64
+                        / 4;
+                    let messages = body["messages"].as_array().unwrap();
+                    let last = messages.last().unwrap();
+                    let tools = body.get("tools").is_some_and(|t| t.as_array().is_some_and(|t| !t.is_empty()));
+                    if last["role"] == "tool" {
+                        Json(common::ok_reply("Answer from the fetched page", prompt, 20))
+                    } else if last["content"].as_str().is_some_and(|text| text.starts_with("fetch")) {
+                        tools_seen.store(tools, Ordering::SeqCst);
+                        if !tools {
+                            return Json(common::ok_reply("Answered without the page", prompt, 20));
+                        }
+                        let arguments = json!({"url":"http://docs.example/docs/item"}).to_string(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                        Json(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                            "tool_calls":[{"id":"call_fetch_1","type":"function","function":{"name":"web_fetch","arguments":arguments}}]}}],
+                            "usage":{"prompt_tokens":prompt,"completion_tokens":20}}))
+                    } else {
+                        // Track the history's size from seed turns only.
+                        prompt_seen.store(prompt, Ordering::SeqCst);
+                        Json(common::ok_reply("Noted.", prompt, 20))
+                    }
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    // LM Studio doubles the reply reservation: 8192 tokens for max_tokens 4096, so
+    // the shipped 28000-token budget admits prompts up to 11,616 input tokens.
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..Default::default()
+        }
+        .with("models.local_llm.provider", "lmstudio")
+        .with("models.local_llm.max_tokens", "4096"),
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+            .await
+            .0,
+        200
+    );
+    let mut session = Value::Null;
+    // Phase 1 (about 9k input tokens): the prompt fits twice with room to spare, so
+    // tools stay on and the 6000-token page is clipped to what the follow-up allows.
+    for turn in 0..30 {
+        if last_prompt.load(Ordering::SeqCst) >= 8_500 {
+            break;
+        }
+        let (status, body) = s
+            .post_json(
+                "/api/chat",
+                json!({"message": format!("seed {turn} {}", "x".repeat(2000)), "session_id": session}),
+            )
+            .await;
+        assert_eq!(status, 200, "{body}");
+        session = body["session_id"].clone();
+    }
+    let (status, body) = s
+        .post_json("/api/chat", json!({"message": "fetch the page", "session_id": session}))
+        .await;
+    assert_eq!(status, 200, "the follow-up after the fetch must fit: {body}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    assert_eq!(body["reply"], "Answer from the fetched page");
+    let text = body["web_tools"][0]["result"]["text"].as_str().unwrap();
+    assert!(
+        !text.is_empty() && text.len() < 24_000 && "PAGE_EVIDENCE ".repeat(2000).starts_with(text),
+        "the page is clipped to the room left: {} chars",
+        text.len()
+    );
+    // Phase 2 (past about 10k input tokens, still admitted): even a minimal result
+    // cannot follow, so tools are not offered and nothing is fetched.
+    for turn in 30..60 {
+        if last_prompt.load(Ordering::SeqCst) >= 10_200 {
+            break;
+        }
+        let (status, body) = s
+            .post_json(
+                "/api/chat",
+                json!({"message": format!("seed {turn} {}", "x".repeat(2000)), "session_id": session}),
+            )
+            .await;
+        assert_eq!(status, 200, "{body}");
+    }
+    let (status, body) = s
+        .post_json("/api/chat", json!({"message": "fetch the page", "session_id": session}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(!offered.load(Ordering::SeqCst), "no tools once a tool round cannot fit");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    assert_eq!(body["reply"], "Answered without the page");
+    assert_eq!(body["web_tools"][0]["code"], "WEB_TOKEN_BUDGET");
     server.abort();
 }
 

@@ -3,7 +3,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::{state::AppState, web_policy::error, web_research::authorize_owner, web_search::WebTool};
+use super::{
+    state::AppState,
+    web_policy::error,
+    web_research::authorize_owner,
+    web_search::{WebTool, MIN_EVIDENCE_TOKENS},
+};
 use crate::common::errors::Result;
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::{parse_chat_response, ChatMessage, ChatResult};
@@ -44,6 +49,50 @@ fn tool_argv(name: &str, args: &str) -> Vec<String> {
             .unwrap_or_default(),
         _ => Vec::new(),
     }
+}
+
+/// Estimated tokens of a model call: UTF-8 bytes / 4 of what is sent, calibrated.
+fn prompt_estimate(bytes: usize, token_ratio: f64) -> u64 {
+    super::compaction::calibrated_tokens((bytes as u64).div_ceil(4), token_ratio)
+}
+
+fn tool_message(id: &str, result: &Value) -> Result<Value> {
+    Ok(json!({"role":"tool","tool_call_id":id,"content":serde_json::to_string(result)?}))
+}
+
+/// Largest form of a tool result that `fits` accepts. A fetched page keeps its
+/// longest fitting prefix, a search listing drops trailing results. `None` when
+/// not even one character or one result fits.
+fn fit_result(mut result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -> Result<Option<Value>> {
+    if fits(&result)? {
+        return Ok(Some(result));
+    }
+    if let Some(text) = result.get("text").and_then(Value::as_str) {
+        let chars: Vec<char> = text.chars().collect();
+        // Prefix `hi` does not fit; find the longest prefix `lo` that does.
+        let (mut lo, mut hi) = (0, chars.len());
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            result["text"] = Value::String(chars[..mid].iter().collect());
+            if fits(&result)? {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        result["text"] = Value::String(chars[..lo].iter().collect());
+        return Ok((lo > 0 && fits(&result)?).then_some(result));
+    }
+    while let Some(listing) = result.get_mut("results").and_then(Value::as_array_mut) {
+        if listing.len() <= 1 {
+            break;
+        }
+        listing.pop();
+        if fits(&result)? {
+            return Ok(Some(result));
+        }
+    }
+    Ok(None)
 }
 
 fn check_evidence(state: &AppState, owner: &str, sources: &[String]) -> Result<()> {
@@ -107,17 +156,31 @@ async fn run_inner(
     let mut initial_prompt_tokens = None;
     let mut budget_used = 0u64;
     let definitions = tools();
+    let definition_bytes = serde_json::to_vec(&definitions)?.len();
+    let mut tools_withheld = false;
     for turn in 0..=web.limits.chat_tool_calls {
         check_evidence(state, owner, &sources)?;
-        let estimate = ((system.len() + serde_json::to_vec(&messages)?.len() + serde_json::to_vec(&definitions)?.len())
-            as u64)
-            .div_ceil(4);
-        let estimate = super::compaction::calibrated_tokens(estimate, token_ratio);
+        let estimate = prompt_estimate(
+            system.len() + serde_json::to_vec(&messages)?.len() + definition_bytes,
+            token_ratio,
+        );
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
         if budget_used.saturating_add(estimate).saturating_add(reservation) > web.limits.total_tokens {
             return Err(error("WEB_TOKEN_BUDGET", "chat web token budget exhausted"));
         }
-        let available = if used_calls == web.limits.chat_tool_calls {
+        // A tool call sends this whole prompt again with its result. Offer tools
+        // only while that follow-up still fits beside a minimal result.
+        let round_fits = budget_used
+            .saturating_add(estimate.saturating_mul(2))
+            .saturating_add(MIN_EVIDENCE_TOKENS)
+            .saturating_add(reservation)
+            <= web.limits.total_tokens;
+        if !round_fits && used_calls < web.limits.chat_tool_calls && !tools_withheld {
+            tools_withheld = true;
+            events.push(json!({"tool":"web","ok":false,"code":"WEB_TOKEN_BUDGET",
+                "message":"web.total_tokens has no room to send this prompt again with a result; web tools were not offered"}));
+        }
+        let available = if used_calls == web.limits.chat_tool_calls || !round_fits {
             &[][..]
         } else {
             definitions.as_slice()
@@ -215,7 +278,7 @@ async fn run_inner(
         }
         used_calls += calls.len();
         messages.push(json!({"role":"assistant","content":message["content"],"tool_calls":calls}));
-        for call in calls {
+        for (index, call) in calls.iter().enumerate() {
             let id = call["id"]
                 .as_str()
                 .filter(|id| {
@@ -291,6 +354,23 @@ async fn run_inner(
                 }
                 _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
             };
+            // The follow-up call sends everything again: cut the result to the room
+            // web.total_tokens has left for it, with the estimate the next call uses,
+            // keeping a minimal result's room for each later call in this batch.
+            let sent = system.len() + serde_json::to_vec(&messages)?.len() + definition_bytes;
+            let later = MIN_EVIDENCE_TOKENS.saturating_mul((calls.len() - index - 1) as u64);
+            let result = match result {
+                Ok(value) => fit_result(value, |candidate| {
+                    let bytes = sent + 1 + serde_json::to_vec(&tool_message(id, candidate)?)?.len();
+                    Ok(budget_used
+                        .saturating_add(prompt_estimate(bytes, token_ratio))
+                        .saturating_add(reservation)
+                        .saturating_add(later)
+                        <= web.limits.total_tokens)
+                })?
+                .ok_or_else(|| error("WEB_TOKEN_BUDGET", "web.total_tokens has no room left for this result")),
+                Err(failure) => Err(failure),
+            };
             check_evidence(state, owner, &sources)?;
             let result = match result {
                 Ok(result) => result,
@@ -329,8 +409,43 @@ async fn run_inner(
             }
             check_evidence(state, owner, &sources)?;
             events.push(json!({"tool":name,"ok":true,"result":result}));
-            messages.push(json!({"role":"tool","tool_call_id":id,"content":serde_json::to_string(&result)?}));
+            messages.push(tool_message(id, &result)?);
         }
     }
     Err(error("WEB_TOOL_LIMIT", "chat tool limit exceeded"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn size(value: &Value) -> usize {
+        serde_json::to_vec(value).unwrap().len()
+    }
+
+    #[test]
+    fn fit_result_keeps_the_longest_fitting_prefix_or_listing() {
+        let page = json!({"url":"https://example.test/a","text":"abcdefghij","notice":"n"});
+        let full = size(&page);
+        assert_eq!(fit_result(page.clone(), |_| Ok(true)).unwrap().unwrap(), page);
+        let fitted = fit_result(page.clone(), |v| Ok(size(v) <= full - 3)).unwrap().unwrap();
+        assert_eq!(fitted["text"], "abcdefg");
+        assert_eq!(fitted["url"], page["url"]);
+        // An empty page is no evidence: not even one character fits.
+        assert!(fit_result(page, |v| Ok(size(v) <= full - 10)).unwrap().is_none());
+        // Prefixes are whole characters, never split UTF-8.
+        let wide = json!({"text":"界界界界"});
+        let fitted = fit_result(wide.clone(), |v| Ok(size(v) < size(&wide)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(fitted["text"], "界界界");
+        // Listings drop trailing results and keep at least one.
+        let listing = json!({"provider":"p","results":[{"title":"1"},{"title":"2"},{"title":"3"}]});
+        let full = size(&listing);
+        let fitted = fit_result(listing.clone(), |v| Ok(size(v) < full - 10))
+            .unwrap()
+            .unwrap();
+        assert_eq!(fitted["results"].as_array().unwrap().len(), 2);
+        assert!(fit_result(listing, |v| Ok(size(v) < 10)).unwrap().is_none());
+    }
 }

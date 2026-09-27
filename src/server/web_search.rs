@@ -20,6 +20,10 @@ pub const MAX_ALLOW: usize = MAX_RULES;
 pub const MAX_BYTES: usize = 262_144;
 const MAX_CONTEXT: usize = 4000;
 
+/// Smallest `web.evidence_tokens`, and the least room web chat keeps for a tool
+/// result before it offers tools.
+pub const MIN_EVIDENCE_TOKENS: u64 = 256;
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Limits {
     pub response_bytes: usize,
@@ -70,7 +74,7 @@ impl Limits {
             cache_bytes: bound("cache_bytes", 16_777_216, 1_048_576, 33_554_432)? as usize,
             subqueries: bound("subqueries", 3, 1, 5)? as usize,
             rounds: bound("rounds", 2, 1, 2)? as usize,
-            evidence_tokens: bound("evidence_tokens", 3000, 256, 6000)?,
+            evidence_tokens: bound("evidence_tokens", 3000, MIN_EVIDENCE_TOKENS, 6000)?,
             model_tokens: bound("model_tokens", 1024, 256, 2048)?,
             total_tokens: bound("total_tokens", 16000, 2048, 32000)?,
             research_seconds: bound("research_seconds", 300, 10, 1800)?,
