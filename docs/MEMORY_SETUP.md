@@ -177,10 +177,11 @@ equally), `suggestion_max_queue: 8` waiting jobs plus one active generation,
 redacted, scanned and held only in RAM; restart drops it. Full/expired queues,
 model errors, low confidence or store quotas can produce no suggestion without
 failing the original successful chat/run. Existing pending capacity defaults to
-32 per owner. An active suggestion holds the local generation gate; a concurrent
-chat may receive `CHAT_BUSY`. The local generator uses no tools/web/recalled
-facts, temperature 0 and max_tokens 1024. Review is still necessary: scanners
-and confidence cannot guarantee truth or detect every secret.
+32 per owner. An active suggestion holds the local generation gate until a chat
+needs it; the chat then stops it, and the input is requeued. The local generator
+uses no tools/web/recalled facts, temperature 0 and max_tokens 1024. Review is
+still necessary: scanners and confidence cannot guarantee truth or detect every
+secret.
 
 #### Hard-save manually while automatic suggestions are off
 

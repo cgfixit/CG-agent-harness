@@ -522,6 +522,22 @@ pub async fn chat(
     Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
 
+/// How long a chat turn waits for a preempted memory suggestion to release the
+/// local model. Preemption aborts the suggestion's HTTP call, so the release
+/// normally takes milliseconds; the bound only covers a stalled store write.
+const SUGGESTION_YIELD_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What a background generation-gate owner is doing, in the operator's words.
+fn busy_label(owner: &str) -> &str {
+    match owner {
+        "consolidation" => "memory consolidation",
+        "web_research" => "web research",
+        "agent" => "a coding run",
+        crate::server::structured_memory_suggest::GATE_OWNER => "a memory suggestion",
+        other => other,
+    }
+}
+
 async fn chat_inner(
     state: Arc<AppState>,
     peer: SocketAddr,
@@ -613,28 +629,41 @@ async fn chat_inner(
         active: loop_claimed,
     };
 
-    let _gate = match state.generation_gate.claim_or_busy_owner("chat") {
+    // A best-effort memory suggestion yields to the operator's turn: it is
+    // stopped and requeued, and this turn takes the model once it lets go.
+    let claimed = state
+        .generation_gate
+        .claim_preempting(
+            "chat",
+            crate::server::structured_memory_suggest::GATE_OWNER,
+            SUGGESTION_YIELD_WAIT,
+            || {
+                crate::server::structured_memory_suggest::preempt(&state);
+            },
+        )
+        .await;
+    let _gate = match claimed {
         Ok(gate) => gate,
         Err(busy_owner) => {
             drop(release);
             let mut details =
                 json!({"session_id": session.session_id, "timeout_sec": state.chat_timeout_sec(&model) as u64});
-            if busy_owner == "chat" {
+            let message = if busy_owner == "chat" {
                 details["cancel"] = json!("/api/chat/cancel");
-            } else if busy_owner == "consolidation" {
-                details["busy"] = json!("consolidation");
-            }
+                "a local model turn is already running".to_string()
+            } else {
+                details["busy"] = json!(busy_owner);
+                format!(
+                    "the local model is busy with {}; try again when it finishes",
+                    busy_label(&busy_owner)
+                )
+            };
             state.audit.log(json!({
                 "event": "chat_busy",
                 "session_id": session.session_id,
                 "owner": busy_owner,
             }));
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "CHAT_BUSY",
-                "a local model turn is already running",
-            )
-            .details(details));
+            return Err(ApiError::new(StatusCode::CONFLICT, "CHAT_BUSY", message).details(details));
         }
     };
 

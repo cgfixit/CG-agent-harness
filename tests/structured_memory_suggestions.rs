@@ -312,6 +312,76 @@ async fn clearing_sessions_cancels_queued_and_inflight_chat_suggestions() {
 }
 
 #[tokio::test]
+async fn chat_preempts_a_running_suggestion_which_requeues_and_finishes_later() {
+    let model = model().await;
+    model.delay.store(10_000, Ordering::SeqCst);
+    let s = spawn_server(&model.base, options("both")).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let (code, first) = s
+        .post_json("/api/chat", json!({"message":"I prefer metric units."}))
+        .await;
+    assert_eq!(code, 200, "{first}");
+    for _ in 0..300 {
+        if !model.requests.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(model.requests.lock().unwrap().len(), 1, "the suggestion is generating");
+    assert_eq!(s.state.generation_gate.owner(), suggest::GATE_OWNER);
+    // Only that in-flight request is slow; a retry would answer at once.
+    model.delay.store(0, Ordering::SeqCst);
+
+    // The operator's next turn takes the model rather than getting CHAT_BUSY.
+    let started = std::time::Instant::now();
+    let (code, second) = s.post_json("/api/chat", json!({"message":"Also use Celsius."})).await;
+    assert_eq!(code, 200, "{second}");
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "chat stopped the suggestion instead of waiting for it"
+    );
+
+    // The stopped suggestion was requeued ahead of the new one and finishes too.
+    settled(&s, "local").await;
+    let episodes: Vec<Value> = model
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            serde_json::from_str::<Value>(r["messages"][1]["content"].as_str().unwrap()).unwrap()["episode_id"].clone()
+        })
+        .collect();
+    assert_eq!(
+        episodes,
+        [
+            first["episode"]["id"].clone(),
+            first["episode"]["id"].clone(),
+            second["episode"]["id"].clone()
+        ]
+    );
+    let runs = store.list_consolidation_runs("local").unwrap();
+    assert_eq!(runs.len(), 2);
+    assert!(
+        runs.iter().all(|run| run.state == "done"),
+        "{:?}",
+        runs.iter().map(|r| &r.state).collect::<Vec<_>>()
+    );
+    let preempted = runs
+        .iter()
+        .find(|run| run.episode_ids[0] == first["episode"]["id"])
+        .unwrap();
+    assert_eq!(preempted.proposal_count, 2);
+    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap();
+    assert!(
+        audit.contains(&format!("\"error_class\":\"{}\"", suggest::PREEMPTED)),
+        "{audit}"
+    );
+    assert!(!audit.contains("\"event\":\"chat_busy\""), "{audit}");
+    assert!(!s.state.generation_gate.is_held());
+}
+
+#[tokio::test]
 async fn generation_failure_leaves_completed_chat_usable_and_records_failure_without_facts() {
     let model = model().await;
     model.bad.store(true, Ordering::SeqCst);

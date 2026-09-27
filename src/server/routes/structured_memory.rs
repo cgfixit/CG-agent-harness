@@ -914,7 +914,7 @@ pub async fn cancel_consolidation(
     let run = store.cancel_consolidation_run(&owner, &id).map_err(|e| store_err(&e))?;
     if matches!(
         state.generation_gate.owner().as_str(),
-        "consolidation" | "memory-suggestion"
+        "consolidation" | crate::server::structured_memory_suggest::GATE_OWNER
     ) {
         state.abort_chat();
     }

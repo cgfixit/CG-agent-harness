@@ -176,7 +176,8 @@ for failures. Cancelling a running batch is allowed while the manual consolidati
 gate is off, provided the store is open and the run belongs to the caller.
 
 The worker waits while the generation gate is held; it does not preempt chat.
-A new chat arriving during an already-running suggestion may receive `CHAT_BUSY`.
+Chat preempts it instead: a new chat arriving during a running suggestion aborts
+that model call, and the input is requeued to run once the model is idle.
 The local OpenAI-compatible model receives no tools/web or recalled facts, with
 temperature 0 and max_tokens 1024. Redactors/scanners are bounded safeguards,
 not a guarantee that arbitrary secrets or hallucinations are detected. Human
