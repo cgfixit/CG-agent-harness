@@ -22,7 +22,7 @@ invariants to "match" CyClaw product policy.
 
 ### Step 1 — Read contracts + status
 
-1. Read `docs/parity/*` (ledger, status, any PORT_PARITY notes).
+1. Read `docs/parity/*` (ledger, status).
 2. Run:
 
    ```text
