@@ -121,9 +121,10 @@ cloud proposers and no change to explicit confirm/reason or write gates.
   Dollars are read-time only; never persist `usd`, prompts, or keys. Local
   rows are unpriced. Pull/warmup/MCP dispatch are not ledger events. Guarded
   `GET /api/spend/summary` is the rollup. `usage_reported` is honest (both
-  counts must be JSON numbers). Empty-text 2xx still records
-  `failed_after_billing`. Completeness is for retained generations, not lifetime
-  billing; unknown/local costs are not zero. The ledger view is read-only.
+  counts must be JSON numbers). Empty-text or unfinished (truncated) cloud 2xx
+  still records `failed_after_billing` and is never shown or saved. Completeness
+  is for retained generations, not lifetime billing; unknown/local costs are not
+  zero. The ledger view is read-only.
   Explicit `POST /api/spend/predict` counts only the supplied cloud draft: Claude
   vendor count with bounded fallback, Grok UTF-8 bytes/4. It creates no ledger
   row. Reserve full output without cache credit; cap missing/null is ungated,
