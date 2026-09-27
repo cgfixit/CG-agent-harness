@@ -432,6 +432,16 @@ impl CloudChat {
             Provider::Grok => grok_text(&body),
             Provider::Claude => claude_text(&body),
         };
+        // Completion is judged before text: an empty reply cut off by the token cap
+        // should say "truncated", not "no text".
+        let text = match completion_error(config.provider, &body) {
+            Some(error) => Err(error
+                .detail("prompt_tokens", tokens.input_tokens.unwrap_or(0))
+                .detail("completion_tokens", tokens.output_tokens.unwrap_or(0))
+                .detail("usage_reported", tokens.usage_reported())
+                .detail("output_bytes", text.as_ref().map_or(0, String::len))),
+            None => text,
+        };
         let outcome = if text.is_err() {
             Some("failed_after_billing")
         } else {
@@ -484,6 +494,60 @@ impl CloudChat {
 
 fn claude_input(config: &ProviderConfig, message: &str) -> Value {
     json!({"model":config.model,"messages":[{"role":"user","content":message}]})
+}
+
+/// Refuse a reply the provider did not report as finished, the way local chat
+/// refuses `finish_reason: "length"`: truncated text is never shown or saved as a
+/// complete answer. Claude ends normally with `stop_reason: "end_turn"`; this
+/// client sends no tools or stop sequences, so any other value, or none, is
+/// refused. xAI's Responses API reports `status: "completed"`; `incomplete` or a
+/// missing status is refused.
+fn completion_error(provider: Provider, body: &Value) -> Option<HarnessError> {
+    // Provider text is echoed back only when it looks like an enum value.
+    let reported = |pointer: &str| match body.pointer(pointer).and_then(Value::as_str) {
+        Some(value) if value.len() <= 40 && value.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') => {
+            value.to_string()
+        }
+        Some(_) => "unrecognized".to_string(),
+        None => "missing".to_string(),
+    };
+    let (field, value, expected, truncated) = match provider {
+        Provider::Claude => {
+            let reason = reported("/stop_reason");
+            if reason == "end_turn" {
+                return None;
+            }
+            let truncated = matches!(reason.as_str(), "max_tokens" | "model_context_window_exceeded");
+            ("stop_reason", reason, "stop_reason=end_turn", truncated)
+        }
+        Provider::Grok => {
+            let status = reported("/status");
+            if status == "completed" {
+                return None;
+            }
+            let incomplete = reported("/incomplete_details/reason");
+            let truncated = status == "incomplete" && incomplete == "max_output_tokens";
+            let value = if status == "incomplete" {
+                format!("incomplete ({incomplete})")
+            } else {
+                status
+            };
+            ("status", value, "status=completed", truncated)
+        }
+    };
+    let name = provider.name();
+    let message = if truncated {
+        format!(
+            "{name} cloud chat output was truncated ({field}={value}); the reply was not saved. Reduce the \
+             requested output or raise models.cloud_chat.max_tokens before retrying"
+        )
+    } else {
+        format!(
+            "{name} cloud chat did not report a normal completion ({field}={value}; {expected} required); \
+             the reply was not saved"
+        )
+    };
+    Some(err(message).detail(field, value))
 }
 
 fn grok_text(body: &Value) -> Result<String> {
@@ -680,7 +744,7 @@ mod tests {
             }))
             .route("/messages", post(move |axum::Json(body): axum::Json<Value>| {
                 generated.lock().unwrap().push(("generate".into(), body));
-                async { axum::Json(json!({"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":25,"output_tokens":1}})) }
+                async { axum::Json(json!({"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":25,"output_tokens":1}})) }
             }))).await;
         let mut chat = enabled_chat();
         chat.claude.model = "claude-sonnet-5".into();
@@ -845,7 +909,7 @@ mod tests {
 
     fn grok_body(len: usize) -> Vec<u8> {
         let prefix =
-            br#"{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{},"padding":""#;
+            br#"{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{},"padding":""#;
         let suffix = br#""}"#;
         assert!(len >= prefix.len() + suffix.len());
         [
@@ -871,6 +935,95 @@ mod tests {
         assert!(!spend::parse_grok_usage(missing.get("usage")).usage_reported());
     }
 
+    #[test]
+    fn cloud_replies_must_report_a_normal_completion() {
+        let claude = |reason: Value| json!({"content":[{"type":"text","text":"partial"}],"stop_reason":reason});
+        assert!(completion_error(Provider::Claude, &claude(json!("end_turn"))).is_none());
+        for reason in ["max_tokens", "model_context_window_exceeded"] {
+            let error = completion_error(Provider::Claude, &claude(json!(reason))).unwrap();
+            assert!(error.message.contains("truncated"), "{reason}: {}", error.message);
+            assert_eq!(error.details["stop_reason"], reason);
+        }
+        for reason in [
+            json!("refusal"),
+            json!("stop_sequence"),
+            json!("tool_use"),
+            json!("pause_turn"),
+            json!(null),
+            json!(42),
+        ] {
+            let error = completion_error(Provider::Claude, &claude(reason.clone())).unwrap();
+            assert!(error.message.contains("did not report a normal completion"), "{reason}");
+        }
+        let missing = completion_error(Provider::Claude, &json!({"content":[]})).unwrap();
+        assert!(missing.message.contains("stop_reason=missing"), "{}", missing.message);
+        // Provider text is not reflected back unless it looks like an enum value.
+        let odd = completion_error(Provider::Claude, &claude(json!("<b>PRIVATE</b>"))).unwrap();
+        assert!(!odd.message.contains("PRIVATE"));
+        assert_eq!(odd.details["stop_reason"], "unrecognized");
+
+        let grok = |status: Value, details: Value| json!({"status":status,"incomplete_details":details,"output":[]});
+        assert!(completion_error(Provider::Grok, &grok(json!("completed"), json!(null))).is_none());
+        let cut = completion_error(
+            Provider::Grok,
+            &grok(json!("incomplete"), json!({"reason":"max_output_tokens"})),
+        )
+        .unwrap();
+        assert!(cut.message.contains("truncated") && cut.message.contains("max_output_tokens"));
+        for (status, details) in [
+            (json!("incomplete"), json!({"reason":"content_filter"})),
+            (json!("in_progress"), json!(null)),
+            (json!(null), json!(null)),
+        ] {
+            let error = completion_error(Provider::Grok, &grok(status.clone(), details)).unwrap();
+            assert!(error.message.contains("did not report a normal completion"), "{status}");
+        }
+        let missing = completion_error(Provider::Grok, &json!({"output":[]})).unwrap();
+        assert!(missing.message.contains("status=missing"), "{}", missing.message);
+    }
+
+    #[tokio::test]
+    async fn truncated_cloud_replies_are_billed_refused_and_never_returned() {
+        let (origin, server) = serve(
+            Router::new()
+                .route(
+                    "/messages",
+                    post(|| async {
+                        axum::Json(json!({"content":[{"type":"text","text":"PARTIAL_ANSWER"}],"stop_reason":"max_tokens","usage":{"input_tokens":7,"output_tokens":16}}))
+                    }),
+                )
+                .route(
+                    "/responses",
+                    post(|| async {
+                        axum::Json(json!({"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":"PARTIAL_ANSWER"}]}],"usage":{"input_tokens":7,"output_tokens":16}}))
+                    }),
+                ),
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("spend.jsonl");
+        let mut chat = enabled_chat();
+        chat.claude.endpoint = format!("{origin}/messages");
+        chat.grok.endpoint = format!("{origin}/responses");
+        chat.attach_spend(ledger.clone());
+        for provider in ["claude", "grok"] {
+            let refused = chat.chat(provider, "PRIVATE_PROMPT").await.unwrap_err();
+            assert_eq!(refused.code, LLM_ERROR_CODE);
+            assert!(refused.message.contains("truncated"), "{provider}: {}", refused.message);
+            assert_eq!(refused.details["completion_tokens"], 16);
+            assert_eq!(refused.details["usage_reported"], true);
+            assert_eq!(refused.details["output_bytes"], "PARTIAL_ANSWER".len());
+            let shown = format!("{} {}", refused.message, refused.details);
+            assert!(!shown.contains("PARTIAL_ANSWER") && !shown.contains("PRIVATE_PROMPT"));
+        }
+        // Billed once each, recorded as unusable, with no content in the ledger.
+        let rows = std::fs::read_to_string(&ledger).unwrap();
+        assert_eq!(rows.lines().count(), 2);
+        assert_eq!(rows.matches("failed_after_billing").count(), 2);
+        assert!(!rows.contains("PARTIAL_ANSWER") && !rows.contains("PRIVATE_PROMPT"));
+        server.abort();
+    }
+
     #[tokio::test]
     async fn empty_text_2xx_appends_failed_after_billing_without_prompt_or_key() {
         let dir = tempfile::tempdir().unwrap();
@@ -881,7 +1034,7 @@ mod tests {
                 Response::builder()
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(
-                        r#"{"output":[],"usage":{"input_tokens":2,"output_tokens":0,"cost_in_usd_ticks":1}}"#,
+                        r#"{"status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":0,"cost_in_usd_ticks":1}}"#,
                     ))
                     .unwrap()
             }),
