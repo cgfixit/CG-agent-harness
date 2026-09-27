@@ -109,8 +109,8 @@ pending proposals only. Automatic consolidation is a separate default-true
 gate that also requires consolidation (AND); when on, a bounded idle worker
 may enqueue the same pending-proposal runner. Feature-off starts no worker.
 Disabling stops new claims without corrupting in-flight work. Interactive
-chat wins generation-gate contention; a running completion suggestion is stopped
-and requeued rather than refusing chat. Independently gated completion suggestions
+chat wins generation-gate contention, preempting (and requeuing) a running
+completion suggestion. Independently gated completion suggestions
 require store + capture, use bounded current completion evidence for the initiating
 owner, and produce pending proposals only. They never read shared archives or
 write human semantic summaries. `/memory save <text> :: <reason>` is an explicit

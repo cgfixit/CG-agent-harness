@@ -125,11 +125,10 @@ default), lost on restart, and never backfilled from history. Failures do not
 fail completed chat/coding results. Session clear invalidates waiting/in-flight
 chat suggestions. Existing proposals/facts retain their existing deletion rules.
 The worker waits for the shared generation gate; it cannot interrupt active chat.
-A chat arriving during an active suggestion stops it rather than receiving
-`CHAT_BUSY`: the suggestion's model call is aborted, its run is marked `cancelled`,
-and the input returns to the front of the queue to run once the model is idle
-(the queue TTL still applies). Run cancellation requires the open store and owner
-match, even if manual consolidation is off.
+Chat preempts an active suggestion instead of receiving `CHAT_BUSY`: its model call
+is aborted, its run marked `cancelled`, and its input requeued at the front. Run
+cancellation requires the open store and owner match, even if manual consolidation
+is off.
 
 See [MEMORY_GUIDE.md](MEMORY_GUIDE.md) for all memory types, bounds, config recipes,
 manual hard-save with automation off, and retrieval behavior. See
