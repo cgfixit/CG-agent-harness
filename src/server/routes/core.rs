@@ -747,15 +747,19 @@ async fn chat_inner(
             .saturating_add(MIN_PROMPT_HEADROOM)
             .saturating_add(crate::server::compaction::calibrated_tokens(tool_tokens, ratio))
             .min(MAX_PROMPT_TOKENS);
-        let mut threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
-        let mut limit_source = "chat.compact_prompt_tokens";
-        if settings.web_enabled && !req.loop_turn {
-            let web_room = crate::server::compaction::web_prompt_limit(web.limits.total_tokens, reservation);
-            if web_room < threshold {
-                threshold = web_room.max(minimum_threshold);
-                limit_source = "web.total_tokens";
-            }
-        }
+        // The reply budget of this turn: /loop turns reserve their own.
+        let reply_setting = if req.loop_turn {
+            "api.harness_loop_rate_limit.max_tokens"
+        } else {
+            "models.local_llm.max_tokens"
+        };
+        let web_chat = settings.web_enabled && !req.loop_turn;
+        let (threshold, limit_source) = crate::server::compaction::prompt_limit(
+            configured_threshold,
+            web_chat.then(|| crate::server::compaction::web_prompt_limit(web.limits.total_tokens, reservation)),
+            minimum_threshold,
+            reply_setting,
+        );
         // Name the setting that actually bounds this prompt: "start a new session"
         // cannot help when the system prompt and reply reservation fill the limit.
         let too_large = |what: &str, projected: u64, compacted: u64| {
@@ -767,17 +771,14 @@ async fn chat_inner(
                 "threshold": threshold,
                 "limit_source": limit_source,
             }));
-            let remedy = if limit_source == "web.total_tokens" {
-                "shorten the message, lower models.local_llm.max_tokens, raise web.total_tokens, or turn web off"
-            } else {
-                "shorten the message or raise chat.compact_prompt_tokens"
-            };
+            let remedy =
+                crate::server::compaction::prompt_limit_remedy(limit_source, threshold, reply_setting, web_chat);
             ApiError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "CHAT_PROMPT_TOO_LARGE",
                 format!(
-                    "{what} the {threshold}-token prompt limit (set by {limit_source}; models.local_llm.max_tokens \
-                     reserves {reservation} of those tokens for the reply); {remedy}"
+                    "{what} the {threshold}-token prompt limit (set by {limit_source}; {reply_setting} reserves \
+                     {reservation} of those tokens for the reply); {remedy}"
                 ),
             )
             .details(json!({
