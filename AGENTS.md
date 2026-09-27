@@ -179,23 +179,15 @@ Read the relevant entrypoint under `.codex/skills` when its task applies:
 
 ## Project Claude skills
 
-The eight Codex twins above that are not optimize/release/verify
-(`fable-protocol`, `cgagentharness-invariant-guard`, `cgagentharness-gotchas`,
-`cgagentharness-project-guidance`, `cgagentharness-write-policy-redteam`,
-`verification-specialist`, `cgagentharness-config-guard`, `cgagentharness-parity`)
-are mirrored under `.claude/skills/<slug>/SKILL.md`, plus a Claude-depth
-`cgagentharness-optimize/SKILL.md` playbook (the `.codex` twin stays the short
-runtime). Claude Code also has three read-only verification/report skills that
-Codex does not: `cgagentharness-doc-sync`, `cgagentharness-verify-deps`, and
-`cgagentharness-runtime-invariant-check`. Two further Claude-only skills
-actively write fixes instead of only reporting drift: `doc-sync` (README,
-AGENTS.md, setup-guide.md, `docs/*.md`) and `dep-sync` (Cargo manifests/locks,
-`rust-toolchain.toml`, `deny.toml`, CI/release YAML), each diffing against
-`origin/main` or the branch's upstream. A separate `run-cg-agent-harness`
-skill drives a local fake-model console smoke and has no slash command. Every
-other Claude skill above is registered as `.claude/commands/<slug>.md`
-(`/fable-protocol`, `/cgagentharness-doc-sync`, `/doc-sync`, `/dep-sync`, etc.)
-and loads the matching `SKILL.md`.
+Claude Code runs each `.claude/skills/<slug>/SKILL.md` as `/<slug>`; a skill
+marked `disable-model-invocation: true` runs only when the operator types it.
+The Codex skills above, except release and verify, are mirrored there;
+`fable-protocol` and `cgagentharness-optimize` are instead long playbooks behind
+the short Codex versions. Claude-only: `cgagentharness-verify-deps` and
+`cgagentharness-runtime-invariant-check` (report only), `dep-sync` (fixes Cargo,
+toolchain, `deny.toml` and CI/release drift against `origin/main`), `doc-sync`
+(rewrites existing docs to match the code) and `run-cg-agent-harness`
+(fake-model console smoke).
 
-These are repository guidance, not application `/api/skills` runtime plugins.
-Existing user authorization governs publication; selecting a skill adds none.
+Both skill trees are repository guidance, not application `/api/skills` runtime
+plugins. Existing user authorization governs publication; selecting a skill adds none.
