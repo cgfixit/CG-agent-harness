@@ -194,7 +194,7 @@ not a successful sandbox probe. `/tools mcp` renders that policy in the console.
 
 Run and job routes both go through `agent::prepare_run`, then cross the shim
 into a child process; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
-[GIT_APPROVAL.md](GIT_APPROVAL.md).
+[CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
 
 ## Completion webhooks
 

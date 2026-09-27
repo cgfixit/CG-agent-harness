@@ -27,7 +27,7 @@ Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
 > `admin` / `admin` — replace the password immediately. Repository mutations
 > stay disabled until explicitly configured, and commit, push and draft-PR
 > publication each require a **separate** operator decision. Details:
-> [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md), [GIT_APPROVAL.md](docs/GIT_APPROVAL.md),
+> [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md), [CODING_PIPELINE.md](docs/CODING_PIPELINE.md#git-approval-and-publication),
 > [INVARIANTS.md](INVARIANTS.md).
 
 ## Quickstart
@@ -210,7 +210,7 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 | [docs/MODELS.md](docs/MODELS.md) | Ollama inventory and `OLLAMA_CONTEXT_LENGTH=32768` |
 | [docs/DESKTOP.md](docs/DESKTOP.md) | App ownership, setup/recovery, packaging, distribution limits |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Toolchains, lockfiles, retained pins |
-| [docs/OFFLINE_CARGO.md](docs/OFFLINE_CARGO.md) | Locked dependency set for sandboxed Cargo checks |
+| [Offline Cargo verification](docs/CODING_PIPELINE.md#offline-cargo-verification) | Locked dependency set for sandboxed Cargo checks |
 | [docs/RELEASING.md](docs/RELEASING.md) | Release cadence, tagging, manual preview/publish |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptom table |
 | [assets/config.default.yaml](assets/config.default.yaml) | Shipped settings and configurable budgets |
@@ -234,8 +234,8 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 | Document | Purpose |
 |---|---|
 | [docs/CODING_PIPELINE.md](docs/CODING_PIPELINE.md) | Optional disarmed coding loop and cloud-planner egress |
-| [docs/BOUNDED_EDITS.md](docs/BOUNDED_EDITS.md) | Exact-content edit format, scope and budget |
-| [docs/GIT_APPROVAL.md](docs/GIT_APPROVAL.md) | Approval binding, commit/push/publish separation |
+| [Bounded edits](docs/CODING_PIPELINE.md#bounded-edits) | Exact-content edit format, scope and budget |
+| [Git approval](docs/CODING_PIPELINE.md#git-approval-and-publication) | Approval binding, commit/push/publish separation |
 | [docs/CONSOLE_JOBS.md](docs/CONSOLE_JOBS.md) | Asynchronous console runs and browser acceptance |
 | [docs/PROCESS_LIFECYCLE.md](docs/PROCESS_LIFECYCLE.md) | Child-process timeouts, cancellation, descendant cleanup |
 | [docs/API_ROUTES.md](docs/API_ROUTES.md) | Registered HTTP route inventory |
