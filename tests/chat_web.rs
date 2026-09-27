@@ -327,6 +327,101 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
 }
 
 #[tokio::test]
+async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
+    // A 504-character title makes the second page's smallest result about 180
+    // tokens, 360 at the learned ratio of 2: more than an uncalibrated 256-token
+    // reserve, less than the calibrated 512.
+    let title = "Release notes ".repeat(36);
+    let page = format!("<html><head><title>{title}</title></head><body><p>TITLED_EVIDENCE</p></body></html>");
+    let router = Router::new()
+        .route(
+            "/docs/big",
+            get(|| async { ([("content-type", "text/plain")], "PAGE_EVIDENCE ".repeat(2000)) }),
+        )
+        .route(
+            "/docs/titled",
+            get(move || {
+                let page = page.clone();
+                async move { ([("content-type", "text/html")], page) }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                // Report twice the sent size: the session learns a token ratio of about 2.
+                let prompt = (body["messages"].to_string().len()
+                    + body.get("tools").map_or(0, |tools| tools.to_string().len()))
+                    as u64
+                    / 2;
+                let messages = body["messages"].as_array().unwrap();
+                let last = messages.last().unwrap();
+                if last["role"] == "tool" {
+                    Json(common::ok_reply("Answer from both pages", prompt, 20))
+                } else if last["content"] == "fetch both pages" {
+                    let calls: Vec<_> = ["big", "titled"]
+                        .iter()
+                        .map(|page| {
+                            json!({"id":format!("call_{page}"),"type":"function","function":{"name":"web_fetch",
+                                "arguments":json!({"url":format!("http://docs.example/docs/{page}")}).to_string()}}) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                        })
+                        .collect();
+                    Json(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                        "tool_calls":calls}}],"usage":{"prompt_tokens":prompt,"completion_tokens":20}}))
+                } else {
+                    Json(common::ok_reply("Noted.", prompt, 20))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    // 25000 tokens leave the batch about 6k after two ~8.7k-token prompts and the
+    // 1024-token reply reservation, so the first page (about 12k at ratio 2) is cut.
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..Default::default()
+        }
+        .with("models.local_llm.provider", "lmstudio")
+        .with("models.local_llm.max_tokens", "512")
+        .with("web.total_tokens", "25000"),
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+            .await
+            .0,
+        200
+    );
+    let (status, body) = s.post_json("/api/chat", json!({"message": "hello"})).await;
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "fetch both pages", "session_id": body["session_id"]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "Answer from both pages", "{body}");
+    let first = body["web_tools"][0]["result"]["text"].as_str().unwrap();
+    assert!(
+        !first.is_empty() && first.len() < 24_000,
+        "the first page is cut to leave room: {} chars",
+        first.len()
+    );
+    let second = &body["web_tools"][1]["result"];
+    assert_eq!(second["title"], title.trim(), "{body}");
+    assert!(
+        second["text"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty() && "TITLED_EVIDENCE".starts_with(text)),
+        "{body}"
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn cancel_during_fetch_prevents_followup_model_call_and_releases_turn() {
     let started = Arc::new(tokio::sync::Notify::new());
     let signal = started.clone();

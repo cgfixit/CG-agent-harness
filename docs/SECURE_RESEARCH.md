@@ -224,9 +224,10 @@ their first read and executed sequentially. A turn allows
 at most `web.chat_tool_calls` (default 10, range 1–10), shares the chat timeout,
 and reserves estimated tokens against `web.total_tokens` before each model call.
 A tool call resends the whole prompt with its result, so tools are offered only
-while that follow-up fits beside a 256-token result, and each result is cut to
-the room left: a page keeps its longest fitting prefix, a listing drops trailing
-results. Withheld tools are reported as `WEB_TOKEN_BUDGET`.
+while that follow-up fits beside a minimal result (256 tokens, calibrated), and
+each result is cut to the room left, keeping that minimum per later call: a page
+keeps its longest fitting prefix, a listing drops trailing results. Withheld
+tools are reported as `WEB_TOKEN_BUDGET`.
 Reported usage sums all completed model calls; absent upstream usage remains
 marked unreported internally rather than being invented as actual token counts.
 Cancellation aborts the whole turn, including an outstanding content request.

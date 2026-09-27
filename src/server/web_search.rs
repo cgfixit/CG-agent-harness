@@ -20,8 +20,8 @@ pub const MAX_ALLOW: usize = MAX_RULES;
 pub const MAX_BYTES: usize = 262_144;
 const MAX_CONTEXT: usize = 4000;
 
-/// Smallest `web.evidence_tokens`, and the least room web chat keeps for a tool
-/// result before it offers tools.
+/// Smallest `web.evidence_tokens`, and (calibrated) the least room web chat keeps
+/// for each tool result it may still receive.
 pub const MIN_EVIDENCE_TOKENS: u64 = 256;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

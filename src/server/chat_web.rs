@@ -56,6 +56,12 @@ fn prompt_estimate(bytes: usize, token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens((bytes as u64).div_ceil(4), token_ratio)
 }
 
+/// Room kept for one minimal tool result, calibrated like the estimate that
+/// later charges it.
+fn min_result_tokens(token_ratio: f64) -> u64 {
+    super::compaction::calibrated_tokens(MIN_EVIDENCE_TOKENS, token_ratio)
+}
+
 fn tool_message(id: &str, result: &Value) -> Result<Value> {
     Ok(json!({"role":"tool","tool_call_id":id,"content":serde_json::to_string(result)?}))
 }
@@ -172,7 +178,7 @@ async fn run_inner(
         // only while that follow-up still fits beside a minimal result.
         let round_fits = budget_used
             .saturating_add(estimate.saturating_mul(2))
-            .saturating_add(MIN_EVIDENCE_TOKENS)
+            .saturating_add(min_result_tokens(token_ratio))
             .saturating_add(reservation)
             <= web.limits.total_tokens;
         if !round_fits && used_calls < web.limits.chat_tool_calls && !tools_withheld {
@@ -358,7 +364,7 @@ async fn run_inner(
             // web.total_tokens has left for it, with the estimate the next call uses,
             // keeping a minimal result's room for each later call in this batch.
             let sent = system.len() + serde_json::to_vec(&messages)?.len() + definition_bytes;
-            let later = MIN_EVIDENCE_TOKENS.saturating_mul((calls.len() - index - 1) as u64);
+            let later = min_result_tokens(token_ratio).saturating_mul((calls.len() - index - 1) as u64);
             let result = match result {
                 Ok(value) => fit_result(value, |candidate| {
                     let bytes = sent + 1 + serde_json::to_vec(&tool_message(id, candidate)?)?.len();
