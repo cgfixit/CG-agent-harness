@@ -150,6 +150,17 @@ cloud proposers and no change to explicit confirm/reason or write gates.
   does not fail CI. Read it before merging. Resolving a thread fires no webhook,
   so re-run the job if the last thread was resolved without a push.
 
+## Docs policy
+
+Do not create Markdown files. Edit the section that owns the topic, and link to
+it instead of restating it. Evidence (acceptance runs, closeouts, verification
+notes) goes in the PR body or an issue comment; screenshots go in
+`docs/screenshots/`. `DOCS_BUDGET` in `tests/invariant_guard.rs` fails on any
+`.md` without a row (tracked or not), on a file or group over its word cap, on
+anything new under a root `screenshots/` or a PDF under `docs/`, and on a new
+file over 1 MiB. A new row or a raised cap needs the operator's approval and a
+`// why:` comment in the same PR.
+
 ## Project Codex skills
 
 Read the relevant entrypoint under `.codex/skills` when its task applies:
