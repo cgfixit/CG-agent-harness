@@ -16,19 +16,20 @@ monitoring; submitted jobs and saved run records remain on the server. Use
 
 ## Spend and completion notifications
 
-Open **Spend** in a supported build to inspect retained provider/model/day usage.
-Refresh rereads the ledger; Previous/Next page through at most 100 groups at a
+Open **Analytics** → **Tokens and cost** to inspect retained provider/model/day usage.
+Refresh rereads the ledger; Previous/Next page through at most 25 groups at a
 time. Unknown usage and local inference remain unpriced. Check completeness
 and stale-rate warnings before interpreting a total. Close, Escape and logout
 clear this view; they do not erase the ledger.
 
-For an unsent cloud draft, choose **Estimate draft**. Claude sends that text
+For an unsent cloud draft, choose **Estimate draft** in that tab. Claude sends that text
 for token counting; Grok uses a labelled bytes/4 estimate. The preview reserves
 full output, warns about CJK and unknown/stale rates, and shows the optional
 per-call cap decision. Local inference is unpriced; count-only requests do not
 change the ledger. See [estimation and caps](SPEND_AND_NOTIFICATIONS.md#estimate-a-cloud-draft-and-configure-a-per-call-cap).
 
-Completion webhooks are separately configured, default-off and restart-only.
+Completion webhooks are separately configured, default-off and restart-only;
+the **Job webhooks** header button appears only while they are enabled.
 They send job ID, status and timestamps, with bounded retries and no job content.
 The queue is in memory and is not replayed after restart. Follow
 [Spend and completion notifications](SPEND_AND_NOTIFICATIONS.md) for build
@@ -321,11 +322,12 @@ specified in [MEMORY_BENCHMARK_PLAN.md](MEMORY_BENCHMARK_PLAN.md).
 
 ## Session, token and code analytics
 
-Choose **Analytics** or use `/analytics` in the console to view retained ledger
+Choose **Analytics** (shown after sign-in) or use `/analytics` in the console to view retained ledger
 usage, session token and message counts, creation-date bars and coding-run outcomes. **Refresh** rereads
 the data; Previous/Next shows 25 rows in the selected section. Close, Escape and
 account transitions clear the dialog. Disabled coding and incomplete ledgers remain
-explicit; no inference or repository action is started. Histories are shared
+explicit; no inference or repository action is started, and only an explicit
+**Estimate draft** sends the unsent draft for token counting. Histories are shared
 portal resources available to administrators and operators, not auditors. See
 [Analytics](ANALYTICS.md) for API fields, retention limits and interpretation.
 Section tabs support arrow keys; each keeps its own filter and 25-row page.

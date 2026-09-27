@@ -6,7 +6,7 @@ Index: [setup-guide.md](../setup-guide.md). Models: [MODELS.md](MODELS.md). Codi
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Spend is absent, or completeness is unknown | Installed build lacks the dashboard or summary-integrity changes | Check the installed source commit against [feature requirements](SPEND_AND_NOTIFICATIONS.md#build-requirements); refresh after upgrading |
+| Spend is absent from Analytics → Tokens and cost, or completeness is unknown | Installed build lacks the dashboard or summary-integrity changes | Check the installed source commit against [feature requirements](SPEND_AND_NOTIFICATIONS.md#build-requirements); refresh after upgrading |
 | Spend reports partial, unreadable, too large or invalid UTF-8 | One retained ledger generation could not be fully summarized | Preserve the ledger before investigating permissions, corruption or size. See [status meanings](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero); missing evidence is not zero spend |
 | A job finished but no webhook arrived | Notifications off, no restart, refused destination, queue overflow or delivery failure | Inspect `notification_delivery` / `notification_dropped` in audit and the authoritative `/agent job <id>` result; do not rerun the job to retry notification |
 | Webhook receiver reports duplicates | A response was lost and the same batch was retried | Deduplicate `batch_id` / `X-CGAgentHarness-Batch-ID`; at most three attempts are made |

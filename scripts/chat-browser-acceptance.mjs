@@ -12,6 +12,8 @@ const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
 let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
+let automationFixture=null; // null keeps the unknown-path {} reply for the header feature probes
+const headerState='["openAnalytics","openDeliveries","openSchedules"].filter(id=>!document.getElementById(id).hidden).join()';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 let memoryEnabled=false, structuredOpen=true;
 let latestEpisode={id:'episode_labeled_latest',outcome:'completed',semantic_summary:null};
@@ -99,6 +101,15 @@ const server=createServer(async(req,res)=>{
   reply({selected:session.selected||[],last_result:[],ready:true});return;
  }
  if(path==='/api/agent/checks'){reply({profiles:[{name:'cargo-fmt'}],default_profile:'cargo-test',capabilities:{jobs:true},planner_model:'mock'});return;}
+ if(path==='/api/notifications'||path==='/api/tools'){
+  if(authFixture&&!signedIn){reply({detail:{code:'AUTH_REQUIRED',message:'authentication required'}},401);return;}
+  if(authFixture&&(mustChange||authRole==='audit')){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
+  if(automationFixture){reply(path==='/api/notifications'?{enabled:automationFixture.notifications,destinations:[],deliveries:[]}:{tools:[{name:'agent-schedule-start',path:'/api/agent/schedules',enabled:automationFixture.agentic}],wired:1,total:1});return;}
+ }
+ if(path==='/api/spend/predict'){
+  assert.equal(req.method,'POST');assert.equal(req.headers['x-cyclaw-csrf'],'fixture');
+  reply({model:'mock-cloud',usd:0.000125,input_tokens:4,reserved_output_tokens:16,estimate_source:'vendor_count',max_usd_per_call:null,budget_applies:false,budget_exceeded:false,priced_as_of:'2026-09-20',rates_stale:false});return;
+ }
  if(path==='/api/skills/check'){
   if(body.id!=='check:cargo-fmt'){reply({detail:{code:'SKILL_ID',message:'Unknown fixed check'}},400);return;}
   reply({id:body.id,profile:'cargo-fmt',executed:false});return;
@@ -257,6 +268,23 @@ try {
  await until('document.getElementById("sSoulV").textContent === "missing"');
  await until('document.getElementById("hAuthWho").textContent.includes("authentication disabled")');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'disabled-auth homes must not advertise a login');
+ // Header: Analytics once the account state is known; automation only when its probe reports it enabled.
+ await until('!document.getElementById("openAnalytics").hidden');
+ const firstProbe=requests.findIndex(r=>r[1]==='/api/notifications'||r[1]==='/api/tools');
+ assert.ok(firstProbe>requests.findIndex(r=>r[1]==='/api/auth/whoami'),'feature probes wait for the account state');
+ assert.equal(await evaluate('refreshHeaderFeatures(true).then(()=>'+headerState+')'),'openAnalytics','unknown {} probe replies keep automation hidden');
+ assert.equal(await evaluate('document.getElementById("openSpend")'),null,'Spend is folded into Analytics');
+ assert.equal(await evaluate('document.getElementById("openDeliveries").textContent'),'Job webhooks');
+ assert.ok(await evaluate('document.getElementById("analyticsTokensPanel").contains(document.getElementById("predictSpend"))'));
+ await evaluate('document.getElementById("input").value="estimate this draft";document.getElementById("openAnalytics").click()');
+ await until('document.getElementById("analyticsDialog").open && document.getElementById("analyticsStatus").textContent.startsWith("Updated")');
+ await evaluate('document.getElementById("predictSpend").click()');
+ await until('document.getElementById("spendPrediction").textContent.startsWith("mock-cloud: $0.000125")');
+ assert.equal(requests.filter(r=>r[1]==='/api/spend/predict').at(-1)[2].message,'estimate this draft');
+ await evaluate('document.getElementById("closeAnalytics").click()');
+ assert.equal(await evaluate('document.getElementById("spendPrediction").textContent'),'','closing Analytics clears the estimate');
+ assert.equal(await evaluate('document.activeElement.id'),'openAnalytics','focus returns to the header button');
+ await evaluate('document.getElementById("input").value=""');
  assert.ok(await evaluate('document.body.innerText.includes("Chat starts without an assigned repository")'));
  assert.equal(await evaluate('document.body.innerText.includes("agentic GitHub coding")'),false);
  await evaluate('agent("Branding fixture")');
@@ -533,8 +561,11 @@ try {
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("WEB_GOOGLE_CHALLENGE")'));
  assert.ok(!requests.some(r=>r[0]==='POST' && ['/api/agent/jobs','/api/agent/run'].includes(r[1])),'chat and skill staging never execute coding work');
  // The real browser must execute the minimal-status login and key editor flows.
- authFixture=true;await afterLoad(()=>call('Page.reload',{ignoreCache:true}));
+ const signedOutMark=requests.length;
+ authFixture=true;automationFixture={notifications:true,agentic:true};await afterLoad(()=>call('Page.reload',{ignoreCache:true}));
  await until('!document.getElementById("hAuthLoginBox").hidden');
+ assert.equal(await evaluate(headerState),'','signed-out consoles show no header automation buttons');
+ assert.equal(requests.slice(signedOutMark).some(r=>['/api/notifications','/api/tools'].includes(r[1])),false,'signed-out consoles send no feature probes');
  assert.equal(await evaluate('document.getElementById("hAuthHint")?.hidden'),false,'show the fresh-install login hint before authentication');
  assert.match(await evaluate('document.getElementById("hAuthHint").innerText'),/Default login is User: admin \/ Password: admin/);
  assert.ok(await evaluate('document.querySelector(".logo").compareDocumentPosition(document.getElementById("hAuthHint")) & Node.DOCUMENT_POSITION_FOLLOWING'));
@@ -544,9 +575,12 @@ try {
  await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("passwordDialog").open');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'hide bootstrap guidance after login');
+ assert.equal(await evaluate(headerState),'','a pending password replacement shows no header automation buttons');
  assert.match(await evaluate('document.getElementById("passwordHelp").innerText'),/Replace the initial admin password/);
  await evaluate('document.getElementById("passwordCurrent").value="admin";document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');assert.equal(mustChange,false);
+ await until(headerState+'==="openAnalytics,openDeliveries,openSchedules"');
+ assert.match(await evaluate('document.getElementById("openDeliveries").title'),/metadata-only.*coding job finishes/);
  await evaluate('document.querySelector("[data-pane=api-keys]").click()');
  await until('!!document.getElementById("saved-DEEPAGENT_API_KEY")');
  await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value="fixture-secret-value-1234";document.getElementById("saved-DEEPAGENT_API_KEY").form.requestSubmit()');
@@ -569,6 +603,7 @@ try {
  await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}; reviewedPRBodies.set("old", "body"); prBodyTarget="old"');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(await evaluate('currentSession'),null);
+ assert.equal(await evaluate(headerState),'','logout hides header automation buttons');
  assert.equal(await evaluate('pendingAgentRun'),null);assert.equal(await evaluate('shownAgentDiffs.size'),0);
  assert.equal(await evaluate('reviewedSoulProposal'),null);assert.equal(await evaluate('reviewedPRBodies.size'),0);
  assert.equal(await evaluate('prBodyTarget'),'');
@@ -578,6 +613,7 @@ try {
  await until('document.getElementById("pane-sessions").textContent.includes("Your role does not permit access to sessions.")');
  assert.equal(await evaluate('document.getElementById("hAuthWho").textContent'),'audit-fixture · audit','a session permission denial must not turn successful login into a network error');
  assert.equal(await evaluate('document.querySelectorAll("#pane-sessions button").length'),0,'auditors must not see New Session or Clear History controls');
+ assert.equal(await evaluate('refreshHeaderFeatures(true).then(()=>["openDeliveries","openSchedules"].every(id=>document.getElementById(id).hidden))'),true,'refused (403) probes keep automation hidden');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
  await evaluate('document.getElementById("stream").replaceChildren()');await send('/status');
  const auditorStatus=await evaluate('document.getElementById("stream").innerText');
@@ -585,10 +621,11 @@ try {
  assert.match(auditorStatus,/read.only/i,'auditor status must explain its read-only scope');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
+ assert.equal(await evaluate(headerState),'');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

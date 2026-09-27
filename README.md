@@ -126,7 +126,7 @@ phrasing only suggest, including retrieval that would otherwise start a chat.
 Slash-command tables:
 [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference).
 
-**Reviewed schedules.** The Schedules panel previews five occurrences before
+**Reviewed schedules.** When coding is enabled, the Schedules panel previews five occurrences before
 activating an owner-bound interval or cron calendar. IANA timezones, DST skips,
 persisted occurrence IDs and consume-before-dispatch recovery keep recurrence
 bounded; each attempt rechecks the existing goal and write gates. See
@@ -148,12 +148,12 @@ in fresh sessions. These are model instructions, not guaranteed formatting.
 Details: [Chat workflows](docs/CHAT_WORKFLOWS.md#inspect-and-edit-the-chat-prompt).
 
 **Memory, web, spend.** Memory enable steps: [MEMORY_SETUP.md](docs/MEMORY_SETUP.md).
-Web research rules: [WEB.md](docs/WEB.md). The Spend view reports retained
-usage and available costs. **Estimate draft** previews the selected cloud model's
+Web research rules: [WEB.md](docs/WEB.md). Analytics' **Tokens and cost** tab reports retained
+usage and available costs. Its **Estimate draft** previews the selected cloud model's
 input estimate and full output reservation; optional per-call caps can refuse
 generation. Claude counting sends only that draft. Optional completion webhooks send only job
 metadata through an owner-bound durable outbox and stay disabled until configured.
-The Deliveries panel inspects status and explicitly replays retained notifications
+Once enabled, the **Job webhooks** panel inspects status and explicitly replays retained notifications
 without restarting jobs. Setup and recovery limits:
 [SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md). MCP stderr
 capture bounds: [PROCESS_LIFECYCLE.md](docs/PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics).
@@ -169,7 +169,7 @@ publishes no tools until explicitly selected; the initial capabilities are
 owner-bound fact list/get/literal search only. It provides no memory writes,
 console login, chat, coding, or remote deployment authority.
 
-**Analytics.** The header button or `/analytics` opens searchable, independently
+**Analytics.** The header button (shown after sign-in) or `/analytics` opens searchable, independently
 paged token/cost, session and coding-run metrics with creation-date and outcome
 bars. Partial or unavailable data stays visible. See [analytics](docs/ANALYTICS.md) for scope, limits and the read-only API.
 

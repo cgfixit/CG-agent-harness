@@ -285,8 +285,7 @@
   /* The status bar row stays dense; the header fields get room for their labels. */
   .statusbar .apikey { padding: 3px 8px; }
   #harnessAuth .apikey { width: 160px; }
-#soulEditor, #sessionClearDialog, #spendDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
-#spendDialog { margin:auto;max-height:90vh; }
+#soulEditor, #sessionClearDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
 #analyticsDialog { width:calc(100% - 32px);max-width:1100px;max-height:92dvh;margin:auto;padding:0;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:12px;overflow:auto;box-shadow:0 24px 80px #0008; }
 #analyticsDialog::backdrop { background:#0009; }
 #analyticsDialog .analytics-header { position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 24px;background:var(--bg-secondary);border-bottom:1px solid var(--border); }
@@ -307,6 +306,8 @@
 #analyticsDialog .analytics-tabs { border-bottom:1px solid var(--border);padding-bottom:12px; }
 #analyticsDialog [aria-selected="true"] { background:var(--accent-amber);border-color:var(--accent-amber);color:#000;font-weight:650; }
 #analyticsDialog .analytics-controls label { display:flex;align-items:center;gap:8px; }
+#analyticsDialog .analytics-estimate { display:flex;align-items:center;gap:0 12px;flex-wrap:wrap; }
+#analyticsDialog .analytics-estimate p { flex:1 1 320px; }
 #analyticsDialog input { width:240px;max-width:100%; }
 #analyticsDialog .analytics-table { overflow:auto;max-height:40vh;border:1px solid var(--border);border-radius:6px; }
 #analyticsDialog .analytics-table:empty { border:0; }
@@ -327,12 +328,6 @@
   #analyticsDialog .analytics-controls label { width:100%;justify-content:space-between; }
   #analyticsDialog input { width:70%; }
 }
-#spendDialog p { margin:12px 0; }
-#spendDialog button { padding:6px 12px;margin:4px 8px 4px 0; }
-#spendDialog .spend-table { overflow:auto;max-height:55vh; }
-#spendDialog table { width:100%;border-collapse:collapse;text-align:left; }
-#spendDialog th, #spendDialog td { padding:8px;border-bottom:1px solid var(--border); }
-#spendDialog td { overflow-wrap:anywhere; }
 :is(#scheduleDialog, #notificationDialog) { margin:auto; width:min(760px,94vw); max-height:88vh; overflow:auto; padding:24px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); border-radius:10px; }
 :is(#scheduleDialog, #notificationDialog)::backdrop { background:#0009; }
 :is(#scheduleDialog, #notificationDialog) h2, :is(#scheduleDialog, #notificationDialog) h3, :is(#scheduleDialog, #notificationDialog) p { margin-bottom:12px; }
@@ -388,7 +383,7 @@
     #harnessAuth .apikey { flex: 1 1 120px; width: auto; }
     #send { padding: 9px 14px; }
     #sGoal { max-width: 90px; }
-    #soulEditor, #sessionClearDialog, #spendDialog { width: 94%; padding: 16px; }
+    #soulEditor, #sessionClearDialog { width: 94%; padding: 16px; }
     #pane-api-keys form { grid-template-columns: 1fr; }
   }
 
@@ -417,13 +412,12 @@
         <button class="toggle" id="hAuthPassword" type="button" hidden>change password</button>
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
       </span>
-      <button class="toggle" id="openAnalytics" type="button">Analytics</button>
-      <button class="toggle" id="openDeliveries" type="button">Deliveries</button>
-      <button class="toggle" id="openSchedules" type="button">Schedules</button>
-      <button class="toggle" id="openSpend" type="button">Spend</button>
+      <button class="toggle" id="openAnalytics" type="button" hidden>Analytics</button>
+      <button class="toggle" id="openDeliveries" type="button" hidden title="Outgoing, metadata-only notices sent to your configured URL when a coding job finishes">Job webhooks</button>
+      <button class="toggle" id="openSchedules" type="button" hidden>Schedules</button>
       <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
       <div class="pill model">model <b id="hModel">…</b></div>
-      <div class="pill" title="Recorded prompt and completion tokens for the selected session; separate from the Spend ledger">session · tokens <b id="hTokens">0</b></div>
+      <div class="pill" title="Recorded prompt and completion tokens for the selected session; separate from the cost ledger in Analytics">session · tokens <b id="hTokens">0</b></div>
       <div class="dot" id="hDot" title="server status"></div>
     </div>
   </div>
@@ -487,25 +481,6 @@
   <input id="agentPRBodyFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
   <input id="agentPlanFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
 
-<dialog id="spendDialog" aria-labelledby="spendTitle">
-  <h2 id="spendTitle">Inference spend</h2>
-  <p>Retained ledger history, grouped by provider, model and UTC day. Local inference is unpriced; amounts are recorded vendor costs or estimates, not invoices.</p>
-  <button id="refreshSpend" type="button">Refresh</button>
-  <button id="closeSpend" type="button">Close</button>
-  <p>Estimate the current unsent draft for the selected cloud model. Claude receives that text for token counting. History and attachments are excluded; local inference is unpriced.</p>
-  <button id="predictSpend" type="button">Estimate draft</button>
-  <p id="spendPrediction" role="status" aria-live="polite"></p>
-  <p id="spendStatus" role="status" aria-live="polite"></p>
-  <div class="spend-table">
-    <table><caption>Inference usage and cost</caption>
-      <thead><tr><th scope="col">UTC day</th><th scope="col">Provider</th><th scope="col">Model</th><th scope="col">Calls</th><th scope="col">Input tokens</th><th scope="col">Output tokens</th><th scope="col">USD</th></tr></thead>
-      <tbody id="spendRows"></tbody>
-    </table>
-  </div>
-  <button id="spendPrevious" type="button">Previous</button>
-  <span id="spendPage"></span>
-  <button id="spendNext" type="button">Next</button>
-</dialog>
 <dialog id="analyticsDialog" aria-labelledby="analyticsTitle" aria-describedby="analyticsDescription">
   <div class="analytics-header"><div><h2 id="analyticsTitle">Analytics</h2><p id="analyticsDescription">Your session history · shared spend and coding-run history</p></div>
     <div><button id="refreshAnalytics" type="button">Refresh</button> <button id="closeAnalytics" type="button" autofocus>Close</button></div></div>
@@ -528,7 +503,10 @@
       <label id="analyticsSortLabel" hidden>Sort sessions <select id="analyticsSort"><option value="tokens">Most tokens</option><option value="recent">Newest created</option><option value="title">Title A–Z</option></select></label>
     </div>
     <section id="analyticsTokensPanel" role="tabpanel" aria-labelledby="analyticsTokensTab" tabindex="0">
-      <h3>Tokens and cost</h3><p id="analyticsTokensStatus"></p><div id="analyticsTokens" class="analytics-table" tabindex="0" aria-label="Token and cost records"></div></section>
+      <h3>Tokens and cost</h3><p>Amounts are recorded vendor costs or estimates, not invoices.</p><p id="analyticsTokensStatus"></p>
+      <div class="analytics-estimate"><button id="predictSpend" type="button">Estimate draft</button><p>Estimate the current unsent draft for the selected cloud model. Claude receives that text for token counting. History and attachments are excluded; local inference is unpriced.</p></div>
+      <p id="spendPrediction" role="status" aria-live="polite"></p>
+      <div id="analyticsTokens" class="analytics-table" tabindex="0" aria-label="Token and cost records"></div></section>
     <section id="analyticsSessionsPanel" role="tabpanel" aria-labelledby="analyticsSessionsTab" tabindex="0" hidden>
       <h3>Sessions</h3><p id="analyticsSessionsStatus"></p><div id="analyticsSessions" class="analytics-table" tabindex="0" aria-label="Session records"></div>
       <p id="analyticsDaysStatus"></p><div id="analyticsDays" class="analytics-bars"></div></section>
@@ -556,7 +534,7 @@
   <h3>Saved schedules</h3><div id="scheduleRows"></div>
 </dialog>
 <dialog id="notificationDialog" aria-labelledby="notificationTitle">
-  <h2 id="notificationTitle">Your completion deliveries</h2>
+  <h2 id="notificationTitle">Your job webhook deliveries</h2>
   <button id="closeDeliveries" type="button" autofocus>Close</button><button id="refreshDeliveries" type="button">Refresh status</button>
   <p>Metadata-only notifications for your terminal coding jobs. A replay resends the same delivery ID and never reruns the job. Receivers must deduplicate IDs.</p>
   <p>Destinations and subscriptions require explicit owner-bound configuration in the private home's config.yaml and a restart. Pending attempts recheck grants and account authority; this panel grants no new destination.</p>
@@ -3350,7 +3328,7 @@ input.addEventListener('keydown', e => {
     e.preventDefault(); recallPrompt(e.key === 'ArrowUp' ? -1 : 1);
   }
 });
-/* Spend dashboard: guarded ledger reads; cloud draft counting is an explicit action. */
+/* Spend helpers for Analytics' Tokens and cost tab: guarded ledger view; cloud draft counting is an explicit action. */
 function spendSummaryView(data) {
   const complete = data.complete === true;
   let status = complete ? 'Complete for retained ledger files.' : data.complete === false
@@ -3360,14 +3338,14 @@ function spendSummaryView(data) {
   if (failed.length) status += ' Unavailable files: ' + failed.map(f => f.generation + ' (' + f.status + ')').join(', ') + '.';
   status += ' Rates dated ' + (data.priced_as_of || 'unknown') + (data.rates_stale ? ' — STALE; estimates need review.' : '.');
   const count = v => typeof v === 'number' && Number.isFinite(v) ? String(v) : 'Unknown';
+  const text = v => v ?? 'Unknown';
   const money = new Intl.NumberFormat('en-US', {style:'currency', currency:'USD', minimumFractionDigits:2, maximumFractionDigits:8});
-  const rows = (data.days || []).map(d => [d.day, d.provider, d.model, count(d.calls), count(d.input_tokens), count(d.output_tokens),
+  const rows = (data.days || []).map(d => [text(d.day), text(d.provider), text(d.model), count(d.calls), count(d.input_tokens), count(d.output_tokens),
     d.provider === 'local' ? 'Unpriced (local)' : typeof d.estimate?.usd === 'number' && Number.isFinite(d.estimate.usd)
       ? money.format(d.estimate.usd) : 'Unpriced / incomplete']);
   if (!rows.length) status += complete ? ' No inference rows in retained history.' : ' No usable rows; this is not proof of zero spend.';
   return {status, rows};
 }
-let spendRequest = 0, spendRows = [], spendPage = 0;
 let spendPredictionRequest = 0;
 async function predictSpend() {
   const draft = input.value.trim();
@@ -3379,7 +3357,7 @@ async function predictSpend() {
   $('spendPrediction').textContent = 'Estimating the draft; no generation is sent…';
   try {
     const p = await api('/api/spend/predict', 'POST', {message: draft});
-    if (request !== spendPredictionRequest || !$('spendDialog').open) return;
+    if (request !== spendPredictionRequest || !$('analyticsDialog').open) return;
     if (input.value.trim() !== draft) { $('spendPrediction').textContent = 'Draft changed. Estimate it again.'; return; }
     const amount = typeof p.usd === 'number' && Number.isFinite(p.usd) ? '$' + p.usd.toFixed(6) : 'Unpriced (unknown model rate)';
     const source = p.estimate_source === 'vendor_count' ? 'Provider token estimate; actual usage may differ.' : 'Rough bytes/4 input estimate; may undercount CJK.';
@@ -3388,38 +3366,15 @@ async function predictSpend() {
     $('spendPrediction').textContent = p.model + ': ' + amount + ' with ' + p.input_tokens + ' estimated input tokens and ' +
       p.reserved_output_tokens + ' output tokens reserved. ' + source + ' ' + gate + ' No cache discount or guaranteed bill ceiling. Rates: ' + p.priced_as_of + (p.rates_stale ? ' (stale).' : '.');
   } catch (e) {
-    if (request === spendPredictionRequest && $('spendDialog').open) $('spendPrediction').textContent = 'Estimate unavailable: ' + e.message;
+    if (request === spendPredictionRequest && $('analyticsDialog').open) $('spendPrediction').textContent = 'Estimate unavailable: ' + e.message;
   } finally {
     if (request === spendPredictionRequest) $('predictSpend').disabled = false;
   }
 }
-function paintSpendPage() {
-  const body = $('spendRows'); body.replaceChildren();
-  for (const row of spendRows.slice(spendPage * 100, (spendPage + 1) * 100)) {
-    const tr = document.createElement('tr');
-    for (const value of row) { const td = document.createElement('td'); td.textContent = String(value ?? 'Unknown'); tr.appendChild(td); }
-    body.appendChild(tr);
-  }
-  $('spendPrevious').disabled = spendPage === 0;
-  $('spendNext').disabled = (spendPage + 1) * 100 >= spendRows.length;
-  $('spendPage').textContent = spendRows.length ? 'Page ' + (spendPage + 1) + ' of ' + Math.ceil(spendRows.length / 100) : '';
-}
-function clearSpend() {
+function clearSpendPrediction() {
   ++spendPredictionRequest; $('spendPrediction').textContent = ''; $('predictSpend').disabled = false;
-  ++spendRequest; spendRows = []; spendPage = 0; paintSpendPage();
-  $('spendStatus').textContent = ''; $('spendDialog').close();
 }
-async function refreshSpend() {
-  const request = ++spendRequest;
-  spendRows = []; spendPage = 0; paintSpendPage(); $('spendStatus').textContent = 'Loading ledger…';
-  try {
-    const data = await api('/api/spend/summary');
-    if (request !== spendRequest || !$('spendDialog').open) return;
-    const view = spendSummaryView(data); spendRows = view.rows; paintSpendPage(); $('spendStatus').textContent = view.status;
-  } catch (e) {
-    if (request === spendRequest && $('spendDialog').open) $('spendStatus').textContent = 'Spend unavailable: ' + e.message;
-  }
-}
+/* End spend helpers. */
 /* ── owner-scoped delivery status and explicit replay ── */
 let notificationRevision = 0;
 function resetNotificationView() {
@@ -3559,8 +3514,8 @@ $('activateSchedule').addEventListener('click', async () => {
     await refreshSchedules();
   } catch (e) { if (revision === scheduleRevision) { scheduleReview = null; $('scheduleStatus').textContent = e.message; } }
 });
+/* End schedules. */
 
-$('openSpend').addEventListener('click', () => { $('spendDialog').showModal(); refreshSpend(); });
 $('reloadLimits').addEventListener('click', async () => {
   const button = $('reloadLimits'); button.disabled = true;
   try {
@@ -3569,14 +3524,7 @@ $('reloadLimits').addEventListener('click', async () => {
   } catch (e) { sys('Reload refused: ' + e.message); }
   finally { button.disabled = false; }
 });
-$('refreshSpend').addEventListener('click', refreshSpend);
-$('predictSpend').addEventListener('click', predictSpend);
-$('closeSpend').addEventListener('click', clearSpend);
-$('spendDialog').addEventListener('cancel', clearSpend);
-$('spendPrevious').addEventListener('click', () => { if (spendPage > 0) { --spendPage; paintSpendPage(); } });
-$('spendNext').addEventListener('click', () => { if ((spendPage + 1) * 100 < spendRows.length) { ++spendPage; paintSpendPage(); } });
-/* End spend dashboard. */
-/* Analytics: retained portal data; no inference or write controls. */
+/* Analytics: retained portal data and an explicit draft estimate; no inference or write controls. */
 let analyticsRequest = 0, analyticsData = null, analyticsSection = 'Tokens', analyticsOpener = null;
 const analyticsSections = ['Tokens', 'Sessions', 'Code'];
 const analyticsPages = {Tokens:0, Sessions:0, Code:0}, analyticsFilters = {Tokens:'', Sessions:'', Code:''};
@@ -3697,7 +3645,7 @@ function resetAnalyticsContent() {
 }
 
 function clearAnalytics() {
-  ++analyticsRequest; analyticsData = null;
+  ++analyticsRequest; analyticsData = null; clearSpendPrediction();
   for (const section of analyticsSections) { analyticsPages[section] = 0; analyticsFilters[section] = ''; }
   $('analyticsSort').value = 'tokens'; selectAnalyticsSection('Tokens'); resetAnalyticsContent();
   $('analyticsDialog').setAttribute('aria-busy', 'false'); $('refreshAnalytics').disabled = false;
@@ -3727,6 +3675,7 @@ async function refreshAnalytics() {
 }
 $('openAnalytics').addEventListener('click', () => openAnalytics($('openAnalytics')));
 $('refreshAnalytics').addEventListener('click', refreshAnalytics);
+$('predictSpend').addEventListener('click', predictSpend);
 $('closeAnalytics').addEventListener('click', clearAnalytics);
 $('analyticsDialog').addEventListener('cancel', e => { e.preventDefault(); clearAnalytics(); });
 for (const [index, section] of analyticsSections.entries()) {
@@ -3771,6 +3720,25 @@ function setHarnessLogoutVisible(on) {
   $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin';
   $('hAuthHint').hidden = on || !hAuthLoginBox || hAuthLoginBox.hidden;
 }
+/* Header automation buttons: hidden until the account state is known. Analytics
+   needs a usable account (signed in, or authentication disabled); Job webhooks
+   and Schedules also need their feature on. A failed probe (401, 403, network or
+   an unexpected reply) keeps that button hidden. A newer call discards older
+   probe replies, so a probe that finishes after logout cannot reveal a button. */
+let headerFeatureRevision = 0;
+async function refreshHeaderFeatures(usable) {
+  const revision = ++headerFeatureRevision;
+  $('openAnalytics').hidden = !usable;
+  $('openDeliveries').hidden = true; $('openSchedules').hidden = true;
+  if (!usable) return;
+  const probe = path => api(path).catch(() => null);
+  const [notifications, tools] = await Promise.all([probe('/api/notifications'), probe('/api/tools')]);
+  if (revision !== headerFeatureRevision) return;
+  $('openDeliveries').hidden = notifications?.enabled !== true;
+  // Every coding-pipeline row except /api/agent/checks reports agentic.enabled.
+  $('openSchedules').hidden = !(Array.isArray(tools?.tools) && tools.tools.some(t => t?.path === '/api/agent/schedules' && t.enabled === true));
+}
+/* End header automation buttons. */
 /* Both probes are bounded, matching terminal.js's refreshAuthUi. The catch
    below deliberately keeps the last-known UI on failure, but a bare fetch
    against a gateway that accepted the socket and then stalled never settles,
@@ -3785,6 +3753,7 @@ async function refreshHarnessAuth() {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(false);
+      refreshHeaderFeatures(true);
       if (who) who.textContent = 'authentication disabled by local configuration';
       return;
     }
@@ -3794,12 +3763,14 @@ async function refreshHarnessAuth() {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
+      refreshHeaderFeatures(!data.must_change_password);
       $('reloadLimits').hidden = data.role !== 'admin' || data.must_change_password;
       if (who) who.textContent = data.username + ' · ' + data.role;
       if (data.must_change_password) openPasswordChange(true);
       return;
     }
     clearAnalytics();
+    refreshHeaderFeatures(false);
     const setup = await fetchWithTimeout('/api/auth/setup-status', {}, 5000);
     if (setup.ok) {
       const status = await setup.json();
@@ -3838,6 +3809,7 @@ if (hAuthLogin) {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
+      refreshHeaderFeatures(!data.must_change_password);
       if (data.must_change_password) openPasswordChange(true);
       else { await refreshStatus(); await refreshSessions(); }
     } catch (e) {
@@ -3861,8 +3833,8 @@ if (hAuthLogout) {
     const claimed = ++sessionRevision;
     sendBtn.disabled = true;
     clearPendingAttachments();
-    clearSpend();
     clearAnalytics();
+    refreshHeaderFeatures(false);
     if (inflightChat) { try { inflightChat.abort(); } catch (e) { /* already finished */ } }
     try {
       const response = await fetchWithTimeout('/api/auth/logout', { method: 'POST', headers: headers }, 15000);
@@ -3878,7 +3850,7 @@ if (hAuthLogout) {
         const rejected = 'logout rejected (' + response.status + ')';
         if (response.status === 401 || response.status === 403) {
           await refreshHarnessAuth();
-        }
+        } else refreshHeaderFeatures(true); // The session was not ended; probes recheck it.
         const who = document.getElementById('hAuthWho');
         if (who) who.textContent = rejected;
         return;
@@ -3920,6 +3892,7 @@ if (hAuthSetupBtn) {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
+      refreshHeaderFeatures(!data.must_change_password);
     } catch (e) {
       if (who) who.textContent = 'network error: could not set password';
     }
