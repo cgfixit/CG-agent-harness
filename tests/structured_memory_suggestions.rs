@@ -381,6 +381,116 @@ async fn chat_preempts_a_running_suggestion_which_requeues_and_finishes_later() 
     assert!(!s.state.generation_gate.is_held());
 }
 
+/// While a chat turn waits for a suggestion to let go of the model, the turn is
+/// already registered, so /api/chat/cancel stops it instead of missing it.
+#[tokio::test]
+async fn chat_cancel_reaches_a_turn_waiting_for_a_suggestion_to_yield() {
+    let model = model().await;
+    let s = spawn_server(&model.base, options("both")).await;
+    // A suggestion that has not let go of the model yet.
+    let gate = s.state.generation_gate.claim(suggest::GATE_OWNER).unwrap();
+    let started = std::time::Instant::now();
+    let chat = s.post_json("/api/chat", json!({"message":"hello"}));
+    let cancel = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        s.post_json("/api/chat/cancel", json!({})).await
+    };
+    let ((code, body), (cancel_code, cancelled)) = tokio::join!(chat, cancel);
+    assert_eq!(
+        (cancel_code, &cancelled["cancelled"]),
+        (200, &json!(true)),
+        "{cancelled}"
+    );
+    assert_eq!(code, 502, "{body}");
+    assert_eq!(body["detail"]["code"], "WEB_CANCELLED", "{body}");
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "cancelled during the wait, not after it"
+    );
+    drop(gate);
+    // The cancelled turn left nothing behind: the next one runs.
+    let (code, body) = s.post_json("/api/chat", json!({"message":"hello again"})).await;
+    assert_eq!(code, 200, "{body}");
+}
+
+/// A run a chat turn preempted waits in the queue to resume. Its owner's cancel
+/// makes it final: the requeued suggestion does not restart it.
+#[tokio::test]
+async fn an_owner_cancel_stops_a_preempted_suggestion_from_resuming() {
+    let model = model().await;
+    model.delay.store(10_000, Ordering::SeqCst);
+    // A slow idle loop leaves time to cancel between the chat and the resume.
+    let s = spawn_server(
+        &model.base,
+        options("both").with("structured_memory.suggestion_idle_ms", "3000"),
+    )
+    .await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let (code, first) = s
+        .post_json("/api/chat", json!({"message":"I prefer metric units."}))
+        .await;
+    assert_eq!(code, 200, "{first}");
+    for _ in 0..1000 {
+        if !model.requests.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(model.requests.lock().unwrap().len(), 1, "the suggestion is generating");
+    model.delay.store(0, Ordering::SeqCst);
+    let (code, second) = s.post_json("/api/chat", json!({"message":"Also use Celsius."})).await;
+    assert_eq!(code, 200, "{second}");
+
+    let run = store
+        .list_consolidation_runs("local")
+        .unwrap()
+        .into_iter()
+        .find(|run| run.episode_ids[0] == first["episode"]["id"])
+        .unwrap();
+    assert_eq!(
+        (run.state.as_str(), run.error_class.as_deref()),
+        ("cancelled", Some("preempted"))
+    );
+    let (code, cancelled) = s
+        .post_json(
+            &format!("/api/structured-memory/consolidation/{}/cancel", run.id),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 200, "{cancelled}");
+    assert_eq!(cancelled["error_class"], "cancelled", "{cancelled}");
+
+    // Settle across two slow idle waits: the cancelled job, then the second chat's.
+    let mut quiet = false;
+    for _ in 0..1000 {
+        let status = suggest::status(&s.state, "local");
+        if status["queued"] == 0 && status["running"] == false {
+            quiet = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(quiet, "suggestion worker did not settle");
+    let run = store
+        .list_consolidation_runs("local")
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == run.id)
+        .unwrap();
+    assert_eq!((run.state.as_str(), run.proposal_count), ("cancelled", 0));
+    let first_requests = model
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            serde_json::from_str::<Value>(r["messages"][1]["content"].as_str().unwrap()).unwrap()["episode_id"]
+                == first["episode"]["id"]
+        })
+        .count();
+    assert_eq!(first_requests, 1, "the cancelled run was not resumed");
+}
+
 #[tokio::test]
 async fn generation_failure_leaves_completed_chat_usable_and_records_failure_without_facts() {
     let model = model().await;

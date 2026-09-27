@@ -289,9 +289,16 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         return Err(HarnessError::new("SUGGESTION_CANCELLED", "chat cleared"));
     }
     let ids = [job.episode.clone()];
-    let run = store.begin_consolidation_run(&job.owner, &ids, VERSION)?;
-    if run.state != "running" {
-        return Ok(());
+    let run = store.begin_suggestion_run(&job.owner, &ids, VERSION)?;
+    match run.state.as_str() {
+        "running" => {}
+        "cancelled" | "failed" => {
+            return Err(HarnessError::new(
+                "SUGGESTION_CANCELLED",
+                "the suggestion's run was cancelled or failed",
+            ))
+        }
+        _ => return Ok(()),
     }
     let result = async {
         let payload = json!({"source":job.source.name(),"episode_id":job.episode,"mode":mode(state),
@@ -360,8 +367,13 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
     }
     .await;
     if let Err(err) = &result {
-        // A preempted run is marked cancelled; the requeued job reuses it.
-        let class = if err.code == PREEMPTED { "cancelled" } else { &err.code };
+        // A preempted run is cancelled as `preempted`: the requeued job resumes
+        // it, unless its owner cancels it meanwhile.
+        let class = if err.code == PREEMPTED {
+            crate::server::structured_memory::PREEMPTED_CLASS
+        } else {
+            &err.code
+        };
         let _ = store.fail_consolidation_run(&job.owner, &run.id, class);
     }
     result

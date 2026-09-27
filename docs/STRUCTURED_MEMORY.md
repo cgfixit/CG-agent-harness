@@ -124,9 +124,10 @@ Waiting input is capped (8 jobs, 8000 total characters each, 300-second TTL by
 default), lost on restart, and never backfilled from history. Failures do not
 fail completed chat/coding results. Session clear invalidates waiting/in-flight
 chat suggestions. Existing proposals/facts retain their existing deletion rules.
-The worker waits for the shared generation gate; it cannot interrupt active chat.
+The worker waits for the generation gate and never interrupts chat.
 Chat preempts an active suggestion instead of receiving `CHAT_BUSY`: its model call
-is aborted, its run marked `cancelled`, and its input requeued at the front. Run
+is aborted, its run parked as `preempted` (an owner cancel ends it), and its input
+requeued ahead. Run
 cancellation requires the open store and owner match, even if manual consolidation
 is off.
 
