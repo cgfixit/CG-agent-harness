@@ -40,6 +40,32 @@ pub fn reply_reservation(backend: &ResolvedLocalBackend, max_tokens: u64) -> u64
     max_tokens.saturating_mul(multiplier)
 }
 
+/// Largest projected prompt (input plus one reply reservation) that web-enabled
+/// chat admits. The projection already carries one reservation, so subtracting
+/// one more leaves room for a second reply, after a tool round, inside
+/// `web.total_tokens`. Subtracting two here charged the reservation three times,
+/// which on a doubled-reservation backend is six times `max_tokens`.
+pub fn web_prompt_limit(web_total_tokens: u64, reservation: u64) -> u64 {
+    web_total_tokens.saturating_sub(reservation)
+}
+
+/// Why web-enabled chat cannot fit a usable prompt with these settings, if it
+/// cannot: under [`MIN_PROMPT_HEADROOM`] input tokens remain once both replies
+/// and the tool definitions are reserved, and the system prompt alone can fill that.
+pub fn web_budget_warning(web_total_tokens: u64, reservation: u64, tool_tokens: u64) -> Option<String> {
+    let input = web_prompt_limit(web_total_tokens, reservation)
+        .saturating_sub(reservation)
+        .saturating_sub(tool_tokens);
+    (input < MIN_PROMPT_HEADROOM).then(|| {
+        format!(
+            "web.total_tokens {web_total_tokens} leaves {input} prompt tokens for web-enabled chat after two \
+             {reservation}-token reply reservations (from models.local_llm.max_tokens) and {tool_tokens} tokens of \
+             tool definitions; below {MIN_PROMPT_HEADROOM}, web chat refuses almost every message. Lower \
+             models.local_llm.max_tokens, raise web.total_tokens (at most 32000), or turn web off"
+        )
+    })
+}
+
 pub fn summary_max_tokens(cfg: &crate::common::config::AppConfig) -> u64 {
     cfg.u64_or("compaction.summary_max_tokens", DEFAULT_SUMMARY_MAX_TOKENS)
         .clamp(128, 2048)
@@ -258,6 +284,20 @@ mod tests {
             text: text.into(),
             ts: 1.0,
         }
+    }
+
+    #[test]
+    fn web_prompt_limit_reserves_the_reply_once_on_top_of_the_projection() {
+        // Shipped web budget with a doubled reservation (MLX / LM Studio, max_tokens 4096).
+        assert_eq!(web_prompt_limit(28_000, 8_192), 19_808);
+        assert!(web_budget_warning(28_000, 8_192, 272).is_none());
+        let warning = web_budget_warning(16_000, 8_192, 272).unwrap();
+        assert!(warning.contains("models.local_llm.max_tokens") && warning.contains("web.total_tokens"));
+        // Exactly MIN_PROMPT_HEADROOM input tokens after both replies and the tools is usable.
+        let usable = 2 * 8_192 + 272 + MIN_PROMPT_HEADROOM;
+        assert!(web_budget_warning(usable, 8_192, 272).is_none());
+        assert!(web_budget_warning(usable - 1, 8_192, 272).is_some());
+        assert!(web_budget_warning(0, 8_192, 272).is_some());
     }
 
     #[test]
