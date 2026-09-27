@@ -414,9 +414,10 @@ mod tests {
         let mut mgr = AuthManager::open(&path, &cfg).unwrap();
         let clock = now.clone();
         mgr.set_clock(Box::new(move || *clock.lock().unwrap()));
-        assert!(mgr.bootstrap_if_empty().unwrap());
-        mgr.login("admin", "admin").unwrap();
-        let session = mgr.change_password("admin", "admin", "first-admin-password").unwrap();
+        // A random password keeps credentials out of the source.
+        let password = authn::new_session_id();
+        mgr.create_user("tester", &password, "operator").unwrap();
+        let session = mgr.login("tester", &password).unwrap();
         let token = authn::hash_token(&session.session_id);
         let on_disk = || {
             connect(&path.with_extension("sqlite3"))
