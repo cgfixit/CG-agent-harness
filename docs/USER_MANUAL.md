@@ -293,7 +293,7 @@ stops new reads, writes, and workers. It does not delete
 - [memory/ISSUE_87_CLOSEOUT.md](memory/ISSUE_87_CLOSEOUT.md) — issue #87 close-out
 - [operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes) — enable steps
 - [README](../README.md) — console overview
-- [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md) — sessions, `/prompt`, persona
+- [CONSOLE.md](CONSOLE.md) — sessions, `/prompt`, persona
 
 ## Automatic completion suggestions and manual hard-save
 

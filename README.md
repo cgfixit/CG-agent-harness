@@ -145,7 +145,7 @@ personas are preserved. For local chat, `/style concise`, `beginner`,
 `technical-deep` or `unslop` layer a style on top; styles default to off and
 never edit the soul. Inspect with `/soul status` and `/prompt`; compare styles
 in fresh sessions. These are model instructions, not guaranteed formatting.
-Details: [Chat workflows](docs/CHAT_WORKFLOWS.md#inspect-and-edit-the-chat-prompt).
+Details: [Response style](docs/CONSOLE.md#74-customize-response-style).
 
 **Memory, web, spend.** Memory enable steps: [MEMORY_SETUP.md](docs/MEMORY_SETUP.md).
 Web research rules: [WEB.md](docs/WEB.md). The Spend view reports retained
@@ -222,8 +222,6 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 | [docs/CONSOLE.md](docs/CONSOLE.md) | Chat, soul, skills, slash-command tables |
 | [docs/ISSUE_102_ACCEPTANCE.md](docs/ISSUE_102_ACCEPTANCE.md) | Selected roadmap close-out, verification and residual scope |
 | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator navigation, spend/notifications and memory how-to |
-| [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging |
-| [docs/CHAT_STREAMING.md](docs/CHAT_STREAMING.md) | SSE chat streaming and `/loop stop` |
 | [docs/MEMORY_SETUP.md](docs/MEMORY_SETUP.md) | Enable steps for pinned notes and structured memory |
 | [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Facts, proposals, episodes, explicit recall, facts-only FTS |
 | [docs/WEB.md](docs/WEB.md) | Google listings, URL fetch, page research |
