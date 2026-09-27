@@ -748,10 +748,46 @@ async fn chat_inner(
             .saturating_add(crate::server::compaction::calibrated_tokens(tool_tokens, ratio))
             .min(MAX_PROMPT_TOKENS);
         let mut threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
+        let mut limit_source = "chat.compact_prompt_tokens";
         if settings.web_enabled && !req.loop_turn {
-            let web_room = web.limits.total_tokens.saturating_sub(reservation.saturating_mul(2));
-            threshold = threshold.min(web_room).max(minimum_threshold);
+            let web_room = crate::server::compaction::web_prompt_limit(web.limits.total_tokens, reservation);
+            if web_room < threshold {
+                threshold = web_room.max(minimum_threshold);
+                limit_source = "web.total_tokens";
+            }
         }
+        // Name the setting that actually bounds this prompt: "start a new session"
+        // cannot help when the system prompt and reply reservation fill the limit.
+        let too_large = |what: &str, projected: u64, compacted: u64| {
+            state.audit.log(json!({
+                "event": "chat_prompt_too_large",
+                "session_id": session.session_id,
+                "projected": projected,
+                "compacted_projected": compacted,
+                "threshold": threshold,
+                "limit_source": limit_source,
+            }));
+            let remedy = if limit_source == "web.total_tokens" {
+                "shorten the message, lower models.local_llm.max_tokens, raise web.total_tokens, or turn web off"
+            } else {
+                "shorten the message or raise chat.compact_prompt_tokens"
+            };
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "CHAT_PROMPT_TOO_LARGE",
+                format!(
+                    "{what} the {threshold}-token prompt limit (set by {limit_source}; models.local_llm.max_tokens \
+                     reserves {reservation} of those tokens for the reply); {remedy}"
+                ),
+            )
+            .details(json!({
+                "projected_tokens": projected,
+                "compacted_tokens": compacted,
+                "limit_tokens": threshold,
+                "limit_source": limit_source,
+                "reply_reservation_tokens": reservation,
+            }))
+        };
         let keep = state
             .cfg
             .u64_or(
@@ -777,23 +813,11 @@ async fn chat_inner(
                 tool_tokens,
             );
             if paste_alone > threshold {
-                state.audit.log(json!({
-                    "event": "chat_prompt_too_large",
-                    "session_id": session.session_id,
-                    "projected": projected,
-                    "compacted_projected": paste_alone,
-                    "threshold": threshold,
-                }));
-                return Err(ApiError::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "CHAT_PROMPT_TOO_LARGE",
-                    "the next prompt still exceeds the configured limit after history compaction",
-                )
-                .details(json!({
-                    "projected_tokens": projected,
-                    "compacted_tokens": paste_alone,
-                    "limit_tokens": threshold,
-                })));
+                return Err(too_large(
+                    "the new message and system prompt alone exceed",
+                    projected,
+                    paste_alone,
+                ));
             }
             let before = session.messages.len();
             let retained = crate::server::compaction::retained_messages(&session.messages, keep);
@@ -814,23 +838,11 @@ async fn chat_inner(
                 tool_tokens,
             );
             if retained_projected > threshold {
-                state.audit.log(json!({
-                    "event": "chat_prompt_too_large",
-                    "session_id": session.session_id,
-                    "projected": projected,
-                    "compacted_projected": retained_projected,
-                    "threshold": threshold,
-                }));
-                return Err(ApiError::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "CHAT_PROMPT_TOO_LARGE",
-                    "the next prompt still exceeds the configured limit after history compaction",
-                )
-                .details(json!({
-                    "projected_tokens": projected,
-                    "compacted_tokens": retained_projected,
-                    "limit_tokens": threshold,
-                })));
+                return Err(too_large(
+                    "the next prompt still exceeds, after history compaction,",
+                    projected,
+                    retained_projected,
+                ));
             }
             let middle = crate::server::compaction::middle_turns(&session.messages, keep);
             let summary = if middle.is_empty() {
@@ -863,23 +875,11 @@ async fn chat_inner(
                 tool_tokens,
             );
             if compacted_projected > threshold {
-                state.audit.log(json!({
-                    "event": "chat_prompt_too_large",
-                    "session_id": session.session_id,
-                    "projected": projected,
-                    "compacted_projected": compacted_projected,
-                    "threshold": threshold,
-                }));
-                return Err(ApiError::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "CHAT_PROMPT_TOO_LARGE",
-                    "the next prompt still exceeds the configured limit after history compaction",
-                )
-                .details(json!({
-                    "projected_tokens": projected,
-                    "compacted_tokens": compacted_projected,
-                    "limit_tokens": threshold,
-                })));
+                return Err(too_large(
+                    "the next prompt still exceeds, after history compaction,",
+                    projected,
+                    compacted_projected,
+                ));
             }
             let after = compacted.messages.len();
             compaction = Some((keep, before, after, projected, compacted_projected, threshold, summary));

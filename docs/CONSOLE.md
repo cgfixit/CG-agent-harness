@@ -216,7 +216,7 @@ restoration through the guarded edit flow.
 | Fixed check | `/skill check:cargo-test` | Selects a known check for an already staged coding request; no immediate execution |
 | Governed catalog entry | `/skills all` | Inventory only unless an implemented adapter says otherwise |
 | Codex development skill | Repository `.codex/skills` or Codex personal skill directory | Guides Codex maintaining the repository; not automatically an app runtime skill |
-| Claude Code development skill | Repository `.claude/skills`; registered shortcuts in `.claude/commands` | Guides Claude Code maintaining the repository; not an app command |
+| Claude Code development skill | Repository `.claude/skills` | Guides Claude Code maintaining the repository; not an app command |
 
 To add optional context, create a local file in the **actual active home**, e.g.
 `skills/review-notes/SKILL.md`. Use a normal directory and file within the home;
@@ -387,7 +387,7 @@ Names from the upstream project do not establish support in this standalone
 harness. There are no `/fsconnect`, `/netconnect` or `/sqlconnect` commands to turn
 on, and copying upstream connector settings does not implement them. The native
 Setup folder chooser prepares offline Cargo inputs; it is not chat filesystem
-access. See [port scope](PORT_PARITY.md) and the
+access. See the
 [capability ledger](parity/STATUS.md) for remaining work, checked against
 [current connector inventory](../src/server/views.rs).
 
@@ -565,7 +565,7 @@ The effective reply reservation is `max_tokens` for resolved Ollama with
 explicit `reasoning_effort: "none"`, and twice `max_tokens` otherwise. The
 threshold floor is that reservation plus 4096 prompt tokens and the calibrated
 tool-definition allowance, capped at 30000. Web chat additionally tightens the
-threshold toward `web.total_tokens - 2 * reservation`, respecting the same
+threshold toward `web.total_tokens - reservation` (room for two replies), respecting the same
 floor; its dispatcher still checks the independent web budget before each call.
 Startup accepts at most 25904 reply tokens on the first path or 12952 on the
 second, for both chat and `/loop`.
@@ -593,4 +593,7 @@ for older homes missing the key. Edit the home `config.yaml` and restart to tune
 it. Compaction is inline; there is no idle pre-compaction worker. Empty, failed,
 truncated or cancelled model output does not commit the candidate summary or
 calibration. A prompt that still exceeds the limit returns
-`CHAT_PROMPT_TOO_LARGE` (422); use a shorter paste or start a new session.
+`CHAT_PROMPT_TOO_LARGE` (422) naming the setting that bounds it (`details.limit_source`).
+Shorten the message; with web on, lower `models.local_llm.max_tokens`, raise
+`web.total_tokens` or `/web off`. A new session cannot help when the system prompt
+and reply reservation fill the limit.

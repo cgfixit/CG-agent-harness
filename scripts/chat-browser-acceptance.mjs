@@ -598,7 +598,8 @@ try {
  assert.equal(await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value'),'');
  assert.equal(await evaluate('document.body.textContent.includes("fixture-secret-value-1234")'),false);
  await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
- await until('document.getElementById("pane-api-keys").textContent.includes("Saved: unset")');assert.equal(savedKey,'');
+ // The cleared SerpAPI row already reads "Saved: unset", so wait on this row's status (the <p> before its input).
+ await until('document.getElementById("saved-DEEPAGENT_API_KEY")?.previousElementSibling?.textContent.startsWith("Saved: unset")');assert.equal(savedKey,'');
  await send('/agent run codex/logout Reviewed before logout');
  await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}; reviewedPRBodies.set("old", "body"); prBodyTarget="old"');
  await evaluate('document.getElementById("hAuthLogout").click()');
