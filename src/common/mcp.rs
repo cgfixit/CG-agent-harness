@@ -410,35 +410,48 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
             .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))
     }
 
-    /// The next message. A line longer than the frame cap is refused once the
-    /// cap is reached, without waiting for a newline that may never come.
+    /// The next message, skipping blank lines.
     async fn read(&mut self) -> Result<Value> {
-        let limit = (self.max_frame + LINE_TERMINATOR_BYTES) as u64;
         loop {
-            let mut line = Vec::new();
-            let n = (&mut self.reader)
-                .take(limit)
-                .read_until(b'\n', &mut line)
-                .await
-                .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
-            if line.last() != Some(&b'\n') {
-                if n as u64 == limit {
-                    return Err(mcp_err("MCP_RESULT_TOO_LARGE", "stdio MCP frame exceeds cap"));
-                }
-                // End of stream, at a message boundary or partway through one.
-                return Err(mcp_err("MCP_STDIO", CHILD_CLOSED));
-            }
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            if line.len() > self.max_frame {
-                return Err(mcp_err("MCP_RESULT_TOO_LARGE", "stdio MCP frame exceeds cap"));
-            }
+            let line = self.read_line().await?;
             if line.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }
             return serde_json::from_slice(&line).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()));
+        }
+    }
+
+    /// One line without its `\n` or `\r\n`. Past `max_frame` bytes only a final
+    /// `\r` may still arrive, so any other byte is refused as soon as it is read,
+    /// without waiting for a newline that may never come. At most
+    /// `max_frame + LINE_TERMINATOR_BYTES` bytes are ever held.
+    async fn read_line(&mut self) -> Result<Vec<u8>> {
+        let mut line = Vec::new();
+        loop {
+            let available = self
+                .reader
+                .fill_buf()
+                .await
+                .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
+            if available.is_empty() {
+                // End of stream, at a message boundary or partway through one.
+                return Err(mcp_err("MCP_STDIO", CHILD_CLOSED));
+            }
+            let newline = available.iter().position(|&b| b == b'\n');
+            let room = self.max_frame + LINE_TERMINATOR_BYTES - line.len();
+            let take = newline.unwrap_or(available.len()).min(room);
+            line.extend_from_slice(&available[..take]);
+            let ended = newline == Some(take);
+            self.reader.consume(take + usize::from(ended));
+            if line.len() > self.max_frame + 1 || (line.len() == self.max_frame + 1 && line[self.max_frame] != b'\r') {
+                return Err(mcp_err("MCP_RESULT_TOO_LARGE", "stdio MCP frame exceeds cap"));
+            }
+            if ended {
+                if line.last() == Some(&b'\r') {
+                    line.pop();
+                }
+                return Ok(line);
+            }
         }
     }
 }
@@ -621,6 +634,41 @@ mod tests {
             Session::new(read, write, 1024).read().await.unwrap(),
             json!("x".repeat(1022))
         );
+    }
+
+    /// One byte past the cap can no longer be a frame unless it is the `\r` of a
+    /// `\r\n`; refuse it at once rather than wait for more output or a timeout.
+    #[tokio::test]
+    async fn stdio_session_refuses_one_byte_past_the_cap_without_waiting() {
+        for close in [false, true] {
+            let (client, mut server) = tokio::io::duplex(4096);
+            server.write_all(&[b'X'; 1025]).await.unwrap();
+            let open = (!close).then_some(server);
+            let (read, write) = tokio::io::split(client);
+            let refused = tokio::time::timeout(Duration::from_secs(5), Session::new(read, write, 1024).read())
+                .await
+                .expect("refused at max_frame + 1 bytes, not after one more");
+            assert_eq!(refused.unwrap_err().code, "MCP_RESULT_TOO_LARGE", "closed: {close}");
+            drop(open);
+        }
+        // A frame of exactly the cap whose `\r` and `\n` arrive separately still fits.
+        let (client, server) = tokio::io::duplex(4096);
+        let (read, write) = tokio::io::split(client);
+        let writer = tokio::spawn(async move {
+            let mut server = server;
+            server
+                .write_all(format!("\"{}\"\r", "x".repeat(1022)).as_bytes())
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            server.write_all(b"\n").await.unwrap();
+            server
+        });
+        assert_eq!(
+            Session::new(read, write, 1024).read().await.unwrap(),
+            json!("x".repeat(1022))
+        );
+        drop(writer.await.unwrap());
     }
 
     #[test]
