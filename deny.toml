@@ -3,7 +3,17 @@ all-features = true
 
 [advisories]
 version = 2
-ignore = []
+# cargo-deny's default ("workspace") silently skips unsound advisories on
+# transitive crates, which hid RUSTSEC-2026-0253 behind a green check (#212 F1).
+unsound = "all"
+ignore = [
+    # Added 2026-09-27. tantivy 0.26.2 requires lru ^0.16.3 and no tantivy release
+    # uses lru >= 0.18.2 yet. The unsound path is LruCache::pop with a key whose
+    # Drop panics; tantivy's StoreReader keys LruCache<usize, Block> (usize has no
+    # Drop) and calls get/put/len/peek_lru, never pop. Remove at tantivy >= 0.27;
+    # the default unused-ignored-advisory = "warn" flags this entry once it is stale.
+    { id = "RUSTSEC-2026-0253", reason = "tantivy 0.26 StoreReader: LruCache<usize,_> get/put only, never pop; usize has no Drop; remove at tantivy>=0.27" },
+]
 
 [licenses]
 version = 2
