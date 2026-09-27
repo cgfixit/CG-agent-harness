@@ -32,16 +32,20 @@ sessions/
 .env.*
 !.env.example
 # ── Operator-home spill ───────────────────────────────────────
-# If CGAGENTHARNESS_HOME is inside the checkout and is not named
-# .CGagentHarness. Default ~/.CGagentHarness is already outside
-# git. Do not git add -f any of these.
-attachments/
+# If CGAGENTHARNESS_HOME is the checkout root. Default
+# ~/.CGagentHarness is already outside git, and a home named
+# .CGagentHarness is ignored anywhere. The runtime directories are
+# anchored so a source directory with the same name (docs/memory/,
+# a future src/**/tools/) is never silently ignored. A home in any
+# other checkout subdirectory is not covered: keep it outside the
+# checkout. Do not git add -f any of these.
+/attachments/
 notes_corpus/
-exports/
-memory/
-logs/
-tmp/
-tools/
+/exports/
+/memory/
+/logs/
+/tmp/
+/tools/
 tls/
 soul-history/
 harness.json
