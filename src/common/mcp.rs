@@ -13,7 +13,7 @@ use std::time::Duration;
 #[cfg(windows)]
 use super::windows_job::JobChild as Child;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 #[cfg(not(windows))]
 use tokio::process::{Child, ChildStdin, ChildStdout};
@@ -55,7 +55,9 @@ const HIJACK_ENV: &[&str] = &[
     "PYTHONHOME",
 ];
 
-const MAX_HEADER_BYTES: usize = 4096;
+/// A message line may end in CRLF: its terminator is at most two bytes beyond the frame cap.
+const LINE_TERMINATOR_BYTES: usize = 2;
+const CHILD_CLOSED: &str = "stdio MCP child closed";
 
 pub fn namespaced(server: &str, tool: &str) -> String {
     format!("mcp:{server}:{tool}")
@@ -105,10 +107,7 @@ pub fn filter_env(extra: &BTreeMap<String, String>) -> BTreeMap<String, String> 
 
 pub struct StdioClient {
     child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: i64,
-    max_frame: usize,
+    session: Session<ChildStdout, ChildStdin>,
     pub backend: &'static str,
     pub probe_reason: String,
     stderr: Arc<Mutex<Vec<u8>>>,
@@ -274,10 +273,7 @@ impl StdioClient {
         let stderr_task = tokio::spawn(drain_stderr(pipe, stderr.clone()));
         Ok(Self {
             child,
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id: 1,
-            max_frame,
+            session: Session::new(stdout, stdin, max_frame),
             backend,
             probe_reason: wrap.probe_reason.clone(),
             stderr,
@@ -289,6 +285,51 @@ impl StdioClient {
     }
 
     pub async fn initialize(&mut self) -> Result<()> {
+        let result = self.session.initialize().await;
+        self.explain_close(result).await
+    }
+
+    pub async fn call_tool(&mut self, name: &str, arguments: Value) -> Result<Value> {
+        let result = self.session.call_tool(name, arguments).await;
+        self.explain_close(result).await
+    }
+
+    /// A child that closed stdout is explained by its clipped stderr.
+    async fn explain_close<T>(&mut self, result: Result<T>) -> Result<T> {
+        match result {
+            Err(err) if err.code == "MCP_STDIO" && err.message == CHILD_CLOSED => {
+                // Normally EOF follows the completed stderr write. Do not wait
+                // indefinitely for a descendant that inherited the pipe.
+                let _ = tokio::time::timeout(Duration::from_millis(50), &mut self.stderr_task).await;
+                let bytes = self.stderr.lock().unwrap_or_else(|p| p.into_inner());
+                let snip: String = String::from_utf8_lossy(&bytes).chars().take(512).collect();
+                Err(mcp_err("MCP_STDIO", format!("{CHILD_CLOSED}; stderr={snip}")))
+            }
+            other => other,
+        }
+    }
+}
+
+/// JSON-RPC over the MCP stdio transport: one message per line. serde_json
+/// never writes a raw newline, so each serialized message is exactly one line.
+struct Session<R, W> {
+    reader: BufReader<R>,
+    writer: W,
+    next_id: i64,
+    max_frame: usize,
+}
+
+impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
+    fn new(reader: R, writer: W, max_frame: usize) -> Self {
+        Self {
+            reader: BufReader::new(reader),
+            writer,
+            next_id: 1,
+            max_frame,
+        }
+    }
+
+    async fn initialize(&mut self) -> Result<()> {
         let result = self
             .request(
                 "initialize",
@@ -305,7 +346,7 @@ impl StdioClient {
         self.notify("notifications/initialized", json!({})).await
     }
 
-    pub async fn call_tool(&mut self, name: &str, arguments: Value) -> Result<Value> {
+    async fn call_tool(&mut self, name: &str, arguments: Value) -> Result<Value> {
         self.request("tools/call", json!({"name": name, "arguments": arguments}))
             .await
     }
@@ -315,7 +356,24 @@ impl StdioClient {
         self.next_id += 1;
         self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
             .await?;
-        let reply = self.read().await?;
+        let reply = loop {
+            let message = self.read().await?;
+            let Some(server_method) = message.get("method") else {
+                break message;
+            };
+            // A server notification (progress, logging) or request, not the
+            // reply. This client declares no capabilities: it answers ping
+            // and refuses any other request rather than leaving it pending.
+            if let Some(server_id) = message.get("id") {
+                let answer = if server_method == "ping" {
+                    json!({"jsonrpc": "2.0", "id": server_id, "result": {}})
+                } else {
+                    json!({"jsonrpc": "2.0", "id": server_id,
+                        "error": {"code": -32601, "message": "method not supported by this client"}})
+                };
+                self.write(&answer).await?;
+            }
+        };
         if reply.get("id") != Some(&json!(id)) {
             return Err(mcp_err("MCP_PROTOCOL", "stdio response id mismatch"));
         }
@@ -337,64 +395,51 @@ impl StdioClient {
     }
 
     async fn write(&mut self, message: &Value) -> Result<()> {
-        let body = serde_json::to_vec(message).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?;
-        if body.len() > self.max_frame {
+        let mut line = serde_json::to_vec(message).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?;
+        if line.len() > self.max_frame {
             return Err(mcp_err("MCP_RESULT_TOO_LARGE", "outgoing MCP frame exceeds cap"));
         }
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
-        self.stdin
-            .write_all(header.as_bytes())
+        line.push(b'\n');
+        self.writer
+            .write_all(&line)
             .await
             .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
-        self.stdin
-            .write_all(&body)
-            .await
-            .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
-        self.stdin
+        self.writer
             .flush()
             .await
             .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))
     }
 
+    /// The next message. A line longer than the frame cap is refused once the
+    /// cap is reached, without waiting for a newline that may never come.
     async fn read(&mut self) -> Result<Value> {
-        let mut headers = Vec::new();
+        let limit = (self.max_frame + LINE_TERMINATOR_BYTES) as u64;
         loop {
-            let n = (&mut self.stdout)
-                .take((MAX_HEADER_BYTES - headers.len() + 1) as u64)
-                .read_until(b'\n', &mut headers)
+            let mut line = Vec::new();
+            let n = (&mut self.reader)
+                .take(limit)
+                .read_until(b'\n', &mut line)
                 .await
                 .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
-            if n == 0 {
-                // Normally EOF follows the completed stderr write. Do not wait
-                // indefinitely for a descendant that inherited the pipe.
-                let _ = tokio::time::timeout(Duration::from_millis(50), &mut self.stderr_task).await;
-                let bytes = self.stderr.lock().unwrap_or_else(|p| p.into_inner());
-                let snip: String = String::from_utf8_lossy(&bytes).chars().take(512).collect();
-                return Err(mcp_err("MCP_STDIO", format!("stdio MCP child closed; stderr={snip}")));
+            if line.last() != Some(&b'\n') {
+                if n as u64 == limit {
+                    return Err(mcp_err("MCP_RESULT_TOO_LARGE", "stdio MCP frame exceeds cap"));
+                }
+                // End of stream, at a message boundary or partway through one.
+                return Err(mcp_err("MCP_STDIO", CHILD_CLOSED));
             }
-            if headers.len() > MAX_HEADER_BYTES {
-                return Err(mcp_err("MCP_PROTOCOL", "stdio headers exceeded 4 KiB"));
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
             }
-            if headers.windows(4).any(|w| w == b"\r\n\r\n") || headers.windows(2).any(|w| w == b"\n\n") {
-                break;
+            if line.len() > self.max_frame {
+                return Err(mcp_err("MCP_RESULT_TOO_LARGE", "stdio MCP frame exceeds cap"));
             }
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            return serde_json::from_slice(&line).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()));
         }
-        let text = std::str::from_utf8(&headers).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?;
-        let mut length = 0usize;
-        for line in text.split(['\r', '\n']) {
-            if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                length = rest.trim().parse().unwrap_or(0);
-            }
-        }
-        if length == 0 || length > self.max_frame {
-            return Err(mcp_err("MCP_RESULT_TOO_LARGE", "stdio MCP frame exceeds cap"));
-        }
-        let mut body = vec![0u8; length];
-        self.stdout
-            .read_exact(&mut body)
-            .await
-            .map_err(|e| mcp_err("MCP_STDIO", e.to_string()))?;
-        serde_json::from_slice(&body).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))
     }
 }
 
@@ -462,6 +507,121 @@ pub fn mcp_err(code: &str, message: impl Into<String>) -> HarnessError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmcp::model::{
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ServerCapabilities, ServerConfig,
+    };
+    use rmcp::service::RequestContext;
+    use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt};
+
+    /// An independent stdio MCP server: rmcp's own newline JSON-RPC codec and
+    /// handshake, served over an in-process pipe instead of a child's stdio.
+    #[derive(Clone)]
+    struct RmcpEcho;
+
+    impl ServerHandler for RmcpEcho {
+        fn get_info(&self) -> ServerConfig {
+            ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        }
+
+        async fn call_tool(
+            &self,
+            request: CallToolRequestParams,
+            context: RequestContext<RoleServer>,
+        ) -> std::result::Result<CallToolResponse, ErrorData> {
+            // A notification ahead of the reply: the client must skip it.
+            let _ = context.peer.notify_tool_list_changed().await;
+            let arguments = Value::Object(request.arguments.unwrap_or_default());
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                json!({"tool": request.name, "echo": arguments}).to_string(),
+            )])
+            .into())
+        }
+    }
+
+    #[tokio::test]
+    async fn stdio_session_interoperates_with_an_rmcp_server() {
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let server = tokio::spawn(async move { RmcpEcho.serve(server).await.expect("rmcp handshake").waiting().await });
+        let (read, write) = tokio::io::split(client);
+        let mut session = Session::new(read, write, 65_536);
+        session.initialize().await.unwrap();
+        for text in ["first", "a\nnewline stays inside one JSON line"] {
+            let result = session.call_tool("echo", json!({"text": text})).await.unwrap();
+            let body: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(body, json!({"tool": "echo", "echo": {"text": text}}));
+        }
+        drop(session);
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn stdio_session_answers_server_requests_and_bounds_every_line() {
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let (read, write) = tokio::io::split(client);
+        let mut session = Session::new(read, write, 1024);
+        let (server_read, mut server_write) = tokio::io::split(server);
+        let fixture = tokio::spawn(async move {
+            let mut lines = BufReader::new(server_read).lines();
+            let request: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let script = [
+                "".to_string(),
+                r#"{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1}}"#.to_string(),
+                r#"{"jsonrpc":"2.0","id":"s1","method":"ping"}"#.to_string(),
+                r#"{"jsonrpc":"2.0","id":"s2","method":"roots/list"}"#.to_string(),
+            ];
+            server_write
+                .write_all((script.join("\r\n") + "\r\n").as_bytes())
+                .await
+                .unwrap();
+            let mut answers = Vec::new();
+            for _ in 0..2 {
+                answers.push(serde_json::from_str::<Value>(&lines.next_line().await.unwrap().unwrap()).unwrap());
+            }
+            let reply = json!({"jsonrpc": "2.0", "id": request["id"], "result": {"ok": true}});
+            server_write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            // Then a line past the cap that never ends, from a server that stays open.
+            server_write.write_all(&[b'X'; 4096]).await.unwrap();
+            (answers, server_write)
+        });
+        assert_eq!(session.call_tool("echo", json!({})).await.unwrap(), json!({"ok": true}));
+        let (answers, _open) = fixture.await.unwrap();
+        assert_eq!(answers[0], json!({"jsonrpc": "2.0", "id": "s1", "result": {}}));
+        assert_eq!(
+            (&answers[1]["id"], &answers[1]["error"]["code"]),
+            (&json!("s2"), &json!(-32601))
+        );
+        let refused = tokio::time::timeout(Duration::from_secs(5), session.read())
+            .await
+            .expect("refused at the cap, not at a newline");
+        assert_eq!(refused.unwrap_err().code, "MCP_RESULT_TOO_LARGE");
+    }
+
+    #[tokio::test]
+    async fn stdio_session_fails_closed_on_oversized_partial_or_non_json_lines() {
+        let oversized = format!("\"{}\"\n", "x".repeat(1023));
+        for (bytes, code) in [
+            (oversized.as_bytes(), "MCP_RESULT_TOO_LARGE"),
+            (&b"{\"jsonrpc\":"[..], "MCP_STDIO"),
+            (&b""[..], "MCP_STDIO"),
+            (&b"Content-Length: 2\r\n\r\n{}"[..], "MCP_PROTOCOL"),
+        ] {
+            let (client, mut server) = tokio::io::duplex(4096);
+            server.write_all(bytes).await.unwrap();
+            drop(server);
+            let (read, write) = tokio::io::split(client);
+            let err = Session::new(read, write, 1024).read().await.unwrap_err();
+            assert_eq!(err.code, code, "{}", String::from_utf8_lossy(bytes));
+        }
+        // A reply of exactly the cap is accepted.
+        let exact = format!("\"{}\"\r\n", "x".repeat(1022));
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(exact.as_bytes()).await.unwrap();
+        let (read, write) = tokio::io::split(client);
+        assert_eq!(
+            Session::new(read, write, 1024).read().await.unwrap(),
+            json!("x".repeat(1022))
+        );
+    }
 
     #[test]
     fn namespaced_tool_identity() {
