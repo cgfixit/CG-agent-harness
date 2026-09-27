@@ -604,8 +604,7 @@ SMOKE_MODEL=qwen3.8:27b scripts/smoke-ollama.sh
 is unavailable and the chat turn is skipped. Its success alone is not real-model
 acceptance, and it does not exercise the editing pipeline. Full disposable
 Chrome/model/edit/verification/approval/publication acceptance is documented in
-[Console jobs](CONSOLE_JOBS.md). Measured native results and remaining gaps
-are in [historical native CLI record](MAC_ACCEPTANCE.md) and [Port parity](PORT_PARITY.md).
+[Console jobs](CONSOLE_JOBS.md).
 
 For a source-built app, also verify the separate desktop crate and packaged backend:
 
