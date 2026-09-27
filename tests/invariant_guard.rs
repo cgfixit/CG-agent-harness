@@ -578,8 +578,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1200),
     (".github/skills/README.md", Agent, 0),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
-    ("AGENTS.md", Agent, 2000),
-    ("INVARIANTS.md", Root, 5200),
+    // why: #237 added the rule that truncated cloud replies are never shown or saved.
+    ("AGENTS.md", Agent, 2100),
+    // why: #237 and #243 added the cloud-truncation and web-budget contracts.
+    ("INVARIANTS.md", Root, 5300),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ACCOUNTS.md", Guide, 600),
@@ -596,7 +598,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/DEPENDENCIES.md", Guide, 1400),
     ("docs/DESKTOP.md", Guide, 2800),
     ("docs/DESKTOP_ACCEPTANCE.md", Evidence, 3000),
-    ("docs/FINETUNE.md", Guide, 900),
+    // why: #241 folded the MLX QLoRA guide and finetune/README.md in here.
+    ("docs/FINETUNE.md", Guide, 1200),
     ("docs/GIT_APPROVAL.md", Guide, 800),
     ("docs/GROK_ACP_PHASE0.md", Evidence, 800),
     ("docs/INSTALL.md", Guide, 5500),
@@ -608,7 +611,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/MEMORY_BENCHMARK_PLAN.md", Evidence, 1100),
     ("docs/MEMORY_GUIDE.md", Guide, 1700),
     ("docs/MEMORY_SETUP.md", Guide, 2100),
-    ("docs/MODELS.md", Guide, 900),
+    // why: #237 documented refused truncated cloud replies.
+    ("docs/MODELS.md", Guide, 1000),
     ("docs/OFFLINE_CARGO.md", Guide, 600),
     ("docs/PORT_PARITY.md", Evidence, 2900),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
@@ -619,7 +623,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/TROUBLESHOOTING.md", Guide, 1500),
     ("docs/USER_MANUAL.md", Guide, 2300),
     ("docs/WEB.md", Guide, 1100),
-    ("docs/guides/mlx-qlora-finetune.md", Guide, 800),
     ("docs/memory/ISSUE_87_CLOSEOUT.md", Evidence, 700),
     ("docs/parity/CONTRACTS.md", Guide, 700),
     ("docs/parity/STATUS.md", Guide, 1300),
@@ -634,7 +637,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/screenshots/issue-102.md", Evidence, 300),
     ("docs/screenshots/session-tokens-verification.md", Evidence, 1000),
     ("docs/screenshots/web-research-help-verification.md", Evidence, 1600),
-    ("finetune/README.md", Guide, 600),
     ("screenshots/slash-single-line/README.md", Evidence, 300),
     ("setup-guide.md", Root, 900),
 ];
