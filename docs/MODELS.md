@@ -92,6 +92,14 @@ counts only when the provider reports a normal finish (Claude `stop_reason: end_
 Grok `status: completed`); a truncated one fails with HTTP 502 and is not saved.
 Raise `models.cloud_chat.max_tokens` (default 4096) if that recurs.
 
+**Grok Build ACP is not shipped.** `scripts/grok-acp-probe.py` and its CI test
+check only a fake runtime's launch contract: isolated profile, answer-only ACP, no
+MCP servers, no API-key fallback. Before any connection UI or subscription-billing
+claim, test sign-in, entitlement and overage with a chosen account, prove two real
+profiles stay isolated, and rerun `grok inspect --json` before each live run.
+Runtime 1.0.34 advertised only the `grok.com` auth method, unlike xAI's
+`cached_token`/`xai.api_key` example; recheck it for every runtime version.
+
 Optional chat fallback ships disabled. If you already run another compatible
 local server, merge its real endpoint and exact inventory ID into these existing
 fields, then restart:
@@ -123,7 +131,7 @@ Keep historical model measurements separate from current settings. Native CLI
 acceptance recorded context 8192 as a conservative fixture; desktop acceptance
 recorded 32768. Neither is a copy-paste default. The seeded 28000/6000 web
 budgets require a verified `OLLAMA_CONTEXT_LENGTH=32768` as above, not those
-records. Refer to [historical native CLI record](MAC_ACCEPTANCE.md) and
+records. Refer to
 [desktop details](DESKTOP.md). Historical native matrix: [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md). Use those files only for each run's dated evidence.
 Do not infer an execution backend from a tag suffix or change the running model
 service just to match a historical measurement.
