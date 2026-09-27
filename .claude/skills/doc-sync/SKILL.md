@@ -3,7 +3,7 @@ name: doc-sync
 description: |
   Actively fix documentation drift by diffing the current tree against the latest
   origin/main (or the active branch's upstream) and rewriting stale prose in
-  README.md, AGENTS.md, setup-guide.md, docs/*.md (including USER_MANUAL.md and
+  README.md, AGENTS.md, docs/*.md (including USER_MANUAL.md and
   DEPENDENCIES.md), and mirrored .codex docs to match. Unlike
   cgagentharness-doc-sync (which only flags drift and reports findings), this
   skill produces the edits: it fetches the comparison ref, enumerates what
@@ -14,7 +14,7 @@ description: |
 compatibility: |
   Requires: git, ripgrep
   Context: Cargo project with README.md, AGENTS.md, INVARIANTS.md,
-  setup-guide.md, docs/*.md (including docs/USER_MANUAL.md)
+  docs/*.md (including docs/USER_MANUAL.md)
 disable-model-invocation: true
 ---
 
@@ -52,7 +52,7 @@ Walk the diff and bucket every change that is doc-relevant:
 - Config keys added/removed/renamed in `assets/config.default.yaml`
 - CLI subcommand or flag changes (`src/main.rs`, `--help` output)
 - Changed exit codes, guard order, or write-gate names
-- Renamed/moved files the docs link to (`docs/*.md`, `setup-guide.md`)
+- Renamed/moved files the docs link to (`docs/*.md`, `README.md`)
 - New scripts under `scripts/` referenced (or that should be referenced) in
   setup/user docs
 - Dependency or toolchain version bumps that `docs/DEPENDENCIES.md` states a
@@ -64,14 +64,13 @@ are not doc-relevant.
 ## 3. Update each affected file
 
 Truth order for what to write: code > `assets/config.default.yaml` >
-`INVARIANTS.md` > `AGENTS.md` > `README.md` > `setup-guide.md` > `docs/*.md`.
+`INVARIANTS.md` > `AGENTS.md` > `README.md` > `docs/*.md`.
 Never let a lower-precedence doc override what a higher one (or the code
 itself) says — if `INVARIANTS.md` and `README.md` disagree after your pass,
 `README.md` is wrong, not `INVARIANTS.md`.
 
-- `README.md` — top-level pitch, command list, architecture summary.
+- `README.md` — top-level pitch, command list, architecture summary, run-path chooser and docs index. Topic pages live under `docs/`; do not fold them back into `README.md`.
 - `AGENTS.md` — literal operating manual; keep instructions actionable, not aspirational.
-- `setup-guide.md` — short index plus "choose how to run it". Install, models, chat, memory, web, coding, accounts, and troubleshooting live under `docs/` (`INSTALL.md`, `MODELS.md`, `CONSOLE.md`, `MEMORY_SETUP.md`, `WEB.md`, `CODING_PIPELINE.md`, `ACCOUNTS.md`, `TROUBLESHOOTING.md`). Do not fold those pages back into `setup-guide.md`.
 - `docs/USER_MANUAL.md` — end-user console/CLI walkthrough; verify UI copy and routes referenced still exist.
 - `docs/DEPENDENCIES.md` — leave dependency version numbers to `dep-sync`; only fix structural drift here (new crates worth documenting, removed ones still mentioned).
 - Other `docs/*.md` — update only the files whose subject matter the diff actually touches; don't touch unrelated docs.
@@ -90,7 +89,7 @@ cargo test --locked registered_paths_are_unique_and_cover_every_router_route
 
 Re-grep every route, gate name, and CLI flag you wrote into a doc against the
 source you cited it from. Confirm every internal doc link you touched still
-resolves (`rg -n '\]\(' README.md AGENTS.md setup-guide.md docs/*.md` and spot
+resolves (`rg -n '\]\(' README.md AGENTS.md docs/*.md` and spot
 check targets exist).
 
 ## 5. Report

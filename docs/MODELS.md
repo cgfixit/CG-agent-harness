@@ -1,6 +1,6 @@
 # Select an installed model and check Ollama
 
-Index: [setup-guide.md](../setup-guide.md). Seeded web token budgets assume `OLLAMA_CONTEXT_LENGTH=32768` is set before the Ollama process starts. The harness sends no `num_ctx`.
+Index: [README.md](../README.md). Seeded web token budgets assume `OLLAMA_CONTEXT_LENGTH=32768` is set before the Ollama process starts. The harness sends no `num_ctx`.
 
 ## 4. Select an installed model and check Ollama
 

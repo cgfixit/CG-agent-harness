@@ -10,8 +10,8 @@ disable-model-invocation: true
 
 # Documentation drift check
 
-Read code, `assets/config.default.yaml`, `INVARIANTS.md`, `AGENTS.md`, README and
-setup guide in that order. Check all relevant callers and current configuration;
+Read code, `assets/config.default.yaml`, `INVARIANTS.md`, `AGENTS.md` and
+README in that order. Check all relevant callers and current configuration;
 old acceptance records are historical evidence, not current contracts.
 
 ## Current contracts

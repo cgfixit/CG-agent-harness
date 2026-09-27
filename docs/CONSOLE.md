@@ -1,6 +1,6 @@
 # Chat, soul, skills and slash commands
 
-Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [setup-guide.md](../setup-guide.md). Workflow bounds: [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md). Memory enable steps: [MEMORY_SETUP.md](MEMORY_SETUP.md). Web: [WEB.md](WEB.md).
+Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [README.md](../README.md). Workflow bounds: [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md). Memory enable steps: [MEMORY_SETUP.md](MEMORY_SETUP.md). Web: [WEB.md](WEB.md).
 
 `/loop` continues chat toward a session goal. It does not execute repository edits or checks. `/agent` drives the coding pipeline. See [CODING_PIPELINE.md](CODING_PIPELINE.md).
 

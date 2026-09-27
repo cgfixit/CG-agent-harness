@@ -188,7 +188,7 @@ runtime). Claude Code also has three read-only verification/report skills that
 Codex does not: `cgagentharness-doc-sync`, `cgagentharness-verify-deps`, and
 `cgagentharness-runtime-invariant-check`. Two further Claude-only skills
 actively write fixes instead of only reporting drift: `doc-sync` (README,
-AGENTS.md, setup-guide.md, `docs/*.md`) and `dep-sync` (Cargo manifests/locks,
+AGENTS.md, `docs/*.md`) and `dep-sync` (Cargo manifests/locks,
 `rust-toolchain.toml`, `deny.toml`, CI/release YAML), each diffing against
 `origin/main` or the branch's upstream. A separate `run-cg-agent-harness`
 skill drives a local fake-model console smoke and has no slash command. Every
