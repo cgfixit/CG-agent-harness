@@ -580,8 +580,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
     // why: #237 added the rule that truncated cloud replies are never shown or saved.
     ("AGENTS.md", Agent, 2100),
-    // why: #237 and #243 added the cloud-truncation and web-budget contracts.
-    ("INVARIANTS.md", Root, 5300),
+    // why: #237 and #243 added the cloud-truncation and web-budget contracts;
+    // #235 the process-global CSRF note and the I6 process map.
+    ("INVARIANTS.md", Root, 5500),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ACCOUNTS.md", Guide, 600),
