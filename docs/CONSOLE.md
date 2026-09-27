@@ -387,7 +387,7 @@ Names from the upstream project do not establish support in this standalone
 harness. There are no `/fsconnect`, `/netconnect` or `/sqlconnect` commands to turn
 on, and copying upstream connector settings does not implement them. The native
 Setup folder chooser prepares offline Cargo inputs; it is not chat filesystem
-access. See [port scope](PORT_PARITY.md) and the
+access. See the
 [capability ledger](parity/STATUS.md) for remaining work, checked against
 [current connector inventory](../src/server/views.rs).
 
