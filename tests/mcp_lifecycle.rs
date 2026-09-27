@@ -94,7 +94,7 @@ mod linux {
                 assert!(handle.await.unwrap_err().is_cancelled());
             }
             "protocol" => {
-                assert!(client.call_tool("header_flood", json!({})).await.is_err());
+                assert!(client.call_tool("line_flood", json!({})).await.is_err());
                 drop(client);
             }
             "crash" => {
