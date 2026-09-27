@@ -264,6 +264,63 @@ async fn reasoning_and_compatible_backends_enforce_the_effective_reply_reservati
     assert_eq!(body["detail"]["details"]["limit_tokens"], 30000);
 }
 
+/// #212 F8. A backend that reserves the reply twice (LM Studio/MLX, or Ollama with
+/// thinking on) had that doubled reservation charged three times against
+/// `web.total_tokens`, so the shipped 28000 budget refused a 400-character message.
+#[tokio::test]
+async fn web_chat_charges_the_reply_reservation_once_against_the_web_budget() {
+    // (provider, max_tokens, web on): every size must pass, history accumulating.
+    for (provider, max_tokens, web) in [
+        ("lmstudio", "4096", true), // refused every size before the fix
+        ("lmstudio", "2048", true),
+        ("lmstudio", "4096", false),
+        ("ollama", "4096", true), // reasoning_effort "none": reserved once
+    ] {
+        let model = start_mock_model().await;
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("models.local_llm.provider", provider)
+                .with("models.local_llm.max_tokens", max_tokens),
+        )
+        .await;
+        if !web {
+            s.post_json("/api/web", json!({"enabled":false})).await;
+        }
+        for chars in [400, 2000, 8000] {
+            let (status, body) = s.post_json("/api/chat", json!({"message":"x".repeat(chars)})).await;
+            assert_eq!(
+                status, 200,
+                "{provider} max_tokens={max_tokens} web={web} {chars} chars: {body}"
+            );
+        }
+    }
+
+    // Web chat that genuinely cannot fit names the settings that bound it.
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("models.local_llm.provider", "lmstudio")
+            .with("models.local_llm.max_tokens", "12952"),
+    )
+    .await;
+    let (status, body) = s.post_json("/api/chat", json!({"message":"x".repeat(400)})).await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
+    assert_eq!(body["detail"]["details"]["limit_source"], "web.total_tokens");
+    assert_eq!(body["detail"]["details"]["reply_reservation_tokens"], 25904);
+    let text = message(&body);
+    for knob in ["models.local_llm.max_tokens", "web.total_tokens", "turn web off"] {
+        assert!(text.contains(knob), "{text}");
+    }
+    assert!(
+        !text.contains("after history compaction"),
+        "nothing was compacted: {text}"
+    );
+    assert!(model.requests.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_calibration() {
     use axum::{routing::post, Json, Router};

@@ -18,6 +18,26 @@ the server or the shim.
   corrupt the server's memory or bypass its guard chain; the exit-code contract
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
 
+Process map. These are the only edges; a new one changes this list and its code together.
+
+- **Renderer:** the console page (`assets/static/harness.html`, `/static/auth_admin.js`)
+  in a browser or the desktop webview, and the desktop setup window (`desktop/ui/`). It
+  holds no authority: it calls same-origin `/api/*` through the guard chain, and
+  `desktop/ui/setup.js` invokes only the Tauri commands `desktop_status`,
+  `retry_backend`, `prepare_cargo` and `check_models`.
+- **Main:** `cgagentharness serve` (`src/server`) owns every guard, gate and store. The
+  desktop shell (`desktop/src/`) checks the bundled backend's SHA-256 and runs it as the
+  hidden `cgagentharness desktop` sidecar, whose pipe protocol carries readiness and
+  ownership, never API authority (`src/server/desktop.rs`).
+- **Pipeline child:** hidden `cgagentharness agentic <action>`, spawned only by
+  `src/shim` with one of the 12 `shim::ACTIONS`.
+- **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` inside the
+  sandbox wrapper. Strict Linux mode runs the hidden `cgagentharness mcp-stdio-worker`
+  byte pump between the harness and the server, inside a transient `systemd-run` service.
+- **Operator CLI:** `account` and `web` call the running portal, `tls` inspects or renews
+  the local certificate, and `mcp-key` manages machine keys with local file authority.
+  The server never spawns them.
+
 MCP stdio children are spawned from `src/common/mcp.rs` with a constructed
 environment (secret and linker-hijack names stripped). Required per-server
 versioned capabilities select explicit read/write roots, network denial or an
@@ -59,7 +79,12 @@ and require `confirm: true`. MCP tools are not attached to `/loop`. `GET /api/mc
 discloses declared server and tool names to any authenticated session; that is
 acceptable for a single-operator console and must be revisited before persistent
 multi-user accounts. Calls and refusals are audited (`mcp_stdio_spawn`,
-`mcp_sse_call`, `mcp_refused`) without arguments or payloads.
+`mcp_sse_call`, `mcp_refused`) without arguments or payloads. The mutation CSRF token
+has the same single-operator scope: `src/server/mod.rs` mints one per process and
+embeds it in the console page, which is served before login, so it is bound to no
+account or session. SameSite=Strict session cookies and exact same-origin checks are
+what stop cross-site use; bind the token to the session before persistent multi-user
+accounts.
 
 ## Account, transport and request boundaries
 
@@ -404,8 +429,10 @@ overflow. The effective trigger is
 `max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
 calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions are also
 included in the calibrated input estimate. Web-enabled chat tightens the trigger
-toward `web.total_tokens - 2 * effective_reply_reservation`, without going below
-that floor; the web dispatcher independently enforces its total budget.
+toward `web.total_tokens - effective_reply_reservation` (the projection already
+carries one reservation, so a web prompt keeps room for two replies), without going
+below that floor; the web dispatcher independently enforces its total budget.
+Startup and reload warn when fewer than 4096 input tokens would remain.
 Resolved Ollama with explicit `reasoning_effort: "none"` reserves the reply
 ceiling once. Other reasoning settings, missing settings and compatible
 backends reserve it twice in startup validation, compaction and web dispatch.
@@ -437,6 +464,7 @@ bodies.
   `tests/chat_and_sessions.rs::compaction_is_persisted_only_with_a_successful_exchange`,
   `tests/chat_and_sessions.rs::observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_calibration`,
   `tests/chat_and_sessions.rs::reasoning_and_compatible_backends_enforce_the_effective_reply_reservation`,
+  `tests/chat_and_sessions.rs::web_chat_charges_the_reply_reservation_once_against_the_web_budget`,
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
   `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,
@@ -536,9 +564,12 @@ the existing audit spend sink. Rows store provider, model, source
 `vendor_cost_ticks` (`TICKS_PER_USD = 10_000_000_000`); otherwise the dated
 rate table; incomplete usage and unknown models stay unpriced; local rows are
 always `local_unpriced`. `usage_reported` is true only when both input and
-output counts parsed as JSON numbers. HTTP 2xx with empty text still appends
-`outcome: failed_after_billing` then errors the chat. `TokenTally` and
-local prompt/compaction token estimates are context budgets, not USD.
+output counts parsed as JSON numbers. HTTP 2xx with empty text, or a cloud reply
+the provider did not report as finished (Claude `stop_reason` other than
+`end_turn`, Grok `status` other than `completed`), still appends
+`outcome: failed_after_billing` then errors the chat; the text is never shown or
+saved. `TokenTally` and local prompt/compaction token estimates are context
+budgets, not USD.
 `PRICED_AS_OF` is the oldest `_RATE_VERIFIED` date; a table older than 30 days
 warns once per process and does not fail the chat. Guarded
 `GET /api/spend/summary` rolls up the same file by provider/model/UTC-day with

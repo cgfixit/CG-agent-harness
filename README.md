@@ -220,7 +220,6 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 | Document | Purpose |
 |---|---|
 | [docs/CONSOLE.md](docs/CONSOLE.md) | Chat, soul, skills, slash-command tables |
-| [docs/ISSUE_102_ACCEPTANCE.md](docs/ISSUE_102_ACCEPTANCE.md) | Selected roadmap close-out, verification and residual scope |
 | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator navigation, spend/notifications and memory how-to |
 | [docs/MEMORY_SETUP.md](docs/MEMORY_SETUP.md) | Enable steps for pinned notes and structured memory |
 | [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Facts, proposals, episodes, explicit recall, facts-only FTS |
@@ -251,8 +250,8 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 
 | Document | Purpose |
 |---|---|
-| [docs/PORT_PARITY.md](docs/PORT_PARITY.md) and [docs/parity/](docs/parity) | CyClaw ↔ harness port ledger |
-| [docs/DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) / [docs/MAC_ACCEPTANCE.md](docs/MAC_ACCEPTANCE.md) | Historical native acceptance records — **not** current operator procedure |
+| [docs/parity/](docs/parity) | CyClaw ↔ harness port ledger |
+| [docs/DESKTOP_ACCEPTANCE.md](docs/DESKTOP_ACCEPTANCE.md) | Historical native acceptance records — **not** current operator procedure |
 
 ## Contributing
 
