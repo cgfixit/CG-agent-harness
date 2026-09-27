@@ -530,18 +530,7 @@ use Kind::{Agent, Evidence, Guide, Root};
 /// on 2026-09-27, rounded up to the next 100 words. Lower them when a fold lands.
 const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".claude/CLAUDE.md", Agent, 400),
-    (".claude/commands/cgagentharness-config-guard.md", Agent, 100),
-    (".claude/commands/cgagentharness-gotchas.md", Agent, 100),
-    (".claude/commands/cgagentharness-optimize.md", Agent, 100),
-    (".claude/commands/cgagentharness-project-guidance.md", Agent, 100),
-    (".claude/commands/cgagentharness-runtime-invariant-check.md", Agent, 100),
-    (".claude/commands/cgagentharness-verify-deps.md", Agent, 100),
-    (".claude/commands/cgagentharness-write-policy-redteam.md", Agent, 100),
-    (".claude/commands/dep-sync.md", Agent, 100),
-    (".claude/commands/fable-protocol.md", Agent, 100),
-    (".claude/commands/verification-specialist.md", Agent, 100),
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
-    (".claude/skills/cgagentharness-doc-sync/SKILL.md", Agent, 500),
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
     (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1400),
@@ -563,7 +552,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".claude/skills/fable-protocol/SKILL.md", Agent, 2400),
     (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 400),
     (".claude/skills/verification-specialist/SKILL.md", Agent, 600),
-    (".codex/README.md", Agent, 200),
     (".codex/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
     (".codex/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".codex/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
@@ -576,7 +564,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".codex/skills/fable-protocol/SKILL.md", Agent, 500),
     (".codex/skills/verification-specialist/SKILL.md", Agent, 600),
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1200),
-    (".github/skills/README.md", Agent, 0),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
     // why: #237 added the rule that truncated cloud replies are never shown or saved.
     ("AGENTS.md", Agent, 2100),
@@ -592,7 +579,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/CHAT_STREAMING.md", Guide, 400),
     ("docs/CHAT_WORKFLOWS.md", Guide, 2600),
     ("docs/CODING_PIPELINE.md", Guide, 2300),
-    ("docs/COMPACTION_ACCEPTANCE.md", Evidence, 900),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
     ("docs/CONSOLE.md", Guide, 6100),
     ("docs/CONSOLE_JOBS.md", Guide, 1400),
@@ -602,11 +588,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #241 folded the MLX QLoRA guide and finetune/README.md in here.
     ("docs/FINETUNE.md", Guide, 1200),
     ("docs/GIT_APPROVAL.md", Guide, 800),
-    ("docs/GROK_ACP_PHASE0.md", Evidence, 800),
     ("docs/INSTALL.md", Guide, 5500),
-    ("docs/ISSUE_102_ACCEPTANCE.md", Evidence, 600),
-    ("docs/ISSUE_148_CLOSEOUT.md", Evidence, 1100),
-    ("docs/MAC_ACCEPTANCE.md", Evidence, 1000),
     ("docs/MCP_CLIENT.md", Guide, 1000),
     ("docs/MCP_SERVER.md", Guide, 1200),
     ("docs/MEMORY_BENCHMARK_PLAN.md", Evidence, 1100),
@@ -615,7 +597,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #237 documented refused truncated cloud replies.
     ("docs/MODELS.md", Guide, 1000),
     ("docs/OFFLINE_CARGO.md", Guide, 600),
-    ("docs/PORT_PARITY.md", Evidence, 2900),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
     ("docs/RELEASING.md", Guide, 700),
     ("docs/SECURE_RESEARCH.md", Guide, 3900),
@@ -629,21 +610,12 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/parity/STATUS.md", Guide, 1300),
     ("docs/parity/WORK.md", Guide, 500),
     ("docs/screenshots/README.md", Evidence, 200),
-    ("docs/screenshots/analytics.md", Evidence, 400),
-    ("docs/screenshots/issue-102-deliveries.md", Evidence, 300),
-    ("docs/screenshots/issue-102-final-acceptance.md", Evidence, 500),
-    ("docs/screenshots/issue-102-gateway.md", Evidence, 300),
-    ("docs/screenshots/issue-102-ownership.md", Evidence, 300),
-    ("docs/screenshots/issue-102-scheduling.md", Evidence, 200),
-    ("docs/screenshots/issue-102.md", Evidence, 300),
-    ("docs/screenshots/session-tokens-verification.md", Evidence, 1000),
-    ("docs/screenshots/web-research-help-verification.md", Evidence, 1600),
     ("screenshots/slash-single-line/README.md", Evidence, 300),
     ("setup-guide.md", Root, 900),
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 55_000), (Evidence, 16_500), (Agent, 24_000)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 55_000), (Evidence, 5_000), (Agent, 22_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
