@@ -8,9 +8,6 @@ Escape clears the dialog and returns focus to the opening control. Logout and lo
 invalidate cached results, including responses that arrive after the transition.
 The command is in the alphabetical Commands pane and `/help`.
 
-See the [native and browser screenshot gallery](screenshots/analytics.md)
-for five verified examples using isolated test data.
-
 The view is available to administrators who have replaced the bootstrap password
 and to portal operators. Auditors cannot read it. Sessions, spend and coding runs
 include account-owned session histories and shared aggregate spend/coding-run records.
