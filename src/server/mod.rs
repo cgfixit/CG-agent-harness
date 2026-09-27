@@ -152,7 +152,8 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     )?;
     let settings = HarnessSettings::load(&home)?;
     let store = SessionStore::new(&home.sessions_dir())?;
-    let audit = Audit::from_home(&home.root, &cfg);
+    // Request handlers queue audit lines; one thread appends them in order.
+    let audit = Audit::from_home(&home.root, &cfg).with_writer_thread();
     let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
     let upload_permits = Arc::new(tokio::sync::Semaphore::new(state::upload_concurrency(&cfg)?));
     let upload_body_timeout = state::upload_body_timeout(&cfg)?;
@@ -391,7 +392,10 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
             state.home.root.display()
         );
         let _mcp_listener = mcp_server::start(state.clone()).await?;
-        transport.serve(listener, app).await?;
+        let served = transport.serve(listener, app).await;
+        // Queued audit lines land before the process exits.
+        state.audit.flush();
+        served?;
         Ok::<(), anyhow::Error>(())
     })
 }

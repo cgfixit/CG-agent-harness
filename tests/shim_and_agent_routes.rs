@@ -261,7 +261,7 @@ async fn run_validates_shape_before_any_subprocess() {
     assert_eq!(resp["detail"]["details"]["cap_sec"], 3600);
     assert_eq!(resp["detail"]["details"]["max_iterations_that_fit"], 2);
     // No audit tool_broker line was written for any of the refusals above.
-    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
+    let audit = s.audit_log();
     assert!(!audit.contains("tool_broker_decision"));
 }
 
@@ -318,7 +318,7 @@ async fn run_reaches_the_child_and_disabled_layer_is_409() {
     assert_eq!(resp["label"], "ok");
     assert!(resp["stdout"].as_str().unwrap().contains("Agentic layer disabled"));
     // The audit log now carries the tool-broker decision for the run.
-    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap();
+    let audit = s.audit_log();
     assert!(audit.contains("tool_broker_decision"));
     assert!(audit.contains("\"tool\":\"agent_run\""));
 }

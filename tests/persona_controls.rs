@@ -219,7 +219,7 @@ async fn edits_require_confirmation_preserve_backups_and_reject_stale_or_invalid
         .as_str()
         .unwrap()
         .contains("PERSONA_TWO"));
-    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    let audit = s.audit_log();
     assert!(!audit.contains("PERSONA_ONE"));
     assert!(!audit.contains("PERSONA_TWO"));
 }

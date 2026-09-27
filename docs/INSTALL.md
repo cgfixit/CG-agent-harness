@@ -479,7 +479,9 @@ or approval is replayed automatically. Cancellation is best-effort; escaped
 descendants can survive and need inspection before further writes.
 
 Audit/spend/optional metrics JSONL logs retain a current file and one previous
-`.1` generation, default 8 MiB each. Logging remains best-effort. See
+`.1` generation, default 8 MiB each. Logging remains best-effort. The server
+appends audit lines on a background thread: requests never wait on the file or
+the agentic child's lease, and a full queue drops new lines with a warning. See
 [console jobs](CONSOLE_JOBS.md), [desktop recovery](DESKTOP.md) and
 [process lifecycle](PROCESS_LIFECYCLE.md) for precise limits.
 

@@ -272,7 +272,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     let refused = request(&server, &admin, Method::GET, "/api/sessions", Value::Null).await;
     assert_eq!(refused.status(), 429, "retained hits must survive reload");
     assert!(refused.headers().contains_key("retry-after"));
-    let audit = std::fs::read_to_string(server.home.join("logs/audit.jsonl")).unwrap();
+    let audit = server.audit_log();
     assert!(audit.contains("config_reloaded") && audit.contains("config_reload_refused"));
     assert!(!audit.contains("PRIVATE_RELOAD_TEXT"));
     let legacy = spawn_server(&model.base_url(), ServerOptions::default()).await;

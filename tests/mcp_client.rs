@@ -164,10 +164,13 @@ impl McpServer {
             .send()
             .await
             .unwrap();
-        (
+        let answer = (
             resp.status().as_u16(),
             resp.json::<Value>().await.unwrap_or(Value::Null),
-        )
+        );
+        // Audit lines queued while handling the call are on disk before a test reads them.
+        self.state.audit.flush();
+        answer
     }
 
     async fn call(&self, body: Value) -> (u16, Value) {
@@ -180,10 +183,13 @@ impl McpServer {
             .send()
             .await
             .unwrap();
-        (
+        let answer = (
             resp.status().as_u16(),
             resp.json::<Value>().await.unwrap_or(Value::Null),
-        )
+        );
+        // Audit lines queued while handling the call are on disk before a test reads them.
+        self.state.audit.flush();
+        answer
     }
 }
 
