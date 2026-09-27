@@ -680,17 +680,26 @@ async fn chat_inner(
         Some(req.message.as_str()),
     )
     .map_err(|e| attachments::upload_error(&e))?;
-    let (pinned, facts, memory_budget, recalled, retrieval_error) = super::structured_memory::prompt_memory(
-        &state,
-        &owner,
-        settings.memory_enabled,
-        &selections,
-        crate::server::structured_memory::RetrievalIntent {
-            force: req.retrieve,
-            query: req.retrieve_query.as_deref(),
-            message: Some(req.message.as_str()),
-        },
-    );
+    // Fact recall and retrieval read SQLite: run them off the async worker.
+    let (pinned, facts, memory_budget, recalled, retrieval_error) = {
+        let (state, owner, selections) = (state.clone(), owner.clone(), selections.clone());
+        let (force, query, message) = (req.retrieve, req.retrieve_query.clone(), req.message.clone());
+        let memory_enabled = settings.memory_enabled;
+        super::structured_memory::off_worker(move || {
+            super::structured_memory::prompt_memory(
+                &state,
+                &owner,
+                memory_enabled,
+                &selections,
+                crate::server::structured_memory::RetrievalIntent {
+                    force,
+                    query: query.as_deref(),
+                    message: Some(message.as_str()),
+                },
+            )
+        })
+        .await
+    };
     let system_prompt = if cloud_selected {
         String::new()
     } else {
@@ -1047,14 +1056,14 @@ async fn chat_inner(
             "normal"
         }
     };
-    let episode = super::structured_memory::stage_after_exchange(
-        &state,
-        &owner,
-        &reply.model,
-        req.message.chars().count(),
-        reply.body_text.chars().count(),
-        sensitivity,
-    );
+    let episode = {
+        let (state, owner, model) = (state.clone(), owner.clone(), reply.model.clone());
+        let (user_chars, assistant_chars) = (req.message.chars().count(), reply.body_text.chars().count());
+        super::structured_memory::off_worker(move || {
+            super::structured_memory::stage_after_exchange(&state, &owner, &model, user_chars, assistant_chars, sensitivity)
+        })
+        .await
+    };
     let memory_suggestion = crate::server::structured_memory_suggest::enqueue(
         &state,
         &owner,

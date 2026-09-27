@@ -60,6 +60,18 @@ fn owner(user: Option<axum::Extension<UserSummary>>) -> String {
     super::auth::context_owner(user)
 }
 
+/// Run synchronous store work (rusqlite) on tokio's blocking pool, so no async
+/// worker waits on SQLite. A panic inside resumes on the caller, as if inline.
+pub(crate) async fn off_worker<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(value) => value,
+        Err(failed) => match failed.try_into_panic() {
+            Ok(panic) => std::panic::resume_unwind(panic),
+            Err(cancelled) => panic!("blocking store work did not finish: {cancelled}"),
+        },
+    }
+}
+
 fn require_store(state: &AppState) -> ApiResult<&StructuredMemoryStore> {
     state.structured_memory.as_ref().ok_or_else(|| {
         ApiError::new(
@@ -176,7 +188,7 @@ pub async fn status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
 ) -> ApiResult<PrivateJson> {
-    Ok(private(status_payload(&state, &owner(user))?))
+    off_worker(move || Ok(private(status_payload(&state, &owner(user))?))).await
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -191,42 +203,45 @@ pub async fn list_facts(
     user: Option<axum::Extension<UserSummary>>,
     Query(query): Query<FactListQuery>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let limits = store.limits();
-    if query
-        .q
-        .as_ref()
-        .is_some_and(|q| q.chars().count() > limits.max_search_query_chars)
-    {
-        return Err(error(
-            "STRUCTURED_MEMORY_SEARCH",
-            "search query exceeds the configured character bound",
-        ));
-    }
-    let limit = query
-        .limit
-        .map(|n| n as usize)
-        .unwrap_or(limits.max_search_results)
-        .min(limits.max_search_results);
-    let searching = query.q.as_ref().is_some_and(|q| !q.trim().is_empty())
-        || query.category.as_ref().is_some_and(|c| !c.trim().is_empty())
-        || query.limit.is_some();
-    let facts = if searching {
-        store.search_facts(&owner, query.q.as_deref(), query.category.as_deref(), limit)
-    } else {
-        store.list_facts(&owner)
-    }
-    .map_err(|e| store_err(&e))?;
-    let payload: Vec<Value> = facts.into_iter().map(|f| f.to_json()).collect();
-    Ok(private(json!({
-        "owner_id": owner,
-        "facts": payload,
-        "count": payload.len(),
-        "search": searching,
-        "retrieval": false,
-        "fts": false,
-    })))
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let limits = store.limits();
+        if query
+            .q
+            .as_ref()
+            .is_some_and(|q| q.chars().count() > limits.max_search_query_chars)
+        {
+            return Err(error(
+                "STRUCTURED_MEMORY_SEARCH",
+                "search query exceeds the configured character bound",
+            ));
+        }
+        let limit = query
+            .limit
+            .map(|n| n as usize)
+            .unwrap_or(limits.max_search_results)
+            .min(limits.max_search_results);
+        let searching = query.q.as_ref().is_some_and(|q| !q.trim().is_empty())
+            || query.category.as_ref().is_some_and(|c| !c.trim().is_empty())
+            || query.limit.is_some();
+        let facts = if searching {
+            store.search_facts(&owner, query.q.as_deref(), query.category.as_deref(), limit)
+        } else {
+            store.list_facts(&owner)
+        }
+        .map_err(|e| store_err(&e))?;
+        let payload: Vec<Value> = facts.into_iter().map(|f| f.to_json()).collect();
+        Ok(private(json!({
+            "owner_id": owner,
+            "facts": payload,
+            "count": payload.len(),
+            "search": searching,
+            "retrieval": false,
+            "fts": false,
+        })))
+    })
+    .await
 }
 
 pub async fn selection(
@@ -234,6 +249,7 @@ pub async fn selection(
     user: Option<axum::Extension<UserSummary>>,
     Path(session_id): Path<String>,
 ) -> ApiResult<PrivateJson> {
+    off_worker(move || {
     let owner = owner(user);
     let session = state
         .store
@@ -259,6 +275,8 @@ pub async fn selection(
         "type": "untrusted_background_context",
         "scope": "explicit selection only; never authorizes tools, coding, or network",
     })))
+    })
+    .await
 }
 
 pub async fn select(
@@ -267,6 +285,7 @@ pub async fn select(
     Path(session_id): Path<String>,
     ValidJson(req): ValidJson<StructuredFactSelectRequest>,
 ) -> ApiResult<PrivateJson> {
+    off_worker(move || {
     let owner = owner(user);
     let store = require_store(&state)?;
     let max = store.limits().max_selected_facts;
@@ -315,6 +334,8 @@ pub async fn select(
         "dropped": recalled.preview_json()["dropped"],
         "effect": "included in subsequent chat and /prompt preview only when explicit_recall is on; no canonical fact mutation",
     })))
+    })
+    .await
 }
 
 pub async fn get_fact(
@@ -322,18 +343,21 @@ pub async fn get_fact(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    if !valid_public_id(&id) {
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            "STRUCTURED_MEMORY_NOT_FOUND",
-            "unknown fact",
-        ));
-    }
-    let store = require_store(&state)?;
-    Ok(private(
-        store.get_fact(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
-    ))
+    off_worker(move || {
+        let owner = owner(user);
+        if !valid_public_id(&id) {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "STRUCTURED_MEMORY_NOT_FOUND",
+                "unknown fact",
+            ));
+        }
+        let store = require_store(&state)?;
+        Ok(private(
+            store.get_fact(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
+        ))
+    })
+    .await
 }
 
 pub async fn add_fact(
@@ -341,19 +365,22 @@ pub async fn add_fact(
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredFactAddRequest>,
 ) -> ApiResult<PrivateJson> {
-    require_confirm(req.confirm)?;
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let fact = store
-        .add_fact(&owner, &req.content, req.category.as_deref().unwrap_or(""), &req.reason)
-        .map_err(|e| store_err(&e))?;
-    audit(
-        &state,
-        "structured_memory_fact_added",
-        &owner,
-        json!({"id": fact.id, "revision": fact.revision, "content_chars": fact.content.chars().count()}),
-    );
-    Ok(private(fact.to_json()))
+    off_worker(move || {
+        require_confirm(req.confirm)?;
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let fact = store
+            .add_fact(&owner, &req.content, req.category.as_deref().unwrap_or(""), &req.reason)
+            .map_err(|e| store_err(&e))?;
+        audit(
+            &state,
+            "structured_memory_fact_added",
+            &owner,
+            json!({"id": fact.id, "revision": fact.revision, "content_chars": fact.content.chars().count()}),
+        );
+        Ok(private(fact.to_json()))
+    })
+    .await
 }
 
 pub async fn deactivate_fact(
@@ -362,19 +389,22 @@ pub async fn deactivate_fact(
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StructuredFactDeactivateRequest>,
 ) -> ApiResult<PrivateJson> {
-    require_confirm(req.confirm)?;
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let fact = store
-        .deactivate_fact(&owner, &id, req.expected_revision, &req.reason)
-        .map_err(|e| store_err(&e))?;
-    audit(
-        &state,
-        "structured_memory_fact_deactivated",
-        &owner,
-        json!({"id": fact.id, "revision": fact.revision, "content_chars": fact.content.chars().count()}),
-    );
-    Ok(private(fact.to_json()))
+    off_worker(move || {
+        require_confirm(req.confirm)?;
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let fact = store
+            .deactivate_fact(&owner, &id, req.expected_revision, &req.reason)
+            .map_err(|e| store_err(&e))?;
+        audit(
+            &state,
+            "structured_memory_fact_deactivated",
+            &owner,
+            json!({"id": fact.id, "revision": fact.revision, "content_chars": fact.content.chars().count()}),
+        );
+        Ok(private(fact.to_json()))
+    })
+    .await
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -388,23 +418,26 @@ pub async fn list_proposals(
     user: Option<axum::Extension<UserSummary>>,
     Query(query): Query<ProposalListQuery>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let proposals = match query.status.as_deref() {
-        None => store.list_proposals(&owner),
-        Some("pending") => store.list_pending_proposals(&owner),
-        Some(_) => {
-            return Err(error(
-                "STRUCTURED_MEMORY_PROPOSAL",
-                "status filter must be pending or omitted",
-            ))
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let proposals = match query.status.as_deref() {
+            None => store.list_proposals(&owner),
+            Some("pending") => store.list_pending_proposals(&owner),
+            Some(_) => {
+                return Err(error(
+                    "STRUCTURED_MEMORY_PROPOSAL",
+                    "status filter must be pending or omitted",
+                ))
+            }
         }
-    }
-    .map_err(|e| store_err(&e))?;
-    let proposals: Vec<Value> = proposals.into_iter().map(|p| p.to_json()).collect();
-    Ok(private(
-        json!({"owner_id": owner, "proposals": proposals, "count": proposals.len()}),
-    ))
+        .map_err(|e| store_err(&e))?;
+        let proposals: Vec<Value> = proposals.into_iter().map(|p| p.to_json()).collect();
+        Ok(private(
+            json!({"owner_id": owner, "proposals": proposals, "count": proposals.len()}),
+        ))
+    })
+    .await
 }
 
 pub async fn propose(
@@ -412,34 +445,37 @@ pub async fn propose(
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredMemoryProposeRequest>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let proposal = store
-        .create_proposal(
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let proposal = store
+            .create_proposal(
+                &owner,
+                ProposalDraft {
+                    action: &req.action,
+                    content: req.content.as_deref(),
+                    category: req.category.as_deref(),
+                    target_fact_id: req.target_fact_id.as_deref(),
+                    expected_revision: req.expected_revision,
+                    expected_digest: req.expected_digest.as_deref(),
+                    source_episode_ids: &req.source_episode_ids,
+                },
+            )
+            .map_err(|e| store_err(&e))?;
+        audit(
+            &state,
+            "structured_memory_proposal_created",
             &owner,
-            ProposalDraft {
-                action: &req.action,
-                content: req.content.as_deref(),
-                category: req.category.as_deref(),
-                target_fact_id: req.target_fact_id.as_deref(),
-                expected_revision: req.expected_revision,
-                expected_digest: req.expected_digest.as_deref(),
-                source_episode_ids: &req.source_episode_ids,
-            },
-        )
-        .map_err(|e| store_err(&e))?;
-    audit(
-        &state,
-        "structured_memory_proposal_created",
-        &owner,
-        json!({
-            "id": proposal.id,
-            "action": proposal.action,
-            "revision": proposal.revision,
-            "status": proposal.status
-        }),
-    );
-    Ok(private(proposal.to_json()))
+            json!({
+                "id": proposal.id,
+                "action": proposal.action,
+                "revision": proposal.revision,
+                "status": proposal.status
+            }),
+        );
+        Ok(private(proposal.to_json()))
+    })
+    .await
 }
 
 pub async fn review(
@@ -447,11 +483,14 @@ pub async fn review(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    Ok(private(
-        store.get_proposal(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
-    ))
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        Ok(private(
+            store.get_proposal(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
+        ))
+    })
+    .await
 }
 
 pub async fn decide(
@@ -460,19 +499,22 @@ pub async fn decide(
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StructuredMemoryDecisionRequest>,
 ) -> ApiResult<PrivateJson> {
-    require_confirm(req.confirm)?;
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let proposal = store
-        .decide_proposal(&owner, &id, &req.revision, req.apply, &req.reason)
-        .map_err(|e| store_err(&e))?;
-    audit(
-        &state,
-        "structured_memory_proposal_decision",
-        &owner,
-        json!({"id": proposal.id, "status": proposal.status, "action": proposal.action}),
-    );
-    Ok(private(proposal.to_json()))
+    off_worker(move || {
+        require_confirm(req.confirm)?;
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let proposal = store
+            .decide_proposal(&owner, &id, &req.revision, req.apply, &req.reason)
+            .map_err(|e| store_err(&e))?;
+        audit(
+            &state,
+            "structured_memory_proposal_decision",
+            &owner,
+            json!({"id": proposal.id, "status": proposal.status, "action": proposal.action}),
+        );
+        Ok(private(proposal.to_json()))
+    })
+    .await
 }
 
 pub fn stage_after_exchange(
@@ -547,23 +589,26 @@ pub async fn list_episodes(
     user: Option<axum::Extension<UserSummary>>,
     Query(query): Query<EpisodeListQuery>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let episodes = if query.latest_completed {
-        store
-            .latest_completed_episode(&owner)
-            .map(|episode| episode.into_iter().collect())
-    } else {
-        store.list_episodes(&owner)
-    }
-    .map_err(|e| store_err(&e))?;
-    let episodes: Vec<Value> = episodes.into_iter().map(|e| e.to_json()).collect();
-    Ok(private(json!({
-        "owner_id": owner,
-        "episodes": episodes,
-        "count": episodes.len(),
-        "available": capture_available(&state.cfg, true, &current_gates(&state))
-    })))
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let episodes = if query.latest_completed {
+            store
+                .latest_completed_episode(&owner)
+                .map(|episode| episode.into_iter().collect())
+        } else {
+            store.list_episodes(&owner)
+        }
+        .map_err(|e| store_err(&e))?;
+        let episodes: Vec<Value> = episodes.into_iter().map(|e| e.to_json()).collect();
+        Ok(private(json!({
+            "owner_id": owner,
+            "episodes": episodes,
+            "count": episodes.len(),
+            "available": capture_available(&state.cfg, true, &current_gates(&state))
+        })))
+    })
+    .await
 }
 
 pub async fn search_facts(
@@ -571,60 +616,63 @@ pub async fn search_facts(
     user: Option<axum::Extension<UserSummary>>,
     Query(query): Query<FactListQuery>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let gates = current_gates(&state);
-    if !retrieval_available(&state.cfg, true, &gates) {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "STRUCTURED_MEMORY_RETRIEVAL_DISABLED",
-            "structured retrieval is disabled; FTS search requires the retrieval gate",
-        ));
-    }
-    let q = query.q.as_deref().unwrap_or("").trim();
-    if q.chars().count() > store.limits().max_search_query_chars {
-        return Err(error(
-            "STRUCTURED_MEMORY_SEARCH",
-            "search query exceeds the configured character bound",
-        ));
-    }
-    let limit = query
-        .limit
-        .map(|n| n as usize)
-        .unwrap_or(store.limits().max_retrieval_results)
-        .min(store.limits().max_search_results);
-    let hits = match store.search_facts_fts(&owner, q, limit) {
-        Ok(hits) => hits,
-        Err(err) if err.code == "STRUCTURED_MEMORY_FTS" => {
-            return Ok(private(json!({
-                "owner_id": owner,
-                "hits": [],
-                "count": 0,
-                "retrieval": true,
-                "fts": true,
-                "health": store.retrieval_health().as_json(),
-                "error_class": err.code,
-            })));
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let gates = current_gates(&state);
+        if !retrieval_available(&state.cfg, true, &gates) {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "STRUCTURED_MEMORY_RETRIEVAL_DISABLED",
+                "structured retrieval is disabled; FTS search requires the retrieval gate",
+            ));
         }
-        Err(err) => return Err(store_err(&err)),
-    };
-    let payload: Vec<Value> = hits.iter().map(|h| h.to_json()).collect();
-    audit(
-        &state,
-        "structured_memory_fts_search",
-        &owner,
-        json!({"count": payload.len(), "query_chars": q.chars().count()}),
-    );
-    Ok(private(json!({
-        "owner_id": owner,
-        "hits": payload,
-        "count": payload.len(),
-        "retrieval": true,
-        "fts": true,
-        "health": store.retrieval_health().as_json(),
-        "type": "untrusted_background_context",
-        "scope": "search candidates only; not injected unless retrieve/auto_retrieval picks them",
-    })))
+        let q = query.q.as_deref().unwrap_or("").trim();
+        if q.chars().count() > store.limits().max_search_query_chars {
+            return Err(error(
+                "STRUCTURED_MEMORY_SEARCH",
+                "search query exceeds the configured character bound",
+            ));
+        }
+        let limit = query
+            .limit
+            .map(|n| n as usize)
+            .unwrap_or(store.limits().max_retrieval_results)
+            .min(store.limits().max_search_results);
+        let hits = match store.search_facts_fts(&owner, q, limit) {
+            Ok(hits) => hits,
+            Err(err) if err.code == "STRUCTURED_MEMORY_FTS" => {
+                return Ok(private(json!({
+                    "owner_id": owner,
+                    "hits": [],
+                    "count": 0,
+                    "retrieval": true,
+                    "fts": true,
+                    "health": store.retrieval_health().as_json(),
+                    "error_class": err.code,
+                })));
+            }
+            Err(err) => return Err(store_err(&err)),
+        };
+        let payload: Vec<Value> = hits.iter().map(|h| h.to_json()).collect();
+        audit(
+            &state,
+            "structured_memory_fts_search",
+            &owner,
+            json!({"count": payload.len(), "query_chars": q.chars().count()}),
+        );
+        Ok(private(json!({
+            "owner_id": owner,
+            "hits": payload,
+            "count": payload.len(),
+            "retrieval": true,
+            "fts": true,
+            "health": store.retrieval_health().as_json(),
+            "type": "untrusted_background_context",
+            "scope": "search candidates only; not injected unless retrieve/auto_retrieval picks them",
+        })))
+    })
+    .await
 }
 
 pub async fn set_gates(
@@ -632,54 +680,57 @@ pub async fn set_gates(
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<crate::server::schemas::StructuredMemoryGateRequest>,
 ) -> ApiResult<PrivateJson> {
-    let _store = require_store(&state)?;
-    let owner = owner(user);
-    let snapshot = {
-        let mut gates = state.structured_gates.lock().unwrap_or_else(|p| p.into_inner());
-        gates.set(&req.gate, req.enabled).map_err(|e| store_err(&e))?;
-        gates.clone()
-    };
-    snapshot
-        .save(&state.home)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    if req.gate == "retrieval" && req.enabled {
-        if let Some(store) = state.structured_memory.as_ref() {
-            if let Err(err) = store.rebuild_facts_fts() {
-                audit(
-                    &state,
-                    "structured_memory_fts_backfill_failed",
-                    &owner,
-                    json!({"error_class": err.code}),
-                );
+    off_worker(move || {
+        let _store = require_store(&state)?;
+        let owner = owner(user);
+        let snapshot = {
+            let mut gates = state.structured_gates.lock().unwrap_or_else(|p| p.into_inner());
+            gates.set(&req.gate, req.enabled).map_err(|e| store_err(&e))?;
+            gates.clone()
+        };
+        snapshot
+            .save(&state.home)
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+        if req.gate == "retrieval" && req.enabled {
+            if let Some(store) = state.structured_memory.as_ref() {
+                if let Err(err) = store.rebuild_facts_fts() {
+                    audit(
+                        &state,
+                        "structured_memory_fts_backfill_failed",
+                        &owner,
+                        json!({"error_class": err.code}),
+                    );
+                }
             }
         }
-    }
-    crate::server::structured_memory_auto::sync_worker(&state);
-    audit(
-        &state,
-        "structured_memory_gate_set",
-        &owner,
-        json!({"gate": req.gate, "enabled": req.enabled}),
-    );
-    Ok(private(json!({
-        "owner_id": owner,
-        "operator_gates": snapshot.as_json(),
-        "episode_capture": capture_available(&state.cfg, true, &snapshot),
-        "explicit_recall": recall_available(&state.cfg, true, &snapshot),
-        "retrieval": retrieval_available(&state.cfg, true, &snapshot),
-        "auto_retrieval": auto_retrieval_available(&state.cfg, true, &snapshot),
-        "consolidation": consolidation_available(&state.cfg, true, &snapshot),
-        "auto_consolidation": auto_consolidation_available(&state.cfg, true, &snapshot),
-        "auto_suggest_chat": crate::server::structured_memory_suggest::available(
+        crate::server::structured_memory_auto::sync_worker(&state);
+        audit(
             &state,
-            crate::server::structured_memory_suggest::Source::Chat,
-        ),
-        "auto_suggest_coding": crate::server::structured_memory_suggest::available(
-            &state,
-            crate::server::structured_memory_suggest::Source::Coding,
-        ),
-        "memory_on_unchanged": true,
-    })))
+            "structured_memory_gate_set",
+            &owner,
+            json!({"gate": req.gate, "enabled": req.enabled}),
+        );
+        Ok(private(json!({
+            "owner_id": owner,
+            "operator_gates": snapshot.as_json(),
+            "episode_capture": capture_available(&state.cfg, true, &snapshot),
+            "explicit_recall": recall_available(&state.cfg, true, &snapshot),
+            "retrieval": retrieval_available(&state.cfg, true, &snapshot),
+            "auto_retrieval": auto_retrieval_available(&state.cfg, true, &snapshot),
+            "consolidation": consolidation_available(&state.cfg, true, &snapshot),
+            "auto_consolidation": auto_consolidation_available(&state.cfg, true, &snapshot),
+            "auto_suggest_chat": crate::server::structured_memory_suggest::available(
+                &state,
+                crate::server::structured_memory_suggest::Source::Chat,
+            ),
+            "auto_suggest_coding": crate::server::structured_memory_suggest::available(
+                &state,
+                crate::server::structured_memory_suggest::Source::Coding,
+            ),
+            "memory_on_unchanged": true,
+        })))
+    })
+    .await
 }
 
 pub async fn get_episode(
@@ -687,18 +738,21 @@ pub async fn get_episode(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    if !valid_public_id(&id) {
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            "STRUCTURED_MEMORY_NOT_FOUND",
-            "unknown episode",
-        ));
-    }
-    let store = require_store(&state)?;
-    Ok(private(
-        store.get_episode(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
-    ))
+    off_worker(move || {
+        let owner = owner(user);
+        if !valid_public_id(&id) {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "STRUCTURED_MEMORY_NOT_FOUND",
+                "unknown episode",
+            ));
+        }
+        let store = require_store(&state)?;
+        Ok(private(
+            store.get_episode(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
+        ))
+    })
+    .await
 }
 
 pub async fn summarize_episode(
@@ -707,6 +761,7 @@ pub async fn summarize_episode(
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StructuredEpisodeSummaryRequest>,
 ) -> ApiResult<PrivateJson> {
+    off_worker(move || {
     require_confirm(req.confirm)?;
     let owner = owner(user);
     let store = require_store(&state)?;
@@ -720,6 +775,8 @@ pub async fn summarize_episode(
         json!({"id": episode.id, "summary_chars": episode.semantic_summary.as_ref().map(|s| s.chars().count()).unwrap_or(0)}),
     );
     Ok(private(episode.to_json()))
+    })
+    .await
 }
 
 pub async fn delete_episode(
@@ -728,14 +785,17 @@ pub async fn delete_episode(
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
 ) -> ApiResult<PrivateJson> {
-    require_confirm(req.confirm)?;
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    store
-        .delete_episode(&owner, &id, &req.reason)
-        .map_err(|e| store_err(&e))?;
-    audit(&state, "structured_memory_episode_deleted", &owner, json!({"id": id}));
-    Ok(private(json!({"deleted": id, "owner_id": owner})))
+    off_worker(move || {
+        require_confirm(req.confirm)?;
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        store
+            .delete_episode(&owner, &id, &req.reason)
+            .map_err(|e| store_err(&e))?;
+        audit(&state, "structured_memory_episode_deleted", &owner, json!({"id": id}));
+        Ok(private(json!({"deleted": id, "owner_id": owner})))
+    })
+    .await
 }
 
 pub async fn purge_expired(
@@ -743,19 +803,22 @@ pub async fn purge_expired(
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
 ) -> ApiResult<PrivateJson> {
-    require_confirm(req.confirm)?;
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let deleted = store
-        .purge_expired_episodes(&owner, &req.reason)
-        .map_err(|e| store_err(&e))?;
-    audit(
-        &state,
-        "structured_memory_episodes_purged",
-        &owner,
-        json!({"deleted": deleted}),
-    );
-    Ok(private(json!({"owner_id": owner, "deleted": deleted})))
+    off_worker(move || {
+        require_confirm(req.confirm)?;
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let deleted = store
+            .purge_expired_episodes(&owner, &req.reason)
+            .map_err(|e| store_err(&e))?;
+        audit(
+            &state,
+            "structured_memory_episodes_purged",
+            &owner,
+            json!({"deleted": deleted}),
+        );
+        Ok(private(json!({"owner_id": owner, "deleted": deleted})))
+    })
+    .await
 }
 
 pub async fn purge_owner(
@@ -763,34 +826,40 @@ pub async fn purge_owner(
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
 ) -> ApiResult<PrivateJson> {
-    require_confirm(req.confirm)?;
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let body = store.purge_owner(&owner, &req.reason).map_err(|e| store_err(&e))?;
-    audit(
-        &state,
-        "structured_memory_owner_purged",
-        &owner,
-        json!({"counts": body["deleted"]}),
-    );
-    Ok(private(body))
+    off_worker(move || {
+        require_confirm(req.confirm)?;
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let body = store.purge_owner(&owner, &req.reason).map_err(|e| store_err(&e))?;
+        audit(
+            &state,
+            "structured_memory_owner_purged",
+            &owner,
+            json!({"counts": body["deleted"]}),
+        );
+        Ok(private(body))
+    })
+    .await
 }
 
 pub async fn export_owner(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
 ) -> ApiResult<axum::response::Response> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let export = store.export_owner(&owner).map_err(|e| store_err(&e))?;
-    let html = export.html();
-    Ok(axum::response::Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CACHE_CONTROL, crate::server::headers::NO_STORE)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
-        .body(axum::body::Body::from(html))
-        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty())))
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let export = store.export_owner(&owner).map_err(|e| store_err(&e))?;
+        let html = export.html();
+        Ok(axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CACHE_CONTROL, crate::server::headers::NO_STORE)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+            .body(axum::body::Body::from(html))
+            .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty())))
+    })
+    .await
 }
 
 fn require_consolidation(state: &AppState) -> ApiResult<&StructuredMemoryStore> {
@@ -810,22 +879,25 @@ pub async fn list_consolidation(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let gates = current_gates(&state);
-    let runs: Vec<Value> = store
-        .list_consolidation_runs(&owner)
-        .map_err(|e| store_err(&e))?
-        .into_iter()
-        .map(|r| r.to_json())
-        .collect();
-    Ok(private(json!({
-        "owner_id": owner,
-        "runs": runs,
-        "count": runs.len(),
-        "consolidation": consolidation_available(&state.cfg, true, &gates),
-        "auto_consolidation": auto_consolidation_available(&state.cfg, true, &gates),
-    })))
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let gates = current_gates(&state);
+        let runs: Vec<Value> = store
+            .list_consolidation_runs(&owner)
+            .map_err(|e| store_err(&e))?
+            .into_iter()
+            .map(|r| r.to_json())
+            .collect();
+        Ok(private(json!({
+            "owner_id": owner,
+            "runs": runs,
+            "count": runs.len(),
+            "consolidation": consolidation_available(&state.cfg, true, &gates),
+            "auto_consolidation": auto_consolidation_available(&state.cfg, true, &gates),
+        })))
+    })
+    .await
 }
 
 pub async fn get_consolidation(
@@ -833,21 +905,24 @@ pub async fn get_consolidation(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    if !valid_public_id(&id) {
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            "STRUCTURED_MEMORY_NOT_FOUND",
-            "unknown consolidation run",
-        ));
-    }
-    let store = require_store(&state)?;
-    Ok(private(
-        store
-            .get_consolidation_run(&owner, &id)
-            .map_err(|e| store_err(&e))?
-            .to_json(),
-    ))
+    off_worker(move || {
+        let owner = owner(user);
+        if !valid_public_id(&id) {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "STRUCTURED_MEMORY_NOT_FOUND",
+                "unknown consolidation run",
+            ));
+        }
+        let store = require_store(&state)?;
+        Ok(private(
+            store
+                .get_consolidation_run(&owner, &id)
+                .map_err(|e| store_err(&e))?
+                .to_json(),
+        ))
+    })
+    .await
 }
 
 pub async fn start_consolidation(
@@ -909,20 +984,23 @@ pub async fn cancel_consolidation(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
 ) -> ApiResult<PrivateJson> {
-    let owner = owner(user);
-    let store = require_store(&state)?;
-    let run = store.cancel_consolidation_run(&owner, &id).map_err(|e| store_err(&e))?;
-    if matches!(
-        state.generation_gate.owner().as_str(),
-        "consolidation" | "memory-suggestion"
-    ) {
-        state.abort_chat();
-    }
-    audit(
-        &state,
-        "structured_memory_consolidation_cancelled",
-        &owner,
-        json!({"id": run.id, "state": run.state, "error_class": run.error_class}),
-    );
-    Ok(private(run.to_json()))
+    off_worker(move || {
+        let owner = owner(user);
+        let store = require_store(&state)?;
+        let run = store.cancel_consolidation_run(&owner, &id).map_err(|e| store_err(&e))?;
+        if matches!(
+            state.generation_gate.owner().as_str(),
+            "consolidation" | "memory-suggestion"
+        ) {
+            state.abort_chat();
+        }
+        audit(
+            &state,
+            "structured_memory_consolidation_cancelled",
+            &owner,
+            json!({"id": run.id, "state": run.state, "error_class": run.error_class}),
+        );
+        Ok(private(run.to_json()))
+    })
+    .await
 }

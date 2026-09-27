@@ -404,4 +404,43 @@ mod tests {
             assert!(AuthManager::open(&legacy, &cfg).is_err());
         }
     }
+
+    #[test]
+    fn a_live_session_slides_its_idle_window_at_most_once_a_minute() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
+        let now = std::sync::Arc::new(std::sync::Mutex::new(1_000.0f64));
+        let mut mgr = AuthManager::open(&path, &cfg).unwrap();
+        let clock = now.clone();
+        mgr.set_clock(Box::new(move || *clock.lock().unwrap()));
+        assert!(mgr.bootstrap_if_empty().unwrap());
+        mgr.login("admin", "admin").unwrap();
+        let session = mgr.change_password("admin", "admin", "first-admin-password").unwrap();
+        let token = authn::hash_token(&session.session_id);
+        let on_disk = || {
+            connect(&path.with_extension("sqlite3"))
+                .unwrap()
+                .query_row(
+                    "SELECT last_seen_ts, revoked FROM sessions WHERE token_hash=?1",
+                    [&token],
+                    |r| Ok((r.get::<_, f64>(0)?, r.get::<_, bool>(1)?)),
+                )
+                .unwrap()
+        };
+        let created = on_disk().0;
+        // Within a minute of the recorded use, a request writes nothing.
+        *now.lock().unwrap() += 59.0;
+        assert!(mgr.validate_session(&session.session_id).is_some());
+        assert_eq!(on_disk(), (created, false));
+        // From a minute on, the next request slides the window on disk.
+        *now.lock().unwrap() += 1.0;
+        assert!(mgr.validate_session(&session.session_id).is_some());
+        assert_eq!(on_disk(), (created + 60.0, false));
+        // Expiry is never deferred: the first request past the idle timeout
+        // (default 43200 s) is refused and revokes the row on disk.
+        *now.lock().unwrap() += 43_200.0;
+        assert!(mgr.validate_session(&session.session_id).is_none());
+        assert_eq!(on_disk(), (created + 60.0, true));
+    }
 }
