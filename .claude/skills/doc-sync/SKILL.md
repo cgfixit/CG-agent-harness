@@ -71,7 +71,7 @@ itself) says — if `INVARIANTS.md` and `README.md` disagree after your pass,
 
 - `README.md` — top-level pitch, command list, architecture summary.
 - `AGENTS.md` — literal operating manual; keep instructions actionable, not aspirational.
-- `setup-guide.md` — short index plus "choose how to run it". Install, models, chat, memory, web, coding, accounts, and troubleshooting live under `docs/` (`INSTALL.md`, `MODELS.md`, `CONSOLE.md`, `MEMORY_SETUP.md`, `WEB.md`, `CODING_PIPELINE.md`, `ACCOUNTS.md`, `TROUBLESHOOTING.md`). Do not fold those pages back into `setup-guide.md`.
+- `setup-guide.md` — short index plus "choose how to run it". Install, models, chat, memory, web, coding, accounts, and troubleshooting live under `docs/` (`INSTALL.md`, `MODELS.md`, `CONSOLE.md`, `MEMORY_GUIDE.md`, `WEB.md`, `CODING_PIPELINE.md`, `ACCOUNTS.md`, `TROUBLESHOOTING.md`). Do not fold those pages back into `setup-guide.md`.
 - `docs/USER_MANUAL.md` — end-user console/CLI walkthrough; verify UI copy and routes referenced still exist.
 - `docs/DEPENDENCIES.md` — leave dependency version numbers to `dep-sync`; only fix structural drift here (new crates worth documenting, removed ones still mentioned).
 - Other `docs/*.md` — update only the files whose subject matter the diff actually touches; don't touch unrelated docs.

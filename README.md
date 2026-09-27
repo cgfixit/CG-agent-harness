@@ -147,7 +147,7 @@ never edit the soul. Inspect with `/soul status` and `/prompt`; compare styles
 in fresh sessions. These are model instructions, not guaranteed formatting.
 Details: [Chat workflows](docs/CHAT_WORKFLOWS.md#inspect-and-edit-the-chat-prompt).
 
-**Memory, web, spend.** Memory enable steps: [MEMORY_SETUP.md](docs/MEMORY_SETUP.md).
+**Memory, web, spend.** Memory enable steps: [MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md).
 Web research rules: [WEB.md](docs/WEB.md). The Spend view reports retained
 usage and available costs. **Estimate draft** previews the selected cloud model's
 input estimate and full output reservation; optional per-call caps can refuse
@@ -224,7 +224,7 @@ Start with [setup-guide.md](setup-guide.md) — the index and run-path chooser.
 | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Operator navigation, spend/notifications and memory how-to |
 | [docs/CHAT_WORKFLOWS.md](docs/CHAT_WORKFLOWS.md) | Chat-first defaults, persona/skill commands, goal staging |
 | [docs/CHAT_STREAMING.md](docs/CHAT_STREAMING.md) | SSE chat streaming and `/loop stop` |
-| [docs/MEMORY_SETUP.md](docs/MEMORY_SETUP.md) | Enable steps for pinned notes and structured memory |
+| [docs/MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md) | Enable steps for pinned notes and structured memory |
 | [docs/STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) | Facts, proposals, episodes, explicit recall, facts-only FTS |
 | [docs/WEB.md](docs/WEB.md) | Google listings, URL fetch, page research |
 | [docs/SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md) | Spend completeness, webhook setup, retries and privacy |
