@@ -4,9 +4,11 @@
 //! never raises: a disk-full or serialization failure degrades to a tracing
 //! warning so an already-computed response is never turned into a 500.
 //!
-//! The server moves appends to one writer thread (`with_writer_thread`), so a
-//! request never waits on the filesystem or on the agentic child's lease. Other
-//! callers, including the short-lived agentic child, append inline.
+//! The server moves appends to one writer thread (`with_writer_thread`, sized by
+//! `logging.audit_queue_lines`), so a request never waits on the filesystem or
+//! on the agentic child's lease. Other callers, including the short-lived
+//! agentic child, append inline; the server flushes before it starts a child,
+//! so the child's lines follow the server lines that authorized it.
 
 use std::borrow::Cow;
 use std::io::ErrorKind;
@@ -22,12 +24,17 @@ use serde_json::Value;
 use super::config::AppConfig;
 
 const AUDIT_SKIP_KEYS: [&str; 3] = ["query_hash", "timestamp", "event"];
-/// Lines waiting for the writer thread. A full queue drops the new line with a
-/// warning, the same outcome as a lease that stays busy past its wait.
-const QUEUE_LINES: usize = 4096;
-/// Longest `flush` waits. Every queued line's own wait already ends at its
-/// submission deadline, so a drain normally takes milliseconds.
+/// Default `logging.audit_queue_lines`: lines waiting for the writer thread. A
+/// full queue drops the new line with a warning, the same outcome as a lease
+/// that stays busy past its wait.
+const QUEUE_LINES: u64 = 4096;
+/// Longest a flush waits, queueing its barrier included, and longest dropping
+/// the last handle waits for the writer to drain. Every queued line's own wait
+/// already ends at its submission deadline, so a drain normally takes
+/// milliseconds; only a stalled filesystem call runs into this bound.
 const FLUSH_WAIT: Duration = Duration::from_secs(10);
+/// How often a flush retries a full queue.
+const FLUSH_RETRY: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone, Default)]
 pub struct Redactors {
@@ -96,6 +103,8 @@ pub struct Audit {
     redactors: Redactors,
     include_query_hash: bool,
     sink: Arc<Sink>,
+    queue_lines: usize,
+    flush_wait: Duration,
     writer: Option<Writer>,
 }
 
@@ -120,7 +129,9 @@ enum Job {
         line: String,
         deadline: Instant,
     },
+    /// Barriers: answered once every earlier line is written or refused.
     Flush(mpsc::Sender<()>),
+    FlushAsync(tokio::sync::oneshot::Sender<()>),
 }
 
 fn write_jobs(sink: Arc<Sink>, jobs: Receiver<Job>) {
@@ -130,7 +141,18 @@ fn write_jobs(sink: Arc<Sink>, jobs: Receiver<Job>) {
             Job::Flush(done) => {
                 let _ = done.send(());
             }
+            Job::FlushAsync(done) => {
+                let _ = done.send(());
+            }
         }
+    }
+}
+
+/// `logging.audit_queue_lines`; 0 keeps appends inline.
+fn queue_lines(cfg: &AppConfig) -> usize {
+    match cfg.u64_or("logging.audit_queue_lines", QUEUE_LINES) {
+        0 => 0,
+        lines => lines.clamp(64, 65_536) as usize,
     }
 }
 
@@ -145,16 +167,21 @@ impl Audit {
                 retention: super::bounded_log::retention(cfg),
                 lock: Mutex::new(()),
             }),
+            queue_lines: queue_lines(cfg),
+            flush_wait: FLUSH_WAIT,
             writer: None,
         }
     }
 
-    /// Append from a dedicated thread instead of the caller's. `log` then only
-    /// redacts, serializes and queues. One thread keeps every line in
-    /// submission order, and each line keeps the lease deadline it was
-    /// submitted with.
+    /// Append from a dedicated thread instead of the caller's, unless
+    /// `logging.audit_queue_lines` is 0. `log` then only redacts, serializes
+    /// and queues. One thread keeps every line in submission order, and each
+    /// line keeps the lease deadline it was submitted with.
     pub fn with_writer_thread(self) -> Self {
-        self.with_queue(QUEUE_LINES)
+        match self.queue_lines {
+            0 => self,
+            lines => self.with_queue(lines),
+        }
     }
 
     fn with_queue(mut self, lines: usize) -> Self {
@@ -175,16 +202,55 @@ impl Audit {
         self
     }
 
+    fn queue(&self) -> Option<&SyncSender<Job>> {
+        self.writer.as_ref().and_then(|w| w.queue.as_ref())
+    }
+
     /// Wait until every line submitted before this call has been written or
-    /// refused. An inline audit has nothing pending and returns at once.
+    /// refused, for at most `FLUSH_WAIT` in all. An inline audit has nothing
+    /// pending and returns at once.
     pub fn flush(&self) {
-        let Some(queue) = self.writer.as_ref().and_then(|w| w.queue.as_ref()) else {
+        let Some(queue) = self.queue() else {
             return;
         };
+        let deadline = Instant::now() + self.flush_wait;
         let (done, drained) = mpsc::channel();
-        if queue.send(Job::Flush(done)).is_ok() {
-            let _ = drained.recv_timeout(FLUSH_WAIT);
+        let mut barrier = Job::Flush(done);
+        // `send` would wait on a full queue with no deadline; retry instead.
+        loop {
+            match queue.try_send(barrier) {
+                Ok(()) => break,
+                Err(TrySendError::Full(job)) if Instant::now() < deadline => {
+                    barrier = job;
+                    std::thread::sleep(FLUSH_RETRY);
+                }
+                // Still full at the deadline, or the writer is gone.
+                Err(_) => return,
+            }
         }
+        let _ = drained.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+    }
+
+    /// `flush` for async callers: the same barrier and bound, without blocking
+    /// a runtime worker.
+    pub async fn flush_async(&self) {
+        let Some(queue) = self.queue() else {
+            return;
+        };
+        let deadline = Instant::now() + self.flush_wait;
+        let (done, drained) = tokio::sync::oneshot::channel();
+        let mut barrier = Job::FlushAsync(done);
+        loop {
+            match queue.try_send(barrier) {
+                Ok(()) => break,
+                Err(TrySendError::Full(job)) if Instant::now() < deadline => {
+                    barrier = job;
+                    tokio::time::sleep(FLUSH_RETRY).await;
+                }
+                Err(_) => return,
+            }
+        }
+        let _ = tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), drained).await;
     }
 
     /// Resolve `logging.audit_file` against the home directory.
@@ -246,7 +312,7 @@ impl Audit {
         // Deadline is stamped at submission, before any in-process wait, so
         // callers that pile up behind a busy sink share one bound.
         let deadline = Instant::now() + self.sink.retention.lease_wait;
-        let Some(queue) = self.writer.as_ref().and_then(|w| w.queue.as_ref()) else {
+        let Some(queue) = self.queue() else {
             return self.sink.append_logged(&self.path, &line, deadline);
         };
         match queue.try_send(Job::Line {
@@ -260,7 +326,7 @@ impl Audit {
             Err(TrySendError::Disconnected(Job::Line { path, line, deadline })) => {
                 self.sink.append_logged(&path, &line, deadline)
             }
-            Err(TrySendError::Disconnected(Job::Flush(_))) => {}
+            Err(TrySendError::Disconnected(_)) => {}
         }
     }
 
@@ -274,14 +340,24 @@ impl Audit {
 
 impl Drop for Audit {
     /// Close the queue and let the writer drain it. Each queued line's wait
-    /// ends at its own submission deadline, so the join is bounded.
+    /// ends at its own submission deadline, but a stalled filesystem call has
+    /// none: after `FLUSH_WAIT` the writer is left behind with what it holds.
     fn drop(&mut self) {
-        if let Some(mut writer) = self.writer.take() {
+        let Some(thread) = self.writer.take().and_then(|mut writer| {
             drop(writer.queue.take());
-            if let Some(thread) = writer.thread.take() {
-                let _ = thread.join();
+            writer.thread.take()
+        }) else {
+            return;
+        };
+        let deadline = Instant::now() + self.flush_wait;
+        while !thread.is_finished() {
+            if Instant::now() >= deadline {
+                tracing::warn!("audit writer still busy at shutdown; lines it holds may be lost");
+                return;
             }
+            std::thread::sleep(FLUSH_RETRY);
         }
+        let _ = thread.join();
     }
 }
 
@@ -395,5 +471,101 @@ mod tests {
         let lines = written(audit.path());
         assert!((1..=2).contains(&lines.len()), "{lines:?}");
         assert_eq!(lines[0]["n"], 0);
+    }
+
+    #[test]
+    fn flush_and_drop_stop_waiting_for_a_stalled_writer_at_their_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut audit = audit(dir.path(), "logging: {}\n").with_queue(1);
+        audit.flush_wait = Duration::from_millis(200);
+        let audit = Arc::new(audit);
+        // The writer stalls inside its first append, as on a hung filesystem,
+        // and one more line fills the queue behind it.
+        let sink = audit.sink.clone();
+        let stalled = sink.lock.lock().unwrap();
+        let queue = audit.queue().unwrap();
+        let mut queued = 0;
+        let started = Instant::now();
+        while queued < 2 && started.elapsed() < Duration::from_secs(5) {
+            let line = Job::Line {
+                path: audit.path().to_path_buf(),
+                line: format!("{{\"n\":{queued}}}"),
+                deadline: Instant::now() + Duration::from_secs(5),
+            };
+            match queue.try_send(line) {
+                Ok(()) => queued += 1,
+                Err(_) => std::thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        assert_eq!(queued, 2);
+        let (done, finished) = mpsc::channel();
+        let flushing = audit.clone();
+        std::thread::spawn(move || {
+            flushing.flush();
+            drop(flushing);
+            let _ = done.send(());
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_secs(3)).is_ok(),
+            "flush waited on the full queue past its deadline"
+        );
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            drop(Arc::try_unwrap(audit).unwrap());
+            let _ = done.send(());
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_secs(3)).is_ok(),
+            "drop waited on the stalled writer past its deadline"
+        );
+        // Released, the writer still lands what it held.
+        drop(stalled);
+        let path = dir.path().join("logs/audit.jsonl");
+        let started = Instant::now();
+        while written(&path).len() < 2 && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(written(&path).len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn flush_async_returns_once_every_earlier_line_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let audit = audit(dir.path(), "logging:\n  audit_lease_wait_ms: 5000\n").with_writer_thread();
+        std::fs::create_dir_all(dir.path().join("logs")).unwrap();
+        let held =
+            super::super::file_lease::FileLease::acquire(&dir.path().join("logs/audit.jsonl.lock"), true).unwrap();
+        audit.log(json!({"event":"before"}));
+        let flushed = audit.flush_async();
+        tokio::pin!(flushed);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), &mut flushed)
+                .await
+                .is_err(),
+            "the barrier passed a line the writer still holds"
+        );
+        drop(held);
+        flushed.await;
+        assert_eq!(written(audit.path()).last().unwrap()["event"], "before");
+    }
+
+    #[test]
+    fn the_queue_size_comes_from_logging_audit_queue_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        for (yaml, lines) in [
+            ("logging: {}\n", 4096),
+            ("logging:\n  audit_queue_lines: 1\n", 64),
+            ("logging:\n  audit_queue_lines: 10000000\n", 65_536),
+            ("logging:\n  audit_queue_lines: \"8\"\n", 4096),
+            ("logging:\n  audit_queue_lines: 0\n", 0),
+        ] {
+            assert_eq!(audit(dir.path(), yaml).queue_lines, lines, "{yaml}");
+        }
+        // 0 keeps appends inline: the line is on disk when `log` returns.
+        let inline = audit(dir.path(), "logging:\n  audit_queue_lines: 0\n").with_writer_thread();
+        assert!(inline.writer.is_none());
+        inline.log(json!({"event":"inline"}));
+        assert_eq!(written(inline.path())[0]["event"], "inline");
     }
 }

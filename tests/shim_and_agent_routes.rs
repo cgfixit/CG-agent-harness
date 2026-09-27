@@ -640,3 +640,35 @@ async fn publication_requires_bounded_reviewed_text_without_defaulting_approval(
     assert_eq!(status, 200);
     assert_eq!(result["exit_code"], 4, "body never supplies approval");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_agentic_child_starts_after_the_audit_line_that_authorized_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("fixture-shim");
+    // The child reports whether the run's broker decision was on disk when it
+    // started; it runs in the home, beside logs/audit.jsonl.
+    std::fs::write(
+        &exe,
+        "#!/bin/sh\nif grep -q '\"event\":\"tool_broker_decision\"' logs/audit.jsonl 2>/dev/null; then seen=true; else seen=false; fi\nprintf '{\"status\":\"pending_decision\",\"decision_on_disk\":%s}\\n' \"$seen\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let model = start_mock_model().await;
+    // The server's writer may wait 5 s for the lease this test holds.
+    let mut opts = ServerOptions::default().with("logging.audit_lease_wait_ms", "5000");
+    opts.shim_exe = Some(exe);
+    let s = spawn_server(&model.base_url(), opts).await;
+    let lease = hold_audit_lease(&s.home).await;
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        drop(lease);
+    });
+    let mut body = run_body();
+    body["confirm"] = json!(true);
+    let (status, result) = s.post_json("/api/agent/run", body).await;
+    release.await.unwrap();
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["parsed"]["decision_on_disk"], true, "{result}");
+}

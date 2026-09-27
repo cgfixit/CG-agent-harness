@@ -243,6 +243,22 @@ impl TestServer {
     }
 }
 
+/// Take the audit file's lease under `home`, retrying while a writer holds it
+/// for an append. While held, the server's audit writer keeps its lines queued
+/// (up to `logging.audit_lease_wait_ms` per line).
+#[cfg(unix)]
+pub async fn hold_audit_lease(home: &Path) -> cgagentharness::common::file_lease::FileLease {
+    std::fs::create_dir_all(home.join("logs")).unwrap();
+    let path = home.join("logs/audit.jsonl.lock");
+    for _ in 0..500 {
+        if let Ok(lease) = cgagentharness::common::file_lease::FileLease::acquire(&path, true) {
+            return lease;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the audit lease stayed busy");
+}
+
 /// Error code from a `{"detail": {...}}` envelope.
 pub fn code(body: &Value) -> String {
     body["detail"]["code"].as_str().unwrap_or("").to_string()

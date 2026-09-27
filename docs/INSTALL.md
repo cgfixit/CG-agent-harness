@@ -452,7 +452,7 @@ soul, memory, skill files or shared prompts.
 Closing the desktop window hides it and keeps its backend running. Dock reopen
 or a second launch focuses the same home instance. Cmd-Q offers **Keep running**
 or **Cancel work and quit** if work is active. A standalone server stops with
-Ctrl-C; the app needs no open Terminal. Neither path installs automatic login
+Ctrl-C or SIGTERM; the app needs no open Terminal. Neither path installs automatic login
 startup, and neither resumes model requests or approvals after a reboot.
 
 One server owns a home at a time. Quit its owner before switching between app
@@ -480,8 +480,10 @@ descendants can survive and need inspection before further writes.
 
 Audit/spend/optional metrics JSONL logs retain a current file and one previous
 `.1` generation, default 8 MiB each. Logging remains best-effort. The server
-appends audit lines on a background thread: requests never wait on the file or
-the agentic child's lease, and a full queue drops new lines with a warning. See
+appends audit lines on a background thread, flushed before each agentic child
+starts and at shutdown: requests never wait on the file or the child's lease. A
+full queue (`logging.audit_queue_lines`, default 4096; 0 appends inline) drops
+new lines with a warning. See
 [console jobs](CONSOLE_JOBS.md), [desktop recovery](DESKTOP.md) and
 [process lifecycle](PROCESS_LIFECYCLE.md) for precise limits.
 

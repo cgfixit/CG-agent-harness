@@ -219,6 +219,10 @@ logging:
   # warning. 0 disables the wait (refuse on the first busy lease).
   audit_lease_wait_ms: 50 # clamped to 0–5000
   audit_lease_retry_ms: 2 # clamped to 1–1000
+  # The server queues audit lines for one writer thread, so requests never
+  # wait on the file; a full queue drops new lines with a warning. 0 appends
+  # inline on the request instead.
+  audit_queue_lines: 4096 # 0, or clamped to 64–65536
   audit_fields:
     include_query_hash: true
 

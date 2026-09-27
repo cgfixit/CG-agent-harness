@@ -305,8 +305,7 @@ fn retire_disabled_owner(state: &AppState, owner: &str) -> ApiResult<()> {
 pub async fn audit_events(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
     use std::io::{Read, Seek, SeekFrom};
     // Lines from earlier requests may still be queued for the writer thread.
-    let flushing = state.clone();
-    let _ = tokio::task::spawn_blocking(move || flushing.audit.flush()).await;
+    state.audit.flush_async().await;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
