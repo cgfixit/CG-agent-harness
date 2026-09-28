@@ -256,9 +256,9 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     // LM Studio doubles the reply reservation: 4096 tokens for max_tokens 2048. A
-    // round needs both replies, so with the shipped 28000-token budget rounds fit up
-    // to 9,776 input tokens ((28000 - 256 - 2 x 4096) / 2), and web chat admits
-    // prompts up to 19,808.
+    // round needs both replies and, with one call a turn, one minimal result, so with
+    // the shipped 28000-token budget rounds fit up to 9,776 input tokens
+    // ((28000 - 256 - 2 x 4096) / 2), and web chat admits prompts up to 19,808.
     let s = common::spawn_server(
         &format!("http://{address}/v1"),
         common::ServerOptions {
@@ -266,7 +266,8 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
             ..Default::default()
         }
         .with("models.local_llm.provider", "lmstudio")
-        .with("models.local_llm.max_tokens", "2048"),
+        .with("models.local_llm.max_tokens", "2048")
+        .with("web.chat_tool_calls", "1"),
     )
     .await;
     assert_eq!(
@@ -378,8 +379,9 @@ async fn web_chat_offers_tools_only_when_both_replies_of_a_round_fit() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     // Shipped Ollama with reasoning "none" reserves one 2048-token reply per call.
-    // A round needs both replies, so tools fit up to 5,824 input tokens
-    // ((16000 - 256 - 2 x 2048) / 2); counting one reply offered them up to 6,848.
+    // With one call a turn, a round needs both replies and one minimal result, so
+    // tools fit up to 5,824 input tokens ((16000 - 256 - 2 x 2048) / 2); counting
+    // one reply offered them up to 6,848.
     let s = common::spawn_server(
         &format!("http://{address}/v1"),
         common::ServerOptions {
@@ -387,7 +389,8 @@ async fn web_chat_offers_tools_only_when_both_replies_of_a_round_fit() {
             ..Default::default()
         }
         .with("models.local_llm.max_tokens", "2048")
-        .with("web.total_tokens", "16000"),
+        .with("web.total_tokens", "16000")
+        .with("web.chat_tool_calls", "1"),
     )
     .await;
     assert_eq!(
@@ -473,6 +476,7 @@ async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     // 25000 tokens leave the batch about 6k after two ~8.7k-token prompts and the
     // 1024-token reply reservation, so the first page (about 12k at ratio 2) is cut.
+    // Two calls a turn: the round check reserves a minimal result for each.
     let s = common::spawn_server(
         &format!("http://{address}/v1"),
         common::ServerOptions {
@@ -481,7 +485,8 @@ async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
         }
         .with("models.local_llm.provider", "lmstudio")
         .with("models.local_llm.max_tokens", "512")
-        .with("web.total_tokens", "25000"),
+        .with("web.total_tokens", "25000")
+        .with("web.chat_tool_calls", "2"),
     )
     .await;
     assert_eq!(
@@ -515,6 +520,155 @@ async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
         "{body}"
     );
     server.abort();
+}
+
+/// A mock model for the budget tests below. It reports bytes / 4 of what it is
+/// sent, fetches with `calls` parallel reads (from a reply that spends its whole
+/// 2048-token cap) when offered tools for a message starting with "fetch", and
+/// records every request.
+fn budget_model(calls: usize, requests: Arc<Mutex<Vec<Value>>>) -> Router {
+    Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<Value>| {
+            let requests = requests.clone();
+            async move {
+                requests.lock().unwrap().push(body.clone());
+                let prompt = (body["messages"].to_string().len()
+                    + body.get("tools").map_or(0, |tools| tools.to_string().len()))
+                    as u64
+                    / 4;
+                let last = body["messages"].as_array().unwrap().last().unwrap().clone();
+                let fetch = last["content"].as_str().is_some_and(|text| text.starts_with("fetch"));
+                if last["role"] == "tool" {
+                    Json(common::ok_reply("Answer from the page", prompt, 20))
+                } else if !fetch {
+                    Json(common::ok_reply("Noted.", prompt, 20))
+                } else if body.get("tools").is_none() {
+                    Json(common::ok_reply("Answered without the page", prompt, 20))
+                } else {
+                    let calls: Vec<_> = (0..calls)
+                        .map(|n| {
+                            json!({"id":format!("call_{n}"),"type":"function","function":{"name":"web_fetch",
+                                "arguments":json!({"url":"http://docs.example/docs/item"}).to_string()}}) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                        })
+                        .collect();
+                    Json(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                        "tool_calls":calls}}],"usage":{"prompt_tokens":prompt,"completion_tokens":2048}}))
+                }
+            }
+        }),
+    )
+}
+
+/// Starts `router` plus a counted 6000-token page at /docs/item, and a server
+/// with shipped Ollama (reasoning "none": one 2048-token reply reserved per
+/// call), `web.total_tokens` 16000 and `calls` web calls a turn. Returns the
+/// server, the read counter, and the input tokens of a fresh session's first
+/// short message, which the tests pad to the size they need.
+async fn budget_server(router: Router, calls: usize) -> (common::TestServer, Arc<AtomicUsize>, u64) {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let read_count = reads.clone();
+    let router = router.route(
+        "/docs/item",
+        get(move || {
+            let reads = read_count.clone();
+            async move {
+                reads.fetch_add(1, Ordering::SeqCst);
+                ([("content-type", "text/plain")], "PAGE_EVIDENCE ".repeat(2000))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..Default::default()
+        }
+        .with("models.local_llm.max_tokens", "2048")
+        .with("web.total_tokens", "16000")
+        .with("web.chat_tool_calls", &calls.to_string()),
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+            .await
+            .0,
+        200
+    );
+    let (status, body) = s.post_json("/api/chat", json!({"message": "hello"})).await;
+    assert_eq!(status, 200, "{body}");
+    let base = body["usage"]["prompt_tokens"].as_u64().unwrap();
+    assert!(
+        base < 4_600,
+        "the budget tests pad a short first message of {base} tokens"
+    );
+    (s, reads, base)
+}
+
+/// A model may batch every call it has left (`parallel_tool_calls`), so a round
+/// must fit a minimal result for each. Reserving one offered tools here; the
+/// model asked for ten reads, and the first ran before the turn ended with
+/// WEB_TOKEN_BUDGET because no room was left for its result.
+#[tokio::test]
+async fn web_chat_offers_tools_only_while_a_result_for_every_call_left_fits() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let (s, reads, base) = budget_server(budget_model(10, requests), 10).await;
+    // Ten calls left: tools fit up to 4,672 input tokens ((16000 - 10 x 256 -
+    // 2 x 2048) / 2). Reserving one result offered them up to 5,824.
+    let message = format!("fetch the page {}", "x".repeat(4 * (5_250 - base) as usize));
+    let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "Answered without the page", "{body}");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        0,
+        "no read runs when the batch cannot fit"
+    );
+    assert_eq!(body["web_tools"][0]["code"], "WEB_TOKEN_BUDGET", "{body}");
+}
+
+/// The last call of a turn carries no tools, so its result is cut to the room a
+/// tool-free follow-up leaves. Counting the definitions anyway cut the page to
+/// leave their room unused, and the follow-up's own admission check refused it.
+#[tokio::test]
+async fn web_chat_sizes_a_tool_free_follow_up_without_the_tool_definitions() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let (s, reads, base) = budget_server(budget_model(1, requests.clone()), 1).await;
+    // About 5,000 input tokens: a one-call round fits (up to 5,824), and after the
+    // tool-call reply spends its cap, the 6000-token page must be cut.
+    let message = format!("fetch the page {}", "x".repeat(4 * (5_000 - base) as usize));
+    let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "Answer from the page", "{body}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    let text = body["web_tools"][0]["result"]["text"].as_str().unwrap();
+    assert!(
+        !text.is_empty() && text.len() < 24_000,
+        "the page is cut: {} chars",
+        text.len()
+    );
+    let requests = requests.lock().unwrap();
+    let last = |request: &Value| request["messages"].as_array().unwrap().last().unwrap().clone();
+    let call = requests
+        .iter()
+        .find(|r| r.get("tools").is_some() && last(r)["content"] != "hello")
+        .unwrap();
+    let follow_up = requests.iter().find(|r| last(r)["role"] == "tool").unwrap();
+    assert!(follow_up.get("tools").is_none(), "the last call carries no tools");
+    // What the web budget charged the tool call, and its estimate of the follow-up.
+    let definitions = call["tools"].to_string().len() as u64;
+    let charged = (call["messages"].to_string().len() as u64 + definitions) / 4 + 2048;
+    let messages = follow_up["messages"].as_array().unwrap();
+    let sent = messages[0]["content"].as_str().unwrap().len() + serde_json::to_vec(&messages[1..]).unwrap().len();
+    let spent = charged + (sent as u64).div_ceil(4) + 2048;
+    assert!(
+        spent <= 16_000 && 16_000 - spent < definitions / 8,
+        "the result fills the room left: {spent} of 16000, definitions {} tokens",
+        definitions / 4
+    );
 }
 
 #[tokio::test]

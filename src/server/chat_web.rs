@@ -66,39 +66,75 @@ fn tool_message(id: &str, result: &Value) -> Result<Value> {
     Ok(json!({"role":"tool","tool_call_id":id,"content":serde_json::to_string(result)?}))
 }
 
-/// Largest form of a tool result that `fits` accepts. A fetched page keeps its
-/// longest fitting prefix, a search listing drops trailing results. `None` when
-/// not even one character or one result fits.
+/// Largest form of a tool result that `fits` accepts, cutting text before
+/// metadata. A fetched page keeps its longest fitting prefix; only when not
+/// even one character fits beside its title is the title cut too. A search
+/// listing drops trailing results, then cuts the last one's snippet, then its
+/// title. URLs and the query are never cut. `None` when even that does not fit.
 fn fit_result(mut result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -> Result<Option<Value>> {
     if fits(&result)? {
         return Ok(Some(result));
     }
-    if let Some(text) = result.get("text").and_then(Value::as_str) {
-        let chars: Vec<char> = text.chars().collect();
-        // Prefix `hi` does not fit; find the longest prefix `lo` that does.
-        let (mut lo, mut hi) = (0, chars.len());
-        while hi - lo > 1 {
-            let mid = lo + (hi - lo) / 2;
-            result["text"] = Value::String(chars[..mid].iter().collect());
+    let cuts: &[(&str, usize)] = if let Some(text) = result.get("text").and_then(Value::as_str) {
+        // An empty page is no evidence.
+        if text.is_empty() {
+            return Ok(None);
+        }
+        &[("/text", 1), ("/title", 0)]
+    } else {
+        while let Some(listing) = result.get_mut("results").and_then(Value::as_array_mut) {
+            if listing.len() <= 1 {
+                break;
+            }
+            listing.pop();
             if fits(&result)? {
-                lo = mid;
-            } else {
-                hi = mid;
+                return Ok(Some(result));
             }
         }
-        result["text"] = Value::String(chars[..lo].iter().collect());
-        return Ok((lo > 0 && fits(&result)?).then_some(result));
-    }
-    while let Some(listing) = result.get_mut("results").and_then(Value::as_array_mut) {
-        if listing.len() <= 1 {
-            break;
-        }
-        listing.pop();
-        if fits(&result)? {
+        &[("/results/0/snippet", 0), ("/results/0/title", 0)]
+    };
+    for &(pointer, min) in cuts {
+        if cut(&mut result, pointer, min, &mut fits)? {
             return Ok(Some(result));
         }
     }
     Ok(None)
+}
+
+/// Cuts the string at `pointer`, which does not fit whole, to its longest prefix
+/// of at least `min` characters that `fits` accepts. `false`, leaving that
+/// minimum in place, when even the minimum does not fit or there is no string.
+fn cut(result: &mut Value, pointer: &str, min: usize, fits: &mut impl FnMut(&Value) -> Result<bool>) -> Result<bool> {
+    let Some(chars) = result
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(|text| text.chars().collect::<Vec<char>>())
+        .filter(|chars| chars.len() >= min)
+    else {
+        return Ok(false);
+    };
+    let set = |result: &mut Value, len: usize| {
+        if let Some(field) = result.pointer_mut(pointer) {
+            *field = Value::String(chars[..len].iter().collect());
+        }
+    };
+    set(result, min);
+    if !fits(result)? {
+        return Ok(false);
+    }
+    // Prefix `lo` fits and prefix `hi` does not; find the longest that does.
+    let (mut lo, mut hi) = (min, chars.len());
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        set(result, mid);
+        if fits(result)? {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    set(result, lo);
+    Ok(true)
 }
 
 fn check_evidence(state: &AppState, owner: &str, sources: &[String]) -> Result<()> {
@@ -164,34 +200,40 @@ async fn run_inner(
     let definitions = tools();
     let definition_bytes = serde_json::to_vec(&definitions)?.len();
     let mut tools_withheld = false;
+    let mut initial_prompt_tools = false;
     for turn in 0..=web.limits.chat_tool_calls {
         check_evidence(state, owner, &sources)?;
-        let estimate = prompt_estimate(
-            system.len() + serde_json::to_vec(&messages)?.len() + definition_bytes,
-            token_ratio,
-        );
+        let sent = system.len() + serde_json::to_vec(&messages)?.len();
+        let with_tools = prompt_estimate(sent + definition_bytes, token_ratio);
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
+        let remaining = web.limits.chat_tool_calls - used_calls;
+        // A tool round is two calls: this one, whose reply carries the tool calls,
+        // and a follow-up that sends this prompt again with the results. Offer tools
+        // only while both prompts, both replies and a minimal result for every call
+        // the model may still make (it may batch them all) fit.
+        let round_fits = remaining > 0
+            && budget_used
+                .saturating_add(with_tools.saturating_mul(2))
+                .saturating_add(min_result_tokens(token_ratio).saturating_mul(remaining as u64))
+                .saturating_add(reservation.saturating_mul(2))
+                <= web.limits.total_tokens;
+        // Charge what is sent: the tool definitions only when tools are offered.
+        let (available, estimate) = if round_fits {
+            (definitions.as_slice(), with_tools)
+        } else {
+            (&[][..], prompt_estimate(sent, token_ratio))
+        };
         if budget_used.saturating_add(estimate).saturating_add(reservation) > web.limits.total_tokens {
             return Err(error("WEB_TOKEN_BUDGET", "chat web token budget exhausted"));
         }
-        // A tool round is two calls: this one, whose reply carries the tool calls,
-        // and a follow-up that sends this prompt again with the result. Offer tools
-        // only while both prompts, a minimal result and both replies fit.
-        let round_fits = budget_used
-            .saturating_add(estimate.saturating_mul(2))
-            .saturating_add(min_result_tokens(token_ratio))
-            .saturating_add(reservation.saturating_mul(2))
-            <= web.limits.total_tokens;
-        if !round_fits && used_calls < web.limits.chat_tool_calls && !tools_withheld {
+        if !round_fits && remaining > 0 && !tools_withheld {
             tools_withheld = true;
             events.push(json!({"tool":"web","ok":false,"code":"WEB_TOKEN_BUDGET",
-                "message":"web.total_tokens has no room for a tool round (this prompt twice, a result and two replies); web tools were not offered"}));
+                "message":"web.total_tokens has no room for a tool round (this prompt twice, two replies and a minimal result per call left); web tools were not offered"}));
         }
-        let available = if used_calls == web.limits.chat_tool_calls || !round_fits {
-            &[][..]
-        } else {
-            definitions.as_slice()
-        };
+        if turn == 0 {
+            initial_prompt_tools = round_fits;
+        }
         let validate = || check_evidence(state, owner, &sources);
         let response = state
             .chat
@@ -232,6 +274,7 @@ async fn run_inner(
             reply.completion_tokens = completion_tokens;
             reply.usage_reported = reported;
             reply.initial_prompt_tokens = initial_prompt_tokens;
+            reply.initial_prompt_tools = initial_prompt_tools;
             return Ok((reply, events));
         }
         let calls = message["tool_calls"]
@@ -362,9 +405,10 @@ async fn run_inner(
                 _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
             };
             // The follow-up call sends everything again: cut the result to the room
-            // web.total_tokens has left for it, with the estimate the next call uses,
-            // keeping a minimal result's room for each later call in this batch.
-            let sent = system.len() + serde_json::to_vec(&messages)?.len() + definition_bytes;
+            // web.total_tokens has left for it, keeping a minimal result's room for
+            // each later call in this batch. Sized without the tool definitions: a
+            // later call sends them only after its round check, which needs more room.
+            let sent = system.len() + serde_json::to_vec(&messages)?.len();
             let later = min_result_tokens(token_ratio).saturating_mul((calls.len() - index - 1) as u64);
             let result = match result {
                 Ok(value) => fit_result(value, |candidate| {
@@ -400,6 +444,7 @@ async fn run_inner(
                             completion_tokens,
                             usage_reported: reported,
                             initial_prompt_tokens,
+                            initial_prompt_tools,
                         },
                         events,
                     ));
@@ -454,5 +499,33 @@ mod tests {
             .unwrap();
         assert_eq!(fitted["results"].as_array().unwrap().len(), 2);
         assert!(fit_result(listing, |v| Ok(size(v) < 10)).unwrap().is_none());
+    }
+
+    #[test]
+    fn fit_result_cuts_a_title_or_snippet_only_when_no_text_fits_beside_it() {
+        let url = "https://example.test/a";
+        let page = json!({"url":url,"title":"T".repeat(400),"text":"abcdefghij","notice":"n"});
+        // While one character of text fits beside it, the title stays whole.
+        let room = size(&json!({"url":url,"title":"T".repeat(400),"text":"abc","notice":"n"}));
+        let fitted = fit_result(page.clone(), |v| Ok(size(v) <= room)).unwrap().unwrap();
+        assert_eq!((&fitted["title"], &fitted["text"]), (&page["title"], &json!("abc")));
+        // Otherwise the title is cut and one character of text stays.
+        let room = size(&json!({"url":url,"title":"T".repeat(100),"text":"a","notice":"n"}));
+        let fitted = fit_result(page.clone(), |v| Ok(size(v) <= room)).unwrap().unwrap();
+        assert_eq!(fitted["title"], "T".repeat(100));
+        assert_eq!((&fitted["text"], &fitted["url"]), (&json!("a"), &json!(url)));
+        // The URL is never cut.
+        let room = size(&json!({"url":url,"title":"","text":"a","notice":"n"}));
+        assert!(fit_result(page, |v| Ok(size(v) < room)).unwrap().is_none());
+        // A listing keeps one result, then cuts its snippet, then its title.
+        let row = |title: usize, snippet: usize| json!({"rank":1,"title":"T".repeat(title),"url":url,"snippet":"S".repeat(snippet)});
+        let listing = json!({"query":"q","results":[row(50, 300),row(1, 1)]});
+        let room = size(&json!({"query":"q","results":[row(50, 20)]}));
+        let fitted = fit_result(listing.clone(), |v| Ok(size(v) <= room)).unwrap().unwrap();
+        assert_eq!(fitted["results"], json!([row(50, 20)]));
+        let room = size(&json!({"query":"q","results":[row(10, 0)]}));
+        let fitted = fit_result(listing.clone(), |v| Ok(size(v) <= room)).unwrap().unwrap();
+        assert_eq!(fitted["results"], json!([row(10, 0)]));
+        assert!(fit_result(listing, |v| Ok(size(v) < room - 10)).unwrap().is_none());
     }
 }

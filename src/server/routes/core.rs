@@ -891,8 +891,6 @@ async fn chat_inner(
         role: "user".into(),
         content: req.message.clone(),
     });
-    let estimated_input =
-        crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", 0, 1.0, tool_tokens);
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
     let spend_source = if req.loop_turn { "loop" } else { "chat" };
     let (mut reply, web_tools) = if cloud_selected {
@@ -1002,6 +1000,11 @@ async fn chat_inner(
     let calibration = if cloud_selected {
         None
     } else {
+        // Calibrate against what the first call sent: web chat leaves out the tool
+        // definitions when a tool round cannot fit.
+        let sent_tools = if reply.initial_prompt_tools { tool_tokens } else { 0 };
+        let estimated_input =
+            crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", 0, 1.0, sent_tools);
         crate::server::compaction::calibrate(
             session.token_calibration.as_ref(),
             &state.chat.base_url,
