@@ -9,8 +9,9 @@
 #
 # Exit 0 = ok; exit 1 = missing required sections.
 # Git hooks cannot intercept GitHub API / gh pr create bodies — agents and
-# humans should run this before opening a PR. CI runs the same headers as a
-# blocking check (.github/workflows/pr-template-check.yml).
+# humans should run this before opening a PR. The script and CI
+# (.github/workflows/pr-template-check.yml) enforce the same rules, in
+# lock-step, including the Cursor footer strip below.
 #
 # The core-path rule is mirrored from that workflow too: when the change
 # touches src/shim/, the guard or header layers, writer, sandbox, workspace,
@@ -38,6 +39,27 @@ elif [[ -f "$input" ]]; then
 else
   printf 'check-pr-template: file not found: %s\n' "$input" >&2
   exit 2
+fi
+
+# Cursor cloud agents append an HTML footer. A line that is exactly
+# `<!-- CURSOR_AGENT_PR_BODY_END -->` (leading and trailing space, tab,
+# vertical tab, or form feed on that line only; CR is removed first) and
+# every line after it are ignored before the checks below. The Last updated
+# stamp must be the last non-blank line of what remains. A stamp that sits
+# after the marker is discarded and fails: that ordering was seen on #269
+# and is rejected on purpose, because a stamp inside the ignored footer does
+# not satisfy the last-line rule. With no such line the body is unchanged.
+# `<!-- CURSOR_AGENT_PR_BODY_BEGIN -->` is not a footer and is left in place.
+if stripped="$(printf '%s\n' "$body" | tr -d '\r' | awk '
+  {
+    t = $0
+    gsub(/^[ \t\v\f]+|[ \t\v\f]+$/, "", t)
+    if (t == "<!-- CURSOR_AGENT_PR_BODY_END -->") { found = 1; exit }
+    print
+  }
+  END { if (!found) exit 2 }
+')"; then
+  body="$stripped"
 fi
 
 fail=0
