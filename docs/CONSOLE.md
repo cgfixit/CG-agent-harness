@@ -1,6 +1,6 @@
 # Chat, soul, skills and slash commands
 
-Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [README.md](../README.md). Workflow bounds: [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md). Memory enable steps: [MEMORY_SETUP.md](MEMORY_SETUP.md). Web: [WEB.md](WEB.md).
+Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [README.md](../README.md). Workflow bounds: [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md). Memory enable steps: [MEMORY_GUIDE.md](MEMORY_GUIDE.md). Web: [WEB.md](WEB.md).
 
 `/loop` continues chat toward a session goal. It does not execute repository edits or checks. `/agent` drives the coding pipeline. See [CODING_PIPELINE.md](CODING_PIPELINE.md).
 
@@ -436,7 +436,7 @@ above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persis
 | `/harness` | List retained optimizer runs; does not start optimization |
 | `/help [topic\|search words\|all]` | Searchable topic guide, full command catalog and insertable examples |
 | `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
-| `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_SETUP.md#75-operator-memory-notes) |
+| `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_GUIDE.md#pinned-notes) |
 | `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
 | `/memory consolidate <episode-id> [episode-id ...]` | Selected-episode consolidation into pending proposals; does not apply facts |
 | `/memory proposals` | Open the Memory panel; Apply/Reject requires review and a reason |

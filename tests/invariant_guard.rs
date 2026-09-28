@@ -590,20 +590,20 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/INSTALL.md", Guide, 5500),
     ("docs/MCP_CLIENT.md", Guide, 1000),
     ("docs/MCP_SERVER.md", Guide, 1200),
-    ("docs/MEMORY_BENCHMARK_PLAN.md", Evidence, 1100),
-    ("docs/MEMORY_GUIDE.md", Guide, 1700),
-    ("docs/MEMORY_SETUP.md", Guide, 2100),
+    // why: #244 folded MEMORY_SETUP.md and USER_MANUAL.md's memory sections in here.
+    ("docs/MEMORY_GUIDE.md", Guide, 2000),
     // why: #237 documented refused truncated cloud replies.
     ("docs/MODELS.md", Guide, 1000),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
     ("docs/RELEASING.md", Guide, 700),
     ("docs/SECURE_RESEARCH.md", Guide, 3900),
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2100),
-    ("docs/STRUCTURED_MEMORY.md", Guide, 3600),
+    // why: #244 made this the one memory contract: a gate table, and the #87
+    // closeout facts it lacked.
+    ("docs/STRUCTURED_MEMORY.md", Guide, 3700),
     ("docs/TROUBLESHOOTING.md", Guide, 1500),
-    ("docs/USER_MANUAL.md", Guide, 2300),
+    ("docs/USER_MANUAL.md", Guide, 500),
     ("docs/WEB.md", Guide, 1100),
-    ("docs/memory/ISSUE_87_CLOSEOUT.md", Evidence, 700),
     ("docs/parity/CONTRACTS.md", Guide, 700),
     ("docs/parity/STATUS.md", Guide, 1300),
     ("docs/parity/WORK.md", Guide, 500),
@@ -612,7 +612,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 54_000), (Evidence, 5_000), (Agent, 22_500)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 51_000), (Evidence, 3_500), (Agent, 22_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
