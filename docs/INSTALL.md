@@ -296,7 +296,7 @@ leave the optional metadata key field empty and send a message. The console
 requests `POST /api/chat` with `Accept: text/event-stream`, so text arrives as
 `delta` events until a final `done`; `/loop stop` (`POST /api/chat/cancel`)
 aborts the turn. Time to first token still depends on the selected local model.
-See [CHAT_STREAMING.md](CHAT_STREAMING.md).
+See [streaming chat](CONSOLE.md#streaming-chat-and-cancellation).
 
 If the browser page hangs and never responds, double-check that Ollama ([model setup](MODELS.md)) is still
 available at its configured local endpoint.

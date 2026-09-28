@@ -574,12 +574,11 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("SECURITY.md", Root, 500),
     ("docs/ANALYTICS.md", Guide, 900),
     ("docs/API_ROUTES.md", Guide, 2000),
-    ("docs/CHAT_STREAMING.md", Guide, 400),
-    ("docs/CHAT_WORKFLOWS.md", Guide, 2600),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     ("docs/CODING_PIPELINE.md", Guide, 3900),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
-    ("docs/CONSOLE.md", Guide, 6100),
+    // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
+    ("docs/CONSOLE.md", Guide, 6600),
     ("docs/CONSOLE_JOBS.md", Guide, 1400),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     ("docs/DESKTOP.md", Guide, 2800),
@@ -589,9 +588,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/INSTALL.md", Guide, 5500),
     ("docs/MCP_CLIENT.md", Guide, 1000),
     ("docs/MCP_SERVER.md", Guide, 1200),
-    ("docs/MEMORY_BENCHMARK_PLAN.md", Evidence, 1100),
-    ("docs/MEMORY_GUIDE.md", Guide, 1700),
-    ("docs/MEMORY_SETUP.md", Guide, 2100),
+    // why: #244 folded MEMORY_SETUP.md and USER_MANUAL.md's memory sections in here.
+    ("docs/MEMORY_GUIDE.md", Guide, 2000),
     // why: #237 documented refused truncated cloud replies.
     ("docs/MODELS.md", Guide, 1000),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
@@ -599,10 +597,11 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     ("docs/SECURE_RESEARCH.md", Guide, 4000),
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2100),
-    ("docs/STRUCTURED_MEMORY.md", Guide, 3600),
+    // why: #244 made this the one memory contract: a gate table, and the #87
+    // closeout facts it lacked.
+    ("docs/STRUCTURED_MEMORY.md", Guide, 3700),
     ("docs/TROUBLESHOOTING.md", Guide, 1500),
-    ("docs/USER_MANUAL.md", Guide, 2300),
-    ("docs/memory/ISSUE_87_CLOSEOUT.md", Evidence, 700),
+    ("docs/USER_MANUAL.md", Guide, 500),
     ("docs/parity/CONTRACTS.md", Guide, 700),
     ("docs/parity/STATUS.md", Guide, 1300),
     ("docs/parity/WORK.md", Guide, 500),
@@ -611,7 +610,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 53_000), (Evidence, 5_000), (Agent, 22_500)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 46_500), (Evidence, 3_500), (Agent, 22_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
