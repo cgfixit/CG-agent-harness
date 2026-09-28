@@ -210,6 +210,7 @@ fn workflow_strips_the_footer_before_the_stamp_check() {
     assert!(yml.contains("actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0"));
     assert!(shell.contains("gsub(/^[ \\t\\v\\f]+|[ \\t\\v\\f]+$/, \"\", t)"));
     assert!(shell.contains("<!-- CURSOR_AGENT_PR_BODY_END -->"));
-    assert!(yml.contains("the script and this workflow enforce the same rules"));
+    assert!(yml.contains("stay in lock-step with scripts/check-pr-template.sh"));
+    assert!(yml.contains("script and this workflow enforce the same rules"));
     assert!(shell.contains("enforce the same rules, in"));
 }
