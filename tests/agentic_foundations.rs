@@ -536,7 +536,7 @@ fn registry_propose_apply_gates_and_lock() {
     assert_eq!(reg.version(), 0);
     let spec = SkillSpec {
         name: "tidy".into(),
-        description: "A long enough description for the bonus".into(),
+        description: "A valid skill description".into(),
         body: "x".repeat(120),
     };
     let proposal = reg.propose_skill(&spec, "r").unwrap();
@@ -560,7 +560,7 @@ fn registry_propose_apply_gates_and_lock() {
     };
     let p = reg.propose_skill(&evil, "r").unwrap();
     assert_eq!(p["safe_to_apply"], false);
-    assert!(p["governance_score"].as_i64().unwrap() <= 20);
+    assert_eq!(p["governance_score"], 20);
     assert_eq!(
         reg.apply_skill(&evil, "r", true).unwrap_err().code,
         "PROMPT_INJECTION_BLOCKED"
@@ -576,6 +576,7 @@ fn registry_propose_apply_gates_and_lock() {
     assert_eq!(reg.version(), 0, "an unconfirmed apply must not write");
     let applied = reg.apply_skill(&spec, "because", true).unwrap();
     assert_eq!(applied["version"], 1);
+    assert_eq!(applied["governance_score"], 100);
     let reopened = SkillRegistry::open(&ctx).unwrap();
     assert_eq!(reopened.list_skills(), vec!["tidy"]);
     assert_eq!(reopened.get_skill("tidy").unwrap()["reason"], "because");

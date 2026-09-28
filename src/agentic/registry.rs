@@ -246,27 +246,12 @@ impl<'a> SkillRegistry<'a> {
         self.ctx.scanner.scan(text)
     }
 
-    fn score_spec(&self, spec: &SkillSpec) -> i64 {
-        let flags = self.scan(&spec.canonical());
-        let penalty = ((flags.len() as i64) * 25).min(80);
-        let mut score = 100 - penalty;
-        if !flags.is_empty() {
-            return score.clamp(0, 20);
-        }
-        if spec.description.len() > 30 {
-            score += 8;
-        }
-        if spec.body.len() > 100 {
-            score += 5;
-        }
-        score.clamp(0, 100)
-    }
-
     /// Preview a skill add/update. NEVER writes; flags are advisory.
     pub fn propose_skill(&self, spec: &SkillSpec, reason: &str) -> Result<Value> {
         spec.validate()?;
         let canonical = spec.canonical();
         let flags = self.scan(&canonical);
+        let governance_score = if flags.is_empty() { 100 } else { 20 };
         let existing = self.get_skill(&spec.name);
         let old_body = existing
             .as_ref()
@@ -283,7 +268,7 @@ impl<'a> SkillRegistry<'a> {
             "reason": reason,
             "proposed_sha": crate::common::sha256_hex(&canonical),
             "is_update": existing.is_some(),
-            "governance_score": self.score_spec(spec),
+            "governance_score": governance_score,
         }))
     }
 
@@ -350,7 +335,7 @@ impl<'a> SkillRegistry<'a> {
         let new_version = outcome?;
         self.ctx.audit.log(json!({"event": "agentic_skill_applied", "name": spec.name, "reason": reason, "version": new_version, "sha256": new_sha}));
         Ok(
-            json!({"status": "applied", "name": spec.name, "version": new_version, "sha256": new_sha, "governance_score": self.score_spec(spec)}),
+            json!({"status": "applied", "name": spec.name, "version": new_version, "sha256": new_sha, "governance_score": 100}),
         )
     }
 }

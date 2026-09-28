@@ -45,9 +45,7 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
 Also run `security_switches_require_boolean_values` in `common_layer`. Check
 `notifications.enabled` and `agentic.deepagent_github.retrieval.enabled` remain
 false in shipped YAML; select `notifications` and `real_repo_loop` tests when
-changed. Reload accepts only `src/server/config_reload.rs::RELOADABLE`, atomically;
-authority and `web.concurrency` remain restart-only. Use `secure_portal` tests.
-Fresh-disk write-policy checks are independent of limit reload.
+changed.
 
 ### Interpret
 
