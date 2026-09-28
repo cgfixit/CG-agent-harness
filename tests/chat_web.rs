@@ -257,8 +257,9 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     // LM Studio doubles the reply reservation: 4096 tokens for max_tokens 2048. A
     // round needs both replies, so with the shipped 28000-token budget rounds fit up
-    // to 9,776 input tokens ((28000 - 256 - 2 x 4096) / 2), and web chat admits
-    // prompts up to 19,808.
+    // to about 9,912 input tokens ((28000 - 256 - 2 x 4096 + 272) / 2, the follow-up
+    // counted without the ~272 definition tokens), and web chat admits prompts up to
+    // 19,808.
     let s = common::spawn_server(
         &format!("http://{address}/v1"),
         common::ServerOptions {
@@ -380,8 +381,9 @@ async fn web_chat_offers_tools_only_when_both_replies_of_a_round_fit() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     // Shipped Ollama with reasoning "none" reserves one 2048-token reply per call.
-    // A round needs both replies, so tools fit up to 5,824 input tokens
-    // ((16000 - 256 - 2 x 2048) / 2); counting one reply offered them up to 6,848.
+    // A round needs both replies, so tools fit up to about 5,960 input tokens
+    // ((16000 - 256 - 2 x 2048 + 272) / 2, the follow-up counted without the ~272
+    // definition tokens); counting one reply would offer them past 6,848.
     let s = common::spawn_server(
         &format!("http://{address}/v1"),
         common::ServerOptions {
@@ -627,7 +629,7 @@ async fn budget_server(router: Router, calls: usize) -> (common::TestServer, Arc
 async fn web_chat_runs_no_read_of_a_batch_without_room_for_each_result() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let (s, reads, base) = budget_server(budget_model(10, None, None, requests.clone()), 10).await;
-    // About 5,250 input tokens: a round fits (up to 5,824 tokens), but after the
+    // About 5,250 input tokens: a round fits (up to about 5,960 tokens), but after the
     // tool-call reply spends its cap, ten minimal results (2,560) do not.
     let message = format!("fetch the page {}", "x".repeat(4 * (5_250 - base) as usize));
     let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
@@ -662,7 +664,7 @@ async fn web_chat_counts_the_echoed_tool_call_message_before_a_read() {
     let content = format!("Let me look that up. {}", "y".repeat(6_000));
     let requests = Arc::new(Mutex::new(Vec::new()));
     let (s, reads, base) = budget_server(budget_model(1, Some(content), None, requests), 1).await;
-    // About 5,575 input tokens: a one-call round fits (up to 5,824), but after a
+    // About 5,575 input tokens: a one-call round fits (up to about 5,960), but after a
     // cap-spending reply the ~1,500-token echo leaves no room for a result.
     let message = format!("fetch the page {}", "x".repeat(4 * (5_575 - base) as usize));
     let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
@@ -684,7 +686,7 @@ async fn web_chat_counts_the_echoed_tool_call_message_before_a_read() {
 async fn web_chat_reserves_a_long_urls_minimal_result_before_the_read() {
     let url = format!("http://docs.example/docs/item?ref={}", "a".repeat(2_000)); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
     let (s, reads, base) = budget_server(budget_model(1, None, Some(url), Arc::default()), 1).await;
-    // About 5,610 input tokens: a one-call round fits (up to 5,824). With the
+    // About 5,610 input tokens: a one-call round fits (up to about 5,960). With the
     // URL's ~560-token minimal result reserved the batch does not; with 256, it did.
     let message = format!("fetch the page {}", "x".repeat(4 * (5_610 - base) as usize));
     let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
@@ -710,7 +712,7 @@ async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() 
         reply.starts_with("This turn includes web_fetch, web_search."),
         "{reply}"
     );
-    // Past a round's limit (5,824 input tokens with one call), tools are withheld.
+    // Past a round's limit (about 5,960 input tokens with one call), tools are withheld.
     let message = format!("search the web {}", "x".repeat(4 * (6_200 - base) as usize));
     let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
     assert_eq!(status, 200, "{body}");
@@ -724,7 +726,7 @@ async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() 
 async fn web_chat_sizes_a_tool_free_follow_up_without_the_tool_definitions() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let (s, reads, base) = budget_server(budget_model(1, None, None, requests.clone()), 1).await;
-    // About 5,000 input tokens: a one-call round fits (up to 5,824), and after the
+    // About 5,000 input tokens: a one-call round fits (up to about 5,960), and after the
     // tool-call reply spends its cap, the 6000-token page must be cut.
     let message = format!("fetch the page {}", "x".repeat(4 * (5_000 - base) as usize));
     let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
@@ -755,6 +757,35 @@ async fn web_chat_sizes_a_tool_free_follow_up_without_the_tool_definitions() {
         spent <= 16_000 && 16_000 - spent < definitions / 8,
         "the result fills the room left: {spent} of 16000, definitions {} tokens",
         definitions / 4
+    );
+}
+
+/// A round's follow-up carries the tool definitions only after passing its own
+/// round check, so the check counts them once. Counting them in both prompts
+/// withheld tools from rounds that fit.
+#[tokio::test]
+async fn web_chat_counts_the_tool_definitions_once_per_round() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let (s, reads, base) = budget_server(budget_model(1, None, None, requests.clone()), 1).await;
+    // Web chat estimates this call at about 5,866 tokens (the model counts ~47
+    // more). A one-call round fits up to 5,824 with the ~272 definition tokens in
+    // both prompts, and up to about 5,960 with them in the tool call only.
+    let message = format!("fetch the page {}", "x".repeat(4 * (5_910 - base) as usize));
+    let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "Answer from the page", "{body}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    let requests = requests.lock().unwrap();
+    let call = requests
+        .iter()
+        .find(|r| r["messages"].as_array().unwrap().last().unwrap()["content"] == message)
+        .unwrap();
+    let messages = call["messages"].as_array().unwrap();
+    let sent = messages[0]["content"].as_str().unwrap().len() + serde_json::to_vec(&messages[1..]).unwrap().len();
+    let with_tools = ((sent + call["tools"].to_string().len()) as u64).div_ceil(4);
+    assert!(
+        2 * with_tools + 256 + 2 * 2048 > 16_000,
+        "estimated at {with_tools} tokens, the round fits even with the definitions counted twice"
     );
 }
 

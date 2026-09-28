@@ -249,11 +249,14 @@ async fn run_inner(
         // A tool round is two calls: this one, whose reply carries the tool calls,
         // and a follow-up that sends this prompt again with the results. Offer tools
         // only while both prompts, a minimal result and both replies fit; the batch
-        // the model returns is checked again before its first read.
+        // the model returns is checked again before its first read. The follow-up
+        // carries the definitions only after passing this check itself, so it is
+        // counted without them.
         let round_fits = remaining > 0
             && !tools_withheld
             && budget_used
-                .saturating_add(with_tools.saturating_mul(2))
+                .saturating_add(with_tools)
+                .saturating_add(prompt_estimate(sent, token_ratio))
                 .saturating_add(min_result_tokens(token_ratio))
                 .saturating_add(reservation.saturating_mul(2))
                 <= web.limits.total_tokens;
