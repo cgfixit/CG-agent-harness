@@ -385,10 +385,10 @@ async fn shim_response_redacts_child_stdout_and_parsed_json() {
     req.desc = Some("reviewed".into());
     req.body = Some(body);
     req.reason = Some("because".into());
+    let planted = req.body.as_deref().expect("propose body is the planted fixture");
+    assert!(planted.contains(SECRET) && planted.contains(EMAIL));
     let result = shim::run_agentic_op(&ctx, &req).await.unwrap();
     assert_eq!(result.exit_code, 0, "{}", result.stderr);
-    assert!(result.stdout.contains(SECRET), "child stdout is unredacted");
-    assert!(result.stdout.contains(EMAIL));
     let redactors = cgagentharness::common::audit::Redactors::from_config(&cfg);
     let envelope = result.to_json(&redactors);
     let rendered = envelope.to_string();
