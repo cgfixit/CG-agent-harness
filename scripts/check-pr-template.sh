@@ -9,7 +9,8 @@
 #
 # Exit 0 = ok; exit 1 = missing required sections.
 # Git hooks cannot intercept GitHub API / gh pr create bodies — agents and
-# humans should run this before opening a PR.
+# humans should run this before opening a PR. CI runs the same headers as a
+# blocking check (.github/workflows/pr-template-check.yml).
 #
 # The core-path rule is mirrored from that workflow too: when the change
 # touches src/shim/, the guard or header layers, writer, sandbox, workspace,

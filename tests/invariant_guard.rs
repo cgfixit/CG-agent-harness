@@ -563,8 +563,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".codex/skills/cgagentharness-write-policy-redteam/SKILL.md", Agent, 800),
     (".codex/skills/fable-protocol/SKILL.md", Agent, 500),
     (".codex/skills/verification-specialist/SKILL.md", Agent, 600),
-    // why: evidence guidance under each section, merge order, and the ELI5 footer.
-    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1614),
+    // why: evidence guidance, merge order, and the ELI5 footer counted 1614 words, rounded up to the next 100.
+    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1700),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
     // why: #237 added the rule that truncated cloud replies are never shown or saved.
     ("AGENTS.md", Agent, 2100),
@@ -612,8 +612,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 
 /// Each group's cap started at its words rounded up to the next 500.
 // why: #249 documents Spend under Analytics and the conditional Job webhooks button (46,536 words, rounded up to the next 500).
-// why: PR template evidence guidance raised the Agent total to 22841.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 47_000), (Evidence, 3_500), (Agent, 22841)];
+// why: PR template evidence guidance raised the Agent total to 22841, rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 47_000), (Evidence, 3_500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
