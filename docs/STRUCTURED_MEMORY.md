@@ -185,9 +185,12 @@ disabled capture, model errors, low confidence or store quotas can prevent
 suggestions; empty output is valid. Failures do not fail completed chat/coding
 results. Session clear invalidates waiting/in-flight
 chat suggestions. Existing proposals/facts retain their existing deletion rules.
-The worker waits for the shared generation gate; it cannot interrupt active chat.
-A chat arriving during an active suggestion can receive `CHAT_BUSY`. Run cancellation
-requires the open store and owner match, even if manual consolidation is off.
+The worker waits for the generation gate and never interrupts chat.
+Chat preempts an active suggestion instead of receiving `CHAT_BUSY`: its model call
+is aborted, its run parked as `preempted` (an owner cancel ends it), and its input
+requeued ahead. Run
+cancellation requires the open store and owner match, even if manual consolidation
+is off.
 Redactors/scanners are bounded safeguards, not a guarantee that arbitrary secrets
 or hallucinations are detected; human review remains mandatory.
 
