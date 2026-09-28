@@ -1,6 +1,6 @@
 # Coding pipeline
 
-Optional, disarmed-by-default coding loop. Index: [setup-guide.md](../setup-guide.md). Edits: [BOUNDED_EDITS.md](BOUNDED_EDITS.md). Git: [GIT_APPROVAL.md](GIT_APPROVAL.md).
+Optional, disarmed-by-default coding loop. Index: [README.md](../README.md). Edits: [BOUNDED_EDITS.md](BOUNDED_EDITS.md). Git: [GIT_APPROVAL.md](GIT_APPROVAL.md).
 
 ## 9. (Optional, advanced) Arm the coding pipeline
 

@@ -1,6 +1,6 @@
 # Operator manual
 
-Start with [setup](../setup-guide.md) and [console commands](CONSOLE.md).
+Start with [setup](../README.md) and [console commands](CONSOLE.md).
 [Accounts](ACCOUNTS.md) explains who can use each surface;
 [coding jobs](CONSOLE_JOBS.md) covers staging, monitoring and reviewed publication.
 

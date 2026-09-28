@@ -1,6 +1,6 @@
 # Install and first run
 
-Prerequisites, clone, build, first run, home/keys, and verification. Index: [setup-guide.md](../setup-guide.md). Model window: [MODELS.md](MODELS.md). Accounts: [ACCOUNTS.md](ACCOUNTS.md).
+Prerequisites, clone, build, first run, home/keys, and verification. Index: [README.md](../README.md). Model window: [MODELS.md](MODELS.md). Accounts: [ACCOUNTS.md](ACCOUNTS.md).
 
 ## 2. Prerequisites
 

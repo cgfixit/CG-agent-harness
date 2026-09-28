@@ -7,7 +7,7 @@ harness/. These Q&A teach a model to REASON about CG-Agent's architecture,
 security model, and local-MLX fine-tuning path — not to memorize files.
 
 Sourced from the live repo (main, 2026-09-21): src/agentic/, src/llm/,
-src/server/, src/common/, setup-guide.md, docs/MODELS.md, docs/CODING_PIPELINE.md,
+src/server/, src/common/, README.md, docs/MODELS.md, docs/CODING_PIPELINE.md,
 INVARIANTS.md. Each claim is verifiable against the cited module/function.
 
 Target: MacBook Pro M5 Pro, 48 GB unified, qwen3.8:27b-mlx base, mlx_lm.lora QLoRA.
