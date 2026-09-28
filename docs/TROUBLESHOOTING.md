@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Index: [setup-guide.md](../setup-guide.md). Models: [MODELS.md](MODELS.md). Coding: [CODING_PIPELINE.md](CODING_PIPELINE.md).
+Index: [README.md](../README.md). Models: [MODELS.md](MODELS.md). Coding: [CODING_PIPELINE.md](CODING_PIPELINE.md).
 
 ## 12. Troubleshooting
 
