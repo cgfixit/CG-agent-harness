@@ -89,7 +89,7 @@ set -e
 "$BIN" agentic --config "$CGAGENTHARNESS_HOME/config.yaml" status | grep -q "Agentic layer disabled"
 
 echo "== open panels"
-curl_account -fsS "$BASE/api/tools" | grep -q '"wired":38'
+curl_account -fsS "$BASE/api/tools" | grep -q '"wired":69'
 curl_account -fsS "$BASE/api/skills" | grep -q 'ponytail'
 curl_account -fsS "$BASE/api/agent/checks" | grep -q 'cargo-test'
 
