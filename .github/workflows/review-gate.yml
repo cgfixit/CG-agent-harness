@@ -9,8 +9,8 @@
 # issue_comment events, whose workflow runs attach to the default branch,
 # not the PR head; so the verdict is always published as a check run on the
 # PR head through the Checks API under one name, "review gate", whatever
-# event started the run. The job's own "evaluate" check is not the signal;
-# it is continue-on-error so a leftover evaluate run cannot red the PR.
+# event started the run. The jobs' own checks are not the signal; each is
+# continue-on-error so a leftover run cannot red the PR.
 #
 # The job polls for up to POLL_MINUTES so the usual sequence (fix pushed,
 # thread replied to, thread resolved a few seconds later; Codex finishing
@@ -20,9 +20,10 @@
 #
 # Triggers use pull_request_target so fork and Dependabot PRs still get a
 # write-capable token for the check publish. No job in this workflow checks
-# out the repository or runs pull-request code. The evaluate job only reads
-# threads and comments. The publish job receives the head SHA, a verdict
-# enum, and two counts, and it is the only job with checks: write.
+# out the repository or runs pull-request code. mark review gate in progress
+# only creates the in_progress check. evaluate only reads threads and
+# comments. publish updates that same check and is not a second writer of a
+# new check run. checks: write is only on the mark and publish jobs.
 #
 # Also enable "Require conversation resolution before merging" in the main
 # ruleset: that native setting is the always-live version of the thread
@@ -50,10 +51,10 @@ permissions: {}
 
 # One canceling group per PR, so a superseded evaluation stops. A comment
 # from anyone but the review bot never enters that group: it would cancel a
-# polling run (leaving its in_progress "review gate" check stranded) and then
-# exit without publishing a verdict of its own. Such runs get a group of
-# their own and are skipped by the job's `if` below. Keep the bot login here
-# and in REVIEW_BOTS in sync.
+# polling run and then exit without a verdict of its own. Such runs get a
+# group of their own and are skipped by the mark job's `if` below. If this
+# run's evaluate is cancelled or times out, publish still completes this
+# run's check as failure. Keep the bot login here and in REVIEW_BOTS in sync.
 # cancel-in-progress stays true. pull_request_target's github.ref is the base
 # branch, so the main/tag guard used by the other workflows would not cancel
 # a superseded PR evaluation. This file has no push, tag, or release trigger.
@@ -62,11 +63,88 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Opens the "review gate" check as in_progress before the poll, matching
+  # the pre-split job. No checkout and no read of pull-request text.
+  # pull_request_target (and the other events that carry pull_request) take
+  # head.sha from the event payload. issue_comment has no head SHA; a
+  # review-bot PR comment is looked up with pulls.get by number.
+  mark-in-progress:
+    name: mark review gate in progress
+    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      checks: write
+      pull-requests: read
+    outputs:
+      marked: ${{ steps.mark.outputs.marked }}
+      head_sha: ${{ steps.mark.outputs.head_sha }}
+      check_run_id: ${{ steps.mark.outputs.check_run_id }}
+    env:
+      REVIEW_BOTS: chatgpt-codex-connector[bot]
+      CHECK_NAME: review gate
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: mark
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const bots = new Set(process.env.REVIEW_BOTS.split(",").map(s => s.trim()).filter(Boolean));
+            core.setOutput("marked", "false");
+            core.setOutput("head_sha", "");
+            core.setOutput("check_run_id", "");
+
+            let sha = "";
+            let number = 0;
+            if (context.eventName === "issue_comment") {
+              const comment = context.payload.comment;
+              const issue = context.payload.issue;
+              if (!comment || !comment.user || !bots.has(comment.user.login) || !issue || !issue.pull_request) {
+                core.info("issue_comment is not a review-bot pull request comment; not marking the check");
+                return;
+              }
+              const pr = (await github.rest.pulls.get({ owner, repo, pull_number: issue.number })).data;
+              if (pr.state !== "open") {
+                core.info(`PR #${pr.number} is ${pr.state}; not marking the check`);
+                return;
+              }
+              sha = pr.head && pr.head.sha;
+              number = pr.number;
+            } else {
+              const pr = context.payload.pull_request;
+              if (!pr || !pr.head || !pr.head.sha) {
+                core.info("event has no pull_request head; not marking the check");
+                return;
+              }
+              if (pr.state !== "open") {
+                core.info(`PR #${pr.number} is ${pr.state}; not marking the check`);
+                return;
+              }
+              sha = pr.head.sha;
+              number = pr.number;
+            }
+            if (!/^[0-9a-f]{40}$/.test(sha || "")) {
+              core.setFailed("head sha was not a commit id");
+              return;
+            }
+            const created = await github.rest.checks.create({
+              owner, repo, name: process.env.CHECK_NAME, head_sha: sha, status: "in_progress",
+              output: {
+                title: "Evaluating review threads and bot reviews",
+                summary: `Run started for #${number} @ ${sha.slice(0, 7)}`,
+              },
+            });
+            core.setOutput("head_sha", sha);
+            core.setOutput("check_run_id", String(created.data.id));
+            core.setOutput("marked", "true");
+
   evaluate:
     name: evaluate
-    # issue_comment fires for plain issues and for humans too; only a PR
-    # comment from the review bot is worth a run.
-    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+    needs: mark-in-progress
+    # Run only after this run opened the check. always() so a later cancel of
+    # mark still evaluates the expression; marked is unset unless create succeeded.
+    if: always() && needs.mark-in-progress.outputs.marked == 'true'
     runs-on: ubuntu-latest
     # Poll is 12 minutes plus a 45 second grace. 30 minutes lets that finish
     # and record outputs before the job is killed.
@@ -80,6 +158,7 @@ jobs:
       conclusion: ${{ steps.gate.outputs.conclusion }}
       thread_count: ${{ steps.gate.outputs.thread_count }}
       running_count: ${{ steps.gate.outputs.running_count }}
+      finished: ${{ steps.gate.outputs.finished }}
     env:
       # Logins whose review-summary comment marks an in-progress review
       # (keep in sync with the concurrency group and job `if` above).
@@ -109,6 +188,7 @@ jobs:
               core.setOutput("thread_count", "0");
               core.setOutput("running_count", "0");
               core.setOutput("head_sha", "");
+              core.setOutput("finished", "false");
             }
             let pr = context.payload.pull_request;
             if (!pr) {
@@ -201,11 +281,20 @@ jobs:
             core.setOutput("conclusion", ok ? "success" : "neutral");
             core.setOutput("thread_count", String(threads.length));
             core.setOutput("running_count", String(running.length));
+            core.setOutput("finished", "true");
 
   publish:
     name: publish review gate
-    needs: evaluate
-    if: always() && (needs.evaluate.outputs.conclusion == 'success' || needs.evaluate.outputs.conclusion == 'neutral')
+    needs: [mark-in-progress, evaluate]
+    # always(), not !cancelled(). A timeout cancels evaluate (needs.evaluate.result
+    # is cancelled) without cancelling the workflow, so !cancelled() would also
+    # be true. A concurrency cancel cancels the workflow: cancelled() is then
+    # true and !cancelled() skips this job, leaving the in_progress check up
+    # and the previous verdict looking current. always() stays true even when
+    # the workflow is canceled, so a failed, timed-out, or cancelled evaluation
+    # still completes this run's check as failure.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+    if: always() && needs.mark-in-progress.outputs.marked == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
@@ -214,44 +303,49 @@ jobs:
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          HEAD_SHA: ${{ needs.evaluate.outputs.head_sha }}
+          CHECK_RUN_ID: ${{ needs.mark-in-progress.outputs.check_run_id }}
+          EVAL_RESULT: ${{ needs.evaluate.result }}
+          FINISHED: ${{ needs.evaluate.outputs.finished }}
           CONCLUSION: ${{ needs.evaluate.outputs.conclusion }}
           THREAD_COUNT: ${{ needs.evaluate.outputs.thread_count }}
           RUNNING_COUNT: ${{ needs.evaluate.outputs.running_count }}
           CHECK_NAME: review gate
         with:
           script: |
-            const sha = process.env.HEAD_SHA || "";
+            const checkRunId = process.env.CHECK_RUN_ID || "";
+            const evalResult = process.env.EVAL_RESULT || "";
+            const finished = process.env.FINISHED || "";
             const conclusion = process.env.CONCLUSION || "";
             const threads = process.env.THREAD_COUNT || "";
             const running = process.env.RUNNING_COUNT || "";
-            if (!/^[0-9a-f]{40}$/.test(sha)) {
-              core.setFailed("head sha was not a commit id");
+            if (!/^[1-9][0-9]*$/.test(checkRunId)) {
+              core.setFailed("check run id was not recorded");
               return;
             }
-            if (conclusion !== "success" && conclusion !== "neutral") {
-              core.setFailed("conclusion was not a known verdict");
-              return;
-            }
-            if (!/^(0|[1-9][0-9]*)$/.test(threads) || !/^(0|[1-9][0-9]*)$/.test(running)) {
-              core.setFailed("counts were not integers");
-              return;
-            }
-            const threadCount = Number(threads);
-            const runningCount = Number(running);
+            const countsOk = /^(0|[1-9][0-9]*)$/.test(threads) && /^(0|[1-9][0-9]*)$/.test(running);
+            // continue-on-error can report a failed evaluate job as success.
+            // finished is set only after a real success or neutral verdict.
+            const verdictOk = evalResult === "success" && finished === "true" && (conclusion === "success" || conclusion === "neutral") && countsOk;
+            const threadCount = countsOk ? Number(threads) : 0;
+            const runningCount = countsOk ? Number(running) : 0;
+            const title = verdictOk
+              ? (runningCount
+                ? `${runningCount} bot review(s) still running on this head`
+                : threadCount ? `${threadCount} unresolved review thread(s)` : "All review threads resolved; no review running")
+              : "Review gate evaluation did not finish";
+            const summary = verdictOk
+              ? (runningCount
+                ? `${runningCount} bot review(s) still running.`
+                : threadCount ? `${threadCount} unresolved review thread(s).` : "No unresolved review threads and no review in progress.")
+              : `evaluate result was '${evalResult || "missing"}'. The review gate check is failure unless evaluation finishes with success or neutral.`;
             const { owner, repo } = context.repo;
-            const title = runningCount
-              ? `${runningCount} bot review(s) still running on this head`
-              : threadCount ? `${threadCount} unresolved review thread(s)` : "All review threads resolved; no review running";
-            const summary = runningCount
-              ? `${runningCount} bot review(s) still running.`
-              : threadCount ? `${threadCount} unresolved review thread(s).` : "No unresolved review threads and no review in progress.";
             try {
-              await github.rest.checks.create({
-                owner, repo, name: process.env.CHECK_NAME, head_sha: sha, status: "completed", conclusion,
+              await github.rest.checks.update({
+                owner, repo, check_run_id: Number(checkRunId), status: "completed",
+                conclusion: verdictOk ? conclusion : "failure",
                 output: { title, summary },
               });
             } catch (e) {
-              core.setFailed(`could not publish the "${process.env.CHECK_NAME}" check on ${sha.slice(0, 7)}: ${e.message} (read-only token? the trigger must run in the base-repository context)`);
+              core.setFailed(`could not publish the "${process.env.CHECK_NAME}" check run ${checkRunId}: ${e.message} (read-only token? the trigger must run in the base-repository context)`);
               throw e;
             }
