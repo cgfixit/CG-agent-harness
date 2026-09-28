@@ -34,7 +34,7 @@ Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
 > means the server listens on a local address such as `127.0.0.1`; it does not
 > prove that every subprocess or external model service has no outbound network
 > access. Details: [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md),
-> [CODING_PIPELINE.md](docs/CODING_PIPELINE.md), [INVARIANTS.md](INVARIANTS.md).
+> [CODING_PIPELINE.md](docs/CODING_PIPELINE.md#git-approval-and-publication), [INVARIANTS.md](INVARIANTS.md).
 
 ## Quickstart
 
