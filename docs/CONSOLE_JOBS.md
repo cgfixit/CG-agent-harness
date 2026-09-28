@@ -35,7 +35,8 @@ cannot satisfy console review.
 
 ## Schedules and completion notifications
 
-Use the **Schedules** button after `/goal stage <branch>`. Review the staged
+Use the **Schedules** button, shown while the coding pipeline is enabled, after
+`/goal stage <branch>`. Review the staged
 request, enter a reason, explicitly check the authorization box, and choose an
 interval or cron calendar. **Preview next 5** shows local timestamps with UTC
 offsets and UTC equivalents. **Activate previewed schedule** consumes a short-lived,

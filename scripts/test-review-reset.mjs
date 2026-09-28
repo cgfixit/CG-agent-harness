@@ -6,6 +6,7 @@ const html = readFileSync(process.env.CGAH_CONSOLE || new URL('../assets/static/
 const source = (start, end) => html.slice(html.indexOf(start), html.indexOf(end));
 const nodes = new Map(), messages = [], calls = [];
 let analyticsClears = 0, scheduleClears = 0, notificationClears = 0;
+const headerStates = []; let headersAtLogoutRequest = null;
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {value:'', files:[], textContent:'', replaceChildren(){this.textContent='';}, addEventListener(event, handler){this[event]=handler;}});
   return nodes.get(id);
@@ -19,9 +20,10 @@ const context = vm.createContext({
   input:node('input'), loopAuto:false, retryAttachmentIds:null, stopLoop(){}, paintGoalLoop(){}, resetScheduleReview(){++scheduleClears;}, resetNotificationView(){++notificationClears;},
   currentStyle:'off', currentStyleIssue:null, inflightChat:null, sendBtn:{disabled:false},
   isLoopStopCommand:()=>false, AGENT_CLI_TIMEOUT_MS:100, sys:text=>messages.push(text), table:rows=>JSON.stringify(rows),
-  abortInflightSearch(){}, clearPendingAttachments(){}, clearSpend(){}, clearAnalytics(){++analyticsClears;}, paintStyle(){},
+  abortInflightSearch(){}, clearPendingAttachments(){}, clearAnalytics(){++analyticsClears;}, paintStyle(){},
+  refreshHeaderFeatures(usable){headerStates.push(usable);},
   refreshStatus:async()=>{}, refreshHarnessAuth:async()=>{},
-  fetchWithTimeout:async()=>({ok:true}), agentRecord:result=>result.parsed,
+  fetchWithTimeout:async()=>{headersAtLogoutRequest=[...headerStates];return {ok:true};}, agentRecord:result=>result.parsed,
   api:async(...args)=>{calls.push(args);return context.respond(...args);},
 });
 vm.runInContext([
@@ -46,6 +48,7 @@ const reset = () => {
 seed(); context.clearTranscript(); reset();
 seed(); await context.hAuthLogout.click(); reset();
 assert.equal(analyticsClears, 1, 'logout must invalidate analytics');
+assert.deepEqual(headersAtLogoutRequest, [false], 'logout must hide header automation buttons before its request');
 assert.equal(scheduleClears, 2, 'clear transcript and logout must invalidate schedule review');
 assert.equal(notificationClears, 2, 'clear transcript and logout must invalidate delivery rows');
 assert.equal(context.currentSession,null);

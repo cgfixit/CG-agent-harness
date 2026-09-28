@@ -13,7 +13,8 @@ let resolve, calls=[];
 const context = vm.createContext({$:node,document:{createElement:()=>node('new-'+nodes.size)},Date,JSON,Error,Number,
   sessionRevision:1,reviewRevision:1,pendingAgentRun:{goal_stage:{session_id:'owned',stage_id:'reviewed'},instruction:'review this'},
   api:async(path,method,body)=>{calls.push({path,body});if(path.endsWith('/preview'))return new Promise(r=>resolve=r);return {schedules:[]};}});
-const start=html.indexOf('/* ── owned schedule preview and activation ── */'), end=html.indexOf("$('openSpend').addEventListener",start);
+const start=html.indexOf('/* ── owned schedule preview and activation ── */'), end=html.indexOf('/* End schedules. */',start);
+assert.ok(start>=0&&end>start,'schedule section markers must bound the slice');
 vm.runInContext(html.slice(start,end),context);
 const seed = () => {node('scheduleKind').value='interval';node('scheduleSeconds').value='60';node('scheduleReason').value='fixture review';node('scheduleConfirm').checked=true;node('scheduleDialog').open=true;};
 const result = () => ({preview_id:'receipt',expires_at:Date.now()/1000+60,occurrences:[{at:Date.now()/1000+60,local_time:'fixture'}]});

@@ -50,10 +50,10 @@ Older supported deployment versions have not been tested.
 
 ## Spend and job notifications
 
-The shared console exposes the [Spend dashboard and optional completion webhooks](SPEND_AND_NOTIFICATIONS.md)
+The shared console exposes [spend in Analytics and optional completion webhooks](SPEND_AND_NOTIFICATIONS.md)
 when their feature changes are included in the packaged source commit. A green
-feature PR does not update an already installed app. Spend reads the ledger;
-**Estimate draft** separately counts the selected cloud draft without generation.
+feature PR does not update an already installed app. Analytics' Tokens and cost tab reads the ledger;
+its **Estimate draft** separately counts the selected cloud draft without generation.
 Claude counting sends that draft to the provider. Completion
 webhook settings and saved bearer changes require a full Cmd-Q/relaunch, not just
 closing the window. Pending webhook deliveries are not persisted across quit.

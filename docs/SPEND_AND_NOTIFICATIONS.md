@@ -1,6 +1,6 @@
 # Spend and completion notifications
 
-Operator setup and interpretation for retained spend, the Spend dashboard and
+Operator setup and interpretation for retained spend, its Analytics view and
 optional job-completion webhooks. Start with [installation](INSTALL.md) and
 [accounts](SECURE_RESEARCH.md#accounts-and-roles); coding authority remains governed by the
 [coding pipeline](CODING_PIPELINE.md).
@@ -37,12 +37,13 @@ not zero. Analytics and `/status` retain their all-session aggregates.
 Session tallies count successfully committed chat exchanges (including their
 web-tool rounds and successful compaction usage). They are not billing records:
 failed-after-billing calls and independent research/coding operations can appear
-in Spend without becoming a saved chat exchange. Switching or creating sessions
+in the ledger without becoming a saved chat exchange. Switching or creating sessions
 does not reset, rewrite or append to the spend ledger.
 
-Open **Spend**, then **Refresh** to read `GET /api/spend/summary`. Previous/Next
-show at most 100 provider/model/day groups per page. Closing the view, pressing
-Escape or logging out clears its page state without deleting the ledger.
+Open **Analytics** → **Tokens and cost**, then **Refresh** to reread the same
+rollup as `GET /api/spend/summary`. Previous/Next show at most 25
+provider/model/day groups per page. Closing the view, pressing Escape or logging
+out clears its page state without deleting the ledger.
 An older summary response without completeness fields is shown as unknown.
 
 The ledger lives in the active home at `logs/spend.jsonl` and the previous
@@ -78,7 +79,7 @@ priced evidence; consult the provider's own billing records for reconciliation.
 ## Estimate a cloud draft and configure a per-call cap
 
 Select `grok` or `claude` with `/model use`, type an ordinary message without
-sending it, then choose **Spend → Estimate draft**. The response reports the
+sending it, then choose **Analytics → Tokens and cost → Estimate draft**. The response reports the
 model, input estimate source, reserved output, dated rate and cap decision.
 Local inference remains unpriced. Closing the dialog or logging out clears the
 estimate; editing the draft requires a fresh estimate. This feature requires a
@@ -262,7 +263,8 @@ of every lifetime job.
 
 ## Inspect and replay without rerunning a job
 
-Open **Deliveries** and **Refresh status**. The panel lists only the acting owner's
+Open **Job webhooks** and **Refresh status**; the header button appears only while
+notifications are enabled. The panel lists only the acting owner's
 destinations and retained metadata, with state, attempts, replays and coarse result
 codes. It exposes no destination URL, token or job result. A failed/delivered row
 can be replayed with a reason and explicit checkbox; current authority and finite

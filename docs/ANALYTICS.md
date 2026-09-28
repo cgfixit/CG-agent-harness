@@ -1,6 +1,6 @@
 # Session, token and coding analytics
 
-Choose **Analytics** in the header or enter `/analytics` in the native or browser
+Choose **Analytics** in the header (shown after sign-in) or enter `/analytics` in the native or browser
 console. The overview shows retained session tokens, readable sessions and listed
 coding runs. A `+` on the run count means the list is truncated. **Refresh** rereads
 retained history and shows the time of the latest successful refresh. **Close** or
@@ -20,7 +20,9 @@ legacy auth-disabled configuration keeps its existing local access semantics.
 - **Tokens and cost:** provider/model/UTC-day ledger rows, calls, input/output
   tokens and available USD. Local inference and unknown prices remain unpriced.
   Partial files, skipped rows and stale rates retain the same warnings as
-  [Spend](SPEND_AND_NOTIFICATIONS.md). Estimates are not invoices.
+  [Spend](SPEND_AND_NOTIFICATIONS.md). Estimates are not invoices. This tab also
+  holds [**Estimate draft**](SPEND_AND_NOTIFICATIONS.md#estimate-a-cloud-draft-and-configure-a-per-call-cap)
+  for an unsent cloud message.
 - **Sessions:** readable retained session titles, message counts, input/output
   and total tokens, exchange counts and UTC creation dates. Sort by most tokens
   (the default), newest creation or title. Missing creation dates stay unknown.
@@ -50,6 +52,7 @@ listed records. Session totals and ledger totals have different retention and
 accounting rules; they are shown separately and never added together.
 
 Opening the view starts no inference, repository edit, verification, push or PR.
+Only an explicit **Estimate draft** sends the unsent draft for token counting.
 The existing run-list operation can reconcile a stale `running` record to
 `interrupted`; analytics retains that recovery behavior. No new analytics files,
 background polling, cloud calls, charting dependencies or CSP permissions are

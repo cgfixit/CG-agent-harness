@@ -21,9 +21,9 @@ never grants permission to execute commands, commit, push, or publish.
 | Accounts and API Keys | Fresh `admin` / `admin` requires password replacement. Administrator, Portal operator and Auditor permissions are enforced on API reads and writes. Administrators manage masked saved/active credentials in API Keys. |
 | Coding loop | Stage a repository task and inspect files or a plan; confirm an isolated run that proposes bounded edits, runs fixed check profiles in a hard sandbox, and feeds check results back into later attempts. |
 | Review and publication | Inspect retained run status and diffs, approve the reviewed tree for a local commit, then separately push and publish a draft PR with a reviewed repository template. |
-| Analytics | The Analytics button or `/analytics` opens an overview and keyboard-accessible Tokens/Sessions/Code sections, each with its own filter and paging; sessions also support sorting. Completeness warnings remain visible. [Interpretation and API](ANALYTICS.md). |
-| Spend | Read-only retained provider/model/UTC-day calls, input/output tokens, available USD, completeness warnings and pagination. See [build requirements and interpretation](SPEND_AND_NOTIFICATIONS.md). |
-| Completion webhooks | Optional metadata-only notifications for terminal detached jobs, disabled until configured. Delivery does not grant job or repository authority; see [setup](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook). |
+| Analytics | The Analytics button (after sign-in) or `/analytics` opens an overview and keyboard-accessible Tokens/Sessions/Code sections with their own filters and paging; sessions also sort. Completeness warnings persist. [Interpretation and API](ANALYTICS.md). |
+| Spend | Analytics' Tokens and cost tab: read-only retained provider/model/day usage, available USD, completeness warnings, pagination and **Estimate draft**. [Build requirements and interpretation](SPEND_AND_NOTIFICATIONS.md). |
+| Completion webhooks | Metadata-only notifications for terminal detached jobs, off until configured; the **Job webhooks** button shows only then. Delivery grants no job or repository authority. [Setup](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook). |
 | Recovery | Rediscover retained jobs and runs after reopening. Worker leases distinguish active work from interrupted runs; reopening does not automatically resume work or replay a publication. |
 
 ## 7. Chat, soul, skills and goals

@@ -363,7 +363,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 69] = [
     ),
     (
         "spend-predict",
-        "(Spend dialog)",
+        "(Analytics dialog)",
         "POST",
         "/api/spend/predict",
         "estimate the typed cloud message and reserve configured output; no generation or ledger write",
@@ -417,8 +417,8 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 69] = [
         "/api/agent/jobs/{job_id}/cancel",
         "abort a detached run (kills the child process)",
     ),
-    ("notification-status", "(Deliveries button)", "GET", "/api/notifications", "owned destination and retained delivery status; no job or message content"),
-    ("notification-replay", "(Deliveries button)", "POST", "/api/notifications/{delivery_id}/replay", "explicit owner-confirmed replay after current authority checks; never reruns a job"),
+    ("notification-status", "(Job webhooks button)", "GET", "/api/notifications", "owned destination and retained delivery status; no job or message content"),
+    ("notification-replay", "(Job webhooks button)", "POST", "/api/notifications/{delivery_id}/replay", "explicit owner-confirmed replay after current authority checks; never reruns a job"),
     (
         "agent-schedule-preview",
         "(Schedules button)",
