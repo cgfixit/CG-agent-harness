@@ -24,6 +24,8 @@ Also allowed (non-feature): `main`, `dependabot/*`, `renovate/*`, `release/*`, `
 #36–#41 were squash-merged into their predecessors and never reached `main`; the
 `base branch is main` check now fails such PRs. Fix with `gh pr edit <n> --base main`.
 
+Record the head SHA in Further comments after the branch exists. Fix a wrong name with `git branch -m` before the first push. Do not force-push. Do not open against any base except `main`. If you skipped a fetch of `origin/main`, say so under Risks and why.
+
 ## Title
 **Use this format:**  
 `[prefix] - Short descriptive sentence of the change`
@@ -32,6 +34,8 @@ Also allowed (non-feature): `main`, `dependabot/*`, `renovate/*`, `release/*`, `
 `[invariant]` • `[security]` • `[infra]` • `[fix]` • `[docs]` • `[harness]` • `[agentic]` • `[test]` • `[feat]`
 
 Example: `[docs] - Retarget PR template for CG-agent-harness`
+
+The prefix classifies the diff. It is not a feature claim. Put commands, exit codes, and the head SHA in Further comments, not in the title.
 
 ---
 
@@ -43,6 +47,10 @@ If it fixes a bug or resolves a feature request, link the issue.
 - Which guarantee in `INVARIANTS.md` does this change affect (or confirm none)? Call out I6 (process isolation) and the write gates when relevant.
 - Provide evidence it is preserved (e.g., server still does not reference `crate::agentic`, `confirm` is never defaulted, write gates still ship closed, clone jail still refuses escapes).
 - If you are intentionally relaxing or evolving an invariant, explain the justification and compensating controls.
+
+Truth order for every claim is the code, then `assets/config.default.yaml`, then `INVARIANTS.md` and `AGENTS.md`, then `README.md`. When prose and code disagree, the code wins. Do not describe a gate as weaker, optional, or off when the code keeps it closed.
+
+Name each invariant this diff touches, or say it touches none. For each command, give the command, its exit code, and the head SHA it ran on. Name each skipped check and why. State residual risk. Rollback is reverting the squash commit on `main`. Do not arm a write gate, default `confirm`, or drop `reason` to undo a failure.
 
 ---
 
@@ -59,12 +67,16 @@ _Put an `x` in the boxes that apply_
 **Optional free-text scope note** (recommended):  
 Core isolation / write-gate path (`src/shim`, guards, writer, sandbox, workspace, shipped config) | Agentic pipeline | Console / server | Docs + audits | Infrastructure / CI only
 
+Check a box only when the diff matches it. A docs or template edit is not a new feature. If a quality-bar command was skipped, leave the checklist row open and explain it under Risks, with the head SHA those boxes describe.
+
 ---
 
 ## Benefits / why
 - Why make this change? What is the concrete upside for CGagentHarness operators, contributors, or long-term maintainability?
 - How does this improve (or at least not degrade) loopback-only posture, I6 isolation, write-gate strength, or security posture?
 - For agentic or harness changes: how does this increase governed capability without weakening the child-process isolation contract or opening a write gate by default?
+
+State the maintainer outcome in concrete terms. Do not market a capability or claim a gate is easier. Loopback bind, I6, and write gates stay as the code ships them. If a benefit depends on a skipped check, name that check and why the benefit still holds.
 
 ---
 
@@ -73,6 +85,8 @@ Core isolation / write-gate path (`src/shim`, guards, writer, sandbox, workspace
 - Could this introduce an in-process server→agentic call, default `confirm` on, weaken a write gate, create a non-loopback bind, or add a network assumption?
 - For write-enablement changes: what failure modes exist if a gate is skipped or `reason` becomes optional?
 - How will you (or future maintainers) detect drift from the intended behavior?
+
+Name residual risk after the checks you actually ran. Include failed or skipped commands, their exit codes, and why you skipped them. Say which invariants the diff touches. Rollback is reverting this PR. Detect drift by re-running `scripts/check-pr-template.sh` on the body and the quality bar on the same head SHA.
 
 ---
 
@@ -90,6 +104,8 @@ _Put an `x` in the boxes that apply. You can fill these out after creating the P
 - [ ] For large or complex changes: before/after invariant notes + `cargo test` evidence is included in "Further comments" or linked
 - [ ] PR body was checked with `scripts/check-pr-template.sh` before opening
 
+Mark a box only after that command exits 0 on the head SHA you will push. A skipped row stays unchecked. The quality-bar row is not met by a green subset. Invariants touched, residual risk, and rollback belong in Proposed changes, Risks, and Further comments.
+
 ---
 
 ## Further comments
@@ -106,6 +122,8 @@ If this is a relatively large, complex, or core-path change, kick off the discus
 - "Write gates still ship closed. `confirm` is not defaulted; `reason` remains required. Clone jail tests still refuse escapes."
 - "Docs-only: no code, no config, no CI Windows parking. Invariants untouched."
 
+Paste the head SHA and each command with its exit code. List skipped checks and why. Restate invariants touched, residual risk, and rollback. A core-path diff still needs the before/after statement above. A docs-only diff names the guarantee it leaves untouched.
+
 ---
 
 **Notes for contributors (including solo maintainer / multi-agent PRs):**
@@ -115,3 +133,15 @@ If this is a relatively large, complex, or core-path change, kick off the discus
 - Prefer squash-and-merge. The final squashed commit message is the permanent record; keep intermediate agent WIP out of `main`.
 - Be blunt about impact: if I6, write gates, or loopback-only bind are affected, say so explicitly.
 - PRs are draft by default until a human marks them ready.
+
+## Suggested merge order of open PRs
+
+List the other open PRs. Then give the order to land them relative to this one. Parents land first, then dependencies, then siblings that conflict. Give the reason for that order. Merge a PR only when its checks are green on that exact head. Wait for green `main` CI before you merge the next PR.
+
+## ELI5
+
+<!-- Replace the placeholder with one short plain-but-technical paragraph. Say what this PR changes and why. Name the files. Do not add a heading after this one. Do not market a feature or soften a gate. -->
+
+<what changed and why>
+
+Last updated: YYYY-MM-DD HH:MM ET

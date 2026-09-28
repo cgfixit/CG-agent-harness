@@ -61,8 +61,30 @@ jobs:
               ["Benefits / why", /^#{1,4}\s*(benefits|why)\b/im],
               ["Risks to monitor", /^#{1,4}\s*risks?(\s*(to\s*monitor|impact))?\b/im],
               ["Checklist", /^#{1,4}\s*checklist\b/im],
+              ["Suggested merge order of open PRs", /^##[ \t\v\f\r]+suggested merge order of open prs[ \t\v\f\r]*$/im],
             ];
             const missing = required.filter(([, re]) => !re.test(body)).map(([label]) => label);
+            const bodyLines = body.replace(/\r/g, "").split("\n");
+            const eli5At = [];
+            bodyLines.forEach((line, i) => {
+              if (/^## ELI5[ \t\v\f]*$/.test(line)) eli5At.push(i);
+            });
+            if (eli5At.length === 0) {
+              missing.push("ELI5 (## ELI5 must be the last section heading)");
+            } else if (bodyLines.slice(eli5At[eli5At.length - 1] + 1).some((line) => /^#{1,6}[ \t\v\f]+/.test(line))) {
+              missing.push("ELI5 must be the last section heading");
+            }
+            let lastNonempty = "";
+            for (const line of bodyLines) {
+              const trimmed = line.replace(/[ \t\v\f]+$/, "");
+              if (trimmed.length > 0) lastNonempty = trimmed;
+            }
+            // The placeholder stamp is accepted only by check-pr-template.sh
+            // when the input path is .github/PULL_REQUEST_TEMPLATE.md. This
+            // job reads the pull request body, so only a filled stamp passes.
+            if (!/^Last updated: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} ET$/.test(lastNonempty)) {
+              missing.push("Last updated timestamp (last line, YYYY-MM-DD HH:MM ET)");
+            }
             if (body.trim().length < 40) missing.push("Body too short (< 40 chars)");
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner, repo: context.repo.repo, pull_number: context.payload.pull_request.number,
