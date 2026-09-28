@@ -2,7 +2,7 @@
 
 Operator setup and interpretation for retained spend, its Analytics view and
 optional job-completion webhooks. Start with [installation](INSTALL.md) and
-[accounts](ACCOUNTS.md); coding authority remains governed by the
+[accounts](SECURE_RESEARCH.md#accounts-and-roles); coding authority remains governed by the
 [coding pipeline](CODING_PIPELINE.md).
 
 ## Build requirements

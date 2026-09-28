@@ -745,6 +745,10 @@ impl Proposal {
     }
 }
 
+/// Error class of a suggestion run a chat turn stopped: cancelled, but due to
+/// resume unless its owner cancels it too.
+pub const PREEMPTED_CLASS: &str = "preempted";
+
 pub struct StructuredMemoryStore {
     path: PathBuf,
     conn: Mutex<Connection>,
@@ -2679,6 +2683,28 @@ impl StructuredMemoryStore {
         episode_ids: &[String],
         summarizer_version: &str,
     ) -> Result<ConsolidationRun> {
+        self.begin_run(owner, episode_ids, summarizer_version, false)
+    }
+
+    /// Start a suggestion's run, or resume it after a chat turn preempted it.
+    /// Unlike an explicit consolidation, a suggestion never restarts a run its
+    /// owner cancelled or one that failed: the stopped run is returned as is.
+    pub fn begin_suggestion_run(
+        &self,
+        owner: &str,
+        episode_ids: &[String],
+        summarizer_version: &str,
+    ) -> Result<ConsolidationRun> {
+        self.begin_run(owner, episode_ids, summarizer_version, true)
+    }
+
+    fn begin_run(
+        &self,
+        owner: &str,
+        episode_ids: &[String],
+        summarizer_version: &str,
+        preempted_only: bool,
+    ) -> Result<ConsolidationRun> {
         Self::require_owner(owner)?;
         let key = Self::consolidation_idempotency_key(owner, episode_ids, summarizer_version);
         let encoded = encode_ids(episode_ids);
@@ -2697,6 +2723,9 @@ impl StructuredMemoryStore {
             .map_err(sql)?;
         if let Some(run) = existing {
             if run.state == "done" {
+                return Ok(run);
+            }
+            if preempted_only && run.state != "running" && run.error_class.as_deref() != Some(PREEMPTED_CLASS) {
                 return Ok(run);
             }
             if run.state == "running" {
@@ -2774,7 +2803,25 @@ impl StructuredMemoryStore {
             .map_err(sql)?
             .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown consolidation run"))?;
         if current.state == "cancelled" {
-            return Ok(current);
+            if current.error_class.as_deref() != Some(PREEMPTED_CLASS) {
+                return Ok(current);
+            }
+            // A run a chat turn preempted is due to resume; the owner's cancel
+            // makes it final, so the requeued suggestion no longer restarts it.
+            tx.execute(
+                "UPDATE consolidation_runs SET error_class='cancelled', ended_ts=?1 WHERE owner_id=?2 AND public_id=?3 AND state='cancelled' AND error_class=?4",
+                params![now, owner, id, PREEMPTED_CLASS],
+            )
+            .map_err(sql)?;
+            let run = tx
+                .query_row(
+                    &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
+                    params![owner, id],
+                    Self::map_run,
+                )
+                .map_err(sql)?;
+            tx.commit().map_err(sql)?;
+            return Ok(run);
         }
         if current.state != "running" {
             return Err(HarnessError::new(
@@ -2806,7 +2853,7 @@ impl StructuredMemoryStore {
     pub fn fail_consolidation_run(&self, owner: &str, id: &str, error_class: &str) -> Result<ConsolidationRun> {
         Self::require_owner(owner)?;
         let now = crate::common::now_ts();
-        let state = if error_class == "cancelled" {
+        let state = if matches!(error_class, "cancelled" | PREEMPTED_CLASS) {
             "cancelled"
         } else {
             "failed"
@@ -4547,6 +4594,61 @@ mod tests {
             .begin_consolidation_run("user_alice", std::slice::from_ref(&episode.id), SUMMARIZER_VERSION)
             .unwrap_err();
         assert_eq!(again.code, "STRUCTURED_MEMORY_BUSY");
+    }
+
+    #[test]
+    fn an_owner_cancel_makes_a_preempted_suggestion_run_final() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let episode = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 8,
+                    assistant_chars: 8,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap();
+        let ids = std::slice::from_ref(&episode.id);
+        let run = store
+            .begin_suggestion_run("user_alice", ids, SUMMARIZER_VERSION)
+            .unwrap();
+        let stopped = store
+            .fail_consolidation_run("user_alice", &run.id, PREEMPTED_CLASS)
+            .unwrap();
+        assert_eq!(
+            (stopped.state.as_str(), stopped.error_class.as_deref()),
+            ("cancelled", Some(PREEMPTED_CLASS))
+        );
+        // The requeued suggestion resumes the run a chat turn stopped.
+        let resumed = store
+            .begin_suggestion_run("user_alice", ids, SUMMARIZER_VERSION)
+            .unwrap();
+        assert_eq!(
+            (resumed.id.as_str(), resumed.state.as_str()),
+            (run.id.as_str(), "running")
+        );
+        store
+            .fail_consolidation_run("user_alice", &run.id, PREEMPTED_CLASS)
+            .unwrap();
+        // Its owner's cancel makes that final for the suggestion...
+        let cancelled = store.cancel_consolidation_run("user_alice", &run.id).unwrap();
+        assert_eq!(
+            (cancelled.state.as_str(), cancelled.error_class.as_deref()),
+            ("cancelled", Some("cancelled"))
+        );
+        let refused = store
+            .begin_suggestion_run("user_alice", ids, SUMMARIZER_VERSION)
+            .unwrap();
+        assert_eq!(refused.state, "cancelled");
+        // ...while an explicit consolidation may still run it again.
+        let rerun = store
+            .begin_consolidation_run("user_alice", ids, SUMMARIZER_VERSION)
+            .unwrap();
+        assert_eq!(rerun.state, "running");
     }
 
     #[test]

@@ -272,7 +272,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     let refused = request(&server, &admin, Method::GET, "/api/sessions", Value::Null).await;
     assert_eq!(refused.status(), 429, "retained hits must survive reload");
     assert!(refused.headers().contains_key("retry-after"));
-    let audit = std::fs::read_to_string(server.home.join("logs/audit.jsonl")).unwrap();
+    let audit = server.audit_log();
     assert!(audit.contains("config_reloaded") && audit.contains("config_reload_refused"));
     assert!(!audit.contains("PRIVATE_RELOAD_TEXT"));
     let legacy = spawn_server(&model.base_url(), ServerOptions::default()).await;
@@ -367,6 +367,81 @@ async fn sighup_reloads_the_owned_server_and_invalid_reload_keeps_it_running() {
     }
     child.kill().await.unwrap();
     child.wait().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ctrl_c_and_sigterm_stop_serve_after_its_queued_audit_lines_land() {
+    let model = start_mock_model().await;
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let dir = tempfile::tempdir().unwrap();
+        config_with(
+            dir.path(),
+            &[
+                ("auth.enabled", "false"),
+                ("tls.enabled", "false"),
+                ("models.local_llm.base_url", &format!("\"{}\"", model.base_url())),
+                ("models.local_llm.warmup.enabled", "false"),
+                ("structured_memory.enabled", "false"),
+                // The writer may wait 5 s for the lease this test holds.
+                ("logging.audit_lease_wait_ms", "5000"),
+            ],
+        );
+        let port = std::net::TcpListener::bind("127.0.0.1:0") // DevSkim: ignore DS162092 because this is an owned loopback fixture.
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut child = tokio::process::Command::new(BIN)
+            .args(["serve", "--port", &port.to_string()])
+            .env("CGAGENTHARNESS_HOME", dir.path())
+            .env("GROK_API_KEY", "")
+            .env("ANTHROPIC_API_KEY", "")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let base = format!("http://127.0.0.1:{port}"); // DevSkim: ignore DS162092 DS137138 because this is the owned loopback-only HTTP fixture.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while client.get(format!("{base}/api/status")).send().await.is_err() {
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "fixture server exited during startup"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        // The request's audit line stays queued while this test holds the lease.
+        let lease = hold_audit_lease(dir.path()).await;
+        let checks = client.get(format!("{base}/api/agent/checks")).send().await.unwrap();
+        assert_eq!(checks.status(), 200);
+        // Only this test's owned child receives a signal.
+        assert_eq!(unsafe { libc::kill(child.id().unwrap() as i32, signal) }, 0);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "signal {signal}: serve exited with an audit line still queued"
+        );
+        drop(lease);
+        let status = tokio::time::timeout(std::time::Duration::from_secs(15), child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(status.success(), "signal {signal}: {status:?}");
+        let audit = std::fs::read_to_string(dir.path().join("logs/audit.jsonl")).unwrap();
+        assert!(
+            audit.contains("\"route\":\"/api/agent/checks\""),
+            "signal {signal}: {audit}"
+        );
+    }
 }
 
 #[tokio::test]

@@ -3,7 +3,8 @@
 //! `build_app` is the test boundary (mirrors CyClaw's `create_app`): tests
 //! pass a temp home, an optional config override and a mock model URL, and
 //! get back the router plus the shared state. `serve_blocking` adds the
-//! bind guard (loopback only), the port bounds and the port-in-use probe.
+//! bind guard (loopback only), the port bounds and the port-in-use probe, and
+//! stops on Ctrl-C or SIGTERM once queued audit lines have landed.
 
 pub mod agent_jobs;
 pub mod agent_policy;
@@ -152,7 +153,8 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
     )?;
     let settings = HarnessSettings::load(&home)?;
     let store = SessionStore::new(&home.sessions_dir())?;
-    let audit = Audit::from_home(&home.root, &cfg);
+    // Request handlers queue audit lines; one thread appends them in order.
+    let audit = Audit::from_home(&home.root, &cfg).with_writer_thread();
     let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
     let upload_permits = Arc::new(tokio::sync::Semaphore::new(state::upload_concurrency(&cfg)?));
     let upload_body_timeout = state::upload_body_timeout(&cfg)?;
@@ -378,7 +380,7 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
         options
     };
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async move {
+    let outcome = rt.block_on(async move {
         let (app, state) = build_app(options).await?;
         #[cfg(unix)]
         let _reload = config_reload::install_sighup(&state)?;
@@ -391,9 +393,44 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
             state.home.root.display()
         );
         let _mcp_listener = mcp_server::start(state.clone()).await?;
-        transport.serve(listener, app).await?;
+        // Ctrl-C and SIGTERM stop serving instead of killing the process, so
+        // the audit lines still queued land before it exits.
+        let served = tokio::select! {
+            served = transport.serve(listener, app) => served,
+            () = shutdown_signal() => Ok(()),
+        };
+        state.audit.flush_async().await;
+        served?;
         Ok::<(), anyhow::Error>(())
-    })
+    });
+    // A blocking task still running at a signal must not hold the exit.
+    rt.shutdown_timeout(std::time::Duration::from_secs(10));
+    outcome
+}
+
+/// Ctrl-C, or SIGTERM on unix. A handler that cannot be installed never fires,
+/// which leaves that signal's default (kill) in place.
+async fn shutdown_signal() {
+    let interrupt = async {
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                terminate.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = interrupt => {}
+        () = terminate => {}
+    }
 }
 
 /// Location of the executable for the shim (exposed for diagnostics).

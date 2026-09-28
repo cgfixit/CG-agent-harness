@@ -134,7 +134,8 @@ pending proposals only. Automatic consolidation is a separate default-true
 gate that also requires consolidation (AND); when on, a bounded idle worker
 may enqueue the same pending-proposal runner. Feature-off starts no worker.
 Disabling stops new claims without corrupting in-flight work. Interactive
-chat wins generation-gate contention. Independently gated completion suggestions
+chat wins generation-gate contention, preempting (and requeuing) a running
+completion suggestion. Independently gated completion suggestions
 require store + capture, use bounded current completion evidence for the initiating
 owner, and produce pending proposals only. They never read shared archives or
 write human semantic summaries. `/memory save <text> :: <reason>` is an explicit
@@ -355,7 +356,7 @@ The job changes no host sysctl and preserves the production backend ladder.
 SIGKILL of the runner with a live grandchild is unverified.
 It is the same process-group leftover already named for Seatbelt. Windows Job
 Object remains a process-tree kill boundary without network or filesystem
-isolation. See `docs/OFFLINE_CARGO.md` for preparation, required native tests,
+isolation. See `docs/CODING_PIPELINE.md#offline-cargo-verification` for preparation, required native tests,
 and remaining process/resource limitations.
 
 - Locked by: `tests/macos_cargo.rs` (no sandbox capability skip),
@@ -381,7 +382,7 @@ Push checks those pins and uses an object-ID refspec; publication checks the
 remote branch. Current policy and separate reason/confirmation remain required.
 Older records missing the new bindings need a new reviewed run. No transaction
 against arbitrary hostile filesystem races or later remote changes is claimed.
-See `docs/GIT_APPROVAL.md` for compatibility changes and review limitations.
+See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility changes and review limitations.
 
 - Locked by: `tests/git_approval.rs`, `tests/write_policy.rs`,
   `tests/real_repo_loop.rs::loop_iterates_on_feedback_then_accepts_and_finalizes`,
@@ -431,7 +432,10 @@ calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions are also
 included in the calibrated input estimate. Web-enabled chat tightens the trigger
 toward `web.total_tokens - effective_reply_reservation` (the projection already
 carries one reservation, so a web prompt keeps room for two replies), without going
-below that floor; the web dispatcher independently enforces its total budget.
+below that floor; the web dispatcher independently enforces its total budget:
+tools are offered only while the prompt fits again with both replies and a
+minimal result, a batch runs only when each call's minimal result fits, and a
+result is cut to the room left.
 Startup and reload warn when fewer than 4096 input tokens would remain.
 Resolved Ollama with explicit `reasoning_effort: "none"` reserves the reply
 ceiling once. Other reasoning settings, missing settings and compatible
@@ -465,6 +469,7 @@ bodies.
   `tests/chat_and_sessions.rs::observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_calibration`,
   `tests/chat_and_sessions.rs::reasoning_and_compatible_backends_enforce_the_effective_reply_reservation`,
   `tests/chat_and_sessions.rs::web_chat_charges_the_reply_reservation_once_against_the_web_budget`,
+  `tests/chat_web.rs::web_chat_tool_rounds_stay_inside_the_web_token_budget`,
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
   `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,

@@ -79,8 +79,8 @@ session timeouts.
 | GET, POST | `/api/sessions/{session_id}/skills` | Skill selection for the session |
 | GET, POST | `/api/sessions/{session_id}/structured-facts` | Selected structured-memory facts (explicit include) |
 
-See [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md) and
-[CHAT_STREAMING.md](CHAT_STREAMING.md).
+See [CONSOLE.md](CONSOLE.md) and
+[streaming chat](CONSOLE.md#streaming-chat-and-cancellation).
 
 ## Persona, skills and pinned notes
 
@@ -195,7 +195,7 @@ not a successful sandbox probe. `/tools mcp` renders that policy in the console.
 
 Run and job routes both go through `agent::prepare_run`, then cross the shim
 into a child process; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
-[GIT_APPROVAL.md](GIT_APPROVAL.md).
+[CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
 
 ## Completion webhooks
 
