@@ -101,6 +101,9 @@ fn dummy_record() -> &'static str {
     })
 }
 
+/// Longest interval between idle-window slides of a live session.
+const SESSION_TOUCH_INTERVAL_SEC: f64 = 60.0;
+
 pub struct AuthManager {
     path: PathBuf,
     idle_timeout_sec: f64,
@@ -139,6 +142,12 @@ impl AuthManager {
 
     fn now(&self) -> f64 {
         (self.clock)()
+    }
+
+    /// How stale a live session's recorded activity may get: a minute, or 1% of
+    /// the idle timeout when that is shorter.
+    fn touch_interval_sec(&self) -> f64 {
+        (self.idle_timeout_sec / 100.0).min(SESSION_TOUCH_INTERVAL_SEC)
     }
 
     fn persist(&self, stored: &mut (rusqlite::Connection, AuthDb), db: &AuthDb) -> Result<()> {
@@ -459,13 +468,18 @@ impl AuthManager {
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let row = stored.1.sessions.get(&key).filter(|row| !row.revoked)?;
         let expired = now >= row.expires_ts || now >= row.last_seen_ts + self.idle_timeout_sec;
-        let last_seen_ts = if expired { row.last_seen_ts } else { now };
         let username = row.username.clone();
-        // Committed before visible, like `persist`, but only this row is written.
-        sqlite::touch_session(&stored.0, &key, last_seen_ts, expired).ok()?;
-        let row = stored.1.sessions.get_mut(&key)?;
-        row.last_seen_ts = last_seen_ts;
-        row.revoked = expired;
+        // Every guarded request lands here, so slide the idle window at most once
+        // per interval instead of writing SQLite each time. A skipped slide can
+        // only end a session sooner, never later; an expiry is always written.
+        if expired || now - row.last_seen_ts >= self.touch_interval_sec() {
+            let last_seen_ts = if expired { row.last_seen_ts } else { now };
+            // Committed before visible, like `persist`, but only this row is written.
+            sqlite::touch_session(&stored.0, &key, last_seen_ts, expired).ok()?;
+            let row = stored.1.sessions.get_mut(&key)?;
+            row.last_seen_ts = last_seen_ts;
+            row.revoked = expired;
+        }
         if expired || stored.1.users.get(&username).is_none_or(|user| user.disabled) {
             return None;
         }
