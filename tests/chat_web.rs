@@ -526,8 +526,8 @@ async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
 /// A mock model for the budget tests below. It reports bytes / 4 of what it is
 /// sent and records every request. Offered tools for a message starting with
 /// "fetch", it asks for `calls` parallel reads from a reply that carries
-/// `content` and spends its whole 2048-token cap. Without tools it says it
-/// cannot search the web: true then, so grounding must leave it alone.
+/// `content` and spends its whole 2048-token cap. Without tools, or asked to
+/// "search", it says it cannot search the web.
 fn budget_model(calls: usize, content: Option<String>, requests: Arc<Mutex<Vec<Value>>>) -> Router {
     Router::new().route(
         "/v1/chat/completions",
@@ -541,7 +541,10 @@ fn budget_model(calls: usize, content: Option<String>, requests: Arc<Mutex<Vec<V
                     / 4;
                 let last = body["messages"].as_array().unwrap().last().unwrap().clone();
                 let fetch = last["content"].as_str().is_some_and(|text| text.starts_with("fetch"));
-                if last["role"] == "tool" {
+                let search = last["content"].as_str().is_some_and(|text| text.starts_with("search"));
+                if search {
+                    Json(common::ok_reply("I cannot search the web.", prompt, 20))
+                } else if last["role"] == "tool" {
                     Json(common::ok_reply("Answer from the page", prompt, 20))
                 } else if !fetch {
                     Json(common::ok_reply("Noted.", prompt, 20))
@@ -666,6 +669,26 @@ async fn web_chat_counts_the_echoed_tool_call_message_before_a_read() {
     );
     let text = body["web_tools"][0]["message"].as_str().unwrap();
     assert!(text.contains("1-call batch; none ran"), "{text}");
+}
+
+/// Grounding rewrites "I cannot search the web" only when the request that
+/// produced it offered the web tools. Web chat withholds them when no tool round
+/// fits, and then the statement is true.
+#[tokio::test]
+async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() {
+    let (s, _reads, base) = budget_server(budget_model(1, None, Arc::default()), 1).await;
+    let (status, body) = s.post_json("/api/chat", json!({"message": "search the web"})).await;
+    assert_eq!(status, 200, "{body}");
+    let reply = body["reply"].as_str().unwrap();
+    assert!(
+        reply.starts_with("This turn includes web_fetch, web_search."),
+        "{reply}"
+    );
+    // Past a round's limit (5,824 input tokens with one call), tools are withheld.
+    let message = format!("search the web {}", "x".repeat(4 * (6_200 - base) as usize));
+    let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "I cannot search the web.", "{body}");
 }
 
 /// The last call of a turn carries no tools, so its result is cut to the room a
