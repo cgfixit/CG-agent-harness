@@ -575,8 +575,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/ACCOUNTS.md", Guide, 600),
     ("docs/ANALYTICS.md", Guide, 900),
     ("docs/API_ROUTES.md", Guide, 2000),
-    ("docs/BOUNDED_EDITS.md", Guide, 600),
-    ("docs/CODING_PIPELINE.md", Guide, 2300),
+    // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
+    ("docs/CODING_PIPELINE.md", Guide, 3900),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     ("docs/CONSOLE.md", Guide, 6600),
@@ -586,7 +586,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/DESKTOP_ACCEPTANCE.md", Evidence, 3000),
     // why: #241 folded the MLX QLoRA guide and finetune/README.md in here.
     ("docs/FINETUNE.md", Guide, 1200),
-    ("docs/GIT_APPROVAL.md", Guide, 800),
     ("docs/INSTALL.md", Guide, 5500),
     ("docs/MCP_CLIENT.md", Guide, 1000),
     ("docs/MCP_SERVER.md", Guide, 1200),
@@ -595,7 +594,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/MEMORY_SETUP.md", Guide, 2100),
     // why: #237 documented refused truncated cloud replies.
     ("docs/MODELS.md", Guide, 1000),
-    ("docs/OFFLINE_CARGO.md", Guide, 600),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
     ("docs/RELEASING.md", Guide, 700),
     ("docs/SECURE_RESEARCH.md", Guide, 3900),

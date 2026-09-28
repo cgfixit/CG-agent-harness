@@ -355,7 +355,7 @@ The job changes no host sysctl and preserves the production backend ladder.
 SIGKILL of the runner with a live grandchild is unverified.
 It is the same process-group leftover already named for Seatbelt. Windows Job
 Object remains a process-tree kill boundary without network or filesystem
-isolation. See `docs/OFFLINE_CARGO.md` for preparation, required native tests,
+isolation. See `docs/CODING_PIPELINE.md#offline-cargo-verification` for preparation, required native tests,
 and remaining process/resource limitations.
 
 - Locked by: `tests/macos_cargo.rs` (no sandbox capability skip),
@@ -381,7 +381,7 @@ Push checks those pins and uses an object-ID refspec; publication checks the
 remote branch. Current policy and separate reason/confirmation remain required.
 Older records missing the new bindings need a new reviewed run. No transaction
 against arbitrary hostile filesystem races or later remote changes is claimed.
-See `docs/GIT_APPROVAL.md` for compatibility changes and review limitations.
+See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility changes and review limitations.
 
 - Locked by: `tests/git_approval.rs`, `tests/write_policy.rs`,
   `tests/real_repo_loop.rs::loop_iterates_on_feedback_then_accepts_and_finalizes`,
