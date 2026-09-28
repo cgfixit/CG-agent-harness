@@ -1,9 +1,11 @@
 //! Fixture checks for `scripts/check-pr-template.sh`.
 //!
-//! Cursor cloud agents append `<!-- CURSOR_AGENT_PR_BODY_END -->` and an HTML
-//! footer. That line (surrounding space, tab, vertical tab, or form feed
-//! allowed) and everything after it are ignored before the template rules
-//! run. A `Last updated` stamp that sits after the marker is discarded with
+//! Cursor cloud agents append an HTML footer after the required stamp.
+//! On #266, #267, #269, and #271 the order is the stamp, a blank line, then
+//! `<!-- CURSOR_AGENT_PR_BODY_END -->`, then the footer. That marker line
+//! (surrounding space, tab, vertical tab, or form feed allowed) and
+//! everything after it are ignored before the template rules run. A stamp
+//! placed below the marker is not that order: the stamp is discarded with
 //! the footer and the check fails. No marker keeps the previous rules.
 //! `<!-- CURSOR_AGENT_PR_BODY_BEGIN -->` is not a footer.
 
@@ -70,15 +72,26 @@ fn run_script(path: &Path) -> Output {
 }
 
 fn run_script_files(path: &Path, files: &str) -> Output {
-    Command::new("bash")
-        .arg(script())
+    run_script_at(path, files, None)
+}
+
+fn run_script_at(path: &Path, files: &str, base: Option<&str>) -> Output {
+    let mut cmd = Command::new("bash");
+    cmd.arg(script())
         .arg(path)
         .env("CGAGENTHARNESS_PR_FILES", files)
         .env_remove("CGAGENTHARNESS_PR_BODY_FILE")
         .env_remove("CYCLAW_PR_BODY_FILE")
-        .current_dir(repo_root())
-        .output()
-        .expect("run check-pr-template.sh")
+        .current_dir(repo_root());
+    match base {
+        Some(base) => {
+            cmd.env("CGAGENTHARNESS_PR_BASE", base);
+        }
+        None => {
+            cmd.env_remove("CGAGENTHARNESS_PR_BASE");
+        }
+    }
+    cmd.output().expect("run check-pr-template.sh")
 }
 
 fn assert_ok(output: &Output) {
@@ -103,20 +116,21 @@ fn assert_stamp_fail(output: &Output) {
     assert!(err.contains(STAMP_MISS), "stderr did not name the stamp rule:\n{err}");
 }
 
-/// (a) Layout 1, as on #266: stamp, blank line, marker, blank line, footer.
+/// Stamp, blank line, marker, blank line, footer.
+///
+/// This is the order on #266, #267, #269, and #271. The stamp stays above
+/// the marker, so the footer is ignored and the check passes.
 #[test]
 fn marker_after_timestamp_ignores_footer() {
     let body = format!("{BEGIN}{}{STAMP}\n\n{END}\n\n{FOOTER}\n", valid_prefix());
     assert_ok(&run_body("marker-after", &body));
 }
 
-/// (b) Layout 2, marker before the stamp, as one ordering on #269.
+/// Marker above the stamp. That order was not a body on #266, #267, #269, or #271.
 ///
-/// Rule 1 strips the marker line and everything after it, so the stamp is
-/// discarded and this fails. The previous checker accepted the same bytes:
-/// the stamp was the last non-blank line, and the marker and footer sat
-/// above it. That pass is rejected on purpose. A stamp inside the ignored
-/// footer does not meet the last-line rule.
+/// The first exact marker line is the cut, so the stamp below it is
+/// discarded and the last-line rule fails. A stamp inside the ignored
+/// footer does not meet that rule.
 #[test]
 fn marker_before_timestamp_strips_the_stamp_and_fails() {
     let body = format!("{BEGIN}{}\n{END}\n\n{FOOTER}\n\n{STAMP}\n", valid_prefix().trim_end());
@@ -261,4 +275,106 @@ fn workflow_strips_the_footer_before_the_stamp_check() {
     assert!(yml.contains("stay in lock-step with scripts/check-pr-template.sh"));
     assert!(yml.contains("script and this workflow enforce the same rules"));
     assert!(shell.contains("enforce the same rules, in"));
+}
+
+/// `CGAGENTHARNESS_PR_FILES` selects the changed-file list. It does not skip
+/// the template comparison. A core path in that list plus a body whose
+/// contributed text fails the invariant comparison exits non-zero.
+#[test]
+fn pr_files_set_with_failing_template_comparison_exits_nonzero() {
+    let body = format!("{}{STAMP}\n", valid_prefix());
+    let dir = std::env::temp_dir().join(format!("cgagentharness-pr-template-{}-files-core", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("body.md");
+    std::fs::write(&path, body).unwrap();
+    let output = run_script_at(&path, "src/server/headers.rs", None);
+    let _ = std::fs::remove_dir_all(&dir);
+    let err = String::from_utf8_lossy(&output.stderr);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !output.status.success(),
+        "a failing template comparison must not pass when CGAGENTHARNESS_PR_FILES is set\nstdout:\n{out}\nstderr:\n{err}"
+    );
+    assert!(
+        err.contains("Invariant / Governance Impact statement"),
+        "stderr did not report the template comparison failure:\n{err}"
+    );
+    assert!(
+        !out.contains("OK —"),
+        "a failing comparison must not report success:\n{out}"
+    );
+}
+
+/// A non-core file list still loads the base template. Success names that
+/// template instead of reporting that it was not compared.
+#[test]
+fn pr_files_set_still_compares_the_base_template() {
+    let output = run_body("files-noncore", &format!("{}{STAMP}\n", valid_prefix()));
+    assert_ok(&output);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        out.contains("template at origin/main"),
+        "expected the base template to be compared:\n{out}"
+    );
+    assert!(
+        !out.contains("template not compared"),
+        "a pass must not report that the template was skipped:\n{out}"
+    );
+}
+
+/// A base ref that resolves without the template file is a visible warning
+/// and a non-zero exit, including when `CGAGENTHARNESS_PR_FILES` is set.
+#[test]
+fn missing_template_with_pr_files_set_is_not_a_pass() {
+    let tree = Command::new("git")
+        .args(["mktree"])
+        .current_dir(repo_root())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("git mktree");
+    assert!(
+        tree.status.success(),
+        "git mktree failed: {}",
+        String::from_utf8_lossy(&tree.stderr)
+    );
+    let tree_sha = String::from_utf8(tree.stdout).unwrap();
+    let commit = Command::new("git")
+        .args(["commit-tree", tree_sha.trim(), "-m", "pr-template-check empty tree"])
+        .env("GIT_AUTHOR_NAME", "pr-template-check")
+        .env("GIT_AUTHOR_EMAIL", "pr-template-check@example.com")
+        .env("GIT_COMMITTER_NAME", "pr-template-check")
+        .env("GIT_COMMITTER_EMAIL", "pr-template-check@example.com")
+        .current_dir(repo_root())
+        .output()
+        .expect("git commit-tree");
+    assert!(
+        commit.status.success(),
+        "git commit-tree failed: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+    let sha = String::from_utf8(commit.stdout).unwrap();
+    let body = format!("{}{STAMP}\n", valid_prefix());
+    let dir = std::env::temp_dir().join(format!(
+        "cgagentharness-pr-template-{}-missing-template",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("body.md");
+    std::fs::write(&path, body).unwrap();
+    let output = run_script_at(&path, "scripts/check-pr-template.sh", Some(sha.trim()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let err = String::from_utf8_lossy(&output.stderr);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !output.status.success(),
+        "a missing template must not pass\nstdout:\n{out}\nstderr:\n{err}"
+    );
+    assert!(
+        err.contains("warning:") && err.contains("absent"),
+        "stderr did not warn that the template is absent:\n{err}"
+    );
+    assert!(
+        !out.contains("OK —"),
+        "a missing template must not report success:\n{out}"
+    );
 }
