@@ -9,8 +9,7 @@
 #
 # Exit 0 = ok; exit 1 = missing required sections.
 # Git hooks cannot intercept GitHub API / gh pr create bodies — agents and
-# humans should run this before opening a PR. CI runs the same headers as a
-# blocking check (.github/workflows/pr-template-check.yml).
+# humans should run this before opening a PR.
 #
 # The core-path rule is mirrored from that workflow too: when the change
 # touches src/shim/, the guard or header layers, writer, sandbox, workspace,
@@ -64,6 +63,43 @@ require_header "Risks to monitor" \
   '^#{1,4}[[:space:]]*risks?([[:space:]]*(to[[:space:]]*monitor|impact))?\b'
 require_header "Checklist" \
   '^#{1,4}[[:space:]]*checklist\b'
+require_header "Suggested merge order of open PRs" \
+  '^##[[:space:]]+suggested merge order of open prs[[:space:]]*$'
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+shipped_template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
+body_unix="$(printf '%s\n' "$body" | tr -d '\r')"
+if ! printf '%s\n' "$body_unix" | grep -Eq '^## ELI5[[:space:]]*$'; then
+  missing+=("ELI5 (## ELI5 must be the last section heading)")
+  fail=1
+else
+  eli5_tail="$(printf '%s\n' "$body_unix" | awk '
+    /^## ELI5[[:space:]]*$/ { buf = ""; seen = 1; next }
+    seen { buf = buf $0 ORS }
+    END { printf "%s", buf }
+  ')"
+  if printf '%s\n' "$eli5_tail" | grep -Eq '^#{1,6}[[:space:]]+'; then
+    missing+=("ELI5 must be the last section heading")
+    fail=1
+  fi
+fi
+last_nonempty="$(printf '%s\n' "$body_unix" | sed -e 's/[[:space:]]*$//' | awk 'NF { line = $0 } END { print line }')"
+filled_stamp='^Last updated: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} ET$'
+placeholder_stamp='^Last updated: YYYY-MM-DD HH:MM ET$'
+stamp_ok=0
+if printf '%s\n' "$last_nonempty" | grep -Eq "$filled_stamp"; then
+  stamp_ok=1
+elif [[ "$input" != "-" && -f "$input" ]]; then
+  input_abs="$(cd "$(dirname "$input")" && pwd)/$(basename "$input")"
+  if [[ "$input_abs" == "$shipped_template" ]] \
+    && printf '%s\n' "$last_nonempty" | grep -Eq "$placeholder_stamp"; then
+    stamp_ok=1
+  fi
+fi
+if [[ "$stamp_ok" -ne 1 ]]; then
+  missing+=("Last updated timestamp (last line, YYYY-MM-DD HH:MM ET)")
+  fail=1
+fi
 
 # CI measures the trimmed body; a whitespace-padded stub must not pass here
 # and fail there.
@@ -76,7 +112,6 @@ fi
 
 # Core-path rule (same file set as pr-template-check.yml).
 core_pattern='^(src/shim/|src/server/guards\.rs$|src/server/headers\.rs$|src/agentic/writer\.rs$|src/agentic/executor/sandbox\.rs$|src/agentic/workspace\.rs$|assets/config\.default\.yaml$)'
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 base="${CGAGENTHARNESS_PR_BASE:-origin/main}"
 merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null || true)"
 changed=""
