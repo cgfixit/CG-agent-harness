@@ -572,7 +572,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("INVARIANTS.md", Root, 5500),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
-    ("docs/ACCOUNTS.md", Guide, 600),
     ("docs/ANALYTICS.md", Guide, 900),
     ("docs/API_ROUTES.md", Guide, 2000),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
@@ -595,14 +594,14 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/MODELS.md", Guide, 1000),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
     ("docs/RELEASING.md", Guide, 700),
-    ("docs/SECURE_RESEARCH.md", Guide, 3900),
+    // why: #245 folded WEB.md and ACCOUNTS.md in here.
+    ("docs/SECURE_RESEARCH.md", Guide, 4000),
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2100),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
     ("docs/STRUCTURED_MEMORY.md", Guide, 3700),
     ("docs/TROUBLESHOOTING.md", Guide, 1500),
     ("docs/USER_MANUAL.md", Guide, 500),
-    ("docs/WEB.md", Guide, 1100),
     ("docs/parity/CONTRACTS.md", Guide, 700),
     ("docs/parity/STATUS.md", Guide, 1300),
     ("docs/parity/WORK.md", Guide, 500),
@@ -611,7 +610,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 48_000), (Evidence, 3_500), (Agent, 22_500)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 46_500), (Evidence, 3_500), (Agent, 22_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

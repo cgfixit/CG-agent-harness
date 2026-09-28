@@ -1,6 +1,6 @@
 # Chat, soul, skills and slash commands
 
-Chat, streaming, soul, skills, style, connector catalog, and slash-command tables. Index: [README.md](../README.md). Memory enable steps: [MEMORY_GUIDE.md](MEMORY_GUIDE.md). Web: [WEB.md](WEB.md).
+Chat, streaming, soul, skills, style, connector catalog, and slash-command tables. Index: [README.md](../README.md). Memory enable steps: [MEMORY_GUIDE.md](MEMORY_GUIDE.md). Web: [SECURE_RESEARCH.md](SECURE_RESEARCH.md#search-fetch-and-research).
 
 Chat continuation and executable coding jobs are separate operations: `/loop`
 continues chat toward a session goal, while `/agent` drives the
@@ -362,7 +362,7 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | Capability | Current configuration / action | Actual boundary |
 |---|---|---|
 | Local model | `models.local_llm` in `config.yaml`; `/model` and `/model use <name>` | Chat uses a configured loopback service; selecting a tag does not download it |
-| Public web text | Chat web tools and `/web` controls in [WEB.md](WEB.md) | Google listings, permitted URL fetch, page research and optional context injection |
+| Public web text | Chat web tools and `/web` controls in [SECURE_RESEARCH.md](SECURE_RESEARCH.md#search-fetch-and-research) | Google listings, permitted URL fetch, page research and optional context injection |
 | GitHub coding | Explicit `agentic.repo`, gates and prerequisites in [coding pipeline](CODING_PIPELINE.md); `/github` reports status | Separate governed child-process workflow; a chat reply does not execute Git commands |
 | Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
 | `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
@@ -444,7 +444,7 @@ above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persis
 | `/style`, `/style <name>`, `/style off` | Inspect/select a session output style, or clear it without changing soul.md |
 | `/tokens` | Current session token tally |
 | `/tools [all\|help\|mcp\|<name>]` | Inspect registered tools, the full catalog including unwired entries, help, external MCP grants, or one named tool |
-| `/users` | Administrator account panel; [accounts](ACCOUNTS.md) |
+| `/users` | Administrator account panel; [accounts](SECURE_RESEARCH.md#accounts-and-roles) |
 | `/web [status\|help]`, `/web on`, `/web off` | Inspect shared-home rules; administrators enable/disable web |
 | `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>` | Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule |
 | `/web check <URL> [URL ...] [--group name]` | Exact permission diagnostic, with no network request or grant |

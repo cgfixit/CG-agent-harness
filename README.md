@@ -11,7 +11,7 @@ a standalone server you open in a browser. The **console** is the same
 interface in the app's native WKWebView and in a browser. Local chat stays on
 loopback. Cloud chat requires provider setup and selection; web reads require
 the account and content permissions described in
-[SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md).
+[SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions).
 
 ![CG Agent Harness running on macOS](docs/screenshots/image.png)
 
@@ -21,7 +21,7 @@ the account and content permissions described in
 |---|---|---|
 | **Local chat** | Chat against an OpenAI-compatible **loopback** model server (Ollama by default), with local history, memory, skills, attachments and web context. `/loop` continues chat toward a session goal. | On |
 | **Cloud chat** | Explicitly selecting `grok` or `claude` routes through a separate cloud path after provider setup. Sends **only the new user message** — no local history, memory, skills, attachments or web context. Not available for `/loop`. | Off until a provider is configured |
-| **Web research** | Google listings, URL fetch and page research under configurable budgets and URL rules. | Governed by [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) |
+| **Web research** | Google listings, URL fetch and page research under configurable budgets and URL rules. | Governed by [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions) |
 | **Coding pipeline** | `/agent` drives a separate planner/executor loop in a child process. Ships closed behind **six gates**, including a per-run `--confirm-online`. Enabling the planner permits **repository-content egress**. | Off — read [CODING_PIPELINE.md](docs/CODING_PIPELINE.md) first |
 
 Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
