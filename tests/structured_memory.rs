@@ -86,7 +86,7 @@ async fn fact_and_proposal_writes_refuse_core_injection_in_both_fields() {
             }
         }
     }
-    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    let audit = s.audit_log();
     assert!(!audit.contains("instructions"));
 }
 
@@ -234,7 +234,7 @@ async fn unknown_fields_stale_apply_and_audit_omit_content() {
         .await;
     assert_eq!(status, 409, "{stale}");
     assert_eq!(code(&stale), "STRUCTURED_MEMORY_CHANGED");
-    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
+    let audit = s.audit_log();
     assert!(!audit.contains("secret-fact-payload"));
     assert!(!audit.contains("replacement"));
     assert!(!audit.contains("intervening human edit"));

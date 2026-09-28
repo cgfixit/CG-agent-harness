@@ -83,7 +83,7 @@ async fn api_keys_panel_writes_dotenv_and_never_returns_values() {
     assert!(env.contains("export GROK_API_KEY='second-value-12345'"));
     assert_eq!(env.matches("GROK_API_KEY").count(), 1);
     // Audit line has names only.
-    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap();
+    let audit = s.audit_log();
     assert!(audit.contains("harness_api_keys_updated"));
     assert!(!audit.contains("second-value"));
     // Rejections: unknown key, control char, empty, batch atomicity.

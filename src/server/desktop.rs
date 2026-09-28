@@ -194,6 +194,7 @@ fn start() -> anyhow::Result<()> {
         let _ = server.await;
         // Permit cancellation guards and their bounded native cleanup to run.
         tokio::time::sleep(Duration::from_millis(250)).await;
+        state.audit.flush_async().await;
         Ok::<(), anyhow::Error>(())
     });
     rt.shutdown_timeout(Duration::from_secs(10));
