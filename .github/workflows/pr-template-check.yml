@@ -1,6 +1,8 @@
-# Blocking PR-body gate. Header regexes stay in lock-step with
-# scripts/check-pr-template.sh; the core-path rule requires an explicit
-# "invariant" mention when the isolation boundary or a security gate moves.
+# Blocking PR-body gate. Header regexes, the Cursor footer strip, and the
+# core-path rule stay in lock-step with scripts/check-pr-template.sh: the
+# script and this workflow enforce the same rules. The core-path rule
+# requires an explicit "invariant" mention when the isolation boundary or a
+# security gate moves.
 name: PR template check
 
 on:
@@ -57,7 +59,18 @@ jobs:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const body = context.payload.pull_request.body || "";
+            const rawBody = context.payload.pull_request.body || "";
+            // Lock-step with scripts/check-pr-template.sh. The first line that
+            // is exactly <!-- CURSOR_AGENT_PR_BODY_END --> (surrounding space,
+            // tab, vertical tab, or form feed on that line only) is the cut.
+            // Every check below uses only the text above it. Text after the
+            // marker cannot satisfy a heading, the stamp, the length floor, or
+            // the invariant statement. A stamp below the marker fails. No
+            // marker leaves rawBody unchanged. The begin comment is not cut.
+            const rawLines = rawBody.replace(/\r/g, "").split("\n");
+            const cursorFooterAt = rawLines.findIndex((line) =>
+              /^[ \t\v\f]*<!-- CURSOR_AGENT_PR_BODY_END -->[ \t\v\f]*$/.test(line));
+            const body = cursorFooterAt === -1 ? rawBody : rawLines.slice(0, cursorFooterAt).join("\n");
             const required = [
               ["Proposed changes (or Why/Benefits/Summary)", /^#{1,4}\s*(proposed changes|benefits|why|summary|what)\b/im],
               ["Types of changes", /^#{1,4}\s*types of changes\b/im],
