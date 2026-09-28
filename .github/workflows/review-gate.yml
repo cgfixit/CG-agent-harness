@@ -52,6 +52,9 @@ permissions: {}
 # exit without publishing a verdict of its own. Such runs get a group of
 # their own and are skipped by the job's `if` below. Keep the bot login here
 # and in REVIEW_BOTS in sync.
+# cancel-in-progress stays true. pull_request_target's github.ref is the base
+# branch, so the main/tag guard used by the other workflows would not cancel
+# a superseded PR evaluation. This file has no push, tag, or release trigger.
 concurrency:
   group: ${{ (github.event_name == 'issue_comment' && github.event.comment.user.login != 'chatgpt-codex-connector[bot]') && format('review-gate-ignored-{0}', github.run_id) || format('review-gate-{0}-{1}', github.workflow, github.event.pull_request.number || github.event.issue.number) }}
   cancel-in-progress: true

@@ -12,7 +12,9 @@ permissions: {}
 
 concurrency:
   group: workflow-lint-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Pull requests only. Do not cancel main, tags, schedules, or release calls.
+  # workflow_call keeps the caller event; if it does not, still refuse main and tags.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   zizmor:

@@ -12,6 +12,7 @@ on:
         type: boolean
         default: false
 
+# Tag pushes, the twice-daily schedule, and manual publish run to completion.
 concurrency:
   group: release-publish
   cancel-in-progress: false
@@ -45,6 +46,8 @@ jobs:
     if: needs.plan.outputs.should_release == 'true'
     permissions:
       contents: read
+    # No timeout-minutes here: actionlint rejects it on a reusable workflow call.
+    # ci.yml jobs keep their own timeouts (longest: test, 45 minutes).
     # Job-level local workflow calls resolve at this commit, before any checkout.
     # Keep ./ syntax until actionlint supports GitHub's newer $/ syntax.
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
@@ -97,6 +100,8 @@ jobs:
     needs: verify
     permissions:
       contents: read
+    # No timeout-minutes here: actionlint rejects it on a reusable workflow call.
+    # desktop.yml jobs keep their own timeouts (longest: desktop, 60 minutes).
     uses: ./.github/workflows/desktop.yml # zizmor: ignore[self-repository]
     with:
       artifact-name: release-cgagentharness-macos-universal-app

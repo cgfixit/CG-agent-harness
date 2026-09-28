@@ -11,7 +11,9 @@ permissions: {}
 
 concurrency:
   group: pr-template-check-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull requests only. This workflow has no push or tag trigger; keep the
+  # same guard so a future trigger cannot cancel main or a release ref.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   # Stacked-base guard. PRs #36-#41 were squash-merged into their predecessor
