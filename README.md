@@ -4,11 +4,7 @@
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
 A local harness for **chat, permitted web research, and reviewed coding**,
-written in Rust. Use it to keep local-model conversations and goals, research
-permitted public documentation with cited evidence, or stage a repository
-change for bounded checks and human review. Runs as a universal macOS app or as
-a standalone server you open in a browser. The **console** is the same
-interface in the app's native WKWebView and in a browser. Local chat stays on
+written in Rust. Local chat stays on
 loopback. Cloud chat requires provider setup and selection; web reads require
 the account and content permissions described in
 [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions).
