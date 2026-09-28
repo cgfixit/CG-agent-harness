@@ -432,8 +432,8 @@ included in the calibrated input estimate. Web-enabled chat tightens the trigger
 toward `web.total_tokens - effective_reply_reservation` (the projection already
 carries one reservation, so a web prompt keeps room for two replies), without going
 below that floor; the web dispatcher independently enforces its total budget:
-tools are offered only while the prompt fits again beside a minimal result, and
-a result is cut to the room left.
+tools are offered only while the prompt fits again with both replies and a
+minimal result, and a result is cut to the room left.
 Startup and reload warn when fewer than 4096 input tokens would remain.
 Resolved Ollama with explicit `reasoning_effort: "none"` reserves the reply
 ceiling once. Other reasoning settings, missing settings and compatible

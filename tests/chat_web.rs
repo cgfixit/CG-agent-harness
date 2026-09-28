@@ -255,8 +255,10 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    // LM Studio doubles the reply reservation: 8192 tokens for max_tokens 4096, so
-    // the shipped 28000-token budget admits prompts up to 11,616 input tokens.
+    // LM Studio doubles the reply reservation: 4096 tokens for max_tokens 2048. A
+    // round needs both replies, so with the shipped 28000-token budget rounds fit up
+    // to 9,776 input tokens ((28000 - 256 - 2 x 4096) / 2), and web chat admits
+    // prompts up to 19,808.
     let s = common::spawn_server(
         &format!("http://{address}/v1"),
         common::ServerOptions {
@@ -264,7 +266,7 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
             ..Default::default()
         }
         .with("models.local_llm.provider", "lmstudio")
-        .with("models.local_llm.max_tokens", "4096"),
+        .with("models.local_llm.max_tokens", "2048"),
     )
     .await;
     assert_eq!(
@@ -274,10 +276,10 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
         200
     );
     let mut session = Value::Null;
-    // Phase 1 (about 9k input tokens): the prompt fits twice with room to spare, so
-    // tools stay on and the 6000-token page is clipped to what the follow-up allows.
+    // Phase 1 (about 9k input tokens): both prompts, a minimal result and both replies
+    // fit, so tools stay on and the 6000-token page is clipped to what the follow-up allows.
     for turn in 0..30 {
-        if last_prompt.load(Ordering::SeqCst) >= 8_500 {
+        if last_prompt.load(Ordering::SeqCst) >= 9_000 {
             break;
         }
         let (status, body) = s
@@ -301,8 +303,8 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
         "the page is clipped to the room left: {} chars",
         text.len()
     );
-    // Phase 2 (past about 10k input tokens, still admitted): even a minimal result
-    // cannot follow, so tools are not offered and nothing is fetched.
+    // Phase 2 (past about 10k input tokens, still admitted): a round no longer fits,
+    // so tools are not offered and nothing is fetched.
     for turn in 30..60 {
         if last_prompt.load(Ordering::SeqCst) >= 10_200 {
             break;
@@ -323,6 +325,100 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     assert_eq!(body["reply"], "Answered without the page");
     assert_eq!(body["web_tools"][0]["code"], "WEB_TOKEN_BUDGET");
+    server.abort();
+}
+
+#[tokio::test]
+async fn web_chat_offers_tools_only_when_both_replies_of_a_round_fit() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let last_prompt = Arc::new(AtomicU64::new(0));
+    let (read_count, prompt_seen) = (reads.clone(), last_prompt.clone());
+    let router = Router::new()
+        .route(
+            "/docs/item",
+            get(move || {
+                let reads = read_count.clone();
+                async move {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    ([("content-type", "text/plain")], "PAGE_EVIDENCE ".repeat(200))
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let prompt_seen = prompt_seen.clone();
+                async move {
+                    let prompt = (body["messages"].to_string().len()
+                        + body.get("tools").map_or(0, |tools| tools.to_string().len()))
+                        as u64
+                        / 4;
+                    let messages = body["messages"].as_array().unwrap();
+                    let last = messages.last().unwrap();
+                    let tools = body.get("tools").is_some_and(|t| t.as_array().is_some_and(|t| !t.is_empty()));
+                    if last["role"] == "tool" {
+                        Json(common::ok_reply("Answer from the page", prompt, 20))
+                    } else if last["content"] == "fetch the page" {
+                        if !tools {
+                            return Json(common::ok_reply("Answered without the page", prompt, 20));
+                        }
+                        // The tool-call reply spends its whole cap, as a reasoning model can.
+                        let arguments = json!({"url":"http://docs.example/docs/item"}).to_string(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                        Json(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                            "tool_calls":[{"id":"call_fetch_1","type":"function","function":{"name":"web_fetch","arguments":arguments}}]}}],
+                            "usage":{"prompt_tokens":prompt,"completion_tokens":2048}}))
+                    } else {
+                        prompt_seen.store(prompt, Ordering::SeqCst);
+                        Json(common::ok_reply("Noted.", prompt, 20))
+                    }
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    // Shipped Ollama with reasoning "none" reserves one 2048-token reply per call.
+    // A round needs both replies, so tools fit up to 5,824 input tokens
+    // ((16000 - 256 - 2 x 2048) / 2); counting one reply offered them up to 6,848.
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..Default::default()
+        }
+        .with("models.local_llm.max_tokens", "2048")
+        .with("web.total_tokens", "16000"),
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+            .await
+            .0,
+        200
+    );
+    let mut session = Value::Null;
+    for turn in 0..20 {
+        if last_prompt.load(Ordering::SeqCst) >= 6_100 {
+            break;
+        }
+        let (status, body) = s
+            .post_json(
+                "/api/chat",
+                json!({"message": format!("seed {turn} {}", "x".repeat(2000)), "session_id": session}),
+            )
+            .await;
+        assert_eq!(status, 200, "{body}");
+        session = body["session_id"].clone();
+    }
+    let seeded = last_prompt.load(Ordering::SeqCst);
+    assert!((6_100..6_848).contains(&seeded), "seeded to {seeded} input tokens");
+    let (status, body) = s
+        .post_json("/api/chat", json!({"message": "fetch the page", "session_id": session}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "Answered without the page", "{body}");
+    assert_eq!(reads.load(Ordering::SeqCst), 0, "no read runs when a round cannot fit");
+    assert_eq!(body["web_tools"][0]["code"], "WEB_TOKEN_BUDGET", "{body}");
     server.abort();
 }
 

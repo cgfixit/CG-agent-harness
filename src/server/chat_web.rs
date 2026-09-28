@@ -174,17 +174,18 @@ async fn run_inner(
         if budget_used.saturating_add(estimate).saturating_add(reservation) > web.limits.total_tokens {
             return Err(error("WEB_TOKEN_BUDGET", "chat web token budget exhausted"));
         }
-        // A tool call sends this whole prompt again with its result. Offer tools
-        // only while that follow-up still fits beside a minimal result.
+        // A tool round is two calls: this one, whose reply carries the tool calls,
+        // and a follow-up that sends this prompt again with the result. Offer tools
+        // only while both prompts, a minimal result and both replies fit.
         let round_fits = budget_used
             .saturating_add(estimate.saturating_mul(2))
             .saturating_add(min_result_tokens(token_ratio))
-            .saturating_add(reservation)
+            .saturating_add(reservation.saturating_mul(2))
             <= web.limits.total_tokens;
         if !round_fits && used_calls < web.limits.chat_tool_calls && !tools_withheld {
             tools_withheld = true;
             events.push(json!({"tool":"web","ok":false,"code":"WEB_TOKEN_BUDGET",
-                "message":"web.total_tokens has no room to send this prompt again with a result; web tools were not offered"}));
+                "message":"web.total_tokens has no room for a tool round (this prompt twice, a result and two replies); web tools were not offered"}));
         }
         let available = if used_calls == web.limits.chat_tool_calls || !round_fits {
             &[][..]
