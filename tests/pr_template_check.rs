@@ -307,13 +307,26 @@ fn pr_files_set_with_failing_template_comparison_exits_nonzero() {
 
 /// A non-core file list still loads the base template. Success names that
 /// template instead of reporting that it was not compared.
+///
+/// The base ref is `HEAD`, which resolves in this checkout, including a
+/// shallow CI clone that has no `origin/main`. The working-tree fallback is
+/// not an acceptable success label here.
 #[test]
 fn pr_files_set_still_compares_the_base_template() {
-    let output = run_body("files-noncore", &format!("{}{STAMP}\n", valid_prefix()));
+    let body = format!("{}{STAMP}\n", valid_prefix());
+    let dir = std::env::temp_dir().join(format!(
+        "cgagentharness-pr-template-{}-files-noncore",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("body.md");
+    std::fs::write(&path, body).unwrap();
+    let output = run_script_at(&path, "scripts/check-pr-template.sh", Some("HEAD"));
+    let _ = std::fs::remove_dir_all(&dir);
     assert_ok(&output);
     let out = String::from_utf8_lossy(&output.stdout);
     assert!(
-        out.contains("template at origin/main"),
+        out.contains("template at HEAD"),
         "expected the base template to be compared:\n{out}"
     );
     assert!(
