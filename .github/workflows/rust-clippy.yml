@@ -20,7 +20,9 @@ permissions: {}
 
 concurrency:
   group: rust-clippy-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Pull requests only. Do not cancel main, tags, schedules, or release calls.
+  # workflow_call keeps the caller event; if it does not, still refuse main and tags.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,16 +35,14 @@ env:
   CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
 
 jobs:
-  rust-clippy-analyze:
-    name: clippy SARIF
+  # Cargo runs repository code, so this job stays contents: read. The
+  # clippy SARIF job publishes the file and keeps that check name.
+  clippy-run:
+    name: clippy (run)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
-      security-events: write
-      # upload-sarif needs actions:read only on private repos; keep for parity
-      # with codeql.yml / devskim.yml.
-      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,8 +74,8 @@ jobs:
 
       - name: Run clippy
         id: clippy
-        # pipefail keeps cargo's exit. continue-on-error lets upload-sarif run
-        # on a red clippy; the last step fails the job so this is not advisory.
+        # pipefail keeps cargo's exit. continue-on-error lets the SARIF
+        # artifact save run on a red clippy; the last step fails this job.
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -84,17 +84,77 @@ jobs:
             | tee rust-clippy-results.sarif \
             | sarif-fmt
 
-      - name: Upload clippy SARIF
+      - name: Save clippy SARIF
         if: hashFiles('rust-clippy-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          sarif_file: rust-clippy-results.sarif
-          # Distinct from codeql.yml category "/language:rust".
-          category: clippy
-          wait-for-processing: false
+          name: rust-clippy-sarif
+          path: rust-clippy-results.sarif
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Fail the job when clippy failed
         if: steps.clippy.outcome != 'success'
         run: |
-          echo "clippy exited non-zero (see the Run clippy step). SARIF was still uploaded." >&2
+          echo "clippy exited non-zero (see the Run clippy step). SARIF was saved for the clippy SARIF job." >&2
           exit 1
+
+  rust-clippy-analyze:
+    name: clippy SARIF
+    needs: clippy-run
+    # !cancelled(), not always(). cancelled() is true only when the workflow
+    # was canceled, not when timeout-minutes cancels clippy. A timed-out or
+    # skipped clippy job still starts this job, and the fail step exits 1
+    # unless needs.clippy-run.result is success. A concurrency cancel cancels
+    # the workflow, so !cancelled() is false and this job stays quiet.
+    # SARIF uploads only on success.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+      # upload-sarif needs actions:read only on private repos; keep for parity
+      # with codeql.yml / devskim.yml.
+      actions: read
+    steps:
+      - name: Fail unless clippy succeeded
+        if: needs.clippy-run.result != 'success'
+        env:
+          SCAN_RESULT: ${{ needs.clippy-run.result }}
+        run: |
+          echo "clippy (run) result was '${SCAN_RESULT}'. The clippy SARIF check fails unless that result is success." >&2
+          exit 1
+
+      - name: Download clippy SARIF
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-clippy-sarif
+          path: sarif
+
+      - name: Select clippy SARIF
+        id: sarif
+        if: steps.download.outcome == 'success'
+        run: |
+          set -euo pipefail
+          file=$(find sarif -name 'rust-clippy-results.sarif' -type f -print -quit)
+          test -n "$file"
+          echo "sarif-file=$file" >> "$GITHUB_OUTPUT"
+
+      - name: Require the SARIF artifact when clippy passed
+        if: steps.sarif.outcome != 'success'
+        run: |
+          echo "clippy (run) succeeded but the SARIF artifact was missing. The clippy SARIF check fails closed." >&2
+          exit 1
+
+      - name: Upload clippy SARIF
+        if: steps.sarif.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: ${{ steps.sarif.outputs.sarif-file }}
+          # Distinct from codeql.yml category "/language:rust".
+          category: clippy
+          wait-for-processing: false

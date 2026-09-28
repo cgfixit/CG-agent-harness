@@ -10,7 +10,9 @@ permissions: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Pull requests only. Do not cancel main, tags, schedules, or release calls.
+  # workflow_call keeps the caller event; if it does not, still refuse main and tags.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,7 +23,7 @@ jobs:
   chat-browser:
     name: chat slash-command browser acceptance
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -55,7 +57,7 @@ jobs:
           echo "Preinstalled Chrome missing; installing google-chrome-stable" >&2
           # `_current_` is a floating artifact, so there is no stable digest to
           # pin it to the way gitleaks.yml pins its release tarball. Retry so a
-          # transient dl.google.com blip does not burn the job's 5-minute budget.
+          # transient dl.google.com blip does not burn the job's 10-minute budget.
           curl --fail --silent --show-error --location \
             --retry 3 --retry-delay 2 --retry-connrefused \
             -o /tmp/google-chrome-stable.deb \
@@ -175,7 +177,7 @@ jobs:
   linux-bwrap:
     name: Linux bubblewrap confinement (required)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:

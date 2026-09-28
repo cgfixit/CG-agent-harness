@@ -12,7 +12,9 @@ permissions: {}
 
 concurrency:
   group: workflow-lint-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Pull requests only. Do not cancel main, tags, schedules, or release calls.
+  # workflow_call keeps the caller event; if it does not, still refuse main and tags.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   zizmor:
@@ -20,12 +22,16 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # advanced-security uploads SARIF inside this action, which would put
+      # security-events: write on the job that checks out the pull request.
+      # Findings still fail this job. No secrets context is passed.
       - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: "false"
 
   actionlint:
     runs-on: ubuntu-latest

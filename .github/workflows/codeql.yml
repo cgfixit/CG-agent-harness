@@ -12,7 +12,9 @@ permissions: {}
 
 concurrency:
   group: codeql-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Pull requests only. Do not cancel main, tags, schedules, or release calls.
+  # workflow_call keeps the caller event; if it does not, still refuse main and tags.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,21 +22,19 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }})
+  # Checkout and analysis stay on a read-only token. The named Analyze job
+  # below does not check out the pull request; it only publishes that leg's
+  # SARIF or fails when this leg failed. Both languages remain a matrix.
+  scan:
+    name: CodeQL scan (${{ matrix.language }})
     runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
     permissions:
-      # required for all workflows
-      security-events: write
-
       # required to fetch internal or private CodeQL packs
       packages: read
-
       # only required for workflows in private repositories
       actions: read
       contents: read
-
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -43,7 +43,6 @@ jobs:
             build-mode: none
           - language: actions
             build-mode: none
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,6 +57,115 @@ jobs:
           # queries: security-extended,security-and-quality
 
       - name: Perform CodeQL Analysis
+        id: analysis
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           category: "/language:${{ matrix.language }}"
+          # The SARIF upload happens in the Analyze job, which does not
+          # check out the pull request. Database bundles need the same
+          # security-events write, so they are not uploaded from this job.
+          upload: "never"
+          upload-database: "false"
+          output: codeql-sarif
+
+      - name: Record scan conclusion
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p codeql-sarif
+          if [ "${{ steps.analysis.outcome }}" = "success" ]; then
+            echo ok > codeql-sarif/conclusion
+          else
+            echo fail > codeql-sarif/conclusion
+          fi
+
+      - name: Save CodeQL SARIF
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-${{ matrix.language }}
+          path: codeql-sarif
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Fail the scan when analysis failed
+        if: steps.analysis.outcome != 'success'
+        run: exit 1
+
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    needs: scan
+    # !cancelled(), not always(). cancelled() is true only when the workflow
+    # was canceled, not when timeout-minutes cancels this job. A timed-out
+    # scan still has needs.scan.result of cancelled or failure, and a skipped
+    # scan has skipped; this job starts and the fail step exits 1 unless the
+    # result is success. A concurrency cancel cancels the workflow, so
+    # !cancelled() is false and this job stays quiet. The matrix result is
+    # one value, so one language timing out fails every Analyze check.
+    # SARIF uploads only on success, and only when this language recorded ok.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [rust, actions]
+    steps:
+      - name: Fail unless the CodeQL matrix succeeded
+        if: needs.scan.result != 'success'
+        env:
+          SCAN_RESULT: ${{ needs.scan.result }}
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          echo "CodeQL scan matrix result was '${SCAN_RESULT}'. Analyze (${LANGUAGE}) fails unless that result is success." >&2
+          exit 1
+
+      - name: Download CodeQL SARIF
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codeql-${{ matrix.language }}
+          path: codeql-sarif
+
+      - name: Read this language conclusion
+        id: language
+        if: steps.download.outcome == 'success'
+        run: |
+          set -euo pipefail
+          conclusion=$(find codeql-sarif -name conclusion -type f -print -quit)
+          if [ -n "${conclusion}" ] && [ "$(tr -d '[:space:]' < "${conclusion}")" = ok ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail unless this language scan succeeded
+        if: steps.language.outputs.ok != 'true'
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          echo "CodeQL scan matrix result was success but ${LANGUAGE} did not record ok. Analyze (${LANGUAGE}) fails closed." >&2
+          exit 1
+
+      - name: Select SARIF
+        id: sarif
+        if: steps.language.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          file=$(find codeql-sarif -name '*.sarif' -type f -print -quit)
+          test -n "$file"
+          echo "sarif-file=$file" >> "$GITHUB_OUTPUT"
+
+      - name: Upload CodeQL SARIF
+        if: steps.language.outputs.ok == 'true'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: ${{ steps.sarif.outputs.sarif-file }}
+          category: "/language:${{ matrix.language }}"
+          wait-for-processing: true
