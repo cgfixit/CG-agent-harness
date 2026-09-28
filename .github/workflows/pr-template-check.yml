@@ -60,13 +60,13 @@ jobs:
         with:
           script: |
             const rawBody = context.payload.pull_request.body || "";
-            // Lock-step with scripts/check-pr-template.sh. A line that is
-            // exactly <!-- CURSOR_AGENT_PR_BODY_END --> (surrounding space,
-            // tab, vertical tab, or form feed on that line only) and
-            // everything after it is an ignored Cursor footer. A Last updated
-            // stamp after that marker is discarded and fails. No marker leaves
-            // rawBody unchanged. <!-- CURSOR_AGENT_PR_BODY_BEGIN --> is not
-            // stripped.
+            // Lock-step with scripts/check-pr-template.sh. The first line that
+            // is exactly <!-- CURSOR_AGENT_PR_BODY_END --> (surrounding space,
+            // tab, vertical tab, or form feed on that line only) is the cut.
+            // Every check below uses only the text above it. Text after the
+            // marker cannot satisfy a heading, the stamp, the length floor, or
+            // the invariant statement. A stamp below the marker fails. No
+            // marker leaves rawBody unchanged. The begin comment is not cut.
             const rawLines = rawBody.replace(/\r/g, "").split("\n");
             const cursorFooterAt = rawLines.findIndex((line) =>
               /^[ \t\v\f]*<!-- CURSOR_AGENT_PR_BODY_END -->[ \t\v\f]*$/.test(line));

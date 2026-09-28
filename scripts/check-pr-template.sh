@@ -41,14 +41,16 @@ else
   exit 2
 fi
 
-# Cursor cloud agents append an HTML footer. A line that is exactly
+# Cursor cloud agents append an HTML footer. The first line that is exactly
 # `<!-- CURSOR_AGENT_PR_BODY_END -->` (leading and trailing space, tab,
-# vertical tab, or form feed on that line only; CR is removed first) and
-# every line after it are ignored before the checks below. The Last updated
-# stamp must be the last non-blank line of what remains. A stamp that sits
-# after the marker is discarded and fails: that ordering was seen on #269
-# and is rejected on purpose, because a stamp inside the ignored footer does
-# not satisfy the last-line rule. With no such line the body is unchanged.
+# vertical tab, or form feed on that line only; CR is removed first) is the
+# cut. That line and everything after it are ignored. Every check below —
+# required headings, the merge-order heading, `## ELI5` as the last heading,
+# the core-path invariant statement, the 40-character floor, and the Last
+# updated stamp as the last non-blank line — reads only the text above the
+# cut. Text below the marker cannot satisfy any of those rules. A marker
+# before a required section makes that section missing. A stamp below the
+# marker is discarded and fails. With no such line the body is unchanged.
 # `<!-- CURSOR_AGENT_PR_BODY_BEGIN -->` is not a footer and is left in place.
 if stripped="$(printf '%s\n' "$body" | tr -d '\r' | awk '
   {

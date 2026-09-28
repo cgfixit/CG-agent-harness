@@ -52,20 +52,28 @@ The marker line and the HTML after it are not part of the template body.
 }
 
 fn run_body(name: &str, body: &str) -> Output {
+    run_body_files(name, body, "scripts/check-pr-template.sh")
+}
+
+fn run_body_files(name: &str, body: &str, files: &str) -> Output {
     let dir = std::env::temp_dir().join(format!("cgagentharness-pr-template-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("body.md");
     std::fs::write(&path, body).unwrap();
-    let output = run_script(&path);
+    let output = run_script_files(&path, files);
     let _ = std::fs::remove_dir_all(&dir);
     output
 }
 
 fn run_script(path: &Path) -> Output {
+    run_script_files(path, "scripts/check-pr-template.sh")
+}
+
+fn run_script_files(path: &Path, files: &str) -> Output {
     Command::new("bash")
         .arg(script())
         .arg(path)
-        .env("CGAGENTHARNESS_PR_FILES", "scripts/check-pr-template.sh")
+        .env("CGAGENTHARNESS_PR_FILES", files)
         .env_remove("CGAGENTHARNESS_PR_BODY_FILE")
         .env_remove("CYCLAW_PR_BODY_FILE")
         .current_dir(repo_root())
@@ -173,6 +181,46 @@ fn heading_after_eli5_still_fails_when_no_marker() {
     let err = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{err}");
     assert!(err.contains("ELI5 must be the last section heading"), "{err}");
+}
+
+/// The first marker cuts the body. Required sections that sit below it are
+/// missing, even when those sections would pass on their own.
+#[test]
+fn marker_before_required_sections_fails() {
+    let intro = "This opening paragraph is above the marker and names no required section. \
+                 It is long enough to pass the length floor by itself.\n";
+    let body = format!("{BEGIN}{intro}\n{END}\n\n{}{STAMP}\n{FOOTER}\n", valid_prefix());
+    let output = run_body("marker-mid-body", &body);
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{err}");
+    for label in [
+        "Proposed changes (or Why/Benefits/Summary)",
+        "Types of changes",
+        "Benefits / why",
+        "Risks to monitor",
+        "Checklist",
+        "Suggested merge order of open PRs",
+        "ELI5 (## ELI5 must be the last section heading)",
+        STAMP_MISS,
+    ] {
+        assert!(err.contains(label), "missing {label} was not reported:\n{err}");
+    }
+}
+
+/// An invariant statement that exists only below the marker does not satisfy
+/// the core-path rule. The file list names a core path so that rule runs.
+#[test]
+fn invariant_statement_below_the_marker_does_not_count() {
+    let below = "\n\n**Invariant / Governance Impact** (required for any change touching core paths):\n\n\
+                 Loopback-only posture is unchanged. I6 process isolation still holds. Write gates stay closed.\n";
+    let body = format!("{BEGIN}{}{STAMP}\n\n{END}{below}", valid_prefix());
+    let output = run_body_files("invariant-below", &body, "src/server/headers.rs");
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("Invariant / Governance Impact statement"),
+        "footer text satisfied the invariant rule:\n{err}"
+    );
 }
 
 /// The same heading after the marker is footer text and is ignored.
