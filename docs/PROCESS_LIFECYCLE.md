@@ -46,10 +46,10 @@ characters. No MCP stderr log file is created. Earlier builds bounded diagnostic
 reads but still wrote the full stderr stream to a file.
 
 The drain lets a noisy child finish a valid protocol response without filling
-its stderr pipe. Response headers, including unterminated lines, remain limited
-to 4 KiB. The configured `mcp.timeout_sec` and existing child/process-group cleanup
-still apply. A diagnostic prefix does not prove complete capture or descendant
-containment. See [troubleshooting](TROUBLESHOOTING.md).
+its stderr pipe. Each response is one newline-delimited JSON line, refused once it
+passes `mcp.max_result_bytes` even if unterminated. The configured `mcp.timeout_sec`
+and existing child/process-group cleanup still apply. A diagnostic prefix does not
+prove complete capture or descendant containment. See [troubleshooting](TROUBLESHOOTING.md).
 
 ### Explicit MCP lifecycle policy
 

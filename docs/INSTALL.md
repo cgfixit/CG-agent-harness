@@ -1,6 +1,6 @@
 # Install and first run
 
-Prerequisites, clone, build, first run, home/keys, and verification. Index: [setup-guide.md](../setup-guide.md). Model window: [MODELS.md](MODELS.md). Accounts: [ACCOUNTS.md](ACCOUNTS.md).
+Prerequisites, clone, build, first run, home/keys, and verification. Index: [README.md](../README.md). Model window: [MODELS.md](MODELS.md). Accounts: [SECURE_RESEARCH.md](SECURE_RESEARCH.md#accounts-and-roles).
 
 ## 2. Prerequisites
 
@@ -88,7 +88,7 @@ implicit toolchain installation, so install both before running it.
 
 Toolchain/dependency downloads belong to preparation. Generated-code verification
 must not attempt a rustup download or use credentials from your real home.
-See [Offline Cargo verification](OFFLINE_CARGO.md).
+See [Offline Cargo verification](CODING_PIPELINE.md#offline-cargo-verification).
 
 ### 2.5 Ollama
 
@@ -296,7 +296,7 @@ leave the optional metadata key field empty and send a message. The console
 requests `POST /api/chat` with `Accept: text/event-stream`, so text arrives as
 `delta` events until a final `done`; `/loop stop` (`POST /api/chat/cancel`)
 aborts the turn. Time to first token still depends on the selected local model.
-See [CHAT_STREAMING.md](CHAT_STREAMING.md).
+See [streaming chat](CONSOLE.md#streaming-chat-and-cancellation).
 
 If the browser page hangs and never responds, double-check that Ollama ([model setup](MODELS.md)) is still
 available at its configured local endpoint.
@@ -452,7 +452,7 @@ soul, memory, skill files or shared prompts.
 Closing the desktop window hides it and keeps its backend running. Dock reopen
 or a second launch focuses the same home instance. Cmd-Q offers **Keep running**
 or **Cancel work and quit** if work is active. A standalone server stops with
-Ctrl-C; the app needs no open Terminal. Neither path installs automatic login
+Ctrl-C or SIGTERM; the app needs no open Terminal. Neither path installs automatic login
 startup, and neither resumes model requests or approvals after a reboot.
 
 One server owns a home at a time. Quit its owner before switching between app
@@ -479,7 +479,11 @@ or approval is replayed automatically. Cancellation is best-effort; escaped
 descendants can survive and need inspection before further writes.
 
 Audit/spend/optional metrics JSONL logs retain a current file and one previous
-`.1` generation, default 8 MiB each. Logging remains best-effort. See
+`.1` generation, default 8 MiB each. Logging remains best-effort. The server
+appends audit lines on a background thread, flushed before each agentic child
+starts and at shutdown: requests never wait on the file or the child's lease. A
+full queue (`logging.audit_queue_lines`, default 4096; 0 appends inline) drops
+new lines with a warning. See
 [console jobs](CONSOLE_JOBS.md), [desktop recovery](DESKTOP.md) and
 [process lifecycle](PROCESS_LIFECYCLE.md) for precise limits.
 

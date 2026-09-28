@@ -22,7 +22,7 @@ reconciles released Unix worker leases to interrupted. Legacy running records
 without ownership proof remain unknown. Inspect persistent run records
 and surviving processes before additional writes. A stop response is not proof
 of process-tree termination. Chat replies stream over SSE and `/loop stop`
-cancels a turn (see [CHAT_STREAMING.md](CHAT_STREAMING.md)); job progress does not stream.
+cancels a turn (see [streaming chat](CONSOLE.md#streaming-chat-and-cancellation)); job progress does not stream.
 
 Inspect `/agent status <run id>` and the complete diff before
 `/agent approve <run id> <reason>`. Approval commits locally. Push and draft

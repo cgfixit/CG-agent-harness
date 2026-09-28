@@ -784,15 +784,19 @@ async fn chat_inner(
             .saturating_add(MIN_PROMPT_HEADROOM)
             .saturating_add(crate::server::compaction::calibrated_tokens(tool_tokens, ratio))
             .min(MAX_PROMPT_TOKENS);
-        let mut threshold = configured_threshold.clamp(minimum_threshold, MAX_PROMPT_TOKENS);
-        let mut limit_source = "chat.compact_prompt_tokens";
-        if settings.web_enabled && !req.loop_turn {
-            let web_room = crate::server::compaction::web_prompt_limit(web.limits.total_tokens, reservation);
-            if web_room < threshold {
-                threshold = web_room.max(minimum_threshold);
-                limit_source = "web.total_tokens";
-            }
-        }
+        // The reply budget of this turn: /loop turns reserve their own.
+        let reply_setting = if req.loop_turn {
+            "api.harness_loop_rate_limit.max_tokens"
+        } else {
+            "models.local_llm.max_tokens"
+        };
+        let web_chat = settings.web_enabled && !req.loop_turn;
+        let (threshold, limit_source) = crate::server::compaction::prompt_limit(
+            configured_threshold,
+            web_chat.then(|| crate::server::compaction::web_prompt_limit(web.limits.total_tokens, reservation)),
+            minimum_threshold,
+            reply_setting,
+        );
         // Name the setting that actually bounds this prompt: "start a new session"
         // cannot help when the system prompt and reply reservation fill the limit.
         let too_large = |what: &str, projected: u64, compacted: u64| {
@@ -804,17 +808,14 @@ async fn chat_inner(
                 "threshold": threshold,
                 "limit_source": limit_source,
             }));
-            let remedy = if limit_source == "web.total_tokens" {
-                "shorten the message, lower models.local_llm.max_tokens, raise web.total_tokens, or turn web off"
-            } else {
-                "shorten the message or raise chat.compact_prompt_tokens"
-            };
+            let remedy =
+                crate::server::compaction::prompt_limit_remedy(limit_source, threshold, reply_setting, web_chat);
             ApiError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "CHAT_PROMPT_TOO_LARGE",
                 format!(
-                    "{what} the {threshold}-token prompt limit (set by {limit_source}; models.local_llm.max_tokens \
-                     reserves {reservation} of those tokens for the reply); {remedy}"
+                    "{what} the {threshold}-token prompt limit (set by {limit_source}; {reply_setting} reserves \
+                     {reservation} of those tokens for the reply); {remedy}"
                 ),
             )
             .details(json!({
@@ -927,8 +928,6 @@ async fn chat_inner(
         role: "user".into(),
         content: req.message.clone(),
     });
-    let estimated_input =
-        crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", 0, 1.0, tool_tokens);
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
     let spend_source = if req.loop_turn { "loop" } else { "chat" };
     let (mut reply, web_tools) = if cloud_selected {
@@ -986,8 +985,11 @@ async fn chat_inner(
     };
     drop(release);
 
-    let inventory =
-        crate::server::tool_inventory::chat_callable_names(!cloud_selected && settings.web_enabled && !req.loop_turn);
+    // Ground against the tools the answering request offered: web chat withholds
+    // them when no tool round fits, and withdraws them after a refused batch.
+    let inventory = crate::server::tool_inventory::chat_callable_names(
+        !cloud_selected && settings.web_enabled && !req.loop_turn && reply.final_prompt_tools,
+    );
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {
@@ -1038,6 +1040,11 @@ async fn chat_inner(
     let calibration = if cloud_selected {
         None
     } else {
+        // Calibrate against what the first call sent: web chat leaves out the tool
+        // definitions when a tool round cannot fit.
+        let sent_tools = if reply.initial_prompt_tools { tool_tokens } else { 0 };
+        let estimated_input =
+            crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", 0, 1.0, sent_tools);
         crate::server::compaction::calibrate(
             session.token_calibration.as_ref(),
             &state.chat.base_url,

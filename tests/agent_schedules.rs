@@ -112,7 +112,7 @@ async fn one_minute_schedule_fires_once_across_restart_and_audits() {
     assert_eq!(status, 200, "{cancelled}");
     cgagentharness::server::routes::agent::tick_schedules(&s.state, t0 + 120.0).await;
     assert_eq!(s.state.jobs.list("local").len(), 1, "cancelled schedule must not fire");
-    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    let audit = s.audit_log();
     assert!(audit.contains("agent_schedule_created"), "{audit}");
     assert!(audit.contains("agent_schedule_start"), "{audit}");
     assert!(

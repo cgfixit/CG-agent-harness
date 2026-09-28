@@ -236,9 +236,7 @@ async fn accounts_cannot_read_mutate_search_export_or_schedule_foreign_sessions(
     let row = s.state.schedules.get(&alice_id, sid).unwrap();
     assert_eq!(row.status, "cancelled");
     assert_eq!(row.last_dispatch.as_deref(), Some("skipped_revoked"));
-    assert!(std::fs::read_to_string(s.home.join("logs/audit.jsonl"))
-        .unwrap()
-        .contains("SCHEDULE_OWNER_REVOKED"));
+    assert!(s.audit_log().contains("SCHEDULE_OWNER_REVOKED"));
 }
 
 #[tokio::test]

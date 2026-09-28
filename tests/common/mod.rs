@@ -214,24 +214,49 @@ impl TestServer {
 
     pub async fn get_json(&self, path: &str) -> (u16, Value) {
         let resp = self.req(reqwest::Method::GET, path).send().await.unwrap();
-        let status = resp.status().as_u16();
-        let body = resp.json::<Value>().await.unwrap_or(Value::Null);
-        (status, body)
+        self.answered(resp).await
     }
 
     pub async fn post_json(&self, path: &str, body: Value) -> (u16, Value) {
         let resp = self.req(reqwest::Method::POST, path).json(&body).send().await.unwrap();
-        let status = resp.status().as_u16();
-        let body = resp.json::<Value>().await.unwrap_or(Value::Null);
-        (status, body)
+        self.answered(resp).await
     }
 
     pub async fn open_get(&self, path: &str) -> (u16, Value) {
         let resp = self.client.get(self.url(path)).send().await.unwrap();
+        self.answered(resp).await
+    }
+
+    /// Status and JSON body, after the audit lines queued while handling the
+    /// request are on disk, so a test may read the log right away.
+    async fn answered(&self, resp: reqwest::Response) -> (u16, Value) {
         let status = resp.status().as_u16();
         let body = resp.json::<Value>().await.unwrap_or(Value::Null);
+        self.state.audit.flush();
         (status, body)
     }
+
+    /// The audit log, with every line queued so far written first.
+    pub fn audit_log(&self) -> String {
+        self.state.audit.flush();
+        std::fs::read_to_string(self.state.audit.path()).unwrap_or_default()
+    }
+}
+
+/// Take the audit file's lease under `home`, retrying while a writer holds it
+/// for an append. While held, the server's audit writer keeps its lines queued
+/// (up to `logging.audit_lease_wait_ms` per line).
+#[cfg(unix)]
+pub async fn hold_audit_lease(home: &Path) -> cgagentharness::common::file_lease::FileLease {
+    std::fs::create_dir_all(home.join("logs")).unwrap();
+    let path = home.join("logs/audit.jsonl.lock");
+    for _ in 0..500 {
+        if let Ok(lease) = cgagentharness::common::file_lease::FileLease::acquire(&path, true) {
+            return lease;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the audit lease stayed busy");
 }
 
 /// Error code from a `{"detail": {...}}` envelope.
