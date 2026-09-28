@@ -14,28 +14,28 @@ invariants to "match" CyClaw product policy.
 
 - Editing or reviewing `docs/parity/*`
 - Running or extending `scripts/parity-status.py`
-- Port / ledger refresh after a CyClaw or harness merge
-- Someone proposes opening a harness gate "because CyClaw does X"
+- Reconciling a port ledger with current code
 
 ## Workflow
 
 ### Step 1 — Read contracts + status
 
-1. Read `docs/parity/*` (ledger, status).
+1. Read `docs/parity/actions.json`, `CONTRACTS.md`, `WORK.md` and `STATUS.md`.
+   Source pins and validation states describe their recorded baseline, not
+   current release acceptance.
 2. Run:
 
    ```text
-   python3 scripts/parity-status.py
+   python3 scripts/parity-status.py --check
    ```
 
-   If the script or docs path is missing on this checkout, say so as a **FACT**
-   about the tree tip — do not invent ledger rows. Fall back to `INVARIANTS.md`,
-   `AGENTS.md`, and the relevant Rust modules; record the gap as INFERENCE only
-   when proposing where a doc *should* live.
+   The check validates the fixed 48 IDs and generated view. To update status,
+   edit the ledger from evidence, run without `--check` to regenerate, then
+   check again. Do not edit `STATUS.md` directly or invent new action IDs.
 
 3. Skim the CyClaw surface named by the ledger **only** as upstream context.
-   Defer CyClaw *product policy* (soul, RAG, triple-gate, I1–I5) to Advisor —
-   do not grade or mutate the harness to adopt them.
+   Verify each side at its stated revision. Preserve intentional harness
+   policy differences; upstream behavior alone does not authorize a change.
 
 ### Step 2 — Classify drift
 
@@ -61,8 +61,8 @@ sufficient to change a harness refuse path.
 
 Do **not**:
 
-- Open `agentic.enabled` / `allow_git_write_tools` / `api_key_optional` to chase
-  parity
+- Open execution/write gates or treat `security.api_key_optional` as account
+  authority to chase parity
 - Default `confirm`, drop `reason`, OR the write kill switch
 - Import `crate::agentic` into the server to mirror in-process CyClaw calls
 - Rename CSRF placeholders / `X-CyClaw-CSRF` for branding parity
@@ -76,7 +76,7 @@ Script: <parity-status.py output summary or "missing">
 FACT drifts: ...
 INFERENCE only: ...
 Harness invariants preserved: yes/no
-Next: update docs | defer to Advisor | code+test change (authorized)
+Next: update ledger/view | record evidence gap | authorized code+test change
 ```
 
 ## Guardrails

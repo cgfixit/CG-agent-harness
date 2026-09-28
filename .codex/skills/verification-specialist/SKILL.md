@@ -16,8 +16,8 @@ command output. No project mutation. Not the smoke/acceptance owner
    `git add/commit/push/checkout/rebase`. No dependency installs as part of
    this skill. Short-lived probes may use `/tmp` or `$TMPDIR` and must be
    cleaned up.
-2. **PASS requires executed command output.** Reading source and saying it
-   "looks correct" is storytelling — reject that path.
+2. **PASS requires executed command output.** Set `CARGO_TARGET_DIR` outside
+   the checkout; source inspection alone is not behavioral verification.
 3. **At least one adversarial / negative probe** before any overall PASS.
 4. Spot-check warning: the caller may re-run any claimed command.
 
@@ -32,11 +32,11 @@ HEAD/base and scope.
 |---|---|
 | HTTP guards / CSRF / Host | `tests/auth_guards.rs`, `tests/security_headers.rs`; same-origin + CSRF absent → reject; Host must be loopback; account/RBAC required for operations; harness API key optional and never authority; placeholders `__CYCLAW_CSRF_TOKEN__` / `__CYCLAW_CSP_NONCE__` / `X-CyClaw-CSRF` unchanged |
 | Shim whitelist / exit codes | `tests/shim_and_agent_routes.rs`, `tests/invariant_guard.rs`; ACTIONS whitelist; hostile argv → 422; exit API `0/2/3/4` (`4` = write refused) |
-| Write refused paths | `tests/real_repo_loop.rs` writer/publish paths; missing confirm → 4; reason required; kill switch AND-only |
+| Write refused paths | `tests/write_policy.rs`, `tests/git_approval.rs`, `tests/write_kill_switch.rs`; fresh disk policy, separate confirmation, reviewed tree/origin binding |
 | Clone / Seatbelt sandbox | `tests/agentic_foundations.rs` jail + `sandbox_*`; no backend ⇒ exit 3 remains correct |
 | Config / shipped gates | `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; `flag_is_true` (quoted `"true"` OFF) |
 | Live serve / smoke | Owned temp `CGAGENTHARNESS_HOME` + **unique port**; never assume default `:8790` is this binary (`scripts/smoke-ollama.sh` pattern) |
-| Chrome chat-browser | Acceptance is flake-prone (issue **#43**); do not hollow asserts; PARTIAL if environment cannot run Chrome |
+| Ownership, memory, MCP, web, reload, jobs, notifications | Select tests from `cgagentharness-invariant-guard`; exercise foreign-owner, revoked-authority and disabled-feature paths for the changed contract |
 | Desktop package | Packaging/signing evidence ≠ HTTP console proof; WKWebView ≠ fetch/CSRF semantics; ad-hoc ≠ Developer ID |
 
 Blank planner keys for tests (mirror CI):
@@ -79,13 +79,11 @@ VERDICT: PARTIAL
 PARTIAL only when required checks could not run (missing Chrome/desktop
 toolchain, etc.) — never for uncertainty. PASS covers only stated scope.
 
-## Distinguish from cgagentharness-verify
+## Evidence limits
 
-| | `verification-specialist` | `cgagentharness-verify` |
-|---|---|---|
-| Job | Break a *supplied* change | Own smoke/acceptance bar |
-| Mutation | Forbidden | May drive verify scripts as documented |
-| Stance | Adversarial | Operator verification |
+A zero-test filter is NOT RUN. Match results to the exact source or packaged
+artifact. On documentation changes, test command syntax, references and the
+docs budget; do not claim a runtime security review from source inspection.
 
 ## Boundary
 
