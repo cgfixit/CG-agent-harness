@@ -286,16 +286,20 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
 }
 
 #[test]
-fn shipped_defaults_protect_agents_md() {
+fn shipped_defaults_protect_agent_instruction_files() {
+    // Both files are loaded automatically by agents, so a coding run must
+    // never be able to rewrite them.
     let yaml = cgagentharness::common::config::AppConfig::embedded_default();
-    assert!(
-        yaml.contains("- \"AGENTS.md\""),
-        "shipped config.default.yaml must list AGENTS.md in protected_write_paths"
-    );
-    assert!(
-        cgagentharness::agentic::config::DEFAULT_PROTECTED_WRITE_PATH_PREFIXES.contains(&"AGENTS.md"),
-        "Rust DEFAULT_PROTECTED_WRITE_PATH_PREFIXES must protect AGENTS.md"
-    );
+    for file in ["AGENTS.md", "CLAUDE.md"] {
+        assert!(
+            yaml.contains(&format!("- \"{file}\"")),
+            "shipped config.default.yaml must list {file} in protected_write_paths"
+        );
+        assert!(
+            cgagentharness::agentic::config::DEFAULT_PROTECTED_WRITE_PATH_PREFIXES.contains(&file),
+            "Rust DEFAULT_PROTECTED_WRITE_PATH_PREFIXES must protect {file}"
+        );
+    }
 }
 
 #[test]
@@ -350,21 +354,27 @@ fn fresh_chat_does_not_select_a_repository() {
 }
 
 #[test]
-fn readme_does_not_link_to_missing_claude_md() {
+fn agents_md_is_the_manual_and_claude_md_its_root_summary() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let readme = include_str!("../README.md");
     assert!(
         !readme.contains("(CLAUDE.md)"),
-        "README must not link to CLAUDE.md after the rename to AGENTS.md"
+        "README must not link to CLAUDE.md; operators read AGENTS.md"
     );
     assert!(
         readme.contains("(AGENTS.md)"),
         "README must point operators at AGENTS.md"
     );
     assert!(manifest.join("AGENTS.md").is_file(), "AGENTS.md must exist");
+    // The per-session summary lives at the root, where Claude Code loads it once.
+    let claude = include_str!("../CLAUDE.md");
     assert!(
-        !manifest.join("CLAUDE.md").exists(),
-        "CLAUDE.md was renamed; do not resurrect the old filename"
+        claude.contains("`AGENTS.md`"),
+        "root CLAUDE.md must defer to AGENTS.md as the full manual"
+    );
+    assert!(
+        !manifest.join(".claude/CLAUDE.md").exists(),
+        "CLAUDE.md moved to the repository root; do not resurrect the .claude/ copy"
     );
 }
 
@@ -520,7 +530,7 @@ enum Kind {
     /// Dated acceptance, closeout and verification notes. New evidence goes in
     /// PR bodies and issue comments, so this group only shrinks.
     Evidence,
-    /// What agents load: `AGENTS.md`, `.claude/`, `.codex/`, `.github/`.
+    /// What agents load: `AGENTS.md`, `CLAUDE.md`, `.claude/`, `.codex/`, `.github/`.
     Agent,
 }
 
@@ -529,7 +539,6 @@ use Kind::{Agent, Evidence, Guide, Root};
 /// `(path, kind, word cap)`, sorted by path. Caps started at each file's size
 /// on 2026-09-27, rounded up to the next 100 words. Lower them when a fold lands.
 const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
-    (".claude/CLAUDE.md", Agent, 400),
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
@@ -563,10 +572,12 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".codex/skills/cgagentharness-write-policy-redteam/SKILL.md", Agent, 800),
     (".codex/skills/fable-protocol/SKILL.md", Agent, 500),
     (".codex/skills/verification-specialist/SKILL.md", Agent, 600),
-    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1200),
+    // why: evidence guidance, merge order, and the ELI5 footer counted 1614 words, rounded up to the next 100.
+    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1700),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
-    // why: #237 added the rule that truncated cloud replies are never shown or saved.
-    ("AGENTS.md", Agent, 2100),
+    ("AGENTS.md", Agent, 1800),
+    // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
+    ("CLAUDE.md", Agent, 300),
     // why: #237 and #243 added the cloud-truncation and web-budget contracts;
     // #235 the process-global CSRF note and the I6 process map.
     ("INVARIANTS.md", Root, 5500),
@@ -611,6 +622,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 
 /// Each group's cap started at its words rounded up to the next 500.
 // why: #249 documents Spend under Analytics and the conditional Job webhooks button (46,536 words, rounded up to the next 500).
+// why: PR template evidence guidance raised the Agent total to 22841, rounded up to the next 500; then
+// trimming AGENTS.md and CLAUDE.md (moved to the root) brought it to 22186, rounded up to the next 500.
 const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 47_000), (Evidence, 3_500), (Agent, 22_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in

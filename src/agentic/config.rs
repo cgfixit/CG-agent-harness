@@ -16,7 +16,7 @@ use crate::llm::backend::is_loopback_url;
 pub const DEFAULT_REPO: &str = "";
 pub const DEFAULT_ALLOWED_READ_OPS: [&str; 6] =
     ["pr_view", "pr_list", "pr_diff", "issue_view", "issue_list", "repo_view"];
-pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 19] = [
+pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 20] = [
     "tests/",
     "conftest.py",
     ".github/",
@@ -32,6 +32,7 @@ pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 19] = [
     ".codex/",
     "config.yaml",
     "AGENTS.md",
+    "CLAUDE.md",
     "Cargo.toml",
     "Cargo.lock",
     "deny.toml",
