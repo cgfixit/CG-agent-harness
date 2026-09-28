@@ -103,7 +103,7 @@ mod windows {
                 .is_err());
             }
             "protocol" | "child_crash" => {
-                let tool = if mode == "protocol" { "header_flood" } else { "crash" };
+                let tool = if mode == "protocol" { "line_flood" } else { "crash" };
                 assert!(client.call_tool(tool, json!({})).await.is_err());
                 drop(client);
             }
