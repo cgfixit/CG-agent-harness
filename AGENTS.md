@@ -16,7 +16,7 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 - `cgagentharness serve` -> shared HTTP/HTTPS transport in `src/server`, loopback only.
 - Public `account` and `web` CLI operations call the same protected service; `tls` exports/renews local certificate material. See `docs/SECURE_RESEARCH.md`.
 - Fresh auth/TLS switches are true; existing explicit choices survive upgrades. SQLite accounts protect operational reads and writes. Harness API keys are optional metadata, never login authority.
-- Fresh web settings start enabled with an empty URL allowlist; existing choices and absent/invalid legacy fields remain unchanged/off. Exact/wildcard content permission is distinct from account and provider authority. Research/web selection and structured memory (facts/proposals/episodes) are account scoped (`user_id`, documented `local` via `context_owner`, or labeled `user_*` fixture owners); sessions, detached jobs and schedules require the initiating owner; unassigned legacy sessions require explicit admin adoption into the acting account (clearing prior coding approval). Pinned notes/persona, model selection, spend and agentic run records remain shared portal resources. Episode capture is a separate default-true gate and is not prompt injection. Explicit recall is a third default-true gate: selected facts enter `/prompt` only after operator selection and assembly-time owner/active/revision revalidation. Retrieval/FTS is a fourth default-true gate, independent of `/memory on` and `explicit_recall`: search is not inject. Per-request `retrieve` / `/memory retrieve` is the explicit pick for that prompt; `auto_retrieval` is a fifth default-true silent path. FTS indexes facts only. Manual consolidation is a sixth default-true gate: selected episodes become pending proposals only and never auto-apply facts. Automatic consolidation is a seventh default-true gate that also requires consolidation (AND): a bounded idle worker may reuse the same pending-proposal runner. Feature-off starts no worker; chat wins the generation gate. Two further default-true switches, `auto_suggest_chat` and `auto_suggest_coding`, require store + capture and may turn bounded current completion evidence into pending summaries/insights for the initiating owner. They never scan shared archives, fill human semantic summaries or auto-apply facts. See `docs/MEMORY_GUIDE.md`.
+- Fresh web settings start enabled with an empty URL allowlist; existing choices and absent/invalid legacy fields remain unchanged/off. Exact/wildcard content permission is distinct from account and provider authority. Research/web selection and structured memory (facts/proposals/episodes) are account scoped (`user_id`, documented `local` via `context_owner`, or labeled `user_*` fixture owners); sessions, detached jobs and schedules require the initiating owner; unassigned legacy sessions require explicit admin adoption into the acting account (clearing prior coding approval). Pinned notes/persona, model selection, spend and agentic run records remain shared portal resources. Episode capture is a separate default-true gate and is not prompt injection. Explicit recall is a third default-true gate: selected facts enter `/prompt` only after operator selection and assembly-time owner/active/revision revalidation. Retrieval/FTS is a fourth default-true gate, independent of `/memory on` and `explicit_recall`: search is not inject. Per-request `retrieve` / `/memory retrieve` is the explicit pick for that prompt; `auto_retrieval` is a fifth default-true silent path. FTS indexes facts only. Manual consolidation is a sixth default-true gate: selected episodes become pending proposals only and never auto-apply facts. Automatic consolidation is a seventh default-true gate that also requires consolidation (AND): a bounded idle worker may reuse the same pending-proposal runner. Feature-off starts no worker; chat wins the generation gate, preempting a running suggestion (its run parks as `preempted` and requeues) instead of answering `CHAT_BUSY`. Two further default-true switches, `auto_suggest_chat` and `auto_suggest_coding`, require store + capture and may turn bounded current completion evidence into pending summaries/insights for the initiating owner. They never scan shared archives, fill human semantic summaries or auto-apply facts. See `docs/MEMORY_GUIDE.md`.
 - Chat exposes only bounded `web_search` (Google listings) and `web_fetch` (permitted URL content) tools when web is enabled; `/loop` stays tool-free. `SERPAPI_API_KEY` selects the fixed Google-results API; no active key selects public Google, whose challenges are explicit failures. Listings never grant destination permissions.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim`, never called in-process from the server).
@@ -70,6 +70,10 @@ cloud proposers and no change to explicit confirm/reason or write gates.
 - The env var `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` on an operator machine is
   real: `cargo test` isolates it so later write gates are what fail. Do not
   flip `EXECUTION_ENABLED` to false (or OR the kill switch) to make tests green.
+- Server audit appends go to one writer thread (`logging.audit_queue_lines`,
+  default 4096; 0 appends inline), flushed before each agentic child and at
+  shutdown; a full queue drops lines with a warning. SQLite store work stays off
+  async workers. Keep new I/O that way: requests never wait on the file.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
 - `cargo clippy` may resolve to a rustup proxy older than Homebrew's toolchain
@@ -124,7 +128,7 @@ cloud proposers and no change to explicit confirm/reason or write gates.
   counts must be JSON numbers). Empty-text or unfinished (truncated) cloud 2xx
   still records `failed_after_billing` and is never shown or saved. Completeness
   is for retained generations, not lifetime billing; unknown/local costs are not
-  zero. The ledger view is read-only.
+  zero. The ledger view (Analytics → Tokens and cost) is read-only.
   Explicit `POST /api/spend/predict` counts only the supplied cloud draft: Claude
   vendor count with bounded fallback, Grok UTF-8 bytes/4. It creates no ledger
   row. Reserve full output without cache credit; cap missing/null is ungated,
@@ -134,7 +138,8 @@ cloud proposers and no change to explicit confirm/reason or write gates.
   at most three per bounded replay cycle, exact owned destination grants, DNS
   pinning and no redirects. The private outbox uses stable deduplication IDs;
   status/replay is owner scoped and every attempt rechecks current authority.
-  Delivery failure must not change a job outcome. Operator contracts and build
+  Delivery failure must not change a job outcome; the console's Job webhooks
+  button shows only while notifications are enabled. Operator contracts and build
   requirements: `docs/SPEND_AND_NOTIFICATIONS.md`.
 - Prefer a small unit test with `#[cfg(test)] mod tests` beside the function
   over another integration test when the thing under test is a pure parser or
@@ -166,8 +171,8 @@ file over 1 MiB. A new row or a raised cap needs the operator's approval and a
 
 Read the relevant entrypoint under `.codex/skills` when its task applies:
 
-- `cgagentharness-optimize/SKILL.md`: evidence-backed Rust/runtime/CI improvements;
-  adapted from CyClaw's Claude workflow with this repository's contracts.
+- `cgagentharness-optimize/SKILL.md`: evidence-backed Rust/runtime/CI improvements
+  under this repository's contracts; never transplant CyClaw topology or defaults.
 - `cgagentharness-release/SKILL.md`: universal macOS packaging, native acceptance,
   workflow provenance and release preparation.
 - `cgagentharness-verify/SKILL.md`: isolated backend, desktop and local-model checks.
@@ -190,15 +195,20 @@ Read the relevant entrypoint under `.codex/skills` when its task applies:
 
 ## Project Claude skills
 
-Claude Code runs each `.claude/skills/<slug>/SKILL.md` as `/<slug>`; a skill
-marked `disable-model-invocation: true` runs only when the operator types it.
+`.claude/CLAUDE.md` is the per-session summary of this file (a root `CLAUDE.md`
+fails the invariant guard); `.claude/settings.json` pre-approves only `cargo`
+build/check/fmt/clippy/test/deny, `cargo run -- serve`, `scripts/verify-local.sh`,
+`scripts/check-pr-template.sh` and `scripts/test-desktop-backend.py`.
+Claude Code runs each `.claude/skills/<slug>/SKILL.md` as `/<slug>`. All but
+three are `disable-model-invocation: true` and run only when the operator types
+them; `cgagentharness-verify-deps`, `cgagentharness-runtime-invariant-check`
+(both report only) and `verification-specialist` may be model-loaded.
 The Codex skills above, except release and verify, are mirrored there;
 `fable-protocol` and `cgagentharness-optimize` are instead long playbooks behind
-the short Codex versions. Claude-only: `cgagentharness-verify-deps` and
-`cgagentharness-runtime-invariant-check` (report only), `dep-sync` (fixes Cargo,
-toolchain, `deny.toml` and CI/release drift against `origin/main`), `doc-sync`
-(rewrites existing docs to match the code) and `run-cg-agent-harness`
-(fake-model console smoke).
+the short Codex versions. Claude-only: the two report-only skills, `dep-sync`
+(fixes Cargo, toolchain, `deny.toml` and CI/release drift against `origin/main`),
+`doc-sync` (rewrites existing docs to match the code) and `run-cg-agent-harness`
+(fake-model console smoke; its `driver.mjs` is historical, not acceptance evidence).
 
 Both skill trees are repository guidance, not application `/api/skills` runtime
 plugins. Existing user authorization governs publication; selecting a skill adds none.
