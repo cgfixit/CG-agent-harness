@@ -568,7 +568,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".codex/skills/cgagentharness-write-policy-redteam/SKILL.md", Agent, 800),
     (".codex/skills/fable-protocol/SKILL.md", Agent, 500),
     (".codex/skills/verification-specialist/SKILL.md", Agent, 600),
-    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1200),
+    // why: evidence guidance, merge order, and the ELI5 footer counted 1614 words, rounded up to the next 100.
+    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1700),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
     ("AGENTS.md", Agent, 1800),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
@@ -616,9 +617,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
-// why: #249 documents Spend under Analytics and the conditional Job webhooks button (46,536 words, rounded up to the next 500);
-// the Agent cap dropped to 22_000 when AGENTS.md and CLAUDE.md were trimmed and CLAUDE.md moved to the root.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 47_000), (Evidence, 3_500), (Agent, 22_000)];
+// why: #249 documents Spend under Analytics and the conditional Job webhooks button (46,536 words, rounded up to the next 500).
+// why: PR template evidence guidance raised the Agent total to 22841, rounded up to the next 500; then
+// trimming AGENTS.md and CLAUDE.md (moved to the root) brought it to 22186, rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 47_000), (Evidence, 3_500), (Agent, 22_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
