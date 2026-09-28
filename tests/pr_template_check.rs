@@ -310,7 +310,8 @@ fn pr_files_set_with_failing_template_comparison_exits_nonzero() {
 ///
 /// The base ref is `HEAD`, which resolves in this checkout, including a
 /// shallow CI clone that has no `origin/main`. The working-tree fallback is
-/// not an acceptable success label here.
+/// not an acceptable success label here. `head_base_rejects_body_satisfied_only_by_loosened_worktree`
+/// checks that the bytes come from that commit, not from the working tree.
 #[test]
 fn pr_files_set_still_compares_the_base_template() {
     let body = format!("{}{STAMP}\n", valid_prefix());
@@ -333,6 +334,102 @@ fn pr_files_set_still_compares_the_base_template() {
         !out.contains("template not compared"),
         "a pass must not report that the template was skipped:\n{out}"
     );
+}
+
+/// Committed `HEAD` is the comparison source. A loosened working-tree copy is not.
+///
+/// The temporary repo commits the shipped template, then deletes the invariant
+/// boilerplate from the working tree only. The body copies that boilerplate and
+/// adds no further contributor guarantee. Against `HEAD` those lines are
+/// template text, so a core path in `CGAGENTHARNESS_PR_FILES` fails the
+/// comparison. The same body would pass if the loosened file were the source:
+/// the boilerplate would count as new text, and its guarantee words would match.
+#[test]
+fn head_base_rejects_body_satisfied_only_by_loosened_worktree() {
+    let template = std::fs::read_to_string(repo_root().join(".github/PULL_REQUEST_TEMPLATE.md")).unwrap();
+    let lines: Vec<&str> = template.split_inclusive('\n').collect();
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with("**Invariant / Governance Impact**"))
+        .expect("shipped template invariant heading");
+    assert!(
+        lines[start + 1].starts_with("- Which guarantee in"),
+        "invariant boilerplate moved: {}",
+        lines[start + 1]
+    );
+    assert!(
+        lines[start + 2].starts_with("- Provide evidence"),
+        "invariant boilerplate moved: {}",
+        lines[start + 2]
+    );
+    assert!(
+        lines[start + 3].starts_with("- If you are intentionally relaxing"),
+        "invariant boilerplate moved: {}",
+        lines[start + 3]
+    );
+    let block: String = lines[start..start + 4].concat();
+    let mut loosened = String::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !(start..start + 4).contains(&index) {
+            loosened.push_str(line);
+        }
+    }
+    assert!(!loosened.contains("**Invariant / Governance Impact**"));
+
+    let dir = std::env::temp_dir().join(format!("cgagentharness-pr-template-{}-head-source", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::create_dir_all(dir.join(".github")).unwrap();
+    let template_path = dir.join(".github/PULL_REQUEST_TEMPLATE.md");
+    std::fs::write(&template_path, &template).unwrap();
+    std::fs::copy(script(), dir.join("scripts/check-pr-template.sh")).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .env("GIT_AUTHOR_NAME", "pr-template-check")
+            .env("GIT_AUTHOR_EMAIL", "pr-template-check@example.com")
+            .env("GIT_COMMITTER_NAME", "pr-template-check")
+            .env("GIT_COMMITTER_EMAIL", "pr-template-check@example.com")
+            .output()
+            .expect("git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-b", "main"]);
+    git(&["add", ".github/PULL_REQUEST_TEMPLATE.md"]);
+    git(&["commit", "-m", "strict template"]);
+    std::fs::write(&template_path, &loosened).unwrap();
+
+    let body = valid_prefix().replacen("## ELI5\n", &format!("{block}## ELI5\n"), 1);
+    let body = format!("{body}{STAMP}\n");
+    let body_path = dir.join("body.md");
+    std::fs::write(&body_path, body).unwrap();
+    let output = Command::new("bash")
+        .arg(dir.join("scripts/check-pr-template.sh"))
+        .arg(&body_path)
+        .env("CGAGENTHARNESS_PR_FILES", "src/server/headers.rs")
+        .env("CGAGENTHARNESS_PR_BASE", "HEAD")
+        .env_remove("CGAGENTHARNESS_PR_BODY_FILE")
+        .env_remove("CYCLAW_PR_BODY_FILE")
+        .current_dir(&dir)
+        .output()
+        .expect("run copied check-pr-template.sh");
+    let _ = std::fs::remove_dir_all(&dir);
+    let err = String::from_utf8_lossy(&output.stderr);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !output.status.success(),
+        "a body that only matches the loosened working tree must fail against HEAD\nstdout:\n{out}\nstderr:\n{err}"
+    );
+    assert!(
+        err.contains("Invariant / Governance Impact statement"),
+        "stderr did not report the committed-template comparison:\n{err}"
+    );
+    assert!(!out.contains("OK —"), "HEAD comparison must not report success:\n{out}");
 }
 
 /// A base ref that resolves without the template file is a visible warning
