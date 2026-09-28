@@ -66,6 +66,42 @@ pub fn web_budget_warning(web_total_tokens: u64, reservation: u64, tool_tokens: 
     })
 }
 
+/// The prompt limit a chat turn is held to and the setting that binds it:
+/// `chat.compact_prompt_tokens` (capped at [`MAX_PROMPT_TOKENS`]), tightened to
+/// `web_room` for web chat, but never below `floor` (reply reservation, headroom
+/// and tool definitions), where the turn's reply setting binds instead.
+pub fn prompt_limit(
+    configured: u64,
+    web_room: Option<u64>,
+    floor: u64,
+    reply_setting: &'static str,
+) -> (u64, &'static str) {
+    let mut limit = (configured.min(MAX_PROMPT_TOKENS), "chat.compact_prompt_tokens");
+    if let Some(room) = web_room.filter(|room| *room < limit.0) {
+        limit = (room, "web.total_tokens");
+    }
+    if limit.0 < floor {
+        limit = (floor, reply_setting);
+    }
+    limit
+}
+
+/// What to change when a prompt exceeds `limit`, bound by `source`. Raising
+/// `chat.compact_prompt_tokens` is suggested only while the limit is under its cap.
+pub fn prompt_limit_remedy(source: &str, limit: u64, reply_setting: &str, web_chat: bool) -> String {
+    let below_cap = limit < MAX_PROMPT_TOKENS;
+    match source {
+        "web.total_tokens" => format!(
+            "shorten the message, lower {reply_setting}, raise web.total_tokens (at most 32000), or turn web off"
+        ),
+        "chat.compact_prompt_tokens" if below_cap => "shorten the message or raise chat.compact_prompt_tokens".into(),
+        "chat.compact_prompt_tokens" => format!("shorten the message or lower {reply_setting}"),
+        _ if web_chat => format!("shorten the message, lower {reply_setting}, or turn web off"),
+        _ if below_cap => format!("shorten the message, lower {reply_setting}, or raise chat.compact_prompt_tokens"),
+        _ => format!("shorten the message or lower {reply_setting}"),
+    }
+}
+
 pub fn summary_max_tokens(cfg: &crate::common::config::AppConfig) -> u64 {
     cfg.u64_or("compaction.summary_max_tokens", DEFAULT_SUMMARY_MAX_TOKENS)
         .clamp(128, 2048)
@@ -298,6 +334,54 @@ mod tests {
         assert!(web_budget_warning(usable, 8_192, 272).is_none());
         assert!(web_budget_warning(usable - 1, 8_192, 272).is_some());
         assert!(web_budget_warning(0, 8_192, 272).is_some());
+    }
+
+    #[test]
+    fn prompt_limit_names_the_bound_that_wins_and_only_remedies_that_help() {
+        let chat = "models.local_llm.max_tokens";
+        // Configured, web room and the floor each win in turn.
+        assert_eq!(
+            prompt_limit(24_000, None, 8_288, chat),
+            (24_000, "chat.compact_prompt_tokens")
+        );
+        assert_eq!(
+            prompt_limit(24_000, Some(15_096), 12_560, chat),
+            (15_096, "web.total_tokens")
+        );
+        // A doubled 12,952-token reply: the floor, capped at 30000, binds even at
+        // the largest web.total_tokens, so raising that setting cannot help.
+        let room = web_prompt_limit(32_000, 25_904);
+        let (limit, source) = prompt_limit(24_000, Some(room), MAX_PROMPT_TOKENS, chat);
+        assert_eq!((limit, source), (MAX_PROMPT_TOKENS, chat));
+        let remedy = prompt_limit_remedy(source, limit, chat, true);
+        assert_eq!(
+            remedy,
+            "shorten the message, lower models.local_llm.max_tokens, or turn web off"
+        );
+        // A configured value above the cap is held at the cap; raising it cannot help.
+        let (limit, source) = prompt_limit(40_000, None, 8_288, chat);
+        assert_eq!((limit, source), (MAX_PROMPT_TOKENS, "chat.compact_prompt_tokens"));
+        assert_eq!(
+            prompt_limit_remedy(source, limit, chat, false),
+            "shorten the message or lower models.local_llm.max_tokens"
+        );
+        // Under the cap, raising the configured limit lifts a floor-bound limit too.
+        let loop_setting = "api.harness_loop_rate_limit.max_tokens";
+        let (limit, source) = prompt_limit(8_000, None, 12_288, loop_setting);
+        assert_eq!((limit, source), (12_288, loop_setting));
+        assert_eq!(
+            prompt_limit_remedy(source, limit, loop_setting, false),
+            "shorten the message, lower api.harness_loop_rate_limit.max_tokens, or raise chat.compact_prompt_tokens"
+        );
+        assert_eq!(
+            prompt_limit_remedy(source, MAX_PROMPT_TOKENS, loop_setting, false),
+            "shorten the message or lower api.harness_loop_rate_limit.max_tokens"
+        );
+        assert!(prompt_limit_remedy("web.total_tokens", 15_096, chat, true).contains("raise web.total_tokens"));
+        assert_eq!(
+            prompt_limit_remedy("chat.compact_prompt_tokens", 24_000, chat, true),
+            "shorten the message or raise chat.compact_prompt_tokens"
+        );
     }
 
     #[test]

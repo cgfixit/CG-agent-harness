@@ -1,6 +1,6 @@
 # Chat, soul, skills and slash commands
 
-Chat, streaming, soul, skills, style, connector catalog, and slash-command tables. Index: [setup-guide.md](../setup-guide.md). Memory enable steps: [MEMORY_SETUP.md](MEMORY_SETUP.md). Web: [WEB.md](WEB.md).
+Chat, streaming, soul, skills, style, connector catalog, and slash-command tables. Index: [README.md](../README.md). Memory enable steps: [MEMORY_SETUP.md](MEMORY_SETUP.md). Web: [WEB.md](WEB.md).
 
 Chat continuation and executable coding jobs are separate operations: `/loop`
 continues chat toward a session goal, while `/agent` drives the
@@ -644,7 +644,7 @@ for older homes missing the key. Edit the home `config.yaml` and restart to tune
 it. Compaction is inline; there is no idle pre-compaction worker. Empty, failed,
 truncated or cancelled model output does not commit the candidate summary or
 calibration. A prompt that still exceeds the limit returns
-`CHAT_PROMPT_TOO_LARGE` (422) naming the setting that bounds it (`details.limit_source`).
-Shorten the message; with web on, lower `models.local_llm.max_tokens`, raise
-`web.total_tokens` or `/web off`. A new session cannot help when the system prompt
-and reply reservation fill the limit.
+`CHAT_PROMPT_TOO_LARGE` (422) naming the bounding setting (`details.limit_source`),
+the turn's reply budget (`models.local_llm.max_tokens`, or
+`api.harness_loop_rate_limit.max_tokens` for `/loop`) and only remedies that can help.
+A new session cannot help when the system prompt and reply reservation fill the limit.
