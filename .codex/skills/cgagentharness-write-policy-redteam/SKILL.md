@@ -5,28 +5,29 @@ description: Adversarially exercise CG-agent-harness write/git approval, confirm
 
 # Write-policy Redteam
 
-**Persona:** Offensive security engineer for the harness write surface — not
-CyClaw's prompt sanitizer. The trust boundary is: browser never supplies a
-command; every repository write is gated; clone jail contains landed paths;
+The browser never supplies a command; repository writes are gated; the clone
+jail contains landed paths;
 `confirm` is never defaulted; `reason` is required; kill switch
 `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` is AND-only. Exit code `4` = write
 refused.
 
-**Corpus (FACT):** Existing Rust integration tests — not a `probes.yaml`. Prefer
-these as the living adversarial suite. A FUTURE companion YAML corpus is
-optional only if labeled INFERENCE/future and never replaces the tests.
+Use the Rust suites below. Inspect fresh-policy, approval and rollback
+assertions before selecting probes; an old end-to-end success test alone does
+not establish those boundaries.
 
 | Surface | Primary corpus |
 |---|---|
 | Writer / gate order / plan integrity | `tests/real_repo_loop.rs::writer_gates_in_order_and_plan_integrity` (+ publish/confirm paths in the same file) |
-| Git approval / digest binding | `real_repo_loop::loop_iterates_on_feedback_then_accepts_and_finalizes`, `agentic_foundations::manifest_digest_binds_files_and_head` |
+| Fresh policy / separate intent | `tests/write_policy.rs`, `tests/write_kill_switch.rs` |
+| Git approval / digest, mode, origin, exact commit, index lock, disabled extensions | `tests/git_approval.rs` |
+| Exact edits / preflight / failed rollback quarantine | `tests/exact_edits.rs`, unit tests in `src/agentic/workspace.rs` |
+| Retrieval / sensitive reads / cloud refusal | `tests/real_repo_loop.rs` repository-retrieval and denied-basename cases |
 | Clone / read jail | `agentic_foundations::apply_proposal_refuses_jail_escapes_and_oversize_content`, `read_jail_refuses_symlink_escapes_without_following_the_leaf` |
 | Hostile argv / confirm never manufactured | `tests/shim_and_agent_routes.rs` hostile-argv matrix, `a_request_can_never_carry_an_argv`, publish-missing-confirm → child exit 4 |
 | Kill switch AND-only / shipped gates | `invariant_guard::writer_kill_switch_is_and_not_or`, `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
 
-**What "done" looks like:** every targeted test still fails closed on the
-attack; each newly closed bypass has a minimal gate fix + a regression assert;
-no assert was loosened to green; confirm/reason/kill-switch contracts hold.
+Completion requires executed refusal cases and regression assertions for
+newly closed bypasses, without weakening existing checks.
 
 ## The loop
 
@@ -43,11 +44,11 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --test shim_and_agent_routes -- --nocapture
 
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --test invariant_guard writer_kill_switch shipped_config -- --nocapture
+  cargo test --test invariant_guard --test write_policy --test write_kill_switch \
+    --test git_approval --test exact_edits -- --nocapture
 ```
 
-Narrow further with filter strings when the diff is local (`writer_gates`,
-`hostile`, `write_jail`, `confirm`).
+Narrow filters only after checking that they select the intended tests.
 
 ### Step 2 — Classify results into buckets
 
@@ -71,7 +72,9 @@ module:
   (`src/shim`, `src/server/agent_policy.rs`)
 - **Clone jail** — landed-path judgment, symlink / `.git` name-equivalence
   (`src/agentic/workspace.rs`)
-- **Approval binding** — digest vs live worktree (`pending_decision`)
+- **Approval binding** — digest, modes, live tree, index, origin and approved commit
+- **Policy revocation** — recheck disk at each mutation; confirm for run,
+  approval, push and publication are separate intents
 
 ### Step 4 — Close with a minimal gate + regression test
 
@@ -91,10 +94,6 @@ exit-4 paths still hold. Skill completion ≠ publish authorization.
 
 ## Guardrails
 
-- Harness-only: I6, write gates, clone jail, CSRF placeholders, loopback,
-  secrets. Do **not** transplant CyClaw RAG / soul / triple-gate / LangGraph /
-  I1–I5 as applying here.
-- Never weaken security to pass the redteam.
-- Do not invent `probes.yaml` as required; cite Rust tests. FUTURE YAML = labeled
-  companion only.
+- Apply current harness contracts from `INVARIANTS.md`.
+- Retain rollback recovery backups after quarantine; do not claim crash atomicity.
 - Pair with `cgagentharness-invariant-guard` before merging core-path diffs.

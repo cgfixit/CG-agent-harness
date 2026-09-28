@@ -6,8 +6,8 @@ description: Build, verify and prepare CG-agent-harness macOS desktop release ar
 # Release the macOS desktop
 
 Read `AGENTS.md`, `docs/DESKTOP.md`, `scripts/package-desktop.sh`,
-`scripts/verify-desktop-bundle.sh` and current Bundle/desktop/release workflows.
-Refresh the default branch and preserve existing changes in another checkout.
+`scripts/verify-desktop-bundle.sh`, `docs/RELEASING.md` and current workflows.
+Refresh main; preserve existing work in another checkout.
 Use a `codex/` branch; package committed source so `Resources/COMMIT` is meaningful.
 `CGAH_ALLOW_DIRTY=1` is only for marked development artifacts.
 
@@ -34,11 +34,13 @@ actual WKWebView evidence; HTTP tests do not prove pixels, focus or native dialo
 Intel cross-compilation, Rosetta execution and native Intel testing are different
 claims. Do not silently install Rosetta or change TCC settings to fill an evidence gap.
 
-Before requested push/PR/release creation, complete local acceptance and inspect
-tracked content for secrets or machine-specific data. Use the real PR template.
+Before publication, complete local acceptance and inspect tracked files for
+secrets or machine-specific data. Use the PR template.
 Bundle calls reusable desktop CI; tagged releases reuse it too. Match remote SHA,
-workflow run, artifact COMMIT and checksums. For an unmerged candidate, prepare a
-draft prerelease and identify its branch; do not describe it as merged main.
-Publication and merging follow the user's actual authorization. Do not overwrite
-release assets or tags as a retry strategy after an ambiguous network result.
+workflow run, artifact COMMIT and checksums. For unmerged candidates, use PR
+Bundle artifacts. Scheduled/manual publication
+requires main and a successful Bundle run at that SHA. The release planner
+rejects prerelease tags. Check existing runs, tags and releases before dispatch.
+Publication follows explicit user authorization. Never overwrite release assets
+or tags after an ambiguous result.
 Ad-hoc signing is not Developer ID signing or notarization; state that limitation.

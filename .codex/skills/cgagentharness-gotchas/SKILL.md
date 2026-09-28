@@ -18,7 +18,8 @@ not runtime `/api/skills` plugins.
   call pipeline functions in-process "just for this route."
 - **Right fix:** Keep I6. Put server-side behavior in `src/server`; cross only
   through `src/shim` spawning `current_exe() agentic <action>` with the ACTIONS
-  whitelist. Exit codes `0/2/3/4` remain the interface.
+  whitelist. Declared MCP children in `src/common/mcp.rs` are a separate
+  capability boundary. Exit codes `0/2/3/4` remain the agentic interface.
 - **Evidence:** `INVARIANTS.md` I6; `AGENTS.md` traps; `tests/invariant_guard.rs`.
 
 ## 2. Deduplicating intentional boundary copies
@@ -36,7 +37,8 @@ not runtime `/api/skills` plugins.
   test assumes string `"true"` is on.
 - **Wrong fix:** Teach operators that quotes are fine; loosen `flag_is_true`.
 - **Right fix:** Unquoted YAML booleans only. Quoted `"true"` is **OFF** for every
-  gate. Keep that parser contract.
+  `flag_is_true` gate. Auth/TLS switches instead reject invalid types at
+  configuration load; see `tests/common_layer.rs`.
 - **Evidence:** `AGENTS.md`; `README.md` security defaults; shipped-config tests.
 
 ## 4. CSRF placeholder / header rename "cleanup"
@@ -70,27 +72,22 @@ not runtime `/api/skills` plugins.
 ## 7. Clippy is the wrong binary on some Macs
 
 - **Symptom:** `scripts/verify-local.sh` fails clippy with toolchain/proxy skew;
-  rustup's `cargo-clippy` older than Homebrew's.
+  Cargo, Clippy and rustc resolve to different installations.
 - **Wrong fix:** `#allow` the warnings or drop `-D warnings`.
-- **Right fix:** `CLIPPY=/opt/homebrew/bin/cargo-clippy scripts/verify-local.sh`.
-- **Evidence:** `AGENTS.md`; `cgagentharness-verify` skill (when landed).
+- **Right fix:** Resolve the repository toolchain through rustup; inspect
+  Cargo/Clippy/rustc versions before using the script's `CLIPPY` override.
+  A Homebrew override must match the selected compiler.
+- **Evidence:** `AGENTS.md`; `cgagentharness-verify` skill.
 
-## 8. Chrome chat-browser acceptance flakes
+## 8. Browser failure needs current evidence
 
-- **Symptom:** CI red on chat-browser acceptance; intermittent "Chrome didn't
-  start" / session attach failures.
-- **Wrong fix:** Delete the acceptance job or weaken assertions until green.
-- **Right fix:** Treat as known flake class (issue **#43** — Start Chrome
-  reliably). Retry/quarantine with tracking; fix the starter, don't hollow the
-  test.
-- **Also seen:** a *non*-startup flake at `chat-browser-acceptance.mjs:418`,
-  where `saved-DEEPAGENT_API_KEY` still held a typed value after a refresh.
-  Observed once in eleven local runs; the same commit then passed ten straight,
-  so do not attribute it to your diff on n=1. Mechanism unconfirmed. The one
-  candidate worth checking first: the script launches Chrome without
-  `--password-store=basic` or any autofill-disabling flag, and the field is
-  `type="password"`. Confirm before "fixing" it.
-- **Evidence:** CI gotcha / #43.
+- **Symptom:** Chrome startup, attach or console assertions fail.
+- **Right fix:** Inspect the current CI Chrome resolution and
+  `scripts/chat-browser-acceptance.mjs`. Reproduce at the failing SHA and
+  distinguish launch failure from a product assertion. An old issue or one
+  successful retry does not classify the current failure.
+- Run the console contract scripts from `.github/workflows/ci.yml`; keep
+  assertions intact and record unavailable browser execution as NOT RUN.
 
 ## 9. Desktop packaging: lipo / sign / embed-SHA256 order
 
@@ -155,8 +152,8 @@ not runtime `/api/skills` plugins.
   `github.paginate(github.rest.issues.listComments, ...)` resolves to the **array
   itself**. When switching to `paginate`, change the consumer too —
   `comments.find(...)`, not `comments.data.find(...)`. Audit every
-  `await github.paginate` call site in `.github/workflows/` at once; there are
-  four, and they must all read the array directly.
+  `await github.paginate` call site in `.github/workflows/`; each must read
+  the array directly.
 - **How to check before pushing:** the `github-script` block can be extracted
   from the YAML and run under stubs (`github`, `context`, `core` are just
   arguments), with `listComments` honouring the 30-per-page default and a marker
@@ -193,22 +190,18 @@ not runtime `/api/skills` plugins.
   `test_unrelated_listener_is_never_adopted` show the keep-the-listener-open
   variant where that is possible.
 
-## 16. A push does **not** re-trigger the Codex review
+## 16. A green check does not prove the current head was reviewed
 
 - **Symptom:** You address review findings, push, see the PR go green, and merge
   — with the fixes themselves never reviewed.
 - **Wrong fix:** Assume the green check covers the new commits, or read a stale
   "Completed" summary row as a verdict on the current head.
-- **Right fix:** Codex reviews trigger on *open for review*, *mark draft ready*,
-  and an explicit `@codex review` comment — **not** on a push. After pushing a
-  fix, comment `@codex review` and check the **Reviewed commit** SHA in the
-  result matches your head. Note also that a superseded run can be reported as
-  `cancelled` by `cancel-in-progress` concurrency; that is not a failure, but it
-  is also not a verdict.
-- **Why it matters here:** fixes to review findings are exactly the diffs most
-  worth a second pass — they are written fast, under the assumption the problem
-  is already understood.
-- **Evidence:** the Codex "About Codex in GitHub" block on any PR in this repo.
+- **Right fix:** Compare the reviewed commit with the current PR head.
+  Read unresolved threads and the advisory `review gate`; it does not fail CI.
+  A cancelled review is not a verdict. Request another review only within
+  the authorized workflow.
+- **Evidence:** `.github/workflows/review-gate.yml` and the actual PR review.
+  Thread resolution alone fires no webhook; re-run the gate when needed.
 
 ## 17. The docs audit agent can cite lines that do not exist
 
@@ -216,12 +209,12 @@ not runtime `/api/skills` plugins.
   written to `sessions/*.json`"; the file has no such line. Applying the edit
   blindly fails, or worse, inserts prose at a guessed location.
 - **Wrong fix:** Trust a subagent's line numbers or quoted text as evidence.
-- **Right fix:** Every audited claim is a *hypothesis*. Before editing, `grep`
+- **Right fix:** Every audited claim is a *hypothesis*. Before editing, `rg`
   the quoted anchor in the named file; skip the finding if it does not match.
   Quote code values (config defaults, ranges, alias spellings) from `rg`, never
   from the report. The `doc-sync` skill's "grep it" rule exists for this.
-- **Evidence:** 2026-09-16 docs refresh (PR #131): 1 of ~20 findings was
-  fabricated; the other 19 were verbatim-verifiable.
+- Respect `DOCS_BUDGET` in `tests/invariant_guard.rs`. Change existing owner
+  sections and put evidence in PR bodies, without adding Markdown files.
 
 ## 18. Memory gate slash aliases are not the config key names
 
@@ -248,8 +241,8 @@ not runtime `/api/skills` plugins.
   watch that run instead. The planner (`scripts/release-plan.py`) fails closed
   on collisions by design. Also note: a green `Bundle` run on the exact main
   SHA is a hard precondition for `schedule`/`workflow_dispatch` releases.
-- **Evidence:** 2026-09-16, `v0.1.14` tag push started run 26 while the docs
-  PR was being drafted; dispatch run 27 queued behind it.
+- **Evidence:** `docs/RELEASING.md`, `scripts/release-plan.py` and current
+  workflow runs. Preview on a feature branch never publishes.
 
 ## Related skills
 

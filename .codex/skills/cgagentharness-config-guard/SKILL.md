@@ -12,25 +12,25 @@ contracts the running system assumes? Not a code/topology review (see
 
 **Checker (FACT):** Rust tests — primarily
 `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` and
-`flag_is_true` coverage in `tests/common_layer.rs`. **Do not invent a Python
-parser** as the merge gate. A FUTURE stdlib/PyYAML companion checker is
-INFERENCE only if labeled as such and never replaces cargo evidence.
+`quoted_true_is_off` and `security_switches_require_boolean_values` in
+`tests/common_layer.rs`. Inspect the assertions; a filter matching zero tests
+is not evidence.
 
 ## Contract checks
 
 | ID | Severity | Contract |
 |---|---|---|
 | H1 | FAIL | `flag_is_true`: unquoted YAML `true` only; quoted `"true"` / `"false"` / other strings are **OFF** |
-| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `unslop.enabled`. Fresh web settings start enabled with an empty URL allowlist; existing choices and missing/invalid legacy web values stay unchanged/off. Fresh `auth.enabled` and `tls.enabled` must be true. Config gates are locked by `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; web seeding and legacy preservation by the home/settings tests in `tests/common_layer.rs`. `security.api_key_optional` remains true but is deprecated metadata, not an account bypass |
+| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `unslop.enabled`, `mcp.enabled`, `mcp.sse_allow_loopback`, `mcp.server.enabled`; inbound MCP tools stay empty. Fresh web settings start enabled with an empty URL allowlist; existing choices and missing/invalid legacy web values stay unchanged/off. Fresh `auth.enabled` and `tls.enabled` must be true. Config gates are locked by `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; web seeding and legacy preservation by the home/settings tests in `tests/common_layer.rs`. `security.api_key_optional` remains true but is deprecated metadata, not an account bypass |
 | H11 | FAIL | Fresh `memory.enabled` and all nine `structured_memory` feature gates are true; persisted explicit off choices still win. Proposals never auto-apply facts. Memory defaults do not arm repository execution/write gates |
 | H10 | FAIL | Invalid auth/TLS switch types refuse configuration; missing legacy fields remain off. Do not apply the generic quoted-gate OFF behavior to these security switches |
 | H3 | FAIL | Literal YAML needles: `api_key_optional: true` and `allow_git_write_tools: false`; shipped YAML must not contain `allow_git_write_tools: true` (string forms hide mistakes) |
 | H4 | FAIL | Write path still requires human `reason` + per-call `confirm` (never defaulted) — behavior locked in writer + `real_repo_loop` / shim routes; config must not document or enable a bypass |
 | H5 | FAIL | Kill switch remains disable-only env `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` (AND-ed); `EXECUTION_ENABLED` does not flip itself closed |
 | H6 | FAIL | Loopback posture: serve binds loopback only; model `base_url` examples stay `127.0.0.1`; non-loopback refused in code |
-| H7 | WARN | `writes_enabled: true` in shipped agentic block is **armed-by-construction** and held closed by `agentic.enabled` + kill switch — changing either without an invariant statement is conscious risk |
-| H8 | WARN | `policy.prompt_filter.banned_patterns` length stays aligned with the documentary CyClaw-port count (asserted 40 in `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`) |
-| H9 | WARN | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agents_md`) |
+| H7 | FAIL | Mode/write-enabled defaults alone cannot authorize mutation. Fresh disk policy also requires master/deepagent/clone-write gates, reason, confirm and the disable-only kill switch (`tests/write_policy.rs`) |
+| H8 | FAIL | `policy.prompt_filter.banned_patterns` length stays aligned with the documentary CyClaw-port count (asserted 40 in `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`) |
+| H9 | FAIL | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agents_md`) |
 
 ## Run
 
@@ -39,12 +39,15 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --test invariant_guard shipped_config -- --nocapture
 
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --test common_layer flag_is_true -- --nocapture
+  cargo test --test common_layer quoted_true_is_off -- --nocapture
 ```
 
-When the change is semantically load-bearing for writes/jails, also run
-`real_repo_loop` writer tests and `agentic_foundations` as needed. Diff-read
-`assets/config.default.yaml` for accidental quoted booleans or opened gates.
+Also run `security_switches_require_boolean_values` in `common_layer`. Check
+`notifications.enabled` and `agentic.deepagent_github.retrieval.enabled` remain
+false in shipped YAML; select `notifications` and `real_repo_loop` tests when
+changed. Reload accepts only `src/server/config_reload.rs::RELOADABLE`, atomically;
+authority and `web.concurrency` remain restart-only. Use `secure_portal` tests.
+Fresh-disk write-policy checks are independent of limit reload.
 
 ### Interpret
 
@@ -52,7 +55,7 @@ When the change is semantically load-bearing for writes/jails, also run
    drifted); re-run until green. Do not delete the assert.
 2. **Deliberate re-tune** — same change set must update comments +
    `INVARIANTS.md` / `AGENTS.md` as needed, with an explicit PR invariant
-   statement. WARN items exist so re-tunes are conscious.
+   statement. Changed defaults require current behavioral evidence.
 3. **Env/test failure** — blank planner keys; do not require developer
    `GROK_API_KEY`.
 
@@ -75,9 +78,3 @@ Verdict: safe to merge / fix required: ...
 - Pair with `cgagentharness-invariant-guard` for core-path merges.
 - No CyClaw soul/RAG/triple-gate transplantation; this is harness config only.
 - Skill ≠ publish authorization.
-
-## FUTURE (INFERENCE)
-
-A no-import stdlib/YAML static checker mirroring CyClaw `config-guard` could be
-added later for fresh-clone CI without compiling — label any such proposal
-FUTURE; until then **cargo tests are authoritative**.

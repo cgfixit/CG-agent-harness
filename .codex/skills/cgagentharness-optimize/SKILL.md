@@ -5,9 +5,9 @@ description: Find and implement evidence-backed Rust, desktop, runtime, and CI i
 
 # Optimize CG-agent-harness
 
-Adapted for Codex from [CyClaw's Claude Optimize skill](https://github.com/cgfixit/CyClaw/blob/a414ba86ebf5f3c8bb901466c16b4f015bbc79c9/.claude/skills/CyClaw-Optimize/SKILL.md).
-Retain evidence-first selection, PR deduplication, shared-file planning, and
-honest verification. Use this repository's Rust contracts and tools.
+Use current repository contracts, PR deduplication and measured verification.
+For documentation, edit the owning file within `DOCS_BUDGET`; do not add
+parallel guides or evidence files.
 
 Read root `AGENTS.md`, `INVARIANTS.md`, the current workflows and PR template.
 Find the actual checkout, dirty state, default branch, and exact remote base.
@@ -22,15 +22,15 @@ Inspect the requested scope before choosing findings. Useful areas are:
   architecture slices, dependency policy and reproducible verification.
 - `.github/workflows`, `tests`: meaningful coverage, exact-head gates, artifact provenance.
 
-For each retained finding, show a concrete trigger, code location, observed
-impact and a discriminating check. Large files, newer dependencies or speculative
+For each finding, show its trigger, code location, impact and verification.
+Large files, newer dependencies or speculative
 speedups do not alone justify changes. Check open PRs before selecting work;
 zero findings is valid. Never manufacture a quota of findings or PRs.
 
-Map files to proposed chunks. Consolidate related edits to shared files or stack
-dependent branches explicitly. Independent branches start at current default
-branch; stacked children start at their parent and name it as PR base. Use a
-throwaway worktree for trial merges where overlapping changes create risk.
+Map files to focused changes. Every draft PR starts from current `origin/main`
+and targets `main`; this repository forbids stacked PR bases. Consolidate
+related edits to shared files. Deliver dependent work after its prerequisite
+lands, then refresh main and check overlap again.
 
 Implement only the authorized scope. Preserve I6: server/common/LLM/shim never
 import agentic; only the shim dispatches whitelisted child actions. Keep shipped
@@ -48,4 +48,5 @@ If the user requested publication, inspect the diff, run
 PR using the actual template. Otherwise deliver the local change or assessment.
 Skill selection is not authorization to push, publish a release, merge or change
 host settings. Verify remote head and exact-head CI after publication. Report
-concrete changes, tests, remaining risk and parent-first merge order if stacked.
+concrete changes, tests and remaining risk. Read the advisory review gate and
+verify the reviewed SHA separately from CI status.

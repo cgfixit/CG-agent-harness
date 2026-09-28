@@ -5,9 +5,7 @@ description: Apply evidence-first reasoning, security review, and explicit verif
 
 # Fable Protocol
 
-Use this as a concise reasoning layer, not a source of extra scope or process.
-Repository instructions and explicit user direction take precedence. This is the
-compressed Codex twin of `.claude/skills/fable-protocol/SKILL.md` (deep playbook).
+Apply the evidence loop within the user-authorized scope.
 
 ## Evidence loop
 
@@ -23,8 +21,9 @@ compressed Codex twin of `.claude/skills/fable-protocol/SKILL.md` (deep playbook
    and crates already in the tree before adding abstractions or configuration.
 5. Review every changed trust boundary: I6 process isolation, guard chain,
    browser-never-supplies-command, write gates, clone jail, judged-before-land,
-   approval binding, secrets redaction, detached-run gates, weaker-than-name
-   signals. Never weaken posture to green a test.
+   approval binding, owner isolation, memory/MCP authority, web permission,
+   reload, schedules and notifications. Use `cgagentharness-invariant-guard`
+   for the current test map. Never weaken posture to green a test.
 6. Run the narrowest meaningful validation, then report commands, results,
    skipped coverage, and residual risk without inflating confidence.
 
@@ -32,7 +31,8 @@ compressed Codex twin of `.claude/skills/fable-protocol/SKILL.md` (deep playbook
 
 - Preserve I6: `src/server` / `src/shim` / `src/llm` / `src/common` never import
   `crate::agentic`; cross only via `src/shim` spawning `current_exe() agentic
-  <action>` with the ACTIONS whitelist. Exit codes `0/2/3/4` are the API.
+  <action>` with the ACTIONS whitelist. Declared MCP children use a separate
+  boundary in `src/common/mcp.rs`. Exit codes `0/2/3/4` are the agentic API.
 - Keep the combined write policy closed by default: master/deepagent/clone-write
   flags are false; mode/write-enabled alone cannot arm writes. Reason and per-call
   confirm remain required, never defaulted. Fresh auth/TLS and web settings are
@@ -42,8 +42,8 @@ compressed Codex twin of `.claude/skills/fable-protocol/SKILL.md` (deep playbook
   the `X-CyClaw-CSRF` header name are contractual (names retained from the port).
 - Bind remains loopback-only (`127.0.0.1`); Host must be a loopback name.
 - Secrets stay redacted in logs/responses; never assert developer `GROK_API_KEY`
-  presence. Defer CyClaw product-policy yes/no to Advisor — this repo is
-  harness-only.
+  presence. Revalidate source references and test filters; zero matched tests
+  do not establish a pass.
 - Core paths needing an invariant statement in the PR body: `src/shim`,
   `src/server/guards.rs`, `src/server/headers.rs`, `src/agentic/writer.rs`,
   `src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`,

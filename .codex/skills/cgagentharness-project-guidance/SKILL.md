@@ -33,8 +33,9 @@ you touch the behavior.
 | Console asset | `assets/static/harness.html` (CSRF placeholders contractual) |
 | Sync vs detached agent | `/api/agent/run` and `/api/agent/jobs` both via `prepare_run` |
 
-This is **not** CyClaw. Harness has its own persona and structured-memory
-surfaces; no external-corpus RAG, LangGraph I1–I5, or CyClaw triple-gate topology. Defer CyClaw policy questions to Advisor. Preserve harness posture:
+Harness has persona and structured-memory
+surfaces and opt-in local repository retrieval. Do not import CyClaw policy
+assumptions. Preserve harness posture:
 I6 isolation, guard chain, write gates, clone jail, judged-before-land,
 approval binding, secrets redaction, detached-run gates.
 
@@ -49,7 +50,8 @@ approval binding, secrets redaction, detached-run gates.
 | Config defaults / gates | `assets/config.default.yaml`, `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
 | Routes / console listing | `src/server/routes/mod.rs` (`REGISTERED_PATHS`), `views.rs` |
 | Install / local verify | `scripts/verify-local.sh`, `scripts/smoke-ollama.sh`, `README.md`, `docs/INSTALL.md`, `docs/MODELS.md` |
-| Packaging / release | `scripts/package-release.sh`, release workflow docs, `cgagentharness-release` |
+| Packaging / release | `scripts/package-desktop.sh`, `docs/RELEASING.md`, `cgagentharness-release` |
+| Ownership, memory, MCP, web, reload, schedules, notifications | Current contract/test map in `cgagentharness-invariant-guard`; select affected boundaries |
 
 Core paths always require an invariant statement in the PR body when touched:
 `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`,
@@ -72,10 +74,9 @@ Core paths always require an invariant statement in the PR body when touched:
 | `cgagentharness-release` | Packaging, signing, checksum embed, release artifacts |
 | `cgagentharness-optimize` | Focused improvement scans that may open a draft PR |
 
-Claude deep playbook twins: `.claude/skills/fable-protocol/SKILL.md` (evidence
-handoff) and `.claude/skills/cgagentharness-optimize/SKILL.md` (optimize
-playbook). Codex `fable-protocol` / `cgagentharness-optimize` are the compressed
-runtimes.
+Keep agent guidance within the existing `DOCS_BUDGET` rows in
+`tests/invariant_guard.rs`. Edit the owner section, link instead of restating,
+and put acceptance evidence in the PR body. Do not add Markdown files.
 
 ## 5. Quality bar (do not invent a lower one)
 
@@ -86,7 +87,7 @@ runtimes.
 - New routes → `REGISTERED_PATHS` (+ console views if listed)
 - New shim actions → `shim::ACTIONS` + CLI dispatch + invariant whitelist together
 - Draft PRs, driver-prefixed branches (`claude/`, `codex/`, `grok/`, `kimi/`,
-  `agent/`), `scripts/check-pr-template.sh`, one concern each
+  `agent/`), based on `main`, `scripts/check-pr-template.sh`, one concern each
 
 ## 6. Authorization boundary
 
@@ -97,7 +98,4 @@ complete.
 
 ## 7. STOP
 
-Sources refreshed for this task. Proceed to the task-specific skill (verify,
-verification-specialist, release, optimize, invariant-guard, config-guard,
-write-policy-redteam, parity, gotchas, or fable-protocol) or to the requested
-engineering work — without expanding scope.
+Proceed with the requested work and its relevant skill.
