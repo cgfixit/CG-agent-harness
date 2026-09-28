@@ -462,6 +462,7 @@ impl CloudChat {
             usage_reported: tokens.usage_reported(),
             initial_prompt_tokens: None,
             initial_prompt_tools: false,
+            final_prompt_tools: false,
         })
     }
 

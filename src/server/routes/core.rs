@@ -948,8 +948,11 @@ async fn chat_inner(
     };
     drop(release);
 
-    let inventory =
-        crate::server::tool_inventory::chat_callable_names(!cloud_selected && settings.web_enabled && !req.loop_turn);
+    // Ground against the tools the answering request offered: web chat withholds
+    // them when no tool round fits, and withdraws them after a refused batch.
+    let inventory = crate::server::tool_inventory::chat_callable_names(
+        !cloud_selected && settings.web_enabled && !req.loop_turn && reply.final_prompt_tools,
+    );
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {

@@ -276,6 +276,7 @@ async fn run_inner(
             reply.usage_reported = reported;
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
+            reply.final_prompt_tools = !available.is_empty();
             return Ok((reply, events));
         }
         let calls = message["tool_calls"]
@@ -340,7 +341,7 @@ async fn run_inner(
         {
             tools_withheld = true;
             events.push(json!({"tool":"web","ok":false,"code":"WEB_TOKEN_BUDGET",
-                "message":format!("web.total_tokens has no room for a result from each of {} calls; none ran, and web tools were withdrawn", calls.len())}));
+                "message":format!("web.total_tokens has no room for a minimal result from each call in this {}-call batch; none ran, and web tools were withdrawn", calls.len())}));
             continue;
         }
         used_calls += calls.len();
@@ -462,6 +463,8 @@ async fn run_inner(
                             usage_reported: reported,
                             initial_prompt_tokens,
                             initial_prompt_tools,
+                            // The last model call offered tools: it returned this batch.
+                            final_prompt_tools: true,
                         },
                         events,
                     ));

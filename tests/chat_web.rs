@@ -524,14 +524,15 @@ async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
 }
 
 /// A mock model for the budget tests below. It reports bytes / 4 of what it is
-/// sent, fetches with `calls` parallel reads (from a reply that spends its whole
-/// 2048-token cap) when offered tools for a message starting with "fetch", and
-/// records every request.
-fn budget_model(calls: usize, requests: Arc<Mutex<Vec<Value>>>) -> Router {
+/// sent and records every request. Offered tools for a message starting with
+/// "fetch", it asks for `calls` parallel reads from a reply that carries
+/// `content` and spends its whole 2048-token cap. Without tools it says it
+/// cannot search the web: true then, so grounding must leave it alone.
+fn budget_model(calls: usize, content: Option<String>, requests: Arc<Mutex<Vec<Value>>>) -> Router {
     Router::new().route(
         "/v1/chat/completions",
         post(move |Json(body): Json<Value>| {
-            let requests = requests.clone();
+            let (requests, content) = (requests.clone(), content.clone());
             async move {
                 requests.lock().unwrap().push(body.clone());
                 let prompt = (body["messages"].to_string().len()
@@ -545,7 +546,7 @@ fn budget_model(calls: usize, requests: Arc<Mutex<Vec<Value>>>) -> Router {
                 } else if !fetch {
                     Json(common::ok_reply("Noted.", prompt, 20))
                 } else if body.get("tools").is_none() {
-                    Json(common::ok_reply("Answered without the page", prompt, 20))
+                    Json(common::ok_reply("I cannot search the web.", prompt, 20))
                 } else {
                     let calls: Vec<_> = (0..calls)
                         .map(|n| {
@@ -553,7 +554,7 @@ fn budget_model(calls: usize, requests: Arc<Mutex<Vec<Value>>>) -> Router {
                                 "arguments":json!({"url":"http://docs.example/docs/item"}).to_string()}}) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
                         })
                         .collect();
-                    Json(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                    Json(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":content,
                         "tool_calls":calls}}],"usage":{"prompt_tokens":prompt,"completion_tokens":2048}}))
                 }
             }
@@ -616,13 +617,15 @@ async fn budget_server(router: Router, calls: usize) -> (common::TestServer, Arc
 #[tokio::test]
 async fn web_chat_runs_no_read_of_a_batch_without_room_for_each_result() {
     let requests = Arc::new(Mutex::new(Vec::new()));
-    let (s, reads, base) = budget_server(budget_model(10, requests.clone()), 10).await;
+    let (s, reads, base) = budget_server(budget_model(10, None, requests.clone()), 10).await;
     // About 5,250 input tokens: a round fits (up to 5,824 tokens), but after the
     // tool-call reply spends its cap, ten minimal results (2,560) do not.
     let message = format!("fetch the page {}", "x".repeat(4 * (5_250 - base) as usize));
     let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
     assert_eq!(status, 200, "{body}");
-    assert_eq!(body["reply"], "Answered without the page", "{body}");
+    // Verbatim: the answering request offered no tools, so grounding must not
+    // claim this turn includes them.
+    assert_eq!(body["reply"], "I cannot search the web.", "{body}");
     assert_eq!(
         reads.load(Ordering::SeqCst),
         0,
@@ -630,7 +633,7 @@ async fn web_chat_runs_no_read_of_a_batch_without_room_for_each_result() {
     );
     assert_eq!(body["web_tools"][0]["code"], "WEB_TOKEN_BUDGET", "{body}");
     let text = body["web_tools"][0]["message"].as_str().unwrap();
-    assert!(text.contains("each of 10 calls; none ran"), "{text}");
+    assert!(text.contains("10-call batch; none ran"), "{text}");
     // Asked once with tools (the batch), then once without.
     let requests = requests.lock().unwrap();
     let asked: Vec<bool> = requests
@@ -641,13 +644,37 @@ async fn web_chat_runs_no_read_of_a_batch_without_room_for_each_result() {
     assert_eq!(asked, [true, false]);
 }
 
+/// The follow-up resends the model's own tool-call message, so a call whose reply
+/// carries long content can leave no room for its result. The batch check counts
+/// that echo before the read; without it, the read ran and the turn ended with
+/// WEB_TOKEN_BUDGET.
+#[tokio::test]
+async fn web_chat_counts_the_echoed_tool_call_message_before_a_read() {
+    let content = format!("Let me look that up. {}", "y".repeat(6_000));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let (s, reads, base) = budget_server(budget_model(1, Some(content), requests), 1).await;
+    // About 5,575 input tokens: a one-call round fits (up to 5,824), but after a
+    // cap-spending reply the ~1,500-token echo leaves no room for a result.
+    let message = format!("fetch the page {}", "x".repeat(4 * (5_575 - base) as usize));
+    let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "I cannot search the web.", "{body}");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        0,
+        "no read runs when the echo leaves no room"
+    );
+    let text = body["web_tools"][0]["message"].as_str().unwrap();
+    assert!(text.contains("1-call batch; none ran"), "{text}");
+}
+
 /// The last call of a turn carries no tools, so its result is cut to the room a
 /// tool-free follow-up leaves. Counting the definitions anyway cut the page to
 /// leave their room unused, and the follow-up's own admission check refused it.
 #[tokio::test]
 async fn web_chat_sizes_a_tool_free_follow_up_without_the_tool_definitions() {
     let requests = Arc::new(Mutex::new(Vec::new()));
-    let (s, reads, base) = budget_server(budget_model(1, requests.clone()), 1).await;
+    let (s, reads, base) = budget_server(budget_model(1, None, requests.clone()), 1).await;
     // About 5,000 input tokens: a one-call round fits (up to 5,824), and after the
     // tool-call reply spends its cap, the 6000-token page must be cut.
     let message = format!("fetch the page {}", "x".repeat(4 * (5_000 - base) as usize));
