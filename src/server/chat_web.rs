@@ -209,12 +209,13 @@ async fn run_inner(
         let remaining = web.limits.chat_tool_calls - used_calls;
         // A tool round is two calls: this one, whose reply carries the tool calls,
         // and a follow-up that sends this prompt again with the results. Offer tools
-        // only while both prompts, both replies and a minimal result for every call
-        // the model may still make (it may batch them all) fit.
+        // only while both prompts, a minimal result and both replies fit; the batch
+        // the model returns is checked again before its first read.
         let round_fits = remaining > 0
+            && !tools_withheld
             && budget_used
                 .saturating_add(with_tools.saturating_mul(2))
-                .saturating_add(min_result_tokens(token_ratio).saturating_mul(remaining as u64))
+                .saturating_add(min_result_tokens(token_ratio))
                 .saturating_add(reservation.saturating_mul(2))
                 <= web.limits.total_tokens;
         // Charge what is sent: the tool definitions only when tools are offered.
@@ -229,7 +230,7 @@ async fn run_inner(
         if !round_fits && remaining > 0 && !tools_withheld {
             tools_withheld = true;
             events.push(json!({"tool":"web","ok":false,"code":"WEB_TOKEN_BUDGET",
-                "message":"web.total_tokens has no room for a tool round (this prompt twice, two replies and a minimal result per call left); web tools were not offered"}));
+                "message":"web.total_tokens has no room for a tool round (this prompt twice, a result and two replies); web tools were not offered"}));
         }
         if turn == 0 {
             initial_prompt_tools = round_fits;
@@ -326,8 +327,24 @@ async fn run_inner(
                 _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
             }
         }
+        // The follow-up resends this prompt with the batch and a result for each
+        // call; the model may batch every call it has left. When not even a minimal
+        // result per call fits, run none of the reads and ask again without tools.
+        let batch = json!({"role":"assistant","content":message["content"],"tool_calls":calls});
+        let sent = system.len() + serde_json::to_vec(&messages)?.len() + 1 + serde_json::to_vec(&batch)?.len();
+        if budget_used
+            .saturating_add(prompt_estimate(sent, token_ratio))
+            .saturating_add(min_result_tokens(token_ratio).saturating_mul(calls.len() as u64))
+            .saturating_add(reservation)
+            > web.limits.total_tokens
+        {
+            tools_withheld = true;
+            events.push(json!({"tool":"web","ok":false,"code":"WEB_TOKEN_BUDGET",
+                "message":format!("web.total_tokens has no room for a result from each of {} calls; none ran, and web tools were withdrawn", calls.len())}));
+            continue;
+        }
         used_calls += calls.len();
-        messages.push(json!({"role":"assistant","content":message["content"],"tool_calls":calls}));
+        messages.push(batch);
         for (index, call) in calls.iter().enumerate() {
             let id = call["id"]
                 .as_str()
