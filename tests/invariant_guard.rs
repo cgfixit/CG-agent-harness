@@ -575,12 +575,11 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/ACCOUNTS.md", Guide, 600),
     ("docs/ANALYTICS.md", Guide, 900),
     ("docs/API_ROUTES.md", Guide, 2000),
-    ("docs/CHAT_STREAMING.md", Guide, 400),
-    ("docs/CHAT_WORKFLOWS.md", Guide, 2600),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     ("docs/CODING_PIPELINE.md", Guide, 3900),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
-    ("docs/CONSOLE.md", Guide, 6100),
+    // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
+    ("docs/CONSOLE.md", Guide, 6600),
     ("docs/CONSOLE_JOBS.md", Guide, 1400),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     ("docs/DESKTOP.md", Guide, 2800),
@@ -612,7 +611,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 51_000), (Evidence, 3_500), (Agent, 22_500)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 48_000), (Evidence, 3_500), (Agent, 22_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
