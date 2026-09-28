@@ -431,7 +431,10 @@ calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions are also
 included in the calibrated input estimate. Web-enabled chat tightens the trigger
 toward `web.total_tokens - effective_reply_reservation` (the projection already
 carries one reservation, so a web prompt keeps room for two replies), without going
-below that floor; the web dispatcher independently enforces its total budget.
+below that floor; the web dispatcher independently enforces its total budget:
+tools are offered only while the prompt fits again with both replies and a
+minimal result, a batch runs only when each call's minimal result fits, and a
+result is cut to the room left.
 Startup and reload warn when fewer than 4096 input tokens would remain.
 Resolved Ollama with explicit `reasoning_effort: "none"` reserves the reply
 ceiling once. Other reasoning settings, missing settings and compatible
@@ -465,6 +468,7 @@ bodies.
   `tests/chat_and_sessions.rs::observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_calibration`,
   `tests/chat_and_sessions.rs::reasoning_and_compatible_backends_enforce_the_effective_reply_reservation`,
   `tests/chat_and_sessions.rs::web_chat_charges_the_reply_reservation_once_against_the_web_budget`,
+  `tests/chat_web.rs::web_chat_tool_rounds_stay_inside_the_web_token_budget`,
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
   `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,

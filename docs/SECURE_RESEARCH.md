@@ -303,18 +303,23 @@ that literal argument. Other flag rules are in the
 ### Chat web tools
 
 With web enabled, ordinary chat can invoke `web_search` (Google keyword listings)
-and `web_fetch` (an exact permitted public URL). They use standard
-OpenAI-compatible tool calls, which the configured local model must support; that
-model receives the retrieved content. No repository, shell, policy, account, key
-or other mutation tool is exposed. `/loop` remains tool-free. Invalid names,
+and `web_fetch` (an exact permitted public URL). They use OpenAI-compatible tool
+calls, which the configured local model must support; it receives the retrieved
+content. No repository, shell, policy, account, key or other mutation tool is
+exposed. `/loop` remains tool-free. Invalid names,
 arguments and excess tool requests are refused; batches are validated before
 their first read and executed sequentially. A turn allows at most
-`web.chat_tool_calls` (default 10, range 1–10) across all rounds, shares the chat
+`web.chat_tool_calls` (1–10, default 10) across all rounds, shares the chat
 timeout, and reserves estimated tokens against `web.total_tokens` before each
-model call. Chat starts with a focused contextual query, reuses duplicate
-searches, and stops when the evidence answers the question. Reported usage sums
-all completed model calls; absent upstream usage remains marked unreported
-internally rather than being invented as actual token counts.
+model call. A tool call resends the prompt with its results, so tools are offered
+only while both calls, both replies and a minimal result (≥256 calibrated tokens)
+fit. A batch without that minimum per call runs no read; the model answers
+without tools. Results are cut to the room left, keeping that minimum per later
+call: pages keep their longest prefix, listings drop trailing results. Withheld
+tools report `WEB_TOKEN_BUDGET`. Chat starts with a focused contextual query,
+reuses duplicate searches, and stops when the evidence answers the question.
+Reported usage sums all completed model calls; absent upstream usage stays marked
+unreported, never invented.
 `/loop stop` or the chat cancellation endpoint aborts the whole turn, including
 an outstanding content request. Direct chat uses `POST /api/chat` and returns
 `web_tools` alongside the reply and aggregate usage.
@@ -328,8 +333,8 @@ The console renders actual provider/source information separately from the
 model answer; successful tool calls show source links and outcomes, and failures
 are shown explicitly. Listings and snippets are attributed to the search
 provider; linked pages have not been fetched. Model answers are not validated
-research citations; use dedicated `/web research` when checked quote references
-are required.
+research citations; use `/web research` when checked quote references are
+required.
 
 ### Google search
 
@@ -344,9 +349,8 @@ environment overrides still apply.
 An active nonempty key selects the fixed `https://serpapi.com/search.json` Google
 backend. The API receives the chosen keyword query, engine, result count and its key;
 it receives neither the full chat history nor harness account credentials.
-The key appears only in the fixed provider's HTTPS request query as required by
-that API, never in user-facing URLs, model context, returned metadata or error
-messages. Responses reflecting the credential in extracted listings are refused.
+The key appears only in the fixed provider's HTTPS request query, never in
+user-facing URLs, model context, returned metadata or error messages. Responses reflecting the credential in extracted listings are refused.
 Returned destination URLs never receive the key. The API client retains public
 DNS pinning, shared concurrency, no proxy/redirect/retry/pooling, and finite
 header/body/time bounds. With web enabled, SerpAPI listings need no Google URL

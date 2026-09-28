@@ -30,6 +30,12 @@ pub struct ChatResult {
     /// First request only, never the sum of a multi-call web turn. Numeric,
     /// positive prompt usage is needed for session estimator calibration.
     pub initial_prompt_tokens: Option<u64>,
+    /// Whether that first request carried tool definitions; calibration counts
+    /// them only then.
+    pub initial_prompt_tools: bool,
+    /// Whether the request that produced `body_text` offered tools; grounding
+    /// treats them as available only then.
+    pub final_prompt_tools: bool,
 }
 
 pub struct ChatClient {
@@ -112,6 +118,8 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         completion_tokens,
         usage_reported,
         initial_prompt_tokens: initial_prompt_tokens(parsed),
+        initial_prompt_tools: false,
+        final_prompt_tools: false,
     })
 }
 
