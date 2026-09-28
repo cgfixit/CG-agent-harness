@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Loaded every session: only what most tasks need. Full manual (follow it literally): `AGENTS.md`;
-contracts: `INVARIANTS.md`. Where they disagree, `AGENTS.md` wins.
+contracts: `INVARIANTS.md`. Where this summary and `AGENTS.md` disagree, `AGENTS.md` wins.
 
 **Truth order:** code > `assets/config.default.yaml` > `INVARIANTS.md` > `AGENTS.md` > `README.md`.
 Fix prose that contradicts code in the same PR.
@@ -13,8 +13,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
 cargo deny check
 ```
-Rust 1.88 is pinned. Always blank those three keys; never assert on a real key.
-`cargo test --test invariant_guard` is the fast check after structural changes.
+Rust 1.88 is pinned. Blank those three keys; never assert on a real key.
+`cargo test --test invariant_guard` is the fast check after structural edits.
 
 ## Rules CI catches late, or not at all
 - **I6:** `src/{server,shim,llm,common}` never import `crate::agentic`; `src/agentic` never

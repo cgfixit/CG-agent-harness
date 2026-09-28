@@ -331,6 +331,7 @@ agentic:
       - ".codex/"
       - "config.yaml"
       - "AGENTS.md"
+      - "CLAUDE.md"
       - "Cargo.toml"
       - "Cargo.lock"
       - "deny.toml"

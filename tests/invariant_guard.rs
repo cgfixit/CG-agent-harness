@@ -286,16 +286,20 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
 }
 
 #[test]
-fn shipped_defaults_protect_agents_md() {
+fn shipped_defaults_protect_agent_instruction_files() {
+    // Both files are loaded automatically by agents, so a coding run must
+    // never be able to rewrite them.
     let yaml = cgagentharness::common::config::AppConfig::embedded_default();
-    assert!(
-        yaml.contains("- \"AGENTS.md\""),
-        "shipped config.default.yaml must list AGENTS.md in protected_write_paths"
-    );
-    assert!(
-        cgagentharness::agentic::config::DEFAULT_PROTECTED_WRITE_PATH_PREFIXES.contains(&"AGENTS.md"),
-        "Rust DEFAULT_PROTECTED_WRITE_PATH_PREFIXES must protect AGENTS.md"
-    );
+    for file in ["AGENTS.md", "CLAUDE.md"] {
+        assert!(
+            yaml.contains(&format!("- \"{file}\"")),
+            "shipped config.default.yaml must list {file} in protected_write_paths"
+        );
+        assert!(
+            cgagentharness::agentic::config::DEFAULT_PROTECTED_WRITE_PATH_PREFIXES.contains(&file),
+            "Rust DEFAULT_PROTECTED_WRITE_PATH_PREFIXES must protect {file}"
+        );
+    }
 }
 
 #[test]

@@ -35,14 +35,15 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   require the initiating owner; unassigned legacy sessions need explicit admin
   adoption (clearing prior coding approval). Pinned notes/persona, model
   selection, spend and agentic run records are shared portal resources.
-- Memory is a chain of independent default-true gates behind the store: episode
-  capture, `explicit_recall` (selected facts enter `/prompt` only after operator
-  selection and assembly-time revalidation), `retrieval` (FTS over facts only;
-  search is not inject), `auto_retrieval`, manual `consolidation` (selected
-  episodes become pending proposals, never applied facts), automatic
-  consolidation (requires consolidation, AND), and `auto_suggest_chat` /
-  `auto_suggest_coding` (bounded completion evidence into pending summaries for
-  the initiating owner; never scans shared archives). Feature-off starts no
+- Memory is a set of default-true gates behind the store, each fail-closed:
+  episode capture, `explicit_recall` (selected facts enter `/prompt` only after
+  operator selection and assembly-time revalidation), `retrieval` (FTS over
+  facts only; search is not inject), manual `consolidation` (selected episodes
+  become pending proposals, never applied facts). Dependent gates AND their
+  prerequisite: `auto_retrieval` needs `retrieval`; automatic consolidation
+  needs `consolidation`; `auto_suggest_chat` / `auto_suggest_coding` need
+  capture (bounded completion evidence into pending summaries for the
+  initiating owner; never scans shared archives). Feature-off starts no
   worker; chat wins the generation gate and preempts a running suggestion (it
   parks as `preempted` and requeues) instead of answering `CHAT_BUSY`. Contract:
   `docs/STRUCTURED_MEMORY.md`; operator view: `docs/MEMORY_GUIDE.md`.
@@ -97,8 +98,9 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 ## Quality bar
 
 - `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
-  `cargo test --all-targets` green; `cargo deny check` clean
-  (`scripts/verify-local.sh` runs them; Rust 1.88 is pinned).
+  `cargo test --all-targets` green; `cargo deny check` clean. Rust 1.88 is
+  pinned. `scripts/verify-local.sh` skips deny when cargo-deny is missing, so
+  its green run is not deny evidence.
 - New routes: add to `routes/mod.rs::REGISTERED_PATHS` (and `views.rs` if the
   console lists them) or `/api/tools` reports them unwired.
 - New shim actions: extend `shim::ACTIONS`, `agentic/commands.rs::dispatch`, and
@@ -148,7 +150,7 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   console's Job webhooks button shows only while notifications are enabled.
 - Prefer a `#[cfg(test)] mod tests` unit test beside a pure parser or matcher
   (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`' same-origin
-  check) over another integration test; they need no server.
+  check) over another integration test.
 - PRs are draft, one concern, on a driver-prefixed branch (`claude/`, `codex/`,
   `grok/`, `kimi/`, `agent/`), **based on `main`** (the `base branch is main`
   check fails stacked PRs), title `[prefix] - Sentence`, body from
