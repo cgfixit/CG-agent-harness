@@ -500,9 +500,10 @@ async fn listener_rejects_ambiguous_authority_proxy_claims_and_csrf_prefixes() {
     assert_eq!(status_of(&duplicate), 400, "{duplicate}");
     assert!(duplicate.contains("Invalid host header"), "{duplicate}");
 
+    let conflict_target = "http://evil.example/api/status"; // DevSkim: ignore DS137138 because this absolute-form target is sent only to the owned loopback listener and is never fetched.
     let conflict = exchange(
         server.addr,
-        &format!("GET http://evil.example/api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"), // DevSkim: ignore DS162092 DS137138 because this absolute-form target is sent only to the owned loopback listener and is never fetched.
+        &format!("GET {conflict_target} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"), // DevSkim: ignore DS162092 because this Host names the owned loopback listener.
     )
     .await;
     assert_eq!(status_of(&conflict), 400, "{conflict}");
