@@ -22,29 +22,18 @@ TOOLS = (
 
 
 def _read_stdio():
-    headers = b""
-    while b"\r\n\r\n" not in headers:
-        chunk = sys.stdin.buffer.read(1)
-        if not chunk:
-            return None
-        headers += chunk
-        if len(headers) > 4096:
-            raise SystemExit("stdio headers exceeded 4 KiB")
-    length = 0
-    for line in headers.decode("ascii", "replace").split("\r\n"):
-        if line.lower().startswith("content-length:"):
-            length = int(line.split(":", 1)[1].strip())
-    if length < 1 or length > 65536:
-        raise SystemExit("stdio frame length refused")
-    body = sys.stdin.buffer.read(length)
-    if len(body) != length:
+    """One newline-delimited JSON-RPC message: the MCP stdio transport."""
+    line = sys.stdin.buffer.readline(65536 + 2)
+    if not line:
         return None
-    return json.loads(body)
+    if not line.endswith(b"\n"):
+        raise SystemExit("stdio message was unterminated or longer than 64 KiB")
+    return json.loads(line)
 
 
 def _write_stdio(message):
-    body = json.dumps(message, separators=(",", ":")).encode()
-    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    # json.dumps escapes newlines inside strings, so one message is one line.
+    sys.stdout.buffer.write(json.dumps(message, separators=(",", ":")).encode() + b"\n")
     sys.stdout.buffer.flush()
 
 
@@ -68,10 +57,11 @@ def _handle(message):
     if method == "tools/call":
         name = (message.get("params") or {}).get("name")
         args = (message.get("params") or {}).get("arguments") or {}
-        if name == "header_flood":
-            # Never terminate the oversized header: the client must refuse it
-            # before waiting for the request timeout or a newline.
-            sys.stdout.buffer.write(b"X" * 4097)
+        if name == "line_flood":
+            # Never finish a line longer than the largest mcp.max_result_bytes
+            # (262144): the client must refuse it at its cap, before the
+            # request timeout, without waiting for a newline.
+            sys.stdout.buffer.write(b"X" * (262144 + 3))
             sys.stdout.buffer.flush()
             threading.Event().wait(10)
             os._exit(1)
