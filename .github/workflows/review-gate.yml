@@ -9,8 +9,10 @@
 # issue_comment events, whose workflow runs attach to the default branch,
 # not the PR head; so the verdict is always published as a check run on the
 # PR head through the Checks API under one name, "review gate", whatever
-# event started the run. The jobs' own checks are not the signal; each is
-# continue-on-error so a leftover run cannot red the PR.
+# event started the run. publish is continue-on-error so a Checks API error
+# does not by itself fail the workflow. evaluate is not: a failed or
+# timed-out poll has to show up as needs.evaluate.result so publish can
+# close the check.
 #
 # The job polls for up to POLL_MINUTES so the usual sequence (fix pushed,
 # thread replied to, thread resolved a few seconds later; Codex finishing
@@ -52,9 +54,10 @@ permissions: {}
 # One canceling group per PR, so a superseded evaluation stops. A comment
 # from anyone but the review bot never enters that group: it would cancel a
 # polling run and then exit without a verdict of its own. Such runs get a
-# group of their own and are skipped by the mark job's `if` below. If this
-# run's evaluate is cancelled or times out, publish still completes this
-# run's check as failure. Keep the bot login here and in REVIEW_BOTS in sync.
+# group of their own and are skipped by the shared `if` on the mark and
+# evaluate jobs below. Keep that `if`, the bot login, and REVIEW_BOTS in sync.
+# If evaluate then fails or is cancelled, publish completes this run's check
+# as failure. It does not do that when the mark or evaluate job was skipped.
 # cancel-in-progress stays true. pull_request_target's github.ref is the base
 # branch, so the main/tag guard used by the other workflows would not cancel
 # a superseded PR evaluation. This file has no push, tag, or release trigger.
@@ -70,10 +73,12 @@ jobs:
   # review-bot PR comment is looked up with pulls.get by number.
   mark-in-progress:
     name: mark review gate in progress
-    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+    # Same if as evaluate, including a closed pull request and a non-bot
+    # comment (the ignored concurrency group). Those runs must not open a
+    # check that evaluate will not run.
+    if: ${{ (github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && github.event.issue.state == 'open')) && (github.event_name == 'issue_comment' || github.event.pull_request.state == 'open') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    continue-on-error: true
     permissions:
       checks: write
       pull-requests: read
@@ -142,14 +147,13 @@ jobs:
   evaluate:
     name: evaluate
     needs: mark-in-progress
-    # Run only after this run opened the check. always() so a later cancel of
-    # mark still evaluates the expression; marked is unset unless create succeeded.
-    if: always() && needs.mark-in-progress.outputs.marked == 'true'
+    # Identical to mark-in-progress. needs still waits for that job; a skipped
+    # marker fails the default success() check, so evaluate is skipped too.
+    if: ${{ (github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && github.event.issue.state == 'open')) && (github.event_name == 'issue_comment' || github.event.pull_request.state == 'open') }}
     runs-on: ubuntu-latest
     # Poll is 12 minutes plus a 45 second grace. 30 minutes lets that finish
     # and record outputs before the job is killed.
     timeout-minutes: 30
-    continue-on-error: true
     permissions:
       contents: read
       pull-requests: read
@@ -183,24 +187,24 @@ jobs:
             // Resolve the PR for every trigger. On issue_comment only a comment
             // from a listed review bot is worth a re-evaluation; anything else
             // (a human "@codex review", chatter) exits without touching the check.
-            function skip() {
+            function skip(message) {
               core.setOutput("conclusion", "skip");
               core.setOutput("thread_count", "0");
               core.setOutput("running_count", "0");
               core.setOutput("head_sha", "");
               core.setOutput("finished", "false");
+              core.setFailed(message);
             }
             let pr = context.payload.pull_request;
             if (!pr) {
               const c = context.payload.comment;
               if (!c || !c.user || !bots.has(c.user.login)) {
-                core.info("issue_comment not from a review bot; nothing to evaluate");
-                skip();
+                skip("issue_comment not from a review bot; nothing to evaluate");
                 return;
               }
               pr = (await github.rest.pulls.get({ owner, repo, pull_number: context.payload.issue.number })).data;
             }
-            if (pr.state !== "open") { core.info(`PR #${pr.number} is ${pr.state}; nothing to evaluate`); skip(); return; }
+            if (pr.state !== "open") { skip(`PR #${pr.number} is ${pr.state}; nothing to evaluate`); return; }
 
             async function unresolvedThreads() {
               const out = [];
@@ -286,15 +290,15 @@ jobs:
   publish:
     name: publish review gate
     needs: [mark-in-progress, evaluate]
-    # always(), not !cancelled(). A timeout cancels evaluate (needs.evaluate.result
-    # is cancelled) without cancelling the workflow, so !cancelled() would also
-    # be true. A concurrency cancel cancels the workflow: cancelled() is then
-    # true and !cancelled() skips this job, leaving the in_progress check up
-    # and the previous verdict looking current. always() stays true even when
-    # the workflow is canceled, so a failed, timed-out, or cancelled evaluation
-    # still completes this run's check as failure.
+    # always() so a timed-out or concurrency-cancelled evaluate (result
+    # cancelled) still closes the check. !cancelled() would be false when the
+    # workflow itself was canceled and would leave that check in progress.
+    # The result list excludes skipped: a skipped marker or a skipped
+    # evaluate does not run this job, and the script refuses the failure
+    # path unless the marker result is success and evaluate failed or was
+    # cancelled.
     # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
-    if: always() && needs.mark-in-progress.outputs.marked == 'true'
+    if: ${{ always() && needs.mark-in-progress.result == 'success' && (needs.evaluate.result == 'failure' || needs.evaluate.result == 'cancelled' || needs.evaluate.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
@@ -304,6 +308,7 @@ jobs:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CHECK_RUN_ID: ${{ needs.mark-in-progress.outputs.check_run_id }}
+          MARKER_RESULT: ${{ needs.mark-in-progress.result }}
           EVAL_RESULT: ${{ needs.evaluate.result }}
           FINISHED: ${{ needs.evaluate.outputs.finished }}
           CONCLUSION: ${{ needs.evaluate.outputs.conclusion }}
@@ -313,19 +318,27 @@ jobs:
         with:
           script: |
             const checkRunId = process.env.CHECK_RUN_ID || "";
+            const markerResult = process.env.MARKER_RESULT || "";
             const evalResult = process.env.EVAL_RESULT || "";
             const finished = process.env.FINISHED || "";
             const conclusion = process.env.CONCLUSION || "";
             const threads = process.env.THREAD_COUNT || "";
             const running = process.env.RUNNING_COUNT || "";
+            if (markerResult !== "success" || markerResult === "skipped" || evalResult === "skipped") {
+              core.info("marker or evaluate was skipped; not changing the check");
+              return;
+            }
+            const markFailed = evalResult === "failure" || evalResult === "cancelled";
+            const countsOk = /^(0|[1-9][0-9]*)$/.test(threads) && /^(0|[1-9][0-9]*)$/.test(running);
+            const verdictOk = evalResult === "success" && finished === "true" && (conclusion === "success" || conclusion === "neutral") && countsOk;
+            if (!markFailed && !verdictOk) {
+              core.info(`evaluate result was '${evalResult}'; not marking the check failed`);
+              return;
+            }
             if (!/^[1-9][0-9]*$/.test(checkRunId)) {
               core.setFailed("check run id was not recorded");
               return;
             }
-            const countsOk = /^(0|[1-9][0-9]*)$/.test(threads) && /^(0|[1-9][0-9]*)$/.test(running);
-            // continue-on-error can report a failed evaluate job as success.
-            // finished is set only after a real success or neutral verdict.
-            const verdictOk = evalResult === "success" && finished === "true" && (conclusion === "success" || conclusion === "neutral") && countsOk;
             const threadCount = countsOk ? Number(threads) : 0;
             const runningCount = countsOk ? Number(running) : 0;
             const title = verdictOk
@@ -337,7 +350,7 @@ jobs:
               ? (runningCount
                 ? `${runningCount} bot review(s) still running.`
                 : threadCount ? `${threadCount} unresolved review thread(s).` : "No unresolved review threads and no review in progress.")
-              : `evaluate result was '${evalResult || "missing"}'. The review gate check is failure unless evaluation finishes with success or neutral.`;
+              : `evaluate result was '${evalResult}'. The review gate check is failure because evaluation failed or was cancelled.`;
             const { owner, repo } = context.repo;
             try {
               await github.rest.checks.update({

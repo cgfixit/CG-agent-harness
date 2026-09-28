@@ -51,16 +51,14 @@ jobs:
   lint:
     name: DevSkim
     needs: scan
-    # always(), not !cancelled(). timeout-minutes "automatically cancels" the
-    # scan, so needs.scan.result is cancelled, while cancelled() is true only
-    # when the workflow was canceled. !cancelled() would start this job after
-    # a timeout and would skip it after a concurrency cancel. A skip is grey,
-    # and branch protection treats grey as success. always() stays true even
-    # when the workflow is canceled, so a timeout, a skip, or a superseded
-    # run starts this job and the fail step turns it red unless the scan
-    # result is success. SARIF uploads only on success.
+    # !cancelled(), not always(). cancelled() is true only when the workflow
+    # was canceled, not when timeout-minutes cancels the scan. A timed-out or
+    # skipped scan still starts this job, and the fail step exits 1 unless
+    # needs.scan.result is success. A concurrency cancel cancels the workflow,
+    # so !cancelled() is false and this job stays quiet. SARIF uploads only
+    # on success.
     # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

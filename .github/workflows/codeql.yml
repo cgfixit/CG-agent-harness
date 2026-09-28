@@ -95,19 +95,16 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     needs: scan
-    # always(), not !cancelled(). timeout-minutes "automatically cancels" the
-    # scan job, so needs.scan.result is cancelled, but cancelled() is true
-    # only when the workflow was canceled. !cancelled() is therefore true for
-    # a timeout and would still start this job — and false for a concurrency
-    # cancel, which would skip it. A skipped required check is grey, and
-    # branch protection treats grey as success. always() stays true even when
-    # the workflow is canceled, so a timeout, a skip, or a superseded run
-    # starts this job and the fail step turns it red unless needs.scan.result
-    # is success. That result is the matrix aggregate, so one language timing
-    # out fails every Analyze check. SARIF uploads only on success, and only
-    # when this language recorded ok.
+    # !cancelled(), not always(). cancelled() is true only when the workflow
+    # was canceled, not when timeout-minutes cancels this job. A timed-out
+    # scan still has needs.scan.result of cancelled or failure, and a skipped
+    # scan has skipped; this job starts and the fail step exits 1 unless the
+    # result is success. A concurrency cancel cancels the workflow, so
+    # !cancelled() is false and this job stays quiet. The matrix result is
+    # one value, so one language timing out fails every Analyze check.
+    # SARIF uploads only on success, and only when this language recorded ok.
     # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
