@@ -1,6 +1,6 @@
 # Coding pipeline
 
-Optional, disarmed-by-default coding loop. Index: [README.md](../README.md). Edits: [BOUNDED_EDITS.md](BOUNDED_EDITS.md). Git: [GIT_APPROVAL.md](GIT_APPROVAL.md).
+Optional, disarmed-by-default coding loop. Index: [README.md](../README.md).
 
 ## 9. (Optional, advanced) Arm the coding pipeline
 
@@ -91,7 +91,7 @@ private `desktop-tools.json` described in [desktop setup](DESKTOP.md).
 Preparation defaults to offline. If locked dependencies are missing, review the
 repository and rerun with `--online` only while explicitly allowing engineering
 dependency access. Actual checks remain offline, with fresh bounded writable
-locations and read-only prepared sources. See [Offline Cargo](OFFLINE_CARGO.md).
+locations and read-only prepared sources. See [Offline Cargo verification](#offline-cargo-verification).
 
 Back in the app or browser console:
 
@@ -99,20 +99,10 @@ Back in the app or browser console:
 2. `/agent checks` lists supported profiles. The server default is `cargo-test`;
    `/agent checks cargo-fmt` is an example explicit selection.
 3. `/agent read src/lib.rs#L40-L80` declares a bounded existing-file window
-   (up to 8 staged paths). During a **local** planner run the model may also
-   emit `=== READ path ===` or `=== READ path#Lstart-Lend ===`. Those lines
-   are stripped before proposal parsing, jailed like operator `--read-file`
-   values, capped at 6 accepted model selectors per run, and shown on the
-   **next** iteration only. After canonicalization, denied basenames
-   (`agentic.deepagent_github.denied_read_basenames`) refuse both model READ
-   and operator `--read-file` (`sensitive_basename`). They are data, not
-   commands, and do not bypass confirm, reason, or write gates. The deny-list
-   is not a secret scanner; the clone jail is not a secrets control.
-   Operator-declared paths are never replaced. A **cloud** planner refuses
-   every model-requested read so undeclared files are not sent off-machine —
-   pre-stage what that run may see here. An unclosed `=== FILE ===` /
-   `=== EDITS ===` block in the model reply leaves later READ lines in the
-   body instead of extracting them.
+   (up to 8 staged paths). A **local** planner may also request reads (see
+   [Bounded edits](#bounded-edits)); a **cloud** planner refuses every
+   model-requested read so undeclared files are not sent off-machine —
+   pre-stage what that run may see here.
 4. `/agent confirm <reason>` submits a job and returns its ID immediately.
 5. `/agent job <job-id>` resumes monitoring after refresh and account login; the optional harness key may stay empty.
 6. `/agent status <run-id>` displays the candidate and complete diff. A truncated
@@ -131,8 +121,7 @@ interrupted work may survive. `/agent reject <run-id>` rejects a pending candida
 Direct CLI writes require `--reason=<why> --confirm`. Publication additionally
 requires a reviewed `--body-file`. API writes require `reason` and `confirm: true`;
 publication also requires `body`. Combined approval/push/publication is refused.
-Protected tests/build configuration remain protected; do not weaken that policy
-to get a proposal accepted. See [Bounded edits](BOUNDED_EDITS.md).
+See [Git approval and publication](#git-approval-and-publication).
 
 ### 9.4 Stage a session goal as a coding task
 
@@ -182,6 +171,92 @@ An export in another shell does not update a running server or child. Restart wi
 switch set for new processes, or revoke `agentic.writes_enabled` in YAML to block later
 mutation boundaries in an active child. Neither action cancels an already executing
 Git command or check. Scope/budget changes also refuse later writes until a fresh invocation.
+
+## Bounded edits
+
+Declare each file needed by the task with `--read-file src/lib.rs`, or select
+an inclusive line window with `--read-file 'src/lib.rs#L590-L630'`. The same
+selector can be staged with `/agent read src/lib.rs#L590-L630`. A `#Lstart-Lend`
+suffix is reserved for this interface. Select one window per file. Missing,
+unsafe, oversized and omitted selections are reported explicitly.
+
+During a **local** planner run the model may also emit `=== READ path ===` or
+`=== READ path#Lstart-Lend ===`. Those lines are stripped before proposal
+parsing, jailed like operator `--read-file` values, capped at 6 accepted model
+selectors per run, and shown on the **next** iteration only. They are data, not
+commands, and do not bypass confirm, reason, or write gates. Operator-declared
+paths are never replaced. An unclosed `=== FILE ===` / `=== EDITS ===` block in
+the model reply leaves later READ lines in the body instead of extracting them.
+
+After clone-jail canonicalization, both operator `--read-file` and local
+planner `=== READ ===` selectors are refused when any path segment is `.git`
+name-equivalent (`is_dotgit_name`). They are also refused (`sensitive_basename`)
+when the final path segment matches `agentic.deepagent_github.denied_read_basenames`
+(default `.env` / `.env.*`, `*.pem`, `id_rsa` / `id_rsa*` / `id_ed25519*` /
+`id_ecdsa*`, `credentials*` / `credentials.json`, `.npmrc`, `.netrc`, `*.p12`;
+name-equivalence folded). The deny-list is not a secret scanner: secrets can use
+arbitrary names. The clone jail stops path escape and clone Git metadata reads.
+It is not a secrets control.
+
+Read ceilings are 4,000 characters per file and 12,000 total, with a
+256,000-byte internal file-read ceiling. The exact displayed span is retained
+separately from headings. These are character budgets, not a claim of exact
+Qwen token counts. Context includes the full-file SHA-256 and a completeness
+flag. A later attempt takes a fresh snapshot; having written a file earlier
+never authorizes blind replacement. Predeclare new paths when corrections may
+need to read them in later attempts.
+
+For existing large files the planner can emit:
+
+```text
+=== EDITS ===
+{"edits":[{"path":"src/lib.rs","sha256":"<provided hash>","old":"<unique displayed text>","new":"<replacement>"}]}
+=== END EDITS ===
+```
+
+Use JSON escapes and one edit per file. `old` must be nonempty, unique in the
+whole original (including overlapping matches), and contained in the actual
+displayed excerpt. Hash mismatch, hidden/ambiguous text, duplicate destinations,
+invalid JSON, mixed block formats and incomplete trailing markers reject the
+whole proposal. `FILE` blocks are for new files or fully displayed current
+originals; they cannot overwrite a partially viewed file.
+
+Model output is judged before it lands: `real_repo_loop.rs` applies the
+injection, edit-budget and protected-path decisions to all final replacement
+content, and `workspace.rs::apply_proposal` rechecks protected destinations and
+aggregate size before staging, with exact-content binding on each edit.
+Response bytes are bounded by the handoff ceiling (`max_handoff_chars`); large
+original files still count toward the final write budget. Raw, canonical and
+landed destinations pass protected-path policy, including Unicode and case
+equivalents. `deepagent_github.protected_write_paths` is a refusal list — a
+candidate touching one of those destinations is rejected — not a scope that
+edits must stay inside. Proposal writes refuse symlink ancestors/leaves.
+Protected tests and build configuration stay protected, with no tests-directory
+exemption: inline existing tests may be read, and operator-authored regression
+PRs are the reviewed mechanism for new protected tests. Do not weaken that
+policy to get a proposal accepted.
+
+Every file's existence/content precondition is checked before staging. Retained
+parent directory capabilities avoid following a newly substituted symlink while
+installing a leaf. Replacements are staged, current originals rechecked, and
+renamed; ordinary later application errors roll back earlier replacements. A
+failed rollback is fatal, quarantines the run and preserves its recovery backup.
+Checks see the resulting batch only after successful application. Failed Cargo
+checks include bounded stdout and stderr in the next attempt's feedback.
+
+This is not crash-atomic multi-file commit or atomic compare-and-swap against an
+adversarial concurrent writer: comparison and rename are separate syscalls, and
+an externally relocated directory remains reachable through its open handle.
+Do not concurrently edit an active disposable clone. Empty newly-created parent
+directories may remain after staging failure.
+
+`tests/exact_edits.rs` drives a >12 KB Rust source edit near line 600, real
+offline Seatbelt Cargo failure with the actual assertion in feedback, then a
+successful exact correction preserving every unrelated byte. Other regressions
+cover multi-file edits, stale state, protected aliases, budget and parser
+refusal. Workspace unit tests exercise rollback after an actual first rename.
+Scripted planner responses prove execution semantics; real-Qwen acceptance is
+separate.
 
 ## Optional repository retrieval
 
@@ -274,6 +349,150 @@ block. These billed 2xx responses are recorded once as `failed_after_billing`
 and are not retried automatically. Reduce the task or adjust
 `agentic.deepagent_github.planner_max_tokens` before retrying a truncated run.
 
+## Offline Cargo verification
+
+The operator prepares dependencies; untrusted checks never fetch them. Rustup
+toolchains use their resolved sysroot; the preparation command runs from the
+selected repository, so its toolchain selection applies. Homebrew does not
+automatically honor rust-toolchain.toml. Provision required tools/components
+explicitly before preparing. No toolchain or model is installed by the harness.
+
+Prepare once per lockfile and application home, as in
+[Run it from the console](#93-run-it-from-the-console). The offline default and
+`--online` both require an existing Cargo.lock and installed cargo/rustc/rustdoc.
+Neither runs build scripts or tests. Cargo vendor uses locked resolution and
+produces a separate source snapshot under
+`data/agentic/cargo-prepared/<lock-sha256>`. Existing snapshots are refused,
+never overwritten; use a separate disposable home to reprepare. Do not place the
+home or snapshot inside the candidate. The snapshot records the concrete
+toolchain and macOS SDK/linker/runtime paths. Moving/removing those
+installations requires preparation again. Preparation adds no Rust
+dependencies. Python 3 standard-library availability is an explicit setup
+requirement; Cargo remains responsible for lock/checksum validation. See
+upstream [Cargo vendor](https://doc.rust-lang.org/cargo/commands/cargo-vendor.html)
+and [Cargo configuration](https://doc.rust-lang.org/cargo/reference/config.html).
+
+Run the harness with `CGAGENTHARNESS_HOME` set to that application home. Keep
+Cargo.lock unchanged in proposals; new dependencies require separately reviewed
+preparation. No model retry can make uncached dependencies available offline.
+Missing components, sources, permission failures and Cargo timeouts return setup
+errors; compile/test failures remain feedback for a correction.
+
+### Execution boundary
+
+Every verification creates and removes owned scratch containing HOME, CARGO_HOME,
+build outputs and temporary files. The real user home and credentials are not
+passed through. Cargo receives the prepared source configuration, explicit
+compiler/rustdoc, `--frozen` (except `cargo fmt`), and `CARGO_NET_OFFLINE=true`. SDKROOT and the direct
+Clang linker avoid xcrun attempting to write into the operator's cache.
+
+On macOS, Seatbelt denies network operations including loopback. Candidate files,
+`.git`, vendor sources, toolchain and runtime inputs are read-only. File data reads
+are restricted to those inputs, scratch, named OS/SDK roots, the root directory
+itself and the system OpenSSL configuration file needed by Homebrew Cargo. The
+whole home, `/usr/local`, `/opt/homebrew`, `/private` and `/Library` are not granted.
+Only scratch is writable. Tests that generate source-tree artifacts must instead
+use the supplied temporary directory; granting candidate writes would also expose
+Git metadata and hooks to build scripts.
+
+File metadata discovery remains allowed. OS libraries and SDKs are readable.
+Seatbelt is not a memory/disk quota; pipe capture and escaped child process
+groups remain separate work. Linux bubblewrap applies its own allowlisted
+read-only filesystem with writable scratch; the `linux-netns` fallback and
+Windows Job Objects provide no filesystem policy. Windows preparation uses
+platform executable suffixes/path separators but native Windows acceptance is
+unverified.
+
+### Required native gate
+
+```sh
+# Authorized preparation, outside verification:
+cargo fetch --locked
+cargo fetch --locked --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml
+# Actual native offline verification, with cloud test credentials empty:
+GROK_API_KEY= ANTHROPIC_API_KEY= DEEPAGENT_API_KEY= CARGO_NET_OFFLINE=true \
+  cargo test --test macos_cargo --locked --offline -- --nocapture
+```
+
+Run on macOS outside an outer sandbox that prohibits nested Seatbelt. Missing
+sandbox capability fails this gate. The tests compile minimal and serde-bearing
+fixtures, execute build scripts/unit tests/doctests, deny synthetic outside and
+symlink reads, deny candidate/Git/cache/outside writes, deny access to an active
+loopback listener, repeat execution, check scratch cleanup and fail on stale or
+missing prepared inputs. Synthetic markers contain no real secrets. This gate
+proves Cargo execution and tested boundaries, not complete harness or real-model
+acceptance.
+
+## Git approval and publication
+
+The retained clone is data, including its local Git configuration and index.
+Approval must commit the bytes and modes that were reviewed. Separate push and
+publication must continue to refer to that approved commit.
+
+Ordinary Git commands do not guarantee that: a pre-staged unrelated file enters
+the commit; an approved filename containing a literal `*` also stages a matching
+neighbor; `post-checkout`, `prepare-commit-msg`, `post-commit` and `pre-push`
+hooks run despite commit's `--no-verify`; a configured clean filter runs during
+ordinary staging and diff inspection and can substitute index bytes without
+changing the reviewed worktree bytes; and Git replacement refs can change the
+accepted base tree while HEAD still prints its original object ID. Remote Git
+trees do not ordinarily install `.git/config` or hooks. Executable configuration
+attacks require effective configuration pointing at untrusted source or
+contaminated retained metadata. Index/pathspec integrity failures do not require
+a hook. These distinctions matter when assessing exposure.
+
+Workspace operations, live manifest reads and disposable-copy verification use
+one agentic Git helper. It clears ambient Git variables, global/system config
+and system attributes; pins hooks, fsmonitor, signing and automatic maintenance
+off; uses literal pathspecs; and disables replacement objects. Local configuration
+is restricted to ordinary clone metadata. Includes, custom programs, filters,
+transport rewrites and unsupported metadata are refused without echoing values.
+Read-only diff inspection still works with inert local external-diff and
+fsmonitor settings.
+
+Authenticated `gh repo clone` also receives isolated Git settings and an empty
+Git template before initial checkout. Publishing Git operations use the installed
+`gh auth git-credential` helper rather than ambient Git credential commands.
+Custom credential helpers, SSH configurations and enterprise-host arrangements
+are not accepted as equivalent workflows; the selected GitHub.com repository
+and absolute local remotes are the supported destinations in this path.
+
+Approval refuses a pre-existing staged change or index lock. It holds the normal
+Git index lock, constructs a fresh private index from the accepted base, inserts
+only accepted raw blobs with accepted executable modes, and writes that exact
+tree. Git replacement objects and graft metadata cannot reinterpret the base.
+The acceptance digest includes mode; older pending records without it require a
+new run. A failure after the branch commit becomes durable is explicitly
+indeterminate and requires inspection before retry.
+
+Content-transforming attributes (`filter`, `text`, `eol`, `working-tree-encoding`,
+`ident`) are refused for selected changes. This deliberately includes LFS and
+newline-normalizing workflows: silently bypassing their transformations could
+commit incorrect representations. Supporting them requires a separately reviewed
+acceptance contract for both worktree and committed representations.
+
+Run records pin the origin before proposal and retain the approved commit ID.
+Push refuses changed local branches or destinations, and sends an object-ID
+refspec to the pinned URL. Publication reads the remote branch and refuses a
+commit mismatch. Each operation still checks current write policy and its own
+reason/confirmation. Older approved records without these pins cannot be pushed;
+inspection and cleanup remain available.
+
+`tests/git_approval.rs` uses real disposable Git repositories and no model/mock
+substitute for Git. It covers unrelated staged changes, literal glob filenames,
+hook/filter markers, transformation refusal, index locks, file modes, local and
+remote branch drift, destination drift and replacement objects. Policy
+revocation, safe inspection, CLI/API and local-bare end-to-end paths have their
+own tests. An independent review of this boundary was interrupted before
+completion; this is not an exhaustive Git security audit.
+
+The index lock coordinates normal Git writers. No atomic transaction against a
+hostile process ignoring locks and racing arbitrary filesystem metadata is
+claimed. Remote readback is a point-in-time check; a different authorized actor
+can change a branch afterward. Abrupt server death and escaped descendants retain
+the documented [process-lifecycle](PROCESS_LIFECYCLE.md) limitations. No global
+Git settings are changed.
+
 ## Isolation check
 
 The HTTP server reaches agentic execution only by spawning one of twelve
@@ -293,13 +512,7 @@ interface: `0` ok, `2` failed, `3` env/config, `4` write refused. A non-zero
 child exit is HTTP 200 with `ok=false`; only shim failures map to 400/502/504
 and a disabled layer to 409.
 
-Model output is judged before it lands: `real_repo_loop.rs` applies the
-injection, edit-budget and protected-path decisions, and
-`workspace.rs::apply_proposal` rechecks protected destinations and aggregate
-size before staging, with exact-content binding on each edit.
-`deepagent_github.protected_write_paths` is a refusal list — a candidate
-touching one of those destinations is rejected — not a scope that edits must
-stay inside. `deepagent_github.denied_read_basenames` is a separate READ
-deny-list (not a secret scanner; jail ≠ secrets). `writer.rs` is a different gate: it guards the single executable
-GitHub write op (`gh pr create`, always `--draft`). Quoted YAML `"true"` does
-not enable a gate.
+Model output is judged before it lands; see [Bounded edits](#bounded-edits).
+`writer.rs` is a different gate: it guards the single executable GitHub write
+op (`gh pr create`, always `--draft`). Quoted YAML `"true"` does not enable a
+gate.
