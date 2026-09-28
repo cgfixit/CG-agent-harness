@@ -36,8 +36,9 @@ After structural changes, `cargo test --test invariant_guard` is the fast check.
   clone; keep new code that way.
 
 ## Docs, tests, PRs
-- Edit the section that owns a topic; don't create `.md` files. Evidence and closeouts go in
-  the PR body; screenshots go in `docs/screenshots/`.
+- Edit the section that owns a topic; don't create `.md` files (`DOCS_BUDGET` in
+  `tests/invariant_guard.rs` fails on one). Evidence and closeouts go in the PR body;
+  screenshots go in `docs/screenshots/`.
 - Prefer a `#[cfg(test)]` test beside a pure function over a new `tests/` file.
 - Branch `claude/<kebab-topic>`; title `[prefix] - Sentence`, where prefix is one of
   invariant, security, infra, fix, docs, harness, agentic, test, feat.
