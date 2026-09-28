@@ -73,7 +73,7 @@ roots overlapping that home are refused (`MCP_HOME_REFUSED`). Actual backend,
 probe result and declared capabilities are audited on `mcp_stdio_spawn`;
 `MCP_HOME_REFUSED`, `MCP_SSRF_DENIED` and `MCP_TIMEOUT` audit as `mcp_refused` with
 the error code. See `docs/MCP_CLIENT.md` and
-`docs/PROCESS_LIFECYCLE.md` for migration and precise residual limits.
+`docs/PROCESS_LIFECYCLE.md` for residual limits.
 Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
 and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`
@@ -129,8 +129,9 @@ force-include. Search returns candidates only — prompt injection still require
 an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
 `retrieve` flag) plus assembly-time owner/active/revision recheck, unless the
 separately gated `auto_retrieval` silent path is on. FTS indexes facts only,
-never episode summaries. Consolidation off means no summarizer call and no
-proposal writes; on, the local model creates pending proposals only.
+never episode summaries. Consolidation off means no manual summarizer call or
+proposal write from selected episodes; on, the local model creates pending
+proposals only.
 `auto_consolidation` additionally requires consolidation (AND) and lets a
 bounded idle worker enqueue the same runner; feature-off starts no worker.
 Disabling stops new claims without corrupting in-flight work. Interactive
@@ -399,8 +400,9 @@ Server audit lines go through one ordered writer thread behind a bounded queue
 (`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue drops
 the new line with a warning and never blocks a request. The server flushes (at
 most 10 s) before spawning an agentic child, before `GET /api/audit` reads,
-and on Ctrl-C/SIGTERM, so a child's lines follow the server lines that
-authorized it. The child, notifier, CLI and spend ledger still append inline.
+and on Ctrl-C/SIGTERM, so a child's lines follow the server lines the flush
+landed; a dropped line or an expired flush does not stop the spawn. Other
+callers append inline.
 
 - Locked by: `tests/common_layer.rs`, `tests/panels.rs`, `tests/chat_and_sessions.rs`,
   `src/common/audit.rs` units,
@@ -464,8 +466,8 @@ refused without rewriting the session. If it can, the summary is persisted atomi
 successful exchange, alongside calibration, using `write_json_atomic_mode` at `0o600`. The system prompt is
 composed each turn and is never stored in `messages`. `Session.goal` and the
 first user message are preserved. The audits `chat_session_compacted`,
-`chat_prompt_too_large` (projected sizes only) and `chat_busy` (a concurrent
-local-model claim) store no message bodies.
+`chat_prompt_too_large` (projected sizes only) and `chat_busy` store no
+message bodies.
 
 - Locked by: `src/server/compaction.rs`,
   `src/server/sessions.rs::record_exchange_inner`,
@@ -584,8 +586,8 @@ budgets, not USD.
 warns once per process and does not fail the chat. Guarded
 `GET /api/spend/summary` rolls up the same file by provider/model/UTC-day with
 the same CSRF/authz class as a loaded session. Ollama pull, keep_alive warmup,
-and MCP broker dispatch are excluded from the ledger by definition — they are
-not billed inference. If a later MCP tool bills a cloud model, it must record
+and MCP broker dispatch are excluded from the ledger: they are not billed
+inference. If a later MCP tool bills a cloud model, it must record
 `source: "agentic"` through this same file.
 
 - Locked by: `src/llm/spend.rs`,
@@ -646,7 +648,7 @@ not reconfigured by reload. `web.concurrency` stays restart-only: web snapshots
 share existing fetch permits, mutation locks and cancellation rather than
 creating more capacity. New operations see the new limits; in-flight web
 operations retain their snapshot. Rate counters survive reload; widening a
-window cannot restore already expired history. A refusal does not rewrite the
+window cannot restore expired history. A refusal does not rewrite the
 operator's file. Fresh-disk coding-policy and URL-permission checks stay
 independent and fail closed.
 
