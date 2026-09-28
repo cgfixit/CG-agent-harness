@@ -85,6 +85,7 @@ _Put an `x` in the boxes that apply. You can fill these out after creating the P
 - [ ] No new external network dependencies or mandatory online LLM assumptions were introduced without explicit justification + local/offline fallback
 - [ ] For any agentic/harness/write-path change: `confirm` is never defaulted, `reason` is required, and shipped write gates stay closed unless this PR is intentionally arming one (with justification)
 - [ ] Relevant docs (`INVARIANTS.md`, `AGENTS.md`, `README.md`) have been updated if core behavior or topology changed
+- [ ] No new Markdown file: doc changes edit the section that owns the topic, and evidence is in this PR body (`DOCS_BUDGET` in `tests/invariant_guard.rs`)
 - [ ] Commit messages follow the title prefix convention above
 - [ ] For large or complex changes: before/after invariant notes + `cargo test` evidence is included in "Further comments" or linked
 - [ ] PR body was checked with `scripts/check-pr-template.sh` before opening

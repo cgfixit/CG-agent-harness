@@ -36,7 +36,7 @@ models:
     # absent/empty omits the field, an invalid value fails at boot.
     reasoning_effort: "none"
     # Server-side Ollama context must be 32768: set OLLAMA_CONTEXT_LENGTH before
-    # `ollama serve` and verify context_length on /api/ps (setup-guide section 4).
+    # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
     temperature: 0.2
