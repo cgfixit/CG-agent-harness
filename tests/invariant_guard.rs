@@ -1,7 +1,7 @@
 //! Invariant 6 at the source level: the server side never references the
 //! agentic module, only the shim spawns a child, the agentic side never
 //! references the server or the shim, and the deliberately duplicated
-//! constants still agree.
+//! constants still agree. Also the repository's docs budget (#213).
 
 use std::path::Path;
 
@@ -501,4 +501,433 @@ fn aliased_and_grouped_imports_across_the_boundary_are_caught() {
         "the legacy substring needles now cover {aliased:?}; \
          re-check whether the parsed guard is still the load-bearing one"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Docs budget (#213). Markdown grows when nothing stops it: the #148 cut
+// regrew within 72 hours. Every `.md` in the checkout, tracked or untracked,
+// needs a row, and every file and group stays under its word cap. Editing a
+// section stays cheap; adding a file or raising a cap is a visible row change
+// that needs the operator's approval and a `// why:` comment on the row.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    /// Repository-root entry points for people.
+    Root,
+    /// Topic docs under `docs/` and beside the code they describe.
+    Guide,
+    /// Dated acceptance, closeout and verification notes. New evidence goes in
+    /// PR bodies and issue comments, so this group only shrinks.
+    Evidence,
+    /// What agents load: `AGENTS.md`, `.claude/`, `.codex/`, `.github/`.
+    Agent,
+}
+
+use Kind::{Agent, Evidence, Guide, Root};
+
+/// `(path, kind, word cap)`, sorted by path. Caps started at each file's size
+/// on 2026-09-27, rounded up to the next 100 words. Lower them when a fold lands.
+const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
+    (".claude/CLAUDE.md", Agent, 400),
+    (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
+    (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
+    (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
+    (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1400),
+    (".claude/skills/cgagentharness-parity/SKILL.md", Agent, 500),
+    (".claude/skills/cgagentharness-project-guidance/SKILL.md", Agent, 800),
+    (
+        ".claude/skills/cgagentharness-runtime-invariant-check/SKILL.md",
+        Agent,
+        500,
+    ),
+    (".claude/skills/cgagentharness-verify-deps/SKILL.md", Agent, 400),
+    (
+        ".claude/skills/cgagentharness-write-policy-redteam/SKILL.md",
+        Agent,
+        800,
+    ),
+    (".claude/skills/dep-sync/SKILL.md", Agent, 800),
+    (".claude/skills/doc-sync/SKILL.md", Agent, 800),
+    (".claude/skills/fable-protocol/SKILL.md", Agent, 2400),
+    (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 400),
+    (".claude/skills/verification-specialist/SKILL.md", Agent, 600),
+    (".codex/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
+    (".codex/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
+    (".codex/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
+    (".codex/skills/cgagentharness-optimize/SKILL.md", Agent, 500),
+    (".codex/skills/cgagentharness-parity/SKILL.md", Agent, 500),
+    (".codex/skills/cgagentharness-project-guidance/SKILL.md", Agent, 800),
+    (".codex/skills/cgagentharness-release/SKILL.md", Agent, 400),
+    (".codex/skills/cgagentharness-verify/SKILL.md", Agent, 300),
+    (".codex/skills/cgagentharness-write-policy-redteam/SKILL.md", Agent, 800),
+    (".codex/skills/fable-protocol/SKILL.md", Agent, 500),
+    (".codex/skills/verification-specialist/SKILL.md", Agent, 600),
+    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1200),
+    (".github/skills/repo-optimize/SKILL.md", Agent, 200),
+    // why: #237 added the rule that truncated cloud replies are never shown or saved.
+    ("AGENTS.md", Agent, 2100),
+    // why: #237 and #243 added the cloud-truncation and web-budget contracts;
+    // #235 the process-global CSRF note and the I6 process map.
+    ("INVARIANTS.md", Root, 5500),
+    ("README.md", Root, 1700),
+    ("SECURITY.md", Root, 500),
+    ("docs/ACCOUNTS.md", Guide, 600),
+    ("docs/ANALYTICS.md", Guide, 900),
+    ("docs/API_ROUTES.md", Guide, 2000),
+    ("docs/BOUNDED_EDITS.md", Guide, 600),
+    ("docs/CHAT_STREAMING.md", Guide, 400),
+    ("docs/CHAT_WORKFLOWS.md", Guide, 2600),
+    ("docs/CODING_PIPELINE.md", Guide, 2300),
+    ("docs/CONFIG_RELOAD.md", Guide, 600),
+    ("docs/CONSOLE.md", Guide, 6100),
+    ("docs/CONSOLE_JOBS.md", Guide, 1400),
+    ("docs/DEPENDENCIES.md", Guide, 1400),
+    ("docs/DESKTOP.md", Guide, 2800),
+    ("docs/DESKTOP_ACCEPTANCE.md", Evidence, 3000),
+    // why: #241 folded the MLX QLoRA guide and finetune/README.md in here.
+    ("docs/FINETUNE.md", Guide, 1200),
+    ("docs/GIT_APPROVAL.md", Guide, 800),
+    ("docs/INSTALL.md", Guide, 5500),
+    ("docs/MCP_CLIENT.md", Guide, 1000),
+    ("docs/MCP_SERVER.md", Guide, 1200),
+    ("docs/MEMORY_BENCHMARK_PLAN.md", Evidence, 1100),
+    ("docs/MEMORY_GUIDE.md", Guide, 1700),
+    ("docs/MEMORY_SETUP.md", Guide, 2100),
+    // why: #237 documented refused truncated cloud replies.
+    ("docs/MODELS.md", Guide, 1000),
+    ("docs/OFFLINE_CARGO.md", Guide, 600),
+    ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
+    ("docs/RELEASING.md", Guide, 700),
+    ("docs/SECURE_RESEARCH.md", Guide, 3900),
+    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2100),
+    ("docs/STRUCTURED_MEMORY.md", Guide, 3600),
+    ("docs/TROUBLESHOOTING.md", Guide, 1500),
+    ("docs/USER_MANUAL.md", Guide, 2300),
+    ("docs/WEB.md", Guide, 1100),
+    ("docs/memory/ISSUE_87_CLOSEOUT.md", Evidence, 700),
+    ("docs/parity/CONTRACTS.md", Guide, 700),
+    ("docs/parity/STATUS.md", Guide, 1300),
+    ("docs/parity/WORK.md", Guide, 500),
+    ("docs/screenshots/README.md", Evidence, 200),
+    ("screenshots/slash-single-line/README.md", Evidence, 300),
+];
+
+/// Each group's cap started at its words rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 55_000), (Evidence, 5_000), (Agent, 22_500)];
+
+/// A group cap this far above its words fails too, so a deletion locks in
+/// instead of leaving room to regrow.
+const DOCS_GROUP_SLACK: usize = 1_000;
+
+/// Already under a root `screenshots/`; captures belong in `docs/screenshots/`.
+/// Nothing may join these, and the list only shrinks.
+const ROOT_SCREENSHOTS: &[&str] = &[
+    "screenshots/slash-single-line/....txt",
+    "screenshots/slash-single-line/01-native-command-guide.png",
+    "screenshots/slash-single-line/02-native-staged-request.png",
+    "screenshots/slash-single-line/03-native-multiline-agent-refused.png",
+    "screenshots/slash-single-line/04-native-exact-agent-cancel.png",
+    "screenshots/slash-single-line/README.md",
+];
+
+/// PDFs already under `docs/`. Nothing may join these, and the list only shrinks.
+const DOCS_PDFS: &[&str] = &[
+    "docs/learning/AI for code complexity optimization A hybrid perspective.pdf",
+    "docs/learning/Guide_to_AI_Software_Design_From_Con.pdf",
+    "docs/learning/Intro-to-Rust-from-Python-PowerShell.pdf",
+    "docs/learning/comprehensive-rust.pdf",
+    "docs/learning/rust_book.pdf",
+    "docs/learning/rust_cheat_sheet_a4.pdf",
+];
+
+/// Files over [`LARGE_FILE_BYTES`] already in the tree. A new one needs a row
+/// and a `// why:`.
+const LARGE_FILES: &[&str] = &[
+    "desktop/icons/icon.png",
+    "docs/learning/AI for code complexity optimization A hybrid perspective.pdf",
+    "docs/learning/comprehensive-rust.pdf",
+    "docs/learning/rust_book.pdf",
+    "docs/learning/rust_cheat_sheet_a4.pdf",
+];
+
+const LARGE_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Words as the budget counts them: whitespace-separated runs, like `wc -w`.
+fn word_count(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+fn is_markdown(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [".md", ".markdown", ".mdx"].iter().any(|ext| lower.ends_with(ext))
+}
+
+/// Every docs-budget violation, given `(path, words)` for each Markdown file
+/// that needs a row.
+fn docs_budget_violations(
+    markdown: &[(String, usize)],
+    budget: &[(&str, Kind, usize)],
+    group_caps: &[(Kind, usize)],
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for pair in budget.windows(2) {
+        if pair[0].0 >= pair[1].0 {
+            out.push(format!(
+                "DOCS_BUDGET must stay sorted and unique: {} follows {}",
+                pair[1].0, pair[0].0
+            ));
+        }
+    }
+    let mut totals: Vec<(Kind, usize)> = group_caps.iter().map(|&(kind, _)| (kind, 0)).collect();
+    for (path, words) in markdown {
+        let Some(&(_, kind, cap)) = budget.iter().find(|row| row.0 == path) else {
+            out.push(format!(
+                "{path} ({words} words) has no DOCS_BUDGET row. Edit the section that owns this topic \
+                 instead of adding a file; a new doc needs the operator's approval, a row and a `// why:`."
+            ));
+            continue;
+        };
+        if *words > cap {
+            out.push(format!(
+                "{path} has {words} words, over its cap of {cap}. Cut or link rather than restate; \
+                 raising the cap needs a `// why:`."
+            ));
+        }
+        match totals.iter_mut().find(|(k, _)| *k == kind) {
+            Some((_, total)) => *total += words,
+            None => out.push(format!("{path}: {kind:?} has no DOCS_GROUP_CAPS entry")),
+        }
+    }
+    for (path, _, _) in budget {
+        if !markdown.iter().any(|(p, _)| p == path) {
+            out.push(format!(
+                "DOCS_BUDGET lists {path}, which does not exist; delete its row."
+            ));
+        }
+    }
+    for (&(kind, cap), &(_, total)) in group_caps.iter().zip(&totals) {
+        if total > cap {
+            out.push(format!(
+                "{kind:?} docs total {total} words, over the group cap of {cap}. Cut or link rather than \
+                 restate; raising the cap needs a `// why:`."
+            ));
+        } else if cap - total >= DOCS_GROUP_SLACK {
+            out.push(format!(
+                "{kind:?} docs total {total} words, {} under the group cap of {cap}; lower it to {} so the \
+                 cut stays cut.",
+                cap - total,
+                total.div_ceil(500) * 500
+            ));
+        }
+    }
+    out
+}
+
+/// Every tree-rule violation, given `(path, bytes)` for each file in the checkout.
+fn tree_violations(
+    files: &[(String, u64)],
+    root_screenshots: &[&str],
+    docs_pdfs: &[&str],
+    large_files: &[&str],
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (path, bytes) in files {
+        let lower = path.to_ascii_lowercase();
+        if lower.starts_with("screenshots/") && !root_screenshots.contains(&path.as_str()) {
+            out.push(format!(
+                "{path} is under a root screenshots/; captures go in docs/screenshots/, notes in the PR body."
+            ));
+        }
+        if lower.starts_with("docs/") && lower.ends_with(".pdf") && !docs_pdfs.contains(&path.as_str()) {
+            out.push(format!(
+                "{path} is a PDF under docs/; link to it instead of committing it."
+            ));
+        }
+        if *bytes > LARGE_FILE_BYTES && !large_files.contains(&path.as_str()) {
+            out.push(format!(
+                "{path} is {bytes} bytes, over 1 MiB; a large file needs a LARGE_FILES row and a `// why:`."
+            ));
+        }
+    }
+    for (name, list) in [
+        ("ROOT_SCREENSHOTS", root_screenshots),
+        ("DOCS_PDFS", docs_pdfs),
+        ("LARGE_FILES", large_files),
+    ] {
+        for listed in list {
+            if !files.iter().any(|(p, _)| p == listed) {
+                out.push(format!(
+                    "{name} lists {listed}, which does not exist; delete the entry."
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Every file git would see in the checkout: tracked plus untracked, minus
+/// ignored. An agent's uncommitted scratch `.md` counts.
+fn checkout_files(manifest: &Path) -> Vec<String> {
+    let out = std::process::Command::new("git")
+        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+        .current_dir(manifest)
+        .output()
+        .unwrap_or_else(|e| panic!("the docs budget lists the checkout with git: {e}"));
+    assert!(
+        out.status.success(),
+        "git ls-files failed ({}), so the docs budget cannot see the checkout: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut files: Vec<String> = out
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        // A tracked file deleted from the working tree is gone for this check too.
+        .filter(|p| manifest.join(p).is_file())
+        .collect();
+    files.sort();
+    files.dedup();
+    assert!(
+        files.iter().any(|p| p == "AGENTS.md"),
+        "git listed no AGENTS.md under {}",
+        manifest.display()
+    );
+    files
+}
+
+/// Markdown the binary compiles in with `include_str!` (styles, the default
+/// soul, bundled skills): product assets rather than docs, so they need no row.
+fn runtime_markdown(manifest: &Path) -> Vec<String> {
+    let checkout = std::fs::canonicalize(manifest).unwrap();
+    let mut out = Vec::new();
+    for (path, text) in read_tree_raw(&manifest.join("src")) {
+        let dir = Path::new(&path).parent().unwrap();
+        for chunk in text.split("include_str!(\"").skip(1) {
+            let literal = chunk.split('"').next().unwrap_or_default();
+            if !is_markdown(literal) {
+                continue;
+            }
+            let target = std::fs::canonicalize(dir.join(literal))
+                .unwrap_or_else(|e| panic!("{path}: include_str!({literal:?}) does not resolve: {e}"));
+            let relative = target
+                .strip_prefix(&checkout)
+                .unwrap_or_else(|_| panic!("{path}: include_str!({literal:?}) is outside the checkout"));
+            let parts: Vec<_> = relative.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+            out.push(parts.join("/"));
+        }
+    }
+    out
+}
+
+#[test]
+fn markdown_stays_on_the_docs_budget() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let files = checkout_files(manifest);
+    let runtime = runtime_markdown(manifest);
+    assert!(
+        runtime.iter().any(|p| p == "assets/soul.default.md"),
+        "include_str! scan found no runtime Markdown: {runtime:?}"
+    );
+    let markdown: Vec<(String, usize)> = files
+        .iter()
+        .filter(|p| is_markdown(p) && !runtime.contains(p))
+        .map(|p| {
+            let bytes = std::fs::read(manifest.join(p)).unwrap();
+            (p.clone(), word_count(&String::from_utf8_lossy(&bytes)))
+        })
+        .collect();
+    let sized: Vec<(String, u64)> = files
+        .iter()
+        .map(|p| (p.clone(), std::fs::metadata(manifest.join(p)).unwrap().len()))
+        .collect();
+    let mut violations = docs_budget_violations(&markdown, DOCS_BUDGET, DOCS_GROUP_CAPS);
+    violations.extend(tree_violations(&sized, ROOT_SCREENSHOTS, DOCS_PDFS, LARGE_FILES));
+    assert!(
+        violations.is_empty(),
+        "docs budget (#213): edit the section that owns the topic.\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+/// The rules pinned on a synthetic tree, so a refactor cannot quietly turn the
+/// tripwire into a tautology.
+#[test]
+fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
+    fn expect(violations: Vec<String>, needle: &str) {
+        assert!(
+            violations.iter().any(|v| v.contains(needle)),
+            "expected a violation containing {needle:?}, got {violations:#?}"
+        );
+    }
+    let md = |files: &[(&str, usize)]| files.iter().map(|&(p, w)| (p.to_string(), w)).collect::<Vec<_>>();
+    let budget: &[(&str, Kind, usize)] = &[("docs/A.md", Guide, 100), ("docs/B.md", Guide, 100)];
+    let caps: &[(Kind, usize)] = &[(Guide, 150)];
+
+    assert!(docs_budget_violations(&md(&[("docs/A.md", 100), ("docs/B.md", 50)]), budget, caps).is_empty());
+    // A new file fails however small it is.
+    expect(
+        docs_budget_violations(
+            &md(&[("docs/A.md", 1), ("docs/B.md", 1), ("docs/NOTES.md", 1)]),
+            budget,
+            caps,
+        ),
+        "docs/NOTES.md (1 words) has no DOCS_BUDGET row",
+    );
+    // So does growing past a file cap, a group cap, or deleting a file without its row.
+    expect(
+        docs_budget_violations(&md(&[("docs/A.md", 101), ("docs/B.md", 1)]), budget, caps),
+        "docs/A.md has 101 words, over its cap of 100",
+    );
+    expect(
+        docs_budget_violations(&md(&[("docs/A.md", 100), ("docs/B.md", 60)]), budget, caps),
+        "Guide docs total 160 words, over the group cap of 150",
+    );
+    expect(
+        docs_budget_violations(&md(&[("docs/A.md", 1)]), budget, caps),
+        "DOCS_BUDGET lists docs/B.md, which does not exist",
+    );
+    // A cut locks in: a group cap left far above its words fails until lowered.
+    expect(
+        docs_budget_violations(&md(&[("docs/A.md", 10), ("docs/B.md", 10)]), budget, &[(Guide, 1_500)]),
+        "lower it to 500",
+    );
+    expect(
+        docs_budget_violations(
+            &md(&[("docs/A.md", 1), ("docs/B.md", 1)]),
+            &[budget[1], budget[0]],
+            caps,
+        ),
+        "must stay sorted and unique",
+    );
+    assert!(is_markdown("docs/NOTES.MD") && is_markdown("x.markdown") && !is_markdown("notes.txt"));
+    assert_eq!(word_count("one  two\n\tthree "), 3);
+
+    let sized = |files: &[(&str, u64)]| files.iter().map(|&(p, b)| (p.to_string(), b)).collect::<Vec<_>>();
+    expect(
+        tree_violations(&sized(&[("screenshots/new.png", 10)]), &[], &[], &[]),
+        "under a root screenshots/",
+    );
+    expect(
+        tree_violations(&sized(&[("docs/learning/new.PDF", 10)]), &[], &[], &[]),
+        "is a PDF under docs/",
+    );
+    expect(
+        tree_violations(&sized(&[("assets/big.bin", LARGE_FILE_BYTES + 1)]), &[], &[], &[]),
+        "over 1 MiB",
+    );
+    expect(
+        tree_violations(&sized(&[]), &["screenshots/old.png"], &[], &[]),
+        "ROOT_SCREENSHOTS lists screenshots/old.png",
+    );
+    let grandfathered = sized(&[("screenshots/old.png", 10), ("docs/old.pdf", LARGE_FILE_BYTES + 1)]);
+    assert!(tree_violations(
+        &grandfathered,
+        &["screenshots/old.png"],
+        &["docs/old.pdf"],
+        &["docs/old.pdf"]
+    )
+    .is_empty());
 }

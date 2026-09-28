@@ -1,6 +1,6 @@
 # Chat, soul, skills and slash commands
 
-Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [setup-guide.md](../setup-guide.md). Workflow bounds: [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md). Memory enable steps: [MEMORY_SETUP.md](MEMORY_SETUP.md). Web: [WEB.md](WEB.md).
+Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [README.md](../README.md). Workflow bounds: [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md). Memory enable steps: [MEMORY_SETUP.md](MEMORY_SETUP.md). Web: [WEB.md](WEB.md).
 
 `/loop` continues chat toward a session goal. It does not execute repository edits or checks. `/agent` drives the coding pipeline. See [CODING_PIPELINE.md](CODING_PIPELINE.md).
 
@@ -29,9 +29,9 @@ Chat, soul, skills, style, connector catalog, and slash-command tables. Index: [
 | Accounts and API Keys | Fresh `admin` / `admin` requires password replacement. Administrator, Portal operator and Auditor permissions are enforced on API reads and writes. Administrators manage masked saved/active credentials in API Keys. |
 | Coding loop | Stage a repository task and inspect files or a plan; confirm an isolated run that proposes bounded edits, runs fixed check profiles in a hard sandbox, and feeds check results back into later attempts. |
 | Review and publication | Inspect retained run status and diffs, approve the reviewed tree for a local commit, then separately push and publish a draft PR with a reviewed repository template. |
-| Analytics | The Analytics button (shown after sign-in) or `/analytics` opens an overview and keyboard-accessible Tokens/Sessions/Code sections, each with its own filter and paging; sessions also support sorting. Completeness warnings remain visible. [Interpretation and API](ANALYTICS.md). |
-| Spend | Analytics' Tokens and cost tab: read-only retained provider/model/day usage, available USD, completeness warnings, pagination and **Estimate draft**. See [build requirements and interpretation](SPEND_AND_NOTIFICATIONS.md). |
-| Completion webhooks | Optional metadata-only notifications for terminal detached jobs, disabled until configured; the **Job webhooks** button appears only while enabled. Delivery does not grant job or repository authority; see [setup](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook). |
+| Analytics | The Analytics button (after sign-in) or `/analytics` opens an overview and keyboard-accessible Tokens/Sessions/Code sections with their own filters and paging; sessions also sort. Completeness warnings persist. [Interpretation and API](ANALYTICS.md). |
+| Spend | Analytics' Tokens and cost tab: read-only retained provider/model/day usage, available USD, completeness warnings, pagination and **Estimate draft**. [Build requirements and interpretation](SPEND_AND_NOTIFICATIONS.md). |
+| Completion webhooks | Metadata-only notifications for terminal detached jobs, off until configured; the **Job webhooks** button shows only then. Delivery grants no job or repository authority. [Setup](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook). |
 | Recovery | Rediscover retained jobs and runs after reopening. Worker leases distinguish active work from interrupted runs; reopening does not automatically resume work or replay a publication. |
 
 ## 7. Chat, soul, skills and goals
@@ -593,7 +593,7 @@ for older homes missing the key. Edit the home `config.yaml` and restart to tune
 it. Compaction is inline; there is no idle pre-compaction worker. Empty, failed,
 truncated or cancelled model output does not commit the candidate summary or
 calibration. A prompt that still exceeds the limit returns
-`CHAT_PROMPT_TOO_LARGE` (422) naming the setting that bounds it (`details.limit_source`).
-Shorten the message; with web on, lower `models.local_llm.max_tokens`, raise
-`web.total_tokens` or `/web off`. A new session cannot help when the system prompt
-and reply reservation fill the limit.
+`CHAT_PROMPT_TOO_LARGE` (422) naming the bounding setting (`details.limit_source`),
+the turn's reply budget (`models.local_llm.max_tokens`, or
+`api.harness_loop_rate_limit.max_tokens` for `/loop`) and only remedies that can help.
+A new session cannot help when the system prompt and reply reservation fill the limit.
