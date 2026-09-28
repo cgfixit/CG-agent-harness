@@ -62,6 +62,32 @@ fn min_result_tokens(token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens(MIN_EVIDENCE_TOKENS, token_ratio)
 }
 
+/// The notice on every fetched page.
+const FETCH_NOTICE: &str = "Untrusted fetched page text; excerpt may be truncated.";
+
+/// The smallest form `fit_result` can cut a call's result to, from what is known
+/// before the read: a page keeps its URL, which is never cut, and one character
+/// of text; a listing keeps its query and search URL, and no results.
+fn minimal_result(name: &str, args: &str) -> Value {
+    if name == "web_fetch" {
+        let url = serde_json::from_str::<FetchArgs>(args)
+            .map(|a| a.url)
+            .unwrap_or_default();
+        let url = super::web_policy::canonical_url(&url).map_or(url, |u| u.to_string());
+        return json!({"url":url,"title":"","text":"x","source_chars":u32::MAX,"notice":FETCH_NOTICE});
+    }
+    let query = serde_json::from_str::<SearchArgs>(args)
+        .map(|a| a.query)
+        .unwrap_or_default();
+    let mut search_url = url::Url::parse("https://www.google.com/search").expect("static URL");
+    search_url
+        .query_pairs_mut()
+        .append_pair("q", &query)
+        .append_pair("num", "10");
+    json!({"query":query,"provider":"google-serpapi","search_url":search_url.as_str(),"results":[],
+        "omitted_results":10,"notice":super::web_google::SEARCH_NOTICE,"complete":false})
+}
+
 fn tool_message(id: &str, result: &Value) -> Result<Value> {
     Ok(json!({"role":"tool","tool_call_id":id,"content":serde_json::to_string(result)?}))
 }
@@ -69,12 +95,14 @@ fn tool_message(id: &str, result: &Value) -> Result<Value> {
 /// Largest form of a tool result that `fits` accepts, cutting text before
 /// metadata. A fetched page keeps its longest fitting prefix; only when not
 /// even one character fits beside its title is the title cut too. A search
-/// listing drops trailing results, then cuts the last one's snippet, then its
-/// title. URLs and the query are never cut. `None` when even that does not fit.
+/// listing drops trailing results, then cuts the last one's snippet and title,
+/// then drops it too and says how many results it left out. URLs and the query
+/// are never cut. `None` when even that does not fit.
 fn fit_result(mut result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -> Result<Option<Value>> {
     if fits(&result)? {
         return Ok(Some(result));
     }
+    let total = result.get("results").and_then(Value::as_array).map_or(0, Vec::len);
     let cuts: &[(&str, usize)] = if let Some(text) = result.get("text").and_then(Value::as_str) {
         // An empty page is no evidence.
         if text.is_empty() {
@@ -96,6 +124,17 @@ fn fit_result(mut result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -
     for &(pointer, min) in cuts {
         if cut(&mut result, pointer, min, &mut fits)? {
             return Ok(Some(result));
+        }
+    }
+    // A listing whose last result does not fit even bare keeps its query and
+    // search URL, and says how many results it left out.
+    if let Some(listing) = result.get_mut("results").and_then(Value::as_array_mut) {
+        if listing.len() == 1 {
+            listing.clear();
+            result["omitted_results"] = json!(total);
+            if fits(&result)? {
+                return Ok(Some(result));
+            }
         }
     }
     Ok(None)
@@ -329,13 +368,27 @@ async fn run_inner(
             }
         }
         // The follow-up resends this prompt with the batch and a result for each
-        // call; the model may batch every call it has left. When not even a minimal
-        // result per call fits, run none of the reads and ask again without tools.
+        // call; the model may batch every call it has left. Each call needs room for
+        // its minimal result, at least the calibrated floor, and more for a long URL
+        // or query, which are never cut. When that does not fit, run none of the
+        // reads and ask again without tools.
         let batch = json!({"role":"assistant","content":message["content"],"tool_calls":calls});
         let sent = system.len() + serde_json::to_vec(&messages)?.len() + 1 + serde_json::to_vec(&batch)?.len();
+        let reserves = calls
+            .iter()
+            .map(|call| {
+                let minimal = minimal_result(
+                    call["function"]["name"].as_str().unwrap_or(""),
+                    call["function"]["arguments"].as_str().unwrap_or(""),
+                );
+                let id = call["id"].as_str().unwrap_or("");
+                let bytes = 1 + serde_json::to_vec(&tool_message(id, &minimal)?)?.len();
+                Ok(prompt_estimate(bytes, token_ratio).max(min_result_tokens(token_ratio)))
+            })
+            .collect::<Result<Vec<u64>>>()?;
         if budget_used
             .saturating_add(prompt_estimate(sent, token_ratio))
-            .saturating_add(min_result_tokens(token_ratio).saturating_mul(calls.len() as u64))
+            .saturating_add(reserves.iter().sum::<u64>())
             .saturating_add(reservation)
             > web.limits.total_tokens
         {
@@ -417,7 +470,7 @@ async fn run_inner(
                         .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid fetch arguments"))?;
                     web.fetch(&args.url, true, &state.audit, owner).await.map(|page| {
                     json!({"url":page["url"],"title":page["title"],"text":crate::common::clip_chars(page["text"].as_str().unwrap_or(""), (web.limits.evidence_tokens * 4) as usize),
-                        "source_chars":page["chars"],"notice":"Untrusted fetched page text; excerpt may be truncated."})
+                        "source_chars":page["chars"],"notice":FETCH_NOTICE})
                 })
                 }
                 _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
@@ -427,7 +480,7 @@ async fn run_inner(
             // each later call in this batch. Sized without the tool definitions: a
             // later call sends them only after its round check, which needs more room.
             let sent = system.len() + serde_json::to_vec(&messages)?.len();
-            let later = min_result_tokens(token_ratio).saturating_mul((calls.len() - index - 1) as u64);
+            let later = reserves[index + 1..].iter().sum::<u64>();
             let result = match result {
                 Ok(value) => fit_result(value, |candidate| {
                     let bytes = sent + 1 + serde_json::to_vec(&tool_message(id, candidate)?)?.len();
@@ -546,6 +599,13 @@ mod tests {
         let room = size(&json!({"query":"q","results":[row(10, 0)]}));
         let fitted = fit_result(listing.clone(), |v| Ok(size(v) <= room)).unwrap().unwrap();
         assert_eq!(fitted["results"], json!([row(10, 0)]));
-        assert!(fit_result(listing, |v| Ok(size(v) < room - 10)).unwrap().is_none());
+        // A result that does not fit even bare is dropped too, and counted.
+        let room = size(&json!({"query":"q","omitted_results":2,"results":[]}));
+        let fitted = fit_result(listing.clone(), |v| Ok(size(v) <= room)).unwrap().unwrap();
+        assert_eq!(
+            (&fitted["results"], &fitted["omitted_results"]),
+            (&json!([]), &json!(2))
+        );
+        assert!(fit_result(listing, |v| Ok(size(v) < room)).unwrap().is_none());
     }
 }

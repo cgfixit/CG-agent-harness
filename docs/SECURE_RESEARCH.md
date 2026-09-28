@@ -224,7 +224,7 @@ their first read and executed sequentially. A turn allows
 at most `web.chat_tool_calls` (1–10, default 10), shares the chat timeout,
 and reserves estimated tokens against `web.total_tokens` before each model call.
 A tool call resends the prompt with its results, so tools are offered only while
-both calls, both replies and a minimal result (256 tokens, calibrated) fit. A
+both calls, both replies and a minimal result (≥256 calibrated tokens) fit. A
 batch without that minimum per call runs no read; the model answers without
 tools. Results are cut to the room left, keeping that minimum per later call:
 pages keep their longest prefix, listings drop trailing results. Withheld tools

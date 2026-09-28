@@ -11,6 +11,10 @@ use super::web_search::WebTool;
 use crate::common::audit::Audit;
 use crate::common::errors::Result;
 
+/// The notice on every search listing.
+pub(crate) const SEARCH_NOTICE: &str =
+    "Search-provider listings only. Linked pages have not been fetched and require their own URL permission.";
+
 #[derive(Debug, Serialize)]
 struct SearchResult {
     rank: usize,
@@ -244,7 +248,7 @@ impl WebTool {
         }
         Ok(
             json!({"query":query,"provider":provider,"search_url":target.as_str(),"results":rows,
-            "notice":"Search-provider listings only. Linked pages have not been fetched and require their own URL permission.","complete":false}),
+            "notice":SEARCH_NOTICE,"complete":false}),
         )
     }
     // Only the fixed HTTPS endpoint above calls this in production. Tests use a
