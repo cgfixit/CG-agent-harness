@@ -51,7 +51,16 @@ jobs:
   lint:
     name: DevSkim
     needs: scan
-    if: always() && needs.scan.result != 'cancelled' && needs.scan.result != 'skipped'
+    # always(), not !cancelled(). timeout-minutes "automatically cancels" the
+    # scan, so needs.scan.result is cancelled, while cancelled() is true only
+    # when the workflow was canceled. !cancelled() would start this job after
+    # a timeout and would skip it after a concurrency cancel. A skip is grey,
+    # and branch protection treats grey as success. always() stays true even
+    # when the workflow is canceled, so a timeout, a skip, or a superseded
+    # run starts this job and the fail step turns it red unless the scan
+    # result is success. SARIF uploads only on success.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -59,9 +68,13 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - name: Require the scanner
+      - name: Fail unless the DevSkim scan succeeded
         if: needs.scan.result != 'success'
-        run: exit 1
+        env:
+          SCAN_RESULT: ${{ needs.scan.result }}
+        run: |
+          echo "DevSkim scan result was '${SCAN_RESULT}'. The DevSkim check fails unless that result is success." >&2
+          exit 1
 
       - name: Download DevSkim SARIF
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

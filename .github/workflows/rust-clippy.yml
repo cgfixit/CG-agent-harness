@@ -102,7 +102,16 @@ jobs:
   rust-clippy-analyze:
     name: clippy SARIF
     needs: clippy-run
-    if: always() && needs.clippy-run.result != 'cancelled' && needs.clippy-run.result != 'skipped'
+    # always(), not !cancelled(). timeout-minutes "automatically cancels" the
+    # clippy job, so needs.clippy-run.result is cancelled, while cancelled()
+    # is true only when the workflow was canceled. !cancelled() would start
+    # this job after a timeout and would skip it after a concurrency cancel.
+    # A skip is grey, and branch protection treats grey as success. always()
+    # stays true even when the workflow is canceled, so a timeout, a skip, or
+    # a superseded run starts this job and the fail step turns it red unless
+    # the clippy result is success. SARIF uploads only on success.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -112,6 +121,14 @@ jobs:
       # with codeql.yml / devskim.yml.
       actions: read
     steps:
+      - name: Fail unless clippy succeeded
+        if: needs.clippy-run.result != 'success'
+        env:
+          SCAN_RESULT: ${{ needs.clippy-run.result }}
+        run: |
+          echo "clippy (run) result was '${SCAN_RESULT}'. The clippy SARIF check fails unless that result is success." >&2
+          exit 1
+
       - name: Download clippy SARIF
         id: download
         continue-on-error: true
@@ -130,8 +147,10 @@ jobs:
           echo "sarif-file=$file" >> "$GITHUB_OUTPUT"
 
       - name: Require the SARIF artifact when clippy passed
-        if: needs.clippy-run.result == 'success' && steps.sarif.outcome != 'success'
-        run: exit 1
+        if: steps.sarif.outcome != 'success'
+        run: |
+          echo "clippy (run) succeeded but the SARIF artifact was missing. The clippy SARIF check fails closed." >&2
+          exit 1
 
       - name: Upload clippy SARIF
         if: steps.sarif.outcome == 'success'
@@ -141,9 +160,3 @@ jobs:
           # Distinct from codeql.yml category "/language:rust".
           category: clippy
           wait-for-processing: false
-
-      - name: Fail the job when clippy failed
-        if: needs.clippy-run.result != 'success'
-        run: |
-          echo "clippy exited non-zero (see the clippy (run) job)." >&2
-          exit 1

@@ -95,7 +95,19 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     needs: scan
-    if: always() && needs.scan.result != 'cancelled' && needs.scan.result != 'skipped'
+    # always(), not !cancelled(). timeout-minutes "automatically cancels" the
+    # scan job, so needs.scan.result is cancelled, but cancelled() is true
+    # only when the workflow was canceled. !cancelled() is therefore true for
+    # a timeout and would still start this job — and false for a concurrency
+    # cancel, which would skip it. A skipped required check is grey, and
+    # branch protection treats grey as success. always() stays true even when
+    # the workflow is canceled, so a timeout, a skip, or a superseded run
+    # starts this job and the fail step turns it red unless needs.scan.result
+    # is success. That result is the matrix aggregate, so one language timing
+    # out fails every Analyze check. SARIF uploads only on success, and only
+    # when this language recorded ok.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -107,6 +119,15 @@ jobs:
       matrix:
         language: [rust, actions]
     steps:
+      - name: Fail unless the CodeQL matrix succeeded
+        if: needs.scan.result != 'success'
+        env:
+          SCAN_RESULT: ${{ needs.scan.result }}
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          echo "CodeQL scan matrix result was '${SCAN_RESULT}'. Analyze (${LANGUAGE}) fails unless that result is success." >&2
+          exit 1
+
       - name: Download CodeQL SARIF
         id: download
         continue-on-error: true
@@ -115,15 +136,29 @@ jobs:
           name: codeql-${{ matrix.language }}
           path: codeql-sarif
 
-      - name: Require this language scan
+      - name: Read this language conclusion
+        id: language
+        if: steps.download.outcome == 'success'
         run: |
           set -euo pipefail
           conclusion=$(find codeql-sarif -name conclusion -type f -print -quit)
-          test -n "$conclusion"
-          test "$(tr -d '[:space:]' < "$conclusion")" = ok
+          if [ -n "${conclusion}" ] && [ "$(tr -d '[:space:]' < "${conclusion}")" = ok ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail unless this language scan succeeded
+        if: steps.language.outputs.ok != 'true'
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          echo "CodeQL scan matrix result was success but ${LANGUAGE} did not record ok. Analyze (${LANGUAGE}) fails closed." >&2
+          exit 1
 
       - name: Select SARIF
         id: sarif
+        if: steps.language.outputs.ok == 'true'
         run: |
           set -euo pipefail
           file=$(find codeql-sarif -name '*.sarif' -type f -print -quit)
@@ -131,6 +166,7 @@ jobs:
           echo "sarif-file=$file" >> "$GITHUB_OUTPUT"
 
       - name: Upload CodeQL SARIF
+        if: steps.language.outputs.ok == 'true'
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: ${{ steps.sarif.outputs.sarif-file }}
