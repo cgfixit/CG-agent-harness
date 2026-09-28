@@ -19,8 +19,10 @@
 # after the poll window closed, re-run the job from the Actions tab.
 #
 # Triggers use pull_request_target so fork and Dependabot PRs still get a
-# write-capable token for the check publish; the job never checks out or
-# runs PR content, which is what makes that trigger safe.
+# write-capable token for the check publish. No job in this workflow checks
+# out the repository or runs pull-request code. The evaluate job only reads
+# threads and comments. The publish job receives the head SHA, a verdict
+# enum, and two counts, and it is the only job with checks: write.
 #
 # Also enable "Require conversation resolution before merging" in the main
 # ruleset: that native setting is the always-live version of the thread
@@ -66,12 +68,18 @@ jobs:
     # comment from the review bot is worth a run.
     if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Poll is 12 minutes plus a 45 second grace. 30 minutes lets that finish
+    # and record outputs before the job is killed.
+    timeout-minutes: 30
     continue-on-error: true
     permissions:
       contents: read
       pull-requests: read
-      checks: write
+    outputs:
+      head_sha: ${{ steps.gate.outputs.head_sha }}
+      conclusion: ${{ steps.gate.outputs.conclusion }}
+      thread_count: ${{ steps.gate.outputs.thread_count }}
+      running_count: ${{ steps.gate.outputs.running_count }}
     env:
       # Logins whose review-summary comment marks an in-progress review
       # (keep in sync with the concurrency group and job `if` above).
@@ -85,6 +93,7 @@ jobs:
       CHECK_NAME: review gate
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: gate
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -95,16 +104,23 @@ jobs:
             // Resolve the PR for every trigger. On issue_comment only a comment
             // from a listed review bot is worth a re-evaluation; anything else
             // (a human "@codex review", chatter) exits without touching the check.
+            function skip() {
+              core.setOutput("conclusion", "skip");
+              core.setOutput("thread_count", "0");
+              core.setOutput("running_count", "0");
+              core.setOutput("head_sha", "");
+            }
             let pr = context.payload.pull_request;
             if (!pr) {
               const c = context.payload.comment;
               if (!c || !c.user || !bots.has(c.user.login)) {
                 core.info("issue_comment not from a review bot; nothing to evaluate");
+                skip();
                 return;
               }
               pr = (await github.rest.pulls.get({ owner, repo, pull_number: context.payload.issue.number })).data;
             }
-            if (pr.state !== "open") { core.info(`PR #${pr.number} is ${pr.state}; nothing to evaluate`); return; }
+            if (pr.state !== "open") { core.info(`PR #${pr.number} is ${pr.state}; nothing to evaluate`); skip(); return; }
 
             async function unresolvedThreads() {
               const out = [];
@@ -148,24 +164,6 @@ jobs:
                 .map(c => ({ login: c.user.login, url: c.html_url }));
             }
 
-            // Publish the verdict on the PR head so every trigger, including
-            // issue_comment (whose own run attaches to the default branch),
-            // lands on the same required check.
-            // A publish failure must be loud: a silent one leaves the required
-            // check missing or stale, which reads as "nothing to do".
-            async function publish(status, conclusion, title, summary) {
-              const body = { owner, repo, name: process.env.CHECK_NAME, head_sha: pr.head.sha, status, output: { title, summary } };
-              if (conclusion) body.conclusion = conclusion;
-              try {
-                await github.rest.checks.create(body);
-              } catch (e) {
-                core.setFailed(`could not publish the "${process.env.CHECK_NAME}" check on ${pr.head.sha.slice(0, 7)}: ${e.message} (read-only token? the trigger must run in the base-repository context)`);
-                throw e;
-              }
-            }
-
-            await publish("in_progress", null, "Evaluating review threads and bot reviews", `Run started for #${pr.number} @ ${pr.head.sha.slice(0, 7)}`);
-
             const action = context.payload.action;
             if (bots.size && context.eventName === "pull_request_target" && (action === "opened" || action === "ready_for_review")) {
               const grace = Number(process.env.GRACE_SECONDS) * 1000;
@@ -199,10 +197,61 @@ jobs:
             const summary = lines.join("\n");
             await core.summary.addRaw(summary).write();
 
-            const title = running.length
-              ? `${running.length} bot review(s) still running on this head`
-              : threads.length ? `${threads.length} unresolved review thread(s)` : "All review threads resolved; no review running";
-            // Neutral (not failure) when follow-through is still open: the
-            // check stays readable before merge without failing CI. A Checks
-            // API publish error still setFailed in publish() above.
-            await publish("completed", ok ? "success" : "neutral", title, summary);
+            core.setOutput("head_sha", pr.head.sha);
+            core.setOutput("conclusion", ok ? "success" : "neutral");
+            core.setOutput("thread_count", String(threads.length));
+            core.setOutput("running_count", String(running.length));
+
+  publish:
+    name: publish review gate
+    needs: evaluate
+    if: always() && (needs.evaluate.outputs.conclusion == 'success' || needs.evaluate.outputs.conclusion == 'neutral')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      checks: write
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HEAD_SHA: ${{ needs.evaluate.outputs.head_sha }}
+          CONCLUSION: ${{ needs.evaluate.outputs.conclusion }}
+          THREAD_COUNT: ${{ needs.evaluate.outputs.thread_count }}
+          RUNNING_COUNT: ${{ needs.evaluate.outputs.running_count }}
+          CHECK_NAME: review gate
+        with:
+          script: |
+            const sha = process.env.HEAD_SHA || "";
+            const conclusion = process.env.CONCLUSION || "";
+            const threads = process.env.THREAD_COUNT || "";
+            const running = process.env.RUNNING_COUNT || "";
+            if (!/^[0-9a-f]{40}$/.test(sha)) {
+              core.setFailed("head sha was not a commit id");
+              return;
+            }
+            if (conclusion !== "success" && conclusion !== "neutral") {
+              core.setFailed("conclusion was not a known verdict");
+              return;
+            }
+            if (!/^(0|[1-9][0-9]*)$/.test(threads) || !/^(0|[1-9][0-9]*)$/.test(running)) {
+              core.setFailed("counts were not integers");
+              return;
+            }
+            const threadCount = Number(threads);
+            const runningCount = Number(running);
+            const { owner, repo } = context.repo;
+            const title = runningCount
+              ? `${runningCount} bot review(s) still running on this head`
+              : threadCount ? `${threadCount} unresolved review thread(s)` : "All review threads resolved; no review running";
+            const summary = runningCount
+              ? `${runningCount} bot review(s) still running.`
+              : threadCount ? `${threadCount} unresolved review thread(s).` : "No unresolved review threads and no review in progress.";
+            try {
+              await github.rest.checks.create({
+                owner, repo, name: process.env.CHECK_NAME, head_sha: sha, status: "completed", conclusion,
+                output: { title, summary },
+              });
+            } catch (e) {
+              core.setFailed(`could not publish the "${process.env.CHECK_NAME}" check on ${sha.slice(0, 7)}: ${e.message} (read-only token? the trigger must run in the base-repository context)`);
+              throw e;
+            }

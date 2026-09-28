@@ -35,16 +35,14 @@ env:
   CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
 
 jobs:
-  rust-clippy-analyze:
-    name: clippy SARIF
+  # Cargo runs repository code, so this job stays contents: read. The
+  # clippy SARIF job publishes the file and keeps that check name.
+  clippy-run:
+    name: clippy (run)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
-      security-events: write
-      # upload-sarif needs actions:read only on private repos; keep for parity
-      # with codeql.yml / devskim.yml.
-      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,8 +74,8 @@ jobs:
 
       - name: Run clippy
         id: clippy
-        # pipefail keeps cargo's exit. continue-on-error lets upload-sarif run
-        # on a red clippy; the last step fails the job so this is not advisory.
+        # pipefail keeps cargo's exit. continue-on-error lets the SARIF
+        # artifact save run on a red clippy; the last step fails this job.
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -86,17 +84,66 @@ jobs:
             | tee rust-clippy-results.sarif \
             | sarif-fmt
 
-      - name: Upload clippy SARIF
+      - name: Save clippy SARIF
         if: hashFiles('rust-clippy-results.sarif') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-clippy-sarif
+          path: rust-clippy-results.sarif
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Fail the job when clippy failed
+        if: steps.clippy.outcome != 'success'
+        run: |
+          echo "clippy exited non-zero (see the Run clippy step). SARIF was saved for the clippy SARIF job." >&2
+          exit 1
+
+  rust-clippy-analyze:
+    name: clippy SARIF
+    needs: clippy-run
+    if: always() && needs.clippy-run.result != 'cancelled' && needs.clippy-run.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+      # upload-sarif needs actions:read only on private repos; keep for parity
+      # with codeql.yml / devskim.yml.
+      actions: read
+    steps:
+      - name: Download clippy SARIF
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rust-clippy-sarif
+          path: sarif
+
+      - name: Select clippy SARIF
+        id: sarif
+        if: steps.download.outcome == 'success'
+        run: |
+          set -euo pipefail
+          file=$(find sarif -name 'rust-clippy-results.sarif' -type f -print -quit)
+          test -n "$file"
+          echo "sarif-file=$file" >> "$GITHUB_OUTPUT"
+
+      - name: Require the SARIF artifact when clippy passed
+        if: needs.clippy-run.result == 'success' && steps.sarif.outcome != 'success'
+        run: exit 1
+
+      - name: Upload clippy SARIF
+        if: steps.sarif.outcome == 'success'
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
-          sarif_file: rust-clippy-results.sarif
+          sarif_file: ${{ steps.sarif.outputs.sarif-file }}
           # Distinct from codeql.yml category "/language:rust".
           category: clippy
           wait-for-processing: false
 
       - name: Fail the job when clippy failed
-        if: steps.clippy.outcome != 'success'
+        if: needs.clippy-run.result != 'success'
         run: |
-          echo "clippy exited non-zero (see the Run clippy step). SARIF was still uploaded." >&2
+          echo "clippy exited non-zero (see the clippy (run) job)." >&2
           exit 1

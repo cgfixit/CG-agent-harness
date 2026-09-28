@@ -28,25 +28,17 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: write
+    outputs:
+      ok: ${{ steps.eval.outputs.ok }}
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: eval
         with:
           script: |
             const pr = context.payload.pull_request;
             const base = pr.base.ref;
             const ok = base === "main";
-            const marker = "<!-- pr-base-check -->";
-            const text = ok
-              ? `${marker}\n✅ Base branch \`${base}\` is an integration branch.`
-              : `${marker}\n❌ This PR targets \`${base}\`, not \`main\`. Stacking PRs on another feature branch is how #36-#41 were "merged" without reaching main.\n\nRetarget it: **Edit** (next to the title) → base: \`main\`, or \`gh pr edit ${pr.number} --base main\`. \`main\` is the only allowed base.`;
-            const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number });
-            const mine = comments.find(c => c.body && c.body.startsWith(marker));
-            if (mine) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: mine.id, body: text });
-            } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number, body: text });
-            }
+            core.setOutput("ok", ok ? "true" : "false");
             if (!ok) core.setFailed(`PR base is '${base}'; must be main.`);
 
   check:
@@ -54,9 +46,12 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: write
+    outputs:
+      ok: ${{ steps.eval.outputs.ok }}
+      missing: ${{ steps.eval.outputs.missing }}
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: eval
         with:
           script: |
             const body = context.payload.pull_request.body || "";
@@ -125,19 +120,75 @@ jobs:
             if (touchesCore && !guarantee.test(statement)) {
               missing.push("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)");
             }
-            const marker = "<!-- pr-template-check -->";
             const ok = missing.length === 0;
+            core.setOutput("ok", ok ? "true" : "false");
+            core.setOutput("missing", missing.join(" || "));
+            if (!ok) core.setFailed(`PR body is missing: ${missing.join("; ")}`);
+
+  # Comments use a write token and fixed text. They do not read the pull
+  # request body or base ref. The checks above remain the failing gates.
+  comment-base:
+    name: comment on base branch
+    needs: base-branch
+    if: always() && needs.base-branch.outputs.ok != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BASE_OK: ${{ needs.base-branch.outputs.ok }}
+        with:
+          script: |
+            const ok = process.env.BASE_OK === "true";
+            const number = Number(context.payload.pull_request && context.payload.pull_request.number);
+            if (!Number.isInteger(number)) {
+              core.setFailed("pull request number missing");
+              return;
+            }
+            const marker = "<!-- pr-base-check -->";
             const text = ok
-              ? `${marker}\n✅ PR template check passed.`
-              : `${marker}\n❌ PR template check failed. Missing:\n${missing.map(m => `- ${m}`).join("\n")}\n\nFill in .github/PULL_REQUEST_TEMPLATE.md's sections (run scripts/check-pr-template.sh locally).`;
-            // Paginated like the base-branch job above: listComments defaults to
-            // page 1 of 30, so on a long PR the marker scrolls off and this job
-            // posts a new comment on every synchronize instead of editing in place.
-            const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: context.payload.pull_request.number });
+              ? `${marker}\n✅ Base branch \`main\` is an integration branch.`
+              : `${marker}\n❌ This PR does not target \`main\`. Stacking PRs on another feature branch is how #36-#41 were "merged" without reaching main.\n\nRetarget it: **Edit** (next to the title) → base: \`main\`, or \`gh pr edit ${number} --base main\`. \`main\` is the only allowed base.`;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: number });
             const mine = comments.find(c => c.body && c.body.startsWith(marker));
             if (mine) {
               await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: mine.id, body: text });
             } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.payload.pull_request.number, body: text });
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: number, body: text });
             }
-            if (!ok) core.setFailed(`PR body is missing: ${missing.join("; ")}`);
+
+  comment-template:
+    name: comment on template
+    needs: check
+    if: always() && needs.check.outputs.ok != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TEMPLATE_OK: ${{ needs.check.outputs.ok }}
+          TEMPLATE_MISSING: ${{ needs.check.outputs.missing }}
+        with:
+          script: |
+            const ok = process.env.TEMPLATE_OK === "true";
+            const number = Number(context.payload.pull_request && context.payload.pull_request.number);
+            if (!Number.isInteger(number)) {
+              core.setFailed("pull request number missing");
+              return;
+            }
+            const missing = (process.env.TEMPLATE_MISSING || "").split(" || ").map(s => s.trim()).filter(Boolean);
+            const marker = "<!-- pr-template-check -->";
+            const text = ok
+              ? `${marker}\n✅ PR template check passed.`
+              : `${marker}\n❌ PR template check failed. Missing:\n${missing.map(m => `- ${m}`).join("\n")}\n\nFill in .github/PULL_REQUEST_TEMPLATE.md's sections (run scripts/check-pr-template.sh locally).`;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: number });
+            const mine = comments.find(c => c.body && c.body.startsWith(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: mine.id, body: text });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: number, body: text });
+            }

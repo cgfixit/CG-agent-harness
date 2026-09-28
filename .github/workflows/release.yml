@@ -101,7 +101,7 @@ jobs:
     permissions:
       contents: read
     # No timeout-minutes here: actionlint rejects it on a reusable workflow call.
-    # desktop.yml jobs keep their own timeouts (longest: desktop, 60 minutes).
+    # desktop.yml jobs keep their own timeouts (longest: desktop, 90 minutes).
     uses: ./.github/workflows/desktop.yml # zizmor: ignore[self-repository]
     with:
       artifact-name: release-cgagentharness-macos-universal-app
