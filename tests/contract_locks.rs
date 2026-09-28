@@ -471,12 +471,16 @@ async fn listener_rejects_ambiguous_authority_proxy_claims_and_csrf_prefixes() {
 
     let ok = exchange(
         server.addr,
-        &format!("GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"),
+        &format!("GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"), // DevSkim: ignore DS162092 because this Host names the owned loopback listener.
     )
     .await;
     assert_eq!(status_of(&ok), 200, "{ok}");
 
-    for host in ["evil.example", "user@127.0.0.1", "127.0.0.1 bad"] {
+    for host in [
+        "evil.example",
+        "user@127.0.0.1", // DevSkim: ignore DS162092 because this host must be refused even when it contains loopback text.
+        "127.0.0.1 bad", // DevSkim: ignore DS162092 because this host must be refused even when it contains loopback text.
+    ] {
         let response = exchange(
             server.addr,
             &format!("GET /api/status HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
@@ -489,7 +493,7 @@ async fn listener_rejects_ambiguous_authority_proxy_claims_and_csrf_prefixes() {
     let duplicate = exchange(
         server.addr,
         &format!(
-            "GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            "GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n" // DevSkim: ignore DS162092 because this duplicate Host names the owned loopback listener.
         ),
     )
     .await;
@@ -498,22 +502,22 @@ async fn listener_rejects_ambiguous_authority_proxy_claims_and_csrf_prefixes() {
 
     let conflict = exchange(
         server.addr,
-        &format!("GET http://evil.example/api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"),
+        &format!("GET http://evil.example/api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"), // DevSkim: ignore DS162092 DS137138 because this absolute-form target is sent only to the owned loopback listener and is never fetched.
     )
     .await;
     assert_eq!(status_of(&conflict), 400, "{conflict}");
     assert!(conflict.contains("Invalid host header"), "{conflict}");
 
     for header in [
-        "X-Forwarded-For: 127.0.0.1",
-        "X-Forwarded-Host: 127.0.0.1",
+        "X-Forwarded-For: 127.0.0.1", // DevSkim: ignore DS162092 because this adversarial header must be refused even when it claims loopback.
+        "X-Forwarded-Host: 127.0.0.1", // DevSkim: ignore DS162092 because this adversarial header must be refused even when it claims loopback.
         "X-Forwarded-Proto: https",
-        "X-Real-IP: 127.0.0.1",
-        "Forwarded: for=127.0.0.1",
+        "X-Real-IP: 127.0.0.1", // DevSkim: ignore DS162092 because this adversarial header must be refused even when it claims loopback.
+        "Forwarded: for=127.0.0.1", // DevSkim: ignore DS162092 because this adversarial header must be refused even when it claims loopback.
     ] {
         let response = exchange(
             server.addr,
-            &format!("GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{header}\r\nConnection: close\r\n\r\n"),
+            &format!("GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{header}\r\nConnection: close\r\n\r\n"), // DevSkim: ignore DS162092 because this Host names the owned loopback listener.
         )
         .await;
         assert_eq!(status_of(&response), 403, "{header}: {response}");
@@ -522,7 +526,7 @@ async fn listener_rejects_ambiguous_authority_proxy_claims_and_csrf_prefixes() {
 
     let spoofed = exchange(
         server.addr,
-        "GET /api/status HTTP/1.1\r\nHost: evil.example\r\nX-Forwarded-Host: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        "GET /api/status HTTP/1.1\r\nHost: evil.example\r\nX-Forwarded-Host: 127.0.0.1\r\nConnection: close\r\n\r\n", // DevSkim: ignore DS162092 because this adversarial header must be refused even when it claims loopback.
     )
     .await;
     assert_eq!(status_of(&spoofed), 400, "{spoofed}");
