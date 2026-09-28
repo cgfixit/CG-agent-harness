@@ -88,7 +88,7 @@ implicit toolchain installation, so install both before running it.
 
 Toolchain/dependency downloads belong to preparation. Generated-code verification
 must not attempt a rustup download or use credentials from your real home.
-See [Offline Cargo verification](OFFLINE_CARGO.md).
+See [Offline Cargo verification](CODING_PIPELINE.md#offline-cargo-verification).
 
 ### 2.5 Ollama
 
