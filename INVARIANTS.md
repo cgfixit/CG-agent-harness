@@ -27,8 +27,8 @@ Process map. These are the only edges; a new one changes this list and its code 
   `retry_backend`, `prepare_cargo` and `check_models`.
 - **Main:** `cgagentharness serve` (`src/server`) owns every guard, gate and store. The
   desktop shell (`desktop/src/`) checks the bundled backend's SHA-256 and runs it as the
-  hidden `cgagentharness desktop` sidecar, whose pipe protocol carries readiness and
-  ownership, never API authority (`src/server/desktop.rs`).
+  hidden, Unix-only `cgagentharness desktop` sidecar, whose pipe protocol carries
+  readiness and ownership, never API authority (`src/server/desktop.rs`).
 - **Pipeline child:** hidden `cgagentharness agentic <action>`, spawned only by
   `src/shim` with one of the 12 `shim::ACTIONS`.
 - **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` inside the
@@ -44,8 +44,9 @@ versioned capabilities select explicit read/write roots, network denial or an
 unrestricted grant, and strict containment or a process-group exception. Missing
 or invalid capability declarations fail closed; authority changes require restart.
 Filesystem confinement is the default. Linux probe failures never silently remove
-network/filesystem protection; Windows confined stdio is refused. `linux-bwrap-fs` only
-exists after an explicit unrestricted network grant. macOS uses `darwin-seatbelt`.
+network/filesystem protection; Windows confined stdio is refused. The confined default
+is `linux-bwrap`; `linux-bwrap-fs` exists only after an explicit unrestricted network
+grant. macOS uses `darwin-seatbelt`.
 
 Strict Linux calls use `linux-systemd-bwrap`: a private lifeline connects the
 harness to a transient systemd service, whose dedicated cgroup owns supervisor
@@ -59,10 +60,10 @@ can escape cleanup. `/tools mcp` displays this limitation.
 
 Windows supports a separate, explicit trusted-server exception: `job_object`
 requires `filesystem: unrestricted`, `network: unrestricted`, no root grants and
-process/memory limits. The unnamed non-inheritable Job Object is assigned during
-CreateProcess through JOB_LIST before any child code runs. Kill-on-close applies
-to normal descendants, including detached processes; neither breakaway flag is
-set. Only the three child pipe handles are inherited. This exception provides no
+process/memory limits. The unnamed non-inheritable Job Object is assigned at
+CreateProcess (JOB_LIST) before child code runs; kill-on-close covers detached
+descendants, no breakaway flag is set, and only the three pipe handles are
+inherited. This exception provides no
 filesystem/home secrecy or network isolation and cannot confine work delegated
 to an outside OS service. It is never an automatic fallback.
 
@@ -70,15 +71,15 @@ to an outside OS service. It is never an automatic fallback.
 are unreachable from confined MCP stdio children: command paths, cwd, and read/write
 roots overlapping that home are refused (`MCP_HOME_REFUSED`). Actual backend,
 probe result and declared capabilities are audited on `mcp_stdio_spawn`;
-refusals include the policy and error code. See `docs/MCP_CLIENT.md` and
+`MCP_HOME_REFUSED`, `MCP_SSRF_DENIED` and `MCP_TIMEOUT` audit as `mcp_refused` with
+the error code. See `docs/MCP_CLIENT.md` and
 `docs/PROCESS_LIFECYCLE.md` for migration and precise residual limits.
 Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
 and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`
 and require `confirm: true`. MCP tools are not attached to `/loop`. `GET /api/mcp`
-discloses declared server and tool names to any authenticated session; that is
-acceptable for a single-operator console and must be revisited before persistent
-multi-user accounts. Calls and refusals are audited (`mcp_stdio_spawn`,
+discloses declared server and tool names to any authenticated session; revisit
+that before persistent multi-user accounts. Calls and refusals are audited (`mcp_stdio_spawn`,
 `mcp_sse_call`, `mcp_refused`) without arguments or payloads. The mutation CSRF token
 has the same single-operator scope: `src/server/mod.rs` mints one per process and
 embeds it in the console page, which is served before login, so it is bound to no
@@ -128,14 +129,16 @@ force-include. Search returns candidates only — prompt injection still require
 an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
 `retrieve` flag) plus assembly-time owner/active/revision recheck, unless the
 separately gated `auto_retrieval` silent path is on. FTS indexes facts only,
-never episode summaries. Manual consolidation off means no summarizer call and
-no proposal writes from selected episodes; when on, the local model may create
-pending proposals only. Automatic consolidation is a separate default-true
-gate that also requires consolidation (AND); when on, a bounded idle worker
-may enqueue the same pending-proposal runner. Feature-off starts no worker.
+never episode summaries. Consolidation off means no summarizer call and no
+proposal writes; on, the local model creates pending proposals only.
+`auto_consolidation` additionally requires consolidation (AND) and lets a
+bounded idle worker enqueue the same runner; feature-off starts no worker.
 Disabling stops new claims without corrupting in-flight work. Interactive
-chat wins generation-gate contention, preempting (and requeuing) a running
-completion suggestion. Independently gated completion suggestions
+chat preempts only a running memory suggestion (bounded 5 s wait); any other
+gate holder returns `CHAT_BUSY` naming it. The preempted run persists as
+`preempted` and returns to the queue front unless its chat was cleared; only a
+`preempted` run resumes, and an owner's cancel of one is final. Independently
+gated completion suggestions
 require store + capture, use bounded current completion evidence for the initiating
 owner, and produce pending proposals only. They never read shared archives or
 write human semantic summaries. `/memory save <text> :: <reason>` is an explicit
@@ -181,8 +184,7 @@ DNS; response headers, bodies and concurrent fetches have finite limits.
 
 Policy is reloaded before dispatch and before storage or delivery. Revoked or
 unproven saved evidence is inaccessible, including old shared plain-text context.
-Revocation prevents future retrieval/injection; it cannot erase historical chat
-or content already sent to a model. No atomicity against arbitrary external file
+Revocation cannot erase historical chat or content already sent to a model. No atomicity against arbitrary external file
 edits between an authorization check and an OS operation is claimed.
 
 Chat exposes only two read-only model tools while web is enabled: Google keyword
@@ -202,8 +204,9 @@ Content permission grants neither account authority nor provider configuration
 authority. None of these authorities substitutes for coding/write/publication
 gates. Page text is data, never a tool command.
 
-- Locked by: `server::web_policy::tests`, `server::web_search::tests`, and web
-  integration tests in `tests/panels.rs`.
+- Locked by: `server::web_policy::tests`, `server::web_search::tests`,
+  `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
+  the web section of `tests/panels.rs`.
 
 ## The browser never supplies a command
 
@@ -227,7 +230,7 @@ requires a new invocation instead of continuing under a stale snapshot.
 Run confirmation authorizes isolated candidate edits only. Approval verifies the
 manifest and commits locally with fresh reason/confirmation. Push and draft PR
 publication each require separate actions and fresh intent; combined
-`decide --push/--publish` is refused. Default master, deepagent, and clone-write
+`real-repo-run-decide --push/--publish` is refused. Default master, deepagent, and clone-write
 flags remain false (mode/write-enabled defaults alone cannot arm writes).
 The established master-disabled CLI banner/no-op exit 0 remains; actual mutation
 boundary denials use exit 4. Invalid/missing config uses exit 3.
@@ -236,12 +239,11 @@ Read-only diff/status do not require write enablement. Git optional index refres
 fsmonitor, external diff and textconv are disabled for inspection. Reject/discard
 remain available with writes disabled while the master layer is enabled.
 
-Environment is inherited at process creation. Exporting the disable variable in
-another shell does **not** alter an existing server/child. Restart with the switch
-set to affect new children, or revoke YAML write policy to block later mutation
-boundaries in an active child. Neither mechanism interrupts an already-running
-Git command/check; process-tree cancellation limitations remain separately tracked.
-No atomic transaction between an external policy edit and a syscall is claimed.
+The kill switch is read from the environment inherited at process creation:
+exporting it in another shell changes nothing until restart, while revoking YAML
+write policy blocks later mutation boundaries in a running child. Neither
+interrupts a running Git command or check, and no atomicity between an external
+policy edit and a syscall is claimed.
 
 - Locked by: `tests/write_policy.rs`, `tests/real_repo_loop.rs`, and
   `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
@@ -258,15 +260,14 @@ succeeds, refuse if any path segment is `.git` name-equivalent (same
 capability held open on the clone: each path component is opened relative to
 the previous one (`openat` semantics), so a symlink pointing outside the clone
 fails to resolve rather than being followed; the leaf is additionally opened
-with `O_NOFOLLOW` (unix). 256 KB cap, UTF-8 required.
+with `O_NOFOLLOW` (unix). 256 000-byte cap, UTF-8 required.
 
 - Locked by: `tests/agentic_foundations.rs::apply_proposal_refuses_jail_escapes_and_oversize_content`
   (the loop's only file write), `workspace_reads_and_inspection_stay_inside_the_clone`,
   `read_jail_refuses_symlink_escapes_without_following_the_leaf`,
   `read_jail_refuses_dotgit_metadata`.
-- This closes the canonicalize-then-open TOCTOU window the port previously
-  carried as a documented residual: capability-based resolution has no window
-  to race, because there is never a bare path handed to the OS a second time.
+- Capability-based resolution closes the canonicalize-then-open TOCTOU window:
+  no bare path is handed to the OS a second time.
 
 Clone jail ≠ secrets. After a selector canonicalizes inside the jail, local
 planner `=== READ ===` requests and operator `--read-file` values are refused
@@ -326,8 +327,8 @@ execution. Verification uses the selected installed toolchain, vendored sources,
 all network operations and file data reads outside candidate, prepared inputs,
 specific OS/SDK/runtime roots, and scratch. Candidate source and `.git` are
 read-only to checks; only owned scratch is writable. Shared compiler/source
-caches are never writable by checks. This is a deliberate restriction on tests
-that formerly wrote into the candidate; use the provided temporary directory.
+caches are never writable by checks. Tests that formerly wrote into the
+candidate must use the provided temporary directory.
 
 Metadata discovery remains allowed. Seatbelt is not a memory/disk quota, and the
 current process group implementation does not contain every escaped descendant.
@@ -338,8 +339,7 @@ file. When `bwrap` is missing or its probe fails, Linux falls back to
 `unshare --net` only (`name()` is `linux-netns`): network isolation without
 filesystem confinement. That fallback is explicit in the backend name, an
 info-level `linux hard sandbox backend selected` line, the self-test line, and
-the audit `sandbox` field. `/api/status` does not report the backend. The
-console must not import `crate::agentic`. Both backends missing is
+the audit `sandbox` field. `/api/status` does not report the backend. Both backends missing is
 `HARD_SANDBOX_UNAVAILABLE` (exit 3). Linux CI (`CI=true`) fails if `bwrap` is
 missing. The ordinary test matrix may report a classified confinement skip
 when a GitHub-hosted runner refuses `RTM_NEWADDR`; that is not confinement proof.
@@ -353,8 +353,7 @@ writes. The network probe first connects to an owned host listener outside the
 sandbox, then requires a different network namespace and connection denial
 inside it. No public endpoint or generic nonzero exit serves as network proof.
 The job changes no host sysctl and preserves the production backend ladder.
-SIGKILL of the runner with a live grandchild is unverified.
-It is the same process-group leftover already named for Seatbelt. Windows Job
+SIGKILL of the runner with a live grandchild is unverified. Windows Job
 Object remains a process-tree kill boundary without network or filesystem
 isolation. See `docs/CODING_PIPELINE.md#offline-cargo-verification` for preparation, required native tests,
 and remaining process/resource limitations.
@@ -378,8 +377,9 @@ attributes refuse the operation. Inspection uses the same boundary. No server
 or shim imports this agentic helper.
 
 Runs retain their origin from candidate creation and the exact approved commit.
-Push checks those pins and uses an object-ID refspec; publication checks the
-remote branch. Current policy and separate reason/confirmation remain required.
+Push checks those pins, refuses a local branch head that differs from the approved
+commit, and uses an object-ID refspec; publication checks the remote branch. Git
+credentials come only from `gh`, with ambient helpers, hooks and prompts disabled. Current policy and separate reason/confirmation remain required.
 Older records missing the new bindings need a new reviewed run. No transaction
 against arbitrary hostile filesystem races or later remote changes is claimed.
 See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility changes and review limitations.
@@ -395,20 +395,29 @@ model error bodies are never echoed; `/api/keys` returns presence and a masked
 tail only; the tool broker logs an argv digest, never argv; validation errors
 substitute `(unexpected field)` for a caller-supplied key.
 
-- Locked by: `tests/common_layer.rs`, `tests/panels.rs`, `tests/chat_and_sessions.rs`.
+Server audit lines go through one ordered writer thread behind a bounded queue
+(`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue drops
+the new line with a warning and never blocks a request. The server flushes (at
+most 10 s) before spawning an agentic child, before `GET /api/audit` reads,
+and on Ctrl-C/SIGTERM, so a child's lines follow the server lines that
+authorized it. The child, notifier, CLI and spend ledger still append inline.
+
+- Locked by: `tests/common_layer.rs`, `tests/panels.rs`, `tests/chat_and_sessions.rs`,
+  `src/common/audit.rs` units,
+  `tests/shim_and_agent_routes.rs::an_agentic_child_starts_after_the_audit_line_that_authorized_it`,
+  `tests/secure_portal.rs::ctrl_c_and_sigterm_stop_serve_after_its_queued_audit_lines_land`.
 
 ## A detached run cannot outlive its gates
 
 `POST /api/agent/jobs` runs the identical validated request as
 `POST /api/agent/run` in a tokio task, but the run gate and (when the local
 model is also the planner) the chat gate are held by the TASK via
-`GateGuard`'s `Drop`, not by the HTTP request. A closed tab, a proxy timeout,
-or a client that never polls again cannot leave the gate stuck: cancelling
+`GateGuard`'s `Drop`, not by the HTTP request. A closed tab or dead client
+cannot leave the gate stuck: cancelling
 (`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping the guards and
-the child (`kill_on_drop`). A job's terminal state is set exactly once —
-`JobStore::finish` is a no-op if the job was already cancelled — so a slow
-child finishing after cancellation can never resurrect a job the operator
-already killed.
+the child (`kill_on_drop`). A job's terminal state is set exactly once
+(`JobStore::finish` is a no-op after cancellation), so a slow child cannot
+resurrect a job the operator killed.
 
 - Locked by: `tests/shim_and_agent_routes.rs::cancelling_a_running_job_aborts_it_and_a_finish_after_cancel_does_not_resurrect_it`,
   `::a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy`,
@@ -431,17 +440,17 @@ overflow. The effective trigger is
 calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions are also
 included in the calibrated input estimate. Web-enabled chat tightens the trigger
 toward `web.total_tokens - effective_reply_reservation` (the projection already
-carries one reservation, so a web prompt keeps room for two replies), without going
-below that floor; the web dispatcher independently enforces its total budget:
-tools are offered only while the prompt fits again with both replies and a
-minimal result, a batch runs only when each call's minimal result fits, and a
-result is cut to the room left.
+carries one reservation, so a web prompt keeps room for two replies) and never
+below that floor; the web dispatcher independently offers tools only while the
+prompt fits with both replies and a minimal result, runs a batch only when each
+call's minimal result fits, and cuts a result to the room left.
 Startup and reload warn when fewer than 4096 input tokens would remain.
 Resolved Ollama with explicit `reasoning_effort: "none"` reserves the reply
 ceiling once. Other reasoning settings, missing settings and compatible
 backends reserve it twice in startup validation, compaction and web dispatch.
-Startup rejects local-chat or loop reply allowances above 25904 or 12952,
-respectively. This is a conservative harness margin, not provider accounting.
+Startup and reload reject `models.local_llm.max_tokens` or
+`api.harness_loop_rate_limit.max_tokens` above 25904 (single reservation) or
+12952 (doubled). This is a conservative harness margin, not provider accounting.
 The incoming user paste is never compacted. The server builds a candidate
 summary with one local-model call (`compaction.summary_max_tokens`, default
 768, clamped 128–2048). Input stays within 24000 characters and the calibrated
@@ -452,14 +461,11 @@ without clipping them or rewriting history.
 A failed, empty, timed-out, or aborted summary does not rewrite the session.
 If compaction cannot bring that initial prompt below the trigger, the turn is
 refused without rewriting the session. If it can, the summary is persisted atomically with the next
-successful exchange, alongside calibration, using `write_json_atomic_mode` at `0o600`; failed or
-cancelled model calls leave stored history unchanged. The system prompt is
+successful exchange, alongside calibration, using `write_json_atomic_mode` at `0o600`. The system prompt is
 composed each turn and is never stored in `messages`. `Session.goal` and the
-first user message are preserved. Successful compaction is audited as
-`chat_session_compacted` without message bodies. An irreducible prompt is
-audited as `chat_prompt_too_large` with projected sizes only. A concurrent
-local-model claim is audited as `chat_busy`. Neither event stores message
-bodies.
+first user message are preserved. The audits `chat_session_compacted`,
+`chat_prompt_too_large` (projected sizes only) and `chat_busy` (a concurrent
+local-model claim) store no message bodies.
 
 - Locked by: `src/server/compaction.rs`,
   `src/server/sessions.rs::record_exchange_inner`,
@@ -481,7 +487,6 @@ bodies.
 - `agentic/context` injection findings are advisory on reads; only the
   model-feeding commands refuse on them (selected by CODE, not severity).
 - The Windows sandbox is a process-tree kill boundary, not a network namespace.
-  A stronger Windows backend (for example AppContainer) is deferred.
 - Linux `linux-netns` is network isolation only. Treat `linux-bwrap` as the
   filesystem-confined backend; do not claim Seatbelt parity when the fallback
   is selected.
@@ -550,8 +555,8 @@ a bounded grace. New activation requires a single-use owner-bound preview of the
 exact reviewed request. Calendar gaps skip and repeated wall times select only
 the first UTC mapping. Stale poll snapshots cannot consume a future occurrence.
 The store lock serializes cancellation with synchronous job registration. Cancelled schedules do not fire; cancelling
-the resulting job still makes `JobStore::finish` a no-op. Start, complete, and
-fail are audited via `Audit::log` (JSONL, never raises).
+the resulting job still makes `JobStore::finish` a no-op. Start, complete and
+fail are audited (JSONL, never raises).
 
 - Locked by: `src/server/agent_schedules.rs`,
   `src/server/routes/agent.rs`,
@@ -575,14 +580,13 @@ the provider did not report as finished (Claude `stop_reason` other than
 `outcome: failed_after_billing` then errors the chat; the text is never shown or
 saved. `TokenTally` and local prompt/compaction token estimates are context
 budgets, not USD.
-`PRICED_AS_OF` is the oldest `_RATE_VERIFIED` date; a table older than 30 days
+`priced_as_of()` is the oldest `RATE_VERIFIED` date; a table older than 30 days
 warns once per process and does not fail the chat. Guarded
 `GET /api/spend/summary` rolls up the same file by provider/model/UTC-day with
 the same CSRF/authz class as a loaded session. Ollama pull, keep_alive warmup,
 and MCP broker dispatch are excluded from the ledger by definition — they are
 not billed inference. If a later MCP tool bills a cloud model, it must record
-`source: "agentic"` through this same file. The console must not import
-`crate::agentic` to write spend.
+`source: "agentic"` through this same file.
 
 - Locked by: `src/llm/spend.rs`,
   `src/llm/cloud_chat.rs`,
@@ -592,7 +596,8 @@ not billed inference. If a later MCP tool bills a cloud model, it must record
 Cloud chat prediction is a separate pre-generation operation. Guarded
 `POST /api/spend/predict` accepts only the explicit message/model and shares the
 generation/cancellation gate. Claude counts the same model/message body at its
-fixed count endpoint, with a 2-second default deadline and 4 MiB response cap;
+fixed count endpoint, with a `count_timeout_sec` deadline (default 2 s, 0.1–10)
+and 4 MiB response cap;
 Grok and count failures use a labelled UTF-8 bytes/4 heuristic. No history,
 attachments, local context or tokenizer calibration reaches the cloud counter.
 The dated ledger rate table prices full configured output with no cache credit.
@@ -623,8 +628,8 @@ receivers require HTTPS and private receivers require exact URL grants. Retries
 remain at most three per cycle. Delivery is at least once within finite bounds:
 receiver deduplication is required after timeout/crash/replay. Pressure, expiry or
 storage failures are explicit and never change job authority/outcomes. No payload
-content adapter or inbound listener is enabled. The 22-key reload allowlist and I6
-remain unchanged. See `docs/SPEND_AND_NOTIFICATIONS.md` for crash/retention limits.
+content adapter or inbound listener is enabled. See
+`docs/SPEND_AND_NOTIFICATIONS.md` for crash/retention limits.
 
 ## Reload changes limits, not authority
 
@@ -642,8 +647,8 @@ share existing fetch permits, mutation locks and cancellation rather than
 creating more capacity. New operations see the new limits; in-flight web
 operations retain their snapshot. Rate counters survive reload; widening a
 window cannot restore already expired history. A refusal does not rewrite the
-operator's file. Existing fresh-disk coding-policy and URL-permission checks
-remain independent and fail closed as before.
+operator's file. Fresh-disk coding-policy and URL-permission checks stay
+independent and fail closed.
 
 - Locked by: `tests/secure_portal.rs` (HTTP, actual SIGHUP, role/CSRF,
   atomic refusal, rate history and web response bounds), `config_reload` units,
@@ -671,5 +676,5 @@ machine keys and retires that owner's schedules and completion notifications.
 Key rows stay until an explicit key-id revoke.
 Audits contain recognized tools, public IDs and coarse outcomes, never content.
 All gateway settings remain restart-only, outside the 22-key reload allowlist.
-A future remote exposure mode needs the explicit deployment acceptance in
-`docs/MCP_SERVER.md`; this implementation opens no LAN/public service or tunnel.
+Remote exposure needs the deployment acceptance in `docs/MCP_SERVER.md`; nothing
+here opens a LAN/public service or tunnel.
