@@ -31,6 +31,9 @@ fn validated_run_id(run_id: &str) -> ApiResult<String> {
 
 async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value>> {
     let action = req.action.clone();
+    // The child appends to the audit file directly. Land the server's queued
+    // lines first, such as the broker decision that authorized this run.
+    state.audit.flush_async().await;
     let result = shim::run_agentic_op(&state.shim, &req).await.map_err(|e| match e {
         ShimError::Ops(msg) => ApiError::bad_request("AGENTIC_ERROR", state.audit.redact(&msg)),
         ShimError::Timeout { action, timeout_sec } => ApiError::new(
@@ -57,6 +60,7 @@ async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value
 }
 
 pub async fn github_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    state.audit.flush_async().await;
     let result = shim::run_agentic_op(&state.shim, &OpsRequest::new("status"))
         .await
         .map_err(|e| match e {

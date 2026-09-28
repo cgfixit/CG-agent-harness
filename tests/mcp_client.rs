@@ -164,10 +164,13 @@ impl McpServer {
             .send()
             .await
             .unwrap();
-        (
+        let answer = (
             resp.status().as_u16(),
             resp.json::<Value>().await.unwrap_or(Value::Null),
-        )
+        );
+        // Audit lines queued while handling the call are on disk before a test reads them.
+        self.state.audit.flush();
+        answer
     }
 
     async fn call(&self, body: Value) -> (u16, Value) {
@@ -180,10 +183,13 @@ impl McpServer {
             .send()
             .await
             .unwrap();
-        (
+        let answer = (
             resp.status().as_u16(),
             resp.json::<Value>().await.unwrap_or(Value::Null),
-        )
+        );
+        // Audit lines queued while handling the call are on disk before a test reads them.
+        self.state.audit.flush();
+        answer
     }
 }
 
@@ -614,14 +620,14 @@ async fn stdio_drop_kills_process_group_leader() {
 }
 
 #[tokio::test]
-async fn stdio_unterminated_header_is_refused_before_timeout_and_stderr_is_clipped() {
+async fn stdio_unterminated_oversized_line_is_refused_before_timeout_and_stderr_is_clipped() {
     let yaml = stdio_yaml().replace(
         "        - crash",
-        "        - header_flood\n        - stderr_flood\n        - crash",
+        "        - line_flood\n        - stderr_flood\n        - crash",
     );
     let server = McpServer::boot(&yaml, &[("mcp.timeout_sec", "2")]).await;
     let (status, body) = server
-        .call(json!({"server":"fixture","tool":"header_flood","confirm":true}))
+        .call(json!({"server":"fixture","tool":"line_flood","confirm":true}))
         .await;
     if !stdio_executed(status, &body) {
         return;
@@ -629,8 +635,8 @@ async fn stdio_unterminated_header_is_refused_before_timeout_and_stderr_is_clipp
     assert_eq!(status, 502, "{body}");
     assert_eq!(
         code(&body),
-        "MCP_PROTOCOL",
-        "unterminated oversized headers must fail before the timeout: {body}"
+        "MCP_RESULT_TOO_LARGE",
+        "an unterminated line past the cap must fail before the timeout: {body}"
     );
     let (status, body) = server
         .call(json!({"server":"fixture","tool":"stderr_flood","confirm":true}))

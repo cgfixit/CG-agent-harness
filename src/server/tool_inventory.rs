@@ -28,6 +28,10 @@ You have no filesystem, shell, gh, account or policy-editing tools in this chat.
     if !names.is_empty() {
         out.push('\n');
         out.push_str(&may_call_line(&names));
+        out.push_str(
+            " when a request offers them: only while web.total_tokens has room for a tool round. \
+When a request offers none, answer without them and claim no web result.",
+        );
         out.push('\n');
         for tool in super::chat_web::tools() {
             let function = &tool["function"];
@@ -139,6 +143,7 @@ mod tests {
         assert!(md.contains("web_search"));
         assert!(md.contains("web_fetch"));
         assert!(md.contains("you MAY call: web_fetch, web_search"));
+        assert!(md.contains("When a request offers none, answer without them"));
         assert!(md.contains("You have no filesystem, shell, gh, account or policy-editing tools"));
         assert!(!md.contains("session_new"));
         assert!(!md.contains("HARNESS_SURFACES"));

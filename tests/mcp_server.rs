@@ -150,7 +150,7 @@ async fn real_protocol_reads_only_key_namespace_and_never_writes() {
     keys.revoke(&principal.key_id).unwrap();
     assert_eq!(call(&g, &alice, "tools/list", json!({})).await.0, 401);
     assert_eq!(call(&g, &bob, "tools/list", json!({})).await.0, 200);
-    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    let audit = s.audit_log();
     for secret in [&alice, &bob, "BIRCH_PRIVATE_CANARY", "Cedar orchard", "OR *"] {
         assert!(!audit.contains(secret));
     }

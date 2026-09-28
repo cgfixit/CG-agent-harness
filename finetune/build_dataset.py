@@ -70,7 +70,7 @@ SIGNIFICANT_FILES: list[str] = [
     "Cargo.toml",
     "INVARIANTS.md",
     "AGENTS.md",
-    "setup-guide.md",
+    "README.md",
 ]
 
 # CG-Agent has no RAG indexer (that is CyClaw's job), so there is no corpus build

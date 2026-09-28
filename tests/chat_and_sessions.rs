@@ -308,16 +308,51 @@ async fn web_chat_charges_the_reply_reservation_once_against_the_web_budget() {
     let (status, body) = s.post_json("/api/chat", json!({"message":"x".repeat(400)})).await;
     assert_eq!(status, 422, "{body}");
     assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
-    assert_eq!(body["detail"]["details"]["limit_source"], "web.total_tokens");
+    // The reservation plus minimum input sets this limit, not web.total_tokens:
+    // raising that setting to its 32000 maximum would not change it.
+    assert_eq!(body["detail"]["details"]["limit_source"], "models.local_llm.max_tokens");
     assert_eq!(body["detail"]["details"]["reply_reservation_tokens"], 25904);
     let text = message(&body);
-    for knob in ["models.local_llm.max_tokens", "web.total_tokens", "turn web off"] {
+    for knob in ["models.local_llm.max_tokens", "turn web off"] {
         assert!(text.contains(knob), "{text}");
     }
+    assert!(!text.contains("raise web.total_tokens"), "{text}");
     assert!(
         !text.contains("after history compaction"),
         "nothing was compacted: {text}"
     );
+    assert!(model.requests.lock().unwrap().is_empty());
+}
+
+/// A /loop turn reserves api.harness_loop_rate_limit.max_tokens, so its refusal
+/// names that setting, not models.local_llm.max_tokens.
+#[tokio::test]
+async fn loop_prompt_refusals_name_the_loop_reply_budget() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("chat.compact_prompt_tokens", "8000"),
+    )
+    .await;
+    let (_, created) = s.post_json("/api/sessions", json!({"title": "t"})).await;
+    let sid = created["session_id"].as_str().unwrap().to_string();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "g"}))
+        .await;
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "x".repeat(30_000), "loop": true, "session_id": sid}),
+        )
+        .await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
+    assert_eq!(body["detail"]["details"]["limit_source"], "chat.compact_prompt_tokens");
+    let text = message(&body);
+    assert!(
+        text.contains("api.harness_loop_rate_limit.max_tokens reserves"),
+        "{text}"
+    );
+    assert!(!text.contains("models.local_llm.max_tokens"), "{text}");
     assert!(model.requests.lock().unwrap().is_empty());
 }
 
@@ -530,7 +565,7 @@ async fn irreducible_prompt_is_rejected_without_rewriting_the_session() {
     assert!(body["detail"]["details"]["compacted_tokens"].as_u64().unwrap() > limit);
     assert!(model.requests.lock().unwrap().is_empty());
     assert_eq!(std::fs::read(path).unwrap(), before);
-    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
+    let audit = s.audit_log();
     assert!(
         audit
             .lines()
@@ -683,7 +718,7 @@ async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
     assert!(session.messages.iter().any(|message| message
         .text
         .starts_with(cgagentharness::server::compaction::COMPACT_PREFIX)));
-    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
+    let audit = s.audit_log();
     assert!(
         audit
             .lines()
@@ -730,7 +765,7 @@ async fn cancel_aborts_the_in_flight_turn_and_releases_the_gate() {
         assert_eq!(status, 409, "{body}");
         assert_eq!(code(&body), "CHAT_BUSY");
         assert_eq!(body["detail"]["details"]["cancel"], "/api/chat/cancel");
-        let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap_or_default();
+        let audit = s.audit_log();
         assert!(
             audit.lines().any(|line| line.contains("\"event\":\"chat_busy\"")),
             "409 CHAT_BUSY must write chat_busy: {audit}"

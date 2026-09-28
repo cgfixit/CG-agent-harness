@@ -79,8 +79,8 @@ session timeouts.
 | GET, POST | `/api/sessions/{session_id}/skills` | Skill selection for the session |
 | GET, POST | `/api/sessions/{session_id}/structured-facts` | Selected structured-memory facts (explicit include) |
 
-See [CHAT_WORKFLOWS.md](CHAT_WORKFLOWS.md) and
-[CHAT_STREAMING.md](CHAT_STREAMING.md).
+See [CONSOLE.md](CONSOLE.md) and
+[streaming chat](CONSOLE.md#streaming-chat-and-cancellation).
 
 ## Persona, skills and pinned notes
 
@@ -161,8 +161,9 @@ configuration; they do not probe or authorize that listener.
 | POST | `/api/mcp/call` | Call one declared MCP tool; `confirm` is never defaulted |
 
 SSE MCP URLs are DNS-pinned. Loopback SSE requires `mcp.sse_allow_loopback: true`.
-MCP tools are not attached to `/loop`. Stdio response headers are limited to 4 KiB,
-including unterminated lines. Child stderr is drained through a pipe, retaining at most 2 KiB in memory and
+MCP tools are not attached to `/loop`. Stdio MCP is newline-delimited JSON-RPC; a
+line longer than `mcp.max_result_bytes`, terminated or not, is refused at the cap.
+Child stderr is drained through a pipe, retaining at most 2 KiB in memory and
 512 Unicode characters in diagnostics. No stderr log file is created; the existing
 call timeout still applies. Stdio protection follows the declared
 [capability policy](MCP_CLIENT.md); no silent fallback to an unconfined process
@@ -194,7 +195,7 @@ not a successful sandbox probe. `/tools mcp` renders that policy in the console.
 
 Run and job routes both go through `agent::prepare_run`, then cross the shim
 into a child process; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
-[GIT_APPROVAL.md](GIT_APPROVAL.md).
+[CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
 
 ## Completion webhooks
 

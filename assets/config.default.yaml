@@ -36,7 +36,7 @@ models:
     # absent/empty omits the field, an invalid value fails at boot.
     reasoning_effort: "none"
     # Server-side Ollama context must be 32768: set OLLAMA_CONTEXT_LENGTH before
-    # `ollama serve` and verify context_length on /api/ps (setup-guide section 4).
+    # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
     temperature: 0.2
@@ -219,6 +219,10 @@ logging:
   # warning. 0 disables the wait (refuse on the first busy lease).
   audit_lease_wait_ms: 50 # clamped to 0–5000
   audit_lease_retry_ms: 2 # clamped to 1–1000
+  # The server queues audit lines for one writer thread, so requests never
+  # wait on the file; a full queue drops new lines with a warning. 0 appends
+  # inline on the request instead.
+  audit_queue_lines: 4096 # 0, or clamped to 64–65536
   audit_fields:
     include_query_hash: true
 
