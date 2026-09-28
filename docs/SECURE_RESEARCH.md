@@ -221,10 +221,16 @@ calls against the configured local model. No repository, shell, policy, account,
 key or other mutation tool is exposed. `/loop` remains tool-free. Invalid names,
 arguments and excess tool requests are refused; batches are validated before
 their first read and executed sequentially. A turn allows
-at most `web.chat_tool_calls` (default 10, range 1–10), shares the chat timeout,
+at most `web.chat_tool_calls` (1–10, default 10), shares the chat timeout,
 and reserves estimated tokens against `web.total_tokens` before each model call.
-Reported usage sums all completed model calls; absent upstream usage remains
-marked unreported internally rather than being invented as actual token counts.
+A tool call resends the prompt with its results, so tools are offered only while
+both calls, both replies and a minimal result (≥256 calibrated tokens) fit. A
+batch without that minimum per call runs no read; the model answers without
+tools. Results are cut to the room left, keeping that minimum per later call:
+pages keep their longest prefix, listings drop trailing results. Withheld tools
+report `WEB_TOKEN_BUDGET`.
+Reported usage sums all completed model calls; absent upstream usage stays marked
+unreported, never invented.
 Cancellation aborts the whole turn, including an outstanding content request.
 
 With a SerpAPI key saved, use `/web search <query>` directly. For the keyless
