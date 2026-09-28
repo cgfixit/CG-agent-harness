@@ -1,6 +1,6 @@
 # Coding pipeline
 
-Optional, disarmed-by-default coding loop. Index: [setup-guide.md](../setup-guide.md).
+Optional, disarmed-by-default coding loop. Index: [README.md](../README.md).
 
 ## 9. (Optional, advanced) Arm the coding pipeline
 

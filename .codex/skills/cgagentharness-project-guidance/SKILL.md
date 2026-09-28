@@ -16,7 +16,7 @@ authorization to push, merge, or release.
 2. `assets/config.default.yaml` (every tunable; no hardcoded tunables elsewhere)
 3. `INVARIANTS.md`
 4. `AGENTS.md`
-5. `README.md` (then `setup-guide.md` / `SECURITY.md` as needed)
+5. `README.md` (then `SECURITY.md` as needed)
 
 If prose and code disagree, code wins — fix the doc in the same change set when
 you touch the behavior.
@@ -48,7 +48,7 @@ approval binding, secrets redaction, detached-run gates.
 | Clone jail / sandbox | `src/agentic/workspace.rs`, `src/agentic/executor/sandbox.rs`, `tests/agentic_foundations.rs` |
 | Config defaults / gates | `assets/config.default.yaml`, `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
 | Routes / console listing | `src/server/routes/mod.rs` (`REGISTERED_PATHS`), `views.rs` |
-| Install / local verify | `scripts/verify-local.sh`, `scripts/smoke-ollama.sh`, `setup-guide.md`, `docs/INSTALL.md`, `docs/MODELS.md` |
+| Install / local verify | `scripts/verify-local.sh`, `scripts/smoke-ollama.sh`, `README.md`, `docs/INSTALL.md`, `docs/MODELS.md` |
 | Packaging / release | `scripts/package-release.sh`, release workflow docs, `cgagentharness-release` |
 
 Core paths always require an invariant statement in the PR body when touched:
