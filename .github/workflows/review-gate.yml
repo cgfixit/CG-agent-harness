@@ -177,6 +177,11 @@ jobs:
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         id: gate
+        env:
+          # issue_comment resolves the head twice. A push between the two
+          # lookups must fail this job so publish closes the marker's check
+          # instead of writing the new head's verdict onto the old one.
+          MARKED_HEAD_SHA: ${{ needs.mark-in-progress.outputs.head_sha }}
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -205,6 +210,13 @@ jobs:
               pr = (await github.rest.pulls.get({ owner, repo, pull_number: context.payload.issue.number })).data;
             }
             if (pr.state !== "open") { skip(`PR #${pr.number} is ${pr.state}; nothing to evaluate`); return; }
+
+            const markedSha = process.env.MARKED_HEAD_SHA || "";
+            const liveSha = (pr.head && pr.head.sha) || "";
+            if (markedSha !== liveSha) {
+              core.setFailed(`head sha changed between mark and evaluate: marker ${markedSha}, evaluate ${liveSha}`);
+              return;
+            }
 
             async function unresolvedThreads() {
               const out = [];
