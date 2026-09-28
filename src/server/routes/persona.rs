@@ -350,17 +350,26 @@ pub async fn preview(
         .as_ref()
         .map(|items| super::structured_memory::selections_from_items(items))
         .unwrap_or_else(|| session.as_ref().map(|s| s.selected_facts.clone()).unwrap_or_default());
-    let (pinned, facts, memory_budget, recalled, retrieval_error) = super::structured_memory::prompt_memory(
-        &state,
-        &owner,
-        settings.memory_enabled,
-        &selections,
-        crate::server::structured_memory::RetrievalIntent {
-            force: req.retrieve,
-            query: req.retrieve_query.as_deref(),
-            message: None,
-        },
-    );
+    // Fact recall and retrieval read SQLite: run them off the async worker.
+    let (pinned, facts, memory_budget, recalled, retrieval_error) = {
+        let (state, owner, selections) = (state.clone(), owner.clone(), selections.clone());
+        let (force, query) = (req.retrieve, req.retrieve_query.clone());
+        let memory_enabled = settings.memory_enabled;
+        super::structured_memory::off_worker(move || {
+            super::structured_memory::prompt_memory(
+                &state,
+                &owner,
+                memory_enabled,
+                &selections,
+                crate::server::structured_memory::RetrievalIntent {
+                    force,
+                    query: query.as_deref(),
+                    message: None,
+                },
+            )
+        })
+        .await
+    };
     let assembled = crate::server::prompts::assemble_memory_sections(&pinned, &facts, memory_budget);
     let soul_path = state.home.soul_path();
     let selected = super::skills::resolve(
