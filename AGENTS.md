@@ -44,8 +44,9 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   needs `consolidation`; `auto_suggest_chat` / `auto_suggest_coding` need
   capture (bounded completion evidence into pending summaries for the
   initiating owner; never scans shared archives). Feature-off starts no
-  worker; chat wins the generation gate and preempts a running suggestion (it
-  parks as `preempted` and requeues) instead of answering `CHAT_BUSY`. Contract:
+  worker; chat wins the generation gate and preempts a running suggestion (its
+  run stores `state=cancelled`, `error_class=preempted`, then requeues) instead
+  of answering `CHAT_BUSY`. Contract:
   `docs/STRUCTURED_MEMORY.md`; operator view: `docs/MEMORY_GUIDE.md`.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim`, never called in-process from the server).

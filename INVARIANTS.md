@@ -136,11 +136,11 @@ proposals only.
 bounded idle worker enqueue the same runner; feature-off starts no worker.
 Disabling stops new claims without corrupting in-flight work. Interactive
 chat preempts only a running memory suggestion (bounded 5 s wait); any other
-gate holder returns `CHAT_BUSY` naming it. The preempted run persists as
-`preempted` and returns to the queue front unless its chat was cleared; only a
-`preempted` run resumes, and an owner's cancel of one is final. Independently
-gated completion suggestions
-require store + capture, use bounded current completion evidence for the initiating
+gate holder returns `CHAT_BUSY` naming it. The run persists with
+`state=cancelled`, `error_class=preempted` and returns to the queue front unless
+its chat was cleared; only that error class resumes, and an owner's cancel is
+final. Independently gated completion suggestions require store + capture, use
+bounded current completion evidence for the initiating
 owner, and produce pending proposals only. They never read shared archives or
 write human semantic summaries. `/memory save <text> :: <reason>` is an explicit
 human confirmed fact write through the existing API, not model authority.
@@ -379,8 +379,10 @@ or shim imports this agentic helper.
 
 Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
-commit, and uses an object-ID refspec; publication checks the remote branch. Git
-credentials come only from `gh`, with ambient helpers, hooks and prompts disabled. Current policy and separate reason/confirmation remain required.
+commit, and uses an object-ID refspec; publication checks the remote branch.
+HTTPS credentials use `gh`, with ambient Git helpers, hooks and prompts disabled.
+Accepted SSH origins can use the operator's SSH configuration and keys.
+Current policy and separate reason/confirmation remain required.
 Older records missing the new bindings need a new reviewed run. No transaction
 against arbitrary hostile filesystem races or later remote changes is claimed.
 See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility changes and review limitations.

@@ -187,8 +187,8 @@ results. Session clear invalidates waiting/in-flight
 chat suggestions. Existing proposals/facts retain their existing deletion rules.
 The worker waits for the generation gate and never interrupts chat.
 Chat preempts an active suggestion instead of receiving `CHAT_BUSY`: its model call
-is aborted, its run parked as `preempted` (an owner cancel ends it), and its input
-requeued ahead. Run
+is aborted, its run stored as `state=cancelled`, `error_class=preempted` (an owner
+cancel ends it), and its job returns to the queue front. Run
 cancellation requires the open store and owner match, even if manual consolidation
 is off.
 Redactors/scanners are bounded safeguards, not a guarantee that arbitrary secrets
