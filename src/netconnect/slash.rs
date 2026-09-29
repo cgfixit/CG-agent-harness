@@ -208,7 +208,7 @@ fn dispatch(
     interfaces: &impl InterfaceSource,
 ) -> Outcome {
     let result = match sub {
-        "status" => tools::call_status(cfg),
+        "status" => tools::call_status(cfg, neighbors, routes, interfaces),
         "devices" => tools::call_devices(cfg, neighbors, routes, interfaces),
         "ports" => tools::invoke_tier(cfg, Tier::PortScan, None),
         "diag" => tools::invoke_tier(cfg, Tier::Diagnostics, None),
@@ -362,6 +362,41 @@ mod tests {
         assert_eq!(status.code, EXIT_OK);
         assert!(status.executed);
         assert_eq!(status.body["enabled"], true);
+    }
+
+    #[test]
+    fn enabled_passive_status_and_devices_show_fixture_data() {
+        let loaded = cfg(
+            "netconnect:\n  enabled: true\n  passive_listen: false\n  discovery: false\n  port_scan: false\n  \
+             diagnostics: false\n  throughput: false\n  anomaly_detection: false\n  home_automation: false\n  \
+             allowed_cidrs: ['127.0.0.0/16']\n",
+        );
+        for tier in Tier::ALL {
+            assert!(!loaded.tier_flag(tier), "{}", tier.key());
+        }
+        let neighbors = FixtureNeighbors::bsd_arp(
+            "lo\u{0001}cal (127.0.0.1) at ab:cd:ef:01:23:45 on lo0 ifscope [ethernet]\n\
+             outsider (192.168.1.50) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]\n",
+        );
+        let routes = FixtureRoutes::bsd_netstat(
+            "Destination        Gateway            Flags        Netif\n\
+             127.0.0.1          127.0.0.1          UH           lo0\n",
+        );
+        let interfaces = FixtureInterfaces::from_lines("lo0 127.0.0.1\n");
+        for line in ["/net status", "/net devices"] {
+            let outcome = evaluate(&loaded, line, &neighbors, &routes, &interfaces);
+            assert_eq!(outcome.code, EXIT_OK, "{line}: {}", outcome.notice);
+            assert!(outcome.executed, "{line}");
+            assert_eq!(outcome.body["packets_sent"], 0, "{line}");
+            assert_eq!(outcome.body["neighbors"][0]["address"], "127.0.0.1", "{line}");
+            assert_eq!(outcome.body["neighbors"][0]["hostname"]["untrusted"], true, "{line}");
+            assert_eq!(outcome.body["neighbors"][0]["hostname"]["value"], "local", "{line}");
+            assert_eq!(outcome.body["interfaces"][0]["addresses"][0], "127.0.0.1", "{line}");
+            assert_eq!(outcome.body["interfaces"][0]["name"]["untrusted"], true, "{line}");
+            let rendered = outcome.body.to_string();
+            assert!(!rendered.contains('\u{0001}'), "{line}");
+            assert!(!rendered.contains("192.168"), "{line}");
+        }
     }
 
     #[test]
