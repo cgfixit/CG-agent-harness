@@ -11,10 +11,14 @@
 # AF_NETLINK. Any other socket family, any connect that is not one of those
 # families, and any multicast-membership setsockopt fails the proof.
 # sendto, sendmsg, and sendmmsg are allowed only on a descriptor this trace
-# opened as AF_NETLINK or AF_UNIX. A send on any other descriptor, or on one
-# the trace never opened, fails. That includes a descriptor the process
-# inherited. The enabled-devices count is stricter than that judge: any
-# family other than AF_NETLINK fails it, including AF_UNIX.
+# opened as AF_NETLINK or AF_UNIX in the same pid. A send on any other
+# descriptor, or on one the trace never opened, fails. That includes a
+# descriptor the process inherited, and a descriptor opened by another pid.
+# strace -f prints a pid column, and it may split a call into
+# "<unfinished ...>" and "resumed" lines. Decoded netlink payload fields
+# such as ifi_family and ifa_family are not the call's address family.
+# The enabled-devices count is stricter than that judge: any family other
+# than AF_NETLINK fails it, including AF_UNIX.
 #
 # Missing strace, a failed `unshare -rn`, or a refused ptrace does not skip:
 # the script exits non-zero and says which prerequisite failed. On a CI runner
@@ -37,24 +41,32 @@ usage() {
   exit 2
 }
 
-judge() {
-  python3 - "$1" <<'PY'
+# Modes: judge, netlink-count, socket-count. One parser, so a pid column or
+# an unfinished/resumed split cannot drift between the judge and the counts.
+read_trace() {
+  python3 - "$@" <<'PY'
 import re
 import sys
 
+mode = sys.argv[1]
+path = sys.argv[2]
 ALLOWED = {"UNIX", "LOCAL", "NETLINK"}
 NUM_ALLOWED = {"1": "UNIX", "16": "NETLINK"}
-FAMILY = re.compile(r"\b(?:AF|PF)_([A-Z0-9]+)\b")
-SA_NUM = re.compile(r"sa_family=(\d+)")
 MEMBERSHIP = re.compile(
     r"\b(IP_ADD_MEMBERSHIP|IP_ADD_SOURCE_MEMBERSHIP|IPV6_JOIN_GROUP|"
     r"IPV6_ADD_MEMBERSHIP|IPV6_JOIN_ANYCAST|MCAST_JOIN_GROUP|"
     r"MCAST_JOIN_SOURCE_GROUP|PACKET_ADD_MEMBERSHIP)\b"
 )
-SOCKET = re.compile(r"\bsocket\(([^,\s)]+)")
-RET = re.compile(r"=\s*(-?\d+)\b")
-FD = re.compile(r"\b(?:connect|sendto|sendmsg|sendmmsg)\((\d+)")
-SEND = re.compile(r"\b(sendto|sendmsg|sendmmsg)\((\d+)")
+PID = re.compile(r"^(?:\[pid\s+(\d+)\]|(\d+))\s+(.*)$")
+UNFINISHED = re.compile(r"^(.*)\s*<unfinished \.\.\.>\s*$")
+RESUMED = re.compile(r"^<\.\.\.\s+\w+\s+resumed>\s*(.*)$")
+SOCKET = re.compile(r"^socket\(([^,\s)]+)")
+RET = re.compile(r"=\s*(-?\d+)\b(?:\s+\S.*)?$")
+SEND = re.compile(r"^(sendto|sendmsg|sendmmsg)\((\d+)")
+CONNECT = re.compile(r"^connect\((\d+)")
+# The sockaddr family only. ifi_family and ifa_family sit inside the payload.
+SA = re.compile(r"\bsa_family=(?:(?:AF|PF)_([A-Z0-9]+)|(\d+))")
+CALL = re.compile(r"\b(socket|connect|sendto|sendmsg|sendmmsg|setsockopt)\(")
 
 
 def family_name(token):
@@ -68,65 +80,154 @@ def family_name(token):
     return token
 
 
-def line_families(line):
-    found = [match.group(1) for match in FAMILY.finditer(line)]
-    numeric = SA_NUM.search(line)
-    if numeric:
-        found.append(NUM_ALLOWED.get(numeric.group(1), "NUM:" + numeric.group(1)))
+def sockaddr_families(line):
+    found = []
+    for match in SA.finditer(line):
+        if match.group(1):
+            found.append(match.group(1))
+        else:
+            found.append(NUM_ALLOWED.get(match.group(2), "NUM:" + match.group(2)))
     return found
 
 
+def strip_pid(line):
+    match = PID.match(line)
+    if not match:
+        return "", line
+    return match.group(1) or match.group(2), match.group(3)
+
+
+def reassemble(path):
+    pending = {}
+    calls = []
+    with open(path, errors="replace") as handle:
+        for raw in handle:
+            pid, body = strip_pid(raw.rstrip("\n"))
+            unfinished = UNFINISHED.match(body)
+            if unfinished:
+                pending[pid] = unfinished.group(1)
+                continue
+            resumed = RESUMED.match(body)
+            if resumed and pid in pending:
+                body = pending.pop(pid) + resumed.group(1)
+            calls.append((pid, body))
+    for pid, body in pending.items():
+        calls.append((pid, body))
+    return calls
+
+
+def returned_fd(line):
+    match = RET.search(line)
+    if not match:
+        return None
+    value = int(match.group(1))
+    if value < 0:
+        return None
+    return str(value)
+
+
+calls = reassemble(path)
+
+if mode == "socket-count":
+    print(sum(1 for _pid, body in calls if body.startswith("socket(")))
+    sys.exit(0)
+
+if mode == "netlink-count":
+    netlink = 0
+    other = []
+    for _pid, body in calls:
+        socket = SOCKET.match(body)
+        if not socket:
+            continue
+        fam = family_name(socket.group(1))
+        opened = returned_fd(body) is not None
+        if fam != "NETLINK":
+            other.append(fam)
+            continue
+        if opened:
+            netlink += 1
+    if other:
+        print("disallowed socket families: %s" % ",".join(other), file=sys.stderr)
+        print(netlink)
+        sys.exit(2)
+    print(netlink)
+    sys.exit(0)
+
+if mode != "judge":
+    print("unknown trace mode: %s" % mode, file=sys.stderr)
+    sys.exit(2)
+
 violations = []
+kinds = []
 fds = {}
-with open(sys.argv[1], errors="replace") as handle:
-    for raw in handle:
-        line = raw.rstrip("\n")
-        if MEMBERSHIP.search(line):
-            violations.append(line)
-            continue
-        socket = SOCKET.search(line)
-        if socket:
-            fam = family_name(socket.group(1))
-            returned = RET.search(line)
-            if returned and int(returned.group(1)) >= 0:
-                fds[returned.group(1)] = fam
+for pid, body in calls:
+    kind = CALL.search(body)
+    kind_name = kind.group(1) if kind else None
+
+    def reject():
+        violations.append(body)
+        if kind_name and kind_name not in kinds:
+            kinds.append(kind_name)
+
+    if MEMBERSHIP.search(body):
+        if "setsockopt" not in kinds:
+            kinds.append("setsockopt")
+        violations.append(body)
+        continue
+    socket = SOCKET.match(body)
+    if socket:
+        fam = family_name(socket.group(1))
+        opened = returned_fd(body)
+        if opened is not None:
+            fds[(pid, opened)] = fam
+        if fam not in ALLOWED:
+            reject()
+        continue
+    send = SEND.match(body)
+    if send:
+        # The descriptor must be one this pid opened as netlink or UNIX.
+        # A decoded AF_NETLINK on a send does not vouch for an inherited fd
+        # or for another pid. Payload families are not the sockaddr.
+        fam = fds.get((pid, send.group(2)))
+        families = sockaddr_families(body)
+        if fam not in ALLOWED or any(name not in ALLOWED for name in families):
+            reject()
+        continue
+    families = sockaddr_families(body)
+    if families:
+        if any(name not in ALLOWED for name in families):
+            reject()
+        continue
+    connect = CONNECT.match(body)
+    if connect:
+        if "NULL" in body:
+            fam = fds.get((pid, connect.group(1)))
             if fam not in ALLOWED:
-                violations.append(line)
-            continue
-        send = SEND.search(line)
-        if send:
-            # The descriptor must be one this trace opened as netlink or UNIX.
-            # A decoded AF_NETLINK on a send does not vouch for an inherited fd.
-            fam = fds.get(send.group(2))
-            families = line_families(line)
-            if fam not in ALLOWED or any(name not in ALLOWED for name in families):
-                violations.append(line)
-            continue
-        families = line_families(line)
-        if families:
-            if any(name not in ALLOWED for name in families):
-                violations.append(line)
-            continue
-        if re.search(r"\bconnect\(", line):
-            if "NULL" in line:
-                fd = FD.search(line)
-                fam = fds.get(fd.group(1)) if fd else None
-                if fam not in ALLOWED:
-                    violations.append(line)
-            else:
-                violations.append(line)
+                reject()
+        else:
+            reject()
 
 if violations:
     for line in violations:
         print(line, file=sys.stderr)
-    print("netconnect syscall proof: %d disallowed call(s)" % len(violations), file=sys.stderr)
+    named = ", ".join(kinds) if kinds else "call"
+    print(
+        "netconnect syscall proof: %d disallowed %s call(s)"
+        % (len(violations), named),
+        file=sys.stderr,
+    )
     sys.exit(1)
 PY
+}
+
+judge() {
+  read_trace judge "$1"
 }
 
 expect_judge_fails() {
   local trace="$1"
   local label="$2"
+  local need="${3:-}"
   local err
   err="$(mktemp)"
   if judge "$trace" 2>"$err"; then
@@ -137,6 +238,12 @@ expect_judge_fails() {
   fi
   if [[ ! -s "$err" ]]; then
     printf 'self-check failure for %s produced no explanation\n' "$label" >&2
+    rm -f "$err"
+    exit 1
+  fi
+  if [[ -n "$need" ]] && ! grep -q "$need" "$err"; then
+    printf 'self-check failure for %s did not name %s\n' "$label" "$need" >&2
+    cat "$err" >&2
     rm -f "$err"
     exit 1
   fi
@@ -245,11 +352,43 @@ self_check() {
   printf '%s\n' 'connect(3, 0x7ffee, 16) = 0' >"$tmp/opaque-connect.txt"
   expect_judge_fails "$tmp/opaque-connect.txt" "connect without a decoded family"
 
+  # The runner's strace -f column and its decoded netlink payload. The two
+  # spaces after a 4-digit pid are strace's width-5 pid field. ifi_family and
+  # ifa_family are payload fields, not the sockaddr.
+  printf '%s\n' \
+    '2733  socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
+    '2733  sendto(3, [{nlmsg_len=20, nlmsg_type=RTM_GETLINK, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1790695426, nlmsg_pid=0}, {ifi_family=AF_UNSPEC, ...}], 20, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 20' \
+    '2733  sendto(3, [{nlmsg_len=20, nlmsg_type=RTM_GETADDR, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1790695427, nlmsg_pid=0}, {ifa_family=AF_UNSPEC, ...}], 20, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 20' \
+    >"$tmp/ci-devices.txt"
+  judge "$tmp/ci-devices.txt"
+  exactly_one_netlink "$tmp/ci-devices.txt" "ci netlink devices"
+
+  printf '%s\n' \
+    '2733  sendto(3, [{nlmsg_len=20, nlmsg_type=RTM_GETLINK, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1790695426, nlmsg_pid=0}, {ifi_family=AF_UNSPEC, ...}], 20, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 20' \
+    >"$tmp/ci-unmatched.txt"
+  expect_judge_fails "$tmp/ci-unmatched.txt" "pid-prefixed sendto with no socket" "disallowed sendto"
+
+  printf '%s\n' \
+    '2733  socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE <unfinished ...>' \
+    '2733  <... socket resumed>) = 3' \
+    '2733  sendto(3, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
+    >"$tmp/resumed.txt"
+  judge "$tmp/resumed.txt"
+  exactly_one_netlink "$tmp/resumed.txt" "resumed netlink socket"
+
+  printf '%s\n' \
+    '2733  socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
+    '2734  sendto(3, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
+    >"$tmp/other-tid.txt"
+  expect_judge_fails "$tmp/other-tid.txt" "sendto on another tid" "disallowed sendto"
+
   sandbox_setup_failure_exits_nonzero "$tmp"
   enabled_passive_traces_are_required "$tmp"
 
   trap - RETURN
   rm -rf "$tmp"
+  printf '%s\n' "netconnect syscall proof self-check: pid-prefixed netlink sendto matches its socket"
+  printf '%s\n' "netconnect syscall proof self-check: sendto without a matching socket fails"
   printf '%s\n' "netconnect syscall proof self-check: ok"
 }
 
@@ -446,19 +585,9 @@ expect_status_socket_fails() {
 }
 
 # Print how many socket() calls the trace contains, successful or not.
+# A split unfinished/resumed socket is one call.
 socket_call_count() {
-  python3 - "$1" <<'PY'
-import re
-import sys
-
-SOCKET = re.compile(r"\bsocket\(")
-count = 0
-with open(sys.argv[1], errors="replace") as handle:
-    for raw in handle:
-        if SOCKET.search(raw):
-            count += 1
-print(count)
-PY
+  read_trace socket-count "$1"
 }
 
 # Enabled status exits 0 and opens nothing. A non-zero exit, including the
@@ -483,48 +612,7 @@ assert_enabled_status() {
 # other family was opened, including AF_UNIX. A failed socket() of another
 # family still counts as that family.
 netlink_socket_count() {
-  python3 - "$1" <<'PY'
-import re
-import sys
-
-NUM_ALLOWED = {"1": "UNIX", "16": "NETLINK"}
-SOCKET = re.compile(r"\bsocket\(([^,\s)]+)")
-RET = re.compile(r"=\s*(-?\d+)\b")
-
-
-def family_name(token):
-    if token in NUM_ALLOWED:
-        return NUM_ALLOWED[token]
-    match = re.fullmatch(r"(?:AF|PF)_(.+)", token)
-    if match:
-        return match.group(1)
-    if token.isdigit():
-        return "NUM:" + token
-    return token
-
-
-netlink = 0
-other = []
-with open(sys.argv[1], errors="replace") as handle:
-    for raw in handle:
-        line = raw.rstrip("\n")
-        socket = SOCKET.search(line)
-        if not socket:
-            continue
-        fam = family_name(socket.group(1))
-        returned = RET.search(line)
-        opened = returned is not None and int(returned.group(1)) >= 0
-        if fam != "NETLINK":
-            other.append(fam)
-            continue
-        if opened:
-            netlink += 1
-if other:
-    print("disallowed socket families: %s" % ",".join(other), file=sys.stderr)
-    print(netlink)
-    sys.exit(2)
-print(netlink)
-PY
+  read_trace netlink-count "$1"
 }
 
 exactly_one_netlink() {
@@ -637,14 +725,24 @@ trace_command() {
     exit 1
   fi
   if [[ "$code" -ne "$expect" ]]; then
+    printf 'filtered trace for netconnect %s:\n' "$action" >&2
+    cat "$trace" >&2
     printf 'netconnect %s exited %s; expected %s\n' "$action" "$code" "$expect" >&2
     cat "$err" >&2
     exit 1
   fi
-  if ! judge "$trace"; then
-    printf 'disallowed socket call while tracing netconnect %s\n' "$action" >&2
+  local judged kinds
+  judged="$(mktemp)"
+  if ! judge "$trace" 2>"$judged"; then
+    cat "$judged" >&2
+    printf 'filtered trace for netconnect %s:\n' "$action" >&2
+    cat "$trace" >&2
+    kinds="$(sed -n 's/^netconnect syscall proof: [0-9]* disallowed \(.*\) call(s)$/\1/p' "$judged" | tail -1)"
+    printf 'disallowed %s while tracing netconnect %s\n' "${kinds:-call}" "$action" >&2
+    rm -f "$judged"
     exit 1
   fi
+  rm -f "$judged"
 }
 
 prove() {

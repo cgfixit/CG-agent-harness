@@ -44,6 +44,14 @@ fn self_check_rejects_packet_sockets_and_multicast_membership() {
         stdout.contains("devices opens exactly one AF_NETLINK socket"),
         "devices must open exactly one netlink socket\nstdout={stdout}\nstderr={stderr}"
     );
+    assert!(
+        stdout.contains("pid-prefixed netlink sendto matches its socket"),
+        "the runner's pid-prefixed netlink sendto must pass\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("sendto without a matching socket fails"),
+        "a sendto with no socket() line must fail\nstdout={stdout}\nstderr={stderr}"
+    );
 }
 
 #[test]
@@ -60,6 +68,9 @@ fn proof_refuses_to_skip_when_unshare_or_strace_is_missing() {
     assert!(text.contains("assert_enabled_status"));
     assert!(text.contains("exactly_one_netlink"));
     assert!(text.contains("enabled status opened no sockets"));
+    assert!(text.contains("ifi_family=AF_UNSPEC"));
+    assert!(text.contains("ifa_family=AF_UNSPEC"));
+    assert!(!text.contains("disallowed socket call"));
     assert!(text.contains("refusing to skip"));
     assert!(text.contains("apparmor_restrict_unprivileged_userns"));
     assert!(!text.contains("|| true"));
