@@ -16,6 +16,7 @@
 pub mod agentic;
 pub mod common;
 pub mod llm;
+pub mod netconnect;
 pub mod server;
 pub mod shim;
 

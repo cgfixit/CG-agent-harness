@@ -234,6 +234,14 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "mcp.enabled",
         "mcp.sse_allow_loopback",
         "mcp.server.enabled",
+        "netconnect.enabled",
+        "netconnect.passive_listen",
+        "netconnect.discovery",
+        "netconnect.port_scan",
+        "netconnect.diagnostics",
+        "netconnect.throughput",
+        "netconnect.anomaly_detection",
+        "netconnect.home_automation",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }
@@ -283,6 +291,18 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         cfg.flag_is_true("security.api_key_optional"),
         "direct local use must ship without a key requirement"
     );
+    assert!(
+        cfg.str_list("netconnect.allowed_cidrs").is_empty(),
+        "netconnect scope must ship empty"
+    );
+    let netconnect = cgagentharness::netconnect::NetconnectConfig::from_config(&cfg).unwrap();
+    assert!(netconnect.scope.is_empty());
+    assert!(netconnect.warnings.is_empty());
+    assert!(netconnect.throughput_endpoint.is_none());
+    for tier in cgagentharness::netconnect::Tier::ALL {
+        assert!(!netconnect.tier_enabled(tier));
+        assert!(!netconnect.tier_may_run(tier));
+    }
 }
 
 #[test]
@@ -575,12 +595,14 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: evidence guidance, merge order, and the ELI5 footer counted 1614 words, rounded up to the next 100.
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1700),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
-    ("AGENTS.md", Agent, 1800),
+    // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
+    ("AGENTS.md", Agent, 1900),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     ("CLAUDE.md", Agent, 300),
     // why: #237 and #243 added the cloud-truncation and web-budget contracts;
     // #235 the process-global CSRF note and the I6 process map.
-    ("INVARIANTS.md", Root, 5500),
+    // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
+    ("INVARIANTS.md", Root, 5700),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ANALYTICS.md", Guide, 900),

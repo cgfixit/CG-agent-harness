@@ -366,7 +366,7 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | GitHub coding | Explicit `agentic.repo`, gates and prerequisites in [coding pipeline](CODING_PIPELINE.md); `/github` reports status | Separate governed child-process workflow; a chat reply does not execute Git commands |
 | Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
 | `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
-| `netconnect` | Not implemented in this app | No arbitrary network connector; `/web` restrictions still apply |
+| `netconnect` | Passive CLI `status` and `devices`; gates ship false | No console tool or scan. Empty scope refuses armed tiers. `/web` still applies |
 | `sqlconnect` | Not implemented in this app | No database connection configuration, query tool or ingestion workflow |
 | `github-public` catalog entry | Inventory only | Does not provide an independent public-repository connector |
 | `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |

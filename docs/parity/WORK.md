@@ -35,8 +35,9 @@ FACT upgrades against tip (HTTP/fixture evidence, native still `unavailable`):
 FACT non-upgrades (do not invent):
 
 - **C1–C10** and **I1–I8** remain `missing`. Tip has no fsconnect, sqlconnect,
-  netconnect, telegram, or opentweet package. The clone jail is not a general
-  filesystem connector.
+  telegram, or opentweet package. `netconnect` is fail-closed config, scope,
+  and a passive CLI only (`INVARIANTS.md`); no tool, slash command, or scan.
+  The clone jail is not a general filesystem connector.
 - Native column stays `unavailable` for every row. Chromium / HTTP tests are
   not WKWebView acceptance. See [DESKTOP_ACCEPTANCE.md](../DESKTOP_ACCEPTANCE.md).
 
