@@ -49,6 +49,11 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   `docs/STRUCTURED_MEMORY.md`; operator view: `docs/MEMORY_GUIDE.md`.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim`, never called in-process from the server).
+- `cgagentharness netconnect status|devices` is passive and read-only.
+  `netconnect` gates ship false; empty `allowed_cidrs` refuses armed tiers.
+  Scope is operator IPv4 CIDRs inside RFC1918 or 127/8 at prefix /16 or
+  longer, never local interfaces. Invalid scope exits 3; a closed master
+  gate exits 4. See the netconnect section of `INVARIANTS.md`.
 - Exit codes are an API: `0` ok, `2` failed, `3` env/config, `4` write refused.
   A non-zero child exit is HTTP 200 with `ok=false`; only shim failures map to
   400/502/504 and the disabled-layer banner to 409.

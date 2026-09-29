@@ -680,3 +680,27 @@ Audits contain recognized tools, public IDs and coarse outcomes, never content.
 All gateway settings remain restart-only, outside the 22-key reload allowlist.
 Remote exposure needs the deployment acceptance in `docs/MCP_SERVER.md`; nothing
 here opens a LAN/public service or tunnel.
+
+## Netconnect is fail-closed and LAN-scoped
+
+`netconnect.enabled` and every tier flag ship false: `passive_listen`,
+`discovery`, `port_scan`, `diagnostics`, `throughput`, `anomaly_detection`,
+`home_automation`. A tier is armed only when both `enabled` and that flag are
+the literal boolean `true`. Quoted `"true"` is off. `allowed_cidrs` ships
+empty, and an empty scope refuses every armed tier. Scope is never derived
+from local interfaces. Entries are IPv4 CIDRs that lie fully inside RFC1918
+(10/8, 172.16/12, 192.168/16) or 127/8, with prefix length 16 through 32.
+Config load rejects IPv6, a wider prefix, 0.0.0.0/8, link-local
+169.254.0.0/16, CGNAT 100.64.0.0/10, multicast 224.0.0.0/4, 240.0.0.0/4, and
+255.255.255.255. `Scope::check_target` rechecks the final address before any
+later connect; hostnames are not targets. `status` and `devices` are passive:
+they send no packets. `passive_listen` is a flag only (joining multicast is
+not passive). Device strings are length-capped, stripped of controls, and
+marked untrusted, and are never argv, commands, or paths. `throughput` has no
+default endpoint; a set flag or endpoint warns at load because it is internet
+egress outside this scope. No secret belongs in this config. These keys are
+outside the 22-key reload allowlist. A false master gate exits 4. Invalid
+scope exits 3.
+
+- Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`, and
+  `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
