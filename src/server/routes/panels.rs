@@ -49,11 +49,16 @@ pub async fn tools(State(state): State<Arc<AppState>>) -> Json<Value> {
 ///
 /// Rows come only from `state.netconnect_sources` through `panel_sources`
 /// (which calls `collect_passive`). Those sources are fixed at startup.
+/// Collection runs on the blocking pool: it reads local files and, on macOS,
+/// waits on fixed `arp`/`netstat` children, so no async worker waits on it.
 pub async fn netconnect_panel(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
     let cfg = crate::netconnect::NetconnectConfig::from_config(state.cfg.as_ref())
         .map_err(|err| ApiError::from_err(StatusCode::BAD_REQUEST, &err))?;
-    let body = crate::netconnect::tools::panel_sources(&cfg, &state.netconnect_sources)
-        .map_err(|err| ApiError::from_err(StatusCode::BAD_GATEWAY, &err))?;
+    let body = super::structured_memory::off_worker(move || {
+        crate::netconnect::tools::panel_sources(&cfg, &state.netconnect_sources)
+    })
+    .await
+    .map_err(|err| ApiError::from_err(StatusCode::BAD_GATEWAY, &err))?;
     Ok(Json(body))
 }
 
