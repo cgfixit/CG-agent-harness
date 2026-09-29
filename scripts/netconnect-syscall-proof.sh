@@ -13,13 +13,18 @@
 # A sendto, sendmsg, or sendmmsg is allowed only when that same line labels
 # the descriptor NETLINK or UNIX, for example `3<NETLINK:[ROUTE:...]>` or
 # `3<UNIX:[...]>`. TCP, UDP, UDPv6, RAW, a bare `socket:[inode]`, and an
-# unlabeled descriptor fail. A bare inode is unknown. The judge keeps no
-# descriptor map: a prior socket() line does not make a send legal, and a
-# decoded sockaddr or payload family does not either. Payload fields such
-# as ifi_family and ifa_family are not the descriptor type.
-# socket() lines are still counted by their decoded family. strace -f prints
-# a pid column, and it may split a call into "<unfinished ...>" and
-# "resumed" lines; the counts reassemble those before counting.
+# unlabeled descriptor fail. `sendto(3, ...)` has no `<...>` label and fails,
+# which covers a strace that ignores `-yy` and a trace captured without it.
+# A bare inode is unknown. The judge keeps no descriptor map: a prior
+# socket() line does not make a send legal, and a decoded sockaddr or
+# payload family does not either. Payload fields such as ifi_family and
+# ifa_family are not the descriptor type.
+# socket() counts use only the socket() call and its decoded family
+# argument. A `-yy` label never changes a count and never authorizes a
+# socket() or connect(). AF_INET, AF_INET6, and AF_PACKET fail whatever
+# label the descriptor carries. strace -f prints a pid column, and it may
+# split a call into "<unfinished ...>" and "resumed" lines; the counts
+# reassemble those before counting.
 # The judge allows AF_NETLINK and AF_UNIX socket() and connect calls.
 # glibc getifaddrs opens AF_NETLINK. Any other socket family, any connect
 # that is not one of those families, and any multicast-membership setsockopt
@@ -68,9 +73,10 @@ UNFINISHED = re.compile(r"^(.*)\s*<unfinished \.\.\.>\s*$")
 RESUMED = re.compile(r"^<\.\.\.\s+\w+\s+resumed>\s*(.*)$")
 SOCKET = re.compile(r"^socket\(([^,\s)]+)")
 # End-anchored so nlmsg_len=20 is not a return code. -yy appends <TYPE:[...]>
-# with no space: `= 5<NETLINK:[161353]>`.
-RET = re.compile(r"=\s*(-?\d+)(?:<[^>]*>)?(?:\s+\S.*)?$")
-SEND = re.compile(r"^(sendto|sendmsg|sendmmsg)\((\d+)(?:<([^>]*)>)?")
+# with no space: `= 5<NETLINK:[161353]>`. TCP labels contain `->`, so the
+# annotation is `<` through the last `>` on the return, not the first.
+RET = re.compile(r"=\s*(-?\d+)(?:<.*>)?(?:\s+\S.*)?$")
+SEND = re.compile(r"^(sendto|sendmsg|sendmmsg)\((\d+)(?:<(.+)>)?(?:,|\))")
 CONNECT = re.compile(r"^connect\(")
 # The sockaddr family only. ifi_family and ifa_family sit inside the payload.
 SA = re.compile(r"\bsa_family=(?:(?:AF|PF)_([A-Z0-9]+)|(\d+))")
@@ -155,6 +161,8 @@ if mode == "netlink-count":
         socket = SOCKET.match(body)
         if not socket:
             continue
+        # Family is the socket() argument only. The -yy annotation on the
+        # returned descriptor is not a family.
         fam = family_name(socket.group(1))
         opened = returned_fd(body) is not None
         if fam != "NETLINK":
@@ -191,14 +199,17 @@ for _pid, body in calls:
         continue
     socket = SOCKET.match(body)
     if socket:
+        # The first argument is the family. A NETLINK or UNIX label on the
+        # returned fd does not make AF_INET, AF_INET6, or AF_PACKET legal.
         fam = family_name(socket.group(1))
         if fam not in ALLOWED:
             reject()
         continue
     send = SEND.match(body)
     if send:
-        # The -yy label on this line is the only authority. A sockaddr, a
-        # payload family, or an earlier socket() does not make a send legal.
+        # The -yy label on this line is the only authority. No <...> label
+        # is a failure, including sendto(3, ...). A sockaddr, a payload
+        # family, or an earlier socket() does not make a send legal.
         if not send_label_allowed(send.group(3)):
             reject()
         continue
@@ -397,6 +408,46 @@ self_check() {
     >"$tmp/bare-inode.txt"
   expect_judge_fails "$tmp/bare-inode.txt" "sendto on a bare socket inode" "disallowed sendto"
 
+  # No <...> label at all. A strace that ignores -yy prints sendto(3, ...).
+  printf '%s\n' 'sendto(3, ...)' >"$tmp/unlabeled-sendto.txt"
+  expect_judge_fails "$tmp/unlabeled-sendto.txt" "unlabeled sendto" "disallowed sendto"
+
+  # An inet socket() or connect() fails even when -yy labels the fd NETLINK
+  # or UNIX. The label is not the family.
+  printf '%s\n' \
+    'socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) = 3<NETLINK:[ROUTE]>' \
+    >"$tmp/inet-labeled-netlink.txt"
+  expect_judge_fails "$tmp/inet-labeled-netlink.txt" "AF_INET socket labeled NETLINK" "disallowed socket"
+  if exactly_one_netlink "$tmp/inet-labeled-netlink.txt" "inet socket labeled netlink"; then
+    printf '%s\n' "self-check counted an AF_INET socket as AF_NETLINK because of a -yy label" >&2
+    exit 1
+  fi
+  printf '%s\n' \
+    'socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP) = 3<UNIX:[123]>' \
+    >"$tmp/inet6-labeled-unix.txt"
+  expect_judge_fails "$tmp/inet6-labeled-unix.txt" "AF_INET6 socket labeled UNIX" "disallowed socket"
+  printf '%s\n' \
+    'socket(AF_PACKET, SOCK_RAW, 768) = 4<NETLINK:[ROUTE]>' \
+    >"$tmp/packet-labeled-netlink.txt"
+  expect_judge_fails "$tmp/packet-labeled-netlink.txt" "AF_PACKET socket labeled NETLINK" "disallowed socket"
+  printf '%s\n' \
+    'connect(3<NETLINK:[ROUTE]>, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("192.0.2.1")}, 16) = 0' \
+    >"$tmp/connect-labeled-inet.txt"
+  expect_judge_fails "$tmp/connect-labeled-inet.txt" "AF_INET connect on a NETLINK label" "disallowed connect"
+  printf '%s\n' \
+    'connect(3<UNIX:[123]>, {sa_family=AF_INET6, sin6_port=htons(80)}, 28) = 0' \
+    >"$tmp/connect-labeled-inet6.txt"
+  expect_judge_fails "$tmp/connect-labeled-inet6.txt" "AF_INET6 connect on a UNIX label" "disallowed connect"
+  printf '%s\n' \
+    'connect(3<NETLINK:[ROUTE]>, {sa_family=AF_PACKET, sll_protocol=htons(0x800)}, 20) = 0' \
+    >"$tmp/connect-labeled-packet.txt"
+  expect_judge_fails "$tmp/connect-labeled-packet.txt" "AF_PACKET connect on a NETLINK label" "disallowed connect"
+  # The return label is not the family. A TCP annotation does not hide AF_NETLINK.
+  printf '%s\n' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3<TCP:[127.0.0.1:1->127.0.0.1:80]>' \
+    >"$tmp/netlink-labeled-tcp.txt"
+  exactly_one_netlink "$tmp/netlink-labeled-tcp.txt" "netlink socket with a tcp label"
+
   printf '%s\n' \
     '2733  socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE <unfinished ...>' \
     '2733  <... socket resumed>) = 3<NETLINK:[161353]>' \
@@ -413,6 +464,8 @@ self_check() {
   printf '%s\n' "netconnect syscall proof self-check: pid-prefixed netlink-labeled sendto passes"
   printf '%s\n' "netconnect syscall proof self-check: tcp and udp labeled sendto fails"
   printf '%s\n' "netconnect syscall proof self-check: bare socket inode sendto fails"
+  printf '%s\n' "netconnect syscall proof self-check: unlabeled sendto fails"
+  printf '%s\n' "netconnect syscall proof self-check: inet socket or connect with a netlink or unix label fails"
   printf '%s\n' "netconnect syscall proof self-check: ok"
 }
 

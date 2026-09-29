@@ -57,6 +57,14 @@ fn self_check_rejects_packet_sockets_and_multicast_membership() {
         "a bare socket:[inode] sendto must fail\nstdout={stdout}\nstderr={stderr}"
     );
     assert!(
+        stdout.contains("unlabeled sendto fails"),
+        "a sendto with no descriptor label must fail\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("inet socket or connect with a netlink or unix label fails"),
+        "an inet socket or connect must fail even when -yy labels it NETLINK or UNIX\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
         stdout.contains("strace -yy runs inside unshare"),
         "strace -yy must run inside unshare\nstdout={stdout}\nstderr={stderr}"
     );
@@ -73,6 +81,8 @@ fn proof_refuses_to_skip_when_unshare_or_strace_is_missing() {
     assert!(text.contains("<TCP:"));
     assert!(text.contains("<UDP:"));
     assert!(text.contains("socket:[12345]"));
+    assert!(text.contains("sendto(3, ...)"));
+    assert!(text.contains("socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) = 3<NETLINK:[ROUTE]>"));
     assert!(text.contains("AF_NETLINK"));
     assert!(text.contains("AF_UNIX"));
     assert!(text.contains("IP_ADD_MEMBERSHIP"));
