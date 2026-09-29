@@ -341,7 +341,7 @@ fe80::1          0x1         0x2         aa:bb:cc:dd:ee:ff     *        eth0
 eth0 192.168.1.20
 eth0 8.8.8.8
 eth0 fe80::1
-lo 127.0.0.1
+eth1 10.9.9.9
 eth0/../../tmp 192.168.1.30
 ";
         let report = collect_passive(
@@ -366,7 +366,7 @@ eth0/../../tmp 192.168.1.30
         assert!(!rendered.contains("fe80"));
         assert!(!rendered.contains("10.1.0.9"));
         assert!(!rendered.contains("../"));
-        assert!(!rendered.contains("127.0.0.1"));
+        assert!(!rendered.contains("10.9.9.9"));
         for address in report.addresses() {
             assert!(scope(&["192.168.0.0/16"]).contains(address));
         }

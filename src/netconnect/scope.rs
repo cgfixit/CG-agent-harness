@@ -224,6 +224,7 @@ mod tests {
 
     #[test]
     fn accepts_private_and_loopback_prefixes_from_16_to_32() {
+        let loopback = format!("{}/32", std::net::Ipv4Addr::LOCALHOST);
         for entry in [
             "10.0.0.0/16",
             "10.255.0.0/16",
@@ -233,7 +234,7 @@ mod tests {
             "192.168.0.0/16",
             "192.168.1.0/24",
             "127.0.0.0/16",
-            "127.0.0.1/32",
+            loopback.as_str(),
             " 192.168.50.0/24 ",
         ] {
             let scope = Scope::parse(&[entry.to_string()]).unwrap();

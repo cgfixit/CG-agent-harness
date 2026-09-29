@@ -15,7 +15,9 @@ use super::parse::{parse_bsd_arp, parse_bsd_netstat};
 use super::parse::{parse_proc_net_arp, parse_proc_net_route};
 use super::parse::{InterfaceRecord, NeighborRecord, RouteRecord};
 
+#[cfg(target_os = "linux")]
 const PROC_ARP: &str = "/proc/net/arp";
+#[cfg(target_os = "linux")]
 const PROC_ROUTE: &str = "/proc/net/route";
 
 #[derive(Debug, Default)]
@@ -170,8 +172,6 @@ impl Drop for Ifaddrs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn passive_sources_do_not_open_raw_sockets_or_a_shell() {
         let text = include_str!("sources.rs");
@@ -194,7 +194,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn live_linux_read_keeps_only_in_scope_addresses() {
-        if !std::path::Path::new(PROC_ARP).is_file() {
+        if !std::path::Path::new(super::PROC_ARP).is_file() {
             return;
         }
         let scope = super::super::Scope::parse(&[
@@ -204,12 +204,26 @@ mod tests {
             "127.0.0.0/16".to_string(),
         ])
         .unwrap();
-        let report = super::super::collect_passive(&scope, &LiveNeighbors, &LiveRoutes, &LiveInterfaces, 64).unwrap();
+        let report = super::super::collect_passive(
+            &scope,
+            &super::LiveNeighbors,
+            &super::LiveRoutes,
+            &super::LiveInterfaces,
+            64,
+        )
+        .unwrap();
         for address in report.addresses() {
             assert!(scope.contains(address));
         }
         let empty = super::super::Scope::parse(&[]).unwrap();
-        let dropped = super::super::collect_passive(&empty, &LiveNeighbors, &LiveRoutes, &LiveInterfaces, 64).unwrap();
+        let dropped = super::super::collect_passive(
+            &empty,
+            &super::LiveNeighbors,
+            &super::LiveRoutes,
+            &super::LiveInterfaces,
+            64,
+        )
+        .unwrap();
         assert!(dropped.addresses().is_empty());
     }
 }

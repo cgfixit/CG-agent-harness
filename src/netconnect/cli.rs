@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn throughput_warning_does_not_echo_the_endpoint() {
         let (_dir, path) = write_config(
-            "netconnect:\n  enabled: false\n  throughput: true\n  throughput_endpoint: http://throughput-marker.example/x\n",
+            "netconnect:\n  enabled: false\n  throughput: true\n  throughput_endpoint: https://throughput-marker.example/x\n",
         );
         let outcome = execute(Some(path), Action::Status);
         assert_eq!(outcome.code, EXIT_REFUSED);

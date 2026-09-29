@@ -387,11 +387,11 @@ mod tests {
         let flag = load("netconnect:\n  throughput: true\n");
         assert_eq!(flag.warnings, vec![THROUGHPUT_WARNING.to_string()]);
         assert!(!flag.tier_enabled(Tier::Throughput));
-        let endpoint = load("netconnect:\n  throughput_endpoint: http://203.0.113.5/speed\n");
+        let endpoint = load("netconnect:\n  throughput_endpoint: https://203.0.113.5/speed\n");
         assert_eq!(endpoint.warnings, vec![THROUGHPUT_WARNING.to_string()]);
         assert_eq!(
             endpoint.throughput_endpoint.as_deref(),
-            Some("http://203.0.113.5/speed")
+            Some("https://203.0.113.5/speed")
         );
         assert!(!endpoint.warnings[0].contains("203.0.113.5"));
         let quoted = load("netconnect:\n  throughput: \"true\"\n");
@@ -408,7 +408,7 @@ mod tests {
         assert!(err.is("CONFIG_ERROR"));
         assert!(!err.message.contains(secret));
         assert!(NetconnectConfig::from_config(&app(
-            "netconnect:\n  ha_endpoint: http://192.168.1.2:8123/api?token=s3cret-token\n"
+            "netconnect:\n  ha_endpoint: https://192.168.1.2:8123/api?token=s3cret-token\n"
         ))
         .unwrap_err()
         .message

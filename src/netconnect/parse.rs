@@ -390,11 +390,11 @@ fe80::%en0         fe80::1            UGc            en0
 eth0 192.168.1.10
 eth0 8.8.8.8
 eth0 fe80::1
-lo 127.0.0.1
+eth1 10.0.0.1
 bogus
 ",
         );
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[2].address, Ipv4Addr::LOCALHOST);
+        assert_eq!(rows[2].address, Ipv4Addr::new(10, 0, 0, 1));
     }
 }
