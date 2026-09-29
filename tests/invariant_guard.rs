@@ -646,7 +646,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: #249 documents Spend under Analytics and the conditional Job webhooks button (46,536 words, rounded up to the next 500).
 // why: PR template evidence guidance raised the Agent total to 22841, rounded up to the next 500; then
 // trimming AGENTS.md and CLAUDE.md (moved to the root) brought it to 22186, rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 47_000), (Evidence, 3_500), (Agent, 22_500)];
+// why: netconnect LAN-scope bullet in AGENTS.md; Agent total 22541 words, rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 47_000), (Evidence, 3_500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
