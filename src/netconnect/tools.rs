@@ -240,9 +240,10 @@ fn devices_body(cfg: &NetconnectConfig, report: &PassiveReport) -> Value {
 
 /// The three passive sources the panel and device tool share.
 ///
-/// Production installs [`PassiveSources::live`]. Tests replace that value on
-/// the server state so `GET /api/netconnect` and [`call_devices`] both reach
-/// rows only through these traits and [`collect_passive`].
+/// [`crate::server::build_app`] installs [`PassiveSources::live`] once.
+/// Tests pass fixtures only through [`crate::server::build_app_with_sources`]
+/// before the server listens. `GET /api/netconnect` and [`call_devices`] then
+/// reach rows only through these traits and [`collect_passive`].
 #[derive(Clone)]
 pub struct PassiveSources {
     neighbors: NeighborSlot,

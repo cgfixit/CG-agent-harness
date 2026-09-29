@@ -996,19 +996,6 @@ async fn enabled_passive_panel_route_returns_sanitized_fixtures() {
     use cgagentharness::netconnect::{FixtureInterfaces, FixtureNeighbors, FixtureRoutes, NetconnectConfig};
 
     let model = start_mock_model().await;
-    let server = spawn_server(
-        &model.base_url(),
-        ServerOptions::default()
-            .with("netconnect.enabled", "true")
-            .with("netconnect.allowed_cidrs", "['127.0.0.0/16']"),
-    )
-    .await;
-    let cfg = NetconnectConfig::from_config(server.state.cfg.as_ref()).unwrap();
-    assert!(cfg.enabled);
-    assert_eq!(cfg.scope.entries(), vec!["127.0.0.0/16".to_string()]);
-    for tier in cgagentharness::netconnect::Tier::ALL {
-        assert!(!cfg.tier_flag(tier), "{}", tier.key());
-    }
     let loads = Arc::new(AtomicUsize::new(0));
     let sources = PassiveSources::fixtures(
         FixtureNeighbors::bsd_arp(
@@ -1023,11 +1010,28 @@ async fn enabled_passive_panel_route_returns_sanitized_fixtures() {
         FixtureInterfaces::from_lines("lo0 127.0.0.1\nen0 192.168.1.20\n"),
         Arc::clone(&loads),
     );
-    *server
-        .state
-        .netconnect_sources
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner()) = sources.clone();
+    let PreparedServer {
+        tmp,
+        home_dir,
+        app_opts,
+        api_key,
+    } = prepare_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("netconnect.enabled", "true")
+            .with("netconnect.allowed_cidrs", "['127.0.0.0/16']"),
+    )
+    .await;
+    let (router, state) = cgagentharness::server::build_app_with_sources(app_opts, sources.clone())
+        .await
+        .unwrap();
+    let server = start_test_server(tmp, home_dir, api_key, router, state).await;
+    let cfg = NetconnectConfig::from_config(server.state.cfg.as_ref()).unwrap();
+    assert!(cfg.enabled);
+    assert_eq!(cfg.scope.entries(), vec!["127.0.0.0/16".to_string()]);
+    for tier in cgagentharness::netconnect::Tier::ALL {
+        assert!(!cfg.tier_flag(tier), "{}", tier.key());
+    }
 
     let port = server.addr.port();
     let bad_host = exchange(
@@ -1112,16 +1116,20 @@ async fn disabled_panel_route_does_not_load_injected_sources() {
     use cgagentharness::netconnect::NetconnectConfig;
 
     let model = start_mock_model().await;
-    let server = spawn_server(&model.base_url(), ServerOptions::default()).await;
-    let cfg = NetconnectConfig::from_config(server.state.cfg.as_ref()).unwrap();
-    assert!(!cfg.enabled);
     let loads = Arc::new(AtomicUsize::new(0));
     let sources = PassiveSources::probe(Arc::clone(&loads));
-    *server
-        .state
-        .netconnect_sources
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner()) = sources.clone();
+    let PreparedServer {
+        tmp,
+        home_dir,
+        app_opts,
+        api_key,
+    } = prepare_server(&model.base_url(), ServerOptions::default()).await;
+    let (router, state) = cgagentharness::server::build_app_with_sources(app_opts, sources.clone())
+        .await
+        .unwrap();
+    let server = start_test_server(tmp, home_dir, api_key, router, state).await;
+    let cfg = NetconnectConfig::from_config(server.state.cfg.as_ref()).unwrap();
+    assert!(!cfg.enabled);
 
     let port = server.addr.port();
     let ok = exchange(
