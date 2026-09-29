@@ -260,7 +260,11 @@ impl Audit {
         let path = PathBuf::from(&configured);
         let path = if configured.is_empty()
             || path.is_absolute()
-            || path.components().any(|part| part == Component::ParentDir)
+            // Windows `\x` and `C:x` are not absolute, yet `join` lets their
+            // root or prefix replace the home; only plain names may remain.
+            || path
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
         {
             tracing::warn!("logging.audit_file must stay home-relative; using default");
             home.join(DEFAULT_AUDIT_FILE)
@@ -452,6 +456,13 @@ mod tests {
         }
         assert_eq!(written(&home.join("logs/audit.jsonl")).len(), 2);
         assert!(!outside.exists());
+
+        #[cfg(windows)]
+        for configured in [r"C:outside.jsonl", r"\outside.jsonl"] {
+            let yaml = format!("logging:\n  audit_file: {configured:?}\n");
+            let cfg = AppConfig::from_str(&yaml, &home.join("config.yaml")).unwrap();
+            assert_eq!(Audit::from_home(&home, &cfg).path(), home.join("logs/audit.jsonl"));
+        }
 
         let cfg = AppConfig::from_str(
             "logging:\n  audit_file: logs/audit..old.jsonl\n",
