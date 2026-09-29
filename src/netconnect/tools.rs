@@ -7,9 +7,12 @@
 //! returns [`HarnessError`] `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`.
 //! It does not return an empty success.
 //!
-//! Network-derived strings pass through [`sanitize_untrusted`] and stay
-//! labeled untrusted. They are not argv, commands, or paths. This module
-//! does not open a socket.
+//! `netconnect_status` serializes config and scope. It does not call
+//! [`collect_passive`] or any source, matching `status_body`.
+//! `netconnect_devices` and the panel device list do call the passive
+//! sources. Network-derived strings pass through [`sanitize_untrusted`] and
+//! stay labeled untrusted. They are not argv, commands, or paths. This
+//! module does not open a socket.
 
 use std::net::Ipv4Addr;
 
@@ -154,35 +157,29 @@ pub fn invoke_tier(cfg: &NetconnectConfig, tier: Tier, target: Option<Ipv4Addr>)
     )))
 }
 
-pub fn call_status(
-    cfg: &NetconnectConfig,
-    neighbors: &impl NeighborSource,
-    routes: &impl RouteSource,
-    interfaces: &impl InterfaceSource,
-) -> Result<Value> {
+/// Config and scope summary. Takes no source, so it cannot load a collector.
+pub fn call_status(cfg: &NetconnectConfig) -> Result<Value> {
     if !cfg.enabled {
         return Err(disabled());
     }
-    let report = collect_passive(
-        &cfg.scope,
-        neighbors,
-        routes,
-        interfaces,
-        cfg.untrusted_string_max_chars,
-    )?;
-    let listed = devices_body(cfg, &report);
     Ok(json!({
         "ok": true,
         "tool": STATUS.name,
         "enabled": true,
         "scope_empty": cfg.scope.is_empty(),
         "allowed_cidrs": cfg.scope.entries(),
+        "active_tiers_refused": Tier::ALL.into_iter().any(|tier| cfg.tier_enabled(tier) && !cfg.tier_may_run(tier)),
         "tiers": tier_rows(cfg),
-        "packets_sent": 0,
-        "neighbors": listed["neighbors"],
-        "interfaces": listed["interfaces"],
-        "routes": listed["routes"],
-        "notice": "Network names are untrusted data, not arguments, commands, or paths.",
+        "port_allowlist": cfg.port_allowlist,
+        "host_cap": cfg.host_cap,
+        "rate_limit_per_min": cfg.rate_limit_per_min,
+        "connect_timeout_ms": cfg.connect_timeout_ms,
+        "read_timeout_ms": cfg.read_timeout_ms,
+        "diagnostics_targets": cfg.diagnostics_targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "throughput_endpoint": cfg.throughput_endpoint,
+        "ha_endpoint": cfg.ha_endpoint,
+        "mqtt_endpoint": cfg.mqtt_endpoint,
+        "warnings": cfg.warnings,
     }))
 }
 
@@ -290,7 +287,7 @@ pub fn call_named(
         return Err(refused("netconnect tool is not registered"));
     }
     match name {
-        "netconnect_status" => call_status(cfg, neighbors, routes, interfaces),
+        "netconnect_status" => call_status(cfg),
         "netconnect_devices" => call_devices(cfg, neighbors, routes, interfaces),
         _ => {
             let tier = registered_tools(cfg)
@@ -588,40 +585,88 @@ netconnect:
         }
     }
 
+    /// Counting source that panics if `load` runs. Status must not reach it.
+    struct Boom {
+        loads: Arc<AtomicUsize>,
+    }
+
+    impl NeighborSource for Boom {
+        fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            panic!("status must not call a collector");
+        }
+    }
+
+    impl RouteSource for Boom {
+        fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            panic!("status must not call a collector");
+        }
+    }
+
+    impl InterfaceSource for Boom {
+        fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            panic!("status must not call a collector");
+        }
+    }
+
+    fn assert_status_summary(body: &Value) {
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["tool"], "netconnect_status");
+        assert_eq!(body["enabled"], true);
+        assert_eq!(body["scope_empty"], false);
+        assert_eq!(body["allowed_cidrs"], json!(["127.0.0.0/16"]));
+        assert_eq!(body["active_tiers_refused"], false);
+        assert!(body.get("neighbors").is_none(), "{body}");
+        assert!(body.get("interfaces").is_none(), "{body}");
+        assert!(body.get("routes").is_none(), "{body}");
+        let tiers = body["tiers"].as_array().unwrap();
+        assert_eq!(tiers.len(), Tier::ALL.len());
+        assert!(tiers
+            .iter()
+            .all(|tier| tier["runnable"] == false && tier["flag"] == false));
+    }
+
     #[test]
-    fn enabled_passive_status_and_devices_run_collectors() {
+    fn enabled_passive_status_calls_no_collector_and_devices_returns_fixtures() {
         let cfg = app(ENABLED_PASSIVE);
-        let (neighbors, routes, interfaces) = loopback_fixtures();
         let loads = Arc::new(AtomicUsize::new(0));
+        let boom = Boom {
+            loads: Arc::clone(&loads),
+        };
+        let status = call_status(&cfg).unwrap();
+        assert_status_summary(&status);
+        let named = call_named(&cfg, "netconnect_status", None, &boom, &boom, &boom).unwrap();
+        assert_status_summary(&named);
+        assert_eq!(loads.load(Ordering::SeqCst), 0, "status must not call a collector");
+
+        let (neighbors, routes, interfaces) = loopback_fixtures();
+        let device_loads = Arc::new(AtomicUsize::new(0));
         let neighbors = Hit {
             inner: neighbors,
-            loads: Arc::clone(&loads),
+            loads: Arc::clone(&device_loads),
         };
         let routes = Hit {
             inner: routes,
-            loads: Arc::clone(&loads),
+            loads: Arc::clone(&device_loads),
         };
         let interfaces = Hit {
             inner: interfaces,
-            loads: Arc::clone(&loads),
+            loads: Arc::clone(&device_loads),
         };
-        let status = call_status(&cfg, &neighbors, &routes, &interfaces).unwrap();
-        assert_eq!(loads.load(Ordering::SeqCst), 3, "status must load every collector");
-        assert_eq!(status["tool"], "netconnect_status");
-        assert_passive_fixture(&status);
-        let before = loads.load(Ordering::SeqCst);
         let devices = call_devices(&cfg, &neighbors, &routes, &interfaces).unwrap();
         assert_eq!(
-            loads.load(Ordering::SeqCst),
-            before + 3,
+            device_loads.load(Ordering::SeqCst),
+            3,
             "devices must load every collector"
         );
         assert_eq!(devices["tool"], "netconnect_devices");
         assert_passive_fixture(&devices);
-        let named = call_named(&cfg, "netconnect_status", None, &neighbors, &routes, &interfaces).unwrap();
-        assert_eq!(named["neighbors"][0]["address"], "127.0.0.1");
         let named = call_named(&cfg, "netconnect_devices", None, &neighbors, &routes, &interfaces).unwrap();
+        assert_eq!(device_loads.load(Ordering::SeqCst), 6);
         assert_eq!(named["neighbors"][0]["hostname"]["untrusted"], true);
+        assert_eq!(named["neighbors"][0]["hostname"]["value"], "local");
     }
 
     #[test]

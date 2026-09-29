@@ -433,7 +433,7 @@ above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persis
 | `/memory retrieve <query>`, `/memory search <query>` | Force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
 | `/model`, `/model use <name>`, `/model use grok\|claude` | Inspect/select a local chat model or explicit cloud provider; does not select the coding planner |
-| `/net status`, `/net devices` | Read-only LAN panel. Exact aliases: `/netconnect`, `/lan`, `/scan`, `/ports`, `/speed`. A near-miss only suggests. `ports`, `diag`, `watch`, and `device` do not scan or control a device |
+| `/net status`, `/net devices` | `status` is scope and gates and loads no collector. `devices` lists passive neighbors. Exact aliases: `/netconnect`, `/lan`, `/scan`, `/ports`, `/speed`. A near-miss only suggests. `ports`, `diag`, `watch`, and `device` do not scan or control a device |
 | `/prompt` | Private preview of the next chat system prompt |
 | `/registry` | Combined skill, tool and connector catalog |
 | `/session`, `list`, `info`, `new [title]`, `rename <title>`, `use <id>` | List sessions, inspect the current session, create, rename or reopen one |

@@ -50,6 +50,7 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim`, never called in-process from the server).
 - `cgagentharness netconnect status|devices` is passive and read-only.
+  `status` loads no collector; `devices` reads the passive tables.
   `netconnect` gates ship false; empty `allowed_cidrs` refuses armed tiers.
   Scope is operator IPv4 CIDRs inside RFC1918 or 127/8 at prefix /16 or
   longer, never local interfaces. Invalid scope exits 3; a closed master

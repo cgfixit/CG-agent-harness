@@ -693,8 +693,9 @@ from local interfaces. Entries are IPv4 CIDRs that lie fully inside RFC1918
 Config load rejects IPv6, a wider prefix, 0.0.0.0/8, link-local
 169.254.0.0/16, CGNAT 100.64.0.0/10, multicast 224.0.0.0/4, 240.0.0.0/4, and
 255.255.255.255. `Scope::check_target` rechecks the final address before any
-later connect; hostnames are not targets. `status` and `devices` are passive:
-they send no packets. `passive_listen` is a flag only (joining multicast is
+later connect; hostnames are not targets. `status` serializes config and
+scope and loads no collector. `devices` and the panel device list send no
+packets. `passive_listen` is a flag only (joining multicast is
 not passive). Device strings are length-capped, stripped of controls, and
 marked untrusted, and are never argv, commands, or paths. `throughput` has no
 default endpoint; a set flag or endpoint warns at load because it is internet

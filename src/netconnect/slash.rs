@@ -1,7 +1,9 @@
 //! `/net` and its exact aliases.
 //!
-//! An exact alias plus an exact read-only subcommand runs. A near-miss prints
-//! `did you mean` and does not read tables or connect. `device` is exact-only:
+//! An exact alias plus an exact read-only subcommand runs. `status` returns
+//! config and scope and does not load collectors. `devices` reads the passive
+//! tables. A near-miss prints `did you mean` and does not read tables or
+//! connect. `device` is exact-only:
 //! fuzzy matching never selects it, and the exact command always refuses.
 //! Active subcommands refuse when [`NetconnectConfig::tier_may_run`] is false
 //! and still do not connect when it is true.
@@ -208,7 +210,7 @@ fn dispatch(
     interfaces: &impl InterfaceSource,
 ) -> Outcome {
     let result = match sub {
-        "status" => tools::call_status(cfg, neighbors, routes, interfaces),
+        "status" => tools::call_status(cfg),
         "devices" => tools::call_devices(cfg, neighbors, routes, interfaces),
         "ports" => tools::invoke_tier(cfg, Tier::PortScan, None),
         "diag" => tools::invoke_tier(cfg, Tier::Diagnostics, None),
@@ -267,7 +269,7 @@ fn error_outcome(err: &HarnessError) -> Outcome {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use super::*;
@@ -364,8 +366,30 @@ mod tests {
         assert_eq!(status.body["enabled"], true);
     }
 
+    /// Counting source that panics if `/net status` loads a collector.
+    struct Boom(Arc<AtomicUsize>);
+
+    impl NeighborSource for Boom {
+        fn load(&self) -> crate::common::errors::Result<Vec<NeighborRecord>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            panic!("status must not call a collector");
+        }
+    }
+    impl RouteSource for Boom {
+        fn load(&self) -> crate::common::errors::Result<Vec<RouteRecord>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            panic!("status must not call a collector");
+        }
+    }
+    impl InterfaceSource for Boom {
+        fn load(&self) -> crate::common::errors::Result<Vec<InterfaceRecord>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            panic!("status must not call a collector");
+        }
+    }
+
     #[test]
-    fn enabled_passive_status_and_devices_show_fixture_data() {
+    fn enabled_passive_status_skips_collectors_and_devices_show_fixtures() {
         let loaded = cfg(
             "netconnect:\n  enabled: true\n  passive_listen: false\n  discovery: false\n  port_scan: false\n  \
              diagnostics: false\n  throughput: false\n  anomaly_detection: false\n  home_automation: false\n  \
@@ -374,6 +398,17 @@ mod tests {
         for tier in Tier::ALL {
             assert!(!loaded.tier_flag(tier), "{}", tier.key());
         }
+        let loads = Arc::new(AtomicUsize::new(0));
+        let boom = Boom(Arc::clone(&loads));
+        let status = evaluate(&loaded, "/net status", &boom, &boom, &boom);
+        assert_eq!(status.code, EXIT_OK, "{}", status.notice);
+        assert!(status.executed);
+        assert_eq!(status.body["enabled"], true);
+        assert_eq!(status.body["scope_empty"], false);
+        assert_eq!(status.body["allowed_cidrs"][0], "127.0.0.0/16");
+        assert!(status.body.get("neighbors").is_none());
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+
         let neighbors = FixtureNeighbors::bsd_arp(
             "lo\u{0001}cal (127.0.0.1) at ab:cd:ef:01:23:45 on lo0 ifscope [ethernet]\n\
              outsider (192.168.1.50) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]\n",
@@ -383,20 +418,18 @@ mod tests {
              127.0.0.1          127.0.0.1          UH           lo0\n",
         );
         let interfaces = FixtureInterfaces::from_lines("lo0 127.0.0.1\n");
-        for line in ["/net status", "/net devices"] {
-            let outcome = evaluate(&loaded, line, &neighbors, &routes, &interfaces);
-            assert_eq!(outcome.code, EXIT_OK, "{line}: {}", outcome.notice);
-            assert!(outcome.executed, "{line}");
-            assert_eq!(outcome.body["packets_sent"], 0, "{line}");
-            assert_eq!(outcome.body["neighbors"][0]["address"], "127.0.0.1", "{line}");
-            assert_eq!(outcome.body["neighbors"][0]["hostname"]["untrusted"], true, "{line}");
-            assert_eq!(outcome.body["neighbors"][0]["hostname"]["value"], "local", "{line}");
-            assert_eq!(outcome.body["interfaces"][0]["addresses"][0], "127.0.0.1", "{line}");
-            assert_eq!(outcome.body["interfaces"][0]["name"]["untrusted"], true, "{line}");
-            let rendered = outcome.body.to_string();
-            assert!(!rendered.contains('\u{0001}'), "{line}");
-            assert!(!rendered.contains("192.168"), "{line}");
-        }
+        let outcome = evaluate(&loaded, "/net devices", &neighbors, &routes, &interfaces);
+        assert_eq!(outcome.code, EXIT_OK, "{}", outcome.notice);
+        assert!(outcome.executed);
+        assert_eq!(outcome.body["packets_sent"], 0);
+        assert_eq!(outcome.body["neighbors"][0]["address"], "127.0.0.1");
+        assert_eq!(outcome.body["neighbors"][0]["hostname"]["untrusted"], true);
+        assert_eq!(outcome.body["neighbors"][0]["hostname"]["value"], "local");
+        assert_eq!(outcome.body["interfaces"][0]["addresses"][0], "127.0.0.1");
+        assert_eq!(outcome.body["interfaces"][0]["name"]["untrusted"], true);
+        let rendered = outcome.body.to_string();
+        assert!(!rendered.contains('\u{0001}'));
+        assert!(!rendered.contains("192.168"));
     }
 
     #[test]
