@@ -15,12 +15,16 @@
 //! module does not open a socket.
 
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
 use crate::common::errors::{HarnessError, Result};
 
-use super::collect::{collect_passive, InterfaceSource, NeighborSource, PassiveReport, RouteSource};
+use super::collect::{
+    collect_passive, FixtureInterfaces, FixtureNeighbors, FixtureRoutes, InterfaceSource, NeighborSource,
+    PassiveReport, RouteSource,
+};
 use super::config::{NetconnectConfig, Tier};
 use super::sanitize::{sanitize_untrusted, UntrustedString};
 use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
@@ -234,9 +238,193 @@ fn devices_body(cfg: &NetconnectConfig, report: &PassiveReport) -> Value {
     })
 }
 
+/// The three passive sources the panel and device tool share.
+///
+/// Production installs [`PassiveSources::live`]. Tests replace that value on
+/// the server state so `GET /api/netconnect` and [`call_devices`] both reach
+/// rows only through these traits and [`collect_passive`].
+#[derive(Clone)]
+pub struct PassiveSources {
+    neighbors: NeighborSlot,
+    routes: RouteSlot,
+    interfaces: InterfaceSlot,
+}
+
+enum NeighborSlot {
+    Live(LiveNeighbors),
+    Shared(Arc<dyn NeighborSource + Send + Sync>),
+}
+
+enum RouteSlot {
+    Live(LiveRoutes),
+    Shared(Arc<dyn RouteSource + Send + Sync>),
+}
+
+enum InterfaceSlot {
+    Live(LiveInterfaces),
+    Shared(Arc<dyn InterfaceSource + Send + Sync>),
+}
+
+impl Clone for NeighborSlot {
+    fn clone(&self) -> Self {
+        match self {
+            NeighborSlot::Live(_) => NeighborSlot::Live(LiveNeighbors),
+            NeighborSlot::Shared(source) => NeighborSlot::Shared(Arc::clone(source)),
+        }
+    }
+}
+
+impl Clone for RouteSlot {
+    fn clone(&self) -> Self {
+        match self {
+            RouteSlot::Live(_) => RouteSlot::Live(LiveRoutes),
+            RouteSlot::Shared(source) => RouteSlot::Shared(Arc::clone(source)),
+        }
+    }
+}
+
+impl Clone for InterfaceSlot {
+    fn clone(&self) -> Self {
+        match self {
+            InterfaceSlot::Live(_) => InterfaceSlot::Live(LiveInterfaces),
+            InterfaceSlot::Shared(source) => InterfaceSlot::Shared(Arc::clone(source)),
+        }
+    }
+}
+
+impl NeighborSource for NeighborSlot {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
+        match self {
+            NeighborSlot::Live(source) => source.load(),
+            NeighborSlot::Shared(source) => source.load(),
+        }
+    }
+}
+
+impl RouteSource for RouteSlot {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
+        match self {
+            RouteSlot::Live(source) => source.load(),
+            RouteSlot::Shared(source) => source.load(),
+        }
+    }
+}
+
+impl InterfaceSource for InterfaceSlot {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
+        match self {
+            InterfaceSlot::Live(source) => source.load(),
+            InterfaceSlot::Shared(source) => source.load(),
+        }
+    }
+}
+
+impl PassiveSources {
+    pub fn live() -> Self {
+        Self {
+            neighbors: NeighborSlot::Live(LiveNeighbors),
+            routes: RouteSlot::Live(LiveRoutes),
+            interfaces: InterfaceSlot::Live(LiveInterfaces),
+        }
+    }
+
+    /// Fixture rows with one shared load counter. Each `load` increments it.
+    pub fn fixtures(
+        neighbors: FixtureNeighbors,
+        routes: FixtureRoutes,
+        interfaces: FixtureInterfaces,
+        loads: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Self {
+        let counted = Arc::new(CountedFixtures {
+            neighbors,
+            routes,
+            interfaces,
+            loads,
+        });
+        Self {
+            neighbors: NeighborSlot::Shared(counted.clone()),
+            routes: RouteSlot::Shared(counted.clone()),
+            interfaces: InterfaceSlot::Shared(counted),
+        }
+    }
+
+    /// A source that records a call and then panics. Disabled routes must not reach it.
+    pub fn probe(loads: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        let probe = Arc::new(LoadProbe { loads });
+        Self {
+            neighbors: NeighborSlot::Shared(probe.clone()),
+            routes: RouteSlot::Shared(probe.clone()),
+            interfaces: InterfaceSlot::Shared(probe),
+        }
+    }
+}
+
+struct CountedFixtures {
+    neighbors: FixtureNeighbors,
+    routes: FixtureRoutes,
+    interfaces: FixtureInterfaces,
+    loads: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl NeighborSource for CountedFixtures {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.neighbors.load()
+    }
+}
+
+impl RouteSource for CountedFixtures {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.routes.load()
+    }
+}
+
+impl InterfaceSource for CountedFixtures {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.interfaces.load()
+    }
+}
+
+struct LoadProbe {
+    loads: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl NeighborSource for LoadProbe {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        panic!("netconnect panel must not call a collector");
+    }
+}
+
+impl RouteSource for LoadProbe {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        panic!("netconnect panel must not call a collector");
+    }
+}
+
+impl InterfaceSource for LoadProbe {
+    fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        panic!("netconnect panel must not call a collector");
+    }
+}
+
 /// Read-only console payload using the process-local passive tables.
 pub fn panel_live(cfg: &NetconnectConfig) -> Result<Value> {
-    panel(cfg, &LiveNeighbors, &LiveRoutes, &LiveInterfaces)
+    panel_sources(cfg, &PassiveSources::live())
+}
+
+/// Same payload as [`panel`], using the sources the HTTP handler was given.
+pub fn panel_sources(cfg: &NetconnectConfig, sources: &PassiveSources) -> Result<Value> {
+    panel(cfg, &sources.neighbors, &sources.routes, &sources.interfaces)
+}
+
+/// Same device listing as [`call_devices`], using the sources the HTTP handler was given.
+pub fn devices_sources(cfg: &NetconnectConfig, sources: &PassiveSources) -> Result<Value> {
+    call_devices(cfg, &sources.neighbors, &sources.routes, &sources.interfaces)
 }
 
 /// Read-only console payload. Disabled gates do not read local tables.

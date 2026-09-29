@@ -987,6 +987,175 @@ async fn netconnect_panel_is_get_only_behind_host_and_csrf() {
     assert!(model.requests.lock().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn enabled_passive_panel_route_returns_sanitized_fixtures() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use cgagentharness::netconnect::tools::{devices_sources, PassiveSources};
+    use cgagentharness::netconnect::{FixtureInterfaces, FixtureNeighbors, FixtureRoutes, NetconnectConfig};
+
+    let model = start_mock_model().await;
+    let server = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("netconnect.enabled", "true")
+            .with("netconnect.allowed_cidrs", "['127.0.0.0/16']"),
+    )
+    .await;
+    let cfg = NetconnectConfig::from_config(server.state.cfg.as_ref()).unwrap();
+    assert!(cfg.enabled);
+    assert_eq!(cfg.scope.entries(), vec!["127.0.0.0/16".to_string()]);
+    for tier in cgagentharness::netconnect::Tier::ALL {
+        assert!(!cfg.tier_flag(tier), "{}", tier.key());
+    }
+    let loads = Arc::new(AtomicUsize::new(0));
+    let sources = PassiveSources::fixtures(
+        FixtureNeighbors::bsd_arp(
+            "lo\u{0001}cal (127.0.0.1) at ab:cd:ef:01:23:45 on lo0 ifscope [ethernet]\n\
+             outsider (192.168.1.50) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]\n",
+        ),
+        FixtureRoutes::bsd_netstat(
+            "Destination        Gateway            Flags        Netif\n\
+             127.0.0.1          127.0.0.1          UH           lo0\n\
+             192.168.1.0/24     192.168.1.1        UG           en0\n",
+        ),
+        FixtureInterfaces::from_lines("lo0 127.0.0.1\nen0 192.168.1.20\n"),
+        Arc::clone(&loads),
+    );
+    *server
+        .state
+        .netconnect_sources
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner()) = sources.clone();
+
+    let port = server.addr.port();
+    let bad_host = exchange(
+        server.addr,
+        "GET /api/netconnect HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n", // DevSkim: ignore DS162092 because this adversarial host must be refused before any collector runs.
+    )
+    .await;
+    assert_eq!(status_of(&bad_host), 400, "{bad_host}");
+    assert_eq!(loads.load(Ordering::SeqCst), 0, "a rejected host must not collect");
+
+    let missing_csrf = exchange(
+        server.addr,
+        &format!("GET /api/netconnect HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"), // DevSkim: ignore DS162092 because this Host names the owned loopback listener.
+    )
+    .await;
+    assert_eq!(status_of(&missing_csrf), 403, "{missing_csrf}");
+    assert_eq!(loads.load(Ordering::SeqCst), 0, "a missing CSRF token must not collect");
+
+    let ok = exchange(
+        server.addr,
+        &format!(
+            "GET /api/netconnect?cmd=id&target=8.8.8.8 HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-CyClaw-CSRF: {}\r\nConnection: close\r\n\r\n", // DevSkim: ignore DS162092 because this Host names the owned loopback listener and the query must not be echoed.
+            server.csrf
+        ),
+    )
+    .await;
+    assert_eq!(status_of(&ok), 200, "{ok}");
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        3,
+        "the route must load each injected source once"
+    );
+    let body = json_body(&ok);
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["allowed_cidrs"][0], "127.0.0.0/16");
+    assert_eq!(body["neighbors"][0]["address"], "127.0.0.1");
+    assert_eq!(body["neighbors"][0]["hostname"]["value"], "local");
+    assert_eq!(body["neighbors"][0]["hostname"]["untrusted"], true);
+    assert_eq!(body["interfaces"][0]["name"]["value"], "lo0");
+    assert_eq!(body["interfaces"][0]["name"]["untrusted"], true);
+    assert_eq!(body["interfaces"][0]["addresses"][0], "127.0.0.1");
+    assert_eq!(body["routes"][0]["destination"], "127.0.0.1/32");
+    assert_eq!(body["routes"][0]["interface"]["untrusted"], true);
+    let rendered = body.to_string();
+    assert!(!rendered.contains("192.168"), "{rendered}");
+    assert!(!rendered.contains('\u{0001}'), "{rendered}");
+    assert!(!rendered.contains("8.8.8.8"), "{rendered}");
+    assert!(!rendered.contains("cmd"), "{rendered}");
+    let tiers = body["tiers"].as_array().unwrap();
+    assert!(tiers
+        .iter()
+        .all(|tier| tier["flag"] == false && tier["runnable"] == false));
+
+    let devices = devices_sources(&cfg, &sources).unwrap();
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        6,
+        "devices must use the same injected sources"
+    );
+    assert_eq!(devices["neighbors"][0]["hostname"]["value"], "local");
+    assert_eq!(devices["neighbors"][0]["hostname"]["untrusted"], true);
+    assert!(!devices.to_string().contains("192.168"));
+
+    let posted = exchange(
+        server.addr,
+        &format!(
+            "POST /api/netconnect HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-CyClaw-CSRF: {}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}", // DevSkim: ignore DS162092 because this Host names the owned loopback listener.
+            server.csrf
+        ),
+    )
+    .await;
+    assert_eq!(status_of(&posted), 405, "{posted}");
+    assert_eq!(loads.load(Ordering::SeqCst), 6, "a refused method must not collect");
+}
+
+#[tokio::test]
+async fn disabled_panel_route_does_not_load_injected_sources() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use cgagentharness::netconnect::tools::{devices_sources, PassiveSources};
+    use cgagentharness::netconnect::NetconnectConfig;
+
+    let model = start_mock_model().await;
+    let server = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let cfg = NetconnectConfig::from_config(server.state.cfg.as_ref()).unwrap();
+    assert!(!cfg.enabled);
+    let loads = Arc::new(AtomicUsize::new(0));
+    let sources = PassiveSources::probe(Arc::clone(&loads));
+    *server
+        .state
+        .netconnect_sources
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner()) = sources.clone();
+
+    let port = server.addr.port();
+    let ok = exchange(
+        server.addr,
+        &format!(
+            "GET /api/netconnect HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-CyClaw-CSRF: {}\r\nConnection: close\r\n\r\n", // DevSkim: ignore DS162092 because this Host names the owned loopback listener.
+            server.csrf
+        ),
+    )
+    .await;
+    assert_eq!(status_of(&ok), 200, "{ok}");
+    let body = json_body(&ok);
+    assert_eq!(body["enabled"], false);
+    assert_eq!(body["neighbors"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        0,
+        "a disabled panel must not call the injected source"
+    );
+    let err = devices_sources(&cfg, &sources).unwrap_err();
+    assert!(err.is("NETCONNECT_DISABLED"));
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        0,
+        "disabled devices share the gate and must not load"
+    );
+}
+
+fn json_body(response: &str) -> serde_json::Value {
+    let start = response.find('{').expect("json body");
+    let end = response.rfind('}').expect("json end");
+    serde_json::from_str(&response[start..=end]).unwrap_or_else(|err| panic!("{err}: {response}"))
+}
+
 async fn exchange(addr: std::net::SocketAddr, raw: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut sock = tokio::time::timeout(std::time::Duration::from_secs(5), tokio::net::TcpStream::connect(addr))

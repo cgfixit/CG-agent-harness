@@ -132,6 +132,8 @@ pub struct AppState {
     pub memory_suggestions: crate::server::structured_memory_suggest::Suggestions,
     /// Native Ollama pull/inventory (loopback only; independent of chat generation).
     pub ollama: OllamaControl,
+    /// Collectors for `GET /api/netconnect`. Production installs the live sources.
+    pub netconnect_sources: Mutex<crate::netconnect::tools::PassiveSources>,
 }
 
 /// Single-flight native Ollama pull plus a short-lived tags cache.

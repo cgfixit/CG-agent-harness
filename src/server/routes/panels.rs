@@ -46,11 +46,19 @@ pub async fn tools(State(state): State<Arc<AppState>>) -> Json<Value> {
 }
 
 /// Read-only LAN panel. The query string is ignored. No method but GET is routed.
+///
+/// Rows come only from `state.netconnect_sources` through `panel_sources`
+/// (which calls `collect_passive`). Production state holds the live sources.
 pub async fn netconnect_panel(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
     let cfg = crate::netconnect::NetconnectConfig::from_config(state.cfg.as_ref())
         .map_err(|err| ApiError::from_err(StatusCode::BAD_REQUEST, &err))?;
-    let body =
-        crate::netconnect::tools::panel_live(&cfg).map_err(|err| ApiError::from_err(StatusCode::BAD_GATEWAY, &err))?;
+    let sources = state
+        .netconnect_sources
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .clone();
+    let body = crate::netconnect::tools::panel_sources(&cfg, &sources)
+        .map_err(|err| ApiError::from_err(StatusCode::BAD_GATEWAY, &err))?;
     Ok(Json(body))
 }
 

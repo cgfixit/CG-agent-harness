@@ -297,6 +297,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl::new(),
         memory_suggestions: crate::server::structured_memory_suggest::Suggestions::default(),
         ollama: state::OllamaControl::new(),
+        netconnect_sources: Mutex::new(crate::netconnect::tools::PassiveSources::live()),
     });
     routes::persona::recover_on_startup(&state)
         .map_err(|e| HarnessError::harness_config(format!("{}: {}", e.code, e.message)))?;
