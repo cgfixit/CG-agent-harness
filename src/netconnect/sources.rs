@@ -135,9 +135,14 @@ fn interfaces_from_getifaddrs() -> Result<Vec<InterfaceRecord>> {
     let _guard = Ifaddrs(head);
     let mut rows = Vec::new();
     let mut cursor = head;
-    while !cursor.is_null() {
-        // SAFETY: cursor is a live node from getifaddrs until Ifaddrs drops.
+    loop {
+        if cursor.is_null() {
+            break;
+        }
+        // SAFETY: cursor is non-null and is a live getifaddrs node until Ifaddrs drops.
+        // codeql[rust/access-invalid-pointer] - getifaddrs writes this pointer; it stays valid until freeifaddrs
         let node = unsafe { &*cursor };
+        let next = node.ifa_next;
         if !node.ifa_addr.is_null() && !node.ifa_name.is_null() {
             // SAFETY: ifa_addr is non-null and points at a sockaddr allocated by getifaddrs.
             let family = unsafe { (*node.ifa_addr).sa_family };
@@ -152,7 +157,7 @@ fn interfaces_from_getifaddrs() -> Result<Vec<InterfaceRecord>> {
                 rows.push(InterfaceRecord { name, address });
             }
         }
-        cursor = node.ifa_next;
+        cursor = next;
     }
     Ok(rows)
 }
