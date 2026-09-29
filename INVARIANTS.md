@@ -702,5 +702,8 @@ egress outside this scope. No secret belongs in this config. These keys are
 outside the 22-key reload allowlist. A false master gate exits 4. Invalid
 scope exits 3.
 
-- Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`, and
+- Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`,
+  `tests/netconnect_flags.rs`, `tests/netconnect_scope.rs`,
+  `tests/netconnect_collectors.rs`, `tests/netconnect_untrusted.rs`,
+  `scripts/netconnect-syscall-proof.sh`, and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
