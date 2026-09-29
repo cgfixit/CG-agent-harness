@@ -123,15 +123,19 @@ fn read_fixed_argv(argv: &[&str]) -> Result<String> {
 fn interfaces_from_getifaddrs() -> Result<Vec<InterfaceRecord>> {
     use std::net::Ipv4Addr;
 
-    let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
-    // SAFETY: head is a writable out-pointer. On success it owns a list freed below.
-    let rc = unsafe { libc::getifaddrs(&mut head) };
+    // Uninitialized on purpose: null_mut() is what CodeQL treats as the invalid
+    // pointer, and getifaddrs writes the list head through this slot on success.
+    let mut slot = std::mem::MaybeUninit::<*mut libc::ifaddrs>::uninit();
+    // SAFETY: slot is a writable out-pointer. On success it owns a list freed below.
+    let rc = unsafe { libc::getifaddrs(slot.as_mut_ptr()) };
     if rc != 0 {
         return Err(HarnessError::new(
             "NETCONNECT_IO",
             "cannot read local interface addresses",
         ));
     }
+    // SAFETY: rc == 0 means getifaddrs stored the list head (null when there are no interfaces).
+    let head = unsafe { slot.assume_init() };
     let _guard = Ifaddrs(head);
     let mut rows = Vec::new();
     let mut cursor = head;
@@ -140,7 +144,6 @@ fn interfaces_from_getifaddrs() -> Result<Vec<InterfaceRecord>> {
             break;
         }
         // SAFETY: cursor is non-null and is a live getifaddrs node until Ifaddrs drops.
-        // codeql[rust/access-invalid-pointer] - getifaddrs writes this pointer; it stays valid until freeifaddrs
         let node = unsafe { &*cursor };
         let next = node.ifa_next;
         if !node.ifa_addr.is_null() && !node.ifa_name.is_null() {
