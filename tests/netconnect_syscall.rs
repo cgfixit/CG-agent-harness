@@ -36,6 +36,14 @@ fn self_check_rejects_packet_sockets_and_multicast_membership() {
         stdout.contains("enabled passive traces are required"),
         "dropping the enabled passive traces must fail self-check\nstdout={stdout}\nstderr={stderr}"
     );
+    assert!(
+        stdout.contains("enabled status opens no sockets and a gated empty trace does not pass"),
+        "passive status must open no socket, and a gated empty trace must not pass\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("devices opens exactly one AF_NETLINK socket"),
+        "devices must open exactly one netlink socket\nstdout={stdout}\nstderr={stderr}"
+    );
 }
 
 #[test]
@@ -49,7 +57,9 @@ fn proof_refuses_to_skip_when_unshare_or_strace_is_missing() {
     assert!(text.contains("IPV6_JOIN_GROUP"));
     assert!(text.contains("127.0.0.0/16"));
     assert!(text.contains("enabled: true"));
+    assert!(text.contains("assert_enabled_status"));
     assert!(text.contains("exactly_one_netlink"));
+    assert!(text.contains("enabled status opened no sockets"));
     assert!(text.contains("refusing to skip"));
     assert!(text.contains("apparmor_restrict_unprivileged_userns"));
     assert!(!text.contains("|| true"));

@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Prove default `netconnect status` and `devices`, and a rejected scope, send
-# no packets.
+# no packets. Enabled passive status exits 0 and opens no socket of any
+# family. Enabled passive devices exits 0 and opens exactly one AF_NETLINK
+# socket and no other family. sendto on that netlink descriptor is allowed.
 #
 # The traced commands run under `unshare -rn` (private network namespace,
 # loopback only) and
 # `strace -f -e trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt`.
-# AF_NETLINK and AF_UNIX are allowed. glibc getifaddrs opens AF_NETLINK.
-# Any other socket family, any connect that is not one of those families,
-# and any multicast-membership setsockopt fails the proof.
+# The shared judge allows AF_NETLINK and AF_UNIX. glibc getifaddrs opens
+# AF_NETLINK. Any other socket family, any connect that is not one of those
+# families, and any multicast-membership setsockopt fails the proof.
 # sendto, sendmsg, and sendmmsg are allowed only on a descriptor this trace
 # opened as AF_NETLINK or AF_UNIX. A send on any other descriptor, or on one
 # the trace never opened, fails. That includes a descriptor the process
-# inherited.
+# inherited. The enabled-devices count is stricter than that judge: any
+# family other than AF_NETLINK fails it, including AF_UNIX.
 #
 # Missing strace, a failed `unshare -rn`, or a refused ptrace does not skip:
 # the script exits non-zero and says which prerequisite failed. On a CI runner
@@ -333,8 +336,8 @@ declares_enabled_passive_traces() {
     "127.0.0.0/16" \
     'enabled.yaml" status 0' \
     'enabled.yaml" devices 0' \
-    'exactly_one_netlink "$tmp/enabled-status.txt"' \
-    'exactly_one_netlink "$tmp/enabled-devices.txt"'
+    'assert_enabled_status "$tmp/enabled-status.txt" 0' \
+    'exactly_one_netlink "$tmp/enabled-devices.txt" "devices"'
   do
     if ! grep -F -q "$key" <<<"$body"; then
       return 1
@@ -355,25 +358,58 @@ enabled_passive_traces_are_required() {
     exit 1
   fi
 
-  printf '%s\n' 'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' >"$tmp/one-netlink.txt"
-  exactly_one_netlink "$tmp/one-netlink.txt" "one netlink fixture"
+  # Exit 0 and an empty trace is the enabled status path.
+  assert_enabled_status "$tmp/empty.txt" 0
+
+  # (a) Passive status opens any socket. A netlink socket is the case the
+  # previous exactly-one rule would have accepted.
+  printf '%s\n' 'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' >"$tmp/status-netlink.txt"
+  expect_status_socket_fails "$tmp/status-netlink.txt" "AF_NETLINK"
+  printf '%s\n' 'socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 4' >"$tmp/status-unix.txt"
+  expect_status_socket_fails "$tmp/status-unix.txt" "AF_UNIX"
+
+  # (d) Exit 4 and an empty trace is the closed master gate. It must not pass.
+  local gated_err
+  gated_err="$(mktemp)"
+  if assert_enabled_status "$tmp/empty.txt" 4 2>"$gated_err"; then
+    printf '%s\n' "self-check accepted a gated status with an empty trace" >&2
+    rm -f "$gated_err"
+    exit 1
+  fi
+  if ! grep -q 'exited 4' "$gated_err"; then
+    printf '%s\n' "self-check: gated status failure did not report exit 4" >&2
+    cat "$gated_err" >&2
+    rm -f "$gated_err"
+    exit 1
+  fi
+  rm -f "$gated_err"
 
   printf '%s\n' \
     'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
-    'socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 4' \
-    >"$tmp/netlink-unix.txt"
-  exactly_one_netlink "$tmp/netlink-unix.txt" "netlink plus unix fixture"
+    'sendto(3, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
+    >"$tmp/one-netlink.txt"
+  exactly_one_netlink "$tmp/one-netlink.txt" "one netlink fixture"
 
-  if exactly_one_netlink "$tmp/empty.txt" "no sockets"; then
-    printf '%s\n' "self-check accepted an enabled trace with no AF_NETLINK socket" >&2
+  # (b) Devices opens zero netlink sockets.
+  if exactly_one_netlink "$tmp/empty.txt" "devices"; then
+    printf '%s\n' "self-check accepted devices with zero AF_NETLINK sockets" >&2
     exit 1
   fi
+  # (c) Devices opens two netlink sockets.
   printf '%s\n' \
     'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
     'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 4' \
     >"$tmp/two-netlink.txt"
   if exactly_one_netlink "$tmp/two-netlink.txt" "two netlink sockets"; then
     printf '%s\n' "self-check accepted two AF_NETLINK sockets" >&2
+    exit 1
+  fi
+  printf '%s\n' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
+    'socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 4' \
+    >"$tmp/netlink-unix.txt"
+  if exactly_one_netlink "$tmp/netlink-unix.txt" "netlink plus unix"; then
+    printf '%s\n' "self-check accepted a non-netlink socket beside AF_NETLINK" >&2
     exit 1
   fi
   printf '%s\n' \
@@ -385,16 +421,72 @@ enabled_passive_traces_are_required() {
     exit 1
   fi
   printf '%s\n' "netconnect syscall proof self-check: enabled passive traces are required"
+  printf '%s\n' "netconnect syscall proof self-check: enabled status opens no sockets and a gated empty trace does not pass"
+  printf '%s\n' "netconnect syscall proof self-check: devices opens exactly one AF_NETLINK socket"
+}
+
+# Passive status must exit 0. Any socket() call, of any family, fails.
+expect_status_socket_fails() {
+  local trace="$1"
+  local label="$2"
+  local err
+  err="$(mktemp)"
+  if assert_enabled_status "$trace" 0 2>"$err"; then
+    printf 'self-check accepted a passive status that opened a socket: %s\n' "$label" >&2
+    rm -f "$err"
+    exit 1
+  fi
+  if ! grep -q 'socket' "$err"; then
+    printf 'self-check: status socket failure had no socket explanation: %s\n' "$label" >&2
+    cat "$err" >&2
+    rm -f "$err"
+    exit 1
+  fi
+  rm -f "$err"
+}
+
+# Print how many socket() calls the trace contains, successful or not.
+socket_call_count() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+
+SOCKET = re.compile(r"\bsocket\(")
+count = 0
+with open(sys.argv[1], errors="replace") as handle:
+    for raw in handle:
+        if SOCKET.search(raw):
+            count += 1
+print(count)
+PY
+}
+
+# Enabled status exits 0 and opens nothing. A non-zero exit, including the
+# closed master gate's exit 4, fails even when the trace has no socket() call.
+assert_enabled_status() {
+  local trace="$1"
+  local code="$2"
+  local calls
+  if [[ "$code" -ne 0 ]]; then
+    printf 'enabled status exited %s; expected 0\n' "$code" >&2
+    return 1
+  fi
+  calls="$(socket_call_count "$trace")"
+  if [[ "$calls" != "0" ]]; then
+    printf 'enabled status opened %s socket call(s); expected 0\n' "$calls" >&2
+    return 1
+  fi
+  return 0
 }
 
 # Print the number of successful AF_NETLINK socket calls. Exit 2 when any
-# other family besides AF_UNIX was opened.
+# other family was opened, including AF_UNIX. A failed socket() of another
+# family still counts as that family.
 netlink_socket_count() {
   python3 - "$1" <<'PY'
 import re
 import sys
 
-ALLOWED = {"UNIX", "LOCAL", "NETLINK"}
 NUM_ALLOWED = {"1": "UNIX", "16": "NETLINK"}
 SOCKET = re.compile(r"\bsocket\(([^,\s)]+)")
 RET = re.compile(r"=\s*(-?\d+)\b")
@@ -419,14 +511,14 @@ with open(sys.argv[1], errors="replace") as handle:
         socket = SOCKET.search(line)
         if not socket:
             continue
-        returned = RET.search(line)
-        if not returned or int(returned.group(1)) < 0:
-            continue
         fam = family_name(socket.group(1))
-        if fam == "NETLINK":
-            netlink += 1
-        elif fam not in ALLOWED:
+        returned = RET.search(line)
+        opened = returned is not None and int(returned.group(1)) >= 0
+        if fam != "NETLINK":
             other.append(fam)
+            continue
+        if opened:
+            netlink += 1
 if other:
     print("disallowed socket families: %s" % ",".join(other), file=sys.stderr)
     print(netlink)
@@ -593,17 +685,33 @@ EOF
   trace_command "$binary" "$tmp/enabled.yaml" status 0 "$tmp/enabled-status.txt" "$tmp/enabled-status.out" "$tmp/enabled-status.err"
   trace_command "$binary" "$tmp/enabled.yaml" devices 0 "$tmp/enabled-devices.txt" "$tmp/enabled-devices.out" "$tmp/enabled-devices.err"
   local failed=0
-  if ! exactly_one_netlink "$tmp/enabled-status.txt" "status"; then
+  local status_sockets devices_netlink devices_err devices_code
+  status_sockets="$(socket_call_count "$tmp/enabled-status.txt")"
+  printf 'enabled status socket() calls: %s\n' "$status_sockets"
+  devices_err="$(mktemp)"
+  set +e
+  devices_netlink="$(netlink_socket_count "$tmp/enabled-devices.txt" 2>"$devices_err")"
+  devices_code=$?
+  set -e
+  printf 'enabled devices AF_NETLINK sockets: %s\n' "${devices_netlink:-unknown}"
+  if [[ -s "$devices_err" ]]; then
+    cat "$devices_err" >&2
+  fi
+  rm -f "$devices_err"
+  if ! assert_enabled_status "$tmp/enabled-status.txt" 0; then
     failed=1
   fi
   if ! exactly_one_netlink "$tmp/enabled-devices.txt" "devices"; then
+    failed=1
+  fi
+  if [[ "$devices_code" -ne 0 || "$devices_netlink" != "1" ]]; then
     failed=1
   fi
   if [[ "$failed" -ne 0 ]]; then
     exit 1
   fi
 
-  printf '%s\n' "netconnect syscall proof: default status and devices, a rejected scope, and enabled passive status and devices each opened exactly one AF_NETLINK socket"
+  printf '%s\n' "netconnect syscall proof: default status and devices and a rejected scope sent no packets; enabled status opened no sockets; enabled devices opened exactly one AF_NETLINK socket"
 }
 
 if [[ "${1:-}" == "--self-check" ]]; then
