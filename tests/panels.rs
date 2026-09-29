@@ -921,3 +921,91 @@ async fn advertised_methods_resolve_and_disabled_status_has_no_side_effects() {
     }
     assert!(model.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn netconnect_panel_is_get_only_behind_host_and_csrf() {
+    let html = cgagentharness::server::console::HARNESS_HTML;
+    assert!(html.contains("api('/api/netconnect')"));
+    assert!(!html.contains("api('/api/netconnect', 'POST'"));
+    assert!(!html.contains("api('/api/netconnect', \"POST\""));
+    let pane = html
+        .split("id=\"pane-netconnect\"")
+        .nth(1)
+        .expect("pane")
+        .split("</div>")
+        .next()
+        .expect("pane body");
+    assert!(!pane.contains("<button"), "{pane}");
+    assert!(!pane.contains("<input"), "{pane}");
+    assert!(!pane.contains("<form"), "{pane}");
+
+    let model = start_mock_model().await;
+    let server = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let port = server.addr.port();
+    let bad_host = exchange(
+        server.addr,
+        "GET /api/netconnect?cmd=id&target=8.8.8.8 HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n", // DevSkim: ignore DS162092 because this adversarial request must be refused and its query is never a command.
+    )
+    .await;
+    assert_eq!(status_of(&bad_host), 400, "{bad_host}");
+    assert!(bad_host.contains("Invalid host header"), "{bad_host}");
+
+    let missing_csrf = exchange(
+        server.addr,
+        &format!("GET /api/netconnect?cmd=id HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"), // DevSkim: ignore DS162092 because this Host names the owned loopback listener.
+    )
+    .await;
+    assert_eq!(status_of(&missing_csrf), 403, "{missing_csrf}");
+    assert!(missing_csrf.contains("CSRF_TOKEN_INVALID"), "{missing_csrf}");
+
+    let ok = exchange(
+        server.addr,
+        &format!(
+            "GET /api/netconnect?cmd=id&target=8.8.8.8 HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-CyClaw-CSRF: {}\r\nConnection: close\r\n\r\n", // DevSkim: ignore DS162092 because this Host names the owned loopback listener and the query must not be echoed.
+            server.csrf
+        ),
+    )
+    .await;
+    assert_eq!(status_of(&ok), 200, "{ok}");
+    assert!(ok.contains("\"enabled\":false"), "{ok}");
+    assert!(ok.contains("\"scope_empty\":true"), "{ok}");
+    assert!(ok.contains("passive_listen") || ok.contains("\"tiers\""), "{ok}");
+    assert!(!ok.contains("8.8.8.8"), "{ok}");
+    assert!(!ok.contains("cmd"), "{ok}");
+
+    for method in ["POST", "PUT", "PATCH", "DELETE"] {
+        let response = exchange(
+            server.addr,
+            &format!(
+                "{method} /api/netconnect HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-CyClaw-CSRF: {}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}", // DevSkim: ignore DS162092 because this Host names the owned loopback listener.
+                server.csrf
+            ),
+        )
+        .await;
+        assert_eq!(status_of(&response), 405, "{method}: {response}");
+    }
+    assert!(model.requests.lock().unwrap().is_empty());
+}
+
+async fn exchange(addr: std::net::SocketAddr, raw: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut sock = tokio::time::timeout(std::time::Duration::from_secs(5), tokio::net::TcpStream::connect(addr))
+        .await
+        .expect("connect timed out")
+        .expect("connect");
+    sock.write_all(raw.as_bytes()).await.unwrap();
+    let mut buf = Vec::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), sock.read_to_end(&mut buf))
+        .await
+        .expect("listener reply timed out")
+        .unwrap();
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+fn status_of(response: &str) -> u16 {
+    response
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}

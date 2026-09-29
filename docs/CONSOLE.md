@@ -366,15 +366,16 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | GitHub coding | Explicit `agentic.repo`, gates and prerequisites in [coding pipeline](CODING_PIPELINE.md); `/github` reports status | Separate governed child-process workflow; a chat reply does not execute Git commands |
 | Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
 | `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
-| `netconnect` | Passive CLI `status` and `devices`; gates ship false | No console tool or scan. Empty scope refuses armed tiers. `/web` still applies |
+| `netconnect` | Passive CLI `status` and `devices`; `/net` read-only aliases; gates ship false | LAN panel is GET `/api/netconnect` (scope, passive devices, tier state). No scan button. Empty scope refuses armed tiers. `/web` still applies |
 | `sqlconnect` | Not implemented in this app | No database connection configuration, query tool or ingestion workflow |
 | `github-public` catalog entry | Inventory only | Does not provide an independent public-repository connector |
 | `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |
 | Runtime prompt skill | Home skill file plus `/skill use` | Prompt context, not an executable plugin or permission grant |
 
 Names from the upstream project do not establish support in this standalone
-harness. There are no `/fsconnect`, `/netconnect` or `/sqlconnect` commands to turn
-on, and copying upstream connector settings does not implement them. The native
+harness. There is no `/fsconnect` or `/sqlconnect` command to turn on.
+`/netconnect` is an exact read-only alias of `/net` and does not enable a scan.
+Copying upstream connector settings does not implement a connector. The native
 Setup folder chooser prepares offline Cargo inputs; it is not chat filesystem
 access. See the
 [capability ledger](parity/STATUS.md) for remaining work, checked against
@@ -432,6 +433,7 @@ above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persis
 | `/memory retrieve <query>`, `/memory search <query>` | Force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
 | `/model`, `/model use <name>`, `/model use grok\|claude` | Inspect/select a local chat model or explicit cloud provider; does not select the coding planner |
+| `/net status`, `/net devices` | Read-only LAN panel. Exact aliases: `/netconnect`, `/lan`, `/scan`, `/ports`, `/speed`. A near-miss only suggests. `ports`, `diag`, `watch`, and `device` do not scan or control a device |
 | `/prompt` | Private preview of the next chat system prompt |
 | `/registry` | Combined skill, tool and connector catalog |
 | `/session`, `list`, `info`, `new [title]`, `rename <title>`, `use <id>` | List sessions, inspect the current session, create, rename or reopen one |

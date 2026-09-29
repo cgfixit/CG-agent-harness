@@ -700,7 +700,17 @@ marked untrusted, and are never argv, commands, or paths. `throughput` has no
 default endpoint; a set flag or endpoint warns at load because it is internet
 egress outside this scope. No secret belongs in this config. These keys are
 outside the 22-key reload allowlist. A false master gate exits 4. Invalid
-scope exits 3.
+scope exits 3. `netconnect_status` and `netconnect_devices` register only
+when `enabled` is literal true. A tier's tools register only when
+`tier_may_run` is true; this build registers none. A call whose tier may
+not run returns `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`, not an empty
+success. `/net` keeps the exact aliases `/netconnect`, `/lan`, `/scan`,
+`/ports`, and `/speed` only when they do not collide with an existing slash
+root. Exact `status` and `devices` are read-only. A near-miss only suggests.
+`device` always refuses and is not a fuzzy match. `GET /api/netconnect` is
+the console panel on the existing Host and CSRF guards. It accepts no other
+method and does not turn browser input into a command.
 
-- Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`, and
+- Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`,
+  `tests/panels.rs`, and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.

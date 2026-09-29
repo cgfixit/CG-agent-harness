@@ -26,7 +26,10 @@ pub async fn registry(State(state): State<Arc<AppState>>) -> Json<Value> {
 }
 
 pub async fn tools(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let mut report = views::list_wired_tools(&super::registered_paths());
+    let extras = crate::netconnect::NetconnectConfig::from_config(state.cfg.as_ref())
+        .map(|cfg| crate::netconnect::tools::catalog_rows(&cfg))
+        .unwrap_or_default();
+    let mut report = views::list_wired_tools_with(&super::registered_paths(), &extras);
     let config = crate::common::config::AppConfig::load(&state.home.config_path());
     for row in report["tools"].as_array_mut().unwrap() {
         let path = row["path"].as_str().unwrap_or("");
@@ -40,6 +43,15 @@ pub async fn tools(State(state): State<Arc<AppState>>) -> Json<Value> {
         }
     }
     Json(report)
+}
+
+/// Read-only LAN panel. The query string is ignored. No method but GET is routed.
+pub async fn netconnect_panel(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    let cfg = crate::netconnect::NetconnectConfig::from_config(state.cfg.as_ref())
+        .map_err(|err| ApiError::from_err(StatusCode::BAD_REQUEST, &err))?;
+    let body =
+        crate::netconnect::tools::panel_live(&cfg).map_err(|err| ApiError::from_err(StatusCode::BAD_GATEWAY, &err))?;
+    Ok(Json(body))
 }
 
 pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
