@@ -45,12 +45,20 @@ fn self_check_rejects_packet_sockets_and_multicast_membership() {
         "devices must open exactly one netlink socket\nstdout={stdout}\nstderr={stderr}"
     );
     assert!(
-        stdout.contains("pid-prefixed netlink sendto matches its socket"),
-        "the runner's pid-prefixed netlink sendto must pass\nstdout={stdout}\nstderr={stderr}"
+        stdout.contains("pid-prefixed netlink-labeled sendto passes"),
+        "a pid-prefixed netlink-labeled sendto must pass\nstdout={stdout}\nstderr={stderr}"
     );
     assert!(
-        stdout.contains("sendto without a matching socket fails"),
-        "a sendto with no socket() line must fail\nstdout={stdout}\nstderr={stderr}"
+        stdout.contains("tcp and udp labeled sendto fails"),
+        "a TCP or UDP labeled sendto must fail\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("bare socket inode sendto fails"),
+        "a bare socket:[inode] sendto must fail\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("strace -yy runs inside unshare"),
+        "strace -yy must run inside unshare\nstdout={stdout}\nstderr={stderr}"
     );
 }
 
@@ -58,7 +66,13 @@ fn self_check_rejects_packet_sockets_and_multicast_membership() {
 fn proof_refuses_to_skip_when_unshare_or_strace_is_missing() {
     let text = std::fs::read_to_string(script()).unwrap();
     assert!(text.contains("unshare -rn"));
+    assert!(text.contains(
+        "\"$unshare_bin\" -rn \"$strace_bin\" -f -yy -e trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt"
+    ));
     assert!(text.contains("trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt"));
+    assert!(text.contains("<TCP:"));
+    assert!(text.contains("<UDP:"));
+    assert!(text.contains("socket:[12345]"));
     assert!(text.contains("AF_NETLINK"));
     assert!(text.contains("AF_UNIX"));
     assert!(text.contains("IP_ADD_MEMBERSHIP"));

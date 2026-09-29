@@ -2,22 +2,28 @@
 # Prove default `netconnect status` and `devices`, and a rejected scope, send
 # no packets. Enabled passive status exits 0 and opens no socket of any
 # family. Enabled passive devices exits 0 and opens exactly one AF_NETLINK
-# socket and no other family. sendto on that netlink descriptor is allowed.
+# socket and no other family. A send is allowed only when its own line
+# labels that descriptor NETLINK or UNIX.
 #
 # The traced commands run under `unshare -rn` (private network namespace,
-# loopback only) and
-# `strace -f -e trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt`.
-# The shared judge allows AF_NETLINK and AF_UNIX. glibc getifaddrs opens
-# AF_NETLINK. Any other socket family, any connect that is not one of those
-# families, and any multicast-membership setsockopt fails the proof.
-# sendto, sendmsg, and sendmmsg are allowed only on a descriptor this trace
-# opened as AF_NETLINK or AF_UNIX in the same pid. A send on any other
-# descriptor, or on one the trace never opened, fails. That includes a
-# descriptor the process inherited, and a descriptor opened by another pid.
-# strace -f prints a pid column, and it may split a call into
-# "<unfinished ...>" and "resumed" lines. Decoded netlink payload fields
-# such as ifi_family and ifa_family are not the call's address family.
-# The enabled-devices count is stricter than that judge: any family other
+# loopback only). strace runs inside that namespace:
+# `unshare -rn strace -f -yy -e trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt`.
+# `-yy` resolves each descriptor through sock_diag in strace's own namespace,
+# so the label is only meaningful when strace is the namespaced command.
+# A sendto, sendmsg, or sendmmsg is allowed only when that same line labels
+# the descriptor NETLINK or UNIX, for example `3<NETLINK:[ROUTE:...]>` or
+# `3<UNIX:[...]>`. TCP, UDP, UDPv6, RAW, a bare `socket:[inode]`, and an
+# unlabeled descriptor fail. A bare inode is unknown. The judge keeps no
+# descriptor map: a prior socket() line does not make a send legal, and a
+# decoded sockaddr or payload family does not either. Payload fields such
+# as ifi_family and ifa_family are not the descriptor type.
+# socket() lines are still counted by their decoded family. strace -f prints
+# a pid column, and it may split a call into "<unfinished ...>" and
+# "resumed" lines; the counts reassemble those before counting.
+# The judge allows AF_NETLINK and AF_UNIX socket() and connect calls.
+# glibc getifaddrs opens AF_NETLINK. Any other socket family, any connect
+# that is not one of those families, and any multicast-membership setsockopt
+# fails the proof. The enabled-devices count is stricter: any family other
 # than AF_NETLINK fails it, including AF_UNIX.
 #
 # Missing strace, a failed `unshare -rn`, or a refused ptrace does not skip:
@@ -61,9 +67,11 @@ PID = re.compile(r"^(?:\[pid\s+(\d+)\]|(\d+))\s+(.*)$")
 UNFINISHED = re.compile(r"^(.*)\s*<unfinished \.\.\.>\s*$")
 RESUMED = re.compile(r"^<\.\.\.\s+\w+\s+resumed>\s*(.*)$")
 SOCKET = re.compile(r"^socket\(([^,\s)]+)")
-RET = re.compile(r"=\s*(-?\d+)\b(?:\s+\S.*)?$")
-SEND = re.compile(r"^(sendto|sendmsg|sendmmsg)\((\d+)")
-CONNECT = re.compile(r"^connect\((\d+)")
+# End-anchored so nlmsg_len=20 is not a return code. -yy appends <TYPE:[...]>
+# with no space: `= 5<NETLINK:[161353]>`.
+RET = re.compile(r"=\s*(-?\d+)(?:<[^>]*>)?(?:\s+\S.*)?$")
+SEND = re.compile(r"^(sendto|sendmsg|sendmmsg)\((\d+)(?:<([^>]*)>)?")
+CONNECT = re.compile(r"^connect\(")
 # The sockaddr family only. ifi_family and ifa_family sit inside the payload.
 SA = re.compile(r"\bsa_family=(?:(?:AF|PF)_([A-Z0-9]+)|(\d+))")
 CALL = re.compile(r"\b(socket|connect|sendto|sendmsg|sendmmsg|setsockopt)\(")
@@ -78,6 +86,14 @@ def family_name(token):
     if token.isdigit():
         return "NUM:" + token
     return token
+
+
+def send_label_allowed(label):
+    # sock_diag type at the start of the -yy annotation. NETLINK:[...] and
+    # UNIX:[...] pass. socket:[inode], TCP, UDP, UDPv6, and RAW do not.
+    if not label:
+        return False
+    return label.startswith("NETLINK") or label.startswith("UNIX")
 
 
 def sockaddr_families(line):
@@ -159,8 +175,7 @@ if mode != "judge":
 
 violations = []
 kinds = []
-fds = {}
-for pid, body in calls:
+for _pid, body in calls:
     kind = CALL.search(body)
     kind_name = kind.group(1) if kind else None
 
@@ -177,20 +192,14 @@ for pid, body in calls:
     socket = SOCKET.match(body)
     if socket:
         fam = family_name(socket.group(1))
-        opened = returned_fd(body)
-        if opened is not None:
-            fds[(pid, opened)] = fam
         if fam not in ALLOWED:
             reject()
         continue
     send = SEND.match(body)
     if send:
-        # The descriptor must be one this pid opened as netlink or UNIX.
-        # A decoded AF_NETLINK on a send does not vouch for an inherited fd
-        # or for another pid. Payload families are not the sockaddr.
-        fam = fds.get((pid, send.group(2)))
-        families = sockaddr_families(body)
-        if fam not in ALLOWED or any(name not in ALLOWED for name in families):
+        # The -yy label on this line is the only authority. A sockaddr, a
+        # payload family, or an earlier socket() does not make a send legal.
+        if not send_label_allowed(send.group(3)):
             reject()
         continue
     families = sockaddr_families(body)
@@ -200,12 +209,7 @@ for pid, body in calls:
         continue
     connect = CONNECT.match(body)
     if connect:
-        if "NULL" in body:
-            fam = fds.get((pid, connect.group(1)))
-            if fam not in ALLOWED:
-                reject()
-        else:
-            reject()
+        reject()
 
 if violations:
     for line in violations:
@@ -261,15 +265,15 @@ self_check() {
   trap "rm -rf '$tmp'" RETURN
 
   printf '%s\n' \
-    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
-    'sendto(3, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3<NETLINK:[ROUTE]>' \
+    'sendto(3<NETLINK:[ROUTE]>, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
     >"$tmp/netlink.txt"
   judge "$tmp/netlink.txt"
 
   printf '%s\n' \
-    'socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 4' \
-    'connect(4, {sa_family=AF_UNIX, sun_path="/tmp/x"}, 10) = 0' \
-    'sendto(4, "x", 1, 0, NULL, 0) = 1' \
+    'socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 4<UNIX:[123]>' \
+    'connect(4<UNIX:[123]>, {sa_family=AF_UNIX, sun_path="/tmp/x"}, 10) = 0' \
+    'sendto(4<UNIX:[123]>, "x", 1, 0, NULL, 0) = 1' \
     >"$tmp/unix.txt"
   judge "$tmp/unix.txt"
 
@@ -316,9 +320,9 @@ self_check() {
   expect_judge_fails "$tmp/null-unknown.txt" "NULL sendto with unknown fd"
 
   printf '%s\n' \
-    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
-    'sendmsg(3, {msg_name={sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, msg_namelen=12, msg_iov=[{iov_base="x", iov_len=1}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 1' \
-    'sendmmsg(3, [{msg_hdr={msg_name={sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, msg_namelen=12}}], 1, 0) = 1' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3<NETLINK:[ROUTE]>' \
+    'sendmsg(3<NETLINK:[ROUTE]>, {msg_name={sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, msg_namelen=12, msg_iov=[{iov_base="x", iov_len=1}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 1' \
+    'sendmmsg(3<UNIX:[123]>, [{msg_hdr={msg_name={sa_family=AF_UNIX, sun_path="/tmp/x"}, msg_namelen=10}}], 1, 0) = 1' \
     >"$tmp/sendmsg-netlink.txt"
   judge "$tmp/sendmsg-netlink.txt"
 
@@ -352,43 +356,63 @@ self_check() {
   printf '%s\n' 'connect(3, 0x7ffee, 16) = 0' >"$tmp/opaque-connect.txt"
   expect_judge_fails "$tmp/opaque-connect.txt" "connect without a decoded family"
 
-  # The runner's strace -f column and its decoded netlink payload. The two
+  # (a) The runner's strace -f column and a netlink-labeled sendto. The two
   # spaces after a 4-digit pid are strace's width-5 pid field. ifi_family and
-  # ifa_family are payload fields, not the sockaddr.
+  # ifa_family are payload fields; the <NETLINK:...> label is what allows the send.
   printf '%s\n' \
-    '2733  socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
-    '2733  sendto(3, [{nlmsg_len=20, nlmsg_type=RTM_GETLINK, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1790695426, nlmsg_pid=0}, {ifi_family=AF_UNSPEC, ...}], 20, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 20' \
-    '2733  sendto(3, [{nlmsg_len=20, nlmsg_type=RTM_GETADDR, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1790695427, nlmsg_pid=0}, {ifa_family=AF_UNSPEC, ...}], 20, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 20' \
+    '2733  socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3<NETLINK:[ROUTE]>' \
+    '2733  sendto(3<NETLINK:[ROUTE:...]>, [{nlmsg_len=20, nlmsg_type=RTM_GETLINK, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1790695426, nlmsg_pid=0}, {ifi_family=AF_UNSPEC, ...}], 20, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 20' \
+    '2733  sendto(3<NETLINK:[ROUTE:...]>, [{nlmsg_len=20, nlmsg_type=RTM_GETADDR, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1790695427, nlmsg_pid=0}, {ifa_family=AF_UNSPEC, ...}], 20, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 20' \
     >"$tmp/ci-devices.txt"
   judge "$tmp/ci-devices.txt"
   exactly_one_netlink "$tmp/ci-devices.txt" "ci netlink devices"
 
+  # A decoded sockaddr does not rescue a send with no type label.
   printf '%s\n' \
     '2733  sendto(3, [{nlmsg_len=20, nlmsg_type=RTM_GETLINK, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1790695426, nlmsg_pid=0}, {ifi_family=AF_UNSPEC, ...}], 20, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 20' \
-    >"$tmp/ci-unmatched.txt"
-  expect_judge_fails "$tmp/ci-unmatched.txt" "pid-prefixed sendto with no socket" "disallowed sendto"
+    >"$tmp/ci-unlabeled.txt"
+  expect_judge_fails "$tmp/ci-unlabeled.txt" "pid-prefixed sendto with no type label" "disallowed sendto"
+
+  # (b) TCP and UDP labels are packet paths.
+  printf '%s\n' \
+    '2733  sendto(3<TCP:[127.0.0.1:1->127.0.0.1:80]>, "x", 1, 0, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("127.0.0.1")}, 16) = 1' \
+    >"$tmp/tcp-sendto.txt"
+  expect_judge_fails "$tmp/tcp-sendto.txt" "sendto on a TCP descriptor" "disallowed sendto"
+  printf '%s\n' \
+    '2733  sendto(3<UDP:[127.0.0.1:53]>, "x", 1, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("127.0.0.1")}, 16) = 1' \
+    >"$tmp/udp-sendto.txt"
+  expect_judge_fails "$tmp/udp-sendto.txt" "sendto on a UDP descriptor" "disallowed sendto"
+  printf '%s\n' \
+    '2733  sendto(3<UDPv6:[::1:53]>, "x", 1, 0, {sa_family=AF_INET6}, 28) = 1' \
+    >"$tmp/udpv6-sendto.txt"
+  expect_judge_fails "$tmp/udpv6-sendto.txt" "sendto on a UDPv6 descriptor" "disallowed sendto"
+  printf '%s\n' \
+    '2733  sendto(3<RAW:[255.255.255.255]>, "x", 1, 0, {sa_family=AF_INET}, 16) = 1' \
+    >"$tmp/raw-sendto.txt"
+  expect_judge_fails "$tmp/raw-sendto.txt" "sendto on a RAW descriptor" "disallowed sendto"
+
+  # (c) A bare inode has no protocol type. sa_family does not make it a pass.
+  printf '%s\n' \
+    '2733  sendto(3<socket:[12345]>, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
+    >"$tmp/bare-inode.txt"
+  expect_judge_fails "$tmp/bare-inode.txt" "sendto on a bare socket inode" "disallowed sendto"
 
   printf '%s\n' \
     '2733  socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE <unfinished ...>' \
-    '2733  <... socket resumed>) = 3' \
-    '2733  sendto(3, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
+    '2733  <... socket resumed>) = 3<NETLINK:[161353]>' \
+    '2733  sendto(3<NETLINK:[161353]>, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
     >"$tmp/resumed.txt"
   judge "$tmp/resumed.txt"
   exactly_one_netlink "$tmp/resumed.txt" "resumed netlink socket"
-
-  printf '%s\n' \
-    '2733  socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
-    '2734  sendto(3, "x", 1, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 1' \
-    >"$tmp/other-tid.txt"
-  expect_judge_fails "$tmp/other-tid.txt" "sendto on another tid" "disallowed sendto"
 
   sandbox_setup_failure_exits_nonzero "$tmp"
   enabled_passive_traces_are_required "$tmp"
 
   trap - RETURN
   rm -rf "$tmp"
-  printf '%s\n' "netconnect syscall proof self-check: pid-prefixed netlink sendto matches its socket"
-  printf '%s\n' "netconnect syscall proof self-check: sendto without a matching socket fails"
+  printf '%s\n' "netconnect syscall proof self-check: pid-prefixed netlink-labeled sendto passes"
+  printf '%s\n' "netconnect syscall proof self-check: tcp and udp labeled sendto fails"
+  printf '%s\n' "netconnect syscall proof self-check: bare socket inode sendto fails"
   printf '%s\n' "netconnect syscall proof self-check: ok"
 }
 
@@ -437,8 +461,10 @@ if [ "$1" = "-rn" ]; then
 fi
 exec "$@"
 EOF
-  cat >"$strace_dir/strace" <<'EOF'
+  local strace_argv="$tmp/strace-argv"
+  cat >"$strace_dir/strace" <<EOF
 #!/bin/sh
+printf '%s\n' "\$*" >> $(printf '%q' "$strace_argv")
 printf '%s\n' "strace: attach: Operation not permitted" >&2
 exit 1
 EOF
@@ -449,6 +475,17 @@ EOF
     "$tmp/strace.err" \
     env PATH="$strace_dir:$PATH" \
     bash "$script" --binary "$bin"
+  if ! grep -q -- '-yy' "$strace_argv"; then
+    printf '%s\n' "self-check: strace inside unshare was not passed -yy" >&2
+    cat "$strace_argv" >&2
+    exit 1
+  fi
+  if grep -q 'unshare' "$strace_argv"; then
+    printf '%s\n' "self-check: strace wrapped unshare; -yy must run inside the namespace" >&2
+    cat "$strace_argv" >&2
+    exit 1
+  fi
+  printf '%s\n' "netconnect syscall proof self-check: strace -yy runs inside unshare"
 
   printf '%s\n' "netconnect syscall proof self-check: sandbox setup failure exits non-zero"
 }
@@ -710,7 +747,7 @@ trace_command() {
   strace_bin="$(command -v strace)"
   set +e
   env -i PATH="$PATH" LANG=C LC_ALL=C HOME="$(dirname "$cfg")" TMPDIR="$(dirname "$cfg")" \
-    "$unshare_bin" -rn "$strace_bin" -f -e trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt -o "$trace" -- \
+    "$unshare_bin" -rn "$strace_bin" -f -yy -e trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt -o "$trace" -- \
     "$binary" netconnect --config "$cfg" "$action" >"$out" 2>"$err"
   local code=$?
   set -e
