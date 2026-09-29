@@ -375,6 +375,7 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 Names from the upstream project do not establish support in this standalone
 harness. There is no `/fsconnect` or `/sqlconnect` command to turn on.
 `/netconnect` is an exact read-only alias of `/net` and does not enable a scan.
+Operator guide: [netconnect](netconnect.md).
 Copying upstream connector settings does not implement a connector. The native
 Setup folder chooser prepares offline Cargo inputs; it is not chat filesystem
 access. See the

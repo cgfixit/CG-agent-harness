@@ -637,6 +637,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/STRUCTURED_MEMORY.md", Guide, 3700),
     ("docs/TROUBLESHOOTING.md", Guide, 1500),
     ("docs/USER_MANUAL.md", Guide, 500),
+    // why: operator netconnect user guide; 3292 words, rounded up to the next 100.
+    ("docs/netconnect.md", Guide, 3300),
     ("docs/parity/CONTRACTS.md", Guide, 700),
     ("docs/parity/STATUS.md", Guide, 1300),
     ("docs/parity/WORK.md", Guide, 500),
@@ -650,7 +652,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // trimming AGENTS.md and CLAUDE.md (moved to the root) brought it to 22186, rounded up to the next 500.
 // why: netconnect LAN-scope bullet in AGENTS.md; Agent total 22541 words, rounded up to the next 500.
 // why: read-only netconnect panel and slash rules; Root total 7506 words, rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_000), (Guide, 47_000), (Evidence, 3_500), (Agent, 23_000)];
+// why: netconnect user guide; Guide total 49930 words, rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_000), (Guide, 50_000), (Evidence, 3_500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

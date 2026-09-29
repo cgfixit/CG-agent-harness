@@ -22,6 +22,7 @@ Spend interpretation and completion-webhook configuration: [operator guide](SPEN
 | GET | `/static/{name}` | Static console assets |
 | GET | `/api/status` | Minimal status; public with early guards |
 | GET | `/api/tools` | Wired-route and tool inventory |
+| GET | `/api/netconnect` | Read-only LAN panel (query ignored; see [netconnect.md](netconnect.md)) |
 | GET | `/api/registry` | Skill/persona registry listing |
 | GET | `/api/audit` | Audit events (administrator) |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |
