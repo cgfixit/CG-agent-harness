@@ -58,10 +58,10 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: dev-${{ runner.os }}
-          # Only main writes the cache. PR runs restore main's entry instead of
-          # each branch saving its own and evicting the others (10 GB repo cap).
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Restores ci.yml's clippy entry (same command, same key) read-only;
+          # that job is its only writer, on main.
+          shared-key: clippy-${{ runner.os }}
+          save-if: false
           cache-targets: true
 
       - name: Install pinned SARIF converters

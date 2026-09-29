@@ -20,6 +20,41 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # Docs-only pull requests skip the compile jobs below through a job-level
+  # `if`: a skipped check passes branch protection, where `paths-ignore` would
+  # leave a required check pending. A skipped matrix job reports once, under
+  # its unexpanded name. invariant-guard always runs. Every other event,
+  # including release.yml's workflow_call, runs all jobs.
+  changes:
+    name: classify changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A pull_request checkout is GitHub's test merge commit; depth 2
+          # brings its parents, and HEAD^1 is the base it merges into.
+          fetch-depth: 2
+      - name: Docs-only pull requests skip compile jobs
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        # Any doubt (a failed diff, an empty diff, a non-doc path) runs everything.
+        run: |
+          code=true
+          if [ "$EVENT_NAME" = pull_request ] &&
+             paths=$(git diff --no-renames --name-only HEAD^1 HEAD) &&
+             printf '%s\n' "$paths" | scripts/ci-docs-only.sh; then
+            code=false
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT_NAME code=$code"
+
   chat-browser:
     name: chat slash-command browser acceptance
     runs-on: ubuntu-latest
@@ -81,11 +116,14 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: "1.88"
           components: rustfmt
       - run: cargo fmt --all -- --check
 
   clippy:
     name: clippy (-D warnings)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -96,10 +134,14 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: "1.88"
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: dev-${{ runner.os }}
+          # Check-only output. On dev-* clippy finished first and saved it, so
+          # every build job restored it and recompiled all dependencies.
+          # rust-clippy.yml restores this entry without saving.
+          shared-key: clippy-${{ runner.os }}
           # Only main writes the cache: PR runs restore main's entry instead of
           # each branch saving its own and evicting the others (10 GB repo cap).
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -107,6 +149,8 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
@@ -130,8 +174,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # The only writer of dev-Linux and dev-macOS: this all-targets build
+          # covers what linux-mcp-lifecycle and invariant-guard compile, so they
+          # restore it read-only. windows-mcp-lifecycle alone uses dev-Windows.
           shared-key: dev-${{ runner.os }}
           # Only main writes the cache: PR runs restore main's entry instead of
           # each branch saving its own and evicting the others (10 GB repo cap).
@@ -176,6 +225,8 @@ jobs:
 
   linux-bwrap:
     name: Linux bubblewrap confinement (required)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -206,6 +257,8 @@ jobs:
 
   linux-mcp-lifecycle:
     name: Linux MCP service lifecycle (required)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -215,10 +268,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Restores the test job's Linux build; only that job saves dev-Linux.
           shared-key: dev-${{ runner.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: false
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - name: Build the native lifecycle fixture
         run: cargo test --locked --test mcp_lifecycle --no-run --message-format=json > /tmp/mcp-build.jsonl
@@ -232,6 +288,8 @@ jobs:
 
   windows-mcp-lifecycle:
     name: Windows MCP Job Object lifecycle (required)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-2025
     timeout-minutes: 30
     permissions:
@@ -241,6 +299,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: dev-${{ runner.os }}
@@ -258,6 +318,8 @@ jobs:
           DEEPAGENT_API_KEY: ""
           CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
 
+  # Not gated on `changes`: tests/invariant_guard.rs also enforces the docs
+  # budget (DOCS_BUDGET), and docs-only pull requests are what it polices.
   invariant-guard:
     name: invariant guard (I6 source scan)
     runs-on: ubuntu-latest
@@ -269,12 +331,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Restores the test job's Linux build; only that job saves dev-Linux.
           shared-key: dev-${{ runner.os }}
-          # Only main writes the cache: PR runs restore main's entry instead of
-          # each branch saving its own and evicting the others (10 GB repo cap).
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: false
       - run: cargo test --test invariant_guard --locked
         env:
           # Same contract as the test job: the operator's real keys and the

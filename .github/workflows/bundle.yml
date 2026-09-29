@@ -27,7 +27,42 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # Docs-only pull requests skip packaging (same classifier as ci.yml). Pushes
+  # to main always package: scripts/release-plan.py needs a green Bundle run
+  # from a push or dispatch on the exact commit it releases.
+  changes:
+    name: classify changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A pull_request checkout is GitHub's test merge commit; depth 2
+          # brings its parents, and HEAD^1 is the base it merges into.
+          fetch-depth: 2
+      - name: Docs-only pull requests skip packaging
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        # Any doubt (a failed diff, an empty diff, a non-doc path) runs everything.
+        run: |
+          code=true
+          if [ "$EVENT_NAME" = pull_request ] &&
+             paths=$(git diff --no-renames --name-only HEAD^1 HEAD) &&
+             printf '%s\n' "$paths" | scripts/ci-docs-only.sh; then
+            code=false
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT_NAME code=$code"
+
   desktop:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     uses: ./.github/workflows/desktop.yml # zizmor: ignore[self-repository]
     permissions:
       contents: read
@@ -36,6 +71,8 @@ jobs:
 
   package:
     name: package (${{ matrix.artifact }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
@@ -64,6 +101,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: release-${{ runner.os }}
