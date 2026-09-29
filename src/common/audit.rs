@@ -12,7 +12,7 @@
 
 use std::borrow::Cow;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -24,6 +24,7 @@ use serde_json::Value;
 use super::config::AppConfig;
 
 const AUDIT_SKIP_KEYS: [&str; 3] = ["query_hash", "timestamp", "event"];
+const DEFAULT_AUDIT_FILE: &str = "logs/audit.jsonl";
 /// Default `logging.audit_queue_lines`: lines waiting for the writer thread. A
 /// full queue drops the new line with a warning, the same outcome as a lease
 /// that stays busy past its wait.
@@ -60,7 +61,7 @@ impl Redactors {
             match Regex::new(pattern) {
                 Ok(re) => rules.push((re, "[REDACTED_SECRET]")),
                 // Log the index only, never the pattern text (it is config content).
-                Err(e) => tracing::warn!("privacy redaction pattern #{idx} failed to compile ({e}); skipped"),
+                Err(_) => tracing::warn!("privacy redaction pattern #{idx} failed to compile; skipped"),
             }
         }
         Self { rules }
@@ -255,9 +256,17 @@ impl Audit {
 
     /// Resolve `logging.audit_file` against the home directory.
     pub fn from_home(home: &Path, cfg: &AppConfig) -> Self {
-        let configured = cfg.str_or("logging.audit_file", "logs/audit.jsonl");
+        let configured = cfg.str_or("logging.audit_file", DEFAULT_AUDIT_FILE);
         let path = PathBuf::from(&configured);
-        let path = if path.is_absolute() { path } else { home.join(path) };
+        let path = if configured.is_empty()
+            || path.is_absolute()
+            || path.components().any(|part| part == Component::ParentDir)
+        {
+            tracing::warn!("logging.audit_file must stay home-relative; using default");
+            home.join(DEFAULT_AUDIT_FILE)
+        } else {
+            home.join(path)
+        };
         Self::new(path, cfg)
     }
 
@@ -277,8 +286,8 @@ impl Audit {
     pub fn log(&self, event: Value) {
         let mut record = match event {
             Value::Object(map) => map,
-            other => {
-                tracing::warn!("audit_log called with a non-object event: {other}");
+            _ => {
+                tracing::warn!("audit_log called with a non-object event");
                 return;
             }
         };
@@ -287,8 +296,6 @@ impl Audit {
                 if let Some(q) = query.as_str() {
                     record.insert("query_hash".to_string(), Value::String(super::sha256_hex(q)));
                 }
-            } else {
-                record.insert("query".to_string(), query);
             }
         }
         let keys: Vec<String> = record.keys().cloned().collect();
@@ -410,6 +417,48 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn disabling_query_hash_does_not_store_the_raw_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let without_hash = audit(dir.path(), "logging:\n  audit_fields:\n    include_query_hash: false\n");
+        without_hash.log(json!({"event":"search","query":"PRIVATE QUERY TEXT"}));
+        let record = &written(without_hash.path())[0];
+        assert!(record.get("query").is_none(), "{record}");
+        assert!(record.get("query_hash").is_none(), "{record}");
+
+        let default = audit(dir.path(), "logging: {}\n");
+        default.log(json!({"event":"search","query":"PRIVATE QUERY TEXT"}));
+        let hashed = &written(default.path())[1];
+        assert!(hashed.get("query").is_none(), "{hashed}");
+        assert_eq!(
+            hashed["query_hash"],
+            json!(super::super::sha256_hex("PRIVATE QUERY TEXT"))
+        );
+    }
+
+    #[test]
+    fn audit_file_rejects_absolute_and_parent_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let outside = dir.path().join("outside.jsonl");
+        for configured in [outside.display().to_string(), "../outside.jsonl".into()] {
+            let yaml = format!("logging:\n  audit_file: {configured:?}\n");
+            let cfg = AppConfig::from_str(&yaml, &home.join("config.yaml")).unwrap();
+            let audit = Audit::from_home(&home, &cfg);
+            assert_eq!(audit.path(), home.join("logs/audit.jsonl"));
+            audit.log(json!({"event":"inside"}));
+        }
+        assert_eq!(written(&home.join("logs/audit.jsonl")).len(), 2);
+        assert!(!outside.exists());
+
+        let cfg = AppConfig::from_str(
+            "logging:\n  audit_file: logs/audit..old.jsonl\n",
+            &home.join("config.yaml"),
+        )
+        .unwrap();
+        assert_eq!(Audit::from_home(&home, &cfg).path(), home.join("logs/audit..old.jsonl"));
     }
 
     #[test]

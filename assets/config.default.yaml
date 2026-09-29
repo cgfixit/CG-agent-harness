@@ -208,6 +208,7 @@ logging:
   # One structured tracing line per HTTP request (method, path, status,
   # latency, client). Never headers, bodies or query strings.
   request_log: true
+  # Home-relative JSONL. Absolute paths and `..` fall back to this default.
   audit_file: "logs/audit.jsonl"
   # Home-relative JSONL. Absolute paths and `..` fall back to this default.
   spend_file: "logs/spend.jsonl"
@@ -224,6 +225,7 @@ logging:
   # inline on the request instead.
   audit_queue_lines: 4096 # 0, or clamped to 64–65536
   audit_fields:
+    # False omits the top-level query instead of storing its hash.
     include_query_hash: true
 
 policy:
