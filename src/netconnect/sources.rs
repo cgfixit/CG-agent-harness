@@ -3,8 +3,9 @@
 //! Linux reads `/proc/net/arp` and `/proc/net/route` and asks libc for
 //! interface addresses. macOS uses the same interface call and, for the
 //! route and neighbor tables, fixed absolute argv (`/usr/sbin/arp`,
-//! `/usr/sbin/netstat`) with no shell. `getifaddrs` may use netlink inside
-//! libc on Linux. This module does not open a netlink, packet, or raw socket.
+//! `/usr/sbin/netstat`) with no shell. Our code opens no netlink, packet,
+//! raw, UDP or TCP socket, and on Linux glibc `getifaddrs` opens an
+//! `AF_NETLINK` socket internally.
 
 use crate::common::errors::{HarnessError, Result};
 
@@ -185,6 +186,12 @@ mod tests {
         let text = include_str!("sources.rs");
         assert!(text.contains("\"/usr/sbin/arp\""));
         assert!(text.contains("\"/usr/sbin/netstat\""));
+        // Module docs name the socket glibc opens. Scan the implementation.
+        let implementation: String = text
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//!"))
+            .collect::<Vec<_>>()
+            .join("\n");
         for parts in [
             &["SOCK_", "RAW"][..],
             &["AF_", "PACKET"],
@@ -195,7 +202,7 @@ mod tests {
             &["set", "cap"],
         ] {
             let needle: String = parts.concat();
-            assert!(!text.contains(&needle), "{needle}");
+            assert!(!implementation.contains(&needle), "{needle}");
         }
     }
 
