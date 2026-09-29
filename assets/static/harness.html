@@ -2686,10 +2686,14 @@ async function runSlash(line, webCommand) {
 
       case 'net': {
         const sub = rest[0] || '';
-        await showNetconnect();
+        // Refuse before loading the panel, so a refused command reads no table.
         if (sub !== 'status' && sub !== 'devices') {
           sys('netconnect refusal: this console does not run active tiers or device control');
+          break;
         }
+        document.querySelectorAll('.side-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === 'netconnect'));
+        document.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-netconnect'));
+        await showNetconnect();
         break;
       }
 
