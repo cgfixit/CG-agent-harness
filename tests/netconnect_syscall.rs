@@ -28,6 +28,10 @@ fn self_check_rejects_packet_sockets_and_multicast_membership() {
         "self-check failed\nstdout={stdout}\nstderr={stderr}"
     );
     assert!(stdout.contains("self-check: ok"), "{stdout}");
+    assert!(
+        stdout.contains("sandbox setup failure exits non-zero"),
+        "a failed unshare or strace must not be a pass\nstdout={stdout}\nstderr={stderr}"
+    );
 }
 
 #[test]

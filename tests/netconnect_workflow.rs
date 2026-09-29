@@ -96,6 +96,27 @@ fn top_level_permissions_are_empty_and_the_trigger_is_not_pull_request_target() 
     let names: Vec<&str> = os.iter().filter_map(Value::as_str).collect();
     assert_eq!(names, vec!["ubuntu-latest", "macos-latest"]);
     assert_eq!(syscall.get("runs-on").and_then(Value::as_str), Some("ubuntu-latest"));
+    assert_syscall_proof_cannot_skip(syscall);
+}
+
+fn assert_syscall_proof_cannot_skip(syscall: &Value) {
+    assert!(
+        syscall.get("continue-on-error").is_none(),
+        "syscall-proof must fail the job when unshare or strace cannot run"
+    );
+    assert!(
+        syscall.get("if").is_none(),
+        "syscall-proof must not skip on runners that restrict user namespaces"
+    );
+    let steps = syscall
+        .get("steps")
+        .and_then(Value::as_sequence)
+        .expect("syscall-proof steps");
+    assert!(!steps.is_empty());
+    for step in steps {
+        assert!(step.get("continue-on-error").is_none(), "{step:?}");
+        assert!(step.get("if").is_none(), "{step:?}");
+    }
 }
 
 #[test]

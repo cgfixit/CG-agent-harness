@@ -17,7 +17,8 @@
 # the script exits non-zero and says which prerequisite failed. On a CI runner
 # where AppArmor sets kernel.apparmor_restrict_unprivileged_userns=1, the
 # script logs that value and turns the bit off for this job, then retries.
-# If the retry still fails, the script exits non-zero.
+# If unshare or strace still cannot run after that retry, the script exits
+# non-zero. It does not exit 0 and it does not print a skip.
 #
 # `--self-check` feeds fixture traces through the same judge and does not
 # need strace, unshare, or a binary.
@@ -240,9 +241,103 @@ self_check() {
   printf '%s\n' 'connect(3, 0x7ffee, 16) = 0' >"$tmp/opaque-connect.txt"
   expect_judge_fails "$tmp/opaque-connect.txt" "connect without a decoded family"
 
+  sandbox_setup_failure_exits_nonzero "$tmp"
+
   trap - RETURN
   rm -rf "$tmp"
   printf '%s\n' "netconnect syscall proof self-check: ok"
+}
+
+# A failing unshare, including after the AppArmor sysctl retry, and a strace
+# that cannot trace, must exit non-zero. The success line is not printed.
+sandbox_setup_failure_exits_nonzero() {
+  local tmp="$1"
+  local script="$root/scripts/netconnect-syscall-proof.sh"
+  local bin="$tmp/cgagentharness"
+  printf '%s\n' '#!/bin/sh' 'exit 4' >"$bin"
+  chmod 755 "$bin"
+
+  local unshare_dir="$tmp/fail-unshare"
+  mkdir -p "$unshare_dir"
+  printf '%s\n' '#!/bin/sh' 'exit 1' >"$unshare_dir/unshare"
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"$unshare_dir/strace"
+  local marker="$tmp/sudo-marker"
+  cat >"$unshare_dir/sudo" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> $(printf '%q' "$marker")
+exit 0
+EOF
+  chmod 755 "$unshare_dir/unshare" "$unshare_dir/strace" "$unshare_dir/sudo"
+  printf '1\n' >"$unshare_dir/bit"
+  run_setup_failure \
+    "unshare still fails after the AppArmor retry" \
+    "$tmp/unshare.out" \
+    "$tmp/unshare.err" \
+    env CI=true PATH="$unshare_dir:$PATH" NETCONNECT_SYSCALL_APPARMOR_SYSCTL="$unshare_dir/bit" \
+    bash "$script" --binary "$bin"
+  if ! grep -q 'kernel.apparmor_restrict_unprivileged_userns=0' "$marker"; then
+    printf '%s\n' "self-check: AppArmor sysctl retry did not run" >&2
+    cat "$marker" >&2
+    exit 1
+  fi
+
+  local strace_dir="$tmp/fail-strace"
+  mkdir -p "$strace_dir"
+  cat >"$strace_dir/unshare" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-rn" ] && [ "$2" = "true" ]; then
+  exit 0
+fi
+if [ "$1" = "-rn" ]; then
+  shift
+fi
+exec "$@"
+EOF
+  cat >"$strace_dir/strace" <<'EOF'
+#!/bin/sh
+printf '%s\n' "strace: attach: Operation not permitted" >&2
+exit 1
+EOF
+  chmod 755 "$strace_dir/unshare" "$strace_dir/strace"
+  run_setup_failure \
+    "strace cannot trace" \
+    "$tmp/strace.out" \
+    "$tmp/strace.err" \
+    env PATH="$strace_dir:$PATH" \
+    bash "$script" --binary "$bin"
+
+  printf '%s\n' "netconnect syscall proof self-check: sandbox setup failure exits non-zero"
+}
+
+run_setup_failure() {
+  local label="$1"
+  local out="$2"
+  local err="$3"
+  shift 3
+  local code=0
+  set +e
+  "$@" >"$out" 2>"$err"
+  code=$?
+  set -e
+  if [[ "$code" -eq 0 ]]; then
+    printf 'self-check: sandbox setup failure was a pass: %s\n' "$label" >&2
+    cat "$err" >&2
+    cat "$out" >&2
+    exit 1
+  fi
+  if ! grep -q 'refusing to skip' "$err"; then
+    printf 'self-check: sandbox setup failure had no refusal: %s\n' "$label" >&2
+    cat "$err" >&2
+    exit 1
+  fi
+  if grep -E -q 'skipping|proof skipped' "$err" "$out"; then
+    printf 'self-check: sandbox setup failure printed a skip: %s\n' "$label" >&2
+    exit 1
+  fi
+  if grep -q 'opened no disallowed socket' "$out" "$err"; then
+    printf 'self-check: missing sandbox counted as a proof: %s\n' "$label" >&2
+    exit 1
+  fi
 }
 
 require_tool() {
@@ -258,7 +353,9 @@ ensure_user_namespace() {
     return 0
   fi
   local bit="unknown"
-  local sysctl_path="/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+  # The default file is the kernel bit. A test may point this at a fixture.
+  # Pointing it elsewhere cannot turn a failed unshare into a pass.
+  local sysctl_path="${NETCONNECT_SYSCALL_APPARMOR_SYSCTL:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}"
   if [[ -r "$sysctl_path" ]]; then
     bit="$(cat "$sysctl_path")"
   fi
