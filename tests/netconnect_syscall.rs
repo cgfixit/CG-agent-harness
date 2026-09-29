@@ -32,6 +32,10 @@ fn self_check_rejects_packet_sockets_and_multicast_membership() {
         stdout.contains("sandbox setup failure exits non-zero"),
         "a failed unshare or strace must not be a pass\nstdout={stdout}\nstderr={stderr}"
     );
+    assert!(
+        stdout.contains("enabled passive traces are required"),
+        "dropping the enabled passive traces must fail self-check\nstdout={stdout}\nstderr={stderr}"
+    );
 }
 
 #[test]
@@ -43,6 +47,9 @@ fn proof_refuses_to_skip_when_unshare_or_strace_is_missing() {
     assert!(text.contains("AF_UNIX"));
     assert!(text.contains("IP_ADD_MEMBERSHIP"));
     assert!(text.contains("IPV6_JOIN_GROUP"));
+    assert!(text.contains("127.0.0.0/16"));
+    assert!(text.contains("enabled: true"));
+    assert!(text.contains("exactly_one_netlink"));
     assert!(text.contains("refusing to skip"));
     assert!(text.contains("apparmor_restrict_unprivileged_userns"));
     assert!(!text.contains("|| true"));

@@ -21,7 +21,8 @@
 # non-zero. It does not exit 0 and it does not print a skip.
 #
 # `--self-check` feeds fixture traces through the same judge and does not
-# need strace, unshare, or a binary.
+# need strace, unshare, or a binary. It also rejects a proof plan that drops
+# the enabled passive `status` and `devices` traces.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -242,6 +243,7 @@ self_check() {
   expect_judge_fails "$tmp/opaque-connect.txt" "connect without a decoded family"
 
   sandbox_setup_failure_exits_nonzero "$tmp"
+  enabled_passive_traces_are_required "$tmp"
 
   trap - RETURN
   rm -rf "$tmp"
@@ -307,6 +309,149 @@ EOF
     bash "$script" --binary "$bin"
 
   printf '%s\n' "netconnect syscall proof self-check: sandbox setup failure exits non-zero"
+}
+
+# prove() must trace enabled status and devices. A plan that only has the
+# closed-master traces is not a passive proof.
+prove_source() {
+  awk '/^prove\(\) \{/{found=1} found{print} found && /^}$/{exit}' "$root/scripts/netconnect-syscall-proof.sh"
+}
+
+declares_enabled_passive_traces() {
+  local body="$1"
+  local key
+  # shellcheck disable=SC2016 # needles are source text, not expansions
+  for key in \
+    "enabled: true" \
+    "passive_listen: false" \
+    "discovery: false" \
+    "port_scan: false" \
+    "diagnostics: false" \
+    "throughput: false" \
+    "anomaly_detection: false" \
+    "home_automation: false" \
+    "127.0.0.0/16" \
+    'enabled.yaml" status 0' \
+    'enabled.yaml" devices 0' \
+    'exactly_one_netlink "$tmp/enabled-status.txt"' \
+    'exactly_one_netlink "$tmp/enabled-devices.txt"'
+  do
+    if ! grep -F -q "$key" <<<"$body"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+enabled_passive_traces_are_required() {
+  local tmp="$1"
+  # shellcheck disable=SC2016 # synthetic prove() body, not an expansion
+  if declares_enabled_passive_traces 'trace_command "$binary" "$tmp/default.yaml" status 4'; then
+    printf '%s\n' "self-check accepted a proof that does not run the enabled passive traces" >&2
+    exit 1
+  fi
+  if ! declares_enabled_passive_traces "$(prove_source)"; then
+    printf '%s\n' "self-check: prove() does not run the enabled passive traces; refusing to skip" >&2
+    exit 1
+  fi
+
+  printf '%s\n' 'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' >"$tmp/one-netlink.txt"
+  exactly_one_netlink "$tmp/one-netlink.txt" "one netlink fixture"
+
+  printf '%s\n' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
+    'socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 4' \
+    >"$tmp/netlink-unix.txt"
+  exactly_one_netlink "$tmp/netlink-unix.txt" "netlink plus unix fixture"
+
+  if exactly_one_netlink "$tmp/empty.txt" "no sockets"; then
+    printf '%s\n' "self-check accepted an enabled trace with no AF_NETLINK socket" >&2
+    exit 1
+  fi
+  printf '%s\n' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 4' \
+    >"$tmp/two-netlink.txt"
+  if exactly_one_netlink "$tmp/two-netlink.txt" "two netlink sockets"; then
+    printf '%s\n' "self-check accepted two AF_NETLINK sockets" >&2
+    exit 1
+  fi
+  printf '%s\n' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
+    'socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) = 5' \
+    >"$tmp/netlink-inet.txt"
+  if exactly_one_netlink "$tmp/netlink-inet.txt" "netlink plus inet"; then
+    printf '%s\n' "self-check accepted a non-netlink socket beside AF_NETLINK" >&2
+    exit 1
+  fi
+  printf '%s\n' "netconnect syscall proof self-check: enabled passive traces are required"
+}
+
+# Print the number of successful AF_NETLINK socket calls. Exit 2 when any
+# other family besides AF_UNIX was opened.
+netlink_socket_count() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+
+ALLOWED = {"UNIX", "LOCAL", "NETLINK"}
+NUM_ALLOWED = {"1": "UNIX", "16": "NETLINK"}
+SOCKET = re.compile(r"\bsocket\(([^,\s)]+)")
+RET = re.compile(r"=\s*(-?\d+)\b")
+
+
+def family_name(token):
+    if token in NUM_ALLOWED:
+        return NUM_ALLOWED[token]
+    match = re.fullmatch(r"(?:AF|PF)_(.+)", token)
+    if match:
+        return match.group(1)
+    if token.isdigit():
+        return "NUM:" + token
+    return token
+
+
+netlink = 0
+other = []
+with open(sys.argv[1], errors="replace") as handle:
+    for raw in handle:
+        line = raw.rstrip("\n")
+        socket = SOCKET.search(line)
+        if not socket:
+            continue
+        returned = RET.search(line)
+        if not returned or int(returned.group(1)) < 0:
+            continue
+        fam = family_name(socket.group(1))
+        if fam == "NETLINK":
+            netlink += 1
+        elif fam not in ALLOWED:
+            other.append(fam)
+if other:
+    print("disallowed socket families: %s" % ",".join(other), file=sys.stderr)
+    print(netlink)
+    sys.exit(2)
+print(netlink)
+PY
+}
+
+exactly_one_netlink() {
+  local trace="$1"
+  local label="$2"
+  local err count code
+  err="$(mktemp)"
+  set +e
+  count="$(netlink_socket_count "$trace" 2>"$err")"
+  code=$?
+  set -e
+  if [[ "$code" -ne 0 || "$count" != "1" ]]; then
+    printf 'enabled %s opened %s AF_NETLINK sockets; expected exactly 1\n' "$label" "${count:-unknown}" >&2
+    cat "$err" >&2
+    rm -f "$err"
+    return 1
+  fi
+  rm -f "$err"
+  return 0
 }
 
 run_setup_failure() {
@@ -433,7 +578,32 @@ prove() {
   trace_command "$binary" "$tmp/rejected.yaml" status 3 "$tmp/rejected-status.txt" "$tmp/rejected-status.out" "$tmp/rejected-status.err"
   trace_command "$binary" "$tmp/rejected.yaml" devices 3 "$tmp/rejected-devices.txt" "$tmp/rejected-devices.out" "$tmp/rejected-devices.err"
 
-  printf '%s\n' "netconnect syscall proof: default status and devices, and a rejected scope, opened no disallowed socket"
+  cat >"$tmp/enabled.yaml" <<'EOF'
+netconnect:
+  enabled: true
+  passive_listen: false
+  discovery: false
+  port_scan: false
+  diagnostics: false
+  throughput: false
+  anomaly_detection: false
+  home_automation: false
+  allowed_cidrs: ['127.0.0.0/16']
+EOF
+  trace_command "$binary" "$tmp/enabled.yaml" status 0 "$tmp/enabled-status.txt" "$tmp/enabled-status.out" "$tmp/enabled-status.err"
+  trace_command "$binary" "$tmp/enabled.yaml" devices 0 "$tmp/enabled-devices.txt" "$tmp/enabled-devices.out" "$tmp/enabled-devices.err"
+  local failed=0
+  if ! exactly_one_netlink "$tmp/enabled-status.txt" "status"; then
+    failed=1
+  fi
+  if ! exactly_one_netlink "$tmp/enabled-devices.txt" "devices"; then
+    failed=1
+  fi
+  if [[ "$failed" -ne 0 ]]; then
+    exit 1
+  fi
+
+  printf '%s\n' "netconnect syscall proof: default status and devices, a rejected scope, and enabled passive status and devices each opened exactly one AF_NETLINK socket"
 }
 
 if [[ "${1:-}" == "--self-check" ]]; then
