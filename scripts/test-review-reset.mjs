@@ -14,7 +14,7 @@ const node = id => {
 const context = vm.createContext({
   document:{getElementById:node}, $:node, window:{}, TextEncoder,
   stream:node('stream'), hAuthLogout:node('logout'), CSRF_TOKEN:'fixture',
-  reviewRevision:0, sessionRevision:1, sessionClearing:false, agentWatchGeneration:0,
+  reviewRevision:0, sessionRevision:1, netconnectRevision:0, sessionClearing:false, agentWatchGeneration:0,
   pendingAgentRun:null, shownAgentDiffs:new Map(), reviewedSoulProposal:null,
   currentSession:'fixture-session', sessionGoal:'fixture goal', promptHistory:{},
   input:node('input'), loopAuto:false, retryAttachmentIds:null, stopLoop(){}, paintGoalLoop(){}, resetScheduleReview(){++scheduleClears;}, resetNotificationView(){++notificationClears;},
@@ -48,6 +48,7 @@ const reset = () => {
 seed(); context.clearTranscript(); reset();
 seed(); await context.hAuthLogout.click(); reset();
 assert.equal(analyticsClears, 1, 'logout must invalidate analytics');
+assert.equal(context.netconnectRevision, 1, 'logout must drop in-flight LAN panel replies');
 assert.deepEqual(headersAtLogoutRequest, [false], 'logout must hide header automation buttons before its request');
 assert.equal(scheduleClears, 2, 'clear transcript and logout must invalidate schedule review');
 assert.equal(notificationClears, 2, 'clear transcript and logout must invalidate delivery rows');
