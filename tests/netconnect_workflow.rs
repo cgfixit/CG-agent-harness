@@ -54,6 +54,21 @@ fn top_level_permissions_are_empty_and_the_trigger_is_not_pull_request_target() 
     assert!(triggers.get("pull_request").is_some());
     assert!(triggers.get("push").is_some());
     assert!(triggers.get("workflow_dispatch").is_some());
+    // Same push scope as ci.yml: a PR-branch push must not start a second run.
+    let push_branches = triggers
+        .get("push")
+        .and_then(|push| push.get("branches"))
+        .and_then(Value::as_sequence)
+        .expect("push branches");
+    let push_branch_names: Vec<&str> = push_branches.iter().filter_map(Value::as_str).collect();
+    assert_eq!(push_branch_names, vec!["main"]);
+    assert!(
+        triggers
+            .get("pull_request")
+            .and_then(|event| event.get("branches"))
+            .is_none(),
+        "pull_request stays unscoped by branch"
+    );
     let permissions = doc.get("permissions").expect("top-level permissions");
     assert!(
         permissions.as_mapping().is_some_and(|map| map.is_empty()),

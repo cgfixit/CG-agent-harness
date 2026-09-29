@@ -12,6 +12,7 @@ on:
       - ".github/workflows/netconnect.yml"
       - "scripts/netconnect-syscall-proof.sh"
   push:
+    branches: [main]
     paths:
       - "src/netconnect/**"
       - "tests/netconnect*"
