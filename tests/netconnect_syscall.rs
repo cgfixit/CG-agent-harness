@@ -34,7 +34,7 @@ fn self_check_rejects_packet_sockets_and_multicast_membership() {
 fn proof_refuses_to_skip_when_unshare_or_strace_is_missing() {
     let text = std::fs::read_to_string(script()).unwrap();
     assert!(text.contains("unshare -rn"));
-    assert!(text.contains("trace=socket,connect,sendto,setsockopt"));
+    assert!(text.contains("trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt"));
     assert!(text.contains("AF_NETLINK"));
     assert!(text.contains("AF_UNIX"));
     assert!(text.contains("IP_ADD_MEMBERSHIP"));

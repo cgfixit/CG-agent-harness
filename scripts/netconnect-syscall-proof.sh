@@ -3,10 +3,15 @@
 # no packets.
 #
 # The traced commands run under `unshare -rn` (private network namespace,
-# loopback only) and `strace -f -e trace=socket,connect,sendto,setsockopt`.
+# loopback only) and
+# `strace -f -e trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt`.
 # AF_NETLINK and AF_UNIX are allowed. glibc getifaddrs opens AF_NETLINK.
-# Any other socket family, any connect/sendto that is not one of those
-# families, and any multicast-membership setsockopt fails the proof.
+# Any other socket family, any connect that is not one of those families,
+# and any multicast-membership setsockopt fails the proof.
+# sendto, sendmsg, and sendmmsg are allowed only on a descriptor this trace
+# opened as AF_NETLINK or AF_UNIX. A send on any other descriptor, or on one
+# the trace never opened, fails. That includes a descriptor the process
+# inherited.
 #
 # Missing strace, a failed `unshare -rn`, or a refused ptrace does not skip:
 # the script exits non-zero and says which prerequisite failed. On a CI runner
@@ -43,7 +48,8 @@ MEMBERSHIP = re.compile(
 )
 SOCKET = re.compile(r"\bsocket\(([^,\s)]+)")
 RET = re.compile(r"=\s*(-?\d+)\b")
-FD = re.compile(r"\b(?:connect|sendto)\((\d+)")
+FD = re.compile(r"\b(?:connect|sendto|sendmsg|sendmmsg)\((\d+)")
+SEND = re.compile(r"\b(sendto|sendmsg|sendmmsg)\((\d+)")
 
 
 def family_name(token):
@@ -82,12 +88,21 @@ with open(sys.argv[1], errors="replace") as handle:
             if fam not in ALLOWED:
                 violations.append(line)
             continue
+        send = SEND.search(line)
+        if send:
+            # The descriptor must be one this trace opened as netlink or UNIX.
+            # A decoded AF_NETLINK on a send does not vouch for an inherited fd.
+            fam = fds.get(send.group(2))
+            families = line_families(line)
+            if fam not in ALLOWED or any(name not in ALLOWED for name in families):
+                violations.append(line)
+            continue
         families = line_families(line)
         if families:
             if any(name not in ALLOWED for name in families):
                 violations.append(line)
             continue
-        if re.search(r"\b(connect|sendto)\(", line):
+        if re.search(r"\bconnect\(", line):
             if "NULL" in line:
                 fd = FD.search(line)
                 fam = fds.get(fd.group(1)) if fd else None
@@ -188,6 +203,40 @@ self_check() {
   printf '%s\n' 'sendto(9, "x", 1, 0, NULL, 0) = 1' >"$tmp/null-unknown.txt"
   expect_judge_fails "$tmp/null-unknown.txt" "NULL sendto with unknown fd"
 
+  printf '%s\n' \
+    'socket(AF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE) = 3' \
+    'sendmsg(3, {msg_name={sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, msg_namelen=12, msg_iov=[{iov_base="x", iov_len=1}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 1' \
+    'sendmmsg(3, [{msg_hdr={msg_name={sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, msg_namelen=12}}], 1, 0) = 1' \
+    >"$tmp/sendmsg-netlink.txt"
+  judge "$tmp/sendmsg-netlink.txt"
+
+  printf '%s\n' \
+    'sendmsg(7, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="x", iov_len=1}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 1' \
+    >"$tmp/sendmsg-unknown.txt"
+  expect_judge_fails "$tmp/sendmsg-unknown.txt" "sendmsg on an unknown fd"
+
+  printf '%s\n' \
+    'sendmsg(8, {msg_name={sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, msg_namelen=12}, 0) = 1' \
+    >"$tmp/sendmsg-inherited.txt"
+  expect_judge_fails "$tmp/sendmsg-inherited.txt" "sendmsg claiming netlink on an fd this trace did not open"
+
+  printf '%s\n' \
+    'socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) = 5' \
+    'sendmsg(5, {msg_name={sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, msg_namelen=16, msg_iov=[{iov_base="x", iov_len=1}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 1' \
+    >"$tmp/sendmsg-inet.txt"
+  expect_judge_fails "$tmp/sendmsg-inet.txt" "sendmsg on AF_INET"
+
+  printf '%s\n' \
+    'sendmmsg(9, [{msg_hdr={msg_name=NULL}}], 1, 0) = 1' \
+    >"$tmp/sendmmsg-unknown.txt"
+  expect_judge_fails "$tmp/sendmmsg-unknown.txt" "sendmmsg on an unknown fd"
+
+  printf '%s\n' \
+    'socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) = 6' \
+    'sendmmsg(6, [{msg_hdr={msg_name={sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("8.8.8.8")}, msg_namelen=16}}], 1, 0) = 1' \
+    >"$tmp/sendmmsg-inet.txt"
+  expect_judge_fails "$tmp/sendmmsg-inet.txt" "sendmmsg on AF_INET"
+
   printf '%s\n' 'connect(3, 0x7ffee, 16) = 0' >"$tmp/opaque-connect.txt"
   expect_judge_fails "$tmp/opaque-connect.txt" "connect without a decoded family"
 
@@ -239,7 +288,7 @@ trace_command() {
   strace_bin="$(command -v strace)"
   set +e
   env -i PATH="$PATH" LANG=C LC_ALL=C HOME="$(dirname "$cfg")" TMPDIR="$(dirname "$cfg")" \
-    "$unshare_bin" -rn "$strace_bin" -f -e trace=socket,connect,sendto,setsockopt -o "$trace" -- \
+    "$unshare_bin" -rn "$strace_bin" -f -e trace=socket,connect,sendto,sendmsg,sendmmsg,setsockopt -o "$trace" -- \
     "$binary" netconnect --config "$cfg" "$action" >"$out" 2>"$err"
   local code=$?
   set -e
