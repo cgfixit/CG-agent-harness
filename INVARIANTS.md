@@ -737,5 +737,8 @@ the console panel on the existing Host and CSRF guards. It accepts no other
 method and does not turn browser input into a command.
 
 - Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`,
+  `tests/netconnect_flags.rs`, `tests/netconnect_scope.rs`,
+  `tests/netconnect_collectors.rs`, `tests/netconnect_untrusted.rs`,
+  `scripts/netconnect-syscall-proof.sh`, `tests/netconnect_syscall.rs`,
   `tests/panels.rs`, and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.

@@ -1,0 +1,101 @@
+# Netconnect flag, scope, and no-packet proof.
+# Path-filtered. Top-level permissions stay empty. The trigger is pull_request, not the target event.
+# The syscall job fails if strace or `unshare -rn` cannot run; it does not skip.
+name: netconnect
+
+on:
+  pull_request:
+    paths:
+      - "src/netconnect/**"
+      - "tests/netconnect*"
+      - "tests/netconnect_support/**"
+      - ".github/workflows/netconnect.yml"
+      - "scripts/netconnect-syscall-proof.sh"
+  push:
+    branches: [main]
+    paths:
+      - "src/netconnect/**"
+      - "tests/netconnect*"
+      - "tests/netconnect_support/**"
+      - ".github/workflows/netconnect.yml"
+      - "scripts/netconnect-syscall-proof.sh"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: netconnect-${{ github.workflow }}-${{ github.ref }}
+  # Pull requests only. Do not cancel main, tags, schedules, or release calls.
+  # workflow_call keeps the caller event; if it does not, still refuse main and tags.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  GROK_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  DEEPAGENT_API_KEY: ""
+  CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
+
+jobs:
+  flags-and-scope:
+    name: netconnect flags and scope (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    concurrency:
+      group: netconnect-flags-${{ github.workflow }}-${{ github.ref }}-${{ matrix.os }}
+      cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Flag, scope, collector, and untrusted-string tests
+        run: cargo test --locked --test netconnect_flags --test netconnect_scope --test netconnect_collectors --test netconnect_untrusted --test netconnect_workflow --test netconnect_syscall --test netconnect_cli
+
+  syscall-proof:
+    name: netconnect default status sends no packets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: netconnect-syscall-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build netconnect CLI
+        run: cargo build --locked --bin cgagentharness
+      - name: Require strace
+        run: |
+          set -euo pipefail
+          if ! command -v strace >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y strace
+          fi
+          command -v strace >/dev/null 2>&1
+          command -v unshare >/dev/null 2>&1
+      - name: Trace default status and a rejected scope
+        run: bash scripts/netconnect-syscall-proof.sh --binary target/debug/cgagentharness
