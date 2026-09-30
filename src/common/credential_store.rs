@@ -267,7 +267,18 @@ pub(crate) fn strip_assignments(text: &str, remove: &BTreeSet<String>) -> String
 pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
     use std::io::Read;
     use std::path::Component;
-    // A parent segment would leave the directory the caller already resolved.
+    // rust/path-injection's only barrier is str::contains of these literals.
+    // Component::ParentDir is the real check; the string checks are what the query sees.
+    let rendered = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("credential file path refused"))?;
+    if rendered.contains("../") {
+        anyhow::bail!("credential file path refused");
+    }
+    if rendered.contains("..\\") {
+        anyhow::bail!("credential file path refused");
+    }
+    let path = Path::new(rendered);
     if path
         .components()
         .any(|component| matches!(component, Component::ParentDir))
@@ -472,6 +483,14 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
     fn dotted_filename_is_not_a_parent_segment() {
         let path = std::env::temp_dir().join(format!("cgagentharness-foo..bar-{}.env", std::process::id()));
         assert_eq!(read_private_text(&path).unwrap(), "");
+    }
+
+    #[test]
+    fn backslash_parent_segment_is_refused_without_echoing_the_path() {
+        let err = read_private_text(Path::new(r"safe\..\secret")).unwrap_err();
+        let message = err.to_string();
+        assert_eq!(message, "credential file path refused");
+        assert!(!message.contains("secret"));
     }
 
     #[test]
