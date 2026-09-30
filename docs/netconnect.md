@@ -119,8 +119,8 @@ Exact lines do parse as dispatch:
 |---|---|---|
 | `/net status` and the same subcommand on any kept alias | `netconnect_status`. No collector. Exit 0 when `enabled` is true. | Opens the LAN panel with `GET /api/netconnect`. It does not call the status tool. |
 | `/net devices` and aliases | Passive tables through `netconnect_devices`. Exit 0 when `enabled` is true. | Same panel GET. It does not call the devices tool by name. |
-| `/net ports`, `/net diag`, `/net watch` | `invoke_tier` for `port_scan`, `diagnostics`, or `passive_listen`. Refuses when `tier_may_run` is false. When the tier may run, still refuses because that tier has no tool. Does not load collectors. Exit 4. | Opens the panel, then prints `netconnect refusal: this console does not run active tiers or device control`. |
-| `/net device` | Always `NETCONNECT_REFUSED`, exit 4. No collector. | Same panel-plus-refusal path. |
+| `/net ports`, `/net diag`, `/net watch` | `invoke_tier` for `port_scan`, `diagnostics`, or `passive_listen`. Refuses when `tier_may_run` is false. When the tier may run, still refuses because that tier has no tool. Does not load collectors. Exit 4. | Prints `netconnect refusal: this console does not run active tiers or device control` without loading the panel. |
+| `/net device` | Always `NETCONNECT_REFUSED`, exit 4. No collector. | Same refusal, no panel load. |
 
 So a near-miss never executes. An exact `status` or `devices` in the console refreshes the read-only panel. It does not start a tier. When `enabled` is true, that panel read does load the three passive sources, including for `/net status`. The CLI `status` command and the `netconnect_status` tool do not.
 
@@ -158,7 +158,7 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 - This crate's collector source is scanned so it does not contain `SOCK_RAW`, `AF_PACKET`, `AF_NETLINK`, `Command::new`, `/bin/sh`, `sudo`, or `setcap`. The tests do not count sockets with strace or seccomp. They do not assert that `status` opens 0 sockets or that `devices` opens exactly one `AF_NETLINK`.
 - The collector comment states that this code opens no netlink, packet, raw, UDP, or TCP socket. On Linux, `devices` and the enabled panel call `getifaddrs`, and glibc opens a netlink socket inside that call. `status` never reaches `getifaddrs`. macOS `devices` runs the two fixed sbin commands above and `getifaddrs`. There is no privilege change and no caller-supplied argv.
 - Device strings are length-capped, stripped of control characters, and marked `untrusted`. Interface labels that fail the label rule are dropped. Those strings are not placed in argv, a shell command, a filesystem path, or a URL this process fetches.
-- The browser cannot supply a command. The panel query is ignored. The pane has no control that posts a body. Active slash subcommands in the console print a refusal after the panel GET. They do not call `invoke_tier`.
+- The browser cannot supply a command. The panel query is ignored. The pane has no control that posts a body. Active slash subcommands in the console print a refusal without the panel GET. They do not call `invoke_tier`.
 - `check_target` rechecks a final `Ipv4Addr` before any later connect. This build's tier path refuses after that check because no tier tool exists. A host name is not accepted as a target.
 - Throughput is labeled internet egress outside this LAN scope. Passive commands do not use it. Endpoint secrets are rejected and are not copied into the error string.
 - No secret belongs in this config. The keys are restart-only.
@@ -178,7 +178,7 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 | Exit 2, `NETCONNECT_IO`, `cannot read a local network table` | `/proc/net/arp`, `/proc/net/route`, or the macOS `arp`/`netstat` helper failed or timed out. |
 | stderr `netconnect throughput is configured...` | The throughput flag or endpoint is set. Passive commands do not call it. The warning is not a scan. |
 | `did you mean /net status or /net devices?` | The line was a near-miss. Nothing ran. Send an exact line. |
-| Console text `this console does not run active tiers or device control` | The subcommand was not `status` or `devices`. The panel may still have refreshed. No tier ran. |
+| Console text `this console does not run active tiers or device control` | The subcommand was not `status` or `devices`. The panel did not refresh. No tier ran. |
 | Panel HTTP 400 or 403 | Host or CSRF guard. Collectors did not run. |
 | Panel HTTP 405 | The method was not GET. |
 | Panel HTTP 502 | A collector failed after the guards passed. |
