@@ -11,6 +11,17 @@ on:
       - "tests/netconnect_support/**"
       - ".github/workflows/netconnect.yml"
       - "scripts/netconnect-syscall-proof.sh"
+      # Shared inputs the traced CLI loads before and around src/netconnect.
+      - "assets/config.default.yaml"
+      - "src/main.rs"
+      - "src/lib.rs"
+      - "src/common/config.rs"
+      - "src/common/errors.rs"
+      - "src/common/home.rs"
+      - "src/common/process.rs"
+      - "src/common/process/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   push:
     branches: [main]
     paths:
@@ -19,6 +30,17 @@ on:
       - "tests/netconnect_support/**"
       - ".github/workflows/netconnect.yml"
       - "scripts/netconnect-syscall-proof.sh"
+      # Shared inputs the traced CLI loads before and around src/netconnect.
+      - "assets/config.default.yaml"
+      - "src/main.rs"
+      - "src/lib.rs"
+      - "src/common/config.rs"
+      - "src/common/errors.rs"
+      - "src/common/home.rs"
+      - "src/common/process.rs"
+      - "src/common/process/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   workflow_dispatch:
 
 permissions: {}

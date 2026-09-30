@@ -128,6 +128,16 @@ fn path_filters_cover_both_events_and_actions_are_pinned_shas() {
         "tests/netconnect_support/**",
         ".github/workflows/netconnect.yml",
         "scripts/netconnect-syscall-proof.sh",
+        "assets/config.default.yaml",
+        "src/main.rs",
+        "src/lib.rs",
+        "src/common/config.rs",
+        "src/common/errors.rs",
+        "src/common/home.rs",
+        "src/common/process.rs",
+        "src/common/process/**",
+        "Cargo.toml",
+        "Cargo.lock",
     ] {
         assert!(
             text.matches(needle).count() >= 2,
