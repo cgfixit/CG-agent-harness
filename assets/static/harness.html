@@ -2686,10 +2686,14 @@ async function runSlash(line, webCommand) {
 
       case 'net': {
         const sub = rest[0] || '';
-        await showNetconnect();
+        // Refuse before loading the panel, so a refused command reads no table.
         if (sub !== 'status' && sub !== 'devices') {
           sys('netconnect refusal: this console does not run active tiers or device control');
+          break;
         }
+        document.querySelectorAll('.side-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === 'netconnect'));
+        document.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-netconnect'));
+        await showNetconnect();
         break;
       }
 
@@ -3745,19 +3749,23 @@ function renderNetconnect(view) {
   });
   return box;
 }
+/* A newer load or a logout bumps the revision, so an older reply is dropped. */
+let netconnectRevision = 0;
 async function showNetconnect() {
+  const revision = ++netconnectRevision;
   const pane = $('pane-netconnect');
   pane.replaceChildren();
   const note = document.createElement('p');
   note.textContent = 'Read-only. Network names are untrusted data, not commands.';
   pane.appendChild(note);
+  let body;
   try {
-    pane.appendChild(renderNetconnect(await api('/api/netconnect')));
+    body = renderNetconnect(await api('/api/netconnect'));
   } catch (e) {
-    const err = document.createElement('p');
-    err.textContent = e.message || String(e);
-    pane.appendChild(err);
+    body = document.createElement('p');
+    body.textContent = e.message || String(e);
   }
+  if (revision === netconnectRevision) pane.appendChild(body);
 }
 const hAuthLogin = document.getElementById('hAuthLogin');
 const hAuthLoginBox = document.getElementById('hAuthLoginBox');
@@ -3906,6 +3914,7 @@ if (hAuthLogout) {
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
+    netconnectRevision++; $('pane-netconnect').replaceChildren();
     currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
     paintSessionTokens({total:0});
     $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;
