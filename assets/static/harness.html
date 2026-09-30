@@ -430,6 +430,7 @@
         <button class="side-tab" data-pane="api-keys">API Keys</button>
         <button class="side-tab" data-pane="memory">Memory</button>
         <button class="side-tab" data-pane="users">Users</button>
+        <button class="side-tab" data-pane="netconnect">LAN</button>
       </div>
       <div class="side-body">
         <div class="side-pane active" id="pane-commands"></div>
@@ -440,6 +441,7 @@
           <div id="usersPanelStatus" class="panel-status" hidden></div>
           <div id="usersPanelBody"></div>
         </div>
+        <div class="side-pane" id="pane-netconnect"><p>Open LAN to view scope, passive devices, and tier state.</p></div>
       </div>
     </div>
 
@@ -1516,6 +1518,7 @@ const COMMANDS = [
   ['/memory save <text> :: <reason>', 'confirm an immediate private fact write'],
   ['/memory search <query>', 'search fact candidates without injecting them'],
   ['/model [use <name>]', 'show or select a chat model; planner selection is separate'],
+  ['/net status|devices', 'status is scope and gates and loads no collector; devices lists passive neighbors; aliases /netconnect /lan /scan /ports /speed only suggest on a near-miss'],
   ['/prompt', 'preview the next chat system prompt (private)'],
   ['/registry', 'combined skill, tool and connector catalog'],
   ['/session [list]', 'list saved chat sessions'],
@@ -2681,6 +2684,19 @@ async function runSlash(line, webCommand) {
         break;
       }
 
+      case 'net': {
+        const sub = rest[0] || '';
+        // Refuse before loading the panel, so a refused command reads no table.
+        if (sub !== 'status' && sub !== 'devices') {
+          sys('netconnect refusal: this console does not run active tiers or device control');
+          break;
+        }
+        document.querySelectorAll('.side-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === 'netconnect'));
+        document.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-netconnect'));
+        await showNetconnect();
+        break;
+      }
+
       case 'status': {
         const s = await api('/api/status');
         if (s.auth_enabled && !('sessions' in s)) {
@@ -3708,8 +3724,49 @@ document.querySelectorAll('.side-tab').forEach(tab => {
     if (tab.dataset.pane === 'users') runSlash('/users');
     if (tab.dataset.pane === 'api-keys') refreshKeys();
     if (tab.dataset.pane === 'memory') refreshMemoryProposals();
+    if (tab.dataset.pane === 'netconnect') showNetconnect();
   });
 });
+function renderNetconnect(view) {
+  const box = document.createElement('div');
+  const add = (text) => {
+    const p = document.createElement('p');
+    p.textContent = text;
+    box.appendChild(p);
+  };
+  add('enabled: ' + (view.enabled === true ? 'on' : 'off'));
+  const cidrs = Array.isArray(view.allowed_cidrs) ? view.allowed_cidrs.join(' ') : '';
+  add('scope: ' + (view.scope_empty || !cidrs ? 'empty' : cidrs));
+  (view.tiers || []).forEach((tier) => {
+    add(String(tier.tier) + ': flag ' + (tier.flag ? 'on' : 'off') + ', runnable ' + (tier.runnable ? 'yes' : 'no'));
+  });
+  const neighbors = Array.isArray(view.neighbors) ? view.neighbors : [];
+  if (!neighbors.length) add('passive devices: none');
+  neighbors.forEach((row) => {
+    const host = row.hostname && row.hostname.value ? row.hostname.value : '';
+    const vendor = row.vendor && row.vendor.value ? row.vendor.value : '';
+    add(String(row.address || '') + ' ' + host + ' ' + vendor + ' (untrusted)');
+  });
+  return box;
+}
+/* A newer load or a logout bumps the revision, so an older reply is dropped. */
+let netconnectRevision = 0;
+async function showNetconnect() {
+  const revision = ++netconnectRevision;
+  const pane = $('pane-netconnect');
+  pane.replaceChildren();
+  const note = document.createElement('p');
+  note.textContent = 'Read-only. Network names are untrusted data, not commands.';
+  pane.appendChild(note);
+  let body;
+  try {
+    body = renderNetconnect(await api('/api/netconnect'));
+  } catch (e) {
+    body = document.createElement('p');
+    body.textContent = e.message || String(e);
+  }
+  if (revision === netconnectRevision) pane.appendChild(body);
+}
 const hAuthLogin = document.getElementById('hAuthLogin');
 const hAuthLoginBox = document.getElementById('hAuthLoginBox');
 const hAuthSetup = document.getElementById('hAuthSetup');
@@ -3857,6 +3914,7 @@ if (hAuthLogout) {
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
+    netconnectRevision++; $('pane-netconnect').replaceChildren();
     currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
     paintSessionTokens({total:0});
     $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;

@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
     name = "cgagentharness",
     version,
     about = "Private local chat, permitted web research, and governed coding",
-    after_help = "QUICK START\n  cgagentharness serve                 Start the local console\n  cgagentharness account login NAME    Sign in to the running portal\n  cgagentharness web --help            URL permissions and research\n\nIn the console, /help opens the searchable command guide; /help web shows research examples.\nData lives in ~/.CGagentHarness (override: CGAGENTHARNESS_HOME). No web content is permitted until an administrator adds URL rules."
+    after_help = "QUICK START\n  cgagentharness serve                 Start the local console\n  cgagentharness account login NAME    Sign in to the running portal\n  cgagentharness web --help            URL permissions and research\n  cgagentharness netconnect status     Show LAN gates (sends no packets)\n\nIn the console, /help opens the searchable command guide; /help web shows research examples.\nData lives in ~/.CGagentHarness (override: CGAGENTHARNESS_HOME). No web content is permitted until an administrator adds URL rules."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -51,6 +51,14 @@ enum Command {
         #[command(subcommand)]
         action: cgagentharness::server::client::TlsCommand,
     },
+    /// Passive LAN observation. Sends no packets. Gates ship closed.
+    Netconnect {
+        /// Config file. Defaults to the home `config.yaml`.
+        #[arg(long)]
+        config: Option<std::path::PathBuf>,
+        #[command(subcommand)]
+        action: cgagentharness::netconnect::cli::Action,
+    },
     /// Private desktop sidecar protocol over inherited pipes.
     #[cfg(unix)]
     #[command(hide = true)]
@@ -80,6 +88,7 @@ fn main() -> ExitCode {
         Command::Web { url, action } => report(cgagentharness::server::client::web(action, url)),
         Command::Account { url, action } => report(cgagentharness::server::client::account(action, url)),
         Command::Tls { action } => report(cgagentharness::server::client::tls(action)),
+        Command::Netconnect { config, action } => ExitCode::from(cgagentharness::netconnect::cli::run(config, action)),
         #[cfg(unix)]
         Command::Desktop => match cgagentharness::server::desktop::run() {
             Ok(()) => ExitCode::SUCCESS,

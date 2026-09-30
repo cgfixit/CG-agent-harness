@@ -89,8 +89,18 @@ pub async fn status(
     }))
 }
 
-pub async fn spend_summary(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(crate::llm::spend::summarize_file(&state.spend_file))
+pub async fn spend_summary(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    let path = state.spend_file.clone();
+    tokio::task::spawn_blocking(move || crate::llm::spend::summarize_file(&path))
+        .await
+        .map(Json)
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SPEND_UNAVAILABLE",
+                "spend summary could not be read",
+            )
+        })
 }
 
 /// Compose existing reads without importing the agentic implementation or
