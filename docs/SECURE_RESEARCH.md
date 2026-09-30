@@ -73,9 +73,9 @@ existing list of values actually consumed by the binary; [supported managed
 keys](INSTALL.md#supported-managed-keys) lists them and explains saved/active
 masks, restarts and environment precedence. Administrators can
 paste/save/replace/clear saved values. GET/POST responses contain only masks and
-status. Save and clear use serialized atomic private dotenv updates, preserving
-unrelated lines; unsafe or unreadable files are refused. Values are never stored
-in SQLite. Missing provider credentials affect only the selected provider's
+status. Save and clear use the OS credential store and fail closed when it is
+unavailable. Literal `security.allow_plaintext_key_file: true` keeps the private
+0600 file. Values are never stored in SQLite. Missing provider credentials affect only the selected provider's
 operation. Leave `GH_TOKEN` unset to use existing `gh auth login`. Completion
 webhook bearers are configured separately; see the
 [webhook guide](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).
@@ -342,9 +342,9 @@ Open **API Keys** in the left pane, paste a **SerpAPI** key into **Google result
 (SerpAPI)**, save, then click **Test Google search**. This is a SerpAPI
 Google-results key, not a Google Cloud/Custom Search key; obtain it through
 [SerpAPI](https://serpapi.com/search-api). No key belongs in the chat transcript
-or `config.yaml`. The field manages `SERPAPI_API_KEY` through the existing private
-dotenv store. Saving/clearing it applies to the next search immediately; process
-environment overrides still apply.
+or `config.yaml`. The field manages `SERPAPI_API_KEY` in the OS credential store
+(legacy `.env` only when the plaintext opt-in is literal true). Saving/clearing
+it applies to the next search immediately; process environment overrides still apply.
 
 An active nonempty key selects the fixed `https://serpapi.com/search.json` Google
 backend. The API receives the chosen keyword query, engine, result count and its key;

@@ -86,8 +86,10 @@ fn start() -> anyhow::Result<()> {
         )?;
         return Ok(());
     }
-    let mut keys = match super::env_keys::read_startup_keys(&home.env_path()) {
-        Ok(keys) => keys,
+    let plaintext = config.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE);
+    let store = crate::common::credential_store::OsCredentialStore::for_home(&home.root);
+    let mut loaded = match super::env_keys::load_startup(&home.env_path(), plaintext, &store) {
+        Ok(loaded) => loaded,
         Err(error) => {
             send(json!({"error":"credentials_unreadable", "message":error.to_string()}))?;
             return Ok(());
@@ -95,25 +97,41 @@ fn start() -> anyhow::Result<()> {
     };
     let key_name = crate::common::apikey::API_KEY_ENV;
     if let Some(key) = hello.initialize_key {
-        if keys.contains_key(key_name) || std::env::var(key_name).is_ok() {
+        if loaded.values.contains_key(key_name) || std::env::var(key_name).is_ok() {
             send(
                 json!({"error":"key_exists", "message":"An API key already exists; enter it in the console. Setup will not overwrite it."}),
             )?;
             return Ok(());
         }
-        super::env_keys::validate_value(key_name, &key)?;
-        let update = [(key_name.to_string(), key)].into_iter().collect();
-        super::env_keys::write_keys(&home.env_path(), &update)?;
-        keys.extend(update);
+        if let Err(error) = super::env_keys::validate_value(key_name, &key) {
+            send(json!({"error":"credential_rejected", "message": error.message}))?;
+            return Ok(());
+        }
+        let update = [(key_name.to_string(), key.clone())].into_iter().collect();
+        let saved = if plaintext {
+            super::env_keys::write_keys(&home.env_path(), &update)
+        } else {
+            super::env_keys::update_os_keys(&store, &update, &[])
+        };
+        if let Err(error) = saved {
+            send(json!({"error":"credential_store_unavailable", "message": error.message}))?;
+            return Ok(());
+        }
+        loaded.values.insert(key_name.to_string(), key);
     }
     let mut options = super::AppOptions::new(home);
-    for (name, value) in keys {
+    let inherited: std::collections::BTreeSet<String> = loaded
+        .values
+        .keys()
+        .filter(|name| std::env::var_os(name).is_some())
+        .cloned()
+        .collect();
+    for (name, value) in super::env_keys::without_inherited(loaded.values, &inherited) {
         // This entrypoint is still single-threaded; preserve explicit env precedence.
-        if std::env::var_os(&name).is_none() {
-            options.key_file_sources.insert(name.clone());
-            std::env::set_var(name, value);
-        }
+        options.key_file_sources.insert(name.clone());
+        std::env::set_var(name, value);
     }
+    options.credential_warnings = loaded.warnings;
     let rt = tokio::runtime::Runtime::new()?;
     let outcome = rt.block_on(async {
         options.config = Some(config);
@@ -154,7 +172,8 @@ fn start() -> anyhow::Result<()> {
             "api_key_optional":state.api_key_optional,
             "home":state.home.root,"chat_model":state.current_model(),
             "planner_model":state.cfg.str_or("agentic.deepagent_github.model", ""),
-            "auth_enabled":state.auth.is_some()}),
+            "auth_enabled":state.auth.is_some(),
+            "credential_warnings":state.credential_warnings}),
         )?;
         // Blocking stdin reader lives on this caller thread while the multithread
         // runtime serves requests. EOF after parent death enters the same shutdown.

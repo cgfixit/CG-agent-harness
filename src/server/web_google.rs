@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use super::web_policy::{canonical_url, error};
 use super::web_search::WebTool;
 use crate::common::audit::Audit;
+use crate::common::credential_store::CredentialStore;
 use crate::common::errors::Result;
 
 /// The notice on every search listing.
@@ -132,22 +133,39 @@ fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
 }
 
 impl WebTool {
-    /// Read the private saved key on demand; an explicit process environment still wins.
+    /// Read the saved search key on demand. An explicit process environment still wins
+    /// unless this process loaded the saved value itself (`search_key_from_file`).
     pub(super) fn search_key(&self) -> Result<String> {
+        if self.plaintext_key_file {
+            if !self.search_key_from_file {
+                if let Ok(key) = std::env::var("SERPAPI_API_KEY") {
+                    return Ok(key.trim().to_string());
+                }
+            }
+            let path = self.tools_dir.parent().unwrap_or(&self.tools_dir).join(".env");
+            return super::env_keys::read_startup_keys(&path)
+                .map(|mut keys| keys.remove("SERPAPI_API_KEY").unwrap_or_default())
+                .map_err(|_| {
+                    error(
+                        "WEB_SEARCH_KEY_UNAVAILABLE",
+                        "Cannot read the saved search key; check API Keys and credential-file permissions",
+                    )
+                });
+        }
         if !self.search_key_from_file {
             if let Ok(key) = std::env::var("SERPAPI_API_KEY") {
                 return Ok(key.trim().to_string());
             }
         }
-        let path = self.tools_dir.parent().unwrap_or(&self.tools_dir).join(".env");
-        super::env_keys::read_startup_keys(&path)
-            .map(|mut keys| keys.remove("SERPAPI_API_KEY").unwrap_or_default())
-            .map_err(|_| {
-                error(
-                    "WEB_SEARCH_KEY_UNAVAILABLE",
-                    "Cannot read the saved search key; check API Keys and credential-file permissions",
-                )
-            })
+        let home = self.tools_dir.parent().unwrap_or(&self.tools_dir);
+        match crate::common::credential_store::OsCredentialStore::for_home(home).get("SERPAPI_API_KEY") {
+            Ok(value) => Ok(value.unwrap_or_default()),
+            Err(crate::common::credential_store::StoreError::Unavailable) => Ok(String::new()),
+            Err(_) => Err(error(
+                "WEB_SEARCH_KEY_UNAVAILABLE",
+                "Cannot read the saved search key from the OS credential store",
+            )),
+        }
     }
 
     /// A key chooses the fixed SerpAPI Google backend. It is never sent to Google
@@ -349,6 +367,7 @@ mod tests {
         let cfg = crate::common::config::AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
         let mut web = WebTool::new(&dir.path().join("tools"), &cfg).unwrap();
         web.search_key_from_file = true;
+        web.plaintext_key_file = true;
         web.test_resolve = Some(("provider.example".into(), address));
         let endpoint = url::Url::parse("http://provider.example/search").unwrap();
         let audit = crate::common::audit::Audit::new(dir.path().join("audit.jsonl"), &cfg);

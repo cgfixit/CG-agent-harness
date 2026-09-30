@@ -70,6 +70,7 @@ for key, value in {
     'models.local_llm.base_url': args.endpoint,
     'models.local_llm.model': args.model,
     'models.local_llm.max_tokens': 256, 'tls.enabled': not args.http,
+    'security.allow_plaintext_key_file': True,
 }.items():
     config = override(config, key, value)
 (home / 'config.yaml').write_text(config)

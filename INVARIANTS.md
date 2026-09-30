@@ -409,6 +409,26 @@ callers append inline.
   `tests/shim_and_agent_routes.rs::an_agentic_child_starts_after_the_audit_line_that_authorized_it`,
   `tests/secure_portal.rs::ctrl_c_and_sigterm_stop_serve_after_its_queued_audit_lines_land`.
 
+## Provider keys live in the OS credential store
+
+Managed provider keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
+`SERPAPI_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
+`CGAGENTHARNESS_WEBHOOK_TOKEN`) are stored in the OS credential store: macOS
+Keychain, Linux Secret Service, or Windows Credential Manager. An inherited
+environment variable wins, including an empty value. A legacy home `.env` is read
+only by the one-time migration, which removes a managed line only after the store
+write verifies. Unknown lines stay. If the store write or verify fails, that line
+stays, startup warns without the value, and the key is not loaded. Settings save
+and clear use the store and fail closed when it is unavailable.
+`security.allow_plaintext_key_file` ships false; only the literal boolean `true`
+keeps the private 0600 file. Quoted `"true"` stays off. Values never appear in
+argv, logs, diagnostics, readiness files, or `/api` responses (presence and a
+masked tail only). Account passwords stay scrypt-hashed in `auth.sqlite3`.
+
+- Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
+  `tests/panels.rs`, and
+  `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
+
 ## A detached run cannot outlive its gates
 
 `POST /api/agent/jobs` runs the identical validated request as

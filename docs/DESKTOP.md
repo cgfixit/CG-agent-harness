@@ -72,25 +72,31 @@ that does not migrate the existing home or alter the published default. Check
 the home shown in the console footer or Setup, and record it separately from
 `Contents/Resources/COMMIT` when comparing app copies.
 
-Desktop and Unix headless `serve` startup load supported managed keys from the home's `.env` **as data**,
-without a shell, `eval`, or shell startup files. The file must be a regular file,
-owned by the current user, private (0600), at most 64 KiB, and not a symlink.
-Explicit inherited environment values retain precedence. Unknown lines are
-preserved when initializing a missing key. API keys are absent from argv,
-user-facing URLs, readiness files and desktop diagnostics. The optional SerpAPI
-key is sent only in that fixed provider's HTTPS request query, never to result URLs. Config/key parse failures show
-an actionable setup error without quoting values. Existing configuration is preserved; fresh homes enable accounts and roles.
-No desktop session elevation exists.
+Desktop and headless `serve` load supported managed keys from the OS credential
+store (macOS Keychain, Linux Secret Service, Windows Credential Manager). An
+explicit inherited environment value still wins, including an empty one. A legacy
+home `.env` is read only by the one-time migration: each managed line is written,
+read back, and removed only after the values match. Unknown lines stay. A failed
+store write or verify leaves that line, shows a setup warning without the value,
+and does not load it. API keys are absent from argv, user-facing URLs, readiness
+files, diagnostics, and error text. The optional SerpAPI key is sent only in that
+fixed provider's HTTPS request query, never to result URLs. Config/key parse
+failures show an actionable setup error without quoting values. Existing
+configuration is preserved; fresh homes enable accounts and roles. No desktop
+session elevation exists.
 
-Headless `serve` uses the same private-file validation before starting its async
-runtime; a missing file is allowed and an unsafe/unreadable file refuses startup.
-SerpAPI key changes in the panel apply immediately; other keys need a restart.
+Settings save and clear go to the OS store. If the store is unavailable, save is
+refused and nothing is written to `.env`. `security.allow_plaintext_key_file: true`
+(literal boolean, default false, restart required) keeps the legacy private 0600
+`.env` path. Quoted `"true"` stays off. An unsafe or unreadable legacy file still
+refuses startup. SerpAPI key changes apply immediately; other keys need a restart.
 A SerpAPI key selects API-backed Google results when web is enabled, without a
-Google page grant; linked pages still require URL permission; no active key selects public
-Google, which may be blocked by JavaScript/CAPTCHA. Other provider gates remain
-independent. Loading a key never grants content, account or repository-write access. This is dotenv support, not macOS Keychain
-integration. Windows headless startup still uses explicitly supplied environment
-values; native Windows credential loading remains a separate parity action.
+Google page grant; linked pages still require URL permission; no active key selects
+public Google, which may be blocked by JavaScript/CAPTCHA. Other provider gates
+remain independent. Loading a key never grants content, account, or repository-write
+access. Linux without a Secret Service session (`DBUS_SESSION_BUS_ADDRESS` unset)
+fails closed. Headless macOS may refuse Keychain access for an unsigned binary
+instead of prompting.
 
 Webview storage is private to that window, avoiding cookie collisions between
 independent homes on ephemeral ports. Sign in again after reopening; provider keys remain server-side.
