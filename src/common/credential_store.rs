@@ -166,8 +166,10 @@ impl OsCredentialStore {
 impl CredentialStore for OsCredentialStore {
     fn get(&self, name: &str) -> Result<Option<String>, StoreError> {
         let entry = self.entry(name)?;
-        match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
+        // Provider tokens are UTF-8 strings. Read the secret bytes instead of
+        // `get_password`, and drop a non-UTF-8 blob without formatting it.
+        match entry.get_secret() {
+            Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| StoreError::ReadFailed),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(self.classify(error)),
         }
@@ -264,6 +266,13 @@ pub(crate) fn strip_assignments(text: &str, remove: &BTreeSet<String>) -> String
 /// Missing is empty. The bytes are migration input or the plaintext opt-in, never a log line.
 pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
     use std::io::Read;
+    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+    // Rebuild the path from that checked string before the open.
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        anyhow::bail!("credential file path refused");
+    }
+    let path = Path::new(raw.as_ref());
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -448,6 +457,14 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         let warning = migration_warning("SERPAPI_API_KEY", StoreError::Unavailable);
         assert!(!warning.contains("secret"));
         assert!(warning.contains(PLAINTEXT_KEY_FILE));
+    }
+
+    #[test]
+    fn credential_file_parent_components_are_refused_without_echoing_the_path() {
+        let err = read_private_text(Path::new("/tmp/not-a-home/../.env")).unwrap_err();
+        let message = err.to_string();
+        assert_eq!(message, "credential file path refused");
+        assert!(!message.contains(".env"));
     }
 
     #[test]

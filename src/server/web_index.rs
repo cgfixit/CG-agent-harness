@@ -731,7 +731,7 @@ mod tests {
             .search("WIDGET_RETRY_COUNT", Some("manuals"), true, &audit, "local")
             .await
             .unwrap();
-        assert_eq!(found["hits"].as_array().unwrap().len(), 1, "{found}");
+        assert_eq!(found["hits"].as_array().unwrap().len(), 1);
         assert_eq!(found["hits"][0]["url"], format!("{root}docs/nested"));
         assert!(found["coverage"]["refused"]
             .as_array()
