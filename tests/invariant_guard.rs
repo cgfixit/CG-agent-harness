@@ -603,7 +603,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // #235 the process-global CSRF note and the I6 process map.
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
     // why: read-only tool, slash, and panel rules; 5790 words, rounded up to the next 100.
-    ("INVARIANTS.md", Root, 5800),
+    // why: credential and preemption contracts matched to runtime; 5807 words, rounded up to the next 100.
+    ("INVARIANTS.md", Root, 5900),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ANALYTICS.md", Guide, 900),
