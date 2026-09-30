@@ -149,8 +149,17 @@ impl ServerOptions {
     }
 }
 
-/// Spawn the app on an ephemeral loopback port with `model_url` as the chat backend.
-pub async fn spawn_server(model_url: &str, opts: ServerOptions) -> TestServer {
+/// Home and [`AppOptions`] ready for [`build_app`] or `build_app_with_sources`.
+/// The listener is not running, so passive sources are fixed in the constructor.
+pub struct PreparedServer {
+    pub tmp: tempfile::TempDir,
+    pub home_dir: PathBuf,
+    pub app_opts: AppOptions,
+    pub api_key: Option<String>,
+}
+
+/// Prepare a temp home and app options. Does not build or listen.
+pub async fn prepare_server(model_url: &str, opts: ServerOptions) -> PreparedServer {
     let tmp = tempfile::tempdir().unwrap();
     let home_dir = tmp.path().join("home");
     let home = Home::at(home_dir.clone());
@@ -171,7 +180,22 @@ pub async fn spawn_server(model_url: &str, opts: ServerOptions) -> TestServer {
     }
     app_opts.web_test_resolve = opts.web_resolve;
     app_opts.shim_exe = Some(opts.shim_exe.unwrap_or_else(|| PathBuf::from(BIN)));
-    let (router, state) = build_app(app_opts).await.unwrap();
+    PreparedServer {
+        tmp,
+        home_dir,
+        app_opts,
+        api_key: opts.api_key,
+    }
+}
+
+/// Bind an already-built router on an ephemeral loopback port.
+pub async fn start_test_server(
+    tmp: tempfile::TempDir,
+    home_dir: PathBuf,
+    api_key: Option<String>,
+    router: Router,
+    state: Arc<AppState>,
+) -> TestServer {
     let transport = cgagentharness::server::transport::Transport::load(&state.home, &state.cfg, "127.0.0.1").unwrap();
     let scheme = transport.scheme();
     let mut client = reqwest::Client::builder()
@@ -191,12 +215,28 @@ pub async fn spawn_server(model_url: &str, opts: ServerOptions) -> TestServer {
         addr,
         state,
         home: home_dir,
-        api_key: opts.api_key.unwrap_or_default(),
+        api_key: api_key.unwrap_or_default(),
         csrf,
         client: client.build().unwrap(),
         _tmp: tmp,
         _task: task,
     }
+}
+
+/// Spawn the app on an ephemeral loopback port with `model_url` as the chat backend.
+///
+/// Production sources stay [`cgagentharness::netconnect::tools::PassiveSources::live`]
+/// through [`build_app`]. Fixture sources go through `build_app_with_sources`
+/// before [`start_test_server`].
+pub async fn spawn_server(model_url: &str, opts: ServerOptions) -> TestServer {
+    let PreparedServer {
+        tmp,
+        home_dir,
+        app_opts,
+        api_key,
+    } = prepare_server(model_url, opts).await;
+    let (router, state) = build_app(app_opts).await.unwrap();
+    start_test_server(tmp, home_dir, api_key, router, state).await
 }
 
 impl TestServer {

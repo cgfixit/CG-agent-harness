@@ -19,6 +19,7 @@ const COMMANDS: &[&str] = &[
     "soul",
     "style",
     "memory",
+    "net",
     "api",
     "model",
     "connectors",
@@ -200,6 +201,11 @@ fn parse_slash_primary(line: &str) -> SlashParse {
 
     let raw_cmd = tokens[0];
     let cmd_l = raw_cmd.to_ascii_lowercase();
+    if !preexisting_slash_names().contains(cmd_l.as_str()) {
+        if let Some(intent) = crate::netconnect::slash::interpret(&cmd_l, &tokens[1..], &preexisting_slash_names()) {
+            return net_intent(intent);
+        }
+    }
     let (cmd, aliased, cmd_score) = resolve_command(&cmd_l);
     let Some(cmd) = cmd else {
         let near = nearby_commands(&cmd_l);
@@ -332,6 +338,53 @@ fn parse_slash_primary(line: &str) -> SlashParse {
             suggestions,
             notice,
         }
+    }
+}
+
+/// Slash roots that existed before `/net`. Netconnect aliases are checked
+/// against this set and dropped on a hit. `net` itself is excluded because
+/// this registry owns that root.
+pub fn preexisting_slash_names() -> std::collections::BTreeSet<&'static str> {
+    const EARLIER_ALIASES: &[&str] = &["cmds", "commands", "mem", "persona"];
+    let mut names = std::collections::BTreeSet::new();
+    for name in COMMANDS {
+        if *name != "net" {
+            names.insert(*name);
+        }
+    }
+    names.extend(EARLIER_ALIASES.iter().copied());
+    names
+}
+
+fn net_intent(intent: crate::netconnect::slash::Intent) -> SlashParse {
+    match intent {
+        crate::netconnect::slash::Intent::Dispatch { canonical, sub } => SlashParse {
+            web: None,
+            kind: SlashKind::Dispatch,
+            dispatch: true,
+            canonical: Some(canonical),
+            command: Some("net".to_string()),
+            sub: Some(sub.to_string()),
+            rest: String::new(),
+            confidence: 100,
+            suggestions: Vec::new(),
+            notice: None,
+        },
+        crate::netconnect::slash::Intent::Suggest { notice, suggestions } => SlashParse {
+            web: None,
+            kind: SlashKind::Suggest,
+            dispatch: false,
+            canonical: None,
+            command: Some("net".to_string()),
+            sub: None,
+            rest: String::new(),
+            confidence: 0,
+            suggestions: suggestions
+                .into_iter()
+                .map(|line| SlashSuggestion { line, score: 70 })
+                .collect(),
+            notice: Some(notice),
+        },
     }
 }
 
@@ -1031,5 +1084,39 @@ mod tests {
             }
             assert!(p.suggestions.len() <= 5, "{line}");
         }
+    }
+
+    #[test]
+    fn net_exact_alias_dispatches_and_fuzzy_does_not_execute() {
+        for line in [
+            "/net status",
+            "/netconnect devices",
+            "/lan devices",
+            "/scan status",
+            "/ports devices",
+            "/speed status",
+        ] {
+            let parsed = parse_line(line);
+            assert!(parsed.dispatch, "{line}: {parsed:?}");
+            assert_eq!(parsed.command.as_deref(), Some("net"));
+            assert!(parsed.canonical.as_deref().unwrap().starts_with("/net "));
+        }
+        for line in ["/nett status", "/scann devices", "/net devic", "/net devicee"] {
+            let parsed = parse_line(line);
+            assert!(!parsed.dispatch, "{line}: {parsed:?}");
+            assert_eq!(parsed.kind, SlashKind::Suggest);
+            let notice = parsed.notice.unwrap_or_default();
+            assert!(notice.contains("did you mean"), "{line}: {notice}");
+            assert!(
+                parsed.suggestions.iter().all(|item| item.line != "/net device"),
+                "{line}"
+            );
+        }
+        let device = parse_line("/net device");
+        assert!(device.dispatch);
+        assert_eq!(device.sub.as_deref(), Some("device"));
+        let (kept, dropped) = crate::netconnect::slash::classify_aliases(&preexisting_slash_names());
+        assert!(dropped.is_empty(), "{dropped:?}");
+        assert_eq!(kept, crate::netconnect::slash::CANDIDATE_ALIASES);
     }
 }

@@ -36,7 +36,8 @@ FACT non-upgrades (do not invent):
 
 - **C1–C10** and **I1–I8** remain `missing`. Tip has no fsconnect, sqlconnect,
   telegram, or opentweet package. `netconnect` is fail-closed config, scope,
-  and a passive CLI only (`INVARIANTS.md`); no tool, slash command, or scan.
+  passive CLI, read-only `/net` aliases, and a GET console panel
+  (`INVARIANTS.md`); no scan and no active-tier tool.
   The clone jail is not a general filesystem connector.
 - Native column stays `unavailable` for every row. Chromium / HTTP tests are
   not WKWebView acceptance. See [DESKTOP_ACCEPTANCE.md](../DESKTOP_ACCEPTANCE.md).

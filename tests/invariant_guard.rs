@@ -602,7 +602,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #237 and #243 added the cloud-truncation and web-budget contracts;
     // #235 the process-global CSRF note and the I6 process map.
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
-    ("INVARIANTS.md", Root, 5700),
+    // why: read-only tool, slash, and panel rules; 5790 words, rounded up to the next 100.
+    ("INVARIANTS.md", Root, 5800),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ANALYTICS.md", Guide, 900),
@@ -611,7 +612,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/CODING_PIPELINE.md", Guide, 3900),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
-    ("docs/CONSOLE.md", Guide, 6600),
+    // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
+    ("docs/CONSOLE.md", Guide, 6700),
     ("docs/CONSOLE_JOBS.md", Guide, 1400),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     ("docs/DESKTOP.md", Guide, 2800),
@@ -647,7 +649,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: PR template evidence guidance raised the Agent total to 22841, rounded up to the next 500; then
 // trimming AGENTS.md and CLAUDE.md (moved to the root) brought it to 22186, rounded up to the next 500.
 // why: netconnect LAN-scope bullet in AGENTS.md; Agent total 22541 words, rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 7_500), (Guide, 47_000), (Evidence, 3_500), (Agent, 23_000)];
+// why: read-only netconnect panel and slash rules; Root total 7506 words, rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_000), (Guide, 47_000), (Evidence, 3_500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
