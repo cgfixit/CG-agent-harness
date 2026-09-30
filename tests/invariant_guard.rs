@@ -620,7 +620,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // #235 the process-global CSRF note and the I6 process map.
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
     // why: read-only tool, slash, and panel rules; 5790 words, rounded up to the next 100.
-    // why: credential and preemption contracts matched to runtime, then the OS credential store section; 5991 words, rounded up to the next 100.
+    // why: credential and preemption contracts matched to runtime, then the OS credential store section; 5997 words, rounded up to the next 100.
     ("INVARIANTS.md", Root, 6000),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
@@ -639,7 +639,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/DESKTOP_ACCEPTANCE.md", Evidence, 3000),
     // why: #241 folded the MLX QLoRA guide and finetune/README.md in here.
     ("docs/FINETUNE.md", Guide, 1200),
-    // why: credentials table now describes the OS store and the plaintext opt-in; 5542 words, rounded up to the next 100.
+    // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     ("docs/INSTALL.md", Guide, 5600),
     ("docs/MCP_CLIENT.md", Guide, 1000),
     ("docs/MCP_SERVER.md", Guide, 1200),
