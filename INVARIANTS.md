@@ -423,7 +423,9 @@ write verifies. Unknown lines stay. If the store write or verify fails, that lin
 stays, startup warns without the value, and the key is not loaded. Settings save
 and clear use the store and fail closed when it is unavailable.
 `security.allow_plaintext_key_file` ships false; only the literal boolean `true`
-keeps the private 0600 file. Quoted `"true"` stays off. Values never appear in
+keeps the private 0600 file. Quoted `"true"` stays off. Each entry's service name
+includes the canonical home. keyring's target is not a namespace: macOS treats it
+as a keychain domain, and Windows uses it as the only credential name. Values never appear in
 argv, logs, diagnostics, readiness files, or `/api` responses (presence and a
 masked tail only). Account passwords stay scrypt-hashed in `auth.sqlite3`.
 

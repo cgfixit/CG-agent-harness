@@ -330,7 +330,9 @@ New homes require HTTPS and account login. The old key-required setting is
 deprecated; a harness metadata key is optional and grants no account authority.
 Administrators save/replace/clear credentials in **API Keys**; saved and active
 masks are separate. Startup reads the OS credential store (macOS Keychain, Linux
-Secret Service, Windows Credential Manager). Explicit inherited environment values
+Secret Service, Windows Credential Manager). A Linux build needs `pkg-config` and
+`libdbus-1-dev`; macOS and Windows use their native stores without that package.
+Explicit inherited environment values
 override stored values. A legacy `.env` is migration input unless
 `security.allow_plaintext_key_file` is literal true. Restart to reload, and remove
 an inherited value separately when clearing a saved key is insufficient.

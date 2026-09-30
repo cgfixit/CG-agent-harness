@@ -70,6 +70,9 @@ jobs:
           # Only main writes the cache: PR runs restore main's entry instead of
           # each branch saving its own and evicting the others (10 GB repo cap).
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Linux credential-store build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - name: Release build
         run: cargo build --release --locked
       - name: Stage, checksum, extract-verify

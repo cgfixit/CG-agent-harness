@@ -73,7 +73,10 @@ the home shown in the console footer or Setup, and record it separately from
 `Contents/Resources/COMMIT` when comparing app copies.
 
 Desktop and headless `serve` load supported managed keys from the OS credential
-store (macOS Keychain, Linux Secret Service, Windows Credential Manager). An
+store (macOS Keychain, Linux Secret Service, Windows Credential Manager). The
+service name includes the canonical home, so two homes do not share entries.
+keyring's target stays at the platform default: on macOS it selects a keychain
+domain, and on Windows it is the sole credential name. An
 explicit inherited environment value still wins, including an empty one. A legacy
 home `.env` is read only by the one-time migration: each managed line is written,
 read back, and removed only after the values match. Unknown lines stay. A failed

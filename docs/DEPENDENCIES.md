@@ -16,7 +16,7 @@ preparation are separate from the application's offline Cargo verification.
 | `scraper` 0.27, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
 | `tantivy` 0.26 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
 | `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
-| `keyring` 3.6.3 | OS store for managed provider keys. Features: `apple-native`, `windows-native`, `sync-secret-service`, `crypto-rust`. Linux uses Secret Service, not keyutils |
+| `keyring` 3.6.3 | OS store for managed provider keys. Features: `apple-native`, `windows-native`, `sync-secret-service`, `crypto-rust`. Linux uses Secret Service, not keyutils. A Linux build needs `pkg-config` and `libdbus-1-dev` |
 
 Reqwest 0.12 already serves both crates. Public fetching disables proxies,
 redirects, compression, retries and connection reuse and pins checked DNS

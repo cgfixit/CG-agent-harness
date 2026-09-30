@@ -113,18 +113,33 @@ pub fn save_refusal(error: StoreError) -> &'static str {
 /// macOS Keychain, Windows Credential Manager, or Linux Secret Service.
 /// Entries are scoped by the canonical home path so two homes do not share keys.
 pub struct OsCredentialStore {
-    target: String,
+    home: String,
     unavailable: AtomicBool,
+}
+
+/// Service string that isolates one harness home.
+///
+/// keyring 3's `target` is not a namespace. On macOS it must be a keychain
+/// domain (`User`, `System`, `Common`, or `Dynamic`); any other string makes
+/// `Entry::new_with_target` fail before the login keychain is opened. On
+/// Windows that same argument replaces the per-entry target name, so one
+/// shared target would collapse every managed key into a single credential.
+/// Linux uses it as a Secret Service collection label. `Entry::new` keeps
+/// each platform's default (login keychain, `user.service`, default collection)
+/// and the canonical home lives in the service string instead. Backslashes
+/// become slashes so a Windows path is a legal Credential Manager target name.
+pub(crate) fn service_name(home: &str) -> String {
+    format!("{SERVICE} ({})", home.replace('\\', "/"))
 }
 
 impl OsCredentialStore {
     pub fn for_home(home: &Path) -> Self {
-        let target = std::fs::canonicalize(home)
+        let home = std::fs::canonicalize(home)
             .unwrap_or_else(|_| home.to_path_buf())
             .display()
             .to_string();
         Self {
-            target,
+            home,
             unavailable: AtomicBool::new(platform_store_missing()),
         }
     }
@@ -133,7 +148,7 @@ impl OsCredentialStore {
         if self.unavailable.load(Ordering::Acquire) {
             return Err(StoreError::Unavailable);
         }
-        keyring::Entry::new_with_target(&self.target, SERVICE, name).map_err(|error| self.classify(error))
+        keyring::Entry::new(&service_name(&self.home), name).map_err(|error| self.classify(error))
     }
 
     fn classify(&self, error: keyring::Error) -> StoreError {
@@ -433,6 +448,23 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         let warning = migration_warning("SERPAPI_API_KEY", StoreError::Unavailable);
         assert!(!warning.contains("secret"));
         assert!(warning.contains(PLAINTEXT_KEY_FILE));
+    }
+
+    #[test]
+    fn service_name_isolates_homes_without_using_a_platform_target() {
+        let home = r"C:\Users\operator\.CGagentHarness";
+        let name = service_name(home);
+        assert!(name.starts_with(SERVICE));
+        assert!(name.contains("C:/Users/operator/.CGagentHarness"));
+        assert!(!name.contains('\\'));
+        assert_ne!(name, service_name("/tmp/other-home"));
+        // Building the entry does not contact Keychain, Credential Manager, or D-Bus.
+        assert!(keyring::Entry::new(&name, "GROK_API_KEY").is_ok());
+        #[cfg(target_os = "macos")]
+        assert!(
+            keyring::Entry::new_with_target(home, SERVICE, "GROK_API_KEY").is_err(),
+            "a filesystem path is not a macOS keychain domain"
+        );
     }
 
     #[test]
