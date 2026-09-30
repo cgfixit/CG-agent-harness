@@ -44,16 +44,21 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   needs `consolidation`; `auto_suggest_chat` / `auto_suggest_coding` need
   capture (bounded completion evidence into pending summaries for the
   initiating owner; never scans shared archives). Feature-off starts no
-  worker; chat wins the generation gate and preempts a running suggestion (it
-  parks as `preempted` and requeues) instead of answering `CHAT_BUSY`. Contract:
+  worker; chat wins the generation gate and preempts a running suggestion (its
+  run stores `state=cancelled`, `error_class=preempted`, then requeues) instead
+  of answering `CHAT_BUSY`. Contract:
   `docs/STRUCTURED_MEMORY.md`; operator view: `docs/MEMORY_GUIDE.md`.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim`, never called in-process from the server).
 - `cgagentharness netconnect status|devices` is passive and read-only.
+  `status` loads no collector; `devices` reads the passive tables.
   `netconnect` gates ship false; empty `allowed_cidrs` refuses armed tiers.
   Scope is operator IPv4 CIDRs inside RFC1918 or 127/8 at prefix /16 or
   longer, never local interfaces. Invalid scope exits 3; a closed master
-  gate exits 4. See the netconnect section of `INVARIANTS.md`.
+  gate exits 4. `/net` (exact aliases `/netconnect`, `/lan`, `/scan`,
+  `/ports`, `/speed`) runs only exact `status` and `devices`. Tier tools
+  register only when `tier_may_run` is true. The console LAN panel is
+  `GET /api/netconnect`. See the netconnect section of `INVARIANTS.md`.
 - Exit codes are an API: `0` ok, `2` failed, `3` env/config, `4` write refused.
   A non-zero child exit is HTTP 200 with `ok=false`; only shim failures map to
   400/502/504 and the disabled-layer banner to 409.

@@ -18,7 +18,9 @@ mod config;
 mod parse;
 mod sanitize;
 mod scope;
+pub mod slash;
 mod sources;
+pub mod tools;
 
 pub use collect::{
     collect_passive, FixtureInterfaces, FixtureNeighbors, FixtureRoutes, InterfaceSource, NeighborSource,

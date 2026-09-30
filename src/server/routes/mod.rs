@@ -26,7 +26,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 100] = [
+pub const REGISTERED_PATHS: [&str; 101] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -34,6 +34,7 @@ pub const REGISTERED_PATHS: [&str; 100] = [
     "/api/status",
     "/api/registry",
     "/api/tools",
+    "/api/netconnect",
     "/api/skills",
     "/api/skills/check",
     "/api/sessions/{session_id}/skills",
@@ -170,6 +171,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     // Mutations and guarded reads: account_gate, then the process CSRF token.
     let guarded = Router::new()
+        .route("/api/netconnect", get(panels::netconnect_panel))
         .route("/api/config/reload", post(core::reload_config))
         .route(
             "/api/sessions/{session_id}/goal-stage",
@@ -387,7 +389,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 100);
+        assert_eq!(REGISTERED_PATHS.len(), 101);
 
         let all = registered_paths();
         assert!(

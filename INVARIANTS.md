@@ -136,11 +136,11 @@ proposals only.
 bounded idle worker enqueue the same runner; feature-off starts no worker.
 Disabling stops new claims without corrupting in-flight work. Interactive
 chat preempts only a running memory suggestion (bounded 5 s wait); any other
-gate holder returns `CHAT_BUSY` naming it. The preempted run persists as
-`preempted` and returns to the queue front unless its chat was cleared; only a
-`preempted` run resumes, and an owner's cancel of one is final. Independently
-gated completion suggestions
-require store + capture, use bounded current completion evidence for the initiating
+gate holder returns `CHAT_BUSY` naming it. The run persists with
+`state=cancelled`, `error_class=preempted` and returns to the queue front unless
+its chat was cleared; only that error class resumes, and an owner's cancel is
+final. Independently gated completion suggestions require store + capture, use
+bounded current completion evidence for the initiating
 owner, and produce pending proposals only. They never read shared archives or
 write human semantic summaries. `/memory save <text> :: <reason>` is an explicit
 human confirmed fact write through the existing API, not model authority.
@@ -379,8 +379,10 @@ or shim imports this agentic helper.
 
 Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
-commit, and uses an object-ID refspec; publication checks the remote branch. Git
-credentials come only from `gh`, with ambient helpers, hooks and prompts disabled. Current policy and separate reason/confirmation remain required.
+commit, and uses an object-ID refspec; publication checks the remote branch.
+HTTPS credentials use `gh`, with ambient Git helpers, hooks and prompts disabled.
+Accepted SSH origins can use the operator's SSH configuration and keys.
+Current policy and separate reason/confirmation remain required.
 Older records missing the new bindings need a new reviewed run. No transaction
 against arbitrary hostile filesystem races or later remote changes is claimed.
 See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility changes and review limitations.
@@ -693,17 +695,28 @@ from local interfaces. Entries are IPv4 CIDRs that lie fully inside RFC1918
 Config load rejects IPv6, a wider prefix, 0.0.0.0/8, link-local
 169.254.0.0/16, CGNAT 100.64.0.0/10, multicast 224.0.0.0/4, 240.0.0.0/4, and
 255.255.255.255. `Scope::check_target` rechecks the final address before any
-later connect; hostnames are not targets. `status` and `devices` are passive:
-they send no packets. `passive_listen` is a flag only (joining multicast is
+later connect; hostnames are not targets. `status` serializes config and
+scope and loads no collector. `devices` and the panel device list send no
+packets. `passive_listen` is a flag only (joining multicast is
 not passive). Device strings are length-capped, stripped of controls, and
 marked untrusted, and are never argv, commands, or paths. `throughput` has no
 default endpoint; a set flag or endpoint warns at load because it is internet
 egress outside this scope. No secret belongs in this config. These keys are
 outside the 22-key reload allowlist. A false master gate exits 4. Invalid
-scope exits 3.
+scope exits 3. `netconnect_status` and `netconnect_devices` register only
+when `enabled` is literal true. A tier's tools register only when
+`tier_may_run` is true; this build registers none. A call whose tier may
+not run returns `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`, not an empty
+success. `/net` keeps the exact aliases `/netconnect`, `/lan`, `/scan`,
+`/ports`, and `/speed` only when they do not collide with an existing slash
+root. Exact `status` and `devices` are read-only. A near-miss only suggests.
+`device` always refuses and is not a fuzzy match. `GET /api/netconnect` is
+the console panel on the existing Host and CSRF guards. It accepts no other
+method and does not turn browser input into a command.
 
 - Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`,
   `tests/netconnect_flags.rs`, `tests/netconnect_scope.rs`,
   `tests/netconnect_collectors.rs`, `tests/netconnect_untrusted.rs`,
-  `scripts/netconnect-syscall-proof.sh`, `tests/netconnect_syscall.rs`, and
+  `scripts/netconnect-syscall-proof.sh`, `tests/netconnect_syscall.rs`,
+  `tests/panels.rs`, and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.

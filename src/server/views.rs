@@ -644,7 +644,13 @@ fn render_tools_diagram(tools: &[Value], wired: usize, total: usize) -> String {
 }
 
 pub fn list_wired_tools(registered: &BTreeSet<String>) -> Value {
-    let tools: Vec<Value> = HARNESS_SURFACES
+    list_wired_tools_with(registered, &[])
+}
+
+/// `extra` rows are config-gated tools. Default config passes an empty slice,
+/// so the wired count stays [`HARNESS_SURFACES`].
+pub fn list_wired_tools_with(registered: &BTreeSet<String>, extra: &[Value]) -> Value {
+    let mut tools: Vec<Value> = HARNESS_SURFACES
         .iter()
         .map(|(name, slash, method, path, desc)| {
             json!({"name": name, "slash": slash, "method": method, "path": path, "description": desc,
@@ -653,14 +659,16 @@ pub fn list_wired_tools(registered: &BTreeSet<String>) -> Value {
                    "unavailable_reason": "requires request-time prerequisite checks", "last_result": null})
         })
         .collect();
+    tools.extend(extra.iter().cloned());
     let wired: Vec<Value> = tools
         .iter()
         .filter(|t| t["wired"].as_bool().unwrap_or(false))
         .cloned()
         .collect();
     let count = wired.len();
-    json!({"tools": tools, "wired": count, "total": HARNESS_SURFACES.len(),
-           "diagram": render_tools_diagram(&wired, count, HARNESS_SURFACES.len())})
+    let total = tools.len();
+    json!({"tools": tools, "wired": count, "total": total,
+           "diagram": render_tools_diagram(&wired, count, total)})
 }
 
 // ---------------------------------------------------------------- skills

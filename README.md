@@ -121,6 +121,15 @@ Set-and-verify procedure: [MODELS.md](docs/MODELS.md).
 prefix for review without executing it; typo suggestions are never executed.
 Slash-command tables: [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference).
 
+### Netconnect
+
+LAN observation ships closed. `netconnect.enabled` and every tier flag in
+`assets/config.default.yaml` are false, and `allowed_cidrs` is empty.
+`cgagentharness netconnect status` reports gates and does not read local tables.
+`cgagentharness netconnect devices` lists in-scope neighbors and sends no packets.
+The console LAN tab is a read-only `GET /api/netconnect`. Guide:
+[netconnect.md](docs/netconnect.md).
+
 ## Which version am I running?
 
 The Cargo package version (`0.1.0`) does **not** establish feature
@@ -142,6 +151,7 @@ and artifact they name. Upgrades, backups and release cadence:
 | Fine-tune `qwen3.8:27b-mlx` and serve it to chat and the coding planner | [FINETUNE.md](docs/FINETUNE.md), [`finetune/`](finetune) |
 | macOS app ownership, Finder setup, recovery, packaging, distribution limits | [DESKTOP.md](docs/DESKTOP.md) |
 | Chat, sessions and goals, soul, styles (off by default), skills, attachments, connectors, streaming, compaction, slash commands | [CONSOLE.md](docs/CONSOLE.md) |
+| Passive LAN observation (`netconnect`, off by default): gates, scope, CLI, `/net`, panel | [netconnect.md](docs/netconnect.md) |
 | Operator manual; memory: pinned notes, structured memory, suggestions, recall | [USER_MANUAL.md](docs/USER_MANUAL.md), [MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md), [STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) |
 | HTTPS and certificates, accounts and roles, web search/fetch/research, URL rules, API keys | [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) |
 | Spend, draft estimates, completion webhooks and deliveries | [SPEND_AND_NOTIFICATIONS.md](docs/SPEND_AND_NOTIFICATIONS.md) |
