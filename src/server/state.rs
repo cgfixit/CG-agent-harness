@@ -132,6 +132,13 @@ pub struct AppState {
     pub memory_suggestions: crate::server::structured_memory_suggest::Suggestions,
     /// Native Ollama pull/inventory (loopback only; independent of chat generation).
     pub ollama: OllamaControl,
+    /// Passive collectors for `GET /api/netconnect`. Fixed at startup.
+    ///
+    /// [`crate::server::build_app`] stores [`crate::netconnect::tools::PassiveSources::live`].
+    /// Tests pass fixtures only through [`crate::server::build_app_with_sources`].
+    /// No route, slash command, reload, or config key replaces this value.
+    /// Any runtime path that does needs a policy review.
+    pub(crate) netconnect_sources: crate::netconnect::tools::PassiveSources,
 }
 
 /// Single-flight native Ollama pull plus a short-lived tags cache.

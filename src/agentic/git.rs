@@ -26,6 +26,9 @@ fn environment(extra: &[(&str, &str)]) -> BTreeMap<String, String> {
     for (key, value) in extra {
         env.insert((*key).into(), (*value).into());
     }
+    env.insert("GH_TELEMETRY".into(), "false".into());
+    env.insert("GH_NO_UPDATE_NOTIFIER".into(), "1".into());
+    env.insert("DO_NOT_TRACK".into(), "1".into());
     env
 }
 
@@ -218,5 +221,14 @@ mod tests {
         assert!(!env.contains_key("SERPAPI_API_KEY"));
         assert!(!env.contains_key("GIT_CONFIG_COUNT"));
         assert_eq!(env.get("GIT_CONFIG_NOSYSTEM").map(String::as_str), Some("1"));
+        assert_eq!(env.get("GH_TELEMETRY").map(String::as_str), Some("false"));
+        assert_eq!(env.get("GH_NO_UPDATE_NOTIFIER").map(String::as_str), Some("1"));
+        assert_eq!(env.get("DO_NOT_TRACK").map(String::as_str), Some("1"));
+        assert_eq!(
+            super::environment(&[("GH_TELEMETRY", "true")])
+                .get("GH_TELEMETRY")
+                .map(String::as_str),
+            Some("false")
+        );
     }
 }

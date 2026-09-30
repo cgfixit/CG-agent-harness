@@ -139,6 +139,20 @@ impl AppOptions {
 }
 
 pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
+    build_app_with_sources(opts, crate::netconnect::tools::PassiveSources::live()).await
+}
+
+/// Build the loopback app with passive sources fixed for the process lifetime.
+///
+/// `sources` is stored once on [`AppState`] and is not replaced afterward.
+/// [`build_app`] is the production caller and passes
+/// [`crate::netconnect::tools::PassiveSources::live`].
+/// No route, slash command, reload, or config key may supply a different value.
+/// Any runtime path that replaces these sources needs a policy review.
+pub async fn build_app_with_sources(
+    opts: AppOptions,
+    netconnect_sources: crate::netconnect::tools::PassiveSources,
+) -> Result<(Router, Arc<AppState>)> {
     let home = opts.home;
     home.ensure_layout()?;
     let cfg = Arc::new(match opts.config {
@@ -297,6 +311,7 @@ pub async fn build_app(opts: AppOptions) -> Result<(Router, Arc<AppState>)> {
         auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl::new(),
         memory_suggestions: crate::server::structured_memory_suggest::Suggestions::default(),
         ollama: state::OllamaControl::new(),
+        netconnect_sources,
     });
     routes::persona::recover_on_startup(&state)
         .map_err(|e| HarnessError::harness_config(format!("{}: {}", e.code, e.message)))?;

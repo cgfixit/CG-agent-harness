@@ -208,6 +208,7 @@ logging:
   # One structured tracing line per HTTP request (method, path, status,
   # latency, client). Never headers, bodies or query strings.
   request_log: true
+  # Home-relative JSONL. Absolute paths and `..` fall back to this default.
   audit_file: "logs/audit.jsonl"
   # Home-relative JSONL. Absolute paths and `..` fall back to this default.
   spend_file: "logs/spend.jsonl"
@@ -224,6 +225,7 @@ logging:
   # inline on the request instead.
   audit_queue_lines: 4096 # 0, or clamped to 64–65536
   audit_fields:
+    # False omits the top-level query instead of storing its hash.
     include_query_hash: true
 
 policy:
@@ -453,6 +455,39 @@ structured_memory:
   # Drop lower-confidence candidates; omitted model confidence remains accepted.
   min_consolidation_confidence: 0.40
   auto_consolidation_idle_ms: 2000
+
+# LAN observation. Every gate ships false. A tier is effective only when
+# `enabled` and that tier's flag are both the literal boolean true; quoted
+# "true" is off. `allowed_cidrs` is empty, so every armed tier stays refused.
+# Scope is never taken from local interfaces. Each entry is an IPv4 CIDR that
+# lies fully inside 10/8, 172.16/12, 192.168/16, or 127/8, with prefix length
+# 16 through 32. Wider prefixes, IPv6, 0.0.0.0/8, 169.254.0.0/16,
+# 100.64.0.0/10, 224.0.0.0/4, 240.0.0.0/4, and 255.255.255.255 are rejected
+# at load. `throughput` has no default endpoint; setting the flag or an
+# endpoint warns because that path is internet egress outside this LAN scope.
+# Endpoints must not carry credentials. These keys are restart-only.
+# host_cap 1–4096; rate_limit_per_min 1–10000; timeouts 100–60000 ms;
+# untrusted_string_max_chars 8–256. Passive commands send no packets.
+netconnect:
+  enabled: false
+  passive_listen: false
+  discovery: false
+  port_scan: false
+  diagnostics: false
+  throughput: false
+  anomaly_detection: false
+  home_automation: false
+  allowed_cidrs: []
+  port_allowlist: []
+  host_cap: 32
+  rate_limit_per_min: 30
+  connect_timeout_ms: 1000
+  read_timeout_ms: 2000
+  diagnostics_targets: []
+  throughput_endpoint: null
+  ha_endpoint: null
+  mqtt_endpoint: null
+  untrusted_string_max_chars: 64
 
 # Durable schedules: restart-only tuning, never execution/write authority.
 # New interval and cron schedules require an owner-bound preview receipt.
