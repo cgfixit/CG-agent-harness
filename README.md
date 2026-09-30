@@ -18,7 +18,8 @@ the account and content permissions described in
 | **Local chat** | Chat against an OpenAI-compatible **loopback** model server (Ollama by default), with local history, memory, skills, attachments and web context. `/loop` continues chat toward a session goal. | On |
 | **Cloud chat** | Explicitly selecting `grok` or `claude` routes through a separate cloud path after provider setup. Sends **only the new user message** — no local history, memory, skills, attachments or web context. Not available for `/loop`. | Off until a provider is configured |
 | **Web research** | Google listings, URL fetch and page research under configurable budgets and URL rules. | Governed by [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions) |
-| **Coding pipeline** | `/agent` drives a separate planner/executor loop in a child process. Ships closed behind **six gates**, including a per-run `--confirm-online`. Enabling the planner permits **repository-content egress**. | Off — read [CODING_PIPELINE.md](docs/CODING_PIPELINE.md) first |
+| **Coding pipeline** | `/agent` drives a separate planner/executor loop in a child process. `agentic.enabled`, `deepagent_github.enabled` and `allow_git_write_tools` ship false. A cloud planner also passes a **six-gate** chain ending in a per-run `--confirm-online`, and permits **repository-content egress**. | Off — read [CODING_PIPELINE.md](docs/CODING_PIPELINE.md) first |
+| **Netconnect** | Passive LAN observation: gates and scope (`status`), plus in-scope interfaces, routes and neighbors from local tables (`devices`). No scans, probes or device control in this build. | Off; empty scope |
 
 Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
 
@@ -29,7 +30,9 @@ Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
 > publication each require a **separate** operator decision. **Loopback-only**
 > means the server listens on a local address such as `127.0.0.1`; it does not
 > prove that every subprocess or external model service has no outbound network
-> access. Details: [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md),
+> access. Netconnect sends no packets and accepts only operator-listed private
+> IPv4 CIDRs. Audit records are redacted JSONL under the home.
+> Details: [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md),
 > [CODING_PIPELINE.md](docs/CODING_PIPELINE.md#git-approval-and-publication), [INVARIANTS.md](INVARIANTS.md).
 
 ## Quickstart
@@ -124,11 +127,52 @@ Slash-command tables: [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-refere
 ### Netconnect
 
 LAN observation ships closed. `netconnect.enabled` and every tier flag in
-`assets/config.default.yaml` are false, and `allowed_cidrs` is empty.
+`assets/config.default.yaml` are false, and `allowed_cidrs` is empty. Scope
+entries must be RFC1918 or 127/8 IPv4 CIDRs at /16 or longer.
 `cgagentharness netconnect status` reports gates and does not read local tables.
 `cgagentharness netconnect devices` lists in-scope neighbors and sends no packets.
-The console LAN tab is a read-only `GET /api/netconnect`. Guide:
+A closed master gate exits 4; an invalid scope exits 3. In the console,
+`/net status` and `/net devices` open the read-only LAN tab
+(`GET /api/netconnect`); other `/net` subcommands are refused. Guide:
 [netconnect.md](docs/netconnect.md).
+
+## Command line
+
+`cgagentharness --help` lists these; each subcommand has its own `--help`.
+
+| Command | Purpose |
+|---|---|
+| `serve [--host H] [--port P]` | Start the console; non-loopback hosts are refused |
+| `account login\|password\|whoami\|logout` | Account operations against the running portal |
+| `web status\|allow\|deny\|check\|fetch\|search\|research\|…` | URL rules and research through the portal |
+| `tls certificate\|renew` | Print or explicitly renew the local certificate |
+| `mcp-key list\|create\|revoke` | Machine keys for the read-only MCP memory gateway |
+| `netconnect [--config F] status\|devices` | Passive LAN gates and inventory |
+
+## Configuration
+
+The first `serve` seeds `config.yaml` in the home from
+[assets/config.default.yaml](assets/config.default.yaml). Edit that file rather
+than replacing it: omitted gates read as false, and quoted `"true"` does not
+enable a gate. Startup settings need a restart; 22 web/API limits reload live
+([CONFIG_RELOAD.md](docs/CONFIG_RELOAD.md), [which settings apply where](docs/INSTALL.md#which-settings-take-effect-where)). `logging.audit_file` must stay
+home-relative; absolute or `..` paths fall back to `logs/audit.jsonl`.
+
+## Build and test
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets --locked
+SKIP_LIVE=1 scripts/verify-local.sh   # all of the above, contract scripts, release build
+```
+
+CI runs rustfmt, Clippy, `cargo deny`, Linux and macOS tests, the invariant
+guard, browser acceptance, Linux bubblewrap and MCP lifecycle jobs, Windows Job
+Object lifecycle, Bundle and desktop packaging, CodeQL, DevSkim and Gitleaks.
+Path-filtered jobs lint workflows (zizmor) and run the netconnect no-packet
+proof. Details:
+[INSTALL.md](docs/INSTALL.md#tests-and-cicd).
 
 ## Which version am I running?
 
