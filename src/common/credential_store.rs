@@ -266,13 +266,14 @@ pub(crate) fn strip_assignments(text: &str, remove: &BTreeSet<String>) -> String
 /// Missing is empty. The bytes are migration input or the plaintext opt-in, never a log line.
 pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
     use std::io::Read;
-    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
-    // Rebuild the path from that checked string before the open.
-    let raw = path.to_string_lossy();
-    if raw.contains("..") {
+    use std::path::Component;
+    // A parent segment would leave the directory the caller already resolved.
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
         anyhow::bail!("credential file path refused");
     }
-    let path = Path::new(raw.as_ref());
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -465,6 +466,12 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         let message = err.to_string();
         assert_eq!(message, "credential file path refused");
         assert!(!message.contains(".env"));
+    }
+
+    #[test]
+    fn dotted_filename_is_not_a_parent_segment() {
+        let path = std::env::temp_dir().join(format!("cgagentharness-foo..bar-{}.env", std::process::id()));
+        assert_eq!(read_private_text(&path).unwrap(), "");
     }
 
     #[test]
