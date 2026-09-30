@@ -2,7 +2,7 @@
 
 Index: [README.md](../README.md). Gate contract: [INVARIANTS.md](../INVARIANTS.md#netconnect-is-fail-closed-and-lan-scoped). Console row: [CONSOLE.md](CONSOLE.md). Route: [API_ROUTES.md](API_ROUTES.md).
 
-Netconnect is fail-closed LAN observation. It ships passive. Every gate in `assets/config.default.yaml` is the boolean `false`, and `allowed_cidrs` is an empty list. Passive commands read local tables. They record `packets_sent: 0`. This build does not scan ports, probe hosts, measure throughput, or control a device.
+Netconnect is fail-closed LAN observation. It ships passive. Every gate in `assets/config.default.yaml` is the boolean `false`, and `allowed_cidrs` is an empty list. `devices` and the enabled panel read local tables and set `packets_sent` to 0. `status` does not load a collector and does not print `packets_sent`. This build does not scan ports, probe hosts, measure throughput, or control a device.
 
 A tier can run only when `netconnect.enabled` and that tier's flag are both the unquoted boolean `true`, and `allowed_cidrs` is a non-empty list the validator accepted. Scope comes from that list. It is never copied from local interface addresses. `passive_listen` is a flag only: this mode does not join a multicast group.
 
@@ -92,7 +92,7 @@ JSON goes to stdout. Warnings, and the `message` on a non-zero exit, go to stder
 
 `devices` reads the passive tables, then drops every address outside the scope. The body includes `packets_sent` (always 0), `interfaces`, `routes`, `default_gateways`, and `neighbors`. An empty scope still reads the tables and then emits no addresses. On Linux the readers are `/proc/net/arp`, `/proc/net/route`, and `getifaddrs`. On macOS they are the fixed argv `/usr/sbin/arp -an` and `/usr/sbin/netstat -rn -f inet` (no shell, two-second timeout) plus `getifaddrs`. Other platforms return `NETCONNECT_UNSUPPORTED` and exit 2. `status` does not need those readers.
 
-A minimal home that can list a private LAN, with every tier still off:
+Merge this block into the seeded home `config.yaml`. Do not replace that file with only these lines. A file that omits `auth.enabled` and `tls.enabled` leaves both off, and `serve` then listens on HTTP with no account gate. Tiers stay off:
 
 ```yaml
 netconnect:
@@ -160,7 +160,7 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 - Device strings are length-capped, stripped of control characters, and marked `untrusted`. Interface labels that fail the label rule are dropped. Those strings are not placed in argv, a shell command, a filesystem path, or a URL this process fetches.
 - The browser cannot supply a command. The panel query is ignored. The pane has no control that posts a body. Active slash subcommands in the console print a refusal without the panel GET. They do not call `invoke_tier`.
 - `check_target` rechecks a final `Ipv4Addr` before any later connect. This build's tier path refuses after that check because no tier tool exists. A host name is not accepted as a target.
-- Throughput is labeled internet egress outside this LAN scope. Passive commands do not use it. Endpoint secrets are rejected and are not copied into the error string.
+- Throughput is labeled internet egress outside this LAN scope. Passive commands do not use it. An endpoint is rejected when it is empty, longer than 256 characters, contains a control character, or contains `@`, `?`, or `#`. The error names the key and does not echo the value. A token in the path is accepted, and a successful `status` prints that endpoint as stored.
 - No secret belongs in this config. The keys are restart-only.
 
 ## Troubleshooting
@@ -179,7 +179,8 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 | stderr `netconnect throughput is configured...` | The throughput flag or endpoint is set. Passive commands do not call it. The warning is not a scan. |
 | `did you mean /net status or /net devices?` | The line was a near-miss. Nothing ran. Send an exact line. |
 | Console text `this console does not run active tiers or device control` | The subcommand was not `status` or `devices`. The panel did not refresh. No tier ran. |
-| Panel HTTP 400 or 403 | Host or CSRF guard. Collectors did not run. |
+| Panel HTTP 400 | Host guard, or the `netconnect` section failed to load (a bad CIDR, limit, or endpoint). Collectors did not run. |
+| Panel HTTP 403 | CSRF guard. Collectors did not run. |
 | Panel HTTP 405 | The method was not GET. |
 | Panel HTTP 502 | A collector failed after the guards passed. |
 | Empty device list while `enabled` is true | The scope matches nothing on this machine, or the scope is empty (tables are read, then every row is dropped). Public, link-local, CGNAT, and IPv6 rows are omitted. |
