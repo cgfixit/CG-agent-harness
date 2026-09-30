@@ -612,7 +612,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1700),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
     // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
-    // why: OS credential store sentence for managed provider keys; 1906 words, rounded up to the next 100.
+    // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
     ("AGENTS.md", Agent, 2000),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     ("CLAUDE.md", Agent, 300),
@@ -620,7 +620,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // #235 the process-global CSRF note and the I6 process map.
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
     // why: read-only tool, slash, and panel rules; 5790 words, rounded up to the next 100.
-    // why: OS credential store section for managed provider keys; 5953 words, rounded up to the next 100.
+    // why: credential and preemption contracts matched to runtime, then the OS credential store section; 5961 words, rounded up to the next 100.
     ("INVARIANTS.md", Root, 6000),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),

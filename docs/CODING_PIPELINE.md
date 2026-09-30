@@ -452,10 +452,11 @@ fsmonitor settings.
 
 Authenticated `gh repo clone` also receives isolated Git settings and an empty
 Git template before initial checkout. Publishing Git operations use the installed
-`gh auth git-credential` helper rather than ambient Git credential commands.
-Custom credential helpers, SSH configurations and enterprise-host arrangements
-are not accepted as equivalent workflows; the selected GitHub.com repository
-and absolute local remotes are the supported destinations in this path.
+`gh auth git-credential` helper for HTTPS rather than ambient Git credential
+commands. The selected GitHub.com repository also accepts an SSH origin, which
+can use the operator's SSH configuration and keys. Custom Git credential
+helpers and enterprise hosts are not accepted; absolute local remotes remain
+available for offline runs.
 
 Approval refuses a pre-existing staged change or index lock. It holds the normal
 Git index lock, constructs a fresh private index from the accepted base, inserts
