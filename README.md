@@ -31,7 +31,7 @@ Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
 > means the server listens on a local address such as `127.0.0.1`; it does not
 > prove that every subprocess or external model service has no outbound network
 > access. Netconnect sends no packets and accepts only operator-listed private
-> IPv4 CIDRs. Audit records are redacted JSONL under the home.
+> or loopback IPv4 CIDRs. Audit records are redacted JSONL under the home.
 > Details: [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md),
 > [CODING_PIPELINE.md](docs/CODING_PIPELINE.md#git-approval-and-publication), [INVARIANTS.md](INVARIANTS.md).
 
