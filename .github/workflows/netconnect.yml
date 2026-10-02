@@ -85,6 +85,9 @@ jobs:
         with:
           shared-key: dev-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Linux credential-store build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - name: Flag, scope, collector, and untrusted-string tests
         run: cargo test --locked --test netconnect_flags --test netconnect_scope --test netconnect_collectors --test netconnect_untrusted --test netconnect_workflow --test netconnect_syscall --test netconnect_cli
 
@@ -108,6 +111,8 @@ jobs:
         with:
           shared-key: dev-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Linux credential-store build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - name: Build netconnect CLI
         run: cargo build --locked --bin cgagentharness
       - name: Require strace
