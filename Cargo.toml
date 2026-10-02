@@ -59,6 +59,9 @@ cap-std = "4"
 scraper = { version = "0.27", default-features = false }
 robotstxt = "0.3"
 tantivy = { version = "0.26.2", default-features = false, features = ["mmap", "lz4-compression", "stemmer"] }
+# Pinned to the 3.6 Entry API. Platform stores are explicit features: macOS Keychain,
+# Windows Credential Manager, and Linux Secret Service (dbus). No default features.
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

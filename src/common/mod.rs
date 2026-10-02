@@ -8,6 +8,7 @@ pub mod auth_store;
 pub mod authn;
 pub mod bounded_log;
 pub mod config;
+pub mod credential_store;
 pub mod errors;
 pub mod file_lease;
 pub mod home;

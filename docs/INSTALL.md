@@ -320,7 +320,7 @@ live outside the bundle, so replacing or uninstalling the app preserves them.
 | `skills/<id>/SKILL.md` | Runtime skill bodies; existing files are preserved |
 | `sessions/` | Chat history, goals, selected skills and current goal-stage linkage |
 | `memory/`, `tools/` | Pinned notes (`memory/notes.json`); optional structured store (`memory/structured.sqlite3`) and gate overlay (`memory/structured_gates.json`); web context/allowlist under `tools/` |
-| `.env`, `auth.sqlite3`, `auth.initialized` | Private provider credentials, transactional accounts and initialization marker; legacy JSON retained for recovery |
+| `.env`, `auth.sqlite3`, `auth.initialized` | Legacy managed-key migration input, or the 0600 store only when `security.allow_plaintext_key_file` is literal true; transactional accounts and initialization marker; legacy JSON retained for recovery |
 | `tls/server.pem`, `cli-session.json` | Private persisted TLS material and optional CLI login bound to its origin/certificate |
 | `data/agentic/` | Registry, retained console jobs, workspaces and run evidence |
 | `logs/` | Bounded audit/spend/optional metrics logs |
@@ -329,8 +329,12 @@ live outside the bundle, so replacing or uninstalling the app preserves them.
 New homes require HTTPS and account login. The old key-required setting is
 deprecated; a harness metadata key is optional and grants no account authority.
 Administrators save/replace/clear credentials in **API Keys**; saved and active
-masks are separate. Unix startup reads private bounded `.env` as data; explicit
-inherited environment values override stored values. Restart to reload, and remove
+masks are separate. Startup reads the OS credential store (macOS Keychain, Linux
+Secret Service, Windows Credential Manager). A Linux build needs `pkg-config` and
+`libdbus-1-dev`; macOS and Windows use their native stores without that package.
+Explicit inherited environment values
+override stored values. A legacy `.env` is migration input unless
+`security.allow_plaintext_key_file` is literal true. Restart to reload, and remove
 an inherited value separately when clearing a saved key is insufficient.
 Forwarded/proxy requests are unsupported. See [secure setup](SECURE_RESEARCH.md).
 
@@ -356,7 +360,7 @@ checks still reread disk at mutation boundaries.
 | Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/memory consolidate`, `/memory auto-consolidate`, `/prompt`; retrieval-off search is 409 |
 | Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
-| Managed credentials | Home `.env`, loaded at process startup on Unix; inherited values win | `/api` reports presence/masked tail, not proof of provider authentication |
+| Managed credentials | OS credential store at process startup; inherited values win. Legacy `.env` migrates once, or stays the store when `security.allow_plaintext_key_file` is literal true | `/api` reports presence/masked tail, not proof of provider authentication |
 | Spend ledger and dashboard | Retained `logs/spend.jsonl` and `.1`; dashboard state is page memory only | [Completeness and pricing](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero) |
 | Completion webhooks | `notifications.*` plus optional managed bearer; restart-only; queue is not durable | [Setup, destination rules and delivery audit](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook) |
 | Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |
@@ -434,18 +438,20 @@ cloud-provider configuration flags; review the separate provider controls in
 [the configuration reference](../assets/config.default.yaml) before considering
 a cloud coding run. Values must be nonempty, no more than 4,096 characters
 and contain no newline, carriage return or NUL. `/api clear <KEY>` removes only
-the named managed credential. Preserve other entries when deliberately maintaining the private
-file, and restart after changing credentials.
+the named managed credential from the OS store. Unknown `.env` lines stay during
+migration. Restart after changing credentials other than `SERPAPI_API_KEY`.
 
 Prefer the **API Keys** pane for pasting secrets; its password inputs are cleared
 after successful save. Use **Clear saved value** to remove a stored credential.
 The pane displays masked **Saved** and **Active** values separately, their source
-(`startup_file`, `environment` or `unset`), and whether a restart is needed.
+(`startup_store`, `saved_store`, `environment`, or `unset`; `startup_file` or
+`saved_file` when the plaintext opt-in is on), and whether a restart is needed.
 Clearing a saved value leaves a currently active value running until restart;
-an explicit process environment override still wins after restart. `/registry`
-and **View registry** preserve inventory access. The Unix startup loader reads
-the managed file as data. Do not source it as a shell script or put secrets in
-soul, memory, skill files or shared prompts.
+an explicit process environment override still wins after restart. If the OS
+store is unavailable, save is refused. Set `security.allow_plaintext_key_file`
+to literal `true` and restart only to keep the legacy 0600 file. `/registry`
+and **View registry** preserve inventory access. Do not source `.env` as a shell
+script or put secrets in soul, memory, skill files or shared prompts.
 
 ### Close, quit and reopen
 

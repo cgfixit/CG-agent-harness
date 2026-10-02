@@ -7,7 +7,8 @@
 //! ~/.CGagentHarness/
 //!   config.yaml        tunables (seeded from assets/config.default.yaml)
 //!   harness.json       {soul_enabled, selected_model, web_enabled, memory_enabled, port}
-//!   .env               managed API keys (written by env_keys)
+//!   .env               legacy managed keys; migration input, or the store only
+//!                      when security.allow_plaintext_key_file is literal true
 //!   auth.sqlite3       users + hashed sessions; legacy auth.json is migration input
 //!   soul.md            seeded default, editable operator persona
 //!   styles/<name>.md   optional operator overlay for output-style presets

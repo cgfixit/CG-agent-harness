@@ -184,6 +184,10 @@ security:
   # Compatibility setting. Harness keys are optional metadata and never grant
   # account permissions. False is deprecated and does not disable account login.
   api_key_optional: true
+  # Literal true keeps managed provider keys in the private 0600 home .env.
+  # Default false uses the OS credential store. Quoted "true" stays off.
+  # Restart required; this key is not reloadable.
+  allow_plaintext_key_file: false
 
 tls:
   enabled: true # newly seeded homes use HTTPS; existing configs are not rewritten

@@ -13,6 +13,7 @@ import secrets
 import select
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -226,6 +227,17 @@ class DesktopBoundary(unittest.TestCase):
         self.children.append(child)
         return child
 
+    def enable_plaintext_key_file(self):
+        """Fixture opt-in. The shipped default stays the OS credential store."""
+        if not (self.home / 'config.yaml').is_file():
+            self.start().close()
+        config = self.home / 'config.yaml'
+        text = config.read_text()
+        needle = 'allow_plaintext_key_file: false'
+        if needle not in text:
+            raise AssertionError('shipped config lost allow_plaintext_key_file: false')
+        config.write_text(text.replace(needle, 'allow_plaintext_key_file: true', 1))
+
     def test_private_models_command_distinguishes_chat_and_planner_tags(self):
         self.start().close()
         fixture = ModelFixture()
@@ -255,7 +267,9 @@ class DesktopBoundary(unittest.TestCase):
     def test_headless_loads_private_dotenv_with_explicit_environment_precedence(self):
         self.start().close()
         config = self.home / 'config.yaml'
-        config.write_text(config.read_text().replace('api_key_optional: true', 'api_key_optional: false'))
+        config.write_text(config.read_text()
+            .replace('api_key_optional: true', 'api_key_optional: false')
+            .replace('allow_plaintext_key_file: false', 'allow_plaintext_key_file: true', 1))
         file_key = secrets.token_hex(32)
         override_key = secrets.token_hex(32)
         marker = self.home / 'must-not-be-created'
@@ -331,6 +345,74 @@ class DesktopBoundary(unittest.TestCase):
                         self.assertNotIn(file_key.encode(), diagnostics)
                         self.assertNotIn(override_key.encode(), diagnostics)
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux without a session bus is the fail-closed store')
+    def test_headless_leaves_legacy_dotenv_when_the_os_store_is_unavailable(self):
+        self.start().close()
+        config = self.home / 'config.yaml'
+        self.assertIn('allow_plaintext_key_file: false', config.read_text())
+        secret = secrets.token_hex(32)
+        dotenv = self.home / '.env'
+        dotenv.write_text(f"# keep\nexport CGAGENTHARNESS_API_KEY='{secret}'\n")
+        dotenv.chmod(0o600)
+        env = {'PATH': '/usr/bin:/bin', 'CGAGENTHARNESS_HOME': str(self.home)}
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cafile=str(self.home / 'tls/server.pem'))
+        http = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
+        with tempfile.TemporaryFile() as output:
+            html = None
+            child = None
+            for attempt in range(1, PORT_ATTEMPTS + 1):
+                port = free_port()
+                base = f'https://127.0.0.1:{port}'
+                child = subprocess.Popen([str(BIN), 'serve', '--port', str(port)],
+                    env=env, cwd='/', stdout=output, stderr=output)
+                html = await_headless(child, http, base)
+                if html is not None:
+                    break
+                child.kill()
+                child.wait(timeout=STARTUP_TIMEOUT)
+            self.assertIsNotNone(html, 'headless startup never answered')
+            try:
+                csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
+                headers = {'X-CyClaw-CSRF': csrf, 'Origin': base}
+                status, body, reply = None, None, None
+                for password in ('desktop-fixture-password', 'admin'):
+                    req = urllib.request.Request(base + '/api/auth/login', headers={**headers, 'Content-Type': 'application/json'},
+                        data=json.dumps({'username': 'admin', 'password': password}).encode())
+                    try:
+                        response = http.open(req, timeout=5)
+                    except urllib.error.HTTPError as error:
+                        response = error
+                    with response:
+                        status, body, reply = response.status, response.read(), response.headers
+                    if status == 200:
+                        break
+                self.assertEqual(status, 200)
+                headers['Cookie'] = reply['Set-Cookie'].split(';')[0]
+                if json.loads(body)['must_change_password']:
+                    req = urllib.request.Request(base + '/api/auth/password', headers={**headers, 'Content-Type': 'application/json'},
+                        data=json.dumps({'current_password': password, 'password': 'desktop-fixture-password'}).encode())
+                    with http.open(req, timeout=5) as response:
+                        self.assertEqual(response.status, 200)
+                        headers['Cookie'] = response.headers['Set-Cookie'].split(';')[0]
+                req = urllib.request.Request(base + '/api/keys', headers=headers)
+                with http.open(req, timeout=5) as response:
+                    payload = response.read()
+                self.assertNotIn(secret.encode(), payload)
+                parsed = json.loads(payload)
+                row = next(item for item in parsed['keys'] if item['name'] == 'CGAGENTHARNESS_API_KEY')
+                self.assertFalse(row['active_configured'])
+                self.assertFalse(row['saved_configured'])
+                warnings = ' '.join(parsed.get('credential_warnings') or [])
+                self.assertIn('CGAGENTHARNESS_API_KEY', warnings)
+                self.assertNotIn(secret, warnings)
+                self.assertIn(secret, dotenv.read_text())
+            finally:
+                child.terminate()
+                child.wait(timeout=5)
+                output.seek(0)
+                self.assertNotIn(secret.encode(), output.read())
+
     @unittest.skipUnless(os.name == 'posix', 'private dotenv descriptor contract is Unix-only')
     def test_headless_refuses_unsafe_dotenv_without_disclosing_credentials(self):
         self.start().close()
@@ -369,6 +451,7 @@ class DesktopBoundary(unittest.TestCase):
                         dotenv.unlink()
 
     def test_owned_readiness_is_not_operator_authorization(self):
+        self.enable_plaintext_key_file()
         key = secrets.token_hex(32)
         seed = self.start(key=key)
         seed.close()
@@ -537,7 +620,7 @@ class DesktopBoundary(unittest.TestCase):
             self.assertEqual(listener.getsockname()[1], port)
 
     def test_private_dotenv_is_data_and_existing_values_are_preserved(self):
-        self.home.mkdir()
+        self.enable_plaintext_key_file()
         marker = Path(self.directory.name) / 'must-not-exist'
         key = f'$(touch {marker})'
         env_file = self.home / '.env'
@@ -564,6 +647,7 @@ class DesktopBoundary(unittest.TestCase):
         self.assertEqual(wrong.hello['error'], 'startup_failed')
 
     def test_retained_runs_reconcile_only_after_worker_lease_releases(self):
+        self.enable_plaintext_key_file()
         key = secrets.token_hex(24)
         child = self.start(key=key)
         child.close()

@@ -1,6 +1,7 @@
 //! Durable owner-bound completion delivery. Only bounded job metadata leaves here.
 use super::notification_outbox::{digest, read_private, Delivery, Outbox};
 use super::web_policy::{canonical_http_url, is_public_ip};
+use crate::common::credential_store::CredentialStore;
 use crate::common::{
     audit::Audit,
     auth_store::AuthManager,
@@ -92,12 +93,21 @@ fn bounded(cfg: &AppConfig, key: &str, min: u64, max: u64) -> Result<u64> {
         .filter(|n| (min..=max).contains(n))
         .ok_or_else(invalid)
 }
-fn read_token(home: &Home) -> Result<Option<String>> {
+fn read_token(home: &Home, allow_plaintext: bool) -> Result<Option<String>> {
     let token = match std::env::var("CGAGENTHARNESS_WEBHOOK_TOKEN") {
         Ok(token) => Some(token),
-        Err(std::env::VarError::NotPresent) => super::env_keys::read_startup_keys(&home.env_path())
+        Err(std::env::VarError::NotPresent) if allow_plaintext => super::env_keys::read_startup_keys(&home.env_path())
             .map_err(|_| invalid())?
             .remove("CGAGENTHARNESS_WEBHOOK_TOKEN"),
+        Err(std::env::VarError::NotPresent) => {
+            match crate::common::credential_store::OsCredentialStore::for_home(&home.root)
+                .get("CGAGENTHARNESS_WEBHOOK_TOKEN")
+            {
+                Ok(value) => value,
+                Err(crate::common::credential_store::StoreError::Unavailable) => None,
+                Err(_) => return Err(invalid()),
+            }
+        }
         Err(_) => return Err(invalid()),
     }
     .filter(|s| !s.trim().is_empty());
@@ -183,9 +193,9 @@ fn bearer_tokens(home: &Home) -> Result<std::collections::BTreeMap<String, Strin
 /// Each `use_bearer` destination keeps its own secret. The house
 /// `CGAGENTHARNESS_WEBHOOK_TOKEN` is only the legacy secret for a single
 /// owner's bearer destinations. A second owner must bring its own secret.
-fn assign_bearers(home: &Home, destinations: &mut [Destination]) -> Result<()> {
+fn assign_bearers(home: &Home, destinations: &mut [Destination], allow_plaintext: bool) -> Result<()> {
     let file = bearer_tokens(home)?;
-    let legacy = read_token(home)?;
+    let legacy = read_token(home, allow_plaintext)?;
     let mut owners = BTreeSet::new();
     for destination in destinations.iter().filter(|d| d.spec.enabled && d.spec.use_bearer) {
         owners.insert(destination.spec.owner.clone());
@@ -271,7 +281,11 @@ impl Settings {
                 &json!({"spec": destination.spec, "private": destination.private}),
             )?);
         }
-        assign_bearers(home, &mut destinations)?;
+        assign_bearers(
+            home,
+            &mut destinations,
+            cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
+        )?;
         Ok(Self {
             destinations,
             capacity: bounded(cfg, "notifications.queue_capacity", 1, 512)? as usize,

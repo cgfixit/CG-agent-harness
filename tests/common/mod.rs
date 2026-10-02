@@ -11,6 +11,7 @@ use std::sync::Arc;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use cgagentharness::common::config::AppConfig;
+use cgagentharness::common::credential_store::CredentialStore;
 use cgagentharness::common::home::Home;
 use cgagentharness::server::state::AppState;
 use cgagentharness::server::{build_app, AppOptions};
@@ -109,6 +110,8 @@ pub struct ServerOptions {
     pub api_key: Option<String>,
     pub deny_all_tools: bool,
     pub web_resolve: Option<(String, SocketAddr)>,
+    /// Test hook. `None` uses the OS credential store when the plaintext opt-in is off.
+    pub credential_store: Option<Arc<dyn CredentialStore>>,
 }
 
 impl Default for ServerOptions {
@@ -138,6 +141,7 @@ impl Default for ServerOptions {
             api_key: Some("test-api-key-0123456789".to_string()),
             deny_all_tools: false,
             web_resolve: None,
+            credential_store: None,
         }
     }
 }
@@ -179,6 +183,7 @@ pub async fn prepare_server(model_url: &str, opts: ServerOptions) -> PreparedSer
         app_opts.tool_allowlist_override = Some(BTreeSet::new());
     }
     app_opts.web_test_resolve = opts.web_resolve;
+    app_opts.credential_store = opts.credential_store;
     app_opts.shim_exe = Some(opts.shim_exe.unwrap_or_else(|| PathBuf::from(BIN)));
     PreparedServer {
         tmp,

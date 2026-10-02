@@ -19,7 +19,9 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   exports/renews local certificate material. See `docs/SECURE_RESEARCH.md`.
 - Fresh auth/TLS switches are true; existing explicit choices survive upgrades.
   SQLite accounts protect operational reads and writes. Harness API keys are
-  optional metadata, never login authority.
+  optional metadata, never login authority. Managed provider keys live in the OS
+  credential store; inherited environment values win.
+  `security.allow_plaintext_key_file` ships false and is the only legacy `.env` opt-in.
 - Fresh web settings start enabled with an empty URL allowlist; existing choices
   and absent/invalid legacy fields stay unchanged/off. Exact/wildcard content
   permission is distinct from account and provider authority. Chat exposes only

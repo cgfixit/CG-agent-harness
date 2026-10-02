@@ -50,7 +50,8 @@ selects its code fallback, which can differ from a fresh-home default.
 | `web.chat_tool_calls` | 1–10 |
 
 `web.concurrency` is **restart-only** because it sizes shared fetch permits.
-All other fields, including TLS, authentication, credentials, models, sandbox,
+All other fields, including TLS, authentication, credentials,
+`security.allow_plaintext_key_file` (ships false; restart required), models, sandbox,
 coding policy, notifications and unknown keys, are outside this reload contract.
 This route never writes YAML or changes permissions. Use [normal restart and
 settings guidance](INSTALL.md#which-settings-take-effect-where) for those fields.

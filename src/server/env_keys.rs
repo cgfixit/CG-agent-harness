@@ -1,6 +1,8 @@
-//! Allowlisted dotenv secret store behind the console's `/api` panel.
-//! Port of `harness/env_keys.py`: `export KEY='value'` lines, 0600, atomic,
-//! unrelated lines preserved verbatim, never returns a value.
+//! Allowlisted managed secrets behind the console's `/api` panel.
+//! Port of `harness/env_keys.py`: presence and a masked tail only.
+//! The default store is the OS credential store. The home `.env` is the
+//! one-time migration source, or the live store when
+//! `security.allow_plaintext_key_file` is literal true.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
@@ -22,9 +24,9 @@ const TAIL_LEN: usize = 4;
 const MASK: &str = "••••••••";
 const QUOTE_ESCAPE: &str = r"'\''";
 const HEADER_LINES: [&str; 3] = [
-    "# CGagentHarness secrets - chmod 600. Managed by the harness console's /api panel.",
+    "# CGagentHarness secrets - chmod 600. Used only when security.allow_plaintext_key_file is literal true.",
     "# Do not commit. Do not copy into config.yaml. Do not paste into chat logs.",
-    "# Unix desktop/serve loads this file as data at startup; other launchers need environment values.",
+    "# Inherited environment values win. The default store is the OS credential store, not this file.",
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -122,87 +124,16 @@ fn shell_single_quote(secret: &str) -> String {
     format!("'{}'", secret.replace('\'', QUOTE_ESCAPE))
 }
 
-fn unquote(raw: &str) -> String {
-    let token = raw.trim();
-    if token.len() >= 2 {
-        let first = token.chars().next().unwrap();
-        let last = token.chars().last().unwrap();
-        if first == last && (first == '\'' || first == '"') {
-            let inner = &token[1..token.len() - 1];
-            return if first == '\'' {
-                inner.replace(QUOTE_ESCAPE, "'")
-            } else {
-                inner.to_string()
-            };
-        }
-    }
-    token.to_string()
-}
-
-fn split_assignment(line: &str) -> Option<(String, String)> {
-    let mut stripped = line.trim();
-    if stripped.is_empty() || stripped.starts_with('#') {
-        return None;
-    }
-    if let Some(rest) = stripped.strip_prefix("export ") {
-        stripped = rest.trim_start();
-    }
-    let (name, raw) = stripped.split_once('=')?;
-    Some((name.trim().to_string(), raw.to_string()))
+fn is_managed(name: &str) -> bool {
+    MANAGED_KEYS.iter().any(|spec| spec.name == name)
 }
 
 fn parse_env_text(text: &str) -> BTreeMap<String, String> {
-    let mut found = BTreeMap::new();
-    for line in text.lines() {
-        if let Some((name, raw)) = split_assignment(line) {
-            if MANAGED_KEYS.iter().any(|s| s.name == name) {
-                found.insert(name, unquote(&raw));
-            }
-        }
-    }
-    found
-}
-
-/// Unix desktop/headless startup reads credentials as data through one validated descriptor.
-/// Missing is distinct from unreadable/unsafe; no shell expansion is performed.
-fn read_private_text(path: &Path) -> anyhow::Result<String> {
-    use std::io::Read;
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
-    }
-    let file = match options.open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
-        Err(_) => anyhow::bail!("credential file unreadable; check its owner, access and symlink status"),
-    };
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
-        anyhow::bail!("credential file must be a regular file");
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        // SAFETY: getuid has no arguments or memory effects.
-        if metadata.uid() != unsafe { libc::getuid() } || metadata.mode() & 0o077 != 0 || metadata.nlink() != 1 {
-            anyhow::bail!("credential file must be private, singly linked, and owned by this user (0600)");
-        }
-    }
-    let mut text = String::new();
-    file.take(65537)
-        .read_to_string(&mut text)
-        .map_err(|_| anyhow::anyhow!("credential file unreadable or not UTF-8"))?;
-    if text.len() > 65536 {
-        anyhow::bail!("credential file exceeds 64 KiB");
-    }
-    Ok(text)
+    crate::common::credential_store::parse_managed(text, is_managed)
 }
 
 pub fn read_startup_keys(path: &Path) -> anyhow::Result<BTreeMap<String, String>> {
-    let keys = parse_env_text(&read_private_text(path)?);
+    let keys = parse_env_text(&crate::common::credential_store::read_private_text(path)?);
     for (name, value) in &keys {
         validate_value(name, value)
             .map_err(|_| anyhow::anyhow!("credential file contains an invalid managed value"))?;
@@ -210,26 +141,51 @@ pub fn read_startup_keys(path: &Path) -> anyhow::Result<BTreeMap<String, String>
     Ok(keys)
 }
 
+/// Names still present in a legacy file. Values are dropped before the caller sees them.
+pub fn legacy_managed_names(path: &Path) -> anyhow::Result<Vec<String>> {
+    let text = crate::common::credential_store::read_private_text(path)?;
+    Ok(parse_env_text(&text).into_keys().collect())
+}
+
 /// Presence + masked tail for every managed key. Never returns a value.
 pub fn read_status(path: &Path, loaded_from_file: &BTreeSet<String>) -> Result<Vec<Value>> {
     let _guard = KEY_MUTATION.lock().map_err(|_| err("credential lock unavailable"))?;
     let stored = read_startup_keys(path).map_err(|e| err(e.to_string()))?;
-    Ok(MANAGED_KEYS
+    Ok(status_rows(&stored, loaded_from_file, false))
+}
+
+pub fn status_from_saved(
+    stored: &BTreeMap<String, String>,
+    loaded_from_saved: &BTreeSet<String>,
+    from_store: bool,
+) -> Vec<Value> {
+    status_rows(stored, loaded_from_saved, from_store)
+}
+
+fn status_rows(
+    stored: &BTreeMap<String, String>,
+    loaded_from_saved: &BTreeSet<String>,
+    from_store: bool,
+) -> Vec<Value> {
+    let saved_label = if from_store { "os_store" } else { "file" };
+    let hot_saved = if from_store { "saved_store" } else { "saved_file" };
+    let startup_saved = if from_store { "startup_store" } else { "startup_file" };
+    MANAGED_KEYS
         .iter()
         .map(|spec| {
             let hot_reload = spec.name == "SERPAPI_API_KEY";
-            let from_file = loaded_from_file.contains(spec.name) || std::env::var_os(spec.name).is_none();
-            let live = if hot_reload && from_file {
+            let from_saved = loaded_from_saved.contains(spec.name) || std::env::var_os(spec.name).is_none();
+            let live = if hot_reload && from_saved {
                 stored.get(spec.name).cloned().unwrap_or_default()
             } else {
                 std::env::var(spec.name).unwrap_or_default().trim().to_string()
             };
-            let in_file = stored.get(spec.name).cloned().unwrap_or_default();
-            let value_for_mask = if live.is_empty() { in_file.clone() } else { live.clone() };
+            let saved = stored.get(spec.name).cloned().unwrap_or_default();
+            let value_for_mask = if live.is_empty() { saved.clone() } else { live.clone() };
             let source = if !live.is_empty() {
                 "env"
-            } else if !in_file.is_empty() {
-                "file"
+            } else if !saved.is_empty() {
+                saved_label
             } else {
                 "unset"
             };
@@ -241,22 +197,22 @@ pub fn read_status(path: &Path, loaded_from_file: &BTreeSet<String>) -> Result<V
                 "configured": !value_for_mask.is_empty(),
                 "masked": if value_for_mask.is_empty() { String::new() } else { mask(&value_for_mask) },
                 "source": source,
-                "saved_configured": !in_file.is_empty(),
-                "saved_masked": if in_file.is_empty() { String::new() } else { mask(&in_file) },
+                "saved_configured": !saved.is_empty(),
+                "saved_masked": if saved.is_empty() { String::new() } else { mask(&saved) },
                 "active_configured": !live.is_empty(),
                 "active_masked": if live.is_empty() { String::new() } else { mask(&live) },
-                "active_source": if hot_reload && from_file { "saved_file" } else if loaded_from_file.contains(spec.name) { "startup_file" } else if std::env::var_os(spec.name).is_some() { "environment" } else { "unset" },
-                "environment_override": !loaded_from_file.contains(spec.name) && std::env::var_os(spec.name).is_some(),
-                "pending_restart": !hot_reload && in_file != live,
+                "active_source": if hot_reload && from_saved { hot_saved } else if loaded_from_saved.contains(spec.name) { startup_saved } else if std::env::var_os(spec.name).is_some() { "environment" } else { "unset" },
+                "environment_override": !loaded_from_saved.contains(spec.name) && std::env::var_os(spec.name).is_some(),
+                "pending_restart": !hot_reload && saved != live,
             })
         })
-        .collect())
+        .collect()
 }
 
 fn render_file(existing: &[String], updates: &BTreeMap<String, String>) -> String {
     let mut kept: Vec<String> = Vec::new();
     for line in existing {
-        if let Some((name, _)) = split_assignment(line) {
+        if let Some((name, _)) = crate::common::credential_store::split_assignment(line) {
             if updates.contains_key(&name) {
                 continue;
             }
@@ -279,7 +235,7 @@ pub fn write_keys(path: &Path, updates: &BTreeMap<String, String>) -> Result<Val
     update_keys(path, updates, &[])
 }
 
-pub fn update_keys(path: &Path, updates: &BTreeMap<String, String>, clear: &[String]) -> Result<Value> {
+fn clean_updates(updates: &BTreeMap<String, String>, clear: &[String]) -> Result<BTreeMap<String, String>> {
     if updates.is_empty() && clear.is_empty() {
         return Err(err("no keys supplied"));
     }
@@ -293,6 +249,30 @@ pub fn update_keys(path: &Path, updates: &BTreeMap<String, String>, clear: &[Str
             return Err(err("a key cannot be saved and cleared together or cleared twice"));
         }
     }
+    Ok(cleaned)
+}
+
+fn result_json(cleaned: &BTreeMap<String, String>, clear: &[String], path: &str) -> Value {
+    let written: Vec<&String> = cleaned.keys().collect();
+    let self_auth: Vec<&String> = cleaned
+        .keys()
+        .filter(|name| {
+            MANAGED_KEYS
+                .iter()
+                .any(|spec| spec.name == name.as_str() && spec.self_auth)
+        })
+        .collect();
+    json!({
+        "written": written,
+        "cleared": clear,
+        "path": path,
+        "restart_required": cleaned.keys().any(|name| name != "SERPAPI_API_KEY"),
+        "self_auth_written": self_auth,
+    })
+}
+
+pub fn update_keys(path: &Path, updates: &BTreeMap<String, String>, clear: &[String]) -> Result<Value> {
+    let cleaned = clean_updates(updates, clear)?;
     let _guard = KEY_MUTATION.lock().map_err(|_| err("credential lock unavailable"))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -302,7 +282,7 @@ pub fn update_keys(path: &Path, updates: &BTreeMap<String, String>, clear: &[Str
             let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
         }
     }
-    let existing: Vec<String> = read_private_text(path)
+    let existing: Vec<String> = crate::common::credential_store::read_private_text(path)
         .map_err(|e| err(e.to_string()))?
         .lines()
         .map(str::to_string)
@@ -312,16 +292,286 @@ pub fn update_keys(path: &Path, updates: &BTreeMap<String, String>, clear: &[Str
         return Err(err("credential file exceeds 64 KiB"));
     }
     write_atomic(path, rendered.as_bytes(), Some(0o600))?;
-    let written: Vec<&String> = cleaned.keys().collect();
-    let self_auth: Vec<&String> = cleaned
-        .keys()
-        .filter(|n| MANAGED_KEYS.iter().any(|s| s.name == n.as_str() && s.self_auth))
+    Ok(result_json(&cleaned, clear, &path.display().to_string()))
+}
+
+pub struct StartupKeys {
+    pub values: BTreeMap<String, String>,
+    pub warnings: Vec<String>,
+}
+
+/// Inherited names are omitted so the caller does not overwrite an explicit environment value.
+pub fn without_inherited(saved: BTreeMap<String, String>, inherited: &BTreeSet<String>) -> BTreeMap<String, String> {
+    saved
+        .into_iter()
+        .filter(|(name, _)| !inherited.contains(name))
+        .collect()
+}
+
+/// Plaintext opt-in reads the file and does not touch `store`. Otherwise migrate, then read the store.
+/// Failed migration names are not loaded. Warnings name the key and the reason, never the value.
+pub fn load_startup(
+    path: &Path,
+    allow_plaintext: bool,
+    store: &dyn crate::common::credential_store::CredentialStore,
+) -> anyhow::Result<StartupKeys> {
+    use crate::common::credential_store::{migration_warning, StoreError};
+    let text = crate::common::credential_store::read_private_text(path)?;
+    let assignments = parse_env_text(&text);
+    for (name, value) in &assignments {
+        validate_value(name, value)
+            .map_err(|_| anyhow::anyhow!("credential file contains an invalid managed value"))?;
+    }
+    if allow_plaintext {
+        return Ok(StartupKeys {
+            values: assignments,
+            warnings: Vec::new(),
+        });
+    }
+    let report = crate::common::credential_store::migrate_text(&text, &assignments, store);
+    let mut warnings: Vec<String> = report
+        .failed
+        .iter()
+        .map(|(name, error)| migration_warning(name, *error))
         .collect();
-    Ok(json!({
-        "written": written,
-        "cleared": clear,
-        "path": path.display().to_string(),
-        "restart_required": cleaned.keys().any(|name| name != "SERPAPI_API_KEY"),
-        "self_auth_written": self_auth,
-    }))
+    if report.text != text && write_atomic(path, report.text.as_bytes(), Some(0o600)).is_err() {
+        warnings.push(
+            "Migrated keys could not be removed from the private .env file. Fix that file's permissions and restart."
+                .to_string(),
+        );
+    }
+    let failed: BTreeSet<String> = report.failed.into_iter().map(|(name, _)| name).collect();
+    let mut values = BTreeMap::new();
+    if !warnings.iter().any(|warning| warning.contains("unavailable")) {
+        for spec in MANAGED_KEYS {
+            if failed.contains(spec.name) {
+                continue;
+            }
+            match store.get(spec.name) {
+                Ok(Some(value)) => match validate_value(spec.name, &value) {
+                    Ok(cleaned) => {
+                        values.insert(spec.name.to_string(), cleaned);
+                    }
+                    Err(_) => warnings.push(format!(
+                        "{} in the OS credential store is not a valid managed value and was not loaded.",
+                        spec.name
+                    )),
+                },
+                Ok(None) => {}
+                Err(StoreError::Unavailable) => break,
+                Err(_) => warnings.push(format!(
+                    "{} could not be read from the OS credential store and was not loaded.",
+                    spec.name
+                )),
+            }
+        }
+    }
+    Ok(StartupKeys { values, warnings })
+}
+
+pub fn saved_from_store(
+    store: &dyn crate::common::credential_store::CredentialStore,
+) -> Result<(BTreeMap<String, String>, Option<String>)> {
+    use crate::common::credential_store::{save_refusal, StoreError};
+    let _guard = KEY_MUTATION.lock().map_err(|_| err("credential lock unavailable"))?;
+    let mut saved = BTreeMap::new();
+    for spec in MANAGED_KEYS {
+        match store.get(spec.name) {
+            Ok(Some(value)) => match validate_value(spec.name, &value) {
+                Ok(cleaned) => {
+                    saved.insert(spec.name.to_string(), cleaned);
+                }
+                Err(_) => {
+                    return Ok((
+                        saved,
+                        Some(format!(
+                            "{} in the OS credential store is not a valid managed value and was ignored.",
+                            spec.name
+                        )),
+                    ));
+                }
+            },
+            Ok(None) => {}
+            Err(StoreError::Unavailable) => {
+                return Ok((BTreeMap::new(), Some(save_refusal(StoreError::Unavailable).to_string())))
+            }
+            Err(_) => {
+                return Ok((
+                    saved,
+                    Some(format!("{} could not be read from the OS credential store.", spec.name)),
+                ));
+            }
+        }
+    }
+    Ok((saved, None))
+}
+
+pub fn update_os_keys(
+    store: &dyn crate::common::credential_store::CredentialStore,
+    updates: &BTreeMap<String, String>,
+    clear: &[String],
+) -> Result<Value> {
+    use crate::common::credential_store::{save_refusal, secret_eq, StoreError, OS_STORE_LABEL};
+    let cleaned = clean_updates(updates, clear)?;
+    let _guard = KEY_MUTATION.lock().map_err(|_| err("credential lock unavailable"))?;
+    let mut prior = Vec::new();
+    for name in cleaned.keys() {
+        prior.push((name.clone(), store.get(name).map_err(|error| err(save_refusal(error)))?));
+    }
+    let mut applied = Vec::new();
+    for (name, secret) in &cleaned {
+        let result = if secret.is_empty() {
+            store.delete(name)
+        } else {
+            store.set(name, secret).and_then(|_| match store.get(name) {
+                Ok(Some(got)) if secret_eq(&got, secret) => Ok(()),
+                Ok(_) => {
+                    let _ = store.delete(name);
+                    Err(StoreError::VerifyMismatch)
+                }
+                Err(error) => Err(error),
+            })
+        };
+        if let Err(error) = result {
+            for (prior_name, prior_value) in prior.iter().rev() {
+                if !applied.iter().any(|applied_name| applied_name == prior_name) {
+                    continue;
+                }
+                match prior_value {
+                    Some(value) => {
+                        let _ = store.set(prior_name, value);
+                    }
+                    None => {
+                        let _ = store.delete(prior_name);
+                    }
+                }
+            }
+            return Err(err(save_refusal(error)));
+        }
+        applied.push(name.clone());
+    }
+    Ok(result_json(&cleaned, clear, OS_STORE_LABEL))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::credential_store::{CredentialStore, StoreError};
+    use std::sync::Mutex;
+
+    struct MemoryStore {
+        values: Mutex<BTreeMap<String, String>>,
+    }
+
+    impl CredentialStore for MemoryStore {
+        fn get(&self, name: &str) -> std::result::Result<Option<String>, StoreError> {
+            Ok(self.values.lock().unwrap().get(name).cloned())
+        }
+        fn set(&self, name: &str, value: &str) -> std::result::Result<(), StoreError> {
+            self.values.lock().unwrap().insert(name.to_string(), value.to_string());
+            Ok(())
+        }
+        fn delete(&self, name: &str) -> std::result::Result<(), StoreError> {
+            self.values.lock().unwrap().remove(name);
+            Ok(())
+        }
+    }
+
+    struct PanicStore;
+
+    impl CredentialStore for PanicStore {
+        fn get(&self, _: &str) -> std::result::Result<Option<String>, StoreError> {
+            panic!("plaintext opt-in must not read the OS store");
+        }
+        fn set(&self, _: &str, _: &str) -> std::result::Result<(), StoreError> {
+            panic!("plaintext opt-in must not write the OS store");
+        }
+        fn delete(&self, _: &str) -> std::result::Result<(), StoreError> {
+            panic!("plaintext opt-in must not delete from the OS store");
+        }
+    }
+
+    #[test]
+    fn inherited_names_are_not_replaced_by_saved_values() {
+        let saved = BTreeMap::from([
+            ("GROK_API_KEY".into(), "saved-grok-value".into()),
+            ("ANTHROPIC_API_KEY".into(), "saved-anthropic-value".into()),
+        ]);
+        let inherited = BTreeSet::from(["GROK_API_KEY".into()]);
+        let apply = without_inherited(saved, &inherited);
+        assert!(!apply.contains_key("GROK_API_KEY"));
+        assert_eq!(
+            apply.get("ANTHROPIC_API_KEY").map(String::as_str),
+            Some("saved-anthropic-value")
+        );
+    }
+
+    #[test]
+    fn plaintext_opt_in_reads_the_file_and_does_not_touch_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        write_atomic(
+            &path,
+            b"export DEEPAGENT_API_KEY='dak-plaintext-opt-in-1234'\n",
+            Some(0o600),
+        )
+        .unwrap();
+        let loaded = load_startup(&path, true, &PanicStore).unwrap();
+        assert_eq!(
+            loaded.values.get("DEEPAGENT_API_KEY").map(String::as_str),
+            Some("dak-plaintext-opt-in-1234")
+        );
+        assert!(loaded.warnings.is_empty());
+    }
+
+    #[test]
+    fn startup_migration_loads_the_store_and_strips_the_verified_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        write_atomic(
+            &path,
+            b"# keep\nexport OTHER='x'\nexport DEEPAGENT_API_KEY='dak-migrate-value-1234'\n",
+            Some(0o600),
+        )
+        .unwrap();
+        let store = MemoryStore {
+            values: Mutex::new(BTreeMap::new()),
+        };
+        let loaded = load_startup(&path, false, &store).unwrap();
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(
+            loaded.values.get("DEEPAGENT_API_KEY").map(String::as_str),
+            Some("dak-migrate-value-1234")
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# keep"));
+        assert!(text.contains("export OTHER='x'"));
+        assert!(!text.contains("dak-migrate-value-1234"));
+    }
+
+    struct DownStore;
+
+    impl CredentialStore for DownStore {
+        fn get(&self, _: &str) -> std::result::Result<Option<String>, StoreError> {
+            Err(StoreError::Unavailable)
+        }
+        fn set(&self, _: &str, _: &str) -> std::result::Result<(), StoreError> {
+            Err(StoreError::Unavailable)
+        }
+        fn delete(&self, _: &str) -> std::result::Result<(), StoreError> {
+            Err(StoreError::Unavailable)
+        }
+    }
+
+    #[test]
+    fn os_save_refuses_when_the_store_is_unavailable_and_does_not_create_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        let secret = "dak-must-not-land-1234";
+        let updates = BTreeMap::from([("DEEPAGENT_API_KEY".into(), secret.into())]);
+        let error = update_os_keys(&DownStore, &updates, &[]).unwrap_err();
+        assert!(error.message.contains("allow_plaintext_key_file"));
+        assert!(!error.message.contains(secret));
+        assert!(!path.exists());
+    }
 }
