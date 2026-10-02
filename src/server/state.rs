@@ -98,6 +98,10 @@ pub struct AppState {
     /// Snapshot of `CGAGENTHARNESS_API_KEY` at build time (tests inject it).
     pub api_key: Option<String>,
     pub key_file_sources: BTreeSet<String>,
+    /// Test hook. Production entrypoints leave this empty and use the OS store.
+    pub credential_store: Option<Arc<dyn crate::common::credential_store::CredentialStore>>,
+    /// Startup migration warnings. Names and reasons only; never secret values.
+    pub credential_warnings: Vec<String>,
     pub auth: Option<Arc<AuthManager>>,
     /// Limits concurrent memory-hard scrypt derivations for this app instance.
     pub auth_operation_permits: Arc<tokio::sync::Semaphore>,

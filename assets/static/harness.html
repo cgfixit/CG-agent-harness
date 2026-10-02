@@ -1421,13 +1421,18 @@ async function refreshSessions() {
 async function refreshKeys() {
   const pane = $('pane-api-keys'); pane.replaceChildren();
   const note = document.createElement('p');
-  note.textContent = 'Administrator access required. SerpAPI changes apply immediately; other saved values load after restart. Explicit process environment values take precedence. Harness metadata never grants account access.';
+  note.textContent = 'Administrator access required. Saved values go to the OS credential store. SerpAPI changes apply immediately; other saved values load after restart. Explicit process environment values take precedence. Harness metadata never grants account access.';
   pane.appendChild(note);
   const registry = document.createElement('button'); registry.textContent = 'View registry';
   registry.addEventListener('click', () => runSlash('/registry')); pane.appendChild(registry);
   let response;
   try { response = await api('/api/keys'); }
   catch (error) { const message = document.createElement('p'); message.textContent = error.message; pane.appendChild(message); return; }
+  for (const warning of response.credential_warnings || []) {
+    const line = document.createElement('p');
+    line.textContent = warning;
+    pane.appendChild(line);
+  }
   for (const key of response.keys) {
     const form = document.createElement('form'); form.className = 'reg-entry';
     const label = document.createElement('label'); label.textContent = key.label + ' (' + key.name + ')';
@@ -2145,6 +2150,7 @@ async function runSlash(line, webCommand) {
           // printed "-> undefined" on every successful save.
           sys('saved: ' + r.written.join(', ') + '  ->  ' + r.path);
           sys('Saved credentials load after restart; explicit environment values override them. Harness metadata does not grant account access.');
+          for (const warning of r.credential_warnings || []) sys(warning);
           await renderKeys(r.keys);
         } else if (rest[0] === 'clear' && rest[1]) {
           const r = await api('/api/keys', 'POST', {clear: [rest[1].toUpperCase()]});
@@ -2153,7 +2159,8 @@ async function runSlash(line, webCommand) {
           sys('usage: /api set <KEY> <value> or /api clear <KEY>; prefer API Keys for secret entry');
         } else {
           const r = await api('/api/keys');
-          sys('key file: ' + r.env_file);
+          sys('credential store: ' + (r.store || r.env_file));
+          for (const warning of r.credential_warnings || []) sys(warning);
           await renderKeys(r.keys);
         }
         break;

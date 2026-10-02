@@ -280,9 +280,25 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     // Source of truth: the shipped YAML uses literal booleans (quoted
     // "true" / "false" would be strings and flag_is_true would hide a mistake).
     let yaml = cgagentharness::common::config::AppConfig::embedded_default();
-    for needle in ["api_key_optional: true", "allow_git_write_tools: false"] {
+    for needle in [
+        "api_key_optional: true",
+        "allow_git_write_tools: false",
+        "allow_plaintext_key_file: false",
+    ] {
         assert!(yaml.contains(needle), "shipped config lost {needle}");
     }
+    assert!(
+        !yaml.contains("allow_plaintext_key_file: true"),
+        "allow_plaintext_key_file must ship false"
+    );
+    assert!(
+        !cfg.flag_is_true("security.allow_plaintext_key_file"),
+        "plaintext key file must ship false"
+    );
+    assert!(
+        !cgagentharness::server::config_reload::RELOADABLE.contains(&"security.allow_plaintext_key_file"),
+        "plaintext key file opt-in is restart-only"
+    );
     assert!(
         !yaml.contains("allow_git_write_tools: true"),
         "allow_git_write_tools must ship false"
@@ -596,15 +612,17 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1700),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
     // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
-    ("AGENTS.md", Agent, 1900),
+    // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
+    ("AGENTS.md", Agent, 2000),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     ("CLAUDE.md", Agent, 300),
     // why: #237 and #243 added the cloud-truncation and web-budget contracts;
     // #235 the process-global CSRF note and the I6 process map.
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
     // why: read-only tool, slash, and panel rules; 5790 words, rounded up to the next 100.
-    // why: credential and preemption contracts matched to runtime; 5807 words, rounded up to the next 100.
-    ("INVARIANTS.md", Root, 5900),
+    // why: credential and preemption contracts matched to runtime, then the OS credential store section; 5997 words, rounded up to the next 100.
+    // why: caveat that loaded keys still reach gh and the shim child until #286; set to the reported 6026 words.
+    ("INVARIANTS.md", Root, 6026),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ANALYTICS.md", Guide, 900),
@@ -617,11 +635,13 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/CONSOLE.md", Guide, 6700),
     ("docs/CONSOLE_JOBS.md", Guide, 1400),
     ("docs/DEPENDENCIES.md", Guide, 1400),
-    ("docs/DESKTOP.md", Guide, 2800),
+    // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
+    ("docs/DESKTOP.md", Guide, 2900),
     ("docs/DESKTOP_ACCEPTANCE.md", Evidence, 3000),
     // why: #241 folded the MLX QLoRA guide and finetune/README.md in here.
     ("docs/FINETUNE.md", Guide, 1200),
-    ("docs/INSTALL.md", Guide, 5500),
+    // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
+    ("docs/INSTALL.md", Guide, 5600),
     ("docs/MCP_CLIENT.md", Guide, 1000),
     ("docs/MCP_SERVER.md", Guide, 1200),
     // why: #244 folded MEMORY_SETUP.md and USER_MANUAL.md's memory sections in here.
@@ -631,7 +651,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
     ("docs/RELEASING.md", Guide, 700),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
-    ("docs/SECURE_RESEARCH.md", Guide, 4000),
+    // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
+    ("docs/SECURE_RESEARCH.md", Guide, 4100),
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2100),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
@@ -654,7 +675,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: netconnect LAN-scope bullet in AGENTS.md; Agent total 22541 words, rounded up to the next 500.
 // why: read-only netconnect panel and slash rules; Root total 7506 words, rounded up to the next 500.
 // why: netconnect user guide; Guide total 50046 words after the review corrections, rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_000), (Guide, 50_500), (Evidence, 3_500), (Agent, 23_000)];
+// why: README refresh (#284) plus the OS credential store section and its #286 caveat; set to the reported Root total of 8145 words.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 50_500), (Evidence, 3_500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

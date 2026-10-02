@@ -145,6 +145,8 @@ jobs:
           # Only main writes the cache: PR runs restore main's entry instead of
           # each branch saving its own and evicting the others (10 GB repo cap).
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Linux credential-store build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
   test:
@@ -195,7 +197,7 @@ jobs:
         run: python3 scripts/test-grok-acp-probe.py
       - name: Install bubblewrap on Linux
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap pkg-config libdbus-1-dev
       - name: Build (all targets)
         run: cargo build --all-targets --locked
       - name: Prepare dependency inventory for required native Cargo fixture
@@ -251,7 +253,7 @@ jobs:
             --env CGAH_REQUIRE_LINUX_MCP=1 \
             --env CGAH_REQUIRE_CHECK_SANDBOX=1 \
             rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 \
-            sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3 git
+            sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3 git pkg-config libdbus-1-dev
                     cargo test --test linux_bwrap --test mcp_client --locked -- --nocapture
                     cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture'
 
@@ -275,7 +277,7 @@ jobs:
           # Restores the test job's Linux build; only that job saves dev-Linux.
           shared-key: dev-${{ runner.os }}
           save-if: false
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap pkg-config libdbus-1-dev
       - name: Build the native lifecycle fixture
         run: cargo test --locked --test mcp_lifecycle --no-run --message-format=json > /tmp/mcp-build.jsonl
       - name: Required service ownership, resource limits and crash cleanup
@@ -338,6 +340,8 @@ jobs:
           # Restores the test job's Linux build; only that job saves dev-Linux.
           shared-key: dev-${{ runner.os }}
           save-if: false
+      - name: Install Linux credential-store build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - run: cargo test --test invariant_guard --locked
         env:
           # Same contract as the test job: the operator's real keys and the

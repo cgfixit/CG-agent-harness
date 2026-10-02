@@ -54,7 +54,7 @@ Neither replaces authoritative audit nor changes policy verdicts. Retrieval-only
 rules are excluded; coding/connector rules beyond upstream are labeled additions.
 
 The current desktop already owns the backend, checks exact model inventories,
-loads private dotenv data and recovers bounded jobs. Preserve those paths.
+loads provider keys from the OS credential store and recovers bounded jobs. Preserve those paths.
 Exports require a narrow operator-selected save workflow; the remote console
 must not gain generic native filesystem capabilities or unrestricted downloads.
 

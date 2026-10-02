@@ -257,6 +257,8 @@ pub struct WebTool {
     /// Additional exact hosts for bounded multi-site fixtures, never runtime configuration.
     pub test_resolve_extra: Vec<(String, SocketAddr)>,
     pub(super) search_key_from_file: bool,
+    /// Literal `security.allow_plaintext_key_file`. When false, saved search keys come from the OS store.
+    pub(super) plaintext_key_file: bool,
     pub limits: Limits,
     pub(super) permits: Arc<Semaphore>,
     pub(super) mutation: Arc<Mutex<()>>,
@@ -275,6 +277,7 @@ impl WebTool {
             permits: Arc::new(Semaphore::new(limits.concurrency)),
             limits,
             search_key_from_file: false,
+            plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
             research: Arc::default(),

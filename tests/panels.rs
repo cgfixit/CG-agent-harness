@@ -4,6 +4,8 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use axum::routing::get;
 use axum::Router;
 use common::*;
@@ -15,7 +17,12 @@ use serde_json::json;
 #[tokio::test]
 async fn api_keys_panel_writes_dotenv_and_never_returns_values() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    // Explicit opt-in. The shipped default refuses a plaintext file.
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("security.allow_plaintext_key_file", "true"),
+    )
+    .await;
     let (status, body) = s.get_json("/api/keys").await;
     assert_eq!(status, 200);
     let names: Vec<&str> = body["keys"]
@@ -144,6 +151,58 @@ async fn api_keys_panel_writes_dotenv_and_never_returns_values() {
         );
         assert_eq!(std::fs::read_to_string(foreign).unwrap(), retained);
     }
+}
+
+struct RefuseStore;
+
+impl cgagentharness::common::credential_store::CredentialStore for RefuseStore {
+    fn get(&self, _: &str) -> Result<Option<String>, cgagentharness::common::credential_store::StoreError> {
+        Err(cgagentharness::common::credential_store::StoreError::Unavailable)
+    }
+    fn set(&self, _: &str, _: &str) -> Result<(), cgagentharness::common::credential_store::StoreError> {
+        Err(cgagentharness::common::credential_store::StoreError::Unavailable)
+    }
+    fn delete(&self, _: &str) -> Result<(), cgagentharness::common::credential_store::StoreError> {
+        Err(cgagentharness::common::credential_store::StoreError::Unavailable)
+    }
+}
+
+#[tokio::test]
+async fn api_keys_panel_refuses_plaintext_save_when_the_os_store_is_unavailable() {
+    let model = start_mock_model().await;
+    let secret = "dak-must-not-land-in-dotenv-1234";
+    let options = ServerOptions {
+        credential_store: Some(Arc::new(RefuseStore)),
+        ..ServerOptions::default()
+    };
+    let s = spawn_server(&model.base_url(), options).await;
+    let (status, body) = s
+        .post_json("/api/keys", json!({"keys": {"DEEPAGENT_API_KEY": secret}}))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "ENV_KEY_REJECTED");
+    let message = message(&body);
+    assert!(message.contains("security.allow_plaintext_key_file"), "{message}");
+    let rendered = body.to_string();
+    assert!(!rendered.contains(secret), "value must never be returned");
+    assert!(!message.contains(secret));
+    let env_path = s.home.join(".env");
+    if env_path.exists() {
+        assert!(!std::fs::read_to_string(&env_path).unwrap().contains(secret));
+    }
+    std::fs::write(&env_path, format!("# keep\nexport DEEPAGENT_API_KEY='{secret}'\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let (status, body) = s.get_json("/api/keys").await;
+    assert_eq!(status, 200, "{body}");
+    let rendered = body.to_string();
+    assert!(!rendered.contains(secret));
+    assert!(rendered.contains("DEEPAGENT_API_KEY"));
+    assert!(rendered.contains("allow_plaintext_key_file") || rendered.contains("unavailable"));
+    assert!(std::fs::read_to_string(&env_path).unwrap().contains(secret));
 }
 
 // ---------------------------------------------------------------- memory

@@ -107,8 +107,12 @@ pub struct AppOptions {
     pub config: Option<AppConfig>,
     /// Snapshot of the API key; `None` reads `CGAGENTHARNESS_API_KEY`.
     pub api_key: Option<String>,
-    /// Names loaded from private dotenv before runtime startup; no values retained here.
+    /// Names loaded from the saved store before runtime startup; no values retained here.
     pub key_file_sources: BTreeSet<String>,
+    /// Test hook. `None` uses the OS credential store when the plaintext opt-in is off.
+    pub credential_store: Option<Arc<dyn crate::common::credential_store::CredentialStore>>,
+    /// Operator-facing migration warnings. Never secret values.
+    pub credential_warnings: Vec<String>,
     /// Test hook: replace the closed tool allowlists (empty set = deny all).
     pub tool_allowlist_override: Option<BTreeSet<String>>,
     /// Test hook: replace the MCP broker allowlist only.
@@ -129,6 +133,8 @@ impl AppOptions {
             config: None,
             api_key: None,
             key_file_sources: BTreeSet::new(),
+            credential_store: None,
+            credential_warnings: Vec::new(),
             tool_allowlist_override: None,
             mcp_tool_allowlist_override: None,
             web_test_resolve: None,
@@ -299,6 +305,8 @@ pub async fn build_app_with_sources(
         api_key_optional: true,
         api_key,
         key_file_sources: opts.key_file_sources,
+        credential_store: opts.credential_store,
+        credential_warnings: opts.credential_warnings,
         auth,
         auth_operation_permits,
         tool_allowlist_override: opts.tool_allowlist_override,
@@ -380,20 +388,27 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
         println!("\nCGagentHarness may already be running on {host}:{port}.\nClose the other instance, or wait for the port to release, then try again.");
         return Ok(());
     }
-    let options = AppOptions::new(home.clone());
-    #[cfg(unix)]
-    let options = {
-        let mut options = options;
-        for (name, value) in env_keys::read_startup_keys(&home.env_path())? {
-            // The serve entrypoint is still single-threaded. Match desktop startup:
-            // private dotenv is data, and explicit environment values take precedence.
-            if std::env::var_os(&name).is_none() {
-                options.key_file_sources.insert(name.clone());
-                std::env::set_var(name, value);
-            }
-        }
-        options
-    };
+    let cfg = home.load_config()?;
+    let mut options = AppOptions::new(home.clone());
+    options.config = Some(cfg.clone());
+    let plaintext = cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE);
+    let store = crate::common::credential_store::OsCredentialStore::for_home(&home.root);
+    let loaded = env_keys::load_startup(&home.env_path(), plaintext, &store)?;
+    let inherited: BTreeSet<String> = loaded
+        .values
+        .keys()
+        .filter(|name| std::env::var_os(name).is_some())
+        .cloned()
+        .collect();
+    // Still single-threaded. An explicit environment value wins over the saved store.
+    for (name, value) in env_keys::without_inherited(loaded.values, &inherited) {
+        options.key_file_sources.insert(name.clone());
+        std::env::set_var(name, value);
+    }
+    for warning in &loaded.warnings {
+        tracing::warn!("{warning}");
+    }
+    options.credential_warnings = loaded.warnings;
     let rt = tokio::runtime::Runtime::new()?;
     let outcome = rt.block_on(async move {
         let (app, state) = build_app(options).await?;

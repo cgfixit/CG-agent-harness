@@ -457,9 +457,67 @@ fn merge(target: &mut Value, extra: Value) {
 
 // ---------------------------------------------------------------- keys
 
-pub async fn api_keys_status(State(state): State<Arc<AppState>>) -> ApiResult<Response> {
+fn plaintext_keys(state: &AppState) -> bool {
+    state
+        .cfg
+        .flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE)
+}
+
+fn with_key_store<T>(
+    state: &AppState,
+    body: impl FnOnce(&dyn crate::common::credential_store::CredentialStore) -> T,
+) -> T {
+    if let Some(store) = &state.credential_store {
+        body(store.as_ref())
+    } else {
+        let store = crate::common::credential_store::OsCredentialStore::for_home(&state.home.root);
+        body(&store)
+    }
+}
+
+fn key_status(state: &AppState) -> Result<Value, crate::common::errors::HarnessError> {
     let path = state.home.env_path();
-    let body = json!({"keys": env_keys::read_status(&path, &state.key_file_sources).map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?, "env_file": path.display().to_string()});
+    let plaintext = plaintext_keys(state);
+    let (stored, warnings) = if plaintext {
+        (
+            env_keys::read_startup_keys(&path).map_err(|error| {
+                crate::common::errors::HarnessError::new(env_keys::ENV_KEY_ERROR, error.to_string())
+            })?,
+            state.credential_warnings.clone(),
+        )
+    } else {
+        let (stored, store_warning) = with_key_store(state, env_keys::saved_from_store)?;
+        let mut warnings = state.credential_warnings.clone();
+        if let Some(warning) = store_warning {
+            warnings.push(warning);
+        }
+        if let Ok(names) = env_keys::legacy_managed_names(&path) {
+            for name in names {
+                if !warnings.iter().any(|warning| warning.contains(&name)) {
+                    warnings.push(crate::common::credential_store::migration_warning(
+                        &name,
+                        crate::common::credential_store::StoreError::Unavailable,
+                    ));
+                }
+            }
+        }
+        (stored, warnings)
+    };
+    let keys = if plaintext {
+        env_keys::read_status(&path, &state.key_file_sources)?
+    } else {
+        env_keys::status_from_saved(&stored, &state.key_file_sources, true)
+    };
+    Ok(json!({
+        "keys": keys,
+        "env_file": path.display().to_string(),
+        "store": if plaintext { "plaintext-file" } else { crate::common::credential_store::OS_STORE_LABEL },
+        "credential_warnings": warnings,
+    }))
+}
+
+pub async fn api_keys_status(State(state): State<Arc<AppState>>) -> ApiResult<Response> {
+    let body = key_status(&state).map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     let mut resp = Json(body).into_response();
     resp.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
@@ -471,15 +529,21 @@ pub async fn api_keys_set(
     ValidJson(req): ValidJson<ApiKeysRequest>,
 ) -> ApiResult<Json<Value>> {
     let path = state.home.env_path();
-    let written = env_keys::update_keys(&path, &req.keys, &req.clear).map_err(|e| {
+    let plaintext = plaintext_keys(&state);
+    let written = if plaintext {
+        env_keys::update_keys(&path, &req.keys, &req.clear)
+    } else {
+        with_key_store(&state, |store| env_keys::update_os_keys(store, &req.keys, &req.clear))
+    }
+    .map_err(|e| {
         if e.code == env_keys::ENV_KEY_ERROR {
             ApiError::new(StatusCode::BAD_REQUEST, "ENV_KEY_REJECTED", e.message.clone())
         } else {
-            tracing::warn!("writing {} failed: {}", path.display(), e.message);
+            tracing::warn!("saving a managed key failed");
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ENV_KEY_WRITE_FAILED",
-                "could not write the key file",
+                "could not store the managed key",
             )
         }
     })?;
@@ -487,8 +551,10 @@ pub async fn api_keys_set(
         .audit
         .log(json!({"event": "harness_api_keys_updated", "keys": written["written"]}));
     let mut out = written;
-    out["keys"] = json!(env_keys::read_status(&path, &state.key_file_sources)
-        .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?);
+    let status = key_status(&state).map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    out["keys"] = status["keys"].clone();
+    out["credential_warnings"] = status["credential_warnings"].clone();
+    out["store"] = status["store"].clone();
     Ok(Json(out))
 }
 

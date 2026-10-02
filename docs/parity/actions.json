@@ -4739,7 +4739,7 @@
         "cli_api": "Bounded corresponding administration or worker interface required; see scope."
       },
       "configuration_and_authorization": "No analytics/updater; preserve stricter operator settings; real dependency controls only.",
-      "credentials_network_side_effects": "Consumer-specific child environment; no broad credential inheritance.",
+      "credentials_network_side_effects": "Consumer-specific child environment required; today gh and the agentic shim child inherit the full process environment, including loaded provider keys (#286).",
       "validation": {
         "implementation_inspection": "static-inventoried",
         "fixtures": "pending",
