@@ -621,7 +621,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
     // why: read-only tool, slash, and panel rules; 5790 words, rounded up to the next 100.
     // why: credential and preemption contracts matched to runtime, then the OS credential store section; 5997 words, rounded up to the next 100.
-    ("INVARIANTS.md", Root, 6000),
+    // why: caveat that loaded keys still reach gh and the shim child until #286; set to the reported 6026 words.
+    ("INVARIANTS.md", Root, 6026),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ANALYTICS.md", Guide, 900),
@@ -674,7 +675,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: netconnect LAN-scope bullet in AGENTS.md; Agent total 22541 words, rounded up to the next 500.
 // why: read-only netconnect panel and slash rules; Root total 7506 words, rounded up to the next 500.
 // why: netconnect user guide; Guide total 50046 words after the review corrections, rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_000), (Guide, 50_500), (Evidence, 3_500), (Agent, 23_000)];
+// why: README refresh (#284) plus the OS credential store section and its #286 caveat; set to the reported Root total of 8145 words.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 50_500), (Evidence, 3_500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

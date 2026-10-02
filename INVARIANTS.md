@@ -428,6 +428,9 @@ includes the canonical home. keyring's target is not a namespace: macOS treats i
 as a keychain domain, and Windows uses it as the only credential name. Values never appear in
 argv, logs, diagnostics, readiness files, or `/api` responses (presence and a
 masked tail only). Account passwords stay scrypt-hashed in `auth.sqlite3`.
+Caveat: startup still exports loaded keys into the harness process environment,
+so `gh` (`agentic::gh_client::gh_env`) and the agentic shim child inherit them
+until #286 gives each child an allowlisted environment.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
   `tests/panels.rs`, and
