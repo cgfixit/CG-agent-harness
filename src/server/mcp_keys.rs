@@ -20,9 +20,6 @@ const MARKER: &[u8] = b"mcp-keys-v1\n";
 fn refused() -> anyhow::Error {
     anyhow::anyhow!("MCP_KEYS_REFUSED: restore a valid private machine-key store")
 }
-fn hex_id(s: &str, len: usize) -> bool {
-    s.len() == len && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-}
 fn present(path: &Path) -> anyhow::Result<bool> {
     // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
     let raw = path.to_string_lossy();
@@ -172,8 +169,8 @@ fn rows(conn: &Connection) -> anyhow::Result<Vec<KeyInfo>> {
     let mut result = Vec::new();
     for value in values {
         let (info, hash) = value.map_err(|_| refused())?;
-        if !hex_id(&info.key_id, 32)
-            || !hex_id(&hash, 64)
+        if !crate::common::is_lower_hex(&info.key_id, 32)
+            || !crate::common::is_lower_hex(&hash, 64)
             || !super::structured_memory::valid_owner(&info.owner_id)
             || info.label.trim().is_empty()
             || info.label.chars().count() > 80
@@ -184,7 +181,10 @@ fn rows(conn: &Connection) -> anyhow::Result<Vec<KeyInfo>> {
             || info
                 .last_used_ts
                 .is_some_and(|t| !t.is_finite() || !(0.0..1e12).contains(&t))
-            || info.issued_by_user_id.as_ref().is_some_and(|s| !hex_id(s, 32))
+            || info
+                .issued_by_user_id
+                .as_ref()
+                .is_some_and(|s| !crate::common::is_lower_hex(s, 32))
         {
             return Err(refused());
         }
@@ -283,7 +283,7 @@ impl KeyStore {
         Ok((info, format!("cgamcp_{id}.{secret}")))
     }
     pub fn revoke(&self, id: &str) -> anyhow::Result<bool> {
-        if !hex_id(id, 32) {
+        if !crate::common::is_lower_hex(id, 32) {
             return Ok(false);
         }
         let conn = connect(&self.path)?;
@@ -340,7 +340,13 @@ impl KeyStore {
                 .ct_eq(stored.as_deref().unwrap_or(&dummy).as_bytes()),
         );
         let key = found
-            .filter(|k| !k.disabled && k.scopes == "memory:read" && equal && hex_id(id, 32) && hex_id(secret, 64))
+            .filter(|k| {
+                !k.disabled
+                    && k.scopes == "memory:read"
+                    && equal
+                    && crate::common::is_lower_hex(id, 32)
+                    && crate::common::is_lower_hex(secret, 64)
+            })
             .ok_or_else(|| anyhow::anyhow!("MCP_AUTH_REQUIRED"))?;
         // This UPDATE also observes revocation committed after the lookup.
         if conn

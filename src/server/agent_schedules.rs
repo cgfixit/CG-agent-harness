@@ -152,12 +152,7 @@ impl ScheduleStore {
                 return Err(HarnessError::harness_config("schedule inventory exceeds its bound"));
             }
             for mut row in parsed {
-                if row.schedule_id.len() != 32
-                    || !row
-                        .schedule_id
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                {
+                if !crate::common::is_lower_hex(&row.schedule_id, 32) {
                     return Err(HarnessError::harness_config("invalid recovered schedule identifier"));
                 }
                 if ![ACTIVE, CANCELLED, "exhausted"].contains(&row.status.as_str()) {

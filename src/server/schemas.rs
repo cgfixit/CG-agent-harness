@@ -805,13 +805,7 @@ impl Validate for AgentRunRequest {
     fn validate(&self) -> Vec<String> {
         let mut bad = Vec::new();
         if self.goal_stage.as_ref().is_some_and(|g| {
-            g.session_id.len() != 12
-                || g.stage_id.len() != 32
-                || !g
-                    .session_id
-                    .bytes()
-                    .chain(g.stage_id.bytes())
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            !crate::common::is_lower_hex(&g.session_id, 12) || !crate::common::is_lower_hex(&g.stage_id, 32)
         }) {
             bad.push("goal_stage".into());
         }
@@ -901,7 +895,7 @@ impl Validate for AgentScheduleCreate {
         if self
             .preview_id
             .as_ref()
-            .is_some_and(|s| s.len() != 32 || !s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+            .is_some_and(|s| !crate::common::is_lower_hex(s, 32))
         {
             bad.push("preview_id".into());
         }

@@ -99,7 +99,7 @@ impl JobStore {
             for row in rows {
                 let id = row["job_id"]
                     .as_str()
-                    .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                    .filter(|id| crate::common::is_lower_hex(id, 32))
                     .ok_or_else(|| HarnessError::harness_config("invalid recovered job identifier"))?;
                 let status = match row["status"].as_str() {
                     Some(RUNNING | INTERRUPTED) => INTERRUPTED,

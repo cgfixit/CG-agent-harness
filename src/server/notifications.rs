@@ -31,11 +31,7 @@ pub struct Completion {
 impl Completion {
     pub(crate) fn valid(&self) -> bool {
         super::structured_memory::valid_owner(&self.owner)
-            && self.job_id.len() == 32
-            && self
-                .job_id
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            && crate::common::is_lower_hex(&self.job_id, 32)
             && ["finished", "failed", "cancelled"].contains(&self.status.as_str())
             && self.created_at.is_finite()
             && self.created_at >= 0.0
