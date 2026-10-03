@@ -11,13 +11,14 @@ use cap_std::fs::Dir;
 use crate::common::injection::Scanner;
 use crate::common::{clip_chars, edit_distance};
 
-pub const BUILTIN_IDS: [&str; 4] = ["beginner", "concise", "technical-deep", "unslop"];
+pub const BUILTIN_IDS: [&str; 5] = ["code-review", "concise", "design", "research", "technical"];
 
-const BUILTIN_BODIES: [(&str, &str); 4] = [
-    ("beginner", include_str!("../../data/styles/beginner.md")),
+const BUILTIN_BODIES: [(&str, &str); 5] = [
+    ("code-review", include_str!("../../data/styles/code-review.md")),
     ("concise", include_str!("../../data/styles/concise.md")),
-    ("technical-deep", include_str!("../../data/styles/technical-deep.md")),
-    ("unslop", include_str!("../../data/styles/unslop.md")),
+    ("design", include_str!("../../data/styles/design.md")),
+    ("research", include_str!("../../data/styles/research.md")),
+    ("technical", include_str!("../../data/styles/technical.md")),
 ];
 
 /// Same charset as runtime skill ids: `[a-z0-9_-]`, 1..=80 bytes.
@@ -250,7 +251,7 @@ mod tests {
     #[test]
     fn style_id_matches_skill_charset() {
         assert!(StyleId::parse("concise").is_some());
-        assert!(StyleId::parse("technical-deep").is_some());
+        assert!(StyleId::parse("technical").is_some());
         assert!(
             StyleId::parse("off").is_none(),
             "off is the clear sentinel, not a preset"
@@ -263,9 +264,12 @@ mod tests {
     #[test]
     fn missing_name_suggests_closest_builtin() {
         assert_eq!(suggest_builtin("conc"), Some("concise"));
-        assert_eq!(suggest_builtin("unslp"), Some("unslop"));
-        assert_eq!(suggest_builtin("beginr"), Some("beginner"));
-        assert_eq!(suggest_builtin("technical"), Some("technical-deep"));
+        assert_eq!(suggest_builtin("cod"), Some("code-review"));
+        assert_eq!(suggest_builtin("desgn"), Some("design"));
+        assert_eq!(suggest_builtin("reserch"), Some("research"));
+        assert_eq!(suggest_builtin("technicl"), Some("technical"));
+        // A retired preset name resolves to its nearest successor.
+        assert_eq!(suggest_builtin("technical-deep"), Some("technical"));
         assert_eq!(suggest_builtin("off"), None);
         assert_eq!(suggest_builtin(""), None);
     }
@@ -355,10 +359,19 @@ mod tests {
     }
 
     #[test]
-    fn unslop_preset_is_chat_prose_and_does_not_name_the_planner_switch() {
-        let body = include_str!("../../data/styles/unslop.md");
-        assert!(body.contains("Lead with the answer"));
-        assert!(body.contains("No filler"));
-        assert!(!body.contains("enabled"));
+    fn every_builtin_preset_is_chat_prose_only_and_grants_no_authority() {
+        for (id, body) in BUILTIN_BODIES {
+            assert!(
+                body.contains("This preset is chat prose only."),
+                "{id}: preset must declare itself chat prose only"
+            );
+            assert!(
+                body.contains("grants no tools, network, or write authority"),
+                "{id}: preset must grant no authority"
+            );
+            // A preset is model phrasing guidance, never a switch: it must not
+            // claim to enable, disable or configure any harness feature.
+            assert!(!body.contains("enabled"), "{id}: preset names a switch state");
+        }
     }
 }

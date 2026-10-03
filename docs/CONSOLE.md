@@ -295,23 +295,24 @@ and explain each difference. Use observable rules such as "answer before
 explanation" or "no repeated closing summary" instead of "sound human."
 
 **Style presets.** `/style <name>` selects a session preset in its JSON;
-`/style off` is the default, and `/style` prints the active preset. Shipped
-presets are `concise`, `unslop`, `technical-deep`, and `beginner`
+`/style off` is the default and `/style` prints
+the active preset. Shipped: `code-review`, `concise`, `design`,
+`research`, and `technical`
 ([`data/styles/`](../data/styles/)). An overlay at
 `$CGAGENTHARNESS_HOME/styles/<name>.md` wins. The status-bar selector is
 equivalent. Prompt order is soul, style, then fixed policy, so style cannot
 override the contract. `/prompt` reports load failures and omits an unreadable,
 empty, missing, or scanner-refused overlay.
 
-`concise` favors brevity, `beginner` defines terms with an example,
-`technical-deep` explains mechanisms and failures, and `unslop` removes inflated
-wording. These model instructions do not deterministically rewrite or limit
+`concise` is brief, `technical` traces mechanism, `research` grades evidence,
+`code-review` leads with blockers at file:line, `design` weighs tradeoffs. These model
+instructions do not deterministically rewrite or limit
 output. An explicit format request wins. `off` removes only style; soul remains.
 Changes affect future turns without rewriting history. Compare the same question,
 model, and settings in a new session; a loaded indicator alone proves no prose effect.
 
 **The `unslop` planner probe.** This optional local coding-planner probe is
-separate from the chat preset. It excludes proposed file bodies when possible,
+not a chat preset. It excludes proposed file bodies when possible,
 then records a response hash and counts 16 fixed case-insensitive phrases such
 as "delve" and "game-changer." It may nudge another ordinary loop iteration but
 never rewrites an answer, forces an iteration, or applies to cloud planners. A
