@@ -118,8 +118,8 @@ _expect "T2 desktop sidecar value-flip mutation" 2 "FAIL  \[T2\] desktop-sidecar
 # T2: an unclassified literal pair joins a builder (a proxy pointed at a child).
 a="$(_mktree)"
 _mutate "$a/src/agentic/executor/runner.rs" '
-text = text.replace("        (\"NO_PROXY\", \"*\"),\n", "        (\"NO_PROXY\", \"*\"),\n        (\"HTTP_PROXY\", \"http://proxy.invalid:8080\"),\n", 1)'
-_expect "T2 runner unexpected-pair mutation" 2 "FAIL  \[T2\] executor-runner: unexpected literal pair HTTP_PROXY"
+text = text.replace("        (\"NO_PROXY\", \"*\"),\n", "        (\"NO_PROXY\", \"*\"),\n        (\"HTTPS_PROXY\", \"https://proxy.invalid:8080\"),\n", 1)'
+_expect "T2 runner unexpected-pair mutation" 2 "FAIL  \[T2\] executor-runner: unexpected literal pair HTTPS_PROXY"
 
 # T3: inherit allowlist widened.
 a="$(_mktree)"

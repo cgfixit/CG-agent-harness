@@ -623,9 +623,9 @@ def _strip_test_tail(text: str) -> str:
 
 
 def _strip_line_comments(text: str) -> str:
-    """Drop `//` comments but leave string literals intact: an `http://` URL
-    value must survive, or a proxy pointed at a child would vanish from the
-    sweep (verify.sh's T2 unexpected-pair scenario)."""
+    """Drop `//` comments but leave string literals intact: a URL value whose
+    scheme separator is `//` must survive, or a proxy pointed at a child would
+    vanish from the sweep (verify.sh's T2 unexpected-pair scenario)."""
     out: list[str] = []
     i, n = 0, len(text)
     while i < n:
