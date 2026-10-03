@@ -138,10 +138,10 @@ pub async fn web_allow(
     ValidJson(req): ValidJson<WebRuleRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    state
-        .web_snapshot()
-        .allow_rules(&req.patterns(), &req.group, &req.seeds, web_enabled(&state))
-        .and_then(|_| state.web_snapshot().status(web_enabled(&state), &owner))
+    let enabled = web_enabled(&state);
+    let web = state.web_snapshot();
+    web.allow_rules(&req.patterns(), &req.group, &req.seeds, enabled)
+        .and_then(|_| web.status(enabled, &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
 }
@@ -152,10 +152,10 @@ pub async fn web_deny(
     ValidJson(req): ValidJson<WebUrlRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    state
-        .web_snapshot()
-        .deny(&req.url, web_enabled(&state))
-        .and_then(|_| state.web_snapshot().status(web_enabled(&state), &owner))
+    let enabled = web_enabled(&state);
+    let web = state.web_snapshot();
+    web.deny(&req.url, enabled)
+        .and_then(|_| web.status(enabled, &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
 }
@@ -517,7 +517,9 @@ fn key_status(state: &AppState) -> Result<Value, crate::common::errors::HarnessE
 }
 
 pub async fn api_keys_status(State(state): State<Arc<AppState>>) -> ApiResult<Response> {
-    let body = key_status(&state).map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let body = super::structured_memory::off_worker(move || key_status(&state))
+        .await
+        .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     let mut resp = Json(body).into_response();
     resp.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
@@ -528,13 +530,17 @@ pub async fn api_keys_set(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<ApiKeysRequest>,
 ) -> ApiResult<Json<Value>> {
-    let path = state.home.env_path();
-    let plaintext = plaintext_keys(&state);
-    let written = if plaintext {
-        env_keys::update_keys(&path, &req.keys, &req.clear)
-    } else {
-        with_key_store(&state, |store| env_keys::update_os_keys(store, &req.keys, &req.clear))
-    }
+    // Keychain / Secret Service calls are synchronous and may block on the OS.
+    let worker = Arc::clone(&state);
+    let written = super::structured_memory::off_worker(move || {
+        let path = worker.home.env_path();
+        if plaintext_keys(&worker) {
+            env_keys::update_keys(&path, &req.keys, &req.clear)
+        } else {
+            with_key_store(&worker, |store| env_keys::update_os_keys(store, &req.keys, &req.clear))
+        }
+    })
+    .await
     .map_err(|e| {
         if e.code == env_keys::ENV_KEY_ERROR {
             ApiError::new(StatusCode::BAD_REQUEST, "ENV_KEY_REJECTED", e.message.clone())
@@ -551,7 +557,9 @@ pub async fn api_keys_set(
         .audit
         .log(json!({"event": "harness_api_keys_updated", "keys": written["written"]}));
     let mut out = written;
-    let status = key_status(&state).map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let status = super::structured_memory::off_worker(move || key_status(&state))
+        .await
+        .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     out["keys"] = status["keys"].clone();
     out["credential_warnings"] = status["credential_warnings"].clone();
     out["store"] = status["store"].clone();
