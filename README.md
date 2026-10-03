@@ -9,7 +9,7 @@ loopback. Cloud chat requires provider setup and selection; web reads require
 the account and content permissions described in
 [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions).
 
-![CG Agent Harness running on macOS](docs/screenshots/image.png)
+![CG Agent Harness](docs/screenshots/image.png)
 
 ## What it does
 
