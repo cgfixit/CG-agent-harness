@@ -628,20 +628,31 @@ mod config_tests {
 
     #[tokio::test]
     async fn sse_transport_errors_never_echo_the_url() {
-        // DevSkim: ignore DS162092 because this fixture reserves a loopback port it closes before the request.
-        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = closed.local_addr().unwrap().port();
-        drop(closed);
+        // An owned listener that accepts and drops the connection fails the
+        // request deterministically; a released port could be re-bound by a
+        // concurrent test.
+        // DevSkim: ignore DS162092 because this fixture listener is loopback only.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                drop(stream);
+            }
+        });
         let runtime = McpRuntime {
             sse_allow_loopback: true,
             ..McpRuntime::disabled()
         };
-        // DevSkim: ignore DS162092 because the request must target that closed loopback port to fail.
+        // DevSkim: ignore DS162092 because the request must reach that owned loopback listener.
         let url = format!("http://127.0.0.1:{port}/sse?token=sse-url-secret-token");
         let err = call_sse(&runtime, &url, "echo", json!({})).await.unwrap_err();
+        server.join().unwrap();
         // Fixed failure messages: the error under test may carry the token.
         assert!(err.code == "MCP_SSE", "unexpected error code");
-        assert!(err.message == "sse connection failed", "unexpected error message");
+        assert!(
+            err.message.starts_with("sse ") && !err.message.contains("http"),
+            "transport error message is not a fixed kind"
+        );
         let shown = format!("{err:?}");
         assert!(
             !shown.contains("sse-url-secret-token") && !shown.contains("/sse?"),
