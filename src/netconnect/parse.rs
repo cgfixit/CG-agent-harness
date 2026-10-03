@@ -5,6 +5,8 @@
 
 use std::net::Ipv4Addr;
 
+use super::scope::network_address;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NeighborRecord {
     pub address: Ipv4Addr,
@@ -269,11 +271,6 @@ fn parse_proc_mask(hex: &str) -> Option<u8> {
         return None;
     }
     u8::try_from(value.count_ones()).ok()
-}
-
-fn network_address(addr: Ipv4Addr, prefix: u8) -> Ipv4Addr {
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
-    Ipv4Addr::from(u32::from(addr) & mask)
 }
 
 fn normalize_mac(raw: &str) -> Option<String> {

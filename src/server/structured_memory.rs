@@ -1035,10 +1035,6 @@ pub struct EpisodeDraft<'a> {
     pub sensitivity: &'a str,
 }
 
-fn digest(content: &str) -> String {
-    crate::common::sha256_hex(content)
-}
-
 fn encode_ids(ids: &[String]) -> String {
     serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_string())
 }
@@ -1591,7 +1587,7 @@ impl StructuredMemoryStore {
         }
         let id = crate::common::random_hex(16);
         let now = crate::common::now_ts();
-        let digest = digest(&content);
+        let digest = crate::common::sha256_hex(&content);
         tx.execute(
             "INSERT INTO facts(public_id,owner_id,content,category,content_digest,revision,active,created_ts,updated_ts)
              VALUES(?1,?2,?3,?4,?5,1,1,?6,?6)",
@@ -1935,7 +1931,7 @@ impl StructuredMemoryStore {
                 tx.execute(
                     "INSERT INTO facts(public_id,owner_id,content,category,content_digest,revision,active,created_ts,updated_ts)
                      VALUES(?1,?2,?3,?4,?5,1,1,?6,?6)",
-                    params![id, owner, cleaned, category, digest(&cleaned), now],
+                    params![id, owner, cleaned, category, crate::common::sha256_hex(&cleaned), now],
                 )
                 .map_err(sql)?;
                 fts_insert(tx, tx.last_insert_rowid(), &category, &cleaned)?;
@@ -1969,7 +1965,7 @@ impl StructuredMemoryStore {
                     params![
                         content,
                         category,
-                        digest(&content),
+                        crate::common::sha256_hex(&content),
                         now,
                         owner,
                         target,

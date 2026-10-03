@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
-axum = { version = "0.8", features = ["macros"] }
+axum = "0.8"
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rcgen = "0.14.10"

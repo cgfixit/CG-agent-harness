@@ -1052,8 +1052,7 @@ async fn chat_inner(
     let prompt_skills = selected_skills
         .iter()
         .map(|(id, body)| {
-            use sha2::{Digest, Sha256};
-            json!({"id":id,"outcome":"included_in_successful_chat","chars":body.chars().count(),"sha256":hex::encode(Sha256::digest(body.as_bytes()))})
+            json!({"id":id,"outcome":"included_in_successful_chat","chars":body.chars().count(),"sha256":crate::common::sha256_hex(body)})
         })
         .collect::<Vec<_>>();
     let calibration = if cloud_selected {

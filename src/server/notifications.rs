@@ -1,5 +1,5 @@
 //! Durable owner-bound completion delivery. Only bounded job metadata leaves here.
-use super::notification_outbox::{digest, read_private, Delivery, Outbox};
+use super::notification_outbox::{read_private, Delivery, Outbox};
 use super::web_policy::{canonical_http_url, is_public_ip};
 use crate::common::credential_store::CredentialStore;
 use crate::common::{
@@ -8,6 +8,7 @@ use crate::common::{
     config::AppConfig,
     errors::{HarnessError, Result},
     home::Home,
+    sha256_bytes_hex,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -42,7 +43,7 @@ impl Completion {
             && self.finished_at >= 0.0
     }
     pub(crate) fn event_id(&self) -> String {
-        digest(&serde_json::to_vec(self).expect("finite validated completion"))
+        sha256_bytes_hex(&serde_json::to_vec(self).expect("finite validated completion"))
     }
 }
 
@@ -208,7 +209,7 @@ fn assign_bearers(home: &Home, destinations: &mut [Destination], allow_plaintext
         } else {
             return Err(invalid());
         };
-        destination.bearer_hash = Some(digest(secret.as_bytes()));
+        destination.bearer_hash = Some(sha256_bytes_hex(secret.as_bytes()));
         destination.bearer = Some(secret);
     }
     Ok(())
@@ -277,7 +278,7 @@ impl Settings {
             if revoked.contains(&destination.spec.owner) {
                 destination.spec.enabled = false;
             }
-            destination.revision = digest(&serde_json::to_vec(
+            destination.revision = sha256_bytes_hex(&serde_json::to_vec(
                 &json!({"spec": destination.spec, "private": destination.private}),
             )?);
         }
@@ -528,7 +529,8 @@ impl Inner {
                 continue;
             }
             let event_id = event.event_id();
-            let delivery_id = digest(format!("{event_id}:{}:{}", destination.spec.id, destination.revision).as_bytes());
+            let delivery_id =
+                sha256_bytes_hex(format!("{event_id}:{}:{}", destination.spec.id, destination.revision).as_bytes());
             if next.deliveries.contains_key(&delivery_id) {
                 continue;
             }
@@ -669,7 +671,7 @@ impl Inner {
                 continue;
             }
             let ids: Vec<_> = batch.iter().map(|d| d.delivery_id.as_str()).collect();
-            let batch_id = digest(ids.join(":").as_bytes());
+            let batch_id = sha256_bytes_hex(ids.join(":").as_bytes());
             let events:Vec<_>=batch.iter().map(|d|json!({"event_id":d.event_id,"delivery_id":d.delivery_id,"job_id":d.completion.job_id,"status":d.completion.status,"created_at":d.completion.created_at,"finished_at":d.completion.finished_at})).collect();
             let payload = json!({"version":2,"batch_id":batch_id,"events":events});
             let result = if serde_json::to_vec(&payload).map_or(true, |b| b.len() > 65536) {

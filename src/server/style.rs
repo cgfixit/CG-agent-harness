@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use cap_std::fs::Dir;
 
-use crate::common::clip_chars;
 use crate::common::injection::Scanner;
+use crate::common::{clip_chars, edit_distance};
 
 pub const BUILTIN_IDS: [&str; 4] = ["beginner", "concise", "technical-deep", "unslop"];
 
@@ -241,22 +241,6 @@ pub fn suggest_builtin(input: &str) -> Option<&'static str> {
         .iter()
         .copied()
         .min_by_key(|id| (edit_distance(&needle, id), id.len()))
-}
-
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cost = usize::from(ca != cb);
-            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
 }
 
 #[cfg(test)]

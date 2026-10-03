@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 
 use crate::common::config::AppConfig;
+use crate::common::edit_distance;
 use crate::common::errors::HarnessError;
 use crate::common::home::Home;
 
@@ -116,24 +117,6 @@ fn nearby<'a>(token: &str, candidates: &[&'a str]) -> Vec<&'a str> {
     scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     scored.truncate(5);
     scored.into_iter().map(|(name, _)| name).collect()
-}
-
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let ins = cur[j] + 1;
-            let del = prev[j + 1] + 1;
-            let sub = prev[j] + usize::from(ca != cb);
-            cur[j + 1] = ins.min(del).min(sub);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
 }
 
 pub fn run(config: Option<PathBuf>, line: &str) -> u8 {

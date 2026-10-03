@@ -17,6 +17,7 @@ use crate::common::home::Home;
 use super::collect::collect_passive;
 use super::config::{NetconnectConfig, Tier};
 use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
+use super::tools::tier_rows;
 
 pub const EXIT_OK: u8 = 0;
 pub const EXIT_FAIL: u8 = 2;
@@ -123,20 +124,6 @@ fn error_outcome(err: &HarnessError, warnings: Vec<String>) -> Outcome {
             "message": err.message,
         }),
     }
-}
-
-fn tier_rows(cfg: &NetconnectConfig) -> Vec<Value> {
-    Tier::ALL
-        .into_iter()
-        .map(|tier| {
-            json!({
-                "tier": tier.key(),
-                "flag": cfg.tier_flag(tier),
-                "tier_enabled": cfg.tier_enabled(tier),
-                "runnable": cfg.tier_may_run(tier),
-            })
-        })
-        .collect()
 }
 
 fn status_body(cfg: &NetconnectConfig) -> Value {
