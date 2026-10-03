@@ -607,17 +607,15 @@ mod tests {
         assert!(store.list_for_owner("bob").unwrap().is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlink_root_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("real");
         std::fs::create_dir(&real).unwrap();
         let link = dir.path().join("notes_corpus");
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&real, &link).unwrap();
-            assert!(NotesCorpus::open(&link, limits()).is_err());
-        }
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(NotesCorpus::open(&link, limits()).is_err());
     }
 
     #[test]
@@ -708,6 +706,7 @@ mod tests {
         let root = dir.path().join("notes");
         let store = NotesCorpus::open(&root, limits()).unwrap();
         let blobs = store.store("alice", &[file("a.md", "keep-me")]).unwrap();
+        assert_eq!(blobs.len(), 1);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
