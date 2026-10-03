@@ -10,6 +10,7 @@
 //! a flag; `body`/`plan`/`checks` travel through temp files that are unlinked on
 //! every exit path.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -415,9 +416,57 @@ pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
     Duration::from_secs(secs)
 }
 
-/// Spawn `argv` as a child and wait for it, killing the whole process group on timeout.
-#[cfg(unix)]
+fn child_environment(action: &str) -> BTreeMap<String, String> {
+    let mut env: BTreeMap<String, String> = [
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "SystemRoot",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_CONFIG_HOME",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_CONFIG_DIR",
+        "GH_HOST",
+        "SSH_AUTH_SOCK",
+        "CGAGENTHARNESS_HOME",
+        "CGAGENTHARNESS_AGENT_COMMIT_NAME",
+        "CGAGENTHARNESS_AGENT_COMMIT_EMAIL",
+        "CGAGENTHARNESS_AGENT_BRANCH_PREFIX",
+        "CGAGENTHARNESS_AGENTIC_WRITE_DISABLE",
+    ]
+    .iter()
+    .filter_map(|key| std::env::var(key).ok().map(|value| ((*key).to_string(), value)))
+    .collect();
+    if action == "real-repo-run" {
+        if let Ok(key) = std::env::var("DEEPAGENT_API_KEY") {
+            env.insert("DEEPAGENT_API_KEY".into(), key);
+        }
+    }
+    env
+}
+
+/// Spawn `argv` with the baseline agentic environment, without provider credentials.
 pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<(i32, String, String), ShimError> {
+    run_argv_with_env(argv, cwd, timeout, child_environment("")).await
+}
+
+#[cfg(unix)]
+async fn run_argv_with_env(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    env: BTreeMap<String, String>,
+) -> Result<(i32, String, String), ShimError> {
     use crate::common::process::{self, ProcessError, RunSpec};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -440,7 +489,7 @@ pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<
             RunSpec {
                 argv: &argv,
                 cwd: Some(&cwd),
-                env: None,
+                env: Some(&env),
                 timeout,
                 stdin: None,
             },
@@ -462,9 +511,16 @@ pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<
 }
 
 #[cfg(not(unix))]
-pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<(i32, String, String), ShimError> {
+async fn run_argv_with_env(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    env: BTreeMap<String, String>,
+) -> Result<(i32, String, String), ShimError> {
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..])
+        .env_clear()
+        .envs(env)
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -525,13 +581,15 @@ pub async fn run_agentic_op(ctx: &ShimContext, req: &OpsRequest) -> Result<OpsRe
     let _active = ActiveOperation::new();
     let (argv, _temps) = build_argv(ctx, req)?;
     let timeout = timeout_for(ctx, req);
-    let (code, stdout, stderr) = run_argv(&argv, &ctx.cwd, timeout).await.map_err(|e| match e {
-        ShimError::Timeout { timeout_sec, .. } => ShimError::Timeout {
-            action: req.action.clone(),
-            timeout_sec,
-        },
-        other => other,
-    })?;
+    let (code, stdout, stderr) = run_argv_with_env(&argv, &ctx.cwd, timeout, child_environment(&req.action))
+        .await
+        .map_err(|e| match e {
+            ShimError::Timeout { timeout_sec, .. } => ShimError::Timeout {
+                action: req.action.clone(),
+                timeout_sec,
+            },
+            other => other,
+        })?;
     let (ok, label) = label_for(code);
     let parsed = if ok && JSON_ACTIONS.contains(&req.action.as_str()) {
         serde_json::from_str::<Value>(&stdout).ok()
@@ -567,5 +625,80 @@ impl ActiveOperation {
 impl Drop for ActiveOperation {
     fn drop(&mut self) {
         ACTIVE_OPERATIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod child_env_tests {
+    use super::*;
+
+    fn fixture_argv(name: &str) -> Vec<String> {
+        vec![
+            std::env::current_exe().unwrap().display().to_string(),
+            "--exact".into(),
+            format!("shim::child_env_tests::{name}"),
+            "--ignored".into(),
+            "--nocapture".into(),
+        ]
+    }
+
+    #[test]
+    fn provider_credentials_are_action_scoped() {
+        for deepagent in ["fake-deepagent-key", ""] {
+            let argv = fixture_argv("action_parent_fixture");
+            let output = std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .env("DEEPAGENT_API_KEY", deepagent)
+                .env("ANTHROPIC_API_KEY", "fake-anthropic-key")
+                .env("GROK_API_KEY", "fake-grok-key")
+                .env("SERPAPI_API_KEY", "fake-serpapi-key")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "subprocess fixture"]
+    async fn action_parent_fixture() {
+        let inherited = std::env::var("DEEPAGENT_API_KEY").unwrap();
+        for action in ACTIONS {
+            let env = child_environment(action);
+            assert_eq!(
+                env.get("DEEPAGENT_API_KEY"),
+                (action == "real-repo-run").then_some(&inherited),
+                "{action}"
+            );
+            let argv = fixture_argv("action_child_fixture");
+            let (code, stdout, stderr) =
+                run_argv_with_env(&argv, &std::env::current_dir().unwrap(), Duration::from_secs(10), env)
+                    .await
+                    .unwrap();
+            assert_eq!(code, 0, "{action}: {stdout}\n{stderr}");
+            assert_eq!(
+                stdout.contains("DEEPAGENT_PRESENT"),
+                action == "real-repo-run",
+                "{action}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture"]
+    fn action_child_fixture() {
+        for key in ["ANTHROPIC_API_KEY", "GROK_API_KEY", "SERPAPI_API_KEY"] {
+            assert!(
+                std::env::var_os(key).is_none(),
+                "provider credential {key} reached the child"
+            );
+        }
+        if std::env::var_os("DEEPAGENT_API_KEY").is_some() {
+            println!("DEEPAGENT_PRESENT");
+        }
     }
 }

@@ -22,8 +22,8 @@ one.
 
 | Piece | File | What |
 |---|---|---|
-| gh + git builder | `src/agentic/git.rs` `environment()` | allowlist inherit (PATH/HOME/LANG/LC_ALL/GH_TOKEN/GITHUB_TOKEN) + git hygiene + `GH_TELEMETRY=false`, `GH_NO_UPDATE_NOTIFIER=1`, `DO_NOT_TRACK=1`. git's `credential.helper` is `!gh auth git-credential`, so git's env is gh's env |
-| gh builder | `src/agentic/gh_client.rs` `gh_env()` | full inherit with the same opt-outs forced on top; every `RunSpec` in `gh_client.rs`/`writer.rs` passes `env: Some(&gh_env())` |
+| gh + git builder | `src/agentic/git.rs` `environment()` | runtime, GitHub auth/config and SSH-agent allowlist + git hygiene + `GH_TELEMETRY=false`, `GH_NO_UPDATE_NOTIFIER=1`, `DO_NOT_TRACK=1`. git's `credential.helper` is `!gh auth git-credential`, so git's env is gh's env |
+| gh builder | `src/agentic/gh_client.rs` `gh_env()` | Git allowlist without provider keys; the same opt-outs forced on top; every `RunSpec` in `gh_client.rs`/`writer.rs` passes `env: Some(&gh_env())` |
 | verifier builder | `src/agentic/executor/runner.rs` `scrubbed_env()` | `ALLOWED_ENV_VARS` (6) + `NO_PROXY=*`, `PIP_NO_INDEX`, `PIP_DISABLE_PIP_VERSION_CHECK`, `CARGO_NET_OFFLINE`, `DO_NOT_TRACK`, `GH_TELEMETRY`, `HF_HUB_DISABLE_TELEMETRY`, `ANONYMIZED_TELEMETRY` for whatever a verified repo's checks read |
 | MCP stdio | `src/common/mcp.rs` `spawn()` + `mcp_worker.rs` | `env_clear()`, operator `env` through `filter_env()` (`SECRET_ENV` + `HIJACK_ENV` dropped), fixed PATH/locale, scratch HOME. No opt-outs delivered (see step 4) |
 | desktop | `desktop/src/backend.rs` `start()`, `main.rs` `prepare_cargo()`/`external_link()` | sidecar + python helper carry `RUSTUP_AUTO_INSTALL=0`; the opener runs `env_clear()` with a fixed PATH |

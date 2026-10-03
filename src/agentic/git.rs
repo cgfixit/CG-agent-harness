@@ -6,11 +6,32 @@ use crate::common::{
 };
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-fn environment(extra: &[(&str, &str)]) -> BTreeMap<String, String> {
-    let mut env: BTreeMap<String, String> = ["PATH", "HOME", "LANG", "LC_ALL", "GH_TOKEN", "GITHUB_TOKEN"]
-        .iter()
-        .filter_map(|key| std::env::var(key).ok().map(|v| (key.to_string(), v)))
-        .collect();
+pub(super) fn environment(extra: &[(&str, &str)]) -> BTreeMap<String, String> {
+    let mut env: BTreeMap<String, String> = [
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_CONFIG_DIR",
+        "XDG_CONFIG_HOME",
+        "GH_HOST",
+        "SSH_AUTH_SOCK",
+        "SystemRoot",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+    ]
+    .iter()
+    .filter_map(|key| std::env::var(key).ok().map(|v| (key.to_string(), v)))
+    .collect();
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
     for (key, value) in [
         ("GIT_CONFIG_GLOBAL", null),

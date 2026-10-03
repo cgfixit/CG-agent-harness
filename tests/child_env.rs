@@ -32,10 +32,16 @@ fn isolated_parent(test: &str) {
         .env("GH_CONFIG_DIR", "fixture-gh-config")
         .env("XDG_CONFIG_HOME", "fixture-xdg-config")
         .env("GH_HOST", "github.example.invalid")
+        .env("SSH_AUTH_SOCK", "fixture-ssh-agent")
+        .env("APPDATA", "fixture-appdata")
+        .env("LOCALAPPDATA", "fixture-localappdata")
         .env("GH_TELEMETRY", "true")
         .env("GH_NO_UPDATE_NOTIFIER", "0")
         .env("GIT_TERMINAL_PROMPT", "1")
         .env("DO_NOT_TRACK", "0")
+        .env("LD_PRELOAD", "")
+        .env("DYLD_INSERT_LIBRARIES", "")
+        .env("GIT_SSH_COMMAND", "fixture-disallowed-command")
         .env("CGAGENTHARNESS_AGENT_COMMIT_NAME", "Fixture Author")
         .env("CGAGENTHARNESS_AGENT_COMMIT_EMAIL", "fixture@example.invalid")
         .env("CGAGENTHARNESS_AGENT_BRANCH_PREFIX", "fixture/")
@@ -56,12 +62,21 @@ fn assert_no_provider_keys() {
             "provider credential {key} reached the child"
         );
     }
+    for key in ["LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "GIT_SSH_COMMAND"] {
+        assert!(
+            std::env::var_os(key).is_none(),
+            "execution override {key} reached the child"
+        );
+    }
     assert_eq!(std::env::var("PATH").unwrap(), "child-env-fixture-path");
     assert_eq!(std::env::var("GH_TOKEN").unwrap(), "fake-gh-token");
     assert_eq!(std::env::var("GITHUB_TOKEN").unwrap(), "fake-github-token");
     assert_eq!(std::env::var("GH_CONFIG_DIR").unwrap(), "fixture-gh-config");
     assert_eq!(std::env::var("XDG_CONFIG_HOME").unwrap(), "fixture-xdg-config");
     assert_eq!(std::env::var("GH_HOST").unwrap(), "github.example.invalid");
+    assert_eq!(std::env::var("SSH_AUTH_SOCK").unwrap(), "fixture-ssh-agent");
+    assert_eq!(std::env::var("APPDATA").unwrap(), "fixture-appdata");
+    assert_eq!(std::env::var("LOCALAPPDATA").unwrap(), "fixture-localappdata");
 }
 
 #[test]

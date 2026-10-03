@@ -453,10 +453,10 @@ pub fn install_fake_gh(dir: &Path, bare: &Path) -> PathBuf {
         let script = format!(
             r#"#!/bin/sh
 BARE='{bare}'
-LOG="${{FAKE_GH_LOG:-}}"
-if [ -n "$LOG" ]; then echo "$@" >> "$LOG"; fi
-RETRY_MARKER="${{FAKE_GH_RETRY_MARKER:-}}"
-if [ -n "$RETRY_MARKER" ] && [ "$1" = repo ] && [ "$2" = view ] && [ ! -e "$RETRY_MARKER" ]; then
+LOG='{log}'
+echo "$@" >> "$LOG"
+RETRY_MARKER='{retry_marker}'
+if [ -e '{retry_enabled}' ] && [ "$1" = repo ] && [ "$2" = view ] && [ ! -e "$RETRY_MARKER" ]; then
   : > "$RETRY_MARKER"
   echo "HTTP 502 transient fixture" 1>&2
   exit 1
@@ -487,7 +487,10 @@ esac
 echo "fake gh: unsupported $*" 1>&2
 exit 1
 "#,
-            bare = bare.display()
+            bare = bare.display(),
+            log = dir.join("gh.log").display(),
+            retry_marker = dir.join("gh-retry-marker").display(),
+            retry_enabled = dir.join("gh-retry-enabled").display(),
         );
         let path = bin.join("gh");
         std::fs::write(&path, script).unwrap();
@@ -496,14 +499,15 @@ exit 1
     #[cfg(windows)]
     {
         let script = format!(
-            "@echo off\r\nif \"%1\"==\"--version\" (echo gh version 2.60.0 & exit /b 0)\r\n\
+            "@echo off\r\necho %* >> \"{log}\"\r\nif \"%1\"==\"--version\" (echo gh version 2.60.0 & exit /b 0)\r\n\
              if \"%1\"==\"repo\" if \"%2\"==\"clone\" (git clone -q --depth 1 \"{bare}\" %4 & exit /b %errorlevel%)\r\n\
              if \"%1\"==\"repo\" if \"%2\"==\"view\" (echo {{\"name\":\"repo\",\"description\":\"fake\",\"defaultBranchRef\":{{\"name\":\"main\"}},\"url\":\"https://example.invalid/r\"}} & exit /b 0)\r\n\
              if \"%1\"==\"pr\" if \"%2\"==\"list\" (echo [] & exit /b 0)\r\n\
              if \"%1\"==\"pr\" if \"%2\"==\"create\" (echo https://example.invalid/pull/42 & exit /b 0)\r\n\
              if \"%1\"==\"issue\" if \"%2\"==\"list\" (echo [] & exit /b 0)\r\n\
              echo fake gh: unsupported %* 1>&2\r\nexit /b 1\r\n",
-            bare = bare.display()
+            bare = bare.display(),
+            log = dir.join("gh.log").display(),
         );
         std::fs::write(bin.join("gh.cmd"), script).unwrap();
     }

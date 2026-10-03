@@ -736,7 +736,7 @@ fn gh_client_runs_the_fake_gh_and_enforces_the_version_floor() {
         assert!(dest.join("target.txt").exists());
         let retry_marker = dir.join("gh-retry-marker");
         let replacement_ran = dir.join("replacement-ran");
-        std::env::set_var("FAKE_GH_RETRY_MARKER", &retry_marker);
+        std::fs::write(dir.join("gh-retry-enabled"), "").unwrap();
         std::thread::scope(|scope| {
             let run = scope.spawn(|| run_read(audit, &req("repo_view", None)));
             let mut retrying = false;
@@ -758,7 +758,7 @@ fn gh_client_runs_the_fake_gh_and_enforces_the_version_floor() {
             let error = run.join().unwrap().unwrap_err();
             assert!(error.message.contains("changed after version validation"));
         });
-        std::env::remove_var("FAKE_GH_RETRY_MARKER");
+        std::fs::remove_file(dir.join("gh-retry-enabled")).unwrap();
         assert!(!replacement_ran.exists(), "replacement gh must not execute");
         let audit_text = std::fs::read_to_string(dir.join("audit.jsonl")).unwrap();
         assert!(audit_text.contains("agentic_read"));
