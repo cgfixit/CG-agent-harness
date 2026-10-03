@@ -531,14 +531,20 @@ pub async fn api_keys_set(
     ValidJson(req): ValidJson<ApiKeysRequest>,
 ) -> ApiResult<Json<Value>> {
     // Keychain / Secret Service calls are synchronous and may block on the OS.
+    // The audit append shares the blocking task with the write, so a dropped
+    // handler cannot leave a stored key without its audit record.
     let worker = Arc::clone(&state);
     let written = super::structured_memory::off_worker(move || {
         let path = worker.home.env_path();
-        if plaintext_keys(&worker) {
+        let written = if plaintext_keys(&worker) {
             env_keys::update_keys(&path, &req.keys, &req.clear)
         } else {
             with_key_store(&worker, |store| env_keys::update_os_keys(store, &req.keys, &req.clear))
-        }
+        }?;
+        worker
+            .audit
+            .log(json!({"event": "harness_api_keys_updated", "keys": written["written"]}));
+        Ok::<_, crate::common::errors::HarnessError>(written)
     })
     .await
     .map_err(|e| {
@@ -553,9 +559,6 @@ pub async fn api_keys_set(
             )
         }
     })?;
-    state
-        .audit
-        .log(json!({"event": "harness_api_keys_updated", "keys": written["written"]}));
     let mut out = written;
     let status = super::structured_memory::off_worker(move || key_status(&state))
         .await
