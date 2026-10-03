@@ -443,13 +443,25 @@ impl AttachmentStore {
     }
 }
 
+fn write_in_jail(jail: &Dir, rel: &Path, data: &[u8]) -> Result<()> {
+    atomic_write_in_jail(jail, rel, data, "attachment", || Ok(()))
+}
+
 /// Atomic, mode-0600 write of `rel` performed entirely through the
 /// capability handle: a fresh temp name is created relative to the jail, the
 /// bytes are written and synced, and the temp is renamed over the target.
 /// No ambient path is opened, so a symlink under the root cannot redirect
-/// the write outside it.
-fn write_in_jail(jail: &Dir, rel: &Path, data: &[u8]) -> Result<()> {
-    let io = |e: std::io::Error| HarnessError::new("IO_ERROR", format!("cannot write attachment: {e}"));
+/// the write outside it, and the destination is never truncated before the
+/// rename succeeds. `before_rename` runs after the sync; an error from it
+/// aborts the write and removes the temp. Shared with the notes corpus.
+pub(crate) fn atomic_write_in_jail(
+    jail: &Dir,
+    rel: &Path,
+    data: &[u8],
+    what: &str,
+    before_rename: impl FnOnce() -> std::io::Result<()>,
+) -> Result<()> {
+    let io = |e: std::io::Error| HarnessError::new("IO_ERROR", format!("cannot write {what}: {e}"));
     let tmp = PathBuf::from(format!("{}.{}.tmp", rel.display(), Uuid::new_v4().simple()));
     let mut options = cap_std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -462,6 +474,7 @@ fn write_in_jail(jail: &Dir, rel: &Path, data: &[u8]) -> Result<()> {
         let mut file = jail.open_with(&tmp, &options)?;
         file.write_all(data)?;
         file.sync_all()?;
+        before_rename()?;
         jail.rename(&tmp, jail, rel)
     })();
     if result.is_err() {
@@ -914,7 +927,7 @@ fn blob_path(root: &Path, blob: &AttachmentBlob) -> Result<PathBuf> {
     Ok(root.join(blob_rel(blob)?))
 }
 
-fn unlink_all(jail: &Dir, rels: &[PathBuf]) {
+pub(crate) fn unlink_all(jail: &Dir, rels: &[PathBuf]) {
     for rel in rels {
         let _ = jail.remove_file(rel);
     }
