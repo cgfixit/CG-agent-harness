@@ -5,7 +5,7 @@ use std::mem::{offset_of, size_of};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
-use std::ptr::null_mut;
+use std::ptr::{null_mut, read_unaligned};
 
 use windows_sys::Win32::Foundation::{
     LocalFree, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_TOKEN, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
@@ -231,19 +231,29 @@ impl PrivateStage {
                 || control & SE_DACL_PROTECTED == 0
                 || dacl.is_null()
                 || IsValidAcl(dacl) == 0
-                || (*dacl).AceCount != 1
             {
+                return Err(refused());
+            }
+            let acl_header = read_unaligned(dacl);
+            if acl_header.AceCount != 1 {
                 return Err(refused());
             }
             let mut ace = null_mut();
             if GetAce(dacl, 0, &mut ace) == 0 || ace.is_null() {
                 return Err(refused());
             }
-            let header = &*ace.cast::<ACE_HEADER>();
+            let ace_offset = (ace as usize).checked_sub(dacl as usize).ok_or_else(refused)?;
+            let acl_size = usize::from(acl_header.AclSize);
+            if ace_offset < size_of::<ACL>() || ace_offset > acl_size || size_of::<ACE_HEADER>() > acl_size - ace_offset
+            {
+                return Err(refused());
+            }
+            let header = read_unaligned(ace.cast::<ACE_HEADER>());
             let offset = offset_of!(ACCESS_ALLOWED_ACE, SidStart);
             if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8
                 || header.AceFlags != 0
                 || (header.AceSize as usize) < offset + 8
+                || usize::from(header.AceSize) > acl_size - ace_offset
             {
                 return Err(refused());
             }
@@ -252,7 +262,7 @@ impl PrivateStage {
             if offset + sid_length != header.AceSize as usize
                 || IsValidSid(sid) == 0
                 || EqualSid(sid, user.sid()) == 0
-                || (*ace.cast::<ACCESS_ALLOWED_ACE>()).Mask != FILE_ALL_ACCESS
+                || read_unaligned(ace.cast::<ACCESS_ALLOWED_ACE>()).Mask != FILE_ALL_ACCESS
             {
                 return Err(refused());
             }
