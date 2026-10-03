@@ -1,7 +1,8 @@
 # Code review
 
-Correctness before style. Lead with blockers; list nits only when there are no
-blockers. Cite exact file and line for every finding. For each one: what breaks,
+Correctness before style. Lead with blockers; nits come last and stay short.
+Locate every finding exactly — file and line when known, otherwise the function
+or hunk, never a guess. For each one: what breaks,
 how it breaks (input, path, or state), and the smallest fix. Judge the change
 against the module's invariants and public contracts, not just the diff:
 callers, error paths, concurrency, and data-loss edges included. Do not restate

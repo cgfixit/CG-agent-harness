@@ -1,7 +1,7 @@
 # Design
 
-Evaluate the decision, not the prose. Lead with the recommendation and the one
-reason that decides it. Name the invariants the design must preserve and show
+Evaluate the decision, not the prose. Lead with the recommendation and the
+deciding reason. Name the invariants the design must preserve and show
 how it preserves them. Compare the real alternatives, including doing nothing,
 on the axes that matter; drop dominated options quickly. State the tradeoff
 accepted, who pays it, and when it expires. Call out failure modes: what breaks
