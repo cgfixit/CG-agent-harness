@@ -210,20 +210,6 @@ fn loop_ctx(dir: &Path) -> AgenticCtx {
 }
 
 #[cfg(unix)]
-#[test]
-fn generated_plan_receives_default_soul_without_private_persona_edits() {
-    let dir = tempfile::tempdir().unwrap();
-    let ctx = loop_ctx(dir.path());
-    std::fs::write(dir.path().join("soul.md"), "PRIVATE_LOCAL_PERSONA").unwrap();
-    let proposer = ScriptedProposer::new(&["Approach: inspect the supplied file."]);
-    assert_eq!(
-        generate_plan(&ctx, &proposer, "Inspect the fixture", "", 256).unwrap(),
-        "Approach: inspect the supplied file."
-    );
-    assert!(!proposer.prompts.borrow()[0].contains("PRIVATE_LOCAL_PERSONA"));
-}
-
-#[cfg(unix)]
 fn clone_into_workspace(ctx: &AgenticCtx, dir: &Path) -> std::path::PathBuf {
     let bare = real_bare_repo(dir);
     let root = &ctx.acfg.deepagent.workspace_root;
@@ -444,6 +430,7 @@ fn repository_retrieval_cannot_expand_cloud_reads_or_bypass_run_gates() {
 fn loop_iterates_on_feedback_then_accepts_and_finalizes() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = loop_ctx(dir.path());
+    std::fs::write(dir.path().join("soul.md"), "PRIVATE_LOCAL_PERSONA").unwrap();
     let clone = clone_into_workspace(&ctx, dir.path());
     let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
     let checks = vec![Check::new(
@@ -475,6 +462,7 @@ fn loop_iterates_on_feedback_then_accepts_and_finalizes() {
     );
     assert_eq!(result.changed_files(), vec!["target.txt"]);
     let prompts = proposer.prompts.borrow();
+    assert!(prompts.iter().all(|prompt| !prompt.contains("PRIVATE_LOCAL_PERSONA")));
     assert!(
         prompts[0].starts_with("Instruction:"),
         "operator instruction comes first"

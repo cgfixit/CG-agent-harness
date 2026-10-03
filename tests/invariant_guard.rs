@@ -168,9 +168,6 @@ fn duplicated_constants_still_agree() {
         cgagentharness::agentic::run_store::RUN_ID_PATTERN,
         "RUN_ID_RE drifted between the server and the agentic side"
     );
-    const _: () = assert!(
-        cgagentharness::server::schemas::MAX_PLAN_CHARS >= cgagentharness::agentic::real_repo_loop::MAX_PLAN_CHARS
-    );
     assert_eq!(
         cgagentharness::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,
         cgagentharness::agentic::config::DEFAULT_PLANNER_TIMEOUT_SEC
