@@ -392,7 +392,7 @@ See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility cha
 
 ## Secrets never reach a response or a log line
 
-Audit records are redacted recursively (emails, IPs, configured secret shapes);
+Audit records are redacted recursively (emails, IPs, secret shapes, startup-loaded key values);
 model error bodies are never echoed; `/api/keys` returns presence and a masked
 tail only; the tool broker logs an argv digest, never argv; validation errors
 substitute `(unexpected field)` for a caller-supplied key. A `query` field is
@@ -440,7 +440,8 @@ keys. Shim children receive a separate allowlist; only `real-repo-run` receives
 environment.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
-  `tests/windows_private_credentials.rs`, `tests/panels.rs`, `tests/child_env.rs`, and
+  `server::slash::tests::api_set_never_echoes_the_credential`,
+  `tests/windows_private_credentials.rs`, `tests/panels.rs`, `tests/child_env.rs`,
   `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 
 ## A detached run cannot outlive its gates

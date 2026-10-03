@@ -226,7 +226,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
             if !near.is_empty() {
                 let mut parsed = suggest_only("unknown subcommand; suggestions were not dispatched", &[]);
                 let tail = if after_cmd.len() > 1 {
-                    format!(" {}", after_cmd[1..].join(" "))
+                    format!(" {}", echoable_args(cmd, &after_cmd[1..]).join(" "))
                 } else {
                     String::new()
                 };
@@ -256,7 +256,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
         // A style id is opaque: an overlay may be called `notes` or
         // `session`, which the filler list would otherwise swallow.
         ("style", _) => args.join(" "),
-        _ => args.join(" "),
+        _ => echoable_args(cmd, &args).join(" "),
     };
     let fuzzy = aliased
         || sub_fuzzy
@@ -657,6 +657,19 @@ fn adjacent_transposition(a: &str, b: &str) -> bool {
     matches!(differences.as_slice(), [i, j] if *j == i + 1 && a[*i] == b[*j] && a[*j] == b[*i])
 }
 
+/// Arguments the parser may return in `canonical`, `rest` or suggestions.
+/// `/api set KEY value` carries a credential after the key name: the parse
+/// response and the console's `normalized:` line must never repeat it, so
+/// only the key name is echoed. The console dispatches `/api set` from the
+/// operator's own line instead (see `runSlashMaybeFuzzy`).
+fn echoable_args<'a>(cmd: &str, args: &'a [&'a str]) -> &'a [&'a str] {
+    if cmd == "api" {
+        &args[..args.len().min(1)]
+    } else {
+        args
+    }
+}
+
 fn suggest_only(notice: &str, near: &[(&str, u8)]) -> SlashParse {
     SlashParse {
         web: None,
@@ -858,7 +871,6 @@ mod tests {
             "/session rename notes from this session",
             "/goal the notes for this session",
             "/web search the phrase and search Google",
-            "/api set EXAMPLE just-for-me",
         ] {
             let parsed = parse_line(line);
             assert!(parsed.dispatch, "{line}: {parsed:?}");
@@ -876,6 +888,38 @@ mod tests {
             "/memory consolidate please use 123456789abcdef0",
         ] {
             assert!(!parse_line(line).dispatch, "{line}");
+        }
+    }
+
+    #[test]
+    fn api_set_never_echoes_the_credential() {
+        // Failure messages name a case index, never the line or the parse:
+        // either would print the credential this test guards.
+        let secret = "sk-slash-parse-secret-0123456789";
+        let exact = parse_line(&format!("/api set EXAMPLE {secret}"));
+        assert!(exact.dispatch, "exact /api set must dispatch");
+        assert!(
+            exact.command.as_deref() == Some("api")
+                && exact.sub.as_deref() == Some("set")
+                && exact.canonical.as_deref() == Some("/api set EXAMPLE")
+                && exact.rest == "EXAMPLE",
+            "exact /api set must echo only the key name"
+        );
+        for (case, line) in [
+            format!("/api set EXAMPLE {secret}"),
+            format!("/API SET EXAMPLE {secret}"),
+            format!("/api   set  EXAMPLE   {secret} with spaces"),
+            format!("/api sett EXAMPLE {secret}"),
+            format!("/api please set EXAMPLE {secret}"),
+            format!("/api EXAMPLE {secret}"),
+            format!("/apii set EXAMPLE {secret}"),
+            format!("/api set EXAMPLE {secret} and search docs"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let echoed = parse_line(line).to_json().to_string();
+            assert!(!echoed.contains(secret), "case {case} echoed the credential");
         }
     }
 

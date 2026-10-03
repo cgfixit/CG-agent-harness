@@ -28,7 +28,10 @@ impl AgenticCtx {
             .unwrap_or_else(|| PathBuf::from("."));
         let home_root = dunce::canonicalize(&home_root).unwrap_or(home_root);
         let acfg = load_agentic_config(&cfg, &home_root)?;
-        let audit = Audit::from_home(&home_root, &cfg);
+        // The cloud hand-off is redacted here, before it leaves the machine,
+        // so this side needs the exact values it holds as well as the shapes.
+        let audit =
+            Audit::from_home(&home_root, &cfg).with_literal_secrets(crate::common::audit::known_secret_values(&cfg));
         let scanner = Scanner::from_config(&cfg);
         Ok(Self {
             config_path: config_path.to_path_buf(),
@@ -50,5 +53,34 @@ impl AgenticCtx {
 
     pub fn spend_file(&self) -> PathBuf {
         crate::llm::spend::spend_path(&self.home_root, &self.cfg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cloud_handoff_redacts_credentials_this_process_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let key = "0123456789abcdef".repeat(4);
+        let text = AppConfig::embedded_default().replacen(
+            "  local_llm:\n",
+            &format!("  local_llm:\n    api_key: '{key}'\n"),
+            1,
+        );
+        let cfg = AppConfig::from_str(&text, &path).unwrap();
+        let ctx = AgenticCtx::new(cfg, &path).unwrap();
+        let sent = super::super::cloud_proposer::sanitize_handoff(
+            &format!("context mentions {key} once"),
+            "grok",
+            &ctx.scanner,
+            ctx.redactors(),
+            &ctx.audit,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(sent, "context mentions [REDACTED_SECRET] once");
     }
 }

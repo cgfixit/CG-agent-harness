@@ -140,6 +140,27 @@ pub fn validate_addresses(addresses: &[SocketAddr]) -> Result<()> {
     Ok(())
 }
 
+/// Properties a node inherits from its ancestors during [`extract`].
+#[derive(Clone, Copy)]
+struct Inherited<Id> {
+    in_title: bool,
+    in_head: bool,
+    in_pre: bool,
+    /// Nearest enclosing block element.
+    block: Option<Id>,
+}
+
+impl<Id> Default for Inherited<Id> {
+    fn default() -> Self {
+        Self {
+            in_title: false,
+            in_head: false,
+            in_pre: false,
+            block: None,
+        }
+    }
+}
+
 /// HTML5 parsing decodes entities and repairs malformed markup. Never execute it.
 pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, String, Vec<String>) {
     if !content_type.contains("html") {
@@ -172,35 +193,37 @@ pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, Stri
                 | "h6"
         )
     };
-    for node in html.tree.root().descendants() {
-        // One ancestor walk supplies every inherited property for this node.
+    // Pre-order walk with each node's inherited properties carried down an
+    // explicit stack. Recomputing them from an ancestor walk per node costs
+    // O(nodes x depth), and html5ever does not bound nesting depth, so a
+    // single hostile page within `response_bytes` could hold a worker for
+    // minutes. A hidden element's subtree is never pushed.
+    let mut pending = vec![(html.tree.root(), Inherited::default())];
+    while let Some((node, inherited)) = pending.pop() {
+        let Inherited {
+            in_title,
+            in_head,
+            in_pre,
+            block: current_block,
+        } = inherited;
+        let mut children = inherited;
         let mut hidden = false;
-        let mut in_title = false;
-        let mut in_head = false;
-        let mut in_pre = false;
-        let mut current_block = None;
-        for ancestor in node.ancestors() {
-            if let Some(element) = ancestor.value().as_element() {
-                let name = element.name();
-                if matches!(
-                    name,
-                    "script" | "style" | "noscript" | "template" | "nav" | "header" | "footer" | "form" | "svg"
-                ) || element.attr("hidden").is_some()
-                    || element.attr("aria-hidden") == Some("true")
-                {
-                    hidden = true;
-                    break;
-                }
-                in_title |= name == "title";
-                in_head |= name == "head";
-                in_pre |= name == "pre";
-                if current_block.is_none() && block(name) {
-                    current_block = Some(ancestor.id());
-                }
+        if let Some(element) = node.value().as_element() {
+            let name = element.name();
+            hidden = matches!(
+                name,
+                "script" | "style" | "noscript" | "template" | "nav" | "header" | "footer" | "form" | "svg"
+            ) || element.attr("hidden").is_some()
+                || element.attr("aria-hidden") == Some("true");
+            children.in_title |= name == "title";
+            children.in_head |= name == "head";
+            children.in_pre |= name == "pre";
+            if block(name) {
+                children.block = Some(node.id());
             }
         }
-        if hidden {
-            continue;
+        if !hidden {
+            pending.extend(node.children().rev().map(|child| (child, children)));
         }
         if let Some(element) = node.value().as_element() {
             if block(element.name()) {
@@ -542,9 +565,13 @@ impl WebTool {
         cached: Option<&Page>,
     ) -> Result<(Page, String)> {
         tokio::time::timeout(Duration::from_secs(self.limits.request_seconds), async {
-            let _permit = self
+            // Owned so extraction can carry it onto the blocking pool: a
+            // request timeout abandons the task, not the thread, and the
+            // permit keeps `web.concurrency` bounding that CPU work too.
+            let permit = self
                 .permits
-                .acquire()
+                .clone()
+                .acquire_owned()
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "fetch cancelled"))?;
             let policy = self.policy()?;
@@ -638,8 +665,21 @@ impl WebTool {
                     }
                     bytes.extend_from_slice(&chunk);
                 }
-                raw_body = String::from_utf8_lossy(&bytes).into_owned();
-                let (title, text, links) = extract(&raw_body, &content_type, &target);
+                // Parsing is CPU-bound and html5ever is itself superlinear on
+                // some deep nestings: keep it off the async workers.
+                let (body, kind, base) = (
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                    content_type.clone(),
+                    target.clone(),
+                );
+                let (body, (title, text, links)) = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    let extracted = extract(&body, &kind, &base);
+                    (body, extracted)
+                })
+                .await
+                .map_err(|_| error("WEB_FETCH_FAILED", "extraction failed"))?;
+                raw_body = body;
                 Page {
                     url: target.to_string(),
                     title,
@@ -819,6 +859,188 @@ mod tests {
                 assert_eq!(result.unwrap().chat_tool_calls, expected);
             } else {
                 assert!(result.is_err(), "invalid limit accepted: {value}");
+            }
+        }
+    }
+
+    /// The pre-fix extractor, kept verbatim as the oracle for the stack walk:
+    /// it recomputes inherited state from a full ancestor walk per node.
+    fn extract_by_ancestor_walk(body: &str, base: &url::Url) -> (String, String, Vec<String>) {
+        let html = scraper::Html::parse_document(body);
+        let mut title = String::new();
+        let mut text = String::new();
+        let mut links = BTreeSet::new();
+        let mut previous_block = None;
+        let block = |name: &str| {
+            matches!(
+                name,
+                "body"
+                    | "main"
+                    | "article"
+                    | "section"
+                    | "p"
+                    | "div"
+                    | "li"
+                    | "tr"
+                    | "td"
+                    | "pre"
+                    | "blockquote"
+                    | "h1"
+                    | "h2"
+                    | "h3"
+                    | "h4"
+                    | "h5"
+                    | "h6"
+            )
+        };
+        for node in html.tree.root().descendants() {
+            let mut hidden = false;
+            let mut in_title = false;
+            let mut in_head = false;
+            let mut in_pre = false;
+            let mut current_block = None;
+            for ancestor in node.ancestors() {
+                if let Some(element) = ancestor.value().as_element() {
+                    let name = element.name();
+                    if matches!(
+                        name,
+                        "script" | "style" | "noscript" | "template" | "nav" | "header" | "footer" | "form" | "svg"
+                    ) || element.attr("hidden").is_some()
+                        || element.attr("aria-hidden") == Some("true")
+                    {
+                        hidden = true;
+                        break;
+                    }
+                    in_title |= name == "title";
+                    in_head |= name == "head";
+                    in_pre |= name == "pre";
+                    if current_block.is_none() && block(name) {
+                        current_block = Some(ancestor.id());
+                    }
+                }
+            }
+            if hidden {
+                continue;
+            }
+            if let Some(element) = node.value().as_element() {
+                if block(element.name()) {
+                    previous_block = Some(node.id());
+                }
+                if matches!(
+                    element.name(),
+                    "p" | "div" | "br" | "li" | "tr" | "pre" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                ) {
+                    text.push('\n');
+                }
+                if matches!(element.name(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+                    text.push_str("# ");
+                }
+                if element.name() == "a" && links.len() < 128 {
+                    if let Some(url) = element
+                        .attr("href")
+                        .and_then(|v| base.join(v).ok())
+                        .and_then(|u| canonical_url(u.as_str()).ok())
+                    {
+                        links.insert(url.to_string());
+                    }
+                }
+            }
+            if let Some(value) = node.value().as_text() {
+                if in_title {
+                    title.push_str(value);
+                } else if !in_head {
+                    if current_block != previous_block {
+                        text.push('\n');
+                        previous_block = current_block;
+                    }
+                    if in_pre {
+                        text.push_str(value);
+                    } else {
+                        text.push_str(&value.split_whitespace().collect::<Vec<_>>().join(" "));
+                        text.push(' ');
+                    }
+                }
+            }
+        }
+        (
+            title.trim().to_string(),
+            text.trim().to_string(),
+            links.into_iter().collect(),
+        )
+    }
+
+    #[test]
+    fn stack_walk_extraction_matches_the_ancestor_walk() {
+        let base = canonical_url("https://example.com/dir/").unwrap();
+        let fixtures = [
+            "",
+            "plain text with no markup",
+            "<title>T</title><head><meta name=x><style>s{}</style></head><body>b</body>",
+            "<p>one<p>two<div>three<span>four</span><p>five</div>six",
+            "<div hidden><p>gone<pre>gone</pre></p></div><p>kept</p>",
+            "<div aria-hidden='true'>x</div><div aria-hidden='false'>y</div>",
+            "<pre> a\n  b <b>c\n d</b></pre><p>after   pre</p>",
+            "<table><tr><td>1</td><td>2<p>3</p></td></tr><tr><td>4</td></tr></table>",
+            "<svg><title>svg title</title><text>t</text></svg><template><p>t</p></template>",
+            "<nav><a href='/n'>n</a></nav><header>h</header><footer>f</footer><form><p>x</p></form>",
+            "<body><title>late title</title><h3>h <a href='x?y=1'>l</a></h3><br>br<li>li</body>",
+            "<blockquote>q<section>s<article>a<main>m</main></article></section></blockquote>",
+            "<b><i><u>misnested</b></i></u> <p><b>p<div>split</b>tail</div>",
+            "<pre><title>in pre</title>x</pre><h1><pre>  h </pre></h1>",
+        ];
+        for fixture in fixtures {
+            assert_eq!(
+                extract(fixture, "text/html", &base),
+                extract_by_ancestor_walk(fixture, &base),
+                "{fixture}"
+            );
+        }
+        // Seeded random markup reaches nestings the fixtures do not name.
+        let tags = [
+            "p", "div", "pre", "title", "head", "li", "td", "tr", "h2", "a", "b", "span", "script", "nav", "br",
+        ];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |bound: usize| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) as usize % bound
+        };
+        for _ in 0..300 {
+            let mut doc = String::new();
+            for _ in 0..next(60) {
+                let tag = tags[next(tags.len())];
+                match next(5) {
+                    0 => doc.push_str(&format!("</{tag}>")),
+                    1 => doc.push_str(&format!(" w{}  x\n", next(9))),
+                    2 => doc.push_str(&format!("<{tag} hidden>")),
+                    3 => doc.push_str(&format!("<{tag} href='/l{}'>", next(4))),
+                    _ => doc.push_str(&format!("<{tag}>")),
+                }
+            }
+            assert_eq!(
+                extract(&doc, "text/html", &base),
+                extract_by_ancestor_walk(&doc, &base),
+                "{doc}"
+            );
+        }
+    }
+
+    #[test]
+    fn deeply_nested_markup_extracts_in_linear_time() {
+        let base = canonical_url("https://example.com/").unwrap();
+        // 256 KiB is the default `response_bytes`; the ancestor walk spent
+        // minutes of CPU on each of these shapes. Nested `<div>` is left out:
+        // html5ever's own scope checks are quadratic there, which `get_raw`
+        // bounds by holding the fetch permit through extraction.
+        for unit in ["<span>", "<b>", "<i>x"] {
+            let body = unit.repeat(256 * 1024 / unit.len());
+            let started = std::time::Instant::now();
+            let (_, text, _) = extract(&body, "text/html", &base);
+            let elapsed = started.elapsed();
+            assert!(elapsed < Duration::from_secs(20), "{unit}: {elapsed:?}");
+            if unit == "<i>x" {
+                assert!(text.starts_with("x x"));
             }
         }
     }

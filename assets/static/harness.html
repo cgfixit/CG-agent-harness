@@ -3307,6 +3307,18 @@ async function runSlashMaybeFuzzy(text) {
     if (parsed && parsed.kind === 'dispatch' && parsed.dispatch === true &&
         typeof parsed.canonical === 'string' && parsed.canonical.startsWith('/')) {
       if (parsed.notice) sys(parsed.notice);
+      if (parsed.command === 'api' && parsed.sub === 'set') {
+        /* The parser echoes only the key name, never the credential
+           (echoable_args in src/server/slash.rs), so take the value from the
+           operator's own line and print no normalized form of it. */
+        const words = text.trim().split(/\s+/);
+        if (words.length < 4 || words[1].toLowerCase() !== 'set') {
+          sys('usage: /api set <KEY> <value> or /api clear <KEY>; prefer API Keys for secret entry');
+          return;
+        }
+        await runSlash('/api set ' + words.slice(2).join(' '));
+        return;
+      }
       if (parsed.canonical !== text) sys('normalized: ' + parsed.canonical);
       await runSlash(parsed.canonical, parsed.web);
       return;

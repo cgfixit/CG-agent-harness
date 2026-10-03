@@ -175,7 +175,10 @@ pub async fn build_app_with_sources(
     let settings = HarnessSettings::load(&home)?;
     let store = SessionStore::new(&home.sessions_dir())?;
     // Request handlers queue audit lines; one thread appends them in order.
-    let audit = Audit::from_home(&home.root, &cfg).with_writer_thread();
+    // Loaded credentials are redacted by exact value as well as by shape.
+    let audit = Audit::from_home(&home.root, &cfg)
+        .with_literal_secrets(crate::common::audit::known_secret_values(&cfg))
+        .with_writer_thread();
     let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
     let upload_permits = Arc::new(tokio::sync::Semaphore::new(state::upload_concurrency(&cfg)?));
     let upload_body_timeout = state::upload_body_timeout(&cfg)?;

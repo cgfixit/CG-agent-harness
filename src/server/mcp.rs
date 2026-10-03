@@ -468,7 +468,25 @@ async fn pinned_client(runtime: &McpRuntime, target: &Url) -> Result<reqwest::Cl
         .timeout(runtime.timeout)
         .user_agent("CGagentHarness-mcp/1.0")
         .build()
-        .map_err(|e| mcp_err("MCP_SSE", e.to_string()))
+        .map_err(sse_transport_error)
+}
+
+/// Fixed text for a reqwest failure. Its `Display` embeds the request URL,
+/// and an SSE URL may carry a token in its query, so the operator-facing
+/// error names only the failure kind.
+fn sse_transport_error(e: reqwest::Error) -> HarnessError {
+    let what = if e.is_timeout() {
+        "timed out"
+    } else if e.is_connect() {
+        "connection failed"
+    } else if e.is_body() || e.is_decode() {
+        "response read failed"
+    } else if e.is_builder() {
+        "client setup failed"
+    } else {
+        "request failed"
+    };
+    mcp_err("MCP_SSE", format!("sse {what}"))
 }
 
 async fn lookup_sse_addresses(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
@@ -489,7 +507,7 @@ async fn call_sse(runtime: &McpRuntime, raw_url: &str, tool: &str, arguments: Va
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .send()
         .await
-        .map_err(|e| mcp_err("MCP_SSE", e.to_string()))?;
+        .map_err(sse_transport_error)?;
     if !sse.status().is_success() {
         return Err(mcp_err("MCP_SSE", format!("sse GET status {}", sse.status())));
     }
@@ -521,7 +539,7 @@ async fn call_sse(runtime: &McpRuntime, raw_url: &str, tool: &str, arguments: Va
 async fn read_sse_handshake(mut response: reqwest::Response, max: usize) -> Result<String> {
     let mut buf = Vec::new();
     loop {
-        let chunk = response.chunk().await.map_err(|e| mcp_err("MCP_SSE", e.to_string()))?;
+        let chunk = response.chunk().await.map_err(sse_transport_error)?;
         let Some(chunk) = chunk else {
             break;
         };
@@ -575,14 +593,14 @@ async fn jsonrpc_post(
         .json(&message)
         .send()
         .await
-        .map_err(|e| mcp_err("MCP_SSE", e.to_string()))?;
+        .map_err(sse_transport_error)?;
     if method == "notifications/initialized" {
         return Ok(json!({}));
     }
     if !response.status().is_success() {
         return Err(mcp_err("MCP_SSE", format!("sse POST status {}", response.status())));
     }
-    let bytes = response.bytes().await.map_err(|e| mcp_err("MCP_SSE", e.to_string()))?;
+    let bytes = response.bytes().await.map_err(sse_transport_error)?;
     if bytes.len() > runtime.max_result_bytes {
         return Err(mcp_err("MCP_RESULT_TOO_LARGE", "sse MCP frame exceeds cap"));
     }
@@ -607,6 +625,38 @@ async fn jsonrpc_post(
 #[cfg(test)]
 mod config_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn sse_transport_errors_never_echo_the_url() {
+        // An owned listener that accepts and drops the connection fails the
+        // request deterministically; a released port could be re-bound by a
+        // concurrent test.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); // DevSkim: ignore DS162092 because this fixture listener is loopback only.
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                drop(stream);
+            }
+        });
+        let runtime = McpRuntime {
+            sse_allow_loopback: true,
+            ..McpRuntime::disabled()
+        };
+        let url = format!("http://127.0.0.1:{port}/sse?token=sse-url-secret-token"); // DevSkim: ignore DS162092 because the request must reach that owned loopback listener.
+        let err = call_sse(&runtime, &url, "echo", json!({})).await.unwrap_err();
+        server.join().unwrap();
+        // Fixed failure messages: the error under test may carry the token.
+        assert!(err.code == "MCP_SSE", "unexpected error code");
+        assert!(
+            err.message.starts_with("sse ") && !err.message.contains("http"),
+            "transport error message is not a fixed kind"
+        );
+        let shown = format!("{err:?}");
+        assert!(
+            !shown.contains("sse-url-secret-token") && !shown.contains("/sse?"),
+            "transport error echoed the SSE URL"
+        );
+    }
 
     #[test]
     fn stdio_never_invents_missing_or_malformed_capabilities() {

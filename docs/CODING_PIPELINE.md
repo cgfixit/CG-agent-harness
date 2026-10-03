@@ -326,7 +326,8 @@ with `cloud_proposer`); a local planner still refuses denied basenames
 accumulate under the same char budgets on a local planner.
 `CloudProposerClient::invoke`
 passes that assembled prompt through `sanitize_handoff` — an injection scan
-and secret-pattern redaction pass, `policy.privacy.redact_secrets_like` — and
+and secret-pattern redaction pass (built-in shapes plus
+`policy.privacy.redact_secrets_like`) — and
 then sends it to the selected provider's API (`api.x.ai` or
 `api.anthropic.com`). Redaction catches known secret shapes; it does not
 strip proprietary source code, comments, or issue content, and none of that

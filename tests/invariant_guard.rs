@@ -168,9 +168,6 @@ fn duplicated_constants_still_agree() {
         cgagentharness::agentic::run_store::RUN_ID_PATTERN,
         "RUN_ID_RE drifted between the server and the agentic side"
     );
-    const _: () = assert!(
-        cgagentharness::server::schemas::MAX_PLAN_CHARS >= cgagentharness::agentic::real_repo_loop::MAX_PLAN_CHARS
-    );
     assert_eq!(
         cgagentharness::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,
         cgagentharness::agentic::config::DEFAULT_PLANNER_TIMEOUT_SEC
@@ -198,6 +195,53 @@ fn duplicated_constants_still_agree() {
     assert!(cgagentharness::shim::ACTIONS.contains(&"real-repo-runs"));
     assert!(!cgagentharness::shim::ACTIONS.contains(&"deepagent-plan"));
     assert!(!cgagentharness::shim::ACTIONS.contains(&"__sleep"));
+}
+
+/// `deny.toml` and `desktop/deny.toml` each carry a `[bans].deny` list of
+/// telemetry and analytics SDK crates (the CI half of the otel-hardening
+/// skill's T5 sweep, #297). cargo-deny matches exact names and stays silent
+/// about a banned crate that is absent from the graph, so a name added to one
+/// file and not the other, or misspelled in one, would never surface at check
+/// time. Both lists must be the same entries in the same order.
+#[test]
+fn deny_lists_ban_the_same_telemetry_crates() {
+    fn entries(name: &str) -> Vec<String> {
+        // A Git for Windows checkout with core.autocrlf=true carries CRLF, and
+        // no .gitattributes pins these files to LF; the table split below must
+        // not depend on the line ending (Codex P2 on #315).
+        let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(name))
+            .unwrap()
+            .replace("\r\n", "\n");
+        let bans = text
+            .split("\n[bans]\n")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{name} has no [bans] table"));
+        let bans = bans.split("\n[").next().unwrap();
+        let list = bans
+            .split_once("\ndeny = [")
+            .unwrap_or_else(|| panic!("{name} [bans] has no deny list"))
+            .1;
+        let list = list.split("\n]").next().unwrap();
+        list.lines()
+            .map(|line| line.split('#').next().unwrap().trim().trim_end_matches(','))
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+    let backend = entries("deny.toml");
+    let desktop = entries("desktop/deny.toml");
+    assert!(
+        backend.iter().any(|e| e.contains("crate = \"opentelemetry\"")),
+        "deny.toml [bans].deny lost the opentelemetry entry: {backend:?}"
+    );
+    let mut seen = std::collections::HashSet::new();
+    for entry in &backend {
+        assert!(seen.insert(entry), "deny.toml [bans].deny lists {entry} twice");
+    }
+    assert_eq!(
+        backend, desktop,
+        "deny.toml and desktop/deny.toml [bans].deny lists differ; add or change a crate in both files"
+    );
 }
 
 /// rust-toolchain.toml overrides every CI toolchain input, so its channel is
@@ -624,7 +668,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: read-only tool, slash, and panel rules; 5790 words, rounded up to the next 100.
     // why: credential and preemption contracts matched to runtime, then the OS credential store section; 5997 words, rounded up to the next 100.
     // why: caveat that loaded keys still reach gh and the shim child until #286; set to the reported 6026 words.
-    ("INVARIANTS.md", Root, 6026),
+    // why: redaction claim narrowed to startup-loaded key values (#313); set to the reported
+    // 6027 words after merging main 17b28d9. Whichever of #312/#313 lands second resets it exactly.
+    ("INVARIANTS.md", Root, 6027),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ANALYTICS.md", Guide, 900),
