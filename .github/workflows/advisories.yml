@@ -1,0 +1,44 @@
+# Daily RustSec scan of both manifests. A new advisory against a quiet main
+# otherwise surfaces only on the next push; the release cron reaches the deny
+# job only when a release is due. Same pinned action and arguments as the deny
+# jobs in ci.yml and desktop.yml, advisories only.
+name: Daily advisories
+
+on:
+  schedule:
+    - cron: "43 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: advisories-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  advisories:
+    name: cargo deny advisories (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            manifest: Cargo.toml
+            arguments: --all-features
+          - name: desktop
+            manifest: desktop/Cargo.toml
+            arguments: --all-features --config desktop/deny.toml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          command-arguments: advisories
+          manifest-path: ${{ matrix.manifest }}
+          arguments: ${{ matrix.arguments }}
