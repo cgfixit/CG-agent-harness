@@ -431,13 +431,13 @@ keychain domain, the sole Windows credential name). A credential-file path with
 a `..` component is refused before open, and a store entry that is not UTF-8
 text is dropped unread. Values never appear in argv, logs, diagnostics, or
 `/api` responses (presence and a masked tail only). Account passwords stay
-scrypt-hashed in `auth.sqlite3`. Caveat: startup still exports loaded keys into
-the harness process environment, so `gh` (`agentic::gh_client::gh_env`) and the
-agentic shim child inherit them until #286 gives each child an allowlisted
-environment; sandboxed check children already get a scrubbed one.
+scrypt-hashed in `auth.sqlite3`. Startup loads keys into the harness environment.
+Git/`gh` children receive an allowlist without provider keys. Shim children
+receive a separate allowlist; only `real-repo-run` receives `DEEPAGENT_API_KEY`
+for its local planner. Sandboxed checks receive a scrubbed environment.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
-  `tests/panels.rs`, and
+  `tests/panels.rs`, `tests/child_env.rs`, and
   `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 
 ## A detached run cannot outlive its gates

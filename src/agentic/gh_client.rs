@@ -80,9 +80,9 @@ pub fn is_transient_gh_error(stderr: &str) -> bool {
     transient_re().is_match(stderr)
 }
 
-/// Full inherited env with telemetry opt-outs forced on top.
+/// Git credentials and runtime settings, with telemetry opt-outs forced on top.
 pub fn gh_env() -> BTreeMap<String, String> {
-    let mut env: BTreeMap<String, String> = std::env::vars().collect();
+    let mut env = super::git::environment(&[]);
     env.insert("GH_TELEMETRY".into(), "false".into());
     env.insert("GH_NO_UPDATE_NOTIFIER".into(), "1".into());
     env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());

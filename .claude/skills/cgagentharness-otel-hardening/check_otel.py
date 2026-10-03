@@ -84,8 +84,7 @@ SITES: dict[str, dict[str, object]] = {
         },
         "mentions": ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"),
     },
-    # Full inherited env (std::env::vars()) with the opt-outs forced on top, so
-    # an ambient GH_TELEMETRY=true can never reach a gh child.
+    # Git allowlist with the gh opt-outs forced on top.
     "agentic-gh": {
         "file": "src/agentic/gh_client.rs",
         "signature": r"pub fn gh_env\(",
@@ -96,7 +95,7 @@ SITES: dict[str, dict[str, object]] = {
             "GIT_TERMINAL_PROMPT": "0",
             "DO_NOT_TRACK": "1",
         },
-        "mentions": ("std::env::vars()",),
+        "mentions": ("super::git::environment(&[])",),
     },
     # Caller-declared verification checks (pytest, ruff, cargo, ...) run inside
     # the hard sandbox with network denied; these pairs are the second layer
@@ -201,7 +200,11 @@ EXPECTED_ARRAYS: dict[str, dict[str, object]] = {
     "git inherit allowlist": {
         "file": "src/agentic/git.rs",
         "anchor": r"fn environment\(",
-        "names": {"PATH", "HOME", "LANG", "LC_ALL", "GH_TOKEN", "GITHUB_TOKEN"},
+        "names": {
+            "PATH", "HOME", "LANG", "LC_ALL", "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR",
+            "XDG_CONFIG_HOME", "GH_HOST", "SSH_AUTH_SOCK", "SystemRoot", "WINDIR", "COMSPEC",
+            "PATHEXT", "TEMP", "TMP", "TMPDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+        },
     },
     "mcp SECRET_ENV": {
         "file": "src/common/mcp.rs",
