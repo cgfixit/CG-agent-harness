@@ -4,6 +4,63 @@ use common::*;
 use reqwest::Method;
 use serde_json::json;
 
+#[test]
+fn transcript_search_yields_to_other_tasks() {
+    use axum::extract::State;
+    use cgagentharness::server::routes::session_io::search_session_transcripts;
+    use cgagentharness::server::schemas::{SessionSearchRequest, ValidJson};
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let model = start_mock_model().await;
+        let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+        let (status, created) = s.post_json("/api/sessions", json!({"title": "worker"})).await;
+        assert_eq!(status, 201, "{created}");
+        let id = created["session_id"].as_str().unwrap();
+        assert_eq!(
+            s.post_json("/api/chat", json!({"session_id": id, "message": "worker-needle"}))
+                .await
+                .0,
+            200
+        );
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let blocker = tokio::task::spawn_blocking(move || {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+        });
+        started_rx.await.unwrap();
+        let search = search_session_transcripts(
+            State(s.state.clone()),
+            None,
+            ValidJson(SessionSearchRequest {
+                query: "worker-needle".into(),
+            }),
+        );
+        tokio::pin!(search);
+        let yielded = tokio::select! {
+            biased;
+            _ = &mut search => false,
+            _ = std::future::ready(()) => true,
+        };
+        drop(release_tx);
+        blocker.await.unwrap();
+        assert!(yielded, "transcript search completed without yielding to another task");
+        let axum::Json(body) = search.await.unwrap();
+        assert_eq!(body["index"], "tantivy-bm25");
+        assert!(body["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hit| hit["session_id"] == id));
+    });
+}
+
 #[tokio::test]
 async fn export_is_csrf_guarded_writes_0600_and_round_trips() {
     let model = start_mock_model().await;
