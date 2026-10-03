@@ -53,6 +53,11 @@ pub fn random_hex(n: usize) -> String {
     hex::encode(buf)
 }
 
+/// Whether `value` is exactly `len` lowercase ASCII hexadecimal bytes.
+pub fn is_lower_hex(value: &str, len: usize) -> bool {
+    value.len() == len && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// URL-safe base64 (no padding) of `n` random bytes, the shape of
 /// Python's `secrets.token_urlsafe(n)`.
 pub fn random_urlsafe(n: usize) -> String {
@@ -104,6 +109,18 @@ pub const MAX_PR_BODY_BYTES: usize = 65_536;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lowercase_hex_requires_exact_length_and_canonical_case() {
+        assert!(super::is_lower_hex("0123456789ab", 12));
+        assert!(super::is_lower_hex(&"ab".repeat(16), 32));
+        assert!(super::is_lower_hex(&"cd".repeat(32), 64));
+        assert!(!super::is_lower_hex("0123456789ab", 11));
+        assert!(!super::is_lower_hex("0123456789aB", 12));
+        assert!(!super::is_lower_hex("0123456789ag", 12));
+        assert!(!super::is_lower_hex("0123456789aé", 12));
+        assert!(!super::is_lower_hex("", 12));
+    }
+
     /// Timestamps are `f64` seconds and travel through JSON on every route.
     /// The value below is one of the 17-significant-digit shapes that
     /// serde_json's default fast float parser rounds to the neighbouring

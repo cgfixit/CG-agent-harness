@@ -1,10 +1,12 @@
 # Install and first run
 
-Prerequisites, clone, build, first run, home/keys, and verification. Index: [README.md](../README.md). Model window: [MODELS.md](MODELS.md). Accounts: [SECURE_RESEARCH.md](SECURE_RESEARCH.md#accounts-and-roles).
+This guide covers prerequisites, build, first run, credentials, and verification.
+See the [index](../README.md), [model setup](MODELS.md), and
+[accounts](SECURE_RESEARCH.md#accounts-and-roles).
 
 ## 2. Prerequisites
 
-Install only what your selected path needs. Preserve existing working tools and models.
+Install only what your path needs. Preserve working tools and models.
 
 ### 2.1 Hardware and macOS
 
@@ -13,47 +15,41 @@ sw_vers
 uname -m
 ```
 
-The universal app includes `arm64` and `x86_64` executables. `uname -m` reports
+The universal app includes `arm64` and `x86_64`. `uname -m` reports
 `arm64` in a native Apple Silicon shell; `x86_64` can mean Intel hardware or a
 translated shell. Check **About This Mac** to distinguish them. The supported
 packaging recipe below runs on Apple Silicon and cross-builds Intel.
 
-The bundle targets macOS 12+, but a deployment target is not proof of acceptance
-on every older OS or Intel machine. Consult [desktop details](DESKTOP.md). Historical native matrix: [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
-for the exact tested hardware and source revision.
+The bundle targets macOS 12+, but that target does not prove acceptance on every
+older OS or Intel Mac. See [desktop details](DESKTOP.md) and the [historical
+native matrix](DESKTOP_ACCEPTANCE.md) for tested hardware and revisions.
 
-In Finder, select the installed app and press Cmd-I: **Kind** should identify a
-Universal application. If **Open using Rosetta** is offered, leave it unchecked
-for normal Apple Silicon use. This bundle's app and backend have native slices;
-installing Rosetta is not a prerequisite. If an Intel-support warning persists,
-verify that Finder/Dock is opening the new copy and identify any separately
-installed Intel-only tools. Apple's [Rosetta guidance](https://support.apple.com/en-us/102527)
-explains how to identify the application type.
+In Finder, press Cmd-I on the app. **Kind** must say Universal. Leave **Open using
+Rosetta** unchecked on Apple Silicon; both app and backend have native slices.
+If an Intel warning persists, verify Finder or Dock opened the new copy and check
+separate Intel-only tools. See Apple's [Rosetta guidance](https://support.apple.com/en-us/102527).
 
 ### 2.2 Xcode Command Line Tools
 
-Source builds and native Cargo checks need a C compiler and linker, which come from Apple's Command Line Tools,
-not the full Xcode app. Install them with:
+Source builds and native Cargo checks need Apple's Command Line Tools, not the
+full Xcode app:
 
 ```bash
 xcode-select --install
 ```
 
-A dialog box will pop up — click "Install" and wait for it to finish (a few minutes on a decent
-connection). If you already have them installed, this command will tell you so and do nothing
-further, which is fine.
+Complete the install dialog. If they are present, the command reports that and
+changes nothing.
 
 ### 2.3 Optional package installation
 
-Preserve an existing working installation. Homebrew is optional for running the
-app; it is convenient for installing development tools such as `gh`. If needed,
-follow the [official Homebrew installation instructions](https://brew.sh), then
-confirm `brew --version` in a new terminal. The model runtime can also be
-installed directly from its vendor.
+Homebrew is optional. Preserve a working installation; otherwise follow its
+[installation instructions](https://brew.sh) and confirm `brew --version` in a
+new terminal. Model runtimes can use vendor installers.
 
 ### 2.4 Rust
 
-Inspect the installation already on PATH before changing it:
+Inspect the installation on PATH before changing it:
 
 ```bash
 command -v rustc cargo rustup
@@ -62,47 +58,45 @@ cargo --version
 rustc --print sysroot
 ```
 
-Preserve a working existing installation. This repository pins **Rust 1.88 for
-the backend** in `rust-toolchain.toml` and **Rust 1.90 for the desktop shell** in
+Preserve a working installation. The repository pins **Rust 1.88 for the
+backend** in `rust-toolchain.toml` and **Rust 1.90 for desktop** in
 `desktop/rust-toolchain.toml`. Use rustup's Cargo on PATH so those files take
 effect; a Homebrew Cargo executable does not enforce them. An unrelated newer
 Clippy version can report different lints.
 
-For backend builds, prepare the pinned components while network access is available:
+Prepare backend components with network access:
 
 ```bash
 rustup toolchain install 1.88 --profile minimal --component clippy --component rustfmt
 ```
 
-For desktop builds, also prepare:
+For desktop, prepare:
 
 ```bash
 rustup toolchain install 1.90 --profile minimal --component clippy --component rustfmt
 ```
 
-On a fresh machine without Rust, follow the official
-[Rust installation instructions](https://www.rust-lang.org/tools/install).
+Without Rust, follow the [installation instructions](https://www.rust-lang.org/tools/install).
 From the repository root, `rustup show active-toolchain` should resolve to 1.88;
 inside `desktop/`, it should resolve to 1.90. The packaging script disables
 implicit toolchain installation, so install both before running it.
 
-Toolchain/dependency downloads belong to preparation. Generated-code verification
-must not attempt a rustup download or use credentials from your real home.
+Download toolchains and dependencies during preparation. Generated-code checks
+must not invoke rustup or use credentials from your real home.
 See [Offline Cargo verification](CODING_PIPELINE.md#offline-cargo-verification).
 
 ### 2.5 Ollama
 
-[Ollama](https://ollama.com) runs the language model locally and is what the console talks to
-for chat and planning. Check `command -v ollama` and `ollama --version` first.
-If it is already installed, preserve that installation. On a fresh machine you
-can install the app with Homebrew:
+[Ollama](https://ollama.com) runs the local chat and planning model. First run
+`command -v ollama` and `ollama --version`; preserve a working installation. On
+a fresh machine, Homebrew can install the app:
 
 ```bash
 brew install --cask ollama
 ```
 
-Launch Ollama once to complete its own setup, then verify `ollama list` and the
-endpoint in [model setup](MODELS.md). If the CLI is unavailable, follow the official
+Launch Ollama, then verify `ollama list` and the endpoint in [model setup](MODELS.md).
+If the CLI is unavailable, follow the
 [Ollama quickstart](https://docs.ollama.com/quickstart). The harness does not
 install Ollama or download a model automatically.
 
@@ -112,9 +106,8 @@ Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
-If you plan to use the optional real-repo coding pipeline in [coding pipeline](CODING_PIPELINE.md), you'll also need the
-GitHub CLI. Skip this for now if you only want the chat console — you can always come back and
-install it later.
+The optional [coding pipeline](CODING_PIPELINE.md) requires GitHub CLI. Chat does
+not.
 
 ```bash
 brew install gh
@@ -127,7 +120,7 @@ git clone https://github.com/cgfixit/CG-agent-harness.git
 cd CG-agent-harness
 ```
 
-For an existing checkout, inspect it before updating:
+Inspect an existing checkout before updating:
 
 ```bash
 git status --short
@@ -143,10 +136,9 @@ git merge --ff-only origin/main
 git log -1 --oneline HEAD
 ```
 
-Stop and inspect any divergence rather than resetting it. For contributions,
-create a separate `codex/<topic>` or other driver-prefixed branch from the updated
-main; PRs must target `main`, not another feature branch. Source-build commands
-below assume your terminal's current directory is this `CG-agent-harness` folder.
+Inspect divergence instead of resetting it. For contributions, create a
+`codex/<topic>` or other driver branch from updated `main`; PRs target `main`.
+Source-build commands assume the `CG-agent-harness` directory.
 
 ## 5. Build or install
 
@@ -158,10 +150,8 @@ From inside the `CG-agent-harness` folder:
 cargo build --release --locked
 ```
 
-The first build compiles dependencies and can take several minutes. Prepare the
-pinned toolchain first as described in [Rust](#24-rust). Subsequent
-builds are much faster because Cargo caches the compiled dependencies. When it finishes, the
-binary is at:
+The first build compiles dependencies. Prepare the pinned toolchain in
+[Rust](#24-rust). Cargo caches dependencies for later builds. The binary is at:
 
 ```
 target/release/cgagentharness
@@ -260,10 +250,9 @@ service already has the shipped `qwen3.8:27b-mlx` tag, chat needs no model-confi
 edit. Use `/model list` to inspect available tags and `/model use <exact-tag>` to
 select another installed chat model. The harness never downloads a missing tag.
 
-Only if the model endpoint needs changing, or you intend to configure the optional
-coding planner, quit with Cmd-Q or stop `serve` with Ctrl-C and update the active
-home's `config.yaml`. Merge the exact installed tag into the applicable existing
-fields (do not duplicate YAML mappings):
+To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
+`serve` with Ctrl-C. Merge the exact installed tag into the active home's
+`config.yaml` without duplicating mappings:
 
 ```yaml
 models:
@@ -320,7 +309,7 @@ live outside the bundle, so replacing or uninstalling the app preserves them.
 | `skills/<id>/SKILL.md` | Runtime skill bodies; existing files are preserved |
 | `sessions/` | Chat history, goals, selected skills and current goal-stage linkage |
 | `memory/`, `tools/` | Pinned notes (`memory/notes.json`); optional structured store (`memory/structured.sqlite3`) and gate overlay (`memory/structured_gates.json`); web context/allowlist under `tools/` |
-| `.env`, `auth.sqlite3`, `auth.initialized` | Legacy managed-key migration input, or the 0600 store only when `security.allow_plaintext_key_file` is literal true; transactional accounts and initialization marker; legacy JSON retained for recovery |
+| `.env`, `auth.sqlite3`, `auth.initialized` | Legacy managed-key migration input, or a private file (Unix `0600`) only when `security.allow_plaintext_key_file` is literal true; transactional accounts and initialization marker; legacy JSON retained for recovery |
 | `tls/server.pem`, `cli-session.json` | Private persisted TLS material and optional CLI login bound to its origin/certificate |
 | `data/agentic/` | Registry, retained console jobs, workspaces and run evidence |
 | `logs/` | Bounded audit/spend/optional metrics logs |
@@ -329,14 +318,20 @@ live outside the bundle, so replacing or uninstalling the app preserves them.
 New homes require HTTPS and account login. The old key-required setting is
 deprecated; a harness metadata key is optional and grants no account authority.
 Administrators save/replace/clear credentials in **API Keys**; saved and active
-masks are separate. Startup reads the OS credential store (macOS Keychain, Linux
-Secret Service, Windows Credential Manager). A Linux build needs `pkg-config` and
-`libdbus-1-dev`; macOS and Windows use their native stores without that package.
+masks are separate. Startup reads macOS Keychain, Linux Secret Service, or
+Windows Credential Manager. A Linux build needs `pkg-config` and
+`libdbus-1-dev`; macOS and Windows use native stores without those packages.
 Explicit inherited environment values
 override stored values. A legacy `.env` is migration input unless
 `security.allow_plaintext_key_file` is literal true. Restart to reload, and remove
 an inherited value separately when clearing a saved key is insufficient.
-Forwarded/proxy requests are unsupported. See [secure setup](SECURE_RESEARCH.md).
+On Unix, plaintext credential files use mode `0600`. On Windows, the writer
+creates a non-reparse regular file with a protected DACL for the effective owner,
+verifies it, and publishes it atomically. The reader accepts only a regular,
+non-reparse file owned by the effective user whose DACL has ordinary allow ACEs
+only for that user. It does not require the protected-DACL flag. See the [credential
+file invariant](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store).
+Forwarded or proxy requests are unsupported. See [secure setup](SECURE_RESEARCH.md).
 
 ### Which settings take effect where?
 
@@ -362,10 +357,10 @@ checks still reread disk at mutation boundaries.
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
 | Managed credentials | OS credential store at process startup; inherited values win. Legacy `.env` migrates once, or stays the store when `security.allow_plaintext_key_file` is literal true | `/api` reports presence/masked tail, not proof of provider authentication |
 | Spend ledger and dashboard | Retained `logs/spend.jsonl` and `.1`; dashboard state is page memory only | [Completeness and pricing](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero) |
-| Completion webhooks | `notifications.*` plus optional managed bearer; restart-only; queue is not durable | [Setup, destination rules and delivery audit](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook) |
+| Completion webhooks | `notifications.*` plus optional bearer; restart-only; private durable outbox with bounded owner replay | [Setup, destination rules and delivery audit](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook) |
 | Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |
 
-For output style, use [response style](CONSOLE.md#74-customize-response-style) before tuning generation parameters.
+Use [response style](CONSOLE.md#74-customize-response-style) before generation parameters.
 `models.local_llm.max_tokens` is an output ceiling and can truncate a reply.
 To keep at least 4096 estimated prompt tokens inside the 30000-token safety
 limit, startup rejects unsigned numeric local-chat values of `0`, and caps
@@ -381,9 +376,8 @@ concise enough to leave useful room for the question and context.
 
 ### Tunables you may want to know about
 
-Every tunable lives in `assets/config.default.yaml` and is copied into your
-home `config.yaml` on first run; there are no hidden hardcoded budgets. The
-ones operators most often ask about:
+Every tunable lives in `assets/config.default.yaml` and is copied to `config.yaml`
+on first run. Common operator settings follow:
 
 | Key | Default | Effect |
 |---|---|---|
@@ -430,16 +424,13 @@ not a general environment-variable editor or connector credential vault.
 | `DEEPAGENT_API_KEY` | Bearer credential for a configured non-Ollama compatible local planner |
 | `SERPAPI_API_KEY` | Optional fixed search API for chat web search; public Google is the no-key fallback |
 
-Saving a key does not select it for chat, open coding gates or install a
-connector. After restart, `/model use grok` or `/model use claude` explicitly
-selects cloud chat; provider and per-run online approvals for coding remain
-separate from key storage. The slash-command workflow does not expose arbitrary
-cloud-provider configuration flags; review the separate provider controls in
-[the configuration reference](../assets/config.default.yaml) before considering
-a cloud coding run. Values must be nonempty, no more than 4,096 characters
-and contain no newline, carriage return or NUL. `/api clear <KEY>` removes only
-the named managed credential from the OS store. Unknown `.env` lines stay during
-migration. Restart after changing credentials other than `SERPAPI_API_KEY`.
+Saving a key does not select chat, open coding gates, or install a connector.
+After restart, `/model use grok` or `/model use claude` selects cloud chat;
+coding still needs provider and per-run online approval. Review provider controls
+in [the configuration reference](../assets/config.default.yaml). Values must be
+nonempty, at most 4,096 characters, and contain no newline, carriage return, or
+NUL. `/api clear <KEY>` removes only that OS-store credential. Migration retains
+unknown `.env` lines. Restart after changes except `SERPAPI_API_KEY`.
 
 Prefer the **API Keys** pane for pasting secrets; its password inputs are cleared
 after successful save. Use **Clear saved value** to remove a stored credential.
@@ -449,17 +440,16 @@ The pane displays masked **Saved** and **Active** values separately, their sourc
 Clearing a saved value leaves a currently active value running until restart;
 an explicit process environment override still wins after restart. If the OS
 store is unavailable, save is refused. Set `security.allow_plaintext_key_file`
-to literal `true` and restart only to keep the legacy 0600 file. `/registry`
+to literal `true` and restart only to keep the private legacy file. `/registry`
 and **View registry** preserve inventory access. Do not source `.env` as a shell
 script or put secrets in soul, memory, skill files or shared prompts.
 
 ### Close, quit and reopen
 
-Closing the desktop window hides it and keeps its backend running. Dock reopen
-or a second launch focuses the same home instance. Cmd-Q offers **Keep running**
-or **Cancel work and quit** if work is active. A standalone server stops with
-Ctrl-C or SIGTERM; the app needs no open Terminal. Neither path installs automatic login
-startup, and neither resumes model requests or approvals after a reboot.
+Closing the desktop window hides it while the backend runs. Dock reopen or a
+second launch focuses the same instance. During work, Cmd-Q offers **Keep
+running** or **Cancel work and quit**. Ctrl-C or SIGTERM stops `serve`. Neither
+path installs login startup or resumes requests or approvals after reboot.
 
 One server owns a home at a time. Quit its owner before switching between app
 and standalone use; do not delete a live lock file. Different homes can run
@@ -467,22 +457,23 @@ independently. This lock does not cover manually invoked agentic CLI writers.
 
 ### Retained jobs and runs
 
-Console jobs are saved in `data/agentic/console-jobs.json`, retaining up to 32
-terminal jobs plus an active one within 16 MiB. After restart, a formerly running
-console job becomes interrupted; it is not reattached or resumed. `/agent jobs`
-shows retained handles and `/agent job <id>` inspects one.
+`data/agentic/console-jobs.json` retains up to 32 terminal jobs plus one active
+job within 16 MiB. Restart marks a running job interrupted without resuming it.
+Use `/agent jobs` to list handles and `/agent job <id>` to inspect one.
 
-Schedules are separately persisted in `data/agentic/console-schedules.json`;
-occurrences are consumed before launch and missed windows are skipped. See
+`data/agentic/console-schedules.json` stores schedules. Occurrences are consumed
+before launch, and missed windows are skipped. See
 [schedules and completion notifications](CONSOLE_JOBS.md#schedules-and-completion-notifications).
-Notifications do not replace job records, and queued deliveries are lost on exit.
+Notifications do not replace job records. The private bounded outbox persists
+delivery state before networking, resumes eligible attempts after restart, and
+supports explicit owner-confirmed replay within current grants and limits.
 
-`/agent runs` inspects separate durable run records. On Unix, a released worker
-lease permits reconciliation to interrupted; a live lease stays running.
-Legacy records without ownership evidence remain unknown. Inspect with
-`/agent status <id>` before deciding or discarding. No commit, push, publication
-or approval is replayed automatically. Cancellation is best-effort; escaped
-descendants can survive and need inspection before further writes.
+`/agent runs` shows durable run records. On Unix, a released worker lease allows
+reconciliation to interrupted; a live lease remains running. Legacy records
+without ownership evidence remain unknown. Inspect `/agent status <id>` before
+deciding or discarding. The Harness never replays a commit, push, publication,
+or approval. Cancellation is best-effort; inspect escaped descendants before
+further writes.
 
 Audit/spend/optional metrics JSONL logs retain a current file and one previous
 `.1` generation, default 8 MiB each. Logging remains best-effort. The server
@@ -495,19 +486,16 @@ new lines with a warning. See
 
 ### Update, backup, rollback and uninstall
 
-Quit with Cmd-Q (closing the window only hides it), wait for work to stop, and
-back up the active home to a private location before upgrading a home you care
-about. It contains credentials and private conversation/run data. Keep the prior
-app archive and its source SHA if you need to compare versions.
+Before upgrade, quit with Cmd-Q, wait for work to stop, and privately back up the
+active home. It contains credentials, conversations, and run data. Retain the
+prior app archive and source SHA for comparisons.
 
-Verify and replace the complete app bundle. Configuration and existing skills
-are seeded only when absent; upgrading does not rewrite your existing defaults,
-model selection or persona. Merge new config fields deliberately instead of
-replacing your file with `assets/config.default.yaml`. An older binary may not
-understand newer state; inspect compatibility and use a preserved matching backup
-rather than blindly rolling back a live home. Never delete a lock to defeat a
-running owner. Uninstalling means quitting and removing only the app; deleting
-the home is a separate destructive choice.
+Verify and replace the complete app bundle. Upgrade does not rewrite existing
+defaults, model selection, persona, or skills. Merge new fields instead of
+replacing `config.yaml` with `assets/config.default.yaml`. An older binary may
+not understand newer state, so inspect compatibility and restore its matching
+backup. Never delete a live owner's lock. To uninstall, quit and remove the app;
+home deletion is a separate destructive action.
 
 To test a candidate without using your normal home, launch it explicitly with a
 new absolute temporary home (adjust the app path):
@@ -517,33 +505,27 @@ candidate_home="$(mktemp -d /private/tmp/cgah-candidate.XXXXXX)"
 open -n --env "CGAGENTHARNESS_HOME=$candidate_home" '/Applications/CG Agent Harness.app'
 ```
 
-Use the console footer or Setup to confirm this home, check the selected model,
-and keep write gates disarmed unless performing a deliberate disposable coding test. It will
-start without your normal sessions, optional skills, credentials or soul. An
-ordinary Finder launch later uses its normal environment/home. A deliberately
-prepared local app copy can retain a separate absolute home through its per-copy
-launch environment; that local customization does not change the published app's
-`~/.CGagentHarness` default. A different app source and a different data home are
-separate choices: record both when comparing versions. Do not change `HOME` to
-point at a test directory.
+Confirm the home in Setup or the footer, check the model, and keep write gates
+disarmed unless the test needs them. The candidate starts without your normal
+sessions, skills, credentials, or soul. A later Finder launch uses the normal
+home. A prepared local app copy can keep an absolute home in its launch
+environment without changing the published `~/.CGagentHarness` default. Record
+both app source and data home when comparing versions. Do not change `HOME`.
 
 ### Release cadence and finding updates
 
-The app has no built-in updater. Download and replace it deliberately. The
-repository's [release workflow](../.github/workflows/release.yml) checks changed main
-every 12 hours at **08:17 and 20:17 UTC** (04:17/16:17 New York during daylight
-time, 03:17/15:17 during standard time). Scheduled GitHub runs can be delayed.
-It skips unchanged source, and also skips until that exact SHA has a successful
-Bundle run. A green Bundle run does not itself publish. When both conditions
-hold, it verifies backend and universal desktop builds, then publishes a regular
-Latest release. Opening a PR does not publish a release; after a merge, the next
-scheduled check can include that new main source.
+The app has no built-in updater. The [release
+workflow](../.github/workflows/release.yml) checks changed `main` at **08:17 and
+20:17 UTC**. These are 04:17 and 16:17 New York daylight time, or 03:17 and
+15:17 standard time. Runs may be delayed. The workflow skips unchanged source
+and any SHA without a successful Bundle run. It then verifies backend and
+universal desktop builds before publishing Latest. A Bundle run or PR alone does
+not publish; a later scheduled run can include merged source.
 
 Maintainers change the schedule in `.github/workflows/release.yml` through a PR.
 The manual workflow's `publish: false` default previews the plan; setting it true
 requests publication after verification. A pushed `v*` tag is another release
 trigger. See [release planning](../scripts/release-plan.py) for source/version checks.
-A green Bundle run only creates artifacts; it does not itself publish a release.
 Changing cadence is a repository workflow change, not an app preference.
 
 ## 11. Verify your setup
@@ -582,23 +564,18 @@ CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 # CLIPPY=/opt/homebrew/bin/cargo-clippy CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
-The disposable home avoids colliding with a running app's home lock. Use a unique
-`--port` if a leftover `serve` already owns `:8790`. This is the
-same invocation as [verify](INSTALL.md#11-verify-your-setup): formatting, Clippy with
-warnings denied, tests (planner keys blanked), the CI contract scripts, and a release build.
-`scripts/verify-local.sh` passes `--locked` to Clippy, the tests and the release
-build, so a stale `Cargo.lock` fails the run instead of being rewritten; it does
-not set `CARGO_NET_OFFLINE`.
-It runs cargo-deny only when installed; record a skipped audit and run the
-dependency policy separately when needed. Tests include required native Cargo sandbox and process tests.
-An outer tool sandbox can prevent nested Seatbelt; run native acceptance from
-the operator's terminal without weakening the application profile.
+The disposable home avoids the app's home lock; use another `--port` if `:8790`
+is occupied. The script runs formatting, warning-denied Clippy, tests with planner
+keys blanked, CI contract scripts, and a release build. It passes `--locked` to
+Cargo without setting `CARGO_NET_OFFLINE`, so a stale lockfile fails instead of
+changing. It runs cargo-deny only when installed; record a skip and run that gate
+separately. An outer sandbox can block nested Seatbelt. Run native acceptance
+from the operator terminal without weakening the profile.
 
-For reproducible dependency acceptance, also run `cargo build --locked` and
-`cargo deny check` in both the repository root and `desktop/`, using each pinned
-toolchain. [Dependency maintenance](DEPENDENCIES.md) documents compatible
-updates, retained pins, feature review and the exact drift commands. A lockfile
-can be valid even when newer releases exist; a blind update can exceed the MSRV.
+For dependency acceptance, run `cargo build --locked` and `cargo deny check` in
+both the root and `desktop/` with their pinned toolchains. [Dependency
+maintenance](DEPENDENCIES.md) covers updates, pins, features, and drift. Newer
+releases do not make a lockfile invalid; blind updates can exceed the MSRV.
 
 For the existing live chat smoke, set the exact installed tag explicitly:
 
@@ -606,11 +583,10 @@ For the existing live chat smoke, set the exact installed tag explicitly:
 SMOKE_MODEL=qwen3.8:27b scripts/smoke-ollama.sh
 ```
 
-**Read its output:** the current smoke exits successfully if the model endpoint
-is unavailable and the chat turn is skipped. Its success alone is not real-model
-acceptance, and it does not exercise the editing pipeline. Full disposable
-Chrome/model/edit/verification/approval/publication acceptance is documented in
-[Console jobs](CONSOLE_JOBS.md).
+Read the output. The smoke succeeds when an unavailable endpoint causes a skip.
+It neither proves real-model acceptance nor tests editing. See [Console
+jobs](CONSOLE_JOBS.md) for disposable Chrome, model, edit, verification,
+approval, and publication acceptance.
 
 For a source-built app, also verify the separate desktop crate and packaged backend:
 
@@ -629,25 +605,22 @@ WebSocket (the recorded local run used Node 24):
 node scripts/chat-browser-acceptance.mjs
 ```
 
-The script uses an isolated browser profile and local mock APIs. On a different
-Chrome installation, set `CHROME_BIN` to its executable. It checks the real console
-and CSP but does not establish actual-model behavior or native WKWebView interaction.
-No new app build or model download is needed for this browser fixture.
+The script uses an isolated profile and mock APIs. Set `CHROME_BIN` for another
+installation. It checks the console and CSP, not model behavior or WKWebView.
+The fixture needs no new app build or model download.
 
-Run these after packaging in [macOS app packaging](INSTALL.md#52-macos-app). The shell embeds its signed sidecar's
-hash, so do not replace or re-sign just the backend afterward. The app bundle
-contains the offline preparation helper and desktop documentation; the separate
-binary-only CLI archive does not. Build and HTTP/process evidence are distinct
-from actual native window, file chooser, clipboard and quit-choice acceptance.
-Use [historical desktop acceptance](DESKTOP_ACCEPTANCE.md) to record those checks.
+Run these after [packaging](INSTALL.md#52-macos-app). The shell embeds the signed
+sidecar hash, so do not replace or re-sign only the backend. The app bundle,
+unlike the CLI archive, includes the offline helper and desktop docs. Build and
+HTTP evidence do not prove native window, chooser, clipboard, or quit behavior.
+Record those in [desktop acceptance](DESKTOP_ACCEPTANCE.md).
 
 ## Tests and CI/CD
 
+The [verification commands above](#11-verify-your-setup) cover local gates,
+desktop packaging, Chrome, and Ollama. Additional focused commands are:
+
 ```bash
-test_home="$(mktemp -d)"
-CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
-# fmt, clippy -D warnings, optional installed cargo-deny, tests, release build
-# If rustup's cargo-clippy is older than Homebrew's: CLIPPY=/opt/homebrew/bin/cargo-clippy
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
 cargo test --test invariant_guard          # fast I6 source scan
 python3 scripts/test-desktop-backend.py    # built release backend; disposable homes
@@ -656,27 +629,23 @@ node scripts/chat-browser-acceptance.mjs   # installed Chrome + Node with WebSoc
 scripts/smoke-ollama.sh
 ```
 
-Always blank `GROK_API_KEY`, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY` when
-running tests: a real key on a developer machine must never become something the
-suite asserts on. Tests drive a real `git` but do not need your global Git
-identity: the fixtures neutralize `GIT_CONFIG_GLOBAL` and set `user.name` /
-`user.email` per seed repository. Set `CGAH_TEST_BINARY` to test another built backend,
-including the copy inside a macOS bundle. The Python suite uses only the standard
-library and a temporary loopback HTTP model fixture; it downloads no models and
-makes no cloud inference requests. Its chat/restart test verifies history, goal,
-notes, model selection, token counts, fresh CSRF and no replay using a disposable
-account, HTTPS and an optional empty harness key.
+Always blank the three planner keys so tests never depend on developer secrets.
+Fixtures neutralize `GIT_CONFIG_GLOBAL` and set repository identity. Set
+`CGAH_TEST_BINARY` for another backend, including a bundle copy. The standard-library
+Python suite uses a loopback model fixture with no downloads or cloud inference.
+Its disposable HTTPS account verifies restart, history, goal, notes, selection,
+tokens, fresh CSRF, and no replay.
 
 | Gate | Evidence and scope |
 |---|---|
-| [Backend CI](../.github/workflows/ci.yml) | PRs, `main`, and reusable release verification: rustfmt, Clippy with warnings denied, `cargo deny`, an MSRV check against `rust-version`, the I6 invariant source scan, a Chrome slash-command browser acceptance job, Rust/public-backend tests on Linux and macOS, and a real-repo-run smoke. Release builds and CLI packaging are not part of this gate: Bundle covers them on PRs and `main`, and Release builds its own before publishing. |
-| Coding and chat regression tests | Write-policy revocation, exact edits, clone jail, reviewed Git trees, detached-job cancellation, session/goal gates, loop budgets, and release of failed/cancelled chat claims. See [`tests/`](../tests/). |
-| Native Cargo acceptance | Required macOS tests prepare locked dependencies, then exercise real Seatbelt restrictions and fixed Cargo checks. Linux bubblewrap is the filesystem-confined backend when present; `unshare --net` fallback and Windows Job Object do not establish equivalent confinement. |
-| [Desktop CI](../.github/workflows/desktop.yml) | Bundle PRs/`main`, tag releases, and manual runs reuse this job to build the universal app on Rust 1.90, run desktop policy and packaged-backend tests, verify signatures/checksums and the extracted bundle, then retain the universal ZIP and checksums as artifacts. |
-| [Bundle](../.github/workflows/bundle.yml) | Packages the loopback CLI for `linux-x86_64` and `macos-arm64` alongside the universal desktop job, checksums each artifact, re-verifies it after extraction, and smokes the staged binary for the loopback-only bind guard and the exit-3 missing-config contract. |
+| [Backend CI](../.github/workflows/ci.yml) | On PRs, `main`, and reusable release calls: rustfmt, warning-denied Clippy, `cargo deny`, MSRV, I6 scan, Chrome commands, Linux/macOS tests, and real-repo smoke. Bundle owns release builds and CLI packaging; Release rebuilds before publication. |
+| Coding and chat regression tests | Revocation, exact edits, clone jail, reviewed trees, job cancellation, session and goal gates, loop budgets, and failed-chat claim release. See [`tests/`](../tests/). |
+| Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
+| [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and packaged backend, verify signatures, checksums, and extraction, then retain ZIP and checksums. |
+| [Bundle](../.github/workflows/bundle.yml) | Packages `linux-x86_64` and `macos-arm64` CLIs beside desktop, checksums and re-verifies each artifact, then tests loopback binding and exit-3 missing configuration. |
 | Workflow and source checks | CodeQL, DevSkim, Gitleaks secret scanning, and PR-template/base-branch checks are separate workflows. Workflow changes additionally trigger actionlint/zizmor. |
 | [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope, collector, and untrusted-string tests on Linux and macOS, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |
-| [Release](../.github/workflows/release.yml) | Every 12 hours at 08:17 and 20:17 UTC, publish the next patch as Latest only if `main` differs from the latest release **and** that SHA already has a successful Bundle run. Backend CI, CLI packaging, universal desktop checks, and downloaded checksums still gate publication. Stable tags and manual preview/publish are also supported. See [release controls](RELEASING.md). |
+| [Release](../.github/workflows/release.yml) | At 08:17 and 20:17 UTC, publishes the next patch only when `main` differs and its SHA has a successful Bundle. Backend CI, CLI packaging, desktop checks, and downloaded checksums still gate publication. Stable tags and manual preview/publish also work. See [release controls](RELEASING.md). |
 
 CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
 does not prove real-model quality, complete native GUI behavior, or notarized

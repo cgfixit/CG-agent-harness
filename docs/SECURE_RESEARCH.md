@@ -1,11 +1,10 @@
 # Accounts, HTTPS and permitted web research
 
-Fresh homes enable HTTPS, account authentication with role permissions, and web
-fetch/search/research. Web content still requires an explicit URL grant; its
-allowlist starts empty. Upgrades preserve the existing `config.yaml`; missing
-legacy auth/TLS switches remain off. To adopt the secure
-defaults, merge these literal booleans into the active home's existing mappings,
-then stop and restart its server:
+Fresh homes enable HTTPS, role authentication, and web operations. Web content
+needs an explicit URL grant, and the allowlist starts empty.
+Upgrades preserve `config.yaml`; missing legacy auth or TLS switches remain off.
+To adopt the defaults, merge these literal booleans into the active mappings,
+then restart the server:
 
 ```yaml
 auth:
@@ -20,30 +19,27 @@ security:
   api_key_optional: true
 ```
 
-Malformed auth/TLS booleans refuse configuration rather than disabling protection.
-The old `security.api_key_optional: false` key-enforcement mode is deprecated and
-ignored. Upgrade such homes with `auth.enabled: true` to require account access.
-A missing, wrong, or stale harness key neither blocks a valid account nor grants
-access.
+Malformed auth/TLS booleans refuse configuration, preserving protection.
+The old `security.api_key_optional: false` mode is ignored. Upgrade such homes
+with `auth.enabled: true` to require account access.
+A stale harness key neither blocks a valid account nor grants access.
 
 ## Accounts and roles
 
 ### First login and passwords
 
-Only a fresh account store creates `admin` / `admin`. That short initial password
-uses the normal scrypt hash with a narrowly scoped bootstrap exception. Sign in;
-the login dialog then requires a replacement password of at least 12 characters.
-Until replacement, the account can inspect its identity, change its own password, or log out; it
-cannot run chat, research, coding, account administration, or key management.
-Replacement checks the current password and CSRF token and invalidates all old
-sessions. Normal administrative resets retain the ordinary password policy.
+Only a fresh account store creates `admin` / `admin`. Its password uses the
+normal scrypt hash with a bootstrap exception. Sign in and replace it with at
+least 12 characters. Until then, the account can inspect its identity, change
+its password, or log out, but cannot use chat, research, coding, administration,
+or keys. Replacement checks the current password and CSRF token, then invalidates
+old sessions. Administrative resets retain the ordinary password policy.
 
-Every role can change its own password: use **change password** in the account
-bar and provide the current password. An administrator creates users through
-**USERS** (`/users`) and can reset another user's password. Password reset, role
-change, disabling, and deletion revoke that account's sessions. The last enabled
-administrator cannot be deleted, disabled, or demoted. **logout** revokes this
-session and clears private displayed state; sign in again to resume.
+Every role can use **change password** with its current password. An administrator
+uses **USERS** (`/users`) to create users or reset passwords. Password reset,
+role change, disable, and deletion revoke that account's sessions. The last
+enabled administrator cannot be deleted, disabled, or demoted. **logout** revokes
+the session and clears private displayed state.
 
 Console authentication probes have a five-second deadline; login, legacy
 bootstrap, logout, and Users panel requests have a fifteen-second deadline.
@@ -74,17 +70,17 @@ keys](INSTALL.md#supported-managed-keys) lists them and explains saved/active
 masks, restarts and environment precedence. Administrators can
 paste/save/replace/clear saved values. GET/POST responses contain only masks and
 status. Save and clear use the OS credential store and fail closed when it is
-unavailable. Literal `security.allow_plaintext_key_file: true` keeps the private
-0600 file. Values are never stored in SQLite. Missing provider credentials affect only the selected provider's
+unavailable. Literal `security.allow_plaintext_key_file: true` keeps the
+[private legacy file](INSTALL.md#8-persistence-optional-keys-and-recovery). Values are never stored in SQLite. Missing provider credentials affect only the selected provider's
 operation. Leave `GH_TOKEN` unset to use existing `gh auth login`. Completion
 webhook bearers are configured separately; see the
 [webhook guide](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).
 
 ### Account storage and recovery
 
-Accounts and hashed session tokens live in versioned SQLite `auth.sqlite3` under
-the home, with transactional updates. Private `auth.initialized` prevents a
-missing initialized database from becoming a fresh default-password bootstrap.
+Versioned `auth.sqlite3` stores accounts and hashed session tokens with
+transactional updates. Private `auth.initialized` prevents a missing database
+from becoming a fresh default-password bootstrap.
 A valid legacy `auth.json` migrates its user hashes, roles, disabled state,
 lockouts, and timestamps; `auth.json.pre-sqlite` preserves the exact private
 recovery copy. Legacy sessions require a new login. The original JSON remains a
@@ -95,9 +91,8 @@ in-memory account changes. Stop the server before an operator-controlled backup
 or recovery; preserve the database and initialization marker together, and do
 not delete them to recreate `admin` / `admin`.
 
-Each scrypt derivation uses about 128 MiB, so login and password operations
-are bounded by `auth.max_concurrent_operations` (default 2, accepted range 1–4);
-extra concurrent attempts wait for a permit rather than exhausting memory.
+Each scrypt derivation uses about 128 MiB. `auth.max_concurrent_operations`
+(default 2, range 1–4) bounds login and password work; extra attempts wait.
 Sessions expire after `auth.session.idle_timeout_sec` (default 43200) without
 use and `auth.session.absolute_timeout_sec` (default 604800) regardless. Chat
 session files under `sessions/` are written atomically with mode 0600 because
@@ -111,11 +106,10 @@ limits are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 
 ### Session ownership and legacy adoption
 
-New sessions use schema version 1 and the authenticated account's random `user_id`.
-Listing, loading, search, export, chat, prompt preview, goals, skills and style
-selection enforce that owner. An administrator does not automatically inherit
-another account's sessions. Auth-disabled homes use the explicit `local` owner;
-enabling authentication does not silently move that data into a human account.
+New sessions use schema version 1 and the account's random `user_id`. Listing,
+loading, search, export, chat, prompt preview, goals, skills, and style enforce
+that owner. Administrators do not inherit other accounts' sessions. Auth-disabled
+homes use owner `local`; enabling auth does not reassign that data.
 
 Sessions without an owner are unassigned legacy shared data. They remain on disk,
 are hidden from ordinary reads/search/export, and survive **Clear my session
@@ -145,15 +139,13 @@ The loopback HTTPS listener accepts TLS 1.3 only. This policy is explicit on the
 server configuration, independent of dependency feature unification. Outbound
 public-web clients retain their existing verified TLS compatibility.
 
-The native desktop receives the certificate DER and fingerprint over its owned
-sidecar's private challenge/PID handshake. Readiness verifies that exact leaf
-before sending HTTP. WKWebView validates its hostname/time/trust using that leaf
-as the only per-connection anchor and rejects other certificates and origins.
-No global validation switch or keychain/root installation is used. HTTP/2
-`:authority` and HTTP/1 Host share validation, while scheme comes from trusted
-listener metadata. Cookies use Secure under HTTPS, HttpOnly and SameSite=Strict;
-logout clears with the same attributes. Public web fetches use ordinary public
-TLS trust, and the local model's URL remains independently configured.
+The desktop receives certificate DER and fingerprint through its owned sidecar's
+challenge and PID handshake. Readiness verifies that leaf before HTTP. WKWebView
+uses it as the sole connection anchor with hostname, time and trust checks.
+The server checks origin, HTTP/2 `:authority` and HTTP/1 Host, taking the scheme
+from trusted listener metadata. The app changes no global trust. HTTPS
+cookies are Secure, HttpOnly, and SameSite=Strict; logout uses the same attributes.
+Public fetch uses public trust, and the model URL remains separate.
 
 Print only the public certificate, or explicitly renew generated material:
 
@@ -163,28 +155,23 @@ Print only the public certificate, or explicitly renew generated material:
 ./target/release/cgagentharness tls renew
 ```
 
-Renewal acquires home ownership and refuses to overwrite operator-supplied paths.
-To use an operator certificate, set both `tls.cert_file` and `tls.key_file` to
-absolute paths or paths relative to the home. Supply a valid chain and private
-key with the supported loopback SANs. The operator controls renewal. Existing
-CLI sessions bound to the old certificate require login again after renewal.
+Renewal acquires home ownership and preserves operator-supplied paths. For an
+operator certificate, set both `tls.cert_file` and `tls.key_file` to absolute or
+home-relative paths, with a valid chain, key, and loopback SANs. The operator
+renews it. Old certificate-bound CLI sessions must log in again.
 
-External browsers do not automatically trust a generated certificate. Prefer the
-native app or the CLI for zero system-trust changes. For an external browser,
-supply an operator-managed certificate trusted by that browser, or deliberately
-review/install the exported public certificate through that browser/OS's own
-trust UI. The application never performs that installation. `curl --cacert
-local-public.pem https://127.0.0.1:8790/api/status` trusts only the supplied file
-for that command; do not use an invalid-certificate bypass.
+Browsers do not trust generated certificates automatically. Use the native app
+or CLI, supply a browser-trusted operator certificate, or review and install the
+exported public certificate through the OS or browser UI. The app never installs
+it. `curl --cacert local-public.pem https://127.0.0.1:8790/api/status` trusts only
+that file for one command. Never bypass certificate validation.
 
 ## Terminal access
 
-The public `account` and `web` command families call the same protected HTTP
-handlers as the console, so this home's server must be running. They never bypass
-login or mutate policy offline. Set `CGAGENTHARNESS_HOME` to the intended absolute
-home when it differs from the default. Default URL uses that home's scheme and
-configured port; pass the actual origin with `--url`, after `account` or `web`,
-when using an explicit port or an ephemeral desktop listener.
+Public `account` and `web` commands call the console's protected HTTP handlers,
+so the home server must run. They cannot bypass login or mutate policy offline.
+Set an absolute `CGAGENTHARNESS_HOME` when needed. For an explicit port or desktop
+listener, pass its origin with `--url` after `account` or `web`.
 
 ```bash
 ./target/release/cgagentharness account --url https://127.0.0.1:8790 login admin
@@ -201,13 +188,12 @@ when using an explicit port or an ephemeral desktop listener.
 ./target/release/cgagentharness account logout
 ```
 
-Login reads one password; password replacement reads current and new passwords.
-Terminal input is hidden on Unix; automation can supply stdin lines. Windows
-interactive password entry requires a private stdin pipe. Never put secrets in
-argv or paste them into chat. Private `cli-session.json` contains the local cookie,
-bound to the exact origin and owned certificate. Logout revokes it and removes
-the file. The CLI refuses foreign origins, redirects, proxies and certificate
-substitution before sending account credentials.
+Login reads one password; replacement reads current and new passwords. Unix hides
+terminal input; automation may supply stdin. Windows interaction needs a private
+stdin pipe. Never put secrets in argv or chat. Private `cli-session.json` binds
+the cookie to the origin and certificate; logout revokes and removes it. Before
+sending credentials, the CLI refuses foreign origins, redirects, proxies, and
+certificate substitution.
 
 ## Web permissions
 
@@ -219,14 +205,12 @@ allowlist rules are **shared by this home, not per session**; only saved web
 selections are account-private. `/web status` shows groups and seeds; `/web check
 URL` diagnoses exact permission without DNS or network access.
 
-`tools/web_allowlist.json` is the authoritative whole-policy document (v1, 64 KiB,
-32 rules). `/web allow` and terminal `web allow` create stable IDs and validate
-source groups/seeds. An `allow` batch writes once or not at all. Missing policy
-refuses reads; an explicit validated admin allow command can initialize a missing
-policy with only that grant. Corrupt, unsupported, unreadable or partially invalid
-files never silently reset. Manual edits use the same strict parser; stop the
-server for coordinated file owner edits, or use serialized atomic API/CLI
-mutations while it runs.
+`tools/web_allowlist.json` is the whole policy (v1, 64 KiB, 32 rules). `/web
+allow` and terminal `web allow` create stable IDs and validate groups and seeds.
+A batch writes atomically. Missing policy refuses reads, but a validated admin
+grant can initialize it with only that rule. Invalid or unreadable files never
+reset. For manual owner edits, stop the server. While it runs, use serialized
+atomic API or CLI mutations.
 
 | Rule | Meaning |
 |---|---|
@@ -261,10 +245,9 @@ injected. Current selections use `tools/web_<account-hash>_{last,context}.json`.
 
 ## Search, fetch and research
 
-The bundled app and browser console use the same backend; no terminal is needed.
-Enter slash commands as plain text starting with `/`, without Markdown backticks.
-Google search needs a [SerpAPI key or a Google grant](#google-search). To read
-the example page, an administrator first grants it:
+The app and browser console share the backend. Enter slash commands as plain text
+starting with `/`. Google needs a [SerpAPI key or Google grant](#google-search).
+To read the example page, an administrator first grants it:
 
 ```text
 /web allow https://doc.rust-lang.org/book/ch01-01-installation.html
@@ -329,12 +312,10 @@ set `web.chat_tool_calls: 10` in the active home's `config.yaml` and use
 **Reload limits** (or restart). Raising the call ceiling does not raise token,
 time, byte, or URL-permission limits.
 
-The console renders actual provider/source information separately from the
-model answer; successful tool calls show source links and outcomes, and failures
-are shown explicitly. Listings and snippets are attributed to the search
-provider; linked pages have not been fetched. Model answers are not validated
-research citations; use `/web research` when checked quote references are
-required.
+The console separates provider and source data from the model answer. Tool calls
+show links, outcomes, and failures. Listings and snippets come from the search
+provider; linked pages have not been fetched. For checked quote references, use
+`/web research`.
 
 ### Google search
 
@@ -406,75 +387,59 @@ administrator can reload without a restart. Failed requests can conservatively
 charge the full response allowance. Reports expose partial coverage, failures and
 unvisited work.
 
-For `research`, repeat `--url` to start from multiple permitted pages/sites.
-Starts narrow discovery and evidence for that run, never grant access. Without
-explicit starts, the selected group's seeds and the permitted literal prefix of a
-concrete-host path wildcard (for example `/docs/`) start bounded traversal. Host
-wildcards require explicit concrete seeds. Fresh research always attempts bounded
-discovery, even with cached matches. Robots is fetched only if permitted by the
-same content policy. Without permitted/readable robots, explicit seeds remain
-readable but discovered-link traversal stops. Relative links are parsed from HTML,
-deduplicated, paced per origin and restricted to the selected group. Robots
-responses consume request budgets but never become indexed evidence. Optional
-sitemap discovery is not implemented. Dedicated permitted-page research needs
-no provider credentials and has no cloud-model fallback.
+For `research`, repeat `--url` for permitted starts. Starts narrow one run but
+grant nothing. Without them, traversal begins at group seeds and permitted
+literal prefixes such as `/docs/`; host wildcards need concrete seeds. Every run
+attempts bounded discovery. Robots is fetched only with content permission. If
+unreadable, seeds remain readable but link traversal stops. HTML links are
+deduplicated, paced, and group-restricted. Robots consumes requests but supplies
+no evidence. Sitemap discovery is absent. Page research needs no provider key
+and has no cloud fallback.
 
 Tantivy rebuilds a bounded in-memory BM25 index from permitted cached extracts.
-Literal phrases/identifiers and modest title/heading boosts improve ranking;
-source diversity and passage deduplication avoid repeated evidence. Cache corruption
-cannot authorize reads; the cache is derived and rebuildable. Conditional refresh
-uses the same network checks. Search currently refreshes each bounded source set,
-so validators reduce transferred bytes but do not eliminate request count.
+Phrases, identifiers, title and heading boosts improve ranking; diversity and
+deduplication reduce repetition. Derived cache corruption grants nothing.
+Conditional refresh repeats network checks. Validators reduce bytes, not requests.
 
-Dedicated research searches the index, asks the configured local model for at
-most 3 additional subqueries in 2 rounds, performs at most one bounded crawl,
-and synthesizes at most about 6,000 evidence tokens. Default total model allowance
-is 28,000 tokens and deadline 300 seconds. (A constrained window that cannot reach
-`OLLAMA_CONTEXT_LENGTH=32768` should instead configure `web.total_tokens: 16000`
-and `web.evidence_tokens: 3000`; see [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama).)
-Provider-reported usage is counted;
-otherwise UTF-8 bytes/4 plus overhead is explicitly estimated, with incomplete
-output charged conservatively. Model output is bounded JSON, never executable
-commands or privileged tools. Original question plus focused subqueries are
-interleaved during retrieval; no new agent framework, embeddings or reranker.
+Research asks the local model for at most 3 subqueries in 2 rounds, runs at most
+one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults are
+28,000 total model tokens and 300 seconds. Without a verified 32768 context,
+configure `web.total_tokens: 16000` and `web.evidence_tokens: 3000`; see
+[MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
+usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete
+output conservatively. Bounded JSON output has no commands or privileged tools.
+Retrieval interleaves the question and subqueries without embeddings or reranking.
 `/web cancel` cancels dedicated research.
 
-Answers distinguish supported claims, conflicts, inferences and missing/stale
-evidence. Citation IDs and exact quotes are checked against original passages;
-semantic support still requires judgment. Rank is not truth confidence. Fetch
-age is not publication-date verification. Bounded runs never assert completeness.
-No-answer results abstain, and planner/answer failures remain visible in warnings.
+Answers label support, conflicts, inference, and missing or stale evidence.
+Citation IDs and quotes are checked against passages, but semantic support still
+needs judgment. Rank is not truth, and fetch age is not publication date. Bounded
+runs never claim completeness; no-answer results abstain and failures stay visible.
 
 ### Saved web selection
 
-`/web inject` explicitly selects the last fetched/page-search extract (the first
-successful page of a batch fetch) for later local chat. It adds a bounded source
-excerpt, not a summary; `/prompt` previews it and `/web forget` clears the current
-account's selection without erasing previously recorded conversations. Google
-listings are not inserted into the page cache or that saved selection, and
-`/web research` does not replace it; fetched pages reuse the existing cache and
-current-account selection. Research is a separate request-scoped, multi-source
-synthesis; do not inject afterward expecting its entire answer or all sources to
-be selected.
+`/web inject` selects the last fetched or page-search extract, or the first
+successful batch page, for local chat. It stores a bounded excerpt, not a summary.
+`/prompt` previews it; `/web forget` clears selection without altering old chats.
+Google listings never enter the page cache or selection. `/web research` is a
+request-scoped multi-source synthesis and does not replace selection, although
+its fetched pages reuse the cache.
 
 ## Security boundaries
 
-All operational API reads and writes require an account when enabled. Public
-surfaces are the static login page/assets, minimal status, setup status and login
-(or legacy bootstrap). Mutation CSRF remains `X-CyClaw-CSRF`. Forwarding headers
-are refused; a reverse proxy is unsupported. The dedicated
+When auth is enabled, all operational API reads and writes require an account.
+Public endpoints are static login assets, minimal status, setup status, and login
+or legacy bootstrap. Mutation CSRF remains `X-CyClaw-CSRF`. Forwarding headers
+are refused, and reverse proxies are unsupported. The dedicated
 [machine gateway](MCP_SERVER.md) does not inherit console authority.
 
-Sessions, transcript search/export, detached jobs and schedule management are
-account scoped; see [session ownership](#session-ownership-and-legacy-adoption).
-Agentic run records, aggregate spend, persona, pinned notes, model selection and
-the public-page cache remain shared among authorized portal operators/admins.
-This is not universal tenant isolation. Research questions,
-model answers and transient controller state belong to the initiating request
-and account. Last fetched/injected web selections are scoped by persistent random
-account identity, so deleting and recreating a username cannot inherit them.
-Auth-off legacy use has one explicit local-owner scope. Private selections may
-remain on disk after account deletion, but are inaccessible to replacement users.
+Sessions, transcript search/export, jobs, and schedules are account scoped; see
+[session ownership](#session-ownership-and-legacy-adoption). Run records, spend,
+persona, pinned notes, model selection, and public-page cache are shared among
+authorized operators and administrators. Research questions, answers, controller
+state, and web selections belong to the initiating random account identity, so a
+recreated username inherits nothing. Auth-off mode uses owner `local`. Deleted
+accounts can leave private selections on disk, inaccessible to replacements.
 
 A non-empty allowlist is an armed content surface: every granted origin or path
 is reachable by chat `web_fetch`, still bounded by `web.chat_tool_calls`. Fresh
@@ -482,15 +447,12 @@ homes refuse page fetching with `WEB_ALLOWLIST_EMPTY`. Search listings never
 authorize their destinations: a follow-up `web_fetch` must independently pass the
 current allowlist and account checks.
 
-Current policy is rechecked on dispatch, cache/index/context reads, storage,
-model consumption and result delivery. Revocation discards in-flight evidence and
-makes revoked cached sources inaccessible, even through overlapping rules.
-Research also rechecks the initiating account before model calls and delivery.
-Revocation cannot erase already delivered historical conversation content or a
-previous model request; ordinary historical conversations can contain previously
-supplied web text. The URL policy applies only to this web subsystem, not the OS
-or unrelated model/GitHub connections; content, provider and account permissions
-are separate.
+Policy is rechecked at dispatch, cache/index/context reads, storage, model use,
+and delivery. Revocation discards in-flight evidence and blocks revoked cache,
+even under overlapping rules. Research rechecks the account before model calls
+and delivery. It cannot erase earlier conversation text or model requests. URL
+policy covers only web, not OS, model, or GitHub connections. Content, provider,
+and account permissions remain separate.
 
 ## Reproducible evidence
 

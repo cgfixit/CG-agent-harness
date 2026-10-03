@@ -5,8 +5,6 @@
 //! These lock today's observable ranking (order, rounded score, heading)
 //! so a refactor or a tuning change shows up as a reviewed diff here
 //! instead of a silent shift in what local chat or web research injects.
-//! Every fixture chunk carries at most one `# ` heading, so heading
-//! carry-over between chunks is not what these goldens pin.
 
 use cgagentharness::common::sha256_hex;
 use cgagentharness::server::passage_index::{chunk_text, retrieve_passages, PassageDoc, SourceKind};
@@ -222,4 +220,58 @@ fn web_ranking_order_is_locked() {
         let single = retrieve(&pages, &policy, query, Some("docs"), 8).unwrap();
         assert_eq!(web_rows(&single), web_rows(batched), "{query}");
     }
+}
+
+#[test]
+fn chunk_heading_labels_match_for_multiple_headings() {
+    let policy = policy();
+    let text = format!(
+        "# Overview\n{}\n# Install\n{}",
+        "overview words ".repeat(20),
+        "install steps ".repeat(150)
+    );
+    let passage_chunks = chunk_text(&text);
+    let web_chunks = cgagentharness::server::web_index::passages(&page("headings", "Guide", &text, &policy), &policy);
+    let passage_rows: Vec<_> = passage_chunks
+        .iter()
+        .map(|(start, end, heading, chunk)| (*start, *end, heading.as_str(), chunk.as_str()))
+        .collect();
+    let web_rows: Vec<_> = web_chunks
+        .iter()
+        .map(|chunk| (chunk.start, chunk.end, chunk.heading.as_str(), chunk.text.as_str()))
+        .collect();
+    assert_eq!(passage_rows, web_rows);
+    assert_eq!(passage_rows[0].2, "Overview");
+    assert!(passage_rows[0].3.contains("# Install"));
+    assert!(passage_rows[1..].iter().all(|row| row.2 == "Install"));
+}
+
+#[test]
+fn multi_heading_ranking_scores_are_locked() {
+    let policy = policy();
+    let text = format!(
+        "# Overview\n{}\n# Install\n{}",
+        "overview words ".repeat(20),
+        "install steps ".repeat(150)
+    );
+    let passage_hits = retrieve_passages(&docs(&[("headings", &text)]), "install steps", 8).unwrap();
+    let web_hits = retrieve(
+        &[page("headings", "Guide", &text, &policy)],
+        &policy,
+        "install steps",
+        Some("docs"),
+        8,
+    )
+    .unwrap();
+    assert_eq!(
+        passage_rows(&passage_hits),
+        ["headings:1198:2394 4.341 [Install]", "headings:0:1198 3.721 [Overview]"]
+    );
+    assert_eq!(
+        web_rows(&web_hits),
+        [
+            "https://docs.example/headings 1198:2394 4.341 [Install]",
+            "https://docs.example/headings 0:1198 3.721 [Overview]",
+        ]
+    );
 }

@@ -9,8 +9,8 @@ A `COMMIT` file is not enough to call a native row passed: rebuilds of the same
 SHA are not byte-identical. Record the ZIP/app SHA-256 (or immutable workflow
 artifact id) in the checksum column **before** changing a result off unverified.
 
-This documentation program runs on Windows and cannot drive Darwin
-WebKit, so every native WKWebView result below is **unverified**.
+This matrix was prepared on Windows without Darwin WebKit access, so its
+native WKWebView rows remain **unverified**.
 
 Scripts named in [`.claude/skills/run-cg-agent-harness/SKILL.md`](../.claude/skills/run-cg-agent-harness/SKILL.md)
 (`cargo build`, `python scripts/test-desktop-backend.py`,
@@ -28,17 +28,15 @@ They are not native WebKit proof.
 
 ## Historical Chromium / HTTP notes (non-native)
 
-The sections below keep earlier Chromium, Chrome, HTTP fixture, and mixed
-native-process records. They are **not** retitled as native WKWebView proof for
-tip `22520f3`. Treat Chrome/HTTP evidence as non-native unless a row explicitly
-names Darwin WKWebView interaction on a stated artifact.
+The sections below are historical Chromium, HTTP fixture, and mixed-process
+records. They prove native WKWebView behavior only when a row names Darwin
+WKWebView interaction on a stated artifact.
 
 ## Chat web tools and Google search (2026-09-12)
 
 Native Computer Use tested an arm64 development bundle based on merged main
 `b53ef9d` on Apple Silicon/macOS 26.6.2, with a separate disposable home. This
-record precedes the final documentation sync and clean universal package; the
-PR/handoff records their final source and validation separately.
+record predates the final universal package.
 
 - Fresh HTTPS login accepted admin/admin and opened password replacement;
   the replacement was saved through the native form and survived restart.
@@ -61,13 +59,11 @@ PR/handoff records their final source and validation separately.
 - Logged out and quit the isolated test app; existing installed copies and homes
   were preserved.
 
-Live SerpAPI success was **not tested without an actual service key**. A local
-HTTP fixture verifies its request parameters, result parsing, quota errors and
-credential-reflection refusal. Parser fixtures verify public Google listings
-and challenge detection. Real Chrome tests verify Google/page command routing,
-rendered source/errors and masked key controls. Neither fixture is live Google
-ranking evidence. Public HTML fallback can be blocked; no CAPTCHA bypass, page
-JavaScript execution or browser-cookie import is implemented.
+Live SerpAPI success was **not tested**. HTTP and parser fixtures cover request
+parameters, parsing, quota errors, reflection refusal, public listings, and
+challenge detection. Chrome covers command routing, rendered errors, and masked
+key controls. None is live ranking evidence. Public HTML can be blocked; the app
+does not bypass CAPTCHA or import browser cookies.
 
 Native Intel hardware, older macOS, every coding interaction, Developer ID
 signing and notarization remain outside this pass.
@@ -76,10 +72,8 @@ signing and notarization remain outside this pass.
 
 Tested `codex/fresh-install-defaults`, based on merged main `a93006d`, on
 Apple Silicon / macOS 26.6.2 through native Computer Use and WKWebView. The
-initial development bundle was universal; the auditor UI corrections were
-rebuilt and tested in an arm64 development bundle. These observations precede
-the final documentation sync and clean universal package; the PR records final
-committed source, bundle verification and CI separately.
+initial bundle was universal; auditor UI corrections were tested in an arm64
+development bundle. These observations predate the final package.
 
 | Native operation | Observed result |
 |---|---|
@@ -102,12 +96,11 @@ That cached-evidence run reported 1,214 prompt + 256 completion tokens, one
 synthesis call and zero additional content requests. This is a single functional
 sample, not a retrieval benchmark or evidence of general answer accuracy.
 
-Native testing exposed a successful auditor login being mislabeled as a network
-failure when its session-list refresh was denied. The shared refresh now reports
-that denial inside Sessions; redacted status no longer renders missing fields.
-The 31-flow real-Chrome fixture independently covers this regression and logout.
-The packaged-backend suite also checks fresh HTTPS/login/password replacement,
-enabled web and empty-policy refusal for fetch, search and research.
+Native testing exposed auditor login mislabeled as a network failure when session
+refresh was denied. Sessions now reports that denial, and redacted status omits
+missing fields. A 31-flow Chrome fixture covers this regression and logout. The
+packaged-backend suite covers fresh HTTPS, login, password replacement, and
+empty-policy refusal.
 
 A disposable home under Documents stalled on a filesystem open during a native
 restart. Copying the same fixture outside Documents allowed immediate launch,
@@ -143,23 +136,17 @@ replace the historical artifact-specific results below or certify distribution.
   auth/CSRF/Host controls, real child dispatch and exact `pong` passed with the
   installed `qwen3.8:27b-mlx` tag (850 prompt + 1 completion tokens).
 
-Public provider credentials, live cloud inference, external-browser trust
-installation, Developer ID/notarization, native Intel execution, and macOS 12
-interaction remain unverified. Native file chooser, external-link confirmation,
-active-job quit and accessibility/scale acceptance are not established by the
-login/key observations. The evidence artifact for this work records exact final
-bundle digests and restart checks. These initial observations used development
-bundles before final documentation/dependency synchronization; the PR and handoff
-record final committed source and subsequent verification separately.
+Public credentials, live cloud inference, external-browser trust, Developer ID,
+notarization, native Intel, and macOS 12 remain unverified. These observations do
+not establish file chooser, external-link, active-job quit, accessibility, or
+scale acceptance. The evidence artifact records exact bundle digests and restarts.
 
 
 ## Issue #32 candidate — September 2026
 
-PRs #35–#38 implement status/verification, prompt/persona controls, runtime skill
-selection and explicit goal-to-coding staging. The documentation PR follows them.
-The following older records are historical; they do not establish acceptance of
-the new controls. Exact candidate SHA, universal ZIP checksum, CI results and
-local native evidence are attached to the stack's handoff and issue #32 comment.
+PRs #35–#38 added status, persona, runtime skill selection, and goal staging.
+Older records do not establish those controls. The handoff and issue #32 contain
+the candidate SHA, ZIP checksum, CI, and native evidence.
 
 The deterministic `scripts/chat-browser-acceptance.mjs` test now covers the
 actual console in Chrome with its CSP and local mock HTTP APIs: persona editor,
@@ -294,7 +281,5 @@ keyboard shortcuts, scrolling, selection, Markdown/code, scaling and accessibili
 Mark each outcome only after interaction. Existing unsupported streaming and
 unprovable escaped-descendant cleanup remain limitations, not passing features.
 
-For the historical desktop delivery below, one draft PR against main carried
-the change; that statement does not apply to the later issue #32 stack. Exact pushed-head CI and final artifact checksums are
-reported in the handoff. Do not mark the PR ready or merge while native acceptance
-is pending.
+The historical desktop delivery used one draft PR against main; the later issue
+#32 stack did not. The handoff records pushed-head CI and artifact checksums.
