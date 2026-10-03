@@ -58,8 +58,12 @@ pub fn passages(page: &Page, policy: &Policy) -> Vec<Passage> {
         }
         let end = start + len;
         let text = &page.text[start..end];
-        if let Some(line) = text.lines().find(|l| l.starts_with("# ")) {
-            heading = line.trim_start_matches("# ").trim().to_string();
+        // A chunk is labelled by its first heading; the next chunk inherits the
+        // last one, since that is the section the text after this chunk is in.
+        let label = |line: &str| line.trim_start_matches("# ").trim().to_string();
+        let chunk_heading = text.lines().find(|l| l.starts_with("# ")).map(label);
+        if let Some(line) = text.lines().rev().find(|l| l.starts_with("# ")) {
+            heading = label(line);
         }
         if !text.trim().is_empty() {
             output.push(Passage {
@@ -68,7 +72,7 @@ pub fn passages(page: &Page, policy: &Policy) -> Vec<Passage> {
                 source_id: source_id.clone(),
                 url: page.url.clone(),
                 title: page.title.clone(),
-                heading: heading.clone(),
+                heading: chunk_heading.unwrap_or_else(|| heading.clone()),
                 text: text.into(),
                 start,
                 end,
@@ -942,5 +946,42 @@ mod tests {
         assert!(retrieve(&[page], &policy, "Widget", Some("other"), 3)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn next_chunk_inherits_the_last_heading_of_the_previous_chunk() {
+        let policy = Policy {
+            version: 1,
+            rules: vec![Rule::new("https://docs.example/*", "docs", &[]).unwrap()],
+            revision: "a".repeat(64),
+        };
+        // Chunk one holds both headings; chunk two holds only Install text.
+        let text = format!(
+            "# Overview\n{}\n# Install\n{}",
+            "overview words ".repeat(20),
+            "install steps ".repeat(150)
+        );
+        let page = Page {
+            url: "https://docs.example/guide".into(),
+            title: "Guide".into(),
+            content_hash: crate::common::sha256_hex(&text),
+            chars: text.chars().count(),
+            text,
+            links: vec![],
+            status: 200,
+            content_type: "text/plain".into(),
+            bytes: 0,
+            transfer_bytes: 0,
+            fetched_at: crate::common::now_ts(),
+            extraction_version: 1,
+            policy_revision: policy.revision.clone(),
+            etag: None,
+            last_modified: None,
+        };
+        let parts = passages(&page, &policy);
+        assert!(parts.len() >= 2, "{}", parts.len());
+        assert!(parts[0].text.contains("# Install") && !parts[1].text.contains("# "));
+        assert_eq!(parts[0].heading, "Overview");
+        assert!(parts[1..].iter().all(|p| p.heading == "Install"), "{parts:?}");
     }
 }
