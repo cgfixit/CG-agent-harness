@@ -83,6 +83,17 @@ pub const MANAGED_KEYS: [KeySpec; 7] = [
     },
 ];
 
+/// Values of every managed key present in this process's environment, for
+/// exact-value audit and response redaction. Read after startup has loaded
+/// the credential store into the environment.
+pub fn loaded_values() -> Vec<String> {
+    MANAGED_KEYS
+        .iter()
+        .filter_map(|spec| std::env::var(spec.name).ok())
+        .filter(|value| !value.trim().is_empty())
+        .collect()
+}
+
 fn err(message: impl Into<String>) -> HarnessError {
     HarnessError::new(ENV_KEY_ERROR, message)
 }

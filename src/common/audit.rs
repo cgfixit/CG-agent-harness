@@ -37,14 +37,45 @@ const FLUSH_WAIT: Duration = Duration::from_secs(10);
 /// How often a flush retries a full queue.
 const FLUSH_RETRY: Duration = Duration::from_millis(5);
 
-#[derive(Debug, Clone, Default)]
+/// Secret shapes redacted whatever `policy.privacy.redact_secrets_like` says.
+/// That list only adds patterns: a home seeded before a shape was known, or
+/// one with no `policy.privacy` section, still redacts these.
+const BUILTIN_SECRET_PATTERNS: [&str; 9] = [
+    r"Bearer\s+[A-Za-z0-9\-_.]+",
+    r#"[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]["'\s]*[:=]["'\s]*[\w\-.]{4,}"#,
+    "AKIA[0-9A-Z]{16}",
+    "xox[baprs]-[0-9a-zA-Z-]+",
+    // Classic (ghp_), OAuth (gho_), user-to-server (ghu_), server (ghs_)
+    // and refresh (ghr_) tokens, then fine-grained personal access tokens.
+    "gh[pousr]_[A-Za-z0-9]{36,}",
+    "github_pat_[A-Za-z0-9_]{22,}",
+    "sk-[a-zA-Z0-9]{20,}",
+    "sk-ant-[a-zA-Z0-9_-]{20,}",
+    "xai-[a-zA-Z0-9]{20,}",
+];
+
+/// Shortest loaded credential redacted by exact value. Shorter strings are
+/// too likely to occur in ordinary text to replace safely.
+const MIN_LITERAL_SECRET_CHARS: usize = 12;
+
+#[derive(Clone, Default)]
 pub struct Redactors {
     rules: Vec<(Regex, &'static str)>,
 }
 
+// Literal rules embed credential values; Debug must never print a pattern.
+impl std::fmt::Debug for Redactors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Redactors").field("rules", &self.rules.len()).finish()
+    }
+}
+
 impl Redactors {
     pub fn from_config(cfg: &AppConfig) -> Self {
-        let mut rules: Vec<(Regex, &'static str)> = Vec::new();
+        let mut rules: Vec<(Regex, &'static str)> = BUILTIN_SECRET_PATTERNS
+            .iter()
+            .map(|pattern| (Regex::new(pattern).expect("static regex"), "[REDACTED_SECRET]"))
+            .collect();
         if cfg.flag_is_true("policy.privacy.redact_emails") {
             rules.push((
                 Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").expect("static regex"),
@@ -58,6 +89,9 @@ impl Redactors {
             ));
         }
         for (idx, pattern) in cfg.str_list("policy.privacy.redact_secrets_like").iter().enumerate() {
+            if BUILTIN_SECRET_PATTERNS.contains(&pattern.as_str()) {
+                continue;
+            }
             match Regex::new(pattern) {
                 Ok(re) => rules.push((re, "[REDACTED_SECRET]")),
                 // Log the index only, never the pattern text (it is config content).
@@ -65,6 +99,31 @@ impl Redactors {
             }
         }
         Self { rules }
+    }
+
+    /// Also redact these exact credential values, ahead of every pattern so
+    /// no partial pattern match can split one first. Values shorter than
+    /// `MIN_LITERAL_SECRET_CHARS` are skipped.
+    pub fn with_literal_secrets<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut literals: Vec<String> = values
+            .into_iter()
+            .map(|value| value.as_ref().trim().to_string())
+            .filter(|value| value.chars().count() >= MIN_LITERAL_SECRET_CHARS)
+            .collect();
+        // Longest first, so a value that contains another is replaced whole.
+        literals.sort_by_key(|value| std::cmp::Reverse(value.len()));
+        literals.dedup();
+        let literal_rules = literals.iter().filter_map(|value| {
+            Regex::new(&regex::escape(value))
+                .ok()
+                .map(|re| (re, "[REDACTED_SECRET]"))
+        });
+        self.rules = literal_rules.chain(self.rules).collect();
+        self
     }
 
     /// Apply every rule. The input is borrowed back untouched when no rule
@@ -172,6 +231,16 @@ impl Audit {
             flush_wait: FLUSH_WAIT,
             writer: None,
         }
+    }
+
+    /// See [`Redactors::with_literal_secrets`].
+    pub fn with_literal_secrets<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.redactors = std::mem::take(&mut self.redactors).with_literal_secrets(values);
+        self
     }
 
     /// Append from a dedicated thread instead of the caller's, unless
@@ -421,6 +490,56 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn builtin_secret_shapes_are_redacted_without_a_privacy_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str("{}", &dir.path().join("config.yaml")).unwrap();
+        let redactors = Redactors::from_config(&cfg);
+        for secret in [
+            format!("ghp_{}", "a1".repeat(18)),
+            format!("gho_{}", "b2".repeat(18)),
+            format!("ghs_{}", "c3".repeat(18)),
+            format!("ghu_{}", "d4".repeat(18)),
+            format!("ghr_{}", "e5".repeat(18)),
+            format!("github_pat_{}_{}", "11ABCDEFG0123456789xyz", "Z".repeat(59)),
+            format!("sk-ant-api03-{}", "f".repeat(40)),
+            format!("xai-{}", "g".repeat(40)),
+            "Authorization: Bearer abc.def-ghi_jkl".to_string(),
+            "AKIAABCDEFGHIJKLMNOP".to_string(),
+        ] {
+            let line = format!("before {secret} after");
+            let out = redactors.redact(&line);
+            assert!(out.contains("[REDACTED_SECRET]"), "{out}");
+            let token = secret.rsplit(' ').next().unwrap();
+            assert!(!out.contains(token), "{out}");
+        }
+        // Configured patterns still add to the floor.
+        let cfg = AppConfig::from_str(
+            "policy:\n  privacy:\n    redact_secrets_like: ['corp-[0-9]{6}']\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
+        let out = Redactors::from_config(&cfg)
+            .redact("corp-123456 and ghp_0123456789abcdef0123456789abcdef0123")
+            .into_owned();
+        assert_eq!(out, "[REDACTED_SECRET] and [REDACTED_SECRET]");
+    }
+
+    #[test]
+    fn loaded_credentials_are_redacted_by_exact_value_and_never_debug_printed() {
+        let dir = tempfile::tempdir().unwrap();
+        let serpapi = "0123456789abcdef".repeat(4);
+        let custom = "local-llm token with spaces";
+        let audit = audit(dir.path(), "{}").with_literal_secrets([serpapi.as_str(), custom, "short-one", ""]);
+        let out = audit.redact(&format!("q={serpapi}&x=1 {custom}! short-one"));
+        assert_eq!(out, "q=[REDACTED_SECRET]&x=1 [REDACTED_SECRET]! short-one");
+        audit.log(json!({"event":"probe","detail":format!("key {serpapi}")}));
+        let lines = written(&dir.path().join("logs/audit.jsonl"));
+        assert_eq!(lines[0]["detail"], "key [REDACTED_SECRET]");
+        let shown = format!("{audit:?}");
+        assert!(!shown.contains(&serpapi) && !shown.contains(custom), "{shown}");
     }
 
     #[test]
