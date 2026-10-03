@@ -328,17 +328,7 @@ impl<'a> RepoWorkspace<'a> {
             ))
             .detail("tool", tool)
             .detail("exit_code", out.status.unwrap_or(-1))
-            .detail(
-                "stderr",
-                out.stderr
-                    .chars()
-                    .rev()
-                    .take(2000)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<String>(),
-            ));
+            .detail("stderr", crate::common::tail_chars(&out.stderr, 2000)));
         }
         self.audit
             .log(json!({"event": "agentic_repo_workspace_git_ok", "op": tool, "exit_code": 0}));

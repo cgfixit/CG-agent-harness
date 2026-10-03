@@ -339,15 +339,10 @@ fn verification_feedback(ctx: &AgenticCtx, verification: &VerificationReport) ->
                     .log(json!({"event": "agentic_real_repo_feedback_injection_finding", "check": r.name}));
                 output = "[output redacted -- matched a governed injection pattern]".into();
             } else if output.chars().count() > MAX_FEEDBACK_CHECK_CHARS {
-                let tail: String = output
-                    .chars()
-                    .rev()
-                    .take(MAX_FEEDBACK_CHECK_CHARS)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                output = format!("...[truncated]\n{tail}");
+                output = format!(
+                    "...[truncated]\n{}",
+                    crate::common::tail_chars(&output, MAX_FEEDBACK_CHECK_CHARS)
+                );
             }
         }
         let timeout_note = if r.timed_out { ", timed out" } else { "" };
