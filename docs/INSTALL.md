@@ -555,13 +555,12 @@ existing hidden `agentic test` command checks some configuration/tools, but is
 not a complete doctor: it does not certify model selection, authentication,
 prepared dependencies or the end-to-end workflow.
 
-Run the repository gates with application inference omitted:
+With the rustup-selected Cargo and Clippy from [Rust](#24-rust), run the
+repository gates with application inference omitted:
 
 ```bash
 test_home="$(mktemp -d)"
 CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
-# If rustup's cargo-clippy is older than Homebrew's:
-# CLIPPY=/opt/homebrew/bin/cargo-clippy CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
 The disposable home avoids the app's home lock; use another `--port` if `:8790`
