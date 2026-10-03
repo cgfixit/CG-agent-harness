@@ -158,9 +158,16 @@ pub fn real_repo_run_budget_sec(planner_timeout_sec: u64, max_iterations: Option
         Some(n) if n > 0 => n as u64,
         _ => REAL_REPO_RUN_DEFAULT_ITERATIONS,
     };
-    iterations * planner
-        + iterations * (check_count.max(1) as u64) * REAL_REPO_RUN_CHECK_SEC
-        + REAL_REPO_RUN_OVERHEAD_SEC
+    // Saturate: an extreme operator planner timeout must not panic (debug) or
+    // wrap below REAL_REPO_RUN_MAX_TIMEOUT_SEC (release).
+    iterations
+        .saturating_mul(planner)
+        .saturating_add(
+            iterations
+                .saturating_mul(check_count.max(1) as u64)
+                .saturating_mul(REAL_REPO_RUN_CHECK_SEC),
+        )
+        .saturating_add(REAL_REPO_RUN_OVERHEAD_SEC)
 }
 
 pub fn real_repo_run_timeout_sec(planner_timeout_sec: u64, max_iterations: Option<i64>, check_count: usize) -> u64 {
@@ -215,6 +222,20 @@ pub fn validate(req: &OpsRequest) -> Result<(), ShimError> {
         return Err(ShimError::Ops(format!("action not allowed: {}", req.action)));
     }
     let a = req.action.as_str();
+    // Values that cross as argv elements (body/plan/checks go via temp files).
+    let argv_text = [
+        &req.name,
+        &req.desc,
+        &req.reason,
+        &req.instruction,
+        &req.branch,
+        &req.commit_message,
+        &req.run_id,
+        &req.decision,
+    ];
+    if argv_text.iter().any(|v| v.as_deref().is_some_and(|s| s.contains('\0'))) {
+        return Err(ShimError::Ops(format!("{a} argv values must not contain NUL bytes")));
+    }
     if a == "propose-skill" || a == "apply-skill" {
         if !non_empty(&req.name) || !non_empty(&req.desc) {
             return Err(ShimError::Ops(format!("{a} requires name and desc")));
@@ -526,8 +547,6 @@ async fn run_argv_with_env(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(unix)]
-    cmd.process_group(0);
     let mut child = cmd
         .spawn()
         .map_err(|e| ShimError::Io(format!("cannot spawn agentic child: {e}")))?;
@@ -553,13 +572,6 @@ async fn run_argv_with_env(
         Ok(Ok(status)) => status,
         Ok(Err(e)) => return Err(ShimError::Io(format!("agentic child wait failed: {e}"))),
         Err(_) => {
-            #[cfg(unix)]
-            if let Some(pid) = child.id() {
-                // SAFETY: killpg on a group we created with process_group(0).
-                unsafe {
-                    libc::killpg(pid as libc::pid_t, libc::SIGKILL);
-                }
-            }
             let _ = child.kill().await;
             out_task.abort();
             err_task.abort();

@@ -115,6 +115,64 @@ fn argv_builder_validation_mirrors_ops_runner() {
 }
 
 #[test]
+fn argv_builder_refuses_nul_in_argv_text_fields() {
+    // A NUL cannot cross an argv element; refuse it as a request error (400)
+    // instead of letting the spawn fail as a shim I/O error (502).
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(dir.path());
+    let mut run = OpsRequest::new("real-repo-run");
+    run.instruction = Some("x".into());
+    run.checks = Some(vec![json!({"name": "a", "argv": ["a"]})]);
+    run.branch = Some("claude/x".into());
+    run.commit_message = Some("m".into());
+    run.reason = Some("r".into());
+    assert!(shim::build_argv(&c, &run).is_ok());
+    type Field = fn(&mut OpsRequest) -> &mut Option<String>;
+    let fields: [(&str, Field); 4] = [
+        ("instruction", |r| &mut r.instruction),
+        ("branch", |r| &mut r.branch),
+        ("commit_message", |r| &mut r.commit_message),
+        ("reason", |r| &mut r.reason),
+    ];
+    for (label, field) in fields {
+        let mut r = run.clone();
+        *field(&mut r) = Some("ok\0--confirm".into());
+        let err = shim::build_argv(&c, &r).unwrap_err();
+        assert!(matches!(err, ShimError::Ops(_)), "{label}: {err}");
+        assert!(err.to_string().contains("NUL"), "{label}: {err}");
+    }
+    let mut skill = OpsRequest::new("propose-skill");
+    skill.name = Some("n\0".into());
+    skill.desc = Some("d".into());
+    assert!(matches!(shim::build_argv(&c, &skill), Err(ShimError::Ops(_))));
+    // Temp-file payloads are not argv and keep their bytes.
+    run.plan = Some("plan\0bytes".into());
+    assert!(shim::build_argv(&c, &run).is_ok());
+}
+
+#[test]
+fn skill_argv_keeps_dash_values_single_and_confirms_only_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(dir.path());
+    let mut r = OpsRequest::new("propose-skill");
+    r.name = Some("--confirm".into());
+    r.desc = Some("-d".into());
+    r.reason = Some("--confirm".into());
+    r.confirm = true;
+    let (argv, _) = shim::build_argv(&c, &r).unwrap();
+    assert!(argv.contains(&"--name=--confirm".to_string()));
+    assert!(argv.contains(&"--desc=-d".to_string()));
+    assert!(argv.contains(&"--reason=--confirm".to_string()));
+    assert!(
+        !argv.contains(&"--confirm".to_string()),
+        "propose-skill never forwards confirm"
+    );
+    r.action = "apply-skill".into();
+    let (argv, _) = shim::build_argv(&c, &r).unwrap();
+    assert_eq!(argv.iter().filter(|a| *a == "--confirm").count(), 1);
+}
+
+#[test]
 fn budget_formula_and_labels() {
     assert_eq!(shim::real_repo_run_budget_sec(720, None, 1), 3 * 720 + 3 * 120 + 300);
     assert_eq!(shim::real_repo_run_budget_sec(720, Some(1), 0), 720 + 120 + 300);
@@ -123,6 +181,11 @@ fn budget_formula_and_labels() {
         2 * 720 + 2 * 2 * 120 + 300
     );
     assert_eq!(shim::real_repo_run_timeout_sec(720, Some(10), 8), 3600);
+    // An extreme operator planner timeout saturates instead of overflowing
+    // (debug panic) or wrapping under the 3600s cap (release).
+    assert_eq!(shim::real_repo_run_budget_sec(u64::MAX, Some(3), 1), u64::MAX);
+    assert_eq!(shim::real_repo_run_budget_sec(u64::MAX / 2, Some(2), 0), u64::MAX);
+    assert_eq!(shim::real_repo_run_timeout_sec(u64::MAX / 3 + 1, Some(3), 1), 3600);
     assert_eq!(shim::label_for(0), (true, "ok"));
     assert_eq!(shim::label_for(2), (false, "failed"));
     assert_eq!(shim::label_for(3), (false, "env_config"));
@@ -208,6 +271,17 @@ async fn a_request_can_never_carry_an_argv() {
     body["checks"] = json!([{"name": "pytest"}]);
     let (status, _) = s.post_json("/api/agent/run", body).await;
     assert_eq!(status, 422);
+}
+
+#[tokio::test]
+async fn a_nul_in_run_text_is_a_request_error_not_a_shim_failure() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let mut body = run_body();
+    body["instruction"] = json!("fix\0--confirm");
+    let (status, resp) = s.post_json("/api/agent/run", body).await;
+    assert_eq!(status, 400, "{resp}");
+    assert_eq!(code(&resp), "AGENTIC_ERROR");
 }
 
 #[tokio::test]
