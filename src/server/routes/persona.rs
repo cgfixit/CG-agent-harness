@@ -35,7 +35,7 @@ fn io_error() -> ApiError {
     )
 }
 fn valid_id(id: &str) -> bool {
-    id.len() == 64 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    crate::common::is_lower_hex(id, 64)
 }
 fn read(dir: &Dir, name: &str) -> ApiResult<Option<String>> {
     match dir.symlink_metadata(name) {
