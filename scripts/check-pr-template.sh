@@ -67,10 +67,13 @@ fi
 fail=0
 missing=()
 
+# Matches read here-strings, never `printf | grep -q`: grep -q exits on the
+# first match, a still-writing printf then takes SIGPIPE, and pipefail turns
+# a present section into a reported-missing one under load.
 require_header() {
   local label="$1"
   local pattern="$2"
-  if ! printf '%s' "$body" | grep -Eiq "$pattern"; then
+  if ! grep -Eiq "$pattern" <<<"$body"; then
     missing+=("$label")
     fail=1
   fi
@@ -94,7 +97,7 @@ require_header "Suggested merge order of open PRs" \
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 shipped_template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
 body_unix="$(printf '%s\n' "$body" | tr -d '\r')"
-if ! printf '%s\n' "$body_unix" | grep -Eq '^## ELI5[[:space:]]*$'; then
+if ! grep -Eq '^## ELI5[[:space:]]*$' <<<"$body_unix"; then
   missing+=("ELI5 (## ELI5 must be the last section heading)")
   fail=1
 else
@@ -103,7 +106,7 @@ else
     seen { buf = buf $0 ORS }
     END { printf "%s", buf }
   ')"
-  if printf '%s\n' "$eli5_tail" | grep -Eq '^#{1,6}[[:space:]]+'; then
+  if grep -Eq '^#{1,6}[[:space:]]+' <<<"$eli5_tail"; then
     missing+=("ELI5 must be the last section heading")
     fail=1
   fi
@@ -112,12 +115,12 @@ last_nonempty="$(printf '%s\n' "$body_unix" | sed -e 's/[[:space:]]*$//' | awk '
 filled_stamp='^Last updated: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} ET$'
 placeholder_stamp='^Last updated: YYYY-MM-DD HH:MM ET$'
 stamp_ok=0
-if printf '%s\n' "$last_nonempty" | grep -Eq "$filled_stamp"; then
+if grep -Eq "$filled_stamp" <<<"$last_nonempty"; then
   stamp_ok=1
 elif [[ "$input" != "-" && -f "$input" ]]; then
   input_abs="$(cd "$(dirname "$input")" && pwd)/$(basename "$input")"
   if [[ "$input_abs" == "$shipped_template" ]] \
-    && printf '%s\n' "$last_nonempty" | grep -Eq "$placeholder_stamp"; then
+    && grep -Eq "$placeholder_stamp" <<<"$last_nonempty"; then
     stamp_ok=1
   fi
 fi
@@ -198,7 +201,7 @@ fi
 
 if [[ -z "$files_source" ]]; then
   printf 'check-pr-template: core-path rule skipped (set CGAGENTHARNESS_PR_FILES or fetch %s)\n' "$base" >&2
-elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
+elif grep -Eq "$core_pattern" <<<"$changed"; then
   # The template itself says "invariant" in its headings and checklist, so
   # only contributor-written lines (those not copied verbatim from the
   # template) can satisfy the statement requirement.
@@ -238,7 +241,7 @@ elif printf '%s\n' "$changed" | grep -Eq "$core_pattern"; then
     # The statement must name a guarantee from INVARIANTS.md (or say none),
     # not merely occupy the section. Wording beyond that is for the reviewer.
     guarantee='invariant|\bnone\b|\bi6\b|process isolation|guard chain|write[ -]gate|clone jail|judged|approval|secret|redact|detached|csrf|sandbox|loopback|weaker than'
-    if ! printf '%s' "$contributed" | grep -Eiq "$guarantee"; then
+    if ! grep -Eiq "$guarantee" <<<"$contributed"; then
       missing+=("Invariant / Governance Impact statement (a core path changed; say which invariant and why it holds)")
       fail=1
     fi
