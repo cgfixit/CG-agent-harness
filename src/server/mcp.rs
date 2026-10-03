@@ -631,8 +631,7 @@ mod config_tests {
         // An owned listener that accepts and drops the connection fails the
         // request deterministically; a released port could be re-bound by a
         // concurrent test.
-        // DevSkim: ignore DS162092 because this fixture listener is loopback only.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); // DevSkim: ignore DS162092 because this fixture listener is loopback only.
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
             if let Ok((stream, _)) = listener.accept() {
@@ -643,8 +642,7 @@ mod config_tests {
             sse_allow_loopback: true,
             ..McpRuntime::disabled()
         };
-        // DevSkim: ignore DS162092 because the request must reach that owned loopback listener.
-        let url = format!("http://127.0.0.1:{port}/sse?token=sse-url-secret-token");
+        let url = format!("http://127.0.0.1:{port}/sse?token=sse-url-secret-token"); // DevSkim: ignore DS162092 because the request must reach that owned loopback listener.
         let err = call_sse(&runtime, &url, "echo", json!({})).await.unwrap_err();
         server.join().unwrap();
         // Fixed failure messages: the error under test may carry the token.
