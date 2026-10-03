@@ -5,8 +5,8 @@ lives. When code and this file disagree, code wins; fix this file.
 
 ## I6 — process isolation between the console and the agentic pipeline
 
-The HTTP console (`src/server`, `src/shim`, `src/llm`, `src/common`) never links
-or calls the agentic pipeline (`src/agentic`). The only edge is
+The HTTP console (`src/server`, `src/shim`, `src/llm`, `src/common`,
+`src/netconnect`) never links or calls the agentic pipeline (`src/agentic`). The only edge is
 `src/shim/mod.rs`, which builds an argv list from a 12-action whitelist and
 spawns `current_exe() agentic <action>` as a CHILD PROCESS with a hard timeout
 (shared bounded Unix runner with cancellation cleanup; `kill_on_drop` elsewhere). The agentic side never references
@@ -56,7 +56,7 @@ prevent child migration. Service-main exit and its external runtime bound kill
 the cgroup, including detached descendants. Strict mode on other hosts refuses.
 An explicit `process_group` exception keeps filesystem/network confinement but
 only kills the owned Unix group/direct child; runner death or detached children
-can escape cleanup. `/tools mcp` displays this limitation.
+can escape cleanup.
 
 Windows supports a separate, explicit trusted-server exception: `job_object`
 requires `filesystem: unrestricted`, `network: unrestricted`, no root grants and
@@ -67,7 +67,7 @@ inherited. This exception provides no
 filesystem/home secrecy or network isolation and cannot confine work delegated
 to an outside OS service. It is never an automatic fallback.
 
-`src/server` still contains no `Command::new`. The harness home and its `.env`
+The harness home and its `.env`
 are unreachable from confined MCP stdio children: command paths, cwd, and read/write
 roots overlapping that home are refused (`MCP_HOME_REFUSED`). Actual backend,
 probe result and declared capabilities are audited on `mcp_stdio_spawn`;
@@ -109,8 +109,8 @@ episodes), sessions, detached jobs and schedule management. Unassigned legacy
 sessions are quarantined until explicit admin adoption into the acting account,
 which clears prior coding approval. Pinned notes/persona, model selection,
 spend and agentic run records remain explicitly shared. Structured memory
-uses authenticated `user_id`, the documented `local` namespace from
-`context_owner` when accounts are disabled, or labeled `user_*` fixture owners. Canonical facts change only through
+owners are the authenticated `user_id`, `local` (`context_owner`, accounts
+disabled) or `user_*` fixture labels. Canonical facts change only through
 an explicit human confirm+reason path; proposals may suggest but never apply
 themselves. Episode capture never writes facts. `structured_memory.enabled`,
 `structured_memory.episode_capture`, `structured_memory.explicit_recall`,
@@ -125,10 +125,10 @@ All nine ship true in fresh configuration; existing config files and explicit of
 overrides remain authoritative. Fresh pinned-note inclusion comes from
 `memory.enabled: true`; existing harness.json values remain unchanged. Capture off means no episode writes; recall off
 means no selected-fact prompt injection; retrieval off means no FTS search or
-force-include. Search returns candidates only — prompt injection still requires
-an explicit pick (`selected_facts`, `/memory retrieve`, or the per-request
-`retrieve` flag) plus assembly-time owner/active/revision recheck, unless the
-separately gated `auto_retrieval` silent path is on. FTS indexes facts only,
+force-include. Search returns candidates only; injection needs an explicit pick
+(`selected_facts`, `/memory retrieve`, or the per-request `retrieve` flag) plus
+an assembly-time owner/active/revision recheck, unless the separately gated
+`auto_retrieval` path is on. FTS indexes facts only,
 never episode summaries. Consolidation off means no manual summarizer call or
 proposal write from selected episodes; on, the local model creates pending
 proposals only.
@@ -147,8 +147,8 @@ human confirmed fact write through the existing API, not model authority.
 `/memory on` remains pinned-note prompt inclusion
 only and does not open capture, recall, retrieval, or consolidation. Recalled text is
 untrusted background context and cannot authorize tools, coding, or network.
-The structured SQLite file uses owner-private mode as OS access
-control — that is not encryption at rest. Pinned `/memory` notes stay on
+The structured SQLite file relies on owner-private mode, not encryption at
+rest. Pinned `/memory` notes stay on
 `memory/notes.json` and are not migrated. Session clear keeps derived episodes
 unless the operator confirms `delete_derived_episodes`; that cascade still
 preserves facts, proposals, and episodes referenced by pending proposals.
@@ -201,9 +201,9 @@ fetches retain URL policy checks. Saved SerpAPI changes apply on the next search
 explicit environment values retain precedence. Challenges and provider failures never become
 fabricated results. Keys remain server-side and never enter model context.
 
-Content permission grants neither account authority nor provider configuration
-authority. None of these authorities substitutes for coding/write/publication
-gates. Page text is data, never a tool command.
+Content permission grants no account or provider-configuration authority, and
+none of these substitutes for coding/write/publication gates. Page text is
+data, never a tool command.
 
 - Locked by: `server::web_policy::tests`, `server::web_search::tests`,
   `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
@@ -226,15 +226,15 @@ PR execution reload `config.yaml` and require `agentic.enabled`, write mode,
 human reason, and explicit confirmation. The emergency disable switch is AND-ed
 with `EXECUTION_ENABLED`; it cannot arm writes. Missing/invalid config refuses.
 A changed repository, workspace root, protected scope, scanner setting, or budget
-requires a new invocation instead of continuing under a stale snapshot.
+requires a new invocation; no stale snapshot continues.
 
 Run confirmation authorizes isolated candidate edits only. Approval verifies the
 manifest and commits locally with fresh reason/confirmation. Push and draft PR
 publication each require separate actions and fresh intent; combined
 `real-repo-run-decide --push/--publish` is refused. Default master, deepagent, and clone-write
 flags remain false (mode/write-enabled defaults alone cannot arm writes).
-The established master-disabled CLI banner/no-op exit 0 remains; actual mutation
-boundary denials use exit 4. Invalid/missing config uses exit 3.
+Master-disabled CLI calls banner and exit 0; mutation-boundary denials exit 4;
+invalid or missing config exits 3.
 
 Read-only diff/status do not require write enablement. Git optional index refresh,
 fsmonitor, external diff and textconv are disabled for inspection. Reject/discard
@@ -275,9 +275,8 @@ planner `=== READ ===` requests and operator `--read-file` values are refused
 when the final path segment matches `agentic.deepagent_github.denied_read_basenames`
 (name-equivalence folded; audit `agentic_real_repo_read_request_refused` /
 `sensitive_basename`). Cloud proposers still refuse every model-requested read
-(`cloud_proposer`). The deny-list is not a secret scanner: secrets can use
-arbitrary names, and hiding a basename from the next prompt does not remediate
-repository history.
+(`cloud_proposer`). The deny-list is not a secret scanner: secrets can have
+any name, and hiding a basename does not remediate repository history.
 
 - Locked by: `src/agentic/real_repo_loop.rs` (`denied_read_basename`,
   `apply_model_read_request`) and `tests/real_repo_loop.rs`.
@@ -292,9 +291,8 @@ Opened file descriptors must be regular files, and reads remain bounded even
 if a file grows after its metadata check. Each retrieved excerpt is re-read,
 bound to the indexed full-file SHA-256, scanned again and charged against
 existing read limits plus its configured UTF-8-byte token reservation.
-A changed hash omits that hit. Every new iteration rebuilds from current
-content, including edits from the prior attempt. Explicit selections keep
-priority. Run/audit traces contain path, line selection, hash and counts,
+A changed hash omits that hit. Each iteration rebuilds from current content,
+prior edits included. Explicit selections keep priority. Run/audit traces contain path, line selection, hash and counts,
 not query or source bytes. Existing exact-edit, check and approval gates apply.
 
 - Locked by: `src/agentic/repo_retrieval.rs`, `src/agentic/edits.rs`,
@@ -307,10 +305,8 @@ against `protected_write_paths` (name-equivalence folded), and budget-checked
 BEFORE candidate content is changed. Whole-proposal preflight precedes staging;
 application failures roll back installed replacements, and failed rollback is
 fatal/quarantined with recovery backups retained. This is not crash-atomic or
-an atomic compare-and-swap against a concurrent external writer. A file that
-exists and was not shown in full through declared or local retrieved context
-is refused for whole-file
-replacement rather than blindly replaced. Exact
+an atomic compare-and-swap against a concurrent external writer. A file not shown in full through declared or retrieved context is refused for
+whole-file replacement. Exact
 edits require a fresh full-file hash and unique original text in the displayed
 excerpt. Every attempt takes new snapshots; earlier writes grant no exemption.
 Verification runs only inside a
@@ -335,8 +331,8 @@ Metadata discovery remains allowed. Seatbelt is not a memory/disk quota, and the
 current process group implementation does not contain every escaped descendant.
 Linux prefers bubblewrap with an allowlisted read-only filesystem, writable
 scratch, tmpfs `/tmp`, and `--unshare-net`. Binding the host root (`--ro-bind / /`)
-is forbidden because it still exposes SSH keys and the harness env credential
-file. When `bwrap` is missing or its probe fails, Linux falls back to
+is forbidden because it exposes SSH keys and any plaintext key file. When
+`bwrap` is missing or its probe fails, Linux falls back to
 `unshare --net` only (`name()` is `linux-netns`): network isolation without
 filesystem confinement. That fallback is explicit in the backend name, an
 info-level `linux hard sandbox backend selected` line, the self-test line, and
@@ -345,7 +341,9 @@ the audit `sandbox` field. `/api/status` does not report the backend. Both backe
 missing. The ordinary test matrix may report a classified confinement skip
 when a GitHub-hosted runner refuses `RTM_NEWADDR`; that is not confinement proof.
 The separate `Linux bubblewrap confinement (required)` job runs the same suite
-in a pinned container with namespace/mount capabilities. Setting
+in a pinned container with namespace/mount capabilities. Docs-only pull requests
+(`scripts/ci-docs-only.sh`) skip compile jobs, this one included; the
+invariant guard still runs. Setting
 `CGAH_REQUIRE_LINUX_BWRAP` (any value) makes every probe failure fatal and also
 refuses a non-Linux host; it is a test-only requirement, not a production gate.
 Python 3 probes must execute successfully, demonstrate candidate reads and
@@ -380,11 +378,12 @@ or shim imports this agentic helper.
 Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
 commit, and uses an object-ID refspec; publication checks the remote branch.
-HTTPS credentials use `gh`, with ambient Git helpers, hooks and prompts disabled.
+HTTPS credentials use `gh`, with ambient Git helpers, hooks and prompts disabled
+and `GH_NO_UPDATE_NOTIFIER=1`, `DO_NOT_TRACK=1` forced.
 Accepted SSH origins can use the operator's SSH configuration and keys.
 Current policy and separate reason/confirmation remain required.
-Older records missing the new bindings need a new reviewed run. No transaction
-against arbitrary hostile filesystem races or later remote changes is claimed.
+Older records without these bindings need a new reviewed run. No transaction
+against hostile filesystem races or later remote changes is claimed.
 See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility changes and review limitations.
 
 - Locked by: `tests/git_approval.rs`, `tests/write_policy.rs`,
@@ -396,7 +395,10 @@ See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility cha
 Audit records are redacted recursively (emails, IPs, configured secret shapes);
 model error bodies are never echoed; `/api/keys` returns presence and a masked
 tail only; the tool broker logs an argv digest, never argv; validation errors
-substitute `(unexpected field)` for a caller-supplied key.
+substitute `(unexpected field)` for a caller-supplied key. A `query` field is
+stored as a SHA-256 hash or, with `logging.audit_fields.include_query_hash:
+false`, omitted; never raw. `logging.audit_file` stays home-relative: absolute,
+`..` and Windows-prefixed paths fall back to `logs/audit.jsonl`.
 
 Server audit lines go through one ordered writer thread behind a bounded queue
 (`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue drops
@@ -424,13 +426,15 @@ stays, startup warns without the value, and the key is not loaded. Settings save
 and clear use the store and fail closed when it is unavailable.
 `security.allow_plaintext_key_file` ships false; only the literal boolean `true`
 keeps the private 0600 file. Quoted `"true"` stays off. Each entry's service name
-includes the canonical home. keyring's target is not a namespace: macOS treats it
-as a keychain domain, and Windows uses it as the only credential name. Values never appear in
-argv, logs, diagnostics, readiness files, or `/api` responses (presence and a
-masked tail only). Account passwords stay scrypt-hashed in `auth.sqlite3`.
-Caveat: startup still exports loaded keys into the harness process environment,
-so `gh` (`agentic::gh_client::gh_env`) and the agentic shim child inherit them
-until #286 gives each child an allowlisted environment.
+includes the canonical home; keyring's target is not a namespace (a macOS
+keychain domain, the sole Windows credential name). A credential-file path with
+a `..` component is refused before open, and a store entry that is not UTF-8
+text is dropped unread. Values never appear in argv, logs, diagnostics, or
+`/api` responses (presence and a masked tail only). Account passwords stay
+scrypt-hashed in `auth.sqlite3`. Caveat: startup still exports loaded keys into
+the harness process environment, so `gh` (`agentic::gh_client::gh_env`) and the
+agentic shim child inherit them until #286 gives each child an allowlisted
+environment; sandboxed check children already get a scrubbed one.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
   `tests/panels.rs`, and
@@ -466,17 +470,17 @@ window is stored prompt history (user and assistant turns, persist cap
 `MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
 overflow. The effective trigger is
 `max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
-calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions are also
-included in the calibrated input estimate. Web-enabled chat tightens the trigger
+calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions count
+in the calibrated input estimate. Web-enabled chat tightens the trigger
 toward `web.total_tokens - effective_reply_reservation` (the projection already
 carries one reservation, so a web prompt keeps room for two replies) and never
 below that floor; the web dispatcher independently offers tools only while the
 prompt fits with both replies and a minimal result, runs a batch only when each
 call's minimal result fits, and cuts a result to the room left.
 Startup and reload warn when fewer than 4096 input tokens would remain.
-Resolved Ollama with explicit `reasoning_effort: "none"` reserves the reply
-ceiling once. Other reasoning settings, missing settings and compatible
-backends reserve it twice in startup validation, compaction and web dispatch.
+Ollama with explicit `reasoning_effort: "none"` reserves the reply ceiling
+once; every other setting or backend reserves it twice in startup validation,
+compaction and web dispatch.
 Startup and reload reject `models.local_llm.max_tokens` or
 `api.harness_loop_rate_limit.max_tokens` above 25904 (single reservation) or
 12952 (doubled). This is a conservative harness margin, not provider accounting.
@@ -487,9 +491,9 @@ summary-call budget. Ordinary middle turns are clipped to 800 characters;
 prior `[session-compacted]` summaries are reserved intact before selecting
 recent ordinary turns. If the summaries alone cannot fit, compaction fails
 without clipping them or rewriting history.
-A failed, empty, timed-out, or aborted summary does not rewrite the session.
-If compaction cannot bring that initial prompt below the trigger, the turn is
-refused without rewriting the session. If it can, the summary is persisted atomically with the next
+A failed, empty, timed-out or aborted summary, or a prompt compaction cannot
+bring below the trigger, leaves the session unrewritten; the latter refuses the
+turn. Otherwise the summary is persisted atomically with the next
 successful exchange, alongside calibration, using `write_json_atomic_mode` at `0o600`. The system prompt is
 composed each turn and is never stored in `messages`. `Session.goal` and the
 first user message are preserved. The audits `chat_session_compacted`,
@@ -634,7 +638,7 @@ A missing/null `models.cloud_chat.max_usd_per_call` leaves generation ungated;
 otherwise it must be finite and positive. Vendor estimates enforce a known-rate
 cap; heuristic estimates enforce it only with literal `budget_on_heuristic: true`.
 Unknown rates remain unpriced. Prediction, count requests and budget refusal
-create no spend rows. This is an estimate, never a guaranteed invoice ceiling.
+create no spend rows. An estimate, never an invoice ceiling.
 
 ## Completion notifications do not grant job or content authority
 
@@ -723,25 +727,27 @@ Config load rejects IPv6, a wider prefix, 0.0.0.0/8, link-local
 later connect; hostnames are not targets. `status` serializes config and
 scope and loads no collector. `devices` and the panel device list send no
 packets. `passive_listen` is a flag only (joining multicast is
-not passive). Device strings are length-capped, stripped of controls, and
-marked untrusted, and are never argv, commands, or paths. `throughput` has no
-default endpoint; a set flag or endpoint warns at load because it is internet
-egress outside this scope. No secret belongs in this config. These keys are
-outside the 22-key reload allowlist. A false master gate exits 4. Invalid
+not passive). Device strings are length-capped, control-stripped, marked
+untrusted, and never argv, commands or paths. `throughput` has no
+default endpoint; setting its flag or endpoint warns at load (internet egress
+outside this scope). These keys are outside the 22-key reload allowlist.
+Outside tests, `src/netconnect` imports only `crate::common` and
+`crate::server::slash`, never `crate::agentic`, and spawns only fixed argv
+through `common::process::run`. A false master gate exits 4. Invalid
 scope exits 3. `netconnect_status` and `netconnect_devices` register only
 when `enabled` is literal true. A tier's tools register only when
 `tier_may_run` is true; this build registers none. A call whose tier may
 not run returns `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`, not an empty
 success. `/net` keeps the exact aliases `/netconnect`, `/lan`, `/scan`,
-`/ports`, and `/speed` only when they do not collide with an existing slash
-root. Exact `status` and `devices` are read-only. A near-miss only suggests.
+`/ports`, and `/speed` only when they collide with no existing slash root. Exact `status` and `devices` are read-only. A near-miss only suggests.
 `device` always refuses and is not a fuzzy match. `GET /api/netconnect` is
-the console panel on the existing Host and CSRF guards. It accepts no other
-method and does not turn browser input into a command.
+the console panel on the existing Host and CSRF guards: GET only; browser
+input never becomes a command.
 
 - Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`,
   `tests/netconnect_flags.rs`, `tests/netconnect_scope.rs`,
   `tests/netconnect_collectors.rs`, `tests/netconnect_untrusted.rs`,
-  `scripts/netconnect-syscall-proof.sh`, `tests/netconnect_syscall.rs`,
+  `tests/netconnect_workflow.rs`, `scripts/netconnect-syscall-proof.sh`,
+  `tests/netconnect_syscall.rs`, `invariant_guard::server_side_never_references_agentic`,
   `tests/panels.rs`, and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.

@@ -113,7 +113,7 @@ fn root() -> std::path::PathBuf {
 
 #[test]
 fn server_side_never_references_agentic() {
-    for sub in ["server", "shim", "llm", "common"] {
+    for sub in ["server", "shim", "llm", "common", "netconnect"] {
         for (path, text) in read_tree(&root().join(sub)) {
             for needle in ["crate::agentic", "agentic::", "super::agentic", "use crate::agentic"] {
                 assert!(
