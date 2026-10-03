@@ -94,7 +94,6 @@ pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Resu
             .set_tokenizer("en_stem")
             .set_index_option(IndexRecordOption::WithFreqsAndPositions),
     );
-    let title = schema.add_text_field("title", text_options.clone());
     let heading = schema.add_text_field("heading", text_options.clone());
     let body = schema.add_text_field("text", text_options);
     let row = schema.add_u64_field("row", STORED);
@@ -105,7 +104,6 @@ pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Resu
     for (i, p) in docs.iter().enumerate() {
         writer
             .add_document(doc!(
-                title => "",
                 heading => p.heading.clone(),
                 body => p.text.clone(),
                 row => i as u64
@@ -115,8 +113,7 @@ pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Resu
     writer.commit().map_err(failed)?;
     let reader = index.reader().map_err(failed)?;
     let searcher = reader.searcher();
-    let mut parser = QueryParser::for_index(&index, vec![title, heading, body]);
-    parser.set_field_boost(title, 1.6);
+    let mut parser = QueryParser::for_index(&index, vec![heading, body]);
     parser.set_field_boost(heading, 1.3);
 
     let terms: Vec<_> = query
