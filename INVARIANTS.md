@@ -417,19 +417,20 @@ callers append inline.
 
 Managed provider keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
 `SERPAPI_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
-`CGAGENTHARNESS_WEBHOOK_TOKEN`) are stored in the OS credential store: macOS
-Keychain, Linux Secret Service, or Windows Credential Manager. An inherited
-environment variable wins, including an empty value. A legacy home `.env` is read
-only by the one-time migration, which removes a managed line only after the store
-write verifies. Unknown lines stay. If the store write or verify fails, that line
-stays, startup warns without the value, and the key is not loaded. Settings save
-and clear use the store and fail closed when it is unavailable.
+`CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or
+Windows Credential Manager. Inherited environment values, including empty, win.
+Legacy home `.env` migration removes only assignments verified in the store;
+unknown and failed lines stay. Failures warn without values and leave keys unloaded.
+Settings save and clear use the store and fail closed when unavailable.
 `security.allow_plaintext_key_file` ships false; only the literal boolean `true`
-keeps the private 0600 file. Quoted `"true"` stays off. Each entry's service name
-includes the canonical home; keyring's target is not a namespace (a macOS
-keychain domain, the sole Windows credential name). A credential-file path with
-a `..` component is refused before open, and a store entry that is not UTF-8
-text is dropped unread. Values never appear in argv, logs, diagnostics, or
+keeps the private file. Unix requires owner uid, 0600 access and one link. Windows
+requires a regular non-reparse file owned by the effective current user, with
+only ordinary allow ACEs for that user in a verifiable DACL. Windows atomic
+replacements inherit home ACLs, which must be private.
+Quoted `"true"` stays off. Entry service names include the canonical home;
+keyring targets select a macOS keychain domain or the sole Windows credential
+name, not a namespace. Credential paths containing a `..` component are refused
+before open; non-UTF-8 store entries are dropped unread. Values never appear in argv, logs, diagnostics, or
 `/api` responses (presence and a masked tail only). Account passwords stay
 scrypt-hashed in `auth.sqlite3`. Startup loads keys into the harness environment.
 Git/`gh` children receive an allowlist without provider keys. Shim children

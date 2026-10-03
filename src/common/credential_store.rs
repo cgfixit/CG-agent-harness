@@ -292,6 +292,14 @@ pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ};
+        options
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .share_mode(FILE_SHARE_READ);
+    }
     let file = match options.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
@@ -309,6 +317,8 @@ pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
             anyhow::bail!("credential file must be private, singly linked, and owned by this user (0600)");
         }
     }
+    #[cfg(windows)]
+    windows_private::validate_file(&file)?;
     let mut text = String::new();
     file.take(65537)
         .read_to_string(&mut text)
@@ -319,20 +329,519 @@ pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
     Ok(text)
 }
 
+#[cfg(windows)]
+mod windows_private {
+    use std::ffi::c_void;
+    use std::fs::File;
+    use std::mem::{offset_of, size_of, size_of_val};
+    use std::os::windows::fs::MetadataExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use std::ptr::{null_mut, read_unaligned};
+    use windows_sys::Win32::Foundation::{GetLastError, LocalFree, ERROR_NO_TOKEN};
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{
+        EqualSid, GetAce, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, GetTokenInformation, IsValidAcl,
+        IsValidSecurityDescriptor, IsValidSid, TokenUser, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL,
+        DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSID, SECURITY_MAX_SID_SIZE, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_ATTRIBUTE_REPARSE_POINT, FILE_TYPE_DISK};
+    use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
+    };
+
+    const REFUSED: &str = "credential file privacy could not be verified for this Windows user";
+    const TOKEN_WORDS: usize = (size_of::<TOKEN_USER>() + SECURITY_MAX_SID_SIZE as usize).div_ceil(size_of::<usize>());
+
+    struct LocalAllocation(*mut c_void);
+
+    impl Drop for LocalAllocation {
+        fn drop(&mut self) {
+            // SAFETY: allocations held here come from Win32 APIs documented to use LocalFree.
+            unsafe { LocalFree(self.0) };
+        }
+    }
+
+    struct CurrentUser {
+        storage: [usize; TOKEN_WORDS],
+        sid_offset: usize,
+    }
+
+    impl CurrentUser {
+        fn query() -> anyhow::Result<Self> {
+            let mut token = null_mut();
+            // SAFETY: pseudo-handles need no close; token is a valid output slot.
+            unsafe {
+                if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut token) == 0
+                    && (GetLastError() != ERROR_NO_TOKEN
+                        || OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0)
+                {
+                    anyhow::bail!(REFUSED);
+                }
+            }
+            // SAFETY: the successful token open transferred one owned handle.
+            let token = unsafe { OwnedHandle::from_raw_handle(token) };
+            let mut user = Self {
+                storage: [0; TOKEN_WORDS],
+                sid_offset: 0,
+            };
+            let mut length = 0;
+            // SAFETY: the aligned buffer has room for TOKEN_USER and the maximum Windows SID.
+            if unsafe {
+                GetTokenInformation(
+                    token.as_raw_handle(),
+                    TokenUser,
+                    user.storage.as_mut_ptr().cast(),
+                    size_of_val(&user.storage) as u32,
+                    &mut length,
+                )
+            } == 0
+                || (length as usize) < size_of::<TOKEN_USER>()
+                || (length as usize) > size_of_val(&user.storage)
+            {
+                anyhow::bail!(REFUSED);
+            }
+            // TOKEN_USER contains a pointer into this buffer. Moving the buffer invalidates it,
+            // so retain the SID offset instead and reconstruct the pointer when needed.
+            let sid = unsafe { (*(user.storage.as_ptr().cast::<TOKEN_USER>())).User.Sid };
+            let offset = (sid as usize)
+                .checked_sub(user.storage.as_ptr() as usize)
+                .ok_or_else(|| anyhow::anyhow!(REFUSED))?;
+            if offset < size_of::<TOKEN_USER>() || offset > length as usize {
+                anyhow::bail!(REFUSED);
+            }
+            // SAFETY: the SID pointer is inside the initialized output buffer; bounds are checked below.
+            if !unsafe { valid_sid_in(sid, length as usize - offset) } {
+                anyhow::bail!(REFUSED);
+            }
+            user.sid_offset = offset;
+            Ok(user)
+        }
+
+        fn sid(&self) -> PSID {
+            // SAFETY: query verified this offset and SID within the owned buffer.
+            unsafe {
+                self.storage
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(self.sid_offset)
+                    .cast_mut()
+                    .cast()
+            }
+        }
+    }
+
+    unsafe fn valid_sid_in(sid: PSID, available: usize) -> bool {
+        if sid.is_null() || available < 8 {
+            return false;
+        }
+        // SAFETY: the caller provides available bytes, including the 8-byte SID header.
+        let count = unsafe { *sid.cast::<u8>().add(1) } as usize;
+        available >= 8 + count * size_of::<u32>() && unsafe { IsValidSid(sid) } != 0
+    }
+
+    pub(super) fn validate_file(file: &File) -> anyhow::Result<()> {
+        let metadata = file.metadata().map_err(|_| anyhow::anyhow!(REFUSED))?;
+        // SAFETY: File owns a live handle for the full validation and subsequent read.
+        if unsafe { GetFileType(file.as_raw_handle()) } != FILE_TYPE_DISK
+            || !metadata.is_file()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            anyhow::bail!(REFUSED);
+        }
+        let user = CurrentUser::query()?;
+        let mut descriptor = null_mut();
+        // SAFETY: the handle is live; only the owned descriptor output is requested.
+        let result = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut descriptor,
+            )
+        };
+        let descriptor = LocalAllocation(descriptor);
+        if result != 0 {
+            anyhow::bail!(REFUSED);
+        }
+        // SAFETY: GetSecurityInfo returned an allocated descriptor kept alive by the guard.
+        unsafe { validate_descriptor(descriptor.0, user.sid()) }
+    }
+
+    unsafe fn validate_descriptor(descriptor: *mut c_void, current_user: PSID) -> anyhow::Result<()> {
+        // SAFETY: callers supply OS-allocated descriptors and a validated live current-user SID.
+        unsafe {
+            if descriptor.is_null() || IsValidSecurityDescriptor(descriptor) == 0 {
+                anyhow::bail!(REFUSED);
+            }
+            let mut owner = null_mut();
+            let mut defaulted = 0;
+            if GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted) == 0
+                || owner.is_null()
+                || IsValidSid(owner) == 0
+                || EqualSid(owner, current_user) == 0
+            {
+                anyhow::bail!(REFUSED);
+            }
+            let mut present = 0;
+            let mut acl = null_mut();
+            if GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted) == 0
+                || present == 0
+                || acl.is_null()
+                || IsValidAcl(acl) == 0
+            {
+                anyhow::bail!(REFUSED);
+            }
+            let acl_header = read_unaligned(acl);
+            for index in 0..u32::from(acl_header.AceCount) {
+                let mut ace = null_mut();
+                if GetAce(acl, index, &mut ace) == 0 || ace.is_null() {
+                    anyhow::bail!(REFUSED);
+                }
+                let offset = (ace as usize)
+                    .checked_sub(acl as usize)
+                    .ok_or_else(|| anyhow::anyhow!(REFUSED))?;
+                if offset < size_of::<ACL>()
+                    || offset > usize::from(acl_header.AclSize)
+                    || size_of::<ACE_HEADER>() > usize::from(acl_header.AclSize) - offset
+                {
+                    anyhow::bail!(REFUSED);
+                }
+                let header = read_unaligned(ace.cast::<ACE_HEADER>());
+                let sid_offset = offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+                let ace_size = usize::from(header.AceSize);
+                // Unknown, conditional and object ACEs cannot establish the owner-only contract.
+                if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE
+                    || ace_size < sid_offset
+                    || ace_size > usize::from(acl_header.AclSize) - offset
+                {
+                    anyhow::bail!(REFUSED);
+                }
+                let sid = ace.cast::<u8>().add(sid_offset).cast();
+                if !valid_sid_in(sid, ace_size - sid_offset) || EqualSid(sid, current_user) == 0 {
+                    anyhow::bail!(REFUSED);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::common::credential_store::{read_private_text, tests::MockStore};
+        use crate::server::env_keys;
+        use std::collections::BTreeMap;
+        use std::io::Read;
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::fs::{symlink_file, OpenOptionsExt};
+        use std::path::{Path, PathBuf};
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SetNamedSecurityInfoW,
+            SDDL_REVISION_1,
+        };
+        use windows_sys::Win32::Security::{
+            ImpersonateSelf, RevertToSelf, SecurityImpersonation, SetFileSecurityW, SetTokenInformation, TokenOwner,
+            PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_ADJUST_DEFAULT, TOKEN_OWNER,
+        };
+        use windows_sys::Win32::Storage::FileSystem::{FILE_READ_ATTRIBUTES, FILE_READ_DATA};
+
+        fn user_sid() -> String {
+            let user = CurrentUser::query().unwrap();
+            let mut text = null_mut();
+            // SAFETY: the SID is valid and text receives a LocalFree allocation.
+            assert_ne!(unsafe { ConvertSidToStringSidW(user.sid(), &mut text) }, 0);
+            let allocation = LocalAllocation(text.cast());
+            let mut length = 0;
+            // SAFETY: successful conversion returns a NUL-terminated UTF-16 string.
+            unsafe {
+                while *text.add(length) != 0 {
+                    length += 1;
+                }
+                let sid = String::from_utf16(std::slice::from_raw_parts(text, length)).unwrap();
+                drop(allocation);
+                sid
+            }
+        }
+
+        fn descriptor(sddl: &str) -> LocalAllocation {
+            let wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
+            let mut descriptor = null_mut();
+            // SAFETY: wide is NUL-terminated and the output is owned by LocalAllocation.
+            assert_ne!(
+                unsafe {
+                    ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                        wide.as_ptr(),
+                        SDDL_REVISION_1,
+                        &mut descriptor,
+                        null_mut(),
+                    )
+                },
+                0,
+                "SDDL fixture conversion failed"
+            );
+            LocalAllocation(descriptor)
+        }
+
+        fn set_dacl(path: &Path, sddl: &str) {
+            let descriptor = descriptor(&format!("O:{}{sddl}", user_sid()));
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            // SAFETY: path and descriptor remain live for the synchronous API call.
+            assert_ne!(
+                unsafe {
+                    SetFileSecurityW(
+                        wide.as_ptr(),
+                        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                        descriptor.0,
+                    )
+                },
+                0,
+                "DACL fixture application failed"
+            );
+        }
+
+        fn private_file(contents: &[u8]) -> (tempfile::TempDir, PathBuf, String) {
+            let dir = tempfile::tempdir().unwrap();
+            let sid = user_sid();
+            set_dacl(dir.path(), &format!("D:P(A;OICI;FA;;;{sid})"));
+            let path = dir.path().join("private.env");
+            std::fs::write(&path, contents).unwrap();
+            set_dacl(&path, &format!("D:P(A;;FA;;;{sid})"));
+            (dir, path, sid)
+        }
+
+        struct UserOwnedCreation;
+
+        impl UserOwnedCreation {
+            fn enter() -> Self {
+                // SAFETY: impersonation is confined to this test thread and undone by Drop.
+                assert_ne!(unsafe { ImpersonateSelf(SecurityImpersonation) }, 0);
+                let guard = Self;
+                let mut token = null_mut();
+                // SAFETY: this thread now owns an impersonation token; the output slot is valid.
+                assert_ne!(
+                    unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY | TOKEN_ADJUST_DEFAULT, 1, &mut token) },
+                    0
+                );
+                // SAFETY: OpenThreadToken transferred an owned token handle.
+                let token = unsafe { OwnedHandle::from_raw_handle(token) };
+                let user = CurrentUser::query().unwrap();
+                let owner = TOKEN_OWNER { Owner: user.sid() };
+                // Elevated CI can default new objects to Administrators. Model an ordinary user
+                // without changing the process token or bypassing the production ownership check.
+                assert_ne!(
+                    unsafe {
+                        SetTokenInformation(
+                            token.as_raw_handle(),
+                            TokenOwner,
+                            (&owner as *const TOKEN_OWNER).cast(),
+                            size_of::<TOKEN_OWNER>() as u32,
+                        )
+                    },
+                    0
+                );
+                guard
+            }
+        }
+
+        impl Drop for UserOwnedCreation {
+            fn drop(&mut self) {
+                // SAFETY: only this test thread's impersonation state is reset.
+                assert_ne!(unsafe { RevertToSelf() }, 0);
+            }
+        }
+
+        #[test]
+        fn private_regular_file_and_missing_file_are_accepted() {
+            let (dir, path, _) = private_file(b"private-value");
+            assert_eq!(read_private_text(&path).unwrap(), "private-value");
+            assert_eq!(read_private_text(&dir.path().join("missing.env")).unwrap(), "");
+        }
+
+        #[test]
+        fn grants_to_other_principals_are_refused() {
+            for principal in ["WD", "BU", "BA", "SY"] {
+                let (_dir, path, sid) = private_file(b"must-not-load");
+                set_dacl(&path, &format!("D:P(A;;FA;;;{sid})(A;;GR;;;{principal})"));
+                assert!(read_private_text(&path).is_err(), "accepted grant to {principal}");
+            }
+        }
+
+        #[test]
+        fn null_dacl_file_is_refused() {
+            let (_dir, path, _) = private_file(b"must-not-load");
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            // SAFETY: a null DACL intentionally makes this temporary fixture unrestricted.
+            assert_eq!(
+                unsafe {
+                    SetNamedSecurityInfoW(
+                        wide.as_ptr(),
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                        null_mut(),
+                        null_mut(),
+                        null_mut(),
+                        null_mut(),
+                    )
+                },
+                0
+            );
+            assert!(read_private_text(&path).is_err());
+        }
+
+        #[test]
+        fn empty_dacl_grants_nobody_access_and_cannot_be_read() {
+            let user = CurrentUser::query().unwrap();
+            let (dir, path, sid) = private_file(b"must-not-load");
+            let empty = descriptor(&format!("O:{sid}D:P"));
+            // SAFETY: this OS-allocated descriptor and the current-user SID remain live.
+            assert!(unsafe { validate_descriptor(empty.0, user.sid()) }.is_ok());
+            set_dacl(&path, "D:P");
+            assert!(read_private_text(&path).is_err());
+            // The owner can restore the DACL so the temporary fixture can be removed.
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            let descriptor = descriptor(&format!("D:P(A;;FA;;;{sid})"));
+            // SAFETY: restore only the DACL; an empty DACL does not grant WRITE_OWNER.
+            assert_ne!(
+                unsafe { SetFileSecurityW(wide.as_ptr(), DACL_SECURITY_INFORMATION, descriptor.0) },
+                0
+            );
+            drop(dir);
+        }
+
+        #[test]
+        fn foreign_owner_missing_dacl_and_unsupported_ace_are_refused() {
+            let user = CurrentUser::query().unwrap();
+            let sid = user_sid();
+            for sddl in [
+                format!("O:WDD:P(A;;FA;;;{sid})"),
+                format!("O:{sid}"),
+                format!("O:{sid}D:P(D;;GW;;;WD)(A;;FA;;;{sid})"),
+            ] {
+                let descriptor = descriptor(&sddl);
+                // SAFETY: the fixture is OS-allocated and both SIDs remain live.
+                assert!(unsafe { validate_descriptor(descriptor.0, user.sid()) }.is_err());
+            }
+            // SAFETY: null is an explicitly rejected input and is never dereferenced.
+            assert!(unsafe { validate_descriptor(null_mut(), user.sid()) }.is_err());
+        }
+
+        #[test]
+        fn invalid_sid_acl_and_unknown_ace_are_refused() {
+            let user = CurrentUser::query().unwrap();
+            let sid = user_sid();
+            for defect in ["owner SID", "ACL", "ACE type"] {
+                let descriptor = descriptor(&format!("O:{sid}D:P(A;;FA;;;{sid})"));
+                // SAFETY: each mutation stays inside its fresh OS-allocated descriptor.
+                unsafe {
+                    let mut defaulted = 0;
+                    if defect == "owner SID" {
+                        let mut owner = null_mut();
+                        assert_ne!(GetSecurityDescriptorOwner(descriptor.0, &mut owner, &mut defaulted), 0);
+                        *owner.cast::<u8>() = 0;
+                    } else {
+                        let mut acl = null_mut();
+                        let mut present = 0;
+                        assert_ne!(
+                            GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut acl, &mut defaulted),
+                            0
+                        );
+                        if defect == "ACL" {
+                            (*acl).AclRevision = 0;
+                        } else {
+                            let mut ace = null_mut();
+                            assert_ne!(GetAce(acl, 0, &mut ace), 0);
+                            (*ace.cast::<ACE_HEADER>()).AceType = u8::MAX;
+                        }
+                    }
+                    assert!(
+                        validate_descriptor(descriptor.0, user.sid()).is_err(),
+                        "accepted invalid {defect}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn directory_symlink_and_dangling_symlink_are_refused() {
+            let (dir, path, _) = private_file(b"must-not-follow");
+            assert!(read_private_text(dir.path()).is_err());
+            let link = dir.path().join("link.env");
+            symlink_file(&path, &link).expect("Windows test runner must support file symlinks");
+            assert!(read_private_text(&link).is_err());
+            std::fs::remove_file(&path).unwrap();
+            assert!(
+                read_private_text(&link).is_err(),
+                "dangling reparse point was treated as missing"
+            );
+        }
+
+        #[test]
+        fn readable_handle_without_security_query_access_is_refused() {
+            let (_dir, path, _) = private_file(b"readable-but-unverified");
+            let mut file = std::fs::OpenOptions::new()
+                .access_mode(FILE_READ_DATA | FILE_READ_ATTRIBUTES)
+                .open(path)
+                .unwrap();
+            let mut text = String::new();
+            file.read_to_string(&mut text).unwrap();
+            assert_eq!(text, "readable-but-unverified");
+            assert!(validate_file(&file).is_err());
+        }
+
+        #[test]
+        fn private_file_preserves_utf8_and_size_limits() {
+            let (_dir, path, _) = private_file(&[0xff]);
+            assert!(read_private_text(&path).is_err());
+            std::fs::write(&path, vec![b'x'; 65536]).unwrap();
+            assert_eq!(read_private_text(&path).unwrap().len(), 65536);
+            std::fs::write(&path, vec![b'x'; 65537]).unwrap();
+            assert!(read_private_text(&path).is_err());
+        }
+
+        #[test]
+        fn private_legacy_write_opt_in_and_migration_round_trip() {
+            let _identity = UserOwnedCreation::enter();
+            let (_dir, path, _) = private_file(b"# retain\n");
+            let values = BTreeMap::from([("GROK_API_KEY".to_owned(), "fixture-private-provider-key".to_owned())]);
+            env_keys::update_keys(&path, &values, &[]).unwrap();
+            let original = read_private_text(&path).unwrap();
+            let store = MockStore::new();
+            let plaintext = env_keys::load_startup(&path, true, &store).unwrap();
+            assert_eq!(plaintext.values, values);
+            assert!(plaintext.warnings.is_empty());
+            assert!(store.values.lock().unwrap().is_empty());
+            assert_eq!(read_private_text(&path).unwrap(), original);
+            let migrated = env_keys::load_startup(&path, false, &store).unwrap();
+            assert_eq!(migrated.values, values);
+            assert!(migrated.warnings.is_empty());
+            assert_eq!(read_private_text(&path).unwrap(), "# retain\n");
+            assert_eq!(*store.values.lock().unwrap(), values);
+            let reloaded = env_keys::load_startup(&path, false, &store).unwrap();
+            assert_eq!(reloaded.values, values);
+            assert!(reloaded.warnings.is_empty());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    struct MockStore {
-        values: Mutex<BTreeMap<String, String>>,
+    pub(super) struct MockStore {
+        pub(super) values: Mutex<BTreeMap<String, String>>,
         fail_write: Mutex<BTreeSet<String>>,
         mismatch: Mutex<BTreeSet<String>>,
         unavailable: Mutex<bool>,
     }
 
     impl MockStore {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self {
                 values: Mutex::new(BTreeMap::new()),
                 fail_write: Mutex::new(BTreeSet::new()),
@@ -477,6 +986,25 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         let message = err.to_string();
         assert_eq!(message, "credential file path refused");
         assert!(!message.contains(".env"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_unix_file_preserves_mode_symlink_and_hardlink_checks() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private.env");
+        std::fs::write(&path, "private-value").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(read_private_text(&path).unwrap(), "private-value");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_private_text(&path).is_err());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.path().join("symlink.env");
+        symlink(&path, &link).unwrap();
+        assert!(read_private_text(&link).is_err());
+        std::fs::hard_link(&path, dir.path().join("hardlink.env")).unwrap();
+        assert!(read_private_text(&path).is_err());
     }
 
     #[test]
