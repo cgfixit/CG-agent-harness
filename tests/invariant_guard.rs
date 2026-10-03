@@ -200,6 +200,53 @@ fn duplicated_constants_still_agree() {
     assert!(!cgagentharness::shim::ACTIONS.contains(&"__sleep"));
 }
 
+/// `deny.toml` and `desktop/deny.toml` each carry a `[bans].deny` list of
+/// telemetry and analytics SDK crates (the CI half of the otel-hardening
+/// skill's T5 sweep, #297). cargo-deny matches exact names and stays silent
+/// about a banned crate that is absent from the graph, so a name added to one
+/// file and not the other, or misspelled in one, would never surface at check
+/// time. Both lists must be the same entries in the same order.
+#[test]
+fn deny_lists_ban_the_same_telemetry_crates() {
+    fn entries(name: &str) -> Vec<String> {
+        // A Git for Windows checkout with core.autocrlf=true carries CRLF, and
+        // no .gitattributes pins these files to LF; the table split below must
+        // not depend on the line ending (Codex P2 on #315).
+        let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(name))
+            .unwrap()
+            .replace("\r\n", "\n");
+        let bans = text
+            .split("\n[bans]\n")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{name} has no [bans] table"));
+        let bans = bans.split("\n[").next().unwrap();
+        let list = bans
+            .split_once("\ndeny = [")
+            .unwrap_or_else(|| panic!("{name} [bans] has no deny list"))
+            .1;
+        let list = list.split("\n]").next().unwrap();
+        list.lines()
+            .map(|line| line.split('#').next().unwrap().trim().trim_end_matches(','))
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+    let backend = entries("deny.toml");
+    let desktop = entries("desktop/deny.toml");
+    assert!(
+        backend.iter().any(|e| e.contains("crate = \"opentelemetry\"")),
+        "deny.toml [bans].deny lost the opentelemetry entry: {backend:?}"
+    );
+    let mut seen = std::collections::HashSet::new();
+    for entry in &backend {
+        assert!(seen.insert(entry), "deny.toml [bans].deny lists {entry} twice");
+    }
+    assert_eq!(
+        backend, desktop,
+        "deny.toml and desktop/deny.toml [bans].deny lists differ; add or change a crate in both files"
+    );
+}
+
 /// rust-toolchain.toml overrides every CI toolchain input, so its channel is
 /// the only compiler CI proves; it must stay the declared MSRV.
 #[test]
