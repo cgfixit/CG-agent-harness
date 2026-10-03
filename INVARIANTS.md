@@ -440,6 +440,7 @@ keys. Shim children receive a separate allowlist; only `real-repo-run` receives
 environment.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
+  `server::slash::tests::api_set_never_echoes_the_credential`,
   `tests/windows_private_credentials.rs`, `tests/panels.rs`, `tests/child_env.rs`, and
   `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 
