@@ -45,6 +45,10 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
   expanding this security feature into a framework/toolchain migration.
 - Duplicate versions are warnings under the existing policy. Advisories,
   unapproved licenses, wildcard requirements and unknown sources remain blocking.
+- Both `deny.toml` files ban push-telemetry and analytics SDK crates
+  (OpenTelemetry, Sentry, PostHog, Segment, Mixpanel, Amplitude, Datadog,
+  Honeycomb, Bugsnag, RudderStack, Statsig, LaunchDarkly, minitrace) by exact
+  name, the CI half of the otel-hardening skill's T5 pattern sweep.
 
 ## Check and synchronize
 
