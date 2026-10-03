@@ -4,8 +4,36 @@
 //! Names come from the same pair `chat_web::tools()` exposes: `web_search`, `web_fetch`.
 
 use std::collections::BTreeSet;
+use std::sync::LazyLock;
 
 use regex::{Captures, RegexBuilder};
+
+static UNSUPPORTED_CAPABILITY_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    RegexBuilder::new(
+        r"(?m)^\s*I (?:have access to (?:the )?(?:filesystem|shell|gh)\b|(?:ran|executed|invoked)\s+(?:the\s+)?(?:`?/|shell\b|gh\b))",
+    )
+    .case_insensitive(true)
+    .build()
+    .expect("static unsupported-capability pattern")
+});
+static ACCESS_DENIAL_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    RegexBuilder::new(r"I don't have access to ([^.\n]+)")
+        .case_insensitive(true)
+        .build()
+        .expect("static access-denial pattern")
+});
+static WEB_SEARCH_DENIAL_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    RegexBuilder::new(r"I cannot search the web")
+        .case_insensitive(true)
+        .build()
+        .expect("static web-search denial pattern")
+});
+static URL_READ_DENIAL_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    RegexBuilder::new(r"I cannot read URLs")
+        .case_insensitive(true)
+        .build()
+        .expect("static url-read denial pattern")
+});
 
 /// Names are derived from the definitions actually supplied to the model.
 pub fn chat_callable_names(web_on: bool) -> BTreeSet<String> {
@@ -76,13 +104,7 @@ fn tool_from_access_phrase(phrase: &str) -> Option<&'static str> {
 pub fn ground_assistant_text(text: &str, names: &BTreeSet<String>) -> String {
     // Explicit first-person execution claims are not tool evidence. Keep the
     // original answer visible but flag this narrow, testable claim family.
-    let unsupported = RegexBuilder::new(
-        r"(?m)^\s*I (?:have access to (?:the )?(?:filesystem|shell|gh)\b|(?:ran|executed|invoked)\s+(?:the\s+)?(?:`?/|shell\b|gh\b))",
-    )
-    .case_insensitive(true)
-    .build()
-    .expect("static unsupported-capability pattern");
-    if unsupported.is_match(text) {
+    if UNSUPPORTED_CAPABILITY_RE.is_match(text) {
         return format!("Harness notice: this chat cannot execute slash commands, filesystem, shell or gh operations. The execution/access claim below is unsupported.\n\n{text}");
     }
     if names.is_empty() {
@@ -92,19 +114,7 @@ pub fn ground_assistant_text(text: &str, names: &BTreeSet<String>) -> String {
         "This turn includes {}. Call those tools instead of claiming they are unavailable.",
         display_names(names)
     );
-    let access = RegexBuilder::new(r"I don't have access to ([^.\n]+)")
-        .case_insensitive(true)
-        .build()
-        .expect("static access-denial pattern");
-    let search = RegexBuilder::new(r"I cannot search the web")
-        .case_insensitive(true)
-        .build()
-        .expect("static web-search denial pattern");
-    let urls = RegexBuilder::new(r"I cannot read URLs")
-        .case_insensitive(true)
-        .build()
-        .expect("static url-read denial pattern");
-    let mut out = access
+    let mut out = ACCESS_DENIAL_RE
         .replace_all(text, |caps: &Captures| {
             let phrase = caps.get(1).map(|m| m.as_str()).unwrap_or("");
             match tool_from_access_phrase(phrase) {
@@ -114,10 +124,10 @@ pub fn ground_assistant_text(text: &str, names: &BTreeSet<String>) -> String {
         })
         .into_owned();
     if names.contains("web_search") {
-        out = search.replace_all(&out, notice.as_str()).into_owned();
+        out = WEB_SEARCH_DENIAL_RE.replace_all(&out, notice.as_str()).into_owned();
     }
     if names.contains("web_fetch") {
-        out = urls.replace_all(&out, notice.as_str()).into_owned();
+        out = URL_READ_DENIAL_RE.replace_all(&out, notice.as_str()).into_owned();
     }
     out
 }
