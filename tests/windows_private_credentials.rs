@@ -162,8 +162,6 @@ fn inspect(path: &Path) -> Security {
         let mut raw = null_mut();
         assert_ne!(unsafe { GetAce(acl, index as u32, &mut raw) }, 0);
         let header = unsafe { &*raw.cast::<ACE_HEADER>() };
-        // Fixtures and writer output require ordinary allow ACEs, whose fixed layout
-        // places a variable-length SID after the mask.
         assert_eq!(header.AceType, 0, "unexpected ACE in {path:?}");
         let sid_offset = offset_of!(ACCESS_ALLOWED_ACE, SidStart);
         assert!(header.AceSize as usize >= sid_offset + 8);
@@ -375,7 +373,6 @@ fn locked_target_preserves_old_bytes_and_cleans_stage() {
     let path = dir.path().join(".env");
     let prior = b"export DEEPAGENT_API_KEY='old-value'\n";
     private_fixture(&path, prior);
-    // Permit the initial read, but refuse replacement's DELETE access.
     let lock = OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ)

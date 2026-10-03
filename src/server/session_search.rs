@@ -42,6 +42,8 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
     if terms.is_empty() {
         return Ok(Vec::new());
     }
+    let lower_query = query.to_lowercase();
+    let overlap = lower_query.chars().count() - 1;
 
     let mut schema_builder = Schema::builder();
     let text_options = TextOptions::default().set_indexing_options(
@@ -79,7 +81,7 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
             if bytes > MAX_BYTES {
                 break;
             }
-            for chunk in chunks(&msg.text) {
+            for chunk in chunks(&msg.text, overlap) {
                 let row = evidence.len() as u64;
                 evidence.push((
                     session.session_id.clone(),
@@ -139,7 +141,16 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
         let Some((sid, title, role, ts, text)) = evidence.get(row) else {
             continue;
         };
-        if !text.to_lowercase().contains(&query.to_lowercase()) {
+        let Some(match_start) = text.to_lowercase().find(&lower_query) else {
+            continue;
+        };
+        let owned_bytes = text
+            .chars()
+            .take(CHUNK_CHARS)
+            .flat_map(char::to_lowercase)
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if match_start >= owned_bytes {
             continue;
         }
         let n = per_session.entry(sid.clone()).or_insert(0);
@@ -162,12 +173,19 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
     Ok(hits)
 }
 
-fn chunks(text: &str) -> Vec<String> {
+fn chunks(text: &str, overlap: usize) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() {
         return Vec::new();
     }
-    chars.chunks(CHUNK_CHARS).map(|c| c.iter().collect()).collect()
+    (0..chars.len())
+        .step_by(CHUNK_CHARS)
+        .map(|start| {
+            chars[start..(start + CHUNK_CHARS + overlap).min(chars.len())]
+                .iter()
+                .collect()
+        })
+        .collect()
 }
 
 fn snippet(text: &str, query: &str) -> String {
@@ -192,6 +210,47 @@ fn snippet(text: &str, query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::sessions::{SessionStore, TokenTally};
+
+    #[test]
+    fn search_finds_literal_phrases_across_transcript_chunk_boundaries() {
+        for query in [
+            "needle across boundary".to_string(),
+            format!("{}edge", "needle ".repeat(28)),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = SessionStore::new(dir.path()).unwrap();
+            let owned = store.for_owner("user_search_boundary");
+            let session = owned.create("test", "boundary fixture").unwrap();
+            let text = format!("{} {query}", "界 ".repeat(599));
+            owned
+                .record_exchange(&session.session_id, &text, "reply", "test", &TokenTally::default(), &[])
+                .unwrap();
+
+            let hits = search_sessions(&owned, &query).unwrap();
+            assert_eq!(hits.len(), 1, "expected one hit for {query:?}, got {hits:?}");
+            assert_eq!(hits[0].session_id, session.session_id);
+            assert_eq!(hits[0].role, "user");
+            assert!(hits[0].snippet.contains("needle"), "{hits:?}");
+        }
+    }
+
+    #[test]
+    fn search_returns_one_hit_for_a_single_case_expanded_boundary_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let owned = store.for_owner("user_search_boundary");
+        let session = owned.create("test", "boundary fixture").unwrap();
+        let text = format!("{}İneedle", "界 ".repeat(600));
+        owned
+            .record_exchange(&session.session_id, &text, "reply", "test", &TokenTally::default(), &[])
+            .unwrap();
+
+        let hits = search_sessions(&owned, "İneedle").unwrap();
+        assert_eq!(hits.len(), 1, "a single occurrence must yield one hit, got {hits:?}");
+        assert_eq!(hits[0].session_id, session.session_id);
+        assert!(hits[0].snippet.contains("İneedle"), "{hits:?}");
+    }
 
     #[test]
     fn snippets_preserve_unicode_and_locate_case_expanded_matches() {

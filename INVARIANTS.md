@@ -379,7 +379,7 @@ Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
 commit, and uses an object-ID refspec; publication checks the remote branch.
 HTTPS credentials use `gh`, with ambient Git helpers, hooks and prompts disabled
-and `GH_NO_UPDATE_NOTIFIER=1`, `DO_NOT_TRACK=1` forced.
+and `child_env` gh opt-outs forced.
 Accepted SSH origins can use the operator's SSH configuration and keys.
 Current policy and separate reason/confirmation remain required.
 Older records without these bindings need a new reviewed run. No transaction
@@ -415,22 +415,24 @@ callers append inline.
 
 ## Provider keys live in the OS credential store
 
-Managed provider keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
+Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
 `SERPAPI_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
 `CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or
 Windows Credential Manager. Inherited environment values, including empty, win.
-Legacy home `.env` is read for migration or explicit opt-in. Migration removes
-managed lines only after verified store writes. Unknown lines and failed assignments stay; failures warn without values
-and are not loaded. Settings save/clear fail closed if the store is unavailable.
+Legacy home `.env` migration removes only store-verified assignments;
+unknown/failed lines stay. Failures warn without values and leave keys unloaded.
+Settings save/clear use the store and fail closed when unavailable.
 `security.allow_plaintext_key_file` ships false; only literal boolean `true`
-keeps the legacy file; quoted `"true"` is off. Unix writes retain 0600. Windows
-saves and migration cleanup create an explicit current-user owner and protected
-user-only DACL, verify the empty staged file, then sync and replace through its
-held handle. Failures preserve the destination. Entries use canonical-home
-service names; keyring targets select a macOS domain or the sole Windows
-credential name. Paths containing a `..` component are refused before open.
-Non-UTF-8 store entries are dropped unread. Values never enter argv, logs,
-diagnostics or `/api` responses, which show presence and masked tails only.
+permits live plaintext; quoted `"true"` is off. Unix requires owner uid, 0600
+access and one link. Windows requires a regular non-reparse file owned by the
+effective user with a verifiable DACL containing only ordinary allow
+ACEs for that user. Windows writes create an explicit owner and
+protected DACL matching these checks, verify empty stages, sync and replace
+through the held handle. Failures preserve destinations. Services
+include canonical home; keyring targets select a macOS domain or the sole Windows
+credential name, not a namespace. `..` path components are refused before open;
+non-UTF-8 store entries are dropped unread. Values never enter argv,
+logs, diagnostics or `/api` responses, which show presence and masked tails only.
 Account passwords stay scrypt-hashed in `auth.sqlite3`. Startup loads keys into
 the harness environment. Git/`gh` children receive an allowlist without provider
 keys. Shim children receive a separate allowlist; only `real-repo-run` receives
@@ -438,7 +440,7 @@ keys. Shim children receive a separate allowlist; only `real-repo-run` receives
 environment.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
-  `tests/panels.rs`, `tests/child_env.rs`, and
+  `tests/windows_private_credentials.rs`, `tests/panels.rs`, `tests/child_env.rs`, and
   `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 
 ## A detached run cannot outlive its gates

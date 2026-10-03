@@ -11,6 +11,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 
 use crate::common::audit::Audit;
+use crate::common::child_env::{self, Child};
 use crate::common::errors::{HarnessError, Result};
 use crate::common::process::{self, RunSpec};
 
@@ -80,13 +81,12 @@ pub fn is_transient_gh_error(stderr: &str) -> bool {
     transient_re().is_match(stderr)
 }
 
-/// Git credentials and runtime settings, with telemetry opt-outs forced on top.
+/// Git credentials and runtime settings (no provider keys), with the gh
+/// opt-outs forced on top.
 pub fn gh_env() -> BTreeMap<String, String> {
     let mut env = super::git::environment(&[]);
-    env.insert("GH_TELEMETRY".into(), "false".into());
-    env.insert("GH_NO_UPDATE_NOTIFIER".into(), "1".into());
     env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
-    env.insert("DO_NOT_TRACK".into(), "1".into());
+    child_env::apply(&mut env, Child::Gh);
     env
 }
 
@@ -498,4 +498,27 @@ pub fn run_read(audit: &Audit, req: &ReadRequest<'_>) -> Result<Value> {
             .detail("output", crate::common::clip_chars(&out.stdout, 500))
     })?;
     Ok(json!({"op": req.op, "repo": req.repo, "data": data}))
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::gh_env;
+    use crate::common::child_env::{telemetry_opt_outs, Child};
+
+    #[test]
+    fn gh_env_forces_every_gh_opt_out_over_the_inherited_env() {
+        let env = gh_env();
+        assert_eq!(env.get("GIT_TERMINAL_PROMPT").map(String::as_str), Some("0"));
+        for (key, value) in telemetry_opt_outs(Child::Gh) {
+            assert_eq!(env.get(*key).map(String::as_str), Some(*value), "{key}");
+        }
+        assert_eq!(
+            env.get("GH_NO_EXTENSION_UPDATE_NOTIFIER").map(String::as_str),
+            Some("1")
+        );
+        // The inherit is deliberate: gh still sees more than the forced pairs.
+        // Other lib tests mutate the process env concurrently, so no snapshot
+        // comparison; PATH is set on every host the suite runs on.
+        assert!(env.contains_key("PATH"), "gh_env must keep the inherited PATH");
+    }
 }

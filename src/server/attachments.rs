@@ -1090,16 +1090,14 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlinked_attachment_root_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
         let outside = tmp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         let root = tmp.path().join("attachments");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, &root).unwrap();
-        #[cfg(not(unix))]
-        return;
         let err = AttachmentStore::open(&root).unwrap_err();
         assert_eq!(err.code, "IO_ERROR");
         assert!(err.message.contains("symlink"), "{}", err.message);

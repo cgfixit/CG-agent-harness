@@ -137,19 +137,22 @@ pub async fn search_session_transcripts(
     ValidJson(req): ValidJson<SessionSearchRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    let hits = search_sessions(&state.store.for_owner(&owner), &req.query)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    Ok(Json(json!({
-        "index": "tantivy-bm25",
-        "hits": hits.iter().map(|h| json!({
-            "session_id": h.session_id,
-            "title": h.title,
-            "snippet": h.snippet,
-            "role": h.role,
-            "ts": h.ts,
-            "score": h.score,
-        })).collect::<Vec<_>>(),
-    })))
+    super::structured_memory::off_worker(move || {
+        let hits = search_sessions(&state.store.for_owner(&owner), &req.query)
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+        Ok(Json(json!({
+            "index": "tantivy-bm25",
+            "hits": hits.iter().map(|h| json!({
+                "session_id": h.session_id,
+                "title": h.title,
+                "snippet": h.snippet,
+                "role": h.role,
+                "ts": h.ts,
+                "score": h.score,
+            })).collect::<Vec<_>>(),
+        })))
+    })
+    .await
 }
 
 // Account identity comes only from the guarded request extension.

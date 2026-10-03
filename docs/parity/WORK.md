@@ -60,7 +60,8 @@ Session D tracks an exact-artifact table separately.
 3. Issue #32 Sessions C–E: exhausted-run diagnostics child issue, native
    exact-artifact matrix, then rewrite/close the tracker.
 4. Connector/integration actions stay missing until separately prioritized.
-   Shared A1/C10/O6/O7 remain open until their consumers land.
+   Shared A1/C10/O7 remain open until their consumers land; O6 closed with the
+   shared `common::child_env` builder (desktop crate exemption in its row).
 
 The 48-action assignment is not complete. Missing connectors are not waived.
 

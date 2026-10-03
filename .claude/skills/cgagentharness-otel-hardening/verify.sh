@@ -91,23 +91,71 @@ _mutate "$a/src/agentic/gh_client.rs" '
 text = text.replace("pub fn gh_env(", "pub fn gh_env_removed(", 1)'
 _expect "T1 builder-removed mutation" 2 "FAIL  \[T1\].*agentic-gh"
 
-# T2: VALUE flip in the executor env (key survives; only the value oracle sees it).
+# T1: the shared builder disappears (every routed site then also loses its arm).
 a="$(_mktree)"
-_mutate "$a/src/agentic/executor/runner.rs" '
+_mutate "$a/src/common/child_env.rs" '
+text = text.replace("pub fn telemetry_opt_outs(", "pub fn telemetry_opt_outs_removed(", 1)'
+_expect "T1 shared-builder-removed mutation" 2 "FAIL  \[T1\] child-env"
+
+# T2: VALUE flip inside the shared builder's gh arm (the first GH_TELEMETRY
+# literal in the file). The arm check names it, and the sites that route
+# through that arm fail on their effective pairs too.
+a="$(_mktree)"
+_mutate "$a/src/common/child_env.rs" '
 text = text.replace("(\"GH_TELEMETRY\", \"false\")", "(\"GH_TELEMETRY\", \"true\")", 1)'
-_expect "T2 runner value-flip mutation" 2 "FAIL  \[T2\] executor-runner: GH_TELEMETRY"
+_expect "T2 builder gh-arm value-flip mutation" 2 "FAIL  \[T2\] child-env/Gh: GH_TELEMETRY"
+a="$(_mktree)"
+_mutate "$a/src/common/child_env.rs" '
+text = text.replace("(\"GH_TELEMETRY\", \"false\")", "(\"GH_TELEMETRY\", \"true\")", 1)'
+_expect "T2 builder gh-arm value-flip reaches agentic-gh" 2 "FAIL  \[T2\] agentic-gh: GH_TELEMETRY"
 
-# T2: dropped pair.
+# T2: a pair dropped from the verifier arm surfaces at the routed site.
+a="$(_mktree)"
+_mutate "$a/src/common/child_env.rs" '
+text = text.replace("            (\"HF_HUB_DISABLE_TELEMETRY\", \"1\"),\n", "", 1)'
+_expect "T2 builder verifier-arm dropped-pair mutation" 2 "FAIL  \[T2\] executor-runner: missing HF_HUB_DISABLE_TELEMETRY"
+
+# T2: the extension-update notifier (the gap the builder closed) regresses.
+a="$(_mktree)"
+_mutate "$a/src/common/child_env.rs" '
+text = text.replace("            (\"GH_NO_EXTENSION_UPDATE_NOTIFIER\", \"1\"),\n", "", 1)'
+_expect "T2 builder extension-notifier dropped mutation" 2 "FAIL  \[T2\] agentic-git: missing GH_NO_EXTENSION_UPDATE_NOTIFIER"
+
+# T2: a new arm lands unpinned.
+a="$(_mktree)"
+_mutate "$a/src/common/child_env.rs" '
+text = text.replace("        Child::McpServer => &[(\"DO_NOT_TRACK\", \"1\")],\n", "        Child::McpServer => &[(\"DO_NOT_TRACK\", \"1\")],\n        Child::Zz => &[(\"ZZ_TELEMETRY\", \"0\")],\n", 1)'
+_expect "T2 builder unclassified-arm mutation" 2 "FAIL  \[T2\] child-env: unclassified arm Child::Zz"
+
+# T2: a site stops calling the builder (its own literals still match, so only
+# the routing check and the effective pairs see it).
+a="$(_mktree)"
+_mutate "$a/src/common/mcp.rs" '
+text = text.replace("        child_env::apply(&mut env, child_env::Child::McpServer);\n", "", 1)'
+_expect "T2 mcp spawn drops child_env::apply mutation" 2 "FAIL  \[T2\] mcp-stdio: body no longer routes through"
+a="$(_mktree)"
+_mutate "$a/src/common/mcp.rs" '
+text = text.replace("        child_env::apply(&mut env, child_env::Child::McpServer);\n", "", 1)'
+_expect "T2 mcp spawn without apply loses DO_NOT_TRACK" 2 "FAIL  \[T2\] mcp-stdio: missing DO_NOT_TRACK"
+
+# T2: a site routes through the wrong arm (git would lose gh's switches).
+a="$(_mktree)"
+_mutate "$a/src/agentic/git.rs" '
+text = text.replace("child_env::apply(&mut env, Child::Gh);", "child_env::apply(&mut env, Child::McpServer);", 1)'
+_expect "T2 git routes through wrong arm mutation" 2 "FAIL  \[T2\] agentic-git: missing GH_TELEMETRY"
+
+# T2: a site re-pins a builder-owned name itself (two owners drift apart).
 a="$(_mktree)"
 _mutate "$a/src/agentic/executor/runner.rs" '
-text = text.replace("        (\"DO_NOT_TRACK\", \"1\"),\n", "", 1)'
-_expect "T2 runner dropped-pair mutation" 2 "FAIL  \[T2\] executor-runner: missing DO_NOT_TRACK"
+text = text.replace("        (\"CARGO_NET_OFFLINE\", \"true\"),\n", "        (\"CARGO_NET_OFFLINE\", \"true\"),\n        (\"DO_NOT_TRACK\", \"1\"),\n", 1)'
+_expect "T2 runner re-pins builder-owned name mutation" 2 "FAIL  \[T2\] executor-runner: pins DO_NOT_TRACK itself"
 
-# T2: insert-form flip (gh_env uses .insert("K".into(), "V".into())).
+# T2: insert-form flip (gh_env still uses .insert("K".into(), "V".into()) for
+# its one non-builder pair).
 a="$(_mktree)"
 _mutate "$a/src/agentic/gh_client.rs" '
-text = text.replace("env.insert(\"GH_TELEMETRY\".into(), \"false\".into());", "env.insert(\"GH_TELEMETRY\".into(), \"log\".into());", 1)'
-_expect "T2 gh_env insert-flip mutation" 2 "FAIL  \[T2\] agentic-gh: GH_TELEMETRY"
+text = text.replace("env.insert(\"GIT_TERMINAL_PROMPT\".into(), \"0\".into());", "env.insert(\"GIT_TERMINAL_PROMPT\".into(), \"1\".into());", 1)'
+_expect "T2 gh_env insert-flip mutation" 2 "FAIL  \[T2\] agentic-gh: GIT_TERMINAL_PROMPT"
 
 # T2: .env()-form flip on the desktop sidecar.
 a="$(_mktree)"

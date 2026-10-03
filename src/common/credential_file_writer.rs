@@ -1,5 +1,3 @@
-//! Windows credential staging keeps creation, verification and publication on one handle.
-
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::{self, Write};
@@ -243,7 +241,6 @@ impl PrivateStage {
             }
             let header = &*ace.cast::<ACE_HEADER>();
             let offset = offset_of!(ACCESS_ALLOWED_ACE, SidStart);
-            // Reject every other ACE layout before casting it.
             if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8
                 || header.AceFlags != 0
                 || (header.AceSize as usize) < offset + 8
