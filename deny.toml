@@ -33,6 +33,88 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Push-telemetry and analytics SDKs, by exact crate name. The otel-hardening
+# skill's T5 (`.claude/skills/cgagentharness-otel-hardening/check_otel.py`,
+# `DENIED_TELEMETRY_CRATE_PATTERNS`) sweeps both lock graphs by name pattern,
+# but it is a manual skill; this list is the CI half. cargo-deny takes exact
+# names, not patterns, so each family lists the crates published on crates.io
+# (checked 2026-10-03). Keep this list identical in deny.toml and
+# desktop/deny.toml, and add a new family's names to both.
+deny = [
+    # OpenTelemetry (api, sdk, exporters, appenders, tracing bridge)
+    { crate = "opentelemetry", reason = "telemetry SDK; otel-hardening T5" },
+    { crate = "opentelemetry_sdk", reason = "telemetry SDK; otel-hardening T5" },
+    { crate = "opentelemetry-api", reason = "telemetry SDK (pre-0.21 api crate); otel-hardening T5" },
+    { crate = "opentelemetry-otlp", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "opentelemetry-proto", reason = "telemetry wire format; otel-hardening T5" },
+    { crate = "opentelemetry-http", reason = "telemetry transport; otel-hardening T5" },
+    { crate = "opentelemetry-semantic-conventions", reason = "telemetry SDK; otel-hardening T5" },
+    { crate = "opentelemetry-appender-tracing", reason = "telemetry log bridge; otel-hardening T5" },
+    { crate = "opentelemetry-appender-log", reason = "telemetry log bridge; otel-hardening T5" },
+    { crate = "opentelemetry-stdout", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "opentelemetry-jaeger", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "opentelemetry-jaeger-propagator", reason = "telemetry propagator; otel-hardening T5" },
+    { crate = "opentelemetry-zipkin", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "opentelemetry-prometheus", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "opentelemetry-datadog", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "opentelemetry-aws", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "opentelemetry-contrib", reason = "telemetry SDK; otel-hardening T5" },
+    { crate = "opentelemetry-resource-detectors", reason = "telemetry SDK; otel-hardening T5" },
+    { crate = "tracing-opentelemetry", reason = "telemetry bridge from tracing; otel-hardening T5" },
+    # Sentry (crash and error reporting)
+    { crate = "sentry", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-core", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-types", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-backtrace", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-contexts", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-panic", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-debug-images", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-tracing", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-log", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-anyhow", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-tower", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-actix", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-slog", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-opentelemetry", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "sentry-rust-minidump", reason = "crash-reporting SDK; otel-hardening T5" },
+    # Product analytics
+    { crate = "posthog-rs", reason = "analytics SDK; otel-hardening T5" },
+    { crate = "posthog", reason = "analytics SDK; otel-hardening T5" },
+    { crate = "segment", reason = "analytics SDK; otel-hardening T5" },
+    { crate = "segment-analytics", reason = "analytics SDK; otel-hardening T5" },
+    { crate = "analytics", reason = "analytics SDK (Segment); otel-hardening T5" },
+    { crate = "analytics-rust", reason = "analytics SDK (Segment); otel-hardening T5" },
+    { crate = "mixpanel", reason = "analytics SDK; otel-hardening T5" },
+    { crate = "mixpanel-rs", reason = "analytics SDK; otel-hardening T5" },
+    { crate = "amplitude", reason = "analytics SDK; otel-hardening T5" },
+    { crate = "amplitude-rs", reason = "analytics SDK; otel-hardening T5" },
+    { crate = "rudderanalytics", reason = "analytics SDK (RudderStack); otel-hardening T5" },
+    # APM / observability vendors
+    { crate = "datadog-apm", reason = "APM SDK; otel-hardening T5" },
+    { crate = "datadog-tracing", reason = "APM SDK; otel-hardening T5" },
+    { crate = "datadog-statsd", reason = "APM SDK; otel-hardening T5" },
+    { crate = "datadog-client", reason = "APM SDK; otel-hardening T5" },
+    { crate = "datadog-api-client", reason = "APM SDK; otel-hardening T5" },
+    { crate = "ddtrace", reason = "APM SDK (Datadog); otel-hardening T5" },
+    { crate = "dd-trace", reason = "APM SDK (Datadog); otel-hardening T5" },
+    { crate = "libhoney", reason = "telemetry SDK (Honeycomb); otel-hardening T5" },
+    { crate = "libhoney-rust", reason = "telemetry SDK (Honeycomb); otel-hardening T5" },
+    { crate = "tracing-honeycomb", reason = "telemetry SDK (Honeycomb); otel-hardening T5" },
+    { crate = "bugsnag", reason = "crash-reporting SDK; otel-hardening T5" },
+    { crate = "minitrace", reason = "telemetry SDK; otel-hardening T5" },
+    { crate = "minitrace-opentelemetry", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "minitrace-jaeger", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "minitrace-datadog", reason = "telemetry exporter; otel-hardening T5" },
+    { crate = "minitrace-macro", reason = "telemetry SDK; otel-hardening T5" },
+    # Feature-flag SDKs that report evaluation events upstream
+    { crate = "statsig", reason = "feature-flag SDK with event upload; otel-hardening T5" },
+    { crate = "statsig-rust", reason = "feature-flag SDK with event upload; otel-hardening T5" },
+    { crate = "statsig-rs", reason = "feature-flag SDK with event upload; otel-hardening T5" },
+    { crate = "launchdarkly-server-sdk", reason = "feature-flag SDK with event upload; otel-hardening T5" },
+    { crate = "launchdarkly", reason = "feature-flag SDK with event upload; otel-hardening T5" },
+    # Bare names the T5 substring rules would also fail on
+    { crate = "telemetry", reason = "telemetry SDK; otel-hardening T5" },
+]
 
 [sources]
 unknown-registry = "deny"

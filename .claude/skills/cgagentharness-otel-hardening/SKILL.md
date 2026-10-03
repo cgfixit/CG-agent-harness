@@ -85,8 +85,9 @@ common base by convention.
    closed here: `GH_NO_EXTENSION_UPDATE_NOTIFIER=1` is set nowhere (CyClaw sets
    it); MCP stdio children get no `DO_NOT_TRACK`, so a server declared with
    `network: unrestricted` runs telemetry-live; a `common::child_env` builder
-   would retire the T9 convention and close parity O6. A `[bans].deny` list in
-   `deny.toml` for the T5 patterns would make CI enforce the lock-graph half.
+   would retire the T9 convention and close parity O6. The lock-graph half is
+   CI-enforced: `[bans].deny` in `deny.toml` and `desktop/deny.toml` lists the
+   T5 families by exact crate name; a new family's names go in both files.
 
 5. **Classify anything new; retire anything gone.** A new crate, binary,
    provider, connector or spawn site gets an `INVENTORY` row or alias with
@@ -127,7 +128,8 @@ common base by convention.
 - **Ollama has no telemetry switch to set.** `POST /api/ollama/pull` asks the
   daemon to fetch a model; the daemon's registry egress is outside this
   process. Do not add a speculative `OLLAMA_*` pair.
-- **`cargo deny` does not enforce T5 today**; a telemetry crate would pass CI
-  until `deny.toml` bans it (step 4).
+- **`cargo deny` bans exact names; T5 matches patterns.** A telemetry crate
+  under a name neither `deny.toml` lists passes CI until both list it; T5
+  still catches it. Verify a name on crates.io before adding it.
 - The desktop lock resolves two `reqwest` majors (0.12 via the harness, 0.13
   via tauri); duplicate versions are warn-only policy, reported as INFO.
