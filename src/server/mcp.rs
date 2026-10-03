@@ -639,12 +639,13 @@ mod config_tests {
         // DevSkim: ignore DS162092 because the request must target that closed loopback port to fail.
         let url = format!("http://127.0.0.1:{port}/sse?token=sse-url-secret-token");
         let err = call_sse(&runtime, &url, "echo", json!({})).await.unwrap_err();
-        assert_eq!(err.code, "MCP_SSE");
-        assert_eq!(err.message, "sse connection failed");
+        // Fixed failure messages: the error under test may carry the token.
+        assert!(err.code == "MCP_SSE", "unexpected error code");
+        assert!(err.message == "sse connection failed", "unexpected error message");
         let shown = format!("{err:?}");
         assert!(
             !shown.contains("sse-url-secret-token") && !shown.contains("/sse?"),
-            "{shown}"
+            "transport error echoed the SSE URL"
         );
     }
 

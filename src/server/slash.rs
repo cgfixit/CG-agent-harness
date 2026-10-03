@@ -893,14 +893,19 @@ mod tests {
 
     #[test]
     fn api_set_never_echoes_the_credential() {
+        // Failure messages name a case index, never the line or the parse:
+        // either would print the credential this test guards.
         let secret = "sk-slash-parse-secret-0123456789";
         let exact = parse_line(&format!("/api set EXAMPLE {secret}"));
-        assert!(exact.dispatch, "{exact:?}");
-        assert_eq!(exact.command.as_deref(), Some("api"));
-        assert_eq!(exact.sub.as_deref(), Some("set"));
-        assert_eq!(exact.canonical.as_deref(), Some("/api set EXAMPLE"));
-        assert_eq!(exact.rest, "EXAMPLE");
-        for line in [
+        assert!(exact.dispatch, "exact /api set must dispatch");
+        assert!(
+            exact.command.as_deref() == Some("api")
+                && exact.sub.as_deref() == Some("set")
+                && exact.canonical.as_deref() == Some("/api set EXAMPLE")
+                && exact.rest == "EXAMPLE",
+            "exact /api set must echo only the key name"
+        );
+        for (case, line) in [
             format!("/api set EXAMPLE {secret}"),
             format!("/API SET EXAMPLE {secret}"),
             format!("/api   set  EXAMPLE   {secret} with spaces"),
@@ -909,9 +914,12 @@ mod tests {
             format!("/api EXAMPLE {secret}"),
             format!("/apii set EXAMPLE {secret}"),
             format!("/api set EXAMPLE {secret} and search docs"),
-        ] {
-            let echoed = parse_line(&line).to_json().to_string();
-            assert!(!echoed.contains(secret), "{line}: {echoed}");
+        ]
+        .iter()
+        .enumerate()
+        {
+            let echoed = parse_line(line).to_json().to_string();
+            assert!(!echoed.contains(secret), "case {case} echoed the credential");
         }
     }
 
