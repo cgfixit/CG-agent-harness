@@ -1,16 +1,15 @@
 # Private read-only MCP memory gateway
 
-The gateway implements the local, read-only selection in issues #102 and #185.
-It runs in the harness process, uses the existing owner-filtered memory store,
-and listens separately from the console. It does not open another structured
-memory database or expose the portal. The outbound client remains controlled by
-`mcp.enabled`; the inbound gateway uses `mcp.server.enabled`.
+The gateway runs in the harness process, uses the owner-filtered memory store,
+and listens separately from the console. It does not open another memory
+database or expose the portal. `mcp.enabled` controls the outbound client;
+`mcp.server.enabled` controls this inbound gateway.
 
-A new or upgraded home has no inbound listener unless that second switch is
-literal `true`. Listener enablement grants no tools: `mcp.server.tools` defaults
-to an empty list. The supported tools are `memory_list_facts`, `memory_get_fact`,
-and `memory_search`. Each requires a dedicated `memory:read` key. No proposal,
-fact write, session, notes, spend, audit, agent, chat or loop tool is published.
+New and upgraded homes have no inbound listener unless the switch is literal
+`true`. `mcp.server.tools` defaults empty. Supported tools are
+`memory_list_facts`, `memory_get_fact`, and `memory_search`; each requires a
+`memory:read` key. The gateway publishes no write, session, notes, spend, audit,
+agent, chat, or loop tool.
 
 ## Deliberate local activation
 
@@ -42,23 +41,20 @@ fact write, session, notes, spend, audit, agent, chat or loop tool is published.
      --confirm --reason 'Allow this workstation to read the selected memory namespace'
    ```
 
-   The CLI runs under trusted local filesystem authority; it does not impersonate
-   a console administrator. `issued_by_user_id` is therefore null. Creation does
-   not create facts or copy another owner's memory. Store the returned bearer
-   token in the client's protected credential storage. It is printed once; it
-   cannot be retrieved later. Do not put it in config, a URL, logs or screenshots.
+   The CLI uses trusted local filesystem authority, so `issued_by_user_id` is
+   null. Creation neither adds facts nor copies memory. Store the one-time bearer
+   token in protected client storage, never config, URLs, logs, or screenshots.
 4. Start `cgagentharness serve` or the native sidecar. Configure the MCP client
    to POST Streamable HTTP to `http://127.0.0.1:8791/mcp` with
    `Authorization: Bearer <token>`. Use the literal configured IP and port;
    `localhost` is not an alias for a different Host authority. The console
    retains its own account and TLS configuration.
 
-The pinned official Rust SDK is `rmcp =3.4.0`, with only server and Streamable
-HTTP transport features. The transport is stateless, including older supported
-protocol versions; it allocates no durable MCP sessions. SDK trace output is
-suppressed by the CLI's logging filter because protocol traces can contain
-memory. Harness call/refusal audits contain public key IDs, recognized tool names
-and coarse outcomes only, never arguments, fact text, tokens or hashes.
+The pinned Rust SDK is `rmcp =3.4.0`, with only server and Streamable HTTP
+transport features. The transport is stateless, including for older supported
+protocol versions, and creates no durable MCP sessions. The CLI suppresses SDK trace output because protocol traces can
+contain memory. Call and refusal audits contain only public key IDs, recognized
+tool names, and coarse outcomes. They omit arguments, fact text, tokens, and hashes.
 
 ## Keys, isolation and revocation
 
@@ -68,36 +64,32 @@ account authentication is disabled. A key has a public 128-bit ID and a random
 unknown/disabled keys follow a dummy-hash comparison path. No password KDF runs
 per tool call. The dedicated `mcp_keys.sqlite3` uses a STRICT schema with its own
 `user_version=1` and `mcp_keys.initialized` marker. Auth and memory schemas are
-unchanged. On Unix, database and marker must be owned regular mode-0600 files,
-not symlinks or hard links, and the home directory mode is `0700`. Missing
-initialized, corrupt, oversized or unknown schema storage refuses instead of
-recreating credentials. Windows does not get those Unix mode checks and this
-build does not install a Windows ACL. Windows relies on the operator home's
-private ACL plus SQLite's no-follow opening. Unix `0700`/`0600` is not claimed
-on Windows.
+unchanged. On Unix, the database and marker must be owner-owned, regular
+mode-0600 files with no symlinks or hard links; the home must be mode `0700`.
+Windows does not apply those Unix mode checks or install a database ACL. It
+relies on the operator home's private ACL and SQLite's no-follow open. Missing,
+corrupt, oversized, or unknown-schema storage refuses instead of recreating
+credentials. Unix `0700` and `0600` are not claimed on Windows.
 
 ```sh
 cgagentharness mcp-key list
 cgagentharness mcp-key revoke KEY_ID --confirm --reason 'Retire workstation access'
 ```
 
-Listing returns metadata only. `mcp-key create` refuses an owner that does not
-exist or is disabled. When account authentication is off, the only owner it
-accepts is `local`. Disabling or deleting an account sets `disabled=1` on that
-owner's machine keys. Revoking one key by its public id still works and does
-not disable a different owner's keys. Revocation is observed by every later
-request and rechecked before memory reads. A read already executing may finish.
-That is not an instantaneous kill of the in-flight read. Owner binding is
-immutable; rotation requires minting another
-key. The table defaults to eight rows, with a hard ceiling of 32. At capacity,
-revoke an old key before minting; oldest disabled rows are removed during rotation.
+Listing returns metadata only. `mcp-key create` refuses a missing or disabled
+owner. With account authentication off, it accepts only `local`. Disabling or
+deleting an account disables that owner's machine keys. Revoking one key does
+not affect another owner's keys. Each later request observes revocation and
+rechecks it before a memory read, but an executing read may finish. Owner binding
+is immutable; mint a new key to rotate it. The table defaults to eight rows and
+has a hard ceiling of 32. At capacity, revoke an old key; rotation removes the
+oldest disabled rows.
 Content-free creation/revocation events remain in the bounded audit log.
 
-The key owner comes only from its stored row. Arguments cannot override it.
-Every fact query filters by that owner; inactive facts are hidden, and a foreign
-fact ID has the same not-found result as an unknown ID. Search reuses the bounded
-literal-substring path, not a query language or FTS expression. Returned memory
-is untrusted data, never tool authority or system instructions.
+The stored row alone supplies the owner. Every query filters on it, hides
+inactive facts, and gives foreign and unknown IDs the same result. Search is a
+bounded literal substring, not FTS or a query language. Returned memory is
+untrusted data, not tool authority or instructions.
 
 ## Bounds and failures
 
@@ -129,12 +121,10 @@ mapping or remote listener is installed. Drop/shutdown closes the owned listener
 
 ## Future remote exposure requires a separate reviewed change
 
-There is no remotely enabled mode in this release. A future LAN/private-overlay
-mode and a future public-internet mode require separate deployment acceptance:
-explicit interface and mode selection, TLS for remote HTTP, authenticated machine
-identities, revocable per-tool/owner scope, exact Host/Origin rules, bounded load,
-console isolation, and tested disable/rollback. Changing one tool grant must never
-change deployment mode. Remote proposal writes, session handoff, spend, audit and
-eval tools each require their own capability decision and tests. Memory proposals
-must still pass the existing scanner and human application flow; no remote tool
-may write canonical facts directly or inherit coding authority.
+This release has no remote mode. LAN, private-overlay, and public modes require
+separate acceptance for interface selection, TLS, machine identity, revocable
+tool and owner scope, Host and Origin rules, bounded load, console isolation,
+and rollback. Tool grants must not change deployment mode. Each new write,
+session, spend, audit, or evaluation tool needs its own capability and tests.
+Remote tools must not write canonical facts directly or inherit coding authority.
+Memory proposals must still pass the scanner and human application flow.

@@ -1,14 +1,12 @@
 # Screenshots
 
-Store screenshot images directly in this directory, not in a project-root
-`screenshots/` directory or nested gallery folders. Use a descriptive, unique
-filename; do not overwrite a different capture with the same name. Temporary
-relocation staging under `temp/` is not a permanent gallery.
+Store screenshots here, outside project-root `screenshots/` or nested galleries.
+Use descriptive, unique filenames; never overwrite a different capture with the same name.
+Relocation staging under `temp/` is temporary.
 
-Provenance and acceptance notes go in the PR body that adds the images, with
-their artifact hashes, platform, fixture/live distinction and verification
-limitations; do not add Markdown files here. A historical screenshot does not
-establish acceptance of a newer build.
+Record artifact hashes, platform, fixture/live distinction and verification
+limits in the PR that adds the images. Do not add Markdown here. Historical
+screenshots do not establish acceptance of newer builds.
 
 ## Existing overview captures
 

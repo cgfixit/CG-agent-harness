@@ -38,8 +38,12 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
 - Desktop Tauri is pinned to 2.11.5. The immutable upstream `tauri-utils`
   patch at `dd725f4b13c30a86b398ccc59eb498f151f461c5` replaces its unmaintained
   rust-unic dependency path. The desktop policy allows only that upstream Git
-  source; no advisory ignore was added. Remove the patch only after a published
+  source. Remove the patch only after a published
   version provides the same dependency correction and passes native packaging.
+- Backend `deny.toml` temporarily ignores `RUSTSEC-2026-0253` for Tantivy 0.26.2's
+  `lru` 0.16 dependency (locked at 0.16.4). The policy records its
+  `StoreReader` call-pattern justification and removal condition, Tantivy 0.27
+  or a fixed dependency path.
 - Major-version updates to existing libraries are separate API migrations.
   Newer available versions alone do not make a valid lockfile stale or justify
   expanding this security feature into a framework/toolchain migration.
@@ -73,18 +77,11 @@ and rerun both crates' formatting,
 Clippy, tests, dependency policy, release builds and applicable native/package
 acceptance. Do not change global rustup overrides to satisfy a dependency.
 
-The September 12 sync applied available compatible updates to both locks with
-that resolver setting. The backend remains buildable on 1.88, and desktop on
-1.90. Exact versions are authoritative in the lockfiles, not this prose. Consult
+Exact versions are authoritative in the lockfiles. Consult
 the [RustSec advisory database](https://rustsec.org/advisories/) and upstream
 [Cargo resolver documentation](https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version)
 when investigating newly reported drift. A clean dependency-policy result is a
 point-in-time advisory/license/source check, not proof of vulnerability absence.
-
-The fresh-install follow-up rechecked both crates with locked metadata/tree
-commands and the MSRV-aware update preview on September 12. Both previews
-reported zero package changes; the manifests, lockfiles, toolchains and deny
-policies were retained. The default/onboarding changes add no dependencies.
 
 ## Chat Google-search follow-up (2026-09-12)
 
@@ -95,72 +92,43 @@ updates; backend and desktop cargo-deny policies passed. Google/SerpAPI are
 optional runtime search services, distinct from Cargo dependencies and local
 model inference. A public-Google challenge is not a dependency or test pass.
 
-## Optimization sweep (2026-09-13)
-
-Backend (Cargo 1.88.0, lockfile at `093749b`, the `main` tree after
-[PR #80](https://github.com/cgfixit/CG-agent-harness/pull/80) merged): `cargo
-metadata --locked`, `cargo build --all-targets --locked` and `cargo test --test
-invariant_guard --locked` exit 0. `cargo update --dry-run --locked --verbose`
-locks 0 packages with the committed `.cargo/config.toml` resolver setting;
-`ordered-float` 5.4.0 is retained (5.5.0 requires Rust 1.90) and the remaining
-eight "behind latest" entries are semver-incompatible releases. The same checks
-were first run on the pre-#80 lockfile at `f47d41d`, where the plain preview
-selected `ordered-float` 5.5.0; that is why PR #80 committed the resolver
-setting, removed the unused direct `http-body-util` declaration and dropped the
-unused `OpenSSL`/`Unicode-DFS-2016` license allowances, and the results above
-were re-run on the merged lockfile that this ledger entry ships with. `cargo deny check` (cargo-deny
-0.20.2, RustSec advisory database cloned 2026-09-13, run offline because the
-sandbox proxy blocks cargo-deny's own fetch): advisories, bans, licenses and
-sources ok; duplicate-version warnings unchanged. Backend `Cargo.lock`
-carries `windows-sys` 0.52.0/0.59.0/0.60.2/0.61.2, `rand` 0.8.8/0.9.5/0.10.2,
-and `thiserror` 2.0.20 only. Desktop (`desktop/Cargo.lock`, Tauri
-2.11.5 with the retained `tauri-utils` patch) additionally duplicates
-`thiserror` 1.0.69/2.0.20 and `windows-sys` 0.45.0/0.52.0/0.59.0/0.60.2/0.61.2.
-`cargo fetch --locked`,
-`cargo metadata --locked --offline` and `cargo deny check` with
-`desktop/deny.toml` exit 0. No dependency was added or updated; no native
-desktop build was run in this sweep.
-
 ## Compatibility audit (2026-09-16)
 
-Applied all available updates within the existing manifest and Rust-version
-constraints: 13 backend and 12 desktop lock entries changed. Shared updates
-include `cc` 1.4.6, `cfg-if` 1.0.5, `lru-slab` 0.1.3, `quinn` 0.11.12,
-`quinn-proto` 0.11.18, `tinyvec` 1.13.3, `yoke-derive` 0.8.3 and
-`zerofrom-derive` 0.1.8. The backend also uses Clap 4.6.7; desktop updates
-`camino` 1.2.6, `redox_users` 0.5.3 and `zlib-rs` 0.6.8. Cargo introduces
-`synstructure` 0.14 and removes `tinyvec_macros` through those upstream updates.
+Both crates resolve independently under their pinned Rust versions and do not
+exchange Rust types across an ABI. Duplicate transitive versions in `cargo tree
+-d` are warnings, not resolution failures. `ordered-float` 5.5 still exceeds the
+backend MSRV; incompatible major lines require separate API migrations. The
+Tauri patch remains required. No dependency update is part of this documentation
+refresh.
 
-Both crates resolve and build independently under their existing pinned Rust
-versions. Duplicate transitive versions remain visible in `cargo tree -d`;
-they are separate upstream compatibility lines, not a failed resolution. The
-backend and desktop remain separate processes and do not exchange Rust crate
-types across an ABI. The exact Serde sandbox fixture lock remains intentional
-reproducibility data rather than the product dependency graph.
+The September 16 audit applied all compatible updates within the manifest and
+Rust-version constraints: 13 backend and 12 desktop lock entries changed. Shared
+updates included `cc` 1.4.6, `cfg-if` 1.0.5, `lru-slab` 0.1.3, `quinn` 0.11.12,
+`quinn-proto` 0.11.18, `tinyvec` 1.13.3, `yoke-derive` 0.8.3, and
+`zerofrom-derive` 0.1.8. The backend moved to Clap 4.6.7. Desktop moved to
+`camino` 1.2.6, `redox_users` 0.5.3, and `zlib-rs` 0.6.8. Cargo added
+`synstructure` 0.14 and removed `tinyvec_macros` through those upstream changes.
 
-Retained constraints remain as documented above: `ordered-float` 5.5 exceeds
-the backend MSRV, and newer incompatible lines of base64, rand, reqwest,
-scrypt, sha2 and windows-sys require separate API migrations. Upstream
-transitive pins retain generic-array/matchit and desktop TOML compatibility
-lines. The crates.io registry confirms Tauri 2.11.5, clippy-sarif 0.8.0 and
-sarif-fmt 0.8.0 are current stable releases. Tauri's immutable security patch
-is still required; no advisory exception or toolchain bump was added.
+The audit retained incompatible lines of base64, rand, reqwest, scrypt, sha2,
+and windows-sys for separate migrations. Upstream constraints retain
+generic-array, matchit, and desktop TOML compatibility lines. The Serde sandbox
+fixture lock remains reproducibility data, not part of the product dependency
+graph.
 
-CI action pins were checked against official release commits. CodeQL advances
-to [v4.38.0](https://github.com/github/codeql-action/releases/tag/v4.38.0),
-zizmor-action to [v0.6.4](https://github.com/zizmorcore/zizmor-action/releases/tag/v0.6.4)
-(zizmor 1.30.1), and the official actionlint container to
-[v1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12), retaining a
-verified multi-architecture index digest. The stable rust-toolchain action
-commit and all other action releases, Gitleaks 8.30.1 and SARIF tool versions
-were already current. CodeQL bundle tags are not action-release tags; the
-pin is the peeled action release commit, not the bundle release commit.
+At that audit, CodeQL moved to v4.38.0, zizmor-action to v0.6.4 with zizmor
+1.30.1, and actionlint to v1.7.12. Verification covered both crates' formatting,
+all-target/all-feature Clippy, all-target tests, cargo-deny policies, compatible
+update previews, release packaging, and isolated native/backend acceptance.
+Those dated results describe that audit; they do not replace current checks.
 
-Verification uses both crates' formatting, all-target/all-feature Clippy,
-all-target tests, cargo-deny policies, fresh compatible-update previews,
-release packaging, and isolated native/backend acceptance. Workflow checks use
-checksum-verified actionlint 1.7.12 and zizmor 1.30.1. Remaining incompatible
-releases are recorded explicitly rather than claimed to be installed.
+## Optimization sweep (2026-09-13)
+
+The September 13 sweep is historical: it retained `ordered-float`
+5.4.0 under the MSRV-aware resolver, found only semver-incompatible newer lines,
+and ran backend and desktop policy checks. It did not run a native desktop build.
+Use the current lockfiles and commands above for any present-tense dependency
+claim rather than carrying those point-in-time results forward.
+The current manifest versions are listed above.
 
 ## DOCX attachment reader (issue #148)
 

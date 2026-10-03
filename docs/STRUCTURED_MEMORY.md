@@ -20,51 +20,32 @@ episodes referenced by pending proposals.
 
 ## What ships
 
-1. Manual structured **facts** (stable public id, content, category, digest,
-   revision, active flag, timestamps).
-2. Governed **proposals** (`add` / `update` / `deactivate`) that may only
-   **suggest**. Optional `source_episode_ids` bind a suggestion to episode
-   provenance without mutating facts.
-3. Human apply/reject with persona semantics: deny unknown fields, bind the
-   reviewed revision (and fact revision/digest for update/deactivate), require
-   `confirm` + nonempty `reason`, re-check, apply once, audit metadata.
-4. Optional **episode capture** after a successful `SessionStore::record_exchange`.
-   Staging is non-fatal to chat. Episodes store bounded metadata and a
-   privacy-filtered summary only — no raw query, no full answer, no hidden
-   reasoning, no tool secrets.
-5. Manual semantic-summary attach (`POST .../episodes/{id}/summary`), which the
-   episode auto-consolidator requires. Clipped assistant output is not labeled a summary.
-6. TTL, per-owner row/byte quotas, and deterministic oldest-first pruning that
-   preserves episodes referenced by pending proposals.
-7. Owner list/get/delete, expired purge, owner purge, and bounded local HTML
-   export (escaped against stored XSS).
-8. Tests and the `tests/fixtures/structured_memory/propose-confirm-recall.json`
-   fixture (list-after-apply; not prompt injection).
-9. **Explicit recall**: bounded fact search/list, session/request
-   “include these facts” selection, reserved prompt budget, and assembly-time
-   revalidation. Prompt preview reports the exact injected/dropped set.
-10. **Facts-only FTS5 retrieval**: co-transactional contentless index
-    on fact title/value/tags, safe MATCH (tokenize/bound/quote, field-prefixed),
-    search API with stable ids/revisions/provenance/lexical score, enable-time
-    backfill, fail-soft when the index is busy or missing. Search ≠ inject.
-11. **Manual consolidation**: operator-selected episode IDs are sent to
-    the local model (tools/web disabled, no recalled-fact prompt input). Strict
-    JSON candidates become **pending proposals only**. Apply/deactivate still
-    require confirm+reason. Runs are durable and idempotent over owner + ordered
-    episode set + summarizer version. Restart recovers interrupted `running`
-    rows without duplicating proposals.
-12. **Optional automatic consolidation**: when
-    `auto_consolidation` is on **and** consolidation is available, a bounded
-    idle worker may enqueue eligible episodes and reuse the manual runner.
-    Feature-off starts no worker. Chat wins the generation gate. Output remains
-    pending proposals only.
-13. **Evaluation corpus** under
-    `tests/fixtures/structured_memory/phase7/`: synthetic cases for stable
-    preferences, temporary statements, negation, corrections, secrets,
-    prompt injection, conflicting facts, and cross-owner attempts. A
-    fixture-model measurement path asserts provisional baselines and shipped
-    enabled memory defaults. Live reviewer rates and latency percentiles
-    stay documented-only.
+1. Manual **facts** with stable IDs, content, category, digest, revision, active
+   state, and timestamps.
+2. Governed `add`, `update`, and `deactivate` **proposals**. Optional
+   `source_episode_ids` record provenance without changing facts.
+3. Human apply or reject with unknown-field denial, reviewed revision binding,
+   `confirm`, nonempty `reason`, recheck, apply-once behavior, and metadata audit.
+4. Optional **episode capture** after a persisted exchange. Failure does not fail
+   chat. Episodes contain bounded metadata and a filtered summary, without raw
+   queries, full answers, hidden reasoning, or tool secrets.
+5. Manual semantic-summary attachment for automatic consolidation. Clipped
+   assistant output is not a semantic summary.
+6. TTL, per-owner row and byte quotas, oldest-first pruning, owner operations,
+   and bounded escaped HTML export. Pruning preserves episodes referenced by
+   pending proposals.
+7. **Explicit recall** with bounded selection, reserved prompt budget,
+   assembly-time revalidation, and exact injected or dropped preview results.
+8. **Facts-only FTS5 retrieval** with safe MATCH construction, stable metadata,
+   enable-time backfill, and fail-soft search. Search does not inject.
+9. **Manual consolidation** of selected episodes through the local model, without
+   tools, web, or recalled facts. Strict JSON creates pending proposals only.
+   Runs are durable and idempotent by owner, ordered episode set, and summarizer version.
+10. **Optional automatic consolidation** through the same runner. Feature-off
+    starts no worker, chat wins the generation gate, and output remains pending.
+11. A synthetic evaluation corpus covers preferences, temporary statements,
+    negation, corrections, secrets, injection, conflicts, and owner isolation.
+    Fixture metrics are provisional; live quality and latency remain unmeasured.
 
 ## What does not ship
 
@@ -129,28 +110,24 @@ leaves the proposal pending and canonical facts unchanged; the operator can
 still reject it. Confirmation, reason, ownership and revision checks remain
 separate requirements.
 
-This is the fixed core pattern set, not the configured
-`policy.prompt_filter.banned_patterns` or the full coding governance scan.
-Matching is case-insensitive and recognizes whitespace variants, but this
-path does not use `scan_normalized`. It is not a secret scanner or a general
-prompt-injection detector. Individually clean fragments may pass, and the
-assembled recalled-facts block has no injection scan. Recalled facts remain
-untrusted background context; the label does not guarantee model obedience.
-Review pending proposals together for suspicious fragments before applying
-them.
+This uses the fixed core patterns, not `policy.prompt_filter.banned_patterns`
+or the coding scan. Matching is case-insensitive and handles whitespace variants,
+but does not call `scan_normalized`. It is neither a secret scanner nor a general
+injection detector. Clean fragments can combine into unsafe text, and assembled
+recall is not scanned. Treat facts as untrusted context and review proposals
+together before applying them.
 
-Regression coverage: `tests/structured_memory.rs` exercises HTTP fact/proposal
-refusals; the unit tests in `src/server/structured_memory.rs` exercise
-consolidation staging and apply-time rescanning of a legacy unsafe proposal
-with a valid revision. Existing benign propose/apply/recall and evaluation-corpus
-tests cover legitimate writes and the distinction from secret detection.
+Tests cover HTTP refusals, consolidation staging, apply-time rescanning of a
+legacy unsafe proposal, valid propose/apply/recall flows, and the distinction
+between injection and secret detection.
 
 ## Completion suggestions
 
-`auto_suggest_chat` and `auto_suggest_coding` are two independent default-true
-gates with administrator-only slash overrides. Both require an open store and episode capture;
-neither requires or opens consolidation, recall or retrieval. `suggestion_mode`
-selects `summaries`, `insights`, or `both` (default); invalid values disable them.
+`auto_suggest_chat` and `auto_suggest_coding` are independent default-true gates
+with administrator-only overrides. Both require an open store and episode
+capture; neither requires nor opens consolidation, recall, or retrieval.
+`suggestion_mode` selects `summaries`, `insights`, or `both` (default); invalid
+values disable suggestions.
 The `completion-suggestions-v1` worker reads only bounded redacted current
 completion evidence in RAM, using the initiating account captured by the chat or
 coding route. It does not scan shared archives or attach generated text as a
@@ -161,13 +138,12 @@ run id, changed files, push/PR fields and commit message), not stdout/stderr,
 file bodies or tool logs. Metadata alone cannot prove a coding lesson or
 successful tests.
 
-The local model returns `session_summary` / `insight` candidates. Strict parsing,
-source membership, sensitivity rejection, the confidence floor and existing
-binding produce pending proposals through existing idempotent run records.
-Canonical facts remain unchanged until Apply with confirm+reason. There is no
-schema bump, tool/web access, recalled-fact payload or new cloud egress. Generation
-uses temperature 0 and max_tokens 1024. The episode consolidator remains
-`consolidator-v2` and its automatic path still requires human semantic summaries.
+The local model returns `session_summary` or `insight` candidates. Strict parsing,
+source membership, sensitivity checks, confidence, and existing bindings create
+pending proposals through idempotent runs. Facts change only after Apply with
+confirm and reason. Generation has no tools, web, recalled facts, schema change,
+or cloud egress; it uses temperature 0 and 1024 output tokens. Automatic
+`consolidator-v2` still requires human semantic summaries.
 
 | Setting | Default | Clamp / meaning |
 |---|---|---|
@@ -179,18 +155,15 @@ uses temperature 0 and max_tokens 1024. The episode consolidator remains
 | `max_consolidation_candidates` | 8 | Existing candidate bound, also used for completion suggestions |
 | `max_proposals_per_owner` | 32 | Pending proposal capacity |
 
-Waiting input is lost on restart and never backfilled from history; durable
-pending proposals survive restart. Input scanner hits, a full/expired queue,
-disabled capture, model errors, low confidence or store quotas can prevent
-suggestions; empty output is valid. Failures do not fail completed chat/coding
-results. Session clear invalidates waiting/in-flight
-chat suggestions. Existing proposals/facts retain their existing deletion rules.
-The worker waits for the generation gate and never interrupts chat.
-Chat preempts an active suggestion instead of receiving `CHAT_BUSY`: its model call
-is aborted, its run stored as `state=cancelled`, `error_class=preempted` (an owner
-cancel ends it), and its job returns to the queue front. Run
-cancellation requires the open store and owner match, even if manual consolidation
-is off.
+Waiting input is lost on restart and is not backfilled; pending proposals persist.
+Scanner hits, queue limits, disabled capture, model errors, low confidence, and
+store quotas can prevent suggestions; empty output is valid. Failures do not fail
+the completed work. Session clear invalidates waiting and active chat suggestions.
+The worker waits for the generation gate. Chat preempts an active suggestion:
+the model call aborts, the run records `state=cancelled` and
+`error_class=preempted`, and the job returns to the queue front. An explicit
+owner cancellation ends the job instead. Cancellation
+requires an open store and matching owner, even with manual consolidation off.
 Redactors/scanners are bounded safeguards, not a guarantee that arbitrary secrets
 or hallucinations are detected; human review remains mandatory.
 
@@ -362,8 +335,7 @@ force-include.
 
 ## Evaluation corpus
 
-The corpus is local and synthetic. Re-run it on the source/build you intend to
-use:
+The corpus is local and synthetic. Run it on the intended source and build:
 
 ```text
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
@@ -371,13 +343,10 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
 cargo run --locked --example structured_memory_eval -- /tmp/phase7-report.json
 ```
 
-The test and example share `tests/fixtures/structured_memory/phase7/corpus.json`.
-They exercise the store and fixture-model consolidator JSON (the same pattern as
-`manual-consolidate-pending-only.json`). No live cloud LLM is used.
-The low-confidence temporary-plan and `unsupported-paris` cases expect
-rejection at the 0.40 floor. This fixture path measures
-parsing/binding/retention, not live prompt quality; live model quality is not
-established by deterministic fixtures.
+Both commands use `tests/fixtures/structured_memory/phase7/corpus.json` and a
+fixture-model consolidator, never a cloud model. Low-confidence temporary-plan
+and `unsupported-paris` cases must fail the 0.40 floor. These fixtures measure
+parsing, binding, and retention, not live model quality.
 
 ### Asserted baselines (provisional)
 
@@ -396,14 +365,11 @@ not a live-model SLA.
 | Database growth / pruning | Oldest-first episode prune with `max_episodes_per_owner: 2` | unreferenced row dropped; pending-proposal refs kept |
 | Chat / feature-combination regression | Existing `tests/structured_memory.rs` + shipped-gate scan | extend those tests; do not add live E2E |
 
-The fixture mix **intentionally** includes one unsupported candidate
-(`unsupported-paris`) so the scorer is not tautological. A later live local
-model should aim for precision 1.0 and unsupported rate 0 on a reviewed set.
-
-Rejected-class retention is **zero** for consolidator `sensitivity: reject`
-and for core injection-scanner hits (`STRUCTURED_MEMORY_INJECTION`). There is
-still no secret scanner: an operator can confirm+reason add non-injection
-secret-shaped text. That is a human-governed write, not a rejected class.
+The corpus includes one unsupported candidate, `unsupported-paris`, to exercise
+the scorer. A future live local-model evaluation should target precision 1.0
+and unsupported rate 0 on a reviewed set. Rejected-class retention is zero for `sensitivity: reject` and core
+injection hits. No secret scanner exists; a confirmed human write can contain
+non-injection secret-shaped text.
 
 ### Documented-only (do not invent numbers)
 
@@ -429,10 +395,10 @@ green:
 Completion suggestions (`auto_suggest_chat` / `auto_suggest_coding`) are
 enabled separately, beside that list. They still write pending proposals only.
 
-Suggested fixture bars before considering a gate: sensitive retention 0,
-stale/cross-owner recall 0, prompt body ≤ 3000, no silent fact apply, and
-precision / unsupported rate at or better than the corpus thresholds. Human
-review rate and latency remain operator-owned.
+Suggested checks before enabling a gate are zero sensitive retention, zero stale or
+cross-owner recall, prompt body at most 3000, no silent fact apply, and the
+corpus precision and unsupported-rate thresholds. Review rate and latency remain
+operator measurements.
 
 ## Rollback
 

@@ -1,57 +1,43 @@
 # Spend and completion notifications
 
-Operator setup and interpretation for retained spend, its Analytics view and
-optional job-completion webhooks. Start with [installation](INSTALL.md) and
-[accounts](SECURE_RESEARCH.md#accounts-and-roles); coding authority remains governed by the
-[coding pipeline](CODING_PIPELINE.md).
+Retained spend, Analytics and optional completion webhooks use the existing
+[installation](INSTALL.md), [account](SECURE_RESEARCH.md#accounts-and-roles)
+and [coding](CODING_PIPELINE.md) requirements.
 
 ## Build requirements
 
-The installed source must contain the corresponding changes:
+Check the installed bundle's `Contents/Resources/COMMIT` or source checkout;
+the Cargo package version does not identify these capabilities. Current main
+has retained-summary completeness metadata, the read-only Spend view, bounded
+MCP diagnostics, and the versioned durable notification outbox.
+`GET /api/notifications` and version-2 envelopes identify this interface. See
+[process lifecycle](PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics) for MCP diagnostics.
 
-| Capability | Required change |
-|---|---|
-| Retained-summary integrity and completeness metadata | [PR #176](https://github.com/cgfixit/CG-agent-harness/pull/176) |
-| Read-only Spend console view | [PR #177](https://github.com/cgfixit/CG-agent-harness/pull/177) |
-| Bounded MCP stderr diagnostics | [PR #178](https://github.com/cgfixit/CG-agent-harness/pull/178), described in [process lifecycle](PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics) |
-| Optional completion webhooks | [PR #179](https://github.com/cgfixit/CG-agent-harness/pull/179) |
-
-The original spend and best-effort notification changes above are on main.
-The current source adds the versioned durable outbox described below. Check the
-installed bundle's `Contents/Resources/COMMIT` or source checkout; the Cargo
-package version alone does not identify capabilities. `GET /api/notifications`
-and version-2 event envelopes identify this delivery interface.
-
-The `/analytics` dialog reuses this ledger summary alongside session and coding-run
-metrics. It keeps the same completeness and pricing semantics; see
-[Analytics](ANALYTICS.md).
+[Analytics](ANALYTICS.md) combines this ledger summary with session/coding
+metrics, preserving completeness and pricing semantics.
 
 ## Read spend without mistaking missing data for zero
 
-The chat header's **session · tokens** is the selected session's persisted
-prompt-plus-completion tally, not the total across saved sessions. A new session
-starts at zero; reopening a session restores its own tally, including after an
-app restart. `/tokens` breaks that tally down. An unavailable tally displays `—`,
-not zero. Analytics and `/status` retain their all-session aggregates.
+The header's **session · tokens** is the selected session's persisted prompt
+plus completion tally. New sessions start at zero; reopening restores their
+tally even after restart. `/tokens` shows its breakdown. Unavailable tallies
+display `—`, not zero. Analytics and `/status` retain all-session aggregates.
 
-Session tallies count successfully committed chat exchanges (including their
-web-tool rounds and successful compaction usage). They are not billing records:
-failed-after-billing calls and independent research/coding operations can appear
-in the ledger without becoming a saved chat exchange. Switching or creating sessions
-does not reset, rewrite or append to the spend ledger.
+Session tallies count committed chat exchanges, including web-tool rounds and
+successful compaction. They are not billing records. Failed-after-billing calls
+and independent research or coding operations can enter the ledger without a
+saved exchange. Switching sessions does not change the ledger.
 
-Open **Analytics** → **Tokens and cost**, then **Refresh** to reread the same
-rollup as `GET /api/spend/summary`. Previous/Next show at most 25
-provider/model/day groups per page. Closing the view, pressing Escape or logging
-out clears its page state without deleting the ledger.
-An older summary response without completeness fields is shown as unknown.
+Open **Analytics** → **Tokens and cost**, then **Refresh** to read the same rollup
+as `GET /api/spend/summary`. Each page has at most 25 provider, model, and day
+groups. Closing the view, pressing Escape, or logging out clears page state without deleting the
+ledger. Older responses without completeness fields appear as unknown.
 
-The ledger lives in the active home at `logs/spend.jsonl` and the previous
-rotation `logs/spend.jsonl.1`. It records provider/model, timestamps, token usage
-when reported and billing outcome, without prompt or response text. This is a
-shared-home operational ledger, not a per-account invoice. Rotation retains a
-bounded window: the default rotation threshold is 8 MiB per file, while the
-summary reader refuses files larger than 16 MiB.
+The active home stores `logs/spend.jsonl` and its previous rotation,
+`logs/spend.jsonl.1`. Rows contain provider, model, timestamps, reported token
+usage, and billing outcome, without prompt or response text. This shared-home
+ledger is not a per-account invoice. Files rotate at 8 MiB by default; the
+summary reader refuses files above 16 MiB.
 
 The summary exposes `coverage: "retained_generations"`, `complete`, `files` and
 `skipped_rows`. File statuses mean:
@@ -78,17 +64,16 @@ priced evidence; consult the provider's own billing records for reconciliation.
 
 ## Estimate a cloud draft and configure a per-call cap
 
-Select `grok` or `claude` with `/model use`, type an ordinary message without
-sending it, then choose **Analytics → Tokens and cost → Estimate draft**. The response reports the
-model, input estimate source, reserved output, dated rate and cap decision.
-Local inference remains unpriced. Closing the dialog or logging out clears the
-estimate; editing the draft requires a fresh estimate. This feature requires a
-build exposing `POST /api/spend/predict`, beyond the original ledger-only view.
+Select `grok` or `claude` with `/model use`, type without sending, then choose
+**Analytics → Tokens and cost → Estimate draft**. It reports model, estimate
+source, reserved output, dated rate and cap decision. Local inference stays
+unpriced. Closing/logout clears estimates; edits require re-estimation. The
+build must expose `POST /api/spend/predict`.
 
-Claude sends the draft to its fixed `messages/count_tokens` endpoint using the
-same model/message body as generation. The default deadline is 2 seconds across
-headers and body; errors, malformed or oversized responses fall back to the
-labelled heuristic. Grok uses rounded-up UTF-8 bytes/4 without a counting call.
+Claude sends the generation model and message body to its fixed
+`messages/count_tokens` endpoint. The two-second default deadline covers headers
+and body; errors, malformed responses, or oversized responses use the labelled fallback.
+Grok uses rounded-up UTF-8 bytes divided by four without a counting call.
 **Bytes/4 can undercount CJK.** The local Qwen calibration is not a cloud
 estimator. Neither history, attachments, memory, skills nor web context is sent.
 Provider credentials and enabled provider configuration are still required.
@@ -151,9 +136,8 @@ IDs are unique, 1–64 ASCII letters/digits/underscores/hyphens. Subscriptions a
 explicit and limited to terminal job states. Each destination's rate is 1–120
 batches/minute. A legacy global `webhook_url` must be migrated deliberately; the
 backend refuses an enabled nonempty legacy URL instead of assigning its authority
-to an arbitrary account. There is no portal endpoint that lets an account choose
-another owner or grant a destination. The local operator configures those grants;
-portal users inspect and replay only their own retained deliveries.
+to an arbitrary account. Only the local operator configures grants; portal accounts can inspect/replay
+their own retained deliveries, never choose another owner or grant destinations.
 
 Quoted `"true"` never enables the master gate. For `use_bearer: true`, each
 destination has its own bearer. Put them in the private file
@@ -180,22 +164,21 @@ owner in `data/notifications/revoked-owners.json`. That owner's destinations
 stop. Other owners stay enabled. Turning the account back on does not restore
 those grants; edit the configuration and restart to do that deliberately.
 
-All settings require restart. Before each attempt/replay, the worker rereads the
-bounded regular configuration file and rechecks the current account, exact startup
-destination revision, subscription/grant and selected credential. Disk changes can
-revoke startup authority but cannot add it. Removing/changing a destination or
-disabling/deleting/demoting its owner stops subsequent attempts; an already in-flight
-request may finish. Malformed config refuses delivery. The ordinary 22-key config
-reload allowlist remains unchanged. These are outbound requests only: no listener,
-callback commands, tunnel or public memory API is created.
+All settings require restart. Before each attempt or replay, the worker rereads
+the bounded regular config and rechecks the account, startup destination revision,
+subscription, grant, and credential. Disk changes can revoke startup authority,
+not add it. Destination changes or owner disablement, deletion, or demotion stop
+later attempts; an active request may finish. Malformed config refuses delivery.
+This creates only outbound requests, with no listener, commands, tunnel, or
+public memory API.
 
-Public receivers require HTTPS. Loopback, RFC1918 and IPv6 unique-local receivers
-need an exact URL in `notifications.private_url_allowlist` (maximum eight).
-Explicitly granted private receivers may use HTTP; public-address HTTP is refused
-even if the URL was listed. Prefer HTTPS for bearer confidentiality. Link-local
-and mapped IPv6 remain refused. Each attempt validates every DNS answer (maximum
-32) and pins the result; proxies, connection reuse, implicit client retries and
-redirects are disabled. Neither receiver bodies nor destination URLs enter audit.
+Public receivers require HTTPS. Loopback, RFC1918, and IPv6 unique-local receivers
+need an exact URL in `notifications.private_url_allowlist`, which accepts eight.
+Granted private receivers may use HTTP, though HTTPS is recommended for bearer
+confidentiality. Public HTTP, link-local, and mapped IPv6
+are refused. Each attempt validates and pins at most 32 DNS answers. Proxies,
+connection reuse, implicit retries, and redirects are disabled. Audit omits
+receiver bodies and URLs.
 
 | Setting | Default | Accepted range |
 |---|---:|---:|
@@ -237,20 +220,18 @@ names, results, raw errors and owner identities are absent. The batch ID is also
 sent as `X-CGAgentHarness-Batch-ID`. **Deduplicate by delivery ID**, because retry
 batch membership can change. Explicit replay preserves that ID and event ID.
 
-The private `data/notifications/outbox.json` uses schema 1 and atomic replacement
-at mode `0600` (directory `0700` on Unix). Attempts and per-destination rate timing
-persist before networking; successful/failed responses are persisted afterward.
-Restart resumes retained pending deliveries. Retained terminal jobs are reconciled
-to cover a crash after job persistence but before enqueue; their stable IDs suppress
-retained duplicates. First enabling a destination can therefore deliver recent
-retained terminal jobs for its owner and selected subscriptions.
+Private `data/notifications/outbox.json` uses schema 1 and atomic mode-0600
+replacement in a mode-0700 Unix directory. Attempts and rate timing persist
+before networking; responses persist afterward. Restart resumes pending rows.
+Reconciliation covers a crash between job persistence and enqueue, with stable
+IDs suppressing retained duplicates. First enablement can therefore deliver
+recent retained jobs for the owner and selected subscriptions.
 
-This is **at-least-once delivery with finite retries and retention**, not an
-exactly-once guarantee. A timeout or crash after receiver acceptance may resend.
-A crash during the last allowed attempt can leave an exhausted failure whose
-receipt is unknown; inspect the receiver before explicit replay. File data is
-synced before replacement and Unix directory ordering is synced. Power-loss
-behavior still depends on the storage/filesystem. Run one backend per home.
+Delivery is **at least once with finite retries and retention**. A timeout or
+crash after acceptance may resend. A crash on the last attempt can leave an
+exhausted row with unknown receipt; inspect the receiver before replay. File data
+and Unix directory ordering are synced, but power-loss behavior still depends on
+storage. Run one backend per home.
 
 HTTP 2xx completes delivery. HTTP 429, 5xx, DNS and transport/timeouts may retry;
 other statuses fail. Attempts, backoff, jitter, rate and payload size (64 KiB) are

@@ -1,28 +1,27 @@
 # Console job workflow
 
-The server advertises the default check, allowed profiles, planner model, polling
-interval and supported job capabilities at `/api/agent/checks`. The console
-stages a request without a check override; today the server selects `cargo-test`.
-`/agent checks <profile>` sets an explicit supported override. `/model use`
-selects chat only and reports the separately configured planner model.
+`/api/agent/checks` advertises the default check, allowed profiles, planner
+model, polling interval, and job capabilities. A staged request uses the server
+default, currently `cargo-test`, unless `/agent checks <profile>` selects a
+supported override. `/model use` selects chat only and reports the separate
+planner model.
 
 `/agent confirm <reason>` submits to `/api/agent/jobs` and immediately retains
 its job ID in the URL fragment. `/agent job <id>` resumes monitoring after a
 refresh; sign in again if the account session expired. The optional harness key
 may remain empty and cannot restore account access.
-`/agent jobs` lists your account's durable retained jobs, including interrupted entries after restart. Failed CLI results are
-failed jobs, with their error output retained. Completed results display the
-run record and verification output.
+`/agent jobs` lists the account's retained jobs, including entries interrupted
+by restart. Failed jobs retain CLI error output. Completed jobs show the run
+record and verification output.
 
-`/agent cancel` discards only a staged request. `/agent stop <id>` cancels the
-active request; **descendant processes may survive**. Job state is persisted in a bounded private JSON file; server restart marks
-previously running jobs interrupted and never resumes execution. Live per-check
-progress is not implemented. `/agent runs` lists retained run records and
-reconciles released Unix worker leases to interrupted. Legacy running records
-without ownership proof remain unknown. Inspect persistent run records
-and surviving processes before additional writes. A stop response is not proof
-of process-tree termination. Chat replies stream over SSE and `/loop stop`
-cancels a turn (see [streaming chat](CONSOLE.md#streaming-chat-and-cancellation)); job progress does not stream.
+`/agent cancel` discards a staged request. `/agent stop <id>` cancels an active
+request, but **descendant processes may survive**. A bounded private JSON file
+stores job state. Restart marks running jobs interrupted and never resumes them.
+`/agent runs` lists run records and reconciles released Unix worker leases to
+interrupted; unowned legacy records remain unknown. Inspect records and surviving
+processes before more writes. A stop response does not prove process-tree
+termination. Chat streams over SSE and `/loop stop` cancels a turn; job progress
+does not stream. See [streaming chat](CONSOLE.md#streaming-chat-and-cancellation).
 
 Inspect `/agent status <run id>` and the complete diff before
 `/agent approve <run id> <reason>`. Approval commits locally. Push and draft
@@ -54,14 +53,12 @@ The guarded API uses the same flow: `POST /api/agent/schedules/preview`, then
 }
 ```
 
-Use the complete request returned by the goal-stage API; this abbreviated example
-is not a replacement for that review. Intervals use `{"kind":"interval","seconds":3600}`
-(60–604800 seconds). The legacy request field `interval_secs` is also accepted,
-with the same mandatory preview; do not supply both forms. Cron uses five fields
-(minute, hour, day-of-month, month, weekday), supports lists/ranges/steps and weekday
-names, and uses Unix 0/7 for Sunday. To avoid differing cron day-match conventions,
-day-of-month or weekday must be literal `*`. Timezone defaults to UTC and accepts
-IANA names. Calendars end in 2100; expressions without a future occurrence refuse.
+Use the complete goal-stage response; the example is abbreviated. Intervals use
+`{"kind":"interval","seconds":3600}` and accept 60–604800 seconds. The legacy
+`interval_secs` field requires the same preview; do not supply both forms. Cron
+uses five fields, supports lists, ranges, steps, and weekday names, and uses 0 or
+7 for Sunday. Either day-of-month or weekday must be literal `*`. Timezone
+defaults to UTC and accepts IANA names. Calendars end in 2100.
 
 Rows migrate to schema 1 without changing interval cadence or inventing owners.
 Ownerless legacy schedules stay hidden and cannot dispatch. Management is owner
@@ -79,14 +76,13 @@ and job registration serialize under the schedule lock. An already started job
 needs its separate cancellation control.
 
 Occurrence identity and the next UTC time persist atomically **before** dispatch.
-Restart skips all elapsed occurrences. During operation, dispatch has a five-second
-default polling grace; older work is skipped. Forward clock jumps skip missed work;
-backward jumps wait for the persisted next UTC time. Nonexistent DST wall times
-are skipped; an ambiguous time uses its first UTC mapping only. There is no catch-up.
-This is at-most-once dispatch: a crash after consumption can miss work. It is not
-exactly-once execution. `last_dispatch=attempted` means a job handle was
-accepted. Other values are `skipped_late`, `skipped_refused`, `skipped_revoked`
-and `skipped_downtime`. Audit records give gate-refusal details.
+Restart skips elapsed occurrences. The default polling grace is five seconds;
+older work is skipped. Forward clock jumps skip missed work, while backward jumps
+wait for the persisted UTC time. Nonexistent DST times are skipped; ambiguous
+times use the first UTC mapping. There is no catch-up. Dispatch is at most once,
+so a crash after consumption can miss work. `last_dispatch=attempted` means a job
+handle was accepted. Other values are `skipped_late`, `skipped_refused`,
+`skipped_revoked`, and `skipped_downtime`.
 
 The `scheduling` section in `config.default.yaml` documents finite poll, grace,
 preview-expiry and inventory settings. They require restart and are outside the
@@ -147,22 +143,15 @@ GitHub publication, startup recovery or descendant termination.
 
 ## Recorded acceptance
 
-The following describes the earlier recorded model/runtime, not the current
-HTTPS/account acceptance. Current security evidence is in
-[SECURE_RESEARCH.md](SECURE_RESEARCH.md). Historical native matrix:
-[DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
-
-On the target Apple M5 Pro/48 GiB, macOS 26.6.2, actual Chrome exercised the flow
-with installed `qwen3.8:27b`, a separate Ollama process with Seatbelt non-loopback
-network denial, and real offline sandboxed Cargo. This is real local-model
-browser evidence, separate from Rust route tests. The operator's normal Ollama
-process and model files were unchanged.
+Historical acceptance used Chrome on an Apple M5 Pro with 48 GiB, macOS 26.6.2,
+installed `qwen3.8:27b`, Seatbelt denial of non-loopback Ollama traffic, and
+offline sandboxed Cargo. It did not alter the operator's Ollama process or model
+files. Current security evidence is in [secure research](SECURE_RESEARCH.md);
+the historical native matrix is in [desktop acceptance](DESKTOP_ACCEPTANCE.md).
 
 
 Direct CLI publication requires `--body-file /path/to/reviewed-description.md`
-(or an explicit `--body` argument), a reason and confirmation. Descriptions must
-contain 1..65536 UTF-8 bytes. The server transfers text through a temporary file;
-the final GitHub invocation also uses `--body-file`, preserving literal newlines
-and avoiding description text in process arguments. This replaces the previous
-hardcoded one-line description. The harness does not invent or certify a
-repository's PR template: the operator completes and reviews it.
+or explicit `--body`, plus a reason and confirmation. Descriptions contain
+1–65536 UTF-8 bytes. The server and GitHub invocation use temporary body files,
+which preserve newlines and keep text out of process arguments. The operator
+must complete and review the repository's PR template.

@@ -1,6 +1,6 @@
 # Select an installed model and check Ollama
 
-Index: [README.md](../README.md). Seeded web token budgets assume `OLLAMA_CONTEXT_LENGTH=32768` is set before the Ollama process starts. The harness sends no `num_ctx`.
+Index: [README.md](../README.md). Set `OLLAMA_CONTEXT_LENGTH=32768` before starting Ollama for seeded web budgets. The harness sends no `num_ctx`.
 
 ## 4. Select an installed model and check Ollama
 
@@ -13,15 +13,13 @@ curl --fail --silent --show-error http://127.0.0.1:11434/v1/models
 ```
 
 If the endpoint is unavailable, start the existing Ollama app or `ollama serve`.
-Do not start a second daemon on an occupied port. Leave a terminal-started daemon
-running in its terminal while you use another terminal for the harness.
+Keep a terminal-started daemon running; use another terminal for the harness.
+Never start a second daemon on an occupied port.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 require a
-**32768-token** Ollama window. The harness sends no `num_ctx`; it inherits
-whatever window the Ollama process started with. Console `POST /api/ollama/pull`
-and startup `keep_alive` warmup use the same rule. Set the env **before** that
-process starts. Changing it later needs a full quit and relaunch, not a second
-daemon on an occupied port.
+**32768-token** window. Chat, console `POST /api/ollama/pull` and startup
+`keep_alive` warmup inherit the window Ollama started with. Changing it requires
+a full quit and relaunch.
 
 ```bash
 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
@@ -44,13 +42,12 @@ curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 window, keep `web.total_tokens: 16000` and `web.evidence_tokens: 3000` in the
 home `config.yaml` instead of the seed values.
 
-Choose the **exact installed identifier**. On the acceptance Mac it was
-`qwen3.8:27b`; the separately installed `qwen3.8:27b-mlx` had a different digest.
-Neither is assumed to exist on another machine. On a fresh machine with an empty
-inventory, deliberately choose and download a model appropriate to your hardware
-using Ollama before continuing; that is a separate network download and disk
-allocation. Preserve working installed models. An `-mlx` suffix alone proves no
-execution backend. Inspect the chosen model, using its actual inventory spelling:
+Choose the **exact installed identifier**. The acceptance Mac had `qwen3.8:27b`
+and a separate `qwen3.8:27b-mlx` with a different digest. Neither is assumed
+installed elsewhere. With an empty inventory, deliberately download a model
+suited to your hardware before continuing; allow for network and disk use.
+Preserve working models. An `-mlx` suffix proves no execution backend. Inspect
+the exact inventory tag:
 
 ```bash
 ollama show qwen3.8:27b
@@ -61,18 +58,16 @@ Configure both `models.local_llm.model` (chat) and
 `/model use <tag>` changes chat selection only. Existing persisted chat selection
 can override the chat config, so inspect `/status` after restart.
 
-The shipped tag is `qwen3.8:27b-mlx`; it is a default string, not an installation
-check. A 27B model is not required just to use the app. Do not copy an example tag
-unless your inventory contains it. Chat uses `models.local_llm.base_url`; the
+The shipped `qwen3.8:27b-mlx` default does not verify installation. The app
+does not require a 27B model. Use a tag your inventory contains. Chat uses `models.local_llm.base_url`; the
 planner uses `agentic.deepagent_github.base_url`. Both local paths require a
 loopback OpenAI-compatible service — which is also how a fine-tuned MLX model is
 served; see [FINETUNE.md](FINETUNE.md) for the QLoRA workflow.
 
 ### Exact-model diagnostics and optional fallback
 
-In the app, open **Harness → Setup and recovery** (Cmd-,), then **Check installed
-chat and planner models**. Both checks use bounded `/models` inventories, with
-these results:
+Open **Harness → Setup and recovery** (Cmd-,), then **Check installed chat
+and planner models**. Both use bounded `/models` inventories:
 
 | State | Meaning / next step |
 |---|---|
@@ -81,10 +76,9 @@ these results:
 | `unavailable` | Inventory failed, timed out, was oversized or malformed. Check the service and endpoint. |
 | `not_probed` | The endpoint is not an eligible loopback URL, or the planner is a cloud provider. Setup does not probe cloud planners. |
 
-`/model` reports selection; `/model use <tag>` persists a name without checking or
-downloading it. The selection is shared across sessions and can override the tag
-chosen from configuration, including the fallback tag. For local chat, check the
-selected name against the endpoint actually in use. For explicit cloud chat, use
+`/model` reports selection; `/model use <tag>` persists it without checking or
+downloading. This shared selection can override configuration, including fallback.
+Check it against the active local endpoint. For explicit cloud chat, use
 `/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only
 after an administrator saves the matching key and restarts. Cloud selection sends
 only the newly typed message and does not change the coding planner. A cloud reply
@@ -127,11 +121,7 @@ under `models.local_llm.inventory`; fallback uses `probe_timeout_sec` with the s
 byte limit. Probes use no proxies or redirects. See the
 [resolver](../src/llm/backend.rs) and [inventory checks](../src/llm/inventory.rs).
 
-Keep historical model measurements separate from current settings. Native CLI
-acceptance recorded context 8192 as a conservative fixture; desktop acceptance
-recorded 32768. Neither is a copy-paste default. The seeded 28000/6000 web
-budgets require a verified `OLLAMA_CONTEXT_LENGTH=32768` as above, not those
-records. Refer to
-[desktop details](DESKTOP.md). Historical native matrix: [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md). Use those files only for each run's dated evidence.
-Do not infer an execution backend from a tag suffix or change the running model
-service just to match a historical measurement.
+Historical CLI acceptance recorded an 8192-token fixture; desktop acceptance
+recorded 32768. These dated measurements do not set current defaults or justify
+changing a working service. Verify the window for your configured budgets. See
+[desktop details](DESKTOP.md) and [the native matrix](DESKTOP_ACCEPTANCE.md).
