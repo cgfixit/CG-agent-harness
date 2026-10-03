@@ -83,17 +83,6 @@ pub const MANAGED_KEYS: [KeySpec; 7] = [
     },
 ];
 
-/// Values of every managed key present in this process's environment, for
-/// exact-value audit and response redaction. Read after startup has loaded
-/// the credential store into the environment.
-pub fn loaded_values() -> Vec<String> {
-    MANAGED_KEYS
-        .iter()
-        .filter_map(|spec| std::env::var(spec.name).ok())
-        .filter(|value| !value.trim().is_empty())
-        .collect()
-}
-
 fn err(message: impl Into<String>) -> HarnessError {
     HarnessError::new(ENV_KEY_ERROR, message)
 }
@@ -469,6 +458,17 @@ mod tests {
     use super::*;
     use crate::common::credential_store::{CredentialStore, StoreError};
     use std::sync::Mutex;
+
+    #[test]
+    fn every_managed_key_is_a_known_secret_for_redaction() {
+        for spec in MANAGED_KEYS {
+            assert!(
+                crate::common::mcp::SECRET_ENV.contains(&spec.name),
+                "{} must be listed in common::mcp::SECRET_ENV",
+                spec.name
+            );
+        }
+    }
 
     struct MemoryStore {
         values: Mutex<BTreeMap<String, String>>,

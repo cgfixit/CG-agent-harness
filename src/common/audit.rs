@@ -54,6 +54,26 @@ const BUILTIN_SECRET_PATTERNS: [&str; 9] = [
     "xai-[a-zA-Z0-9]{20,}",
 ];
 
+const SECRET_LABEL: &str = "[REDACTED_SECRET]";
+
+/// Credential values this process knows: every [`super::mcp::SECRET_ENV`]
+/// variable set in its environment, plus the configured local-model keys
+/// (`models.local_llm.api_key` and its fallback's), for exact-value
+/// redaction. The server and the agentic child each call this on their own
+/// environment, so no credential crosses the process boundary for it.
+pub fn known_secret_values(cfg: &AppConfig) -> Vec<String> {
+    super::mcp::SECRET_ENV
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .chain(
+            ["models.local_llm.api_key", "models.local_llm.fallback.api_key"]
+                .iter()
+                .map(|key| cfg.str_or(key, "")),
+        )
+        .filter(|value| !value.trim().is_empty())
+        .collect()
+}
+
 /// Shortest loaded credential redacted by exact value. Shorter strings are
 /// too likely to occur in ordinary text to replace safely.
 const MIN_LITERAL_SECRET_CHARS: usize = 12;
@@ -74,7 +94,7 @@ impl Redactors {
     pub fn from_config(cfg: &AppConfig) -> Self {
         let mut rules: Vec<(Regex, &'static str)> = BUILTIN_SECRET_PATTERNS
             .iter()
-            .map(|pattern| (Regex::new(pattern).expect("static regex"), "[REDACTED_SECRET]"))
+            .map(|pattern| (Regex::new(pattern).expect("static regex"), SECRET_LABEL))
             .collect();
         if cfg.flag_is_true("policy.privacy.redact_emails") {
             rules.push((
@@ -93,7 +113,7 @@ impl Redactors {
                 continue;
             }
             match Regex::new(pattern) {
-                Ok(re) => rules.push((re, "[REDACTED_SECRET]")),
+                Ok(re) => rules.push((re, SECRET_LABEL)),
                 // Log the index only, never the pattern text (it is config content).
                 Err(_) => tracing::warn!("privacy redaction pattern #{idx} failed to compile; skipped"),
             }
@@ -101,8 +121,7 @@ impl Redactors {
         Self { rules }
     }
 
-    /// Also redact these exact credential values, ahead of every pattern so
-    /// no partial pattern match can split one first. Values shorter than
+    /// Also redact these exact credential values. Values shorter than
     /// `MIN_LITERAL_SECRET_CHARS` are skipped.
     pub fn with_literal_secrets<I, S>(mut self, values: I) -> Self
     where
@@ -117,33 +136,60 @@ impl Redactors {
         // Longest first, so a value that contains another is replaced whole.
         literals.sort_by_key(|value| std::cmp::Reverse(value.len()));
         literals.dedup();
-        let literal_rules = literals.iter().filter_map(|value| {
-            Regex::new(&regex::escape(value))
-                .ok()
-                .map(|re| (re, "[REDACTED_SECRET]"))
-        });
+        let literal_rules = literals
+            .iter()
+            .filter_map(|value| Regex::new(&regex::escape(value)).ok().map(|re| (re, SECRET_LABEL)));
         self.rules = literal_rules.chain(self.rules).collect();
         self
     }
 
-    /// Apply every rule. The input is borrowed back untouched when no rule
-    /// matched, so the per-request audit path allocates only for real hits
-    /// instead of once per rule per string.
+    /// Apply every rule to the original text and replace the union of their
+    /// matches. Matching sequentially would let a narrow rule rewrite part of
+    /// a value before a broader rule sees it (a built-in `Bearer` shape would
+    /// cut a configured `Bearer\s+\S+` short and expose the suffix).
+    /// Overlapping matches merge into one replacement; a secret label wins
+    /// over email and IP labels. The input is borrowed back untouched when no
+    /// rule matched, so the audit path allocates only for real hits.
     pub fn redact<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        let mut owned: Option<String> = None;
+        let mut spans: Vec<(usize, usize, &'static str)> = Vec::new();
         for (re, replacement) in &self.rules {
-            let replaced = match re.replace_all(owned.as_deref().unwrap_or(text), *replacement) {
-                Cow::Owned(s) => Some(s),
-                Cow::Borrowed(_) => None,
-            };
-            if let Some(s) = replaced {
-                owned = Some(s);
+            spans.extend(
+                re.find_iter(text)
+                    .filter(|m| !m.is_empty())
+                    .map(|m| (m.start(), m.end(), *replacement)),
+            );
+        }
+        if spans.is_empty() {
+            return Cow::Borrowed(text);
+        }
+        spans.sort_by_key(|&(start, end, _)| (start, std::cmp::Reverse(end)));
+        let mut out = String::with_capacity(text.len());
+        let mut cursor = 0;
+        let mut merged: Option<(usize, usize, &'static str)> = None;
+        for (start, end, label) in spans {
+            match merged.as_mut() {
+                Some((_, merged_end, merged_label)) if start < *merged_end => {
+                    *merged_end = (*merged_end).max(end);
+                    if label == SECRET_LABEL {
+                        *merged_label = SECRET_LABEL;
+                    }
+                }
+                _ => {
+                    if let Some((s, e, l)) = merged.replace((start, end, label)) {
+                        out.push_str(&text[cursor..s]);
+                        out.push_str(l);
+                        cursor = e;
+                    }
+                }
             }
         }
-        match owned {
-            Some(s) => Cow::Owned(s),
-            None => Cow::Borrowed(text),
+        if let Some((s, e, l)) = merged {
+            out.push_str(&text[cursor..s]);
+            out.push_str(l);
+            cursor = e;
         }
+        out.push_str(&text[cursor..]);
+        Cow::Owned(out)
     }
 
     pub fn redact_value(&self, value: &Value) -> Value {
@@ -511,7 +557,7 @@ mod tests {
         ] {
             let line = format!("before {secret} after");
             let out = redactors.redact(&line);
-            assert!(out.contains("[REDACTED_SECRET]"), "{out}");
+            assert!(out.contains(SECRET_LABEL), "{out}");
             let token = secret.rsplit(' ').next().unwrap();
             assert!(!out.contains(token), "{out}");
         }
@@ -525,6 +571,46 @@ mod tests {
             .redact("corp-123456 and ghp_0123456789abcdef0123456789abcdef0123")
             .into_owned();
         assert_eq!(out, "[REDACTED_SECRET] and [REDACTED_SECRET]");
+    }
+
+    #[test]
+    fn a_builtin_shape_never_cuts_a_broader_configured_pattern_short() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str(
+            "policy:\n  privacy:\n    redact_emails: true\n    redact_secrets_like: ['Bearer\\s+\\S+']\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
+        let redactors = Redactors::from_config(&cfg);
+        assert_eq!(
+            redactors.redact("Authorization: Bearer abc+DEF/ghi== next"),
+            "Authorization: [REDACTED_SECRET] next"
+        );
+        // Overlapping secret and email matches merge; the secret label wins.
+        assert_eq!(
+            redactors.redact("Bearer ops@example.com tail"),
+            "[REDACTED_SECRET] tail"
+        );
+        assert_eq!(redactors.redact("mail ops@example.com"), "mail [REDACTED_EMAIL]");
+        assert!(matches!(redactors.redact("nothing here"), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn configured_local_model_keys_are_known_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str(
+            "models:\n  local_llm:\n    api_key: primary-local-bearer-0001\n    fallback:\n      api_key: fallback-local-bearer-0002\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
+        let known = known_secret_values(&cfg);
+        assert!(known.iter().any(|v| v == "primary-local-bearer-0001"));
+        assert!(known.iter().any(|v| v == "fallback-local-bearer-0002"));
+        let redactors = Redactors::from_config(&cfg).with_literal_secrets(known);
+        assert_eq!(
+            redactors.redact("a primary-local-bearer-0001 b fallback-local-bearer-0002"),
+            "a [REDACTED_SECRET] b [REDACTED_SECRET]"
+        );
     }
 
     #[test]
