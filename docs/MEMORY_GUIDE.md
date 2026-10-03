@@ -1,21 +1,20 @@
 # Memory: save, suggest, review and retrieve
 
-This is the memory how-to. The contract (gates, ownership, storage, limits and
-what is never automatic) is [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md); the
-command table is [CONSOLE.md §7.8](CONSOLE.md#78-slash-command-quick-reference).
+This how-to covers memory operations. [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md)
+defines gates, ownership, storage, limits, and automatic behavior. The command
+table is [CONSOLE.md §7.8](CONSOLE.md#78-slash-command-quick-reference).
 
 There are two memory systems: shared-home pinned notes and an account-private
-structured store. Neither is embeddings, a vector database or RAG fusion. The
-Harness can suggest **summaries, durable insights, or both** from completed
-Harness chat turns and coding runs. These suggestions persist as pending
-proposals. **Only your Apply action with a reason saves a canonical fact.**
+structured store. Neither uses embeddings, a vector database, or RAG fusion.
+The Harness can propose **summaries, durable insights, or both** from completed
+chat turns and coding runs. **Only Apply with a reason saves a canonical fact.**
 Recalled text is untrusted background context and cannot authorize tools,
 coding, or network.
 
-Fresh configuration turns on pinned-note inclusion (`memory.enabled: true`) and
-every structured-memory gate. Existing config files, saved `harness.json`
-choices and explicit administrator off overrides are preserved. Ordinary
-chat-history persistence is separate and already happens without these flags.
+Fresh configuration enables pinned-note inclusion (`memory.enabled: true`) and
+every structured-memory gate. Upgrades preserve existing config, saved
+`harness.json` choices, and administrator overrides. Chat history persists
+independently of these flags.
 
 ## What counts as memory
 
@@ -33,12 +32,12 @@ default `~/.CGagentHarness`).
 | Facts search index | Derived, contentless FTS5 index in the structured store | Lexical search over facts only. No embeddings, vector database, episode search or RAG fusion. |
 | Detached coding jobs / run records | Owner-scoped jobs; shared underlying pipeline run records | Evidence about a coding run, not automatically injected memory. The completion-suggestion hook only uses the initiating account's current completed run. |
 
-`session_summary` and `insight` are fact/proposal categories, not new storage
-systems. A generated summary covers **one completed turn or run**, not an unseen
-whole session. Applying it creates a fact; it does not silently fill an episode's
-human `semantic_summary`. External Codex conversations and old Harness archives
-are not scanned or imported. Use pinned notes for shared-home preferences; use
-structured facts only after explicit review.
+`session_summary` and `insight` are categories, not storage systems. A generated
+summary covers **one completed turn or run**, not an unseen session. Applying it
+creates a fact without filling an episode's human `semantic_summary`. The
+Harness does not scan or import external Codex conversations or old archives.
+Use pinned notes for shared preferences and reviewed structured facts for
+account-private memory.
 
 ## Pinned notes
 
@@ -50,10 +49,9 @@ structured facts only after explicit review.
 ```
 
 - `/memory` shows the inclusion state, note IDs and structured-memory gate state.
-- `/memory add <note>` stores those exact words:
-  `/memory add save all session history` stores that sentence, not a summary or
-  a reference that loads other sessions. Store concrete facts or a reviewed
-  summary instead.
+- `/memory add <note>` stores those exact words. For example,
+  `/memory add save all session history` stores the sentence. It does not load
+  or summarize other sessions.
 - Adding a note does **not** turn inclusion on. `/memory on` includes saved notes
   in later chat; `/memory off` keeps the notes and excludes them.
 - `/memory forget <id>` deletes one note; `/memory clear` deletes all notes.
@@ -61,27 +59,23 @@ structured facts only after explicit review.
   session in this home.
 - `/memory on` includes pinned notes only. It opens no structured-memory gate.
 
-Notes are stored in `memory/notes.json`. Current code limits are 20 notes, 500
-characters per note and 3,000 characters of assembled prompt context; a full
-store is not a promise every note fits in the prompt. Empty, oversized and
-blocked instruction-override content is rejected. These note limits are code
-constants, not documented YAML settings. If memory is on but absent from
-`/prompt`, inspect `/memory` for an unreadable store rather than assuming it
-loaded. Back up before manual repair. Pinned-note capability flags
-(`rag.facts`, episodes, retrieval fusion) remain false.
+`memory/notes.json` holds at most 20 notes, 500 characters per note, and 3,000
+characters of assembled prompt context. The prompt may omit notes from a full
+store. The code rejects empty, oversized, and blocked instruction-override
+content; these limits are constants, not YAML settings. If enabled notes are
+absent from `/prompt`, inspect `/memory` for a store error and back up before
+manual repair. Pinned-note capability flags (`rag.facts`, episodes, retrieval
+fusion) remain false.
 
-Chat receives a guide to these controls plus current inclusion settings. It can
-list notes actually included in its prompt, but cannot save or delete them.
+Chat can list notes included in its prompt but cannot save or delete them.
 
 ## Gates and configuration
 
-Set keys under `structured_memory:` in the active `config.yaml`, then restart
-the server or fully relaunch the app. Literal YAML `true` is required; quoted
-`"true"` and missing keys stay off. Administrators can also switch each
-sub-gate live with its slash overlay, for example `/memory auto-retrieve off`.
-Overlays persist in `memory/structured_gates.json` and override the config
-value, including explicit `off` over config `true`, but they cannot open the
-store: only `enabled: true` plus a restart creates and opens
+Set keys under `structured_memory:` in `config.yaml`, then restart the server or
+app. Gates require literal YAML `true`; quoted `"true"` and missing keys are off.
+Administrators can change sub-gates live, such as `/memory auto-retrieve off`.
+These overlays persist in `memory/structured_gates.json` and override config,
+but cannot open the store. Only `enabled: true` plus a restart creates and opens
 `memory/structured.sqlite3`. `/memory` shows the effective gates;
 `GET /api/structured-memory` also shows suggestion queue status. Tunables live in
 `assets/config.default.yaml`; do not invent extra flags.
@@ -91,9 +85,8 @@ listed once in [the gate table](STRUCTURED_MEMORY.md#gates).
 
 ### Enable in an existing home
 
-Fresh homes already have these defaults. To enable them in an existing home,
-merge this into its existing block (do not create duplicate YAML keys) and
-restart:
+Fresh homes have these defaults. For an existing home, merge these keys into
+the existing block without duplicating keys, then restart:
 
 ```yaml
 structured_memory:
@@ -109,28 +102,24 @@ structured_memory:
   auto_retrieval: true
 ```
 
-Existing slash overrides take precedence over config: if a `/memory capture off`
-overlay is present, use `/memory capture on` after restart, and turn on any other
-off overlays you want to match this recipe. To enable gates one at a time, follow
-the [enable order](STRUCTURED_MEMORY.md#enable-order).
+Slash overrides take precedence. After restart, use `/memory capture on` and
+enable any other overlays needed for this recipe. To enable gates separately,
+follow the [enable order](STRUCTURED_MEMORY.md#enable-order).
 
 ## Automatic suggestions and review
 
-With the store, capture and either suggestion source on, a completed chat turn
-or successful coding run can produce pending `session_summary` and/or `insight`
-proposals, chosen by `suggestion_mode`. Either source switch can be enabled
-alone. Invalid modes, including non-string YAML values, disable suggestions. No
-setting auto-approves them. This path is separate from the human-summary
-auto-consolidator below; neither enables retrieval.
+With the store, capture, and either suggestion source enabled, a completed chat
+turn or successful coding run can produce pending `session_summary`, `insight`,
+or both according to `suggestion_mode`. Invalid modes, including non-string
+YAML values, disable suggestions. No setting approves proposals. Suggestions,
+human-summary consolidation, and retrieval are separate gates.
 
-Complete a chat turn or coding run, open **Memory** or `/memory proposals`, and
-use **Refresh proposals** after generation. The panel shows pending action,
-category, content, source episode ids and proposal id. Expand **Review full
-proposal**, check the content and repository scope (model confidence does not
-establish correctness), enter your reason, then choose **Apply** or **Reject**.
-That button explicitly confirms your decision for the displayed revision through
-the existing proposal-decide API. Empty/blank reasons are refused. Refresh to
-reload after a stale-proposal error. A closed store has no decision controls.
+After a chat turn or coding run, open **Memory** or `/memory proposals`, then use
+**Refresh proposals**. Review the action, category, content, source episode IDs,
+proposal ID, and repository scope. Model confidence does not establish
+correctness. Enter a reason and choose **Apply** or **Reject**. This confirms the
+displayed revision through the proposal-decide API. Blank reasons fail. Refresh
+after a stale-proposal error. A closed store has no decision controls.
 
 HTTP equivalent: review `GET /api/structured-memory/proposals/{id}`, then POST
 to that same path with `revision`, `confirm: true`, a nonblank `reason`, and
@@ -139,11 +128,10 @@ or operator suggests with `POST /api/structured-memory/proposals` (no
 `confirm`); direct add/deactivate also need `confirm: true` and `reason`. Verify
 with `GET /api/structured-memory/facts` and `/prompt`.
 
-There is no guarantee of a proposal for every event, and a suggestion that fails
-never fails the original chat or run. Review `automatic_suggestions` status,
-consolidation-run state and metadata audit events for failures, and review
-existing proposals before generating more: pending capacity is per owner. Bounds
-and failure behavior: [completion suggestions](STRUCTURED_MEMORY.md#completion-suggestions).
+Not every event produces a proposal. Suggestion failure does not fail the chat
+or run. For failures, inspect `automatic_suggestions`, consolidation state, and
+metadata audit events. Review existing proposals before generating more because
+pending capacity is per owner. See [completion suggestions](STRUCTURED_MEMORY.md#completion-suggestions).
 
 ## Save a fact manually
 
@@ -153,17 +141,15 @@ Keep `enabled: true`. Automatic generation and capture may stay off:
 /memory save For repository example, use metric units in examples. :: My reviewed standing preference
 ```
 
-The command itself explicitly confirms a private fact write, requires a visible
-reason after the last `::`, and uses the existing facts API with category `manual`.
-It needs neither capture nor model inference. The store must already be open.
-Plain language such as “remember this” does not execute this command: with
-automatic suggestions enabled it may produce a draft, but cannot approve one.
-Saving and later prompt retrieval remain separate operations.
+The command confirms a private fact write and requires a visible reason after
+the last `::`. It uses category `manual` and needs an open store, but no capture
+or model inference. Plain language such as "remember this" does not run the
+command. It may produce a draft when suggestions are enabled, but cannot approve
+one. Saving and retrieval remain separate.
 
-To save only by hand, run `/memory auto-suggest-chat off`,
-`/memory auto-suggest-coding off`, and `/memory auto-consolidate off` (or set
-those config values false and restart). For a shared literal note instead, use
-`/memory add <text>`.
+For manual-only facts, run `/memory auto-suggest-chat off`,
+`/memory auto-suggest-coding off`, and `/memory auto-consolidate off`, or set
+their config values false and restart. For a shared literal note, use `/memory add <text>`.
 
 ## Summarize and consolidate episodes
 
@@ -177,10 +163,10 @@ write the one durable sentence you want considered, then consolidate it:
 /memory proposals
 ```
 
-`remember` explicitly confirms attaching your bounded, scanned sentence to your
-latest completed episode and prints its id. It requires a visible reason and an
-open store; capture may be off if that episode exists. It saves no fact and
-starts no model run. This is **not chat autosave**.
+`remember` confirms attaching the bounded, scanned sentence to your latest
+completed episode and prints its ID. It requires a reason and an open store;
+capture may be off if the episode exists. It saves no fact and starts no model
+run. This is **not chat autosave**.
 
 `consolidate` claims the local generation gate, sends only those episode
 summaries to the local model (no tools, no web, no recalled facts), and writes
@@ -188,12 +174,11 @@ pending proposals. It does **not** create or update facts; review them as above.
 Manual selection of summary-less episodes still runs but has worse quality:
 metadata alone is not a source of facts.
 
-With `auto_consolidation` on as well, a bounded idle worker may claim the
-episode instead, so you can wait for pending proposals in Memory. It requires
+With `auto_consolidation` on, a bounded idle worker may claim the episode. It requires
 nonblank human summaries, unexpired `none`/`pending` episodes and no running
 owner batch, waits for the generation gate, and never preempts chat. A completed
 suggestion batch marks its episode done; later summary edits do not reset it for
-automatic replay. Explicit manual consolidation remains available.
+automatic replay. Manual consolidation remains available.
 
 ## Retrieve and inspect
 
@@ -229,15 +214,13 @@ budget.
 
 ## Turn automation or the store off
 
-To retain manual facts but stop derived capture and suggestions: leave the store
-enabled, disable both `auto_suggest_*` switches, `auto_consolidation` and
-capture (config or `/memory … off`). Existing saved facts and pending proposals
-remain. To avoid opening the structured database at all, set `enabled: false`
-and restart. This does not delete it or disable pinned notes, persona, or
-ordinary chat-history persistence: successful exchanges still persist in
-account-owned `sessions/*.json`, and bounded recent messages are used for the
-next chat in that session. There is no structured-memory flag that disables
-saving successful chat exchanges to the session store.
+To keep manual facts but stop capture and suggestions, leave the store enabled
+and disable both `auto_suggest_*` switches, `auto_consolidation`, and capture.
+Saved facts and pending proposals remain. To stop opening the database, set
+`enabled: false` and restart. This does not delete it or disable pinned notes,
+persona, or chat-history persistence. Successful exchanges still enter the
+account-owned `sessions/*.json`, and the next turn uses bounded recent messages.
+No structured-memory flag disables session persistence.
 
 `/clear` clears the display. Sessions Clear has its separate deletion flow: it
 cancels waiting/in-flight chat suggestions and keeps facts and proposals; derived

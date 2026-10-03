@@ -3,10 +3,9 @@
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
-A local harness for **chat, permitted web research, and reviewed coding**,
-written in Rust. Local chat stays on
-loopback. Cloud chat requires provider setup and selection; web reads require
-the account and content permissions described in
+A Rust harness for **chat, permitted web research, and reviewed coding**.
+Local chat uses loopback. Cloud chat requires provider setup and selection;
+web reads require the account and content permissions in
 [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions).
 
 ![CG Agent Harness](docs/screenshots/image.png)
@@ -15,8 +14,8 @@ the account and content permissions described in
 
 | Surface | What it is | Default state |
 |---|---|---|
-| **Local chat** | Chat against an OpenAI-compatible **loopback** model server (Ollama by default), with local history, memory, skills, attachments and web context. `/loop` continues chat toward a session goal. | On |
-| **Cloud chat** | Explicitly selecting `grok` or `claude` routes through a separate cloud path after provider setup. Sends **only the new user message** — no local history, memory, skills, attachments or web context. Not available for `/loop`. | Off until a provider is configured |
+| **Local chat** | Chat with an OpenAI-compatible **loopback** model server (default Ollama), using history, memory, skills, attachments and web context. `/loop` continues toward a session goal. | On |
+| **Cloud chat** | Select `grok` or `claude` after provider setup. Sends **only the new message**, excluding local history, memory, skills, attachments and web context. Unavailable for `/loop`. | Off until a provider is configured |
 | **Web research** | Google listings, URL fetch and page research under configurable budgets and URL rules. | Governed by [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md#web-permissions) |
 | **Coding pipeline** | `/agent` drives a separate planner/executor loop in a child process. `agentic.enabled`, `deepagent_github.enabled` and `allow_git_write_tools` ship false. A cloud planner also passes a **six-gate** chain ending in a per-run `--confirm-online`, and permits **repository-content egress**. | Off — read [CODING_PIPELINE.md](docs/CODING_PIPELINE.md) first |
 | **Netconnect** | Passive LAN observation: gates and scope (`status`), plus in-scope interfaces, routes and neighbors from local tables (`devices`). No scans, probes or device control in this build. | Off; empty scope |
@@ -28,9 +27,8 @@ Capability table: [CONSOLE.md](docs/CONSOLE.md#what-you-can-do).
 > `admin` / `admin` — replace the password immediately. Repository mutations
 > stay disabled until explicitly configured, and commit, push and draft-PR
 > publication each require a **separate** operator decision. **Loopback-only**
-> means the server listens on a local address such as `127.0.0.1`; it does not
-> prove that every subprocess or external model service has no outbound network
-> access. Netconnect sends no packets and accepts only operator-listed private
+> restricts server binding, such as to `127.0.0.1`. Subprocesses and external
+> model services may still access outbound networks. Netconnect sends no packets and accepts only operator-listed private
 > or loopback IPv4 CIDRs. Audit records are redacted JSONL under the home.
 > Details: [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md),
 > [CODING_PIPELINE.md](docs/CODING_PIPELINE.md#git-approval-and-publication), [INVARIANTS.md](INVARIANTS.md).
@@ -48,9 +46,9 @@ Pick one run path. A **home** is the harness state directory,
 | Standalone server (macOS) | Git, Xcode Command Line Tools and Rust 1.88 | Browser at `https://127.0.0.1:8790/` by default |
 | Standalone server (Linux) | Git, a C toolchain, Rust 1.88, and `bwrap` (preferred) or `unshare` for sandboxed checks | Browser at `https://127.0.0.1:8790/` by default |
 
-An already-built app needs no Terminal, external browser, Rust or Python merely
-to launch. Coding checks still need their own tools and prepared dependencies.
-Full prerequisites, first run and verification: [INSTALL.md](docs/INSTALL.md).
+A built app launches without Terminal, an external browser, Rust or Python.
+Coding checks need their own tools and prepared dependencies. Prerequisites
+and verification: [INSTALL.md](docs/INSTALL.md).
 
 ### Option A — macOS app (recommended)
 
@@ -64,9 +62,8 @@ Full prerequisites, first run and verification: [INSTALL.md](docs/INSTALL.md).
    open "CG Agent Harness.app"
    ```
 
-The app owns a bundled backend on an ephemeral loopback port and keeps account
-and work data outside the bundle, so replacing the app does not replace that
-data. Packaging, ad-hoc signing and desktop limits: [DESKTOP.md](docs/DESKTOP.md).
+The app owns its backend on an ephemeral loopback port. Account and work data
+live outside the bundle and survive app replacement. Packaging and signing: [DESKTOP.md](docs/DESKTOP.md).
 
 **Build the app from source** (macOS, both Rust toolchains are required):
 
@@ -98,14 +95,13 @@ The backend is built and tested on Linux in CI, and Bundle runs attach a
 (allowlisted read-only inputs and writable scratch) and falls back to
 `unshare --net` when `bwrap` is missing: that fallback isolates the network but
 does not give checks the read-only input confinement that Seatbelt does on
-macOS. General Windows CI and release legs are parked; focused native MCP Job
-Object acceptance runs on Windows.
+macOS. General Windows CI and release legs remain parked. The focused Windows job
+runs MCP Job Object, child-environment and credential-file privacy tests.
 
 ### Local model
 
-The harness talks to `http://127.0.0.1:11434/v1` by default and sends no
-`num_ctx`, so context length must be set on the Ollama side **before** the
-Ollama process starts:
+The default endpoint is `http://127.0.0.1:11434/v1`. The harness sends no
+`num_ctx`; set context length **before** Ollama starts:
 
 ```bash
 export OLLAMA_CONTEXT_LENGTH=32768   # seeded web budgets assume this value
@@ -119,16 +115,14 @@ Set-and-verify procedure: [MODELS.md](docs/MODELS.md).
 1. Sign in with `admin` / `admin` and replace the bootstrap password.
 2. Run `/help`.
 
-`/help` opens a compact topic guide, `/help web` shows research syntax and
-`/help all` lists the complete catalog. Clicking an entry inserts its command
-prefix for review without executing it; typo suggestions are never executed.
-Slash-command tables: [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference).
+`/help` opens topics, `/help web` shows research syntax, and `/help all` lists
+the catalog. Entries insert command prefixes for review; neither entries nor
+typo suggestions execute commands. Reference: [CONSOLE.md](docs/CONSOLE.md#78-slash-command-quick-reference).
 
 ### Netconnect
 
-LAN observation ships closed. `netconnect.enabled` and every tier flag in
-`assets/config.default.yaml` are false, and `allowed_cidrs` is empty. Scope
-entries must be RFC1918 or 127/8 IPv4 CIDRs at /16 or longer.
+LAN observation ships closed with false master/tier flags and empty
+`allowed_cidrs`. Scope accepts only RFC1918 or 127/8 IPv4 CIDRs at /16 or longer.
 `cgagentharness netconnect status` reports gates and does not read local tables.
 `cgagentharness netconnect devices` lists in-scope neighbors and sends no packets.
 A closed master gate exits 4; an invalid scope exits 3. In the console,
@@ -151,10 +145,9 @@ A closed master gate exits 4; an invalid scope exits 3. In the console,
 
 ## Configuration
 
-The first `serve` seeds `config.yaml` in the home from
-[assets/config.default.yaml](assets/config.default.yaml). Edit that file rather
-than replacing it: omitted gates read as false, and quoted `"true"` does not
-enable a gate. Startup settings need a restart; 22 web/API limits reload live
+First `serve` seeds the home's `config.yaml` from
+[assets/config.default.yaml](assets/config.default.yaml). Edit it in place.
+Omitted gates are false; quoted `"true"` never enables them. Startup settings need a restart; 22 web/API limits reload live
 ([CONFIG_RELOAD.md](docs/CONFIG_RELOAD.md), [which settings apply where](docs/INSTALL.md#which-settings-take-effect-where)). `logging.audit_file` must stay
 home-relative; absolute or `..` paths fall back to `logs/audit.jsonl`.
 
@@ -168,21 +161,20 @@ SKIP_LIVE=1 scripts/verify-local.sh   # all of the above, contract scripts, rele
 ```
 
 CI runs rustfmt, Clippy, `cargo deny`, Linux and macOS tests, the invariant
-guard, browser acceptance, Linux bubblewrap and MCP lifecycle jobs, Windows Job
-Object lifecycle, Bundle and desktop packaging, CodeQL, DevSkim and Gitleaks.
+guard, browser acceptance, Linux bubblewrap/MCP lifecycle, Windows Job Object,
+child-environment and credential tests, Bundle/desktop packaging, CodeQL, DevSkim
+and Gitleaks.
 Path-filtered jobs lint workflows (zizmor) and run the netconnect no-packet
 proof. Details:
 [INSTALL.md](docs/INSTALL.md#tests-and-cicd).
 
 ## Which version am I running?
 
-The Cargo package version (`0.1.0`) does **not** establish feature
-availability, and a source checkout can include features newer than the
-[latest release](https://github.com/cgfixit/CG-agent-harness/releases/latest).
-Identify an installed build by `Contents/Resources/COMMIT` inside the app
-bundle, the workflow SHA of the build and its release notes; `/help all` lists
-the commands that build has. Dated acceptance records certify only the source
-and artifact they name. Upgrades, backups and release cadence:
+The Cargo version (`0.1.0`) does **not** identify features. Source can be newer
+than the [latest release](https://github.com/cgfixit/CG-agent-harness/releases/latest).
+Check the app's `Contents/Resources/COMMIT`, build workflow SHA and release
+notes. `/help all` lists that build's commands. Acceptance records cover only
+the named source/artifact. Upgrades, backups and release cadence:
 [INSTALL.md](docs/INSTALL.md#update-backup-rollback-and-uninstall) and
 [RELEASING.md](docs/RELEASING.md).
 
@@ -194,7 +186,7 @@ and artifact they name. Upgrades, backups and release cadence:
 | Choose an installed model; check `OLLAMA_CONTEXT_LENGTH=32768` | [MODELS.md](docs/MODELS.md) |
 | Fine-tune `qwen3.8:27b-mlx` and serve it to chat and the coding planner | [FINETUNE.md](docs/FINETUNE.md), [`finetune/`](finetune) |
 | macOS app ownership, Finder setup, recovery, packaging, distribution limits | [DESKTOP.md](docs/DESKTOP.md) |
-| Chat, sessions and goals, soul, styles (off by default), skills, attachments, connectors, streaming, compaction, slash commands | [CONSOLE.md](docs/CONSOLE.md) |
+| Chat, session search/export, goals, soul, styles (default-off), skills, attachments, connectors, streaming, compaction, commands | [CONSOLE.md](docs/CONSOLE.md) |
 | Passive LAN observation (`netconnect`, off by default): gates, scope, CLI, `/net`, panel | [netconnect.md](docs/netconnect.md) |
 | Operator manual; memory: pinned notes, structured memory, suggestions, recall | [USER_MANUAL.md](docs/USER_MANUAL.md), [MEMORY_GUIDE.md](docs/MEMORY_GUIDE.md), [STRUCTURED_MEMORY.md](docs/STRUCTURED_MEMORY.md) |
 | HTTPS and certificates, accounts and roles, web search/fetch/research, URL rules, API keys | [SECURE_RESEARCH.md](docs/SECURE_RESEARCH.md) |
@@ -226,6 +218,5 @@ checked with `scripts/check-pr-template.sh`.
 
 ## Origins
 
-The harness began as a Rust port of the console and agentic pipeline from
-[CyClaw](https://github.com/cgfixit/CyClaw). Its focus here is local coding,
-chat context, controlled tools and explicit operator review.
+A Rust port of [CyClaw](https://github.com/cgfixit/CyClaw)'s console and coding
+pipeline, focused on local coding, chat context, controlled tools and operator review.

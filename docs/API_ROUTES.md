@@ -1,18 +1,16 @@
 # HTTP route inventory
 
-Every route the console serves, grouped by feature. The authoritative list is
-`REGISTERED_PATHS` in `src/server/routes/mod.rs`; `GET /api/tools` reports the
-same inventory at runtime as its "wired" set, and
-`tests/invariant_guard.rs` fails the build if the router and the list diverge.
-This page is a reading aid; when it disagrees with the code, the code wins.
+Console routes, grouped by feature. `registered_paths()` in
+`src/server/routes/mod.rs` combines `REGISTERED_PATHS` with authentication
+extras. Its unit test checks router coverage; `GET /api/tools` reports catalog
+wiring against that set. Code remains authoritative.
 
-All routes are loopback-only and pass the guard chain in
-[INVARIANTS.md](../INVARIANTS.md): rate limit, same-origin, direct
-loopback/no forwarding headers, account/RBAC, then mutation CSRF
-(`X-CyClaw-CSRF`). Public routes still receive the early guards. The browser
-never supplies a command; agent routes carry check-profile names and run ids.
+All console routes use the [guard chain](../INVARIANTS.md): rate limit,
+same-origin, direct loopback/no forwarding headers, account/RBAC, mutation
+CSRF (`X-CyClaw-CSRF`). Public routes retain early guards. Agent requests carry
+check-profile names and run IDs, never browser-supplied commands.
 
-Spend interpretation and completion-webhook configuration: [operator guide](SPEND_AND_NOTIFICATIONS.md). Webhooks are outbound notifications, not a new inbound route.
+Spend and outbound completion webhooks: [operator guide](SPEND_AND_NOTIFICATIONS.md).
 
 ## Console and status
 
@@ -26,7 +24,7 @@ Spend interpretation and completion-webhook configuration: [operator guide](SPEN
 | GET | `/api/registry` | Skill/persona registry listing |
 | GET | `/api/audit` | Audit events (administrator) |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |
-| GET | `/api/analytics/summary` | Composed spend/session/coding-run analytics for the account (`/analytics`; see [ANALYTICS.md](ANALYTICS.md)) |
+| GET | `/api/analytics/summary` | Owned sessions plus shared spend/coding analytics (`/analytics`; [details](ANALYTICS.md)) |
 | POST | `/api/config/reload` | Reload the non-secret limits allowlist (administrator, CSRF-guarded; see [CONFIG_RELOAD.md](CONFIG_RELOAD.md)) |
 
 ## Accounts and sessions
@@ -39,9 +37,9 @@ Spend interpretation and completion-webhook configuration: [operator guide](SPEN
 | POST | `/api/auth/logout` | Revoke the current session |
 | GET | `/api/auth/whoami` | Current account and role |
 | POST | `/api/auth/password` | Change own password; revokes other sessions |
-| GET, POST | `/api/auth/users` | List or create accounts (administrator; `/users`) |
+| GET, POST | `/api/auth/users` | List/create accounts (administrator; `/users`) |
 | DELETE | `/api/auth/users/{username}` | Delete an account (administrator) |
-| POST | `/api/auth/users/{username}/disabled` | Enable or disable an account (administrator) |
+| POST | `/api/auth/users/{username}/disabled` | Enable/disable an account (administrator) |
 | POST | `/api/auth/users/{username}/password` | Administrative password reset |
 | POST | `/api/auth/users/{username}/role` | Change a role (administrator) |
 | GET, POST | `/api/keys` | Managed-key presence (masked tail) and `/api set <KEY> <value>` |
@@ -54,9 +52,9 @@ session timeouts.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
-| POST | `/api/chat/attachments` | Store up to 3 text/DOCX files (txt/md/json/csv/log/docx, 15 MB each, 64 MB and 512-blob home quota; `attachments.max_concurrent_uploads` bodies in flight, else 503). UUID blobs at `0600`. Local chat persists owner-scoped blob ids on the session (cap 12) and may BM25-chunk those blobs into the existing fence; cloud, `/loop`, and `/agent` return `ATTACHMENT_SURFACE_FORBIDDEN` if those ids or request `attachment_ids` are present. |
-| GET | `/api/notes-corpus` | List this owner's jailed `.md`/`.txt` notes (id, mime, sha prefix, bytes; no bodies, no host path). |
-| POST | `/api/notes-corpus` | Copy+classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` (caps in `notes_corpus.*`). Injected on local chat / preview only. |
+| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs. Concurrent bodies use `attachments.max_concurrent_uploads`, else 503. UUID blobs use `0600`. Local chat retains up to 12 owner-scoped IDs per session for fenced BM25 context. Cloud, `/loop` and `/agent` refuse saved/requested attachment IDs with `ATTACHMENT_SURFACE_FORBIDDEN`. |
+| GET | `/api/notes-corpus` | List owned jailed `.md`/`.txt` metadata (ID, MIME, SHA prefix, bytes), without bodies or host paths. |
+| POST | `/api/notes-corpus` | Copy/classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` under `notes_corpus.*` caps; local chat/preview only. |
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
@@ -65,12 +63,12 @@ session timeouts.
 | POST | `/api/ollama/pull/cancel` | Abort the in-flight pull |
 | POST | `/api/prompt/preview` | Show the assembled system prompt (`/prompt`) |
 | POST | `/api/slash/parse` | Suggest-don't-guess slash normalizer; never executes mutations |
-| GET | `/api/spend/summary` | Guarded retained-history spend rollup with completeness, file statuses and skipped-row counts (read-time USD) |
-| POST | `/api/spend/predict` | Estimate an unsent cloud draft's cost before sending (Analytics → Tokens and cost → Estimate draft; see [SPEND_AND_NOTIFICATIONS.md](SPEND_AND_NOTIFICATIONS.md)) |
+| GET | `/api/spend/summary` | Guarded retained spend, completeness, file statuses, skipped rows and read-time USD |
+| POST | `/api/spend/predict` | Estimate unsent cloud cost (Analytics → Tokens and cost → Estimate draft; [details](SPEND_AND_NOTIFICATIONS.md)) |
 | GET, POST | `/api/sessions` | List your sessions or create an owned one |
 | GET | `/api/sessions/legacy` | Administrator metadata inventory of unassigned legacy sessions |
 | POST | `/api/sessions/{session_id}/adopt` | Administrator adopts into own account with confirmation/reason; clears prior goal-stage approval |
-| POST | `/api/sessions/search` | Local transcript search; case-insensitive matches with Unicode-safe snippets of at most 160 characters |
+| POST | `/api/sessions/search` | Owned local transcript search off async workers; case-insensitive literal phrases cross chunk boundaries; Unicode-safe snippets ≤160 characters |
 | POST | `/api/sessions/clear` | Delete owned sessions; retain foreign, legacy, corrupt and staged files |
 | GET | `/api/sessions/{session_id}` | Load one owned session |
 | GET | `/api/sessions/{session_id}/export` | Markdown export; also written 0o600 under home/exports |
@@ -129,7 +127,7 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | Method | Path | Purpose |
 |---|---|---|
 | GET, POST | `/api/web` | Status and on/off toggle |
-| POST | `/api/web/allow` | Atomically grant one or more exact URLs or explicit wildcards, with a group and optional seeds |
+| POST | `/api/web/allow` | Atomically grant exact URLs or explicit wildcards, with group/optional seeds |
 | POST | `/api/web/deny` | Remove a grant |
 | POST | `/api/web/fetch` | Read one or more exact permitted URLs within shared resource limits |
 | POST | `/api/web/check` | Check exact URL permissions locally, without fetching or granting access |
@@ -144,15 +142,13 @@ running portal.
 
 ## Private MCP memory server
 
-The optional separate loopback listener accepts `POST /mcp` using dedicated
-machine bearer keys, never console cookies. It is not a console route and is
-not exposed by changing the portal's bind address. Default-off listener and
-empty tool grants are independent. Read-only tools are `memory_list_facts`,
-`memory_get_fact`, and literal-substring `memory_search`, each bound to the
-key row's owner and `memory:read` scope. Local CLI `mcp-key create/list/revoke`
-manages independent credentials. See [activation, limits and future exposure
-contract](MCP_SERVER.md). `GET /api/mcp` and `/tools mcp` also show gateway
-configuration; they do not probe or authorize that listener.
+A separate default-off loopback listener accepts `POST /mcp` with dedicated
+machine bearer keys, never console cookies. Portal binding does not expose it.
+Empty tool grants independently restrict `memory_list_facts`, `memory_get_fact`
+and literal-substring `memory_search` to the key owner and `memory:read` scope.
+`mcp-key create/list/revoke` manages its credentials. `GET /api/mcp` and
+`/tools mcp` display configuration without probing or authorizing it. See
+[activation, limits and exposure contract](MCP_SERVER.md).
 
 ## MCP client
 
@@ -161,15 +157,13 @@ configuration; they do not probe or authorize that listener.
 | GET | `/api/mcp` | Declared MCP servers, namespaced tools and versioned stdio capability policies; does not auto-discover |
 | POST | `/api/mcp/call` | Call one declared MCP tool; `confirm` is never defaulted |
 
-SSE MCP URLs are DNS-pinned. Loopback SSE requires `mcp.sse_allow_loopback: true`.
-MCP tools are not attached to `/loop`. Stdio MCP is newline-delimited JSON-RPC; a
-line longer than `mcp.max_result_bytes`, terminated or not, is refused at the cap.
-Child stderr is drained through a pipe, retaining at most 2 KiB in memory and
-512 Unicode characters in diagnostics. No stderr log file is created; the existing
-call timeout still applies. Stdio protection follows the declared
-[capability policy](MCP_CLIENT.md); no silent fallback to an unconfined process
-or a weaker network mode is allowed. The response reports declared policy,
-not a successful sandbox probe. `/tools mcp` renders that policy in the console.
+SSE URLs are DNS-pinned; loopback needs `mcp.sse_allow_loopback: true`. `/loop`
+has no MCP tools. Stdio uses newline-delimited JSON-RPC with a
+`mcp.max_result_bytes` line cap, including unterminated lines. Piped stderr
+retains 2 KiB in memory and 512 Unicode diagnostic characters, without a log file.
+The call timeout applies. Declared [capability policy](MCP_CLIENT.md) forbids
+unconfined or weaker-network fallback. Responses and `/tools mcp` report policy,
+not successful sandbox probes.
 
 ## Coding agent
 
@@ -183,7 +177,7 @@ not a successful sandbox probe. `/tools mcp` renders that policy in the console.
 | POST | `/api/agent/jobs/{job_id}/cancel` | Cancel a job |
 | GET | `/api/notifications` | Owned destinations and retained delivery metadata; no URLs, credentials or job content |
 | POST | `/api/notifications/{delivery_id}/replay` | Confirmed owner replay within current grants/limits; never reruns a job |
-| POST | `/api/agent/schedules/preview` | Preview five interval/cron occurrences; return a bounded owner-bound activation receipt |
+| POST | `/api/agent/schedules/preview` | Preview five interval/cron occurrences; return bounded owner-bound receipt |
 | GET, POST | `/api/agent/schedules` | List owned schedules or activate the exact previewed, owned reviewed-goal request |
 | GET | `/api/agent/schedules/{schedule_id}` | One schedule |
 | POST | `/api/agent/schedules/{schedule_id}/cancel` | Cancel a schedule |
@@ -194,27 +188,23 @@ not a successful sandbox probe. `/tools mcp` renders that policy in the console.
 | POST | `/api/agent/runs/{run_id}/publish` | Open a draft PR |
 | POST | `/api/agent/runs/{run_id}/discard` | Discard a run |
 
-Run and job routes both go through `agent::prepare_run`, then cross the shim
-into a child process; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
+Run/job routes share `agent::prepare_run`, then spawn through the shim; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
 [CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
 
 ## Completion webhooks
 
-`notifications.enabled: true` activates the private bounded outbox for explicitly
-owned destinations and terminal-job subscriptions. It remains default-off and
-restart-only. Configure schema 1 `destinations`; a nonempty legacy global
-`webhook_url` refuses enablement until deliberately migrated. Account users cannot
-supply another owner through the status/replay APIs.
+Default-off, restart-only `notifications.enabled: true` activates a private
+bounded outbox for owned destinations and terminal-job subscriptions. Schema 1
+`destinations` replace the legacy `webhook_url`, which must be empty. Status and
+replay cannot select another account owner.
 
-Version-2 JSON batches contain only stable event/delivery IDs, job ID, terminal
-status and timestamps. Every attempt rechecks current destination/account grants,
-validates and pins DNS, refuses proxies/redirects and requires HTTPS for public
-receivers. Exact private URL grants can permit private HTTP. Credentials are
-selected explicitly from the protected managed environment and never enter status,
-outbox records, payloads or audit.
+Version-2 batches contain stable event/delivery IDs, job ID, status and
+timestamps. Attempts recheck destination/account grants, pin validated DNS,
+refuse proxies/redirects and require public HTTPS. Exact private URL grants can
+permit private HTTP. Explicit managed credentials never enter status, outbox,
+payloads or audit.
 
-Attempts and per-destination rate state persist before dispatch. Retained jobs
-reconcile an enqueue crash gap on restart. Finite retries, retention, bounded queue
-pressure and explicit replay use at-least-once delivery; receivers deduplicate by
-stable delivery ID. Replay never restarts a job. See the complete configuration,
-crash semantics and bounds in [SPEND_AND_NOTIFICATIONS.md](SPEND_AND_NOTIFICATIONS.md).
+Attempts/rate state persist before dispatch. Retained jobs reconcile enqueue
+crash gaps on restart. At-least-once delivery has finite retries, retention and
+queue bounds; deduplicate by delivery ID. Replay never restarts jobs. See
+[configuration and crash semantics](SPEND_AND_NOTIFICATIONS.md).

@@ -1,28 +1,26 @@
 # Reload non-secret limits
 
-Edit the active home's `config.yaml`, then use **Reload limits** in the console
-header as an administrator. The button appears after replacing the bootstrap
-password. It calls authenticated, CSRF-guarded `POST /api/config/reload` with
-an empty JSON object (`{}`). Operators, audit accounts and auth-disabled legacy
-homes cannot call this route. On Unix, send SIGHUP to the owned **backend** PID
-(the native sidecar, not its desktop parent) to invoke the same implementation.
+Edit the active home's `config.yaml`, then choose **Reload limits** as an
+administrator who replaced the bootstrap password. The button sends `{}` to
+authenticated, CSRF-guarded `POST /api/config/reload`. Operators, auditors and
+auth-disabled homes cannot call it. Unix SIGHUP to the owned **backend** PID
+(the native sidecar, not desktop parent) invokes the same implementation.
 
-A successful response includes `changed`, `limits.revision`, the applied
-snapshot and `reloadable`. A no-op keeps the revision. New operations use the
-new snapshot; a web fetch/research/chat-tool operation already running keeps
-its original limits. Reload retains rate-limit hits and shared fetch capacity,
-locks and cancellation. Tightening a ceiling can immediately produce HTTP 429;
+Success returns `changed`, `limits.revision`, the applied snapshot and
+`reloadable`. A no-op preserves revision. New operations use the new snapshot;
+running web fetch/research/chat-tool operations retain theirs. Reload preserves
+rate-limit hits, shared fetch capacity, locks and cancellation. Tightening a ceiling can immediately produce HTTP 429;
 SIGHUP can recover an HTTP ceiling that currently blocks the reload route.
 `Retry-After` waits for enough retained hits to expire under the new ceiling.
 Increasing a rate window cannot restore hits already expired under its former
-window. This is tuning, not a fresh quota allocation.
+window. Reload allocates no fresh quota.
 
 ## Supported settings
 
-Only these 22 leaf keys can change. All values are integers except the two
-`window_seconds` values, which accept finite numbers. Bounds also apply at
-startup. Seeded defaults are in `assets/config.default.yaml`; removing a key
-selects its code fallback, which can differ from a fresh-home default.
+Only these 22 keys reload. Values are integers except finite `window_seconds`
+numbers. Bounds also apply at startup. Defaults live in
+`assets/config.default.yaml`; removing a key selects its potentially different
+code fallback.
 
 | Key | Accepted range |
 |---|---|
@@ -50,9 +48,9 @@ selects its code fallback, which can differ from a fresh-home default.
 | `web.chat_tool_calls` | 1–10 |
 
 `web.concurrency` is **restart-only** because it sizes shared fetch permits.
-All other fields, including TLS, authentication, credentials,
-`security.allow_plaintext_key_file` (ships false; restart required), models, sandbox,
-coding policy, notifications and unknown keys, are outside this reload contract.
+TLS, authentication, credentials, `security.allow_plaintext_key_file` (default
+false), models, sandbox, coding policy, notifications and unknown keys require
+restart.
 This route never writes YAML or changes permissions. Use [normal restart and
 settings guidance](INSTALL.md#which-settings-take-effect-where) for those fields.
 
@@ -61,15 +59,13 @@ settings guidance](INSTALL.md#which-settings-take-effect-where) for those fields
 An unreadable file, symlink on Unix, non-regular file, invalid UTF-8/YAML, more than
 1 MiB of config, or an invalid limit returns `CONFIG_RELOAD_INVALID`. A mixed
 candidate changing anything outside the allowlist returns
-`CONFIG_RESTART_REQUIRED`. Either preserves **all** running limits; no partial
-update occurs. Restore unsupported or invalid edits and retry, or deliberately
-restart with a valid complete configuration. Error messages and audit never
+`CONFIG_RESTART_REQUIRED`. Both preserve **all** running limits. Restore invalid or unsupported edits and
+retry, or restart with a valid complete configuration. Error messages and audit never
 include raw YAML or secret values.
 
 Audit `config_reloaded` reports source (`http`/`sighup`), revision and whether
 anything changed; `config_reload_refused` reports the source and coarse code.
-A refusal leaves the on-disk file as edited. Existing components that independently
-read disk, including coding write-policy revalidation, still see that file and
-can refuse their operations. Reload does not freeze or roll back those checks.
-A smaller web cache bound governs subsequent cache operations; it does not
-promise immediate background eviction of already stored pages.
+Refusal leaves the edited file on disk. Independent disk readers, including
+coding write-policy revalidation, still see it and can refuse operations.
+Smaller cache bounds govern subsequent operations without promising immediate
+background eviction.

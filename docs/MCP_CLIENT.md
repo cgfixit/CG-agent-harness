@@ -1,18 +1,15 @@
 # External MCP client capabilities
 
-MCP stays disabled until an operator declares servers and enables `mcp.enabled`.
-Calls require an authenticated operator/admin, CSRF, the declared namespaced
-tool in the broker allowlist, and literal `confirm: true`. There is no discovery
-or model/repository permission to expand the declaration. `/loop` has no MCP
-tools. The client is separate from the [read-only memory gateway](MCP_SERVER.md), whose listener, keys and tool grants are independent.
+MCP requires declared servers and enabled `mcp.enabled`. Calls need an
+authenticated operator/admin, CSRF, a declared namespaced tool in the broker
+allowlist, and literal `confirm: true`. Discovery, models and repositories
+cannot expand declarations. `/loop` has no MCP tools. The client is separate from the [read-only memory gateway](MCP_SERVER.md), whose listener, keys and tool grants are independent.
 
 ## Migrate a stdio declaration
 
-Existing stdio declarations without `capabilities` are refused at startup.
-Review the paths and choose a lifecycle policy explicitly; no upgrade silently
-grants old ambient access. Disabled MCP with no declarations is unchanged.
-All declarations and grants require restart and are outside the 22-key config
-reload allowlist.
+Stdio declarations need `capabilities` or startup refuses. Review paths and
+lifecycle policy; upgrades grant no ambient access. Disabled, undeclared MCP
+stays off. Declarations require restart, outside the 22-key reload allowlist.
 
 ```yaml
 mcp:
@@ -37,14 +34,12 @@ mcp:
           memory_mb: 256
 ```
 
-Replace these example paths with existing, deliberately granted paths. At most
-16 read/write roots are accepted. Roots must be absolute, cannot contain `..`
-or name the filesystem root, and are canonicalized again for every invocation.
-For confined policies (the default), the harness home and any ancestor/descendant overlap are refused. The optional
-`cwd` is an additional read-only grant; omit it for an empty owned directory.
-The executable and fixed OS runtime files are readable. Script arguments do
-not grant their directories: declare scripts, modules and non-system runtimes
-explicitly. Host writes are limited to owned scratch and declared write roots.
+Replace the example paths with deliberate grants. At most 16 roots are accepted.
+Roots must be absolute, exclude `..` and the filesystem root, and are
+re-canonicalized for each call. Confined policies refuse the harness home and
+all overlaps. Optional `cwd` is a read-only grant; omit it for an empty owned
+directory. Declare scripts, modules, and non-system runtimes explicitly because
+arguments grant no paths. Host writes stay in owned scratch and write roots.
 Linux also has private namespace storage (including `/tmp`); a write there does
 not modify a same-named host path. Tests check the host filesystem as well as
 the tool's result, including an unmounted host canary that must remain unchanged.
@@ -68,13 +63,12 @@ when its network namespace probe fails.
 | `job_object`, Windows | explicit trusted-server exception; unrestricted filesystem/network, atomic process-tree ownership and resource limits |
 | `job_object`, macOS / Linux | refuses before execution |
 
-Strict limits are required: `processes` 8–128 and `memory_mb` 64–4096. The
-process count includes supervisor/runtime processes and the memory cap covers
-the cgroup. A working systemd version supporting `--expand-environment=no`
-(254+) and cgroup v2 is required. Normal Linux operators use their existing
-user service manager; root uses the system manager. The harness does not invoke
-sudo, install a service or change host namespace settings. Unavailable user
-controllers or namespace permissions cause refusal.
+Strict mode requires `processes` 8–128, `memory_mb` 64–4096, systemd 254 or
+newer with `--expand-environment=no`, and cgroup v2. Counts include supervisor
+and runtime processes; memory covers the cgroup. Linux uses the existing user
+service manager, or the system manager for root. The harness does not invoke
+sudo, install services, or change host namespace settings. Missing controllers
+or namespace permissions cause refusal.
 
 To deliberately retain weaker cleanup on macOS/Linux, replace `containment`
 with `process_group` and omit `limits`. This exception promises neither
@@ -105,20 +99,18 @@ The console explicitly warns that account-accessible secrets are readable.
 Scrubbing environment variables and checking declared command/cwd paths do not
 prevent this trusted program from opening other paths or contacting services.
 
-Membership exists before the first child instruction. Normal detached children
-cannot break away, and the OS terminates job members when the runner exits even
-without cleanup code. Windows services outside the job (including WMI/COM) are
-outside this guarantee. A responsive harness enforces the request deadline;
-this is not an OS wall-clock timer or a hostile-code sandbox. No fallback,
-model output or hot reload can choose this exception. Future AppContainer/VM
-isolation requires a separate implementation and acceptance.
+Membership exists before the first child instruction. Detached children cannot
+break away, and runner exit terminates job members without cleanup code. Windows
+services such as WMI or COM remain outside the job. The request deadline depends
+on a responsive harness; it is not an OS timer or hostile-code sandbox. Only
+configuration can select this exception.
 
 ## Inspect and troubleshoot
 
-`/tools mcp` and authenticated `GET /api/mcp` show declarations and grants,
-without spawning tools or claiming readiness. Successful calls audit the actual
-backend, policy and probe result; refusals audit the policy and error code.
-Arguments, tool results and environment secrets are not audited.
+`/tools mcp` and authenticated `GET /api/mcp` show declarations/grants without
+spawning or claiming readiness. Success audits backend, policy and probe result;
+refusals audit policy/error code. Arguments, results and environment secrets
+stay out of audit.
 
 | Result | Meaning |
 |---|---|
