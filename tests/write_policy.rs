@@ -232,7 +232,6 @@ fn approved_cli_push_and_publish_refuse_revoked_policy_without_side_effects() {
         let env = [
             ("CGAGENTHARNESS_AGENTIC_WRITE_DISABLE", kill),
             ("PATH", path.as_str()),
-            ("FAKE_GH_LOG", log.to_str().unwrap()),
             ("GROK_API_KEY", ""),
             ("ANTHROPIC_API_KEY", ""),
             ("DEEPAGENT_API_KEY", ""),

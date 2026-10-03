@@ -23,8 +23,8 @@ one.
 | Piece | File | What |
 |---|---|---|
 | shared builder | `src/common/child_env.rs` | one opt-out table per child kind (`Gh`, `VerificationCheck`, `McpServer`), applied last at each routed site; in `common`, so no `crate::agentic` (I6) |
-| gh + git builder | `src/agentic/git.rs` `environment()` | allowlist inherit (PATH/HOME/LANG/LC_ALL/GH_TOKEN/GITHUB_TOKEN) + git hygiene + `Gh` arm. git's `credential.helper` is `!gh auth git-credential`, so git's env is gh's env |
-| gh builder | `src/agentic/gh_client.rs` `gh_env()` | full inherit + `GIT_TERMINAL_PROMPT=0` + `Gh` arm; every `RunSpec` in `gh_client.rs`/`writer.rs` passes `env: Some(&gh_env())` |
+| gh + git builder | `src/agentic/git.rs` `environment()` | runtime, GitHub auth/config and SSH-agent allowlist + git hygiene + `Gh` arm. git's `credential.helper` is `!gh auth git-credential`, so git's env is gh's env |
+| gh builder | `src/agentic/gh_client.rs` `gh_env()` | Git allowlist without provider keys + `GIT_TERMINAL_PROMPT=0` + `Gh` arm; every `RunSpec` in `gh_client.rs`/`writer.rs` passes `env: Some(&gh_env())` |
 | verifier builder | `src/agentic/executor/runner.rs` `scrubbed_env()` | `ALLOWED_ENV_VARS` (6) + `NO_PROXY=*`, `PIP_NO_INDEX`, `PIP_DISABLE_PIP_VERSION_CHECK`, `CARGO_NET_OFFLINE` + `VerificationCheck` arm |
 | MCP stdio | `src/common/mcp.rs` `spawn()` + `mcp_worker.rs` | `env_clear()`, operator `env` through `filter_env()` (`SECRET_ENV` + `HIJACK_ENV` dropped), then `McpServer` arm (operator `env` cannot override it), fixed PATH/locale, scratch HOME |
 | desktop | `desktop/src/backend.rs` `start()`, `main.rs` `prepare_cargo()`/`external_link()` | sidecar + python helper carry `RUSTUP_AUTO_INSTALL=0`; the opener runs `env_clear()` with a fixed PATH |
@@ -83,8 +83,9 @@ it actually calls, and an arm's names are never re-pinned at a site.
    commit, add a `verify.sh` mutation for any new rule, re-run steps 1–2, then
    `cargo test` (the sites have unit tests: `git.rs`, `mcp.rs`
    `secret_env_names_are_stripped`, `child_env.rs`). A new opt-out goes in a
-   `child_env` arm, never a site literal. Still open: a `[bans].deny` list in
-   `deny.toml` for the T5 patterns would make CI enforce the lock-graph half.
+   `child_env` arm, never a site literal. The lock-graph half is CI-enforced:
+   `[bans].deny` in `deny.toml` and `desktop/deny.toml` lists the T5 families
+   by exact crate name; a new family's names go in both files.
 
 5. **Classify anything new; retire anything gone.** A new crate, binary,
    provider, connector or spawn site gets an `INVENTORY` row or alias with
@@ -125,7 +126,8 @@ it actually calls, and an arm's names are never re-pinned at a site.
 - **Ollama has no telemetry switch to set.** `POST /api/ollama/pull` asks the
   daemon to fetch a model; the daemon's registry egress is outside this
   process. Do not add a speculative `OLLAMA_*` pair.
-- **`cargo deny` does not enforce T5 today**; a telemetry crate would pass CI
-  until `deny.toml` bans it (step 4).
+- **`cargo deny` bans exact names; T5 matches patterns.** A telemetry crate
+  under a name neither `deny.toml` lists passes CI until both list it; T5
+  still catches it. Verify a name on crates.io before adding it.
 - The desktop lock resolves two `reqwest` majors (0.12 via the harness, 0.13
   via tauri); duplicate versions are warn-only policy, reported as INFO.

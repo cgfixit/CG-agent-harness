@@ -313,6 +313,8 @@ jobs:
           $env:CGAH_WINDOWS_PYTHON = (Get-Command python.exe).Source
           cargo test --locked --test mcp_windows -- --nocapture --test-threads=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --test child_env -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           CGAH_REQUIRE_WINDOWS_MCP: "1"
           GROK_API_KEY: ""

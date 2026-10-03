@@ -4731,7 +4731,7 @@
       "implementation": {
         "status": "implemented",
         "existing": "src/common/child_env.rs holds one per-kind opt-out table (Gh, VerificationCheck, McpServer), applied last at every spawn site that launches a telemetry-capable child: git.rs environment(), gh_client.rs gh_env() (also writer.rs), runner.rs scrubbed_env(), and mcp.rs StdioClient::spawn after filter_env. Each site's prior pairs are unchanged; GH_NO_EXTENSION_UPDATE_NOTIFIER=1 now reaches both gh sites and DO_NOT_TRACK=1 now reaches MCP stdio children. The otel-hardening oracle pins every arm and credits each site only with the arm it calls.",
-        "remaining": "Credential scoping of the gh and shim child environments is tracked separately (#286), not by this action.",
+        "remaining": "None for this action; startup still loads managed keys into the harness process environment.",
         "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
       },
       "dependencies": [],
@@ -4740,7 +4740,7 @@
         "cli_api": "Bounded corresponding administration or worker interface required; see scope."
       },
       "configuration_and_authorization": "No analytics/updater; preserve stricter operator settings; real dependency controls only.",
-      "credentials_network_side_effects": "Telemetry/update-check opt-outs are central and cannot be overridden by caller extras or operator MCP env. Unchanged and out of scope here: gh and the agentic shim child still inherit the full process environment, including loaded provider keys (#286).",
+      "credentials_network_side_effects": "Telemetry/update-check opt-outs are central and cannot be overridden by caller extras or operator MCP env. Git/gh children use the Git allowlist without provider keys. Shim children use an explicit allowlist; only real-repo-run receives DEEPAGENT_API_KEY for its local planner. Startup still loads managed keys into the harness process environment.",
       "validation": {
         "implementation_inspection": "static-inventoried",
         "fixtures": "fixture-verified",
@@ -4779,7 +4779,6 @@
         "artifact": null
       },
       "limitations": [
-        "Credential inheritance by gh and the shim child is unchanged (#286).",
         "Desktop launchers keep their own RUSTUP_AUTO_INSTALL=0 literal; they launch no binary with a documented telemetry switch, so they are not routed through the builder.",
         "Windows verification children still rely on these env pairs alone; the Job Object does not deny network.",
         "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."

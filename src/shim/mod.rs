@@ -10,6 +10,7 @@
 //! a flag; `body`/`plan`/`checks` travel through temp files that are unlinked on
 //! every exit path.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -415,9 +416,57 @@ pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
     Duration::from_secs(secs)
 }
 
-/// Spawn `argv` as a child and wait for it, killing the whole process group on timeout.
-#[cfg(unix)]
+fn child_environment(action: &str) -> BTreeMap<String, String> {
+    let mut env: BTreeMap<String, String> = [
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "SystemRoot",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_CONFIG_HOME",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_CONFIG_DIR",
+        "GH_HOST",
+        "SSH_AUTH_SOCK",
+        "CGAGENTHARNESS_HOME",
+        "CGAGENTHARNESS_AGENT_COMMIT_NAME",
+        "CGAGENTHARNESS_AGENT_COMMIT_EMAIL",
+        "CGAGENTHARNESS_AGENT_BRANCH_PREFIX",
+        "CGAGENTHARNESS_AGENTIC_WRITE_DISABLE",
+    ]
+    .iter()
+    .filter_map(|key| std::env::var(key).ok().map(|value| ((*key).to_string(), value)))
+    .collect();
+    if action == "real-repo-run" {
+        if let Ok(key) = std::env::var("DEEPAGENT_API_KEY") {
+            env.insert("DEEPAGENT_API_KEY".into(), key);
+        }
+    }
+    env
+}
+
+/// Spawn `argv` with the baseline agentic environment, without provider credentials.
 pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<(i32, String, String), ShimError> {
+    run_argv_with_env(argv, cwd, timeout, child_environment("")).await
+}
+
+#[cfg(unix)]
+async fn run_argv_with_env(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    env: BTreeMap<String, String>,
+) -> Result<(i32, String, String), ShimError> {
     use crate::common::process::{self, ProcessError, RunSpec};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -440,7 +489,7 @@ pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<
             RunSpec {
                 argv: &argv,
                 cwd: Some(&cwd),
-                env: None,
+                env: Some(&env),
                 timeout,
                 stdin: None,
             },
@@ -462,9 +511,16 @@ pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<
 }
 
 #[cfg(not(unix))]
-pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<(i32, String, String), ShimError> {
+async fn run_argv_with_env(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    env: BTreeMap<String, String>,
+) -> Result<(i32, String, String), ShimError> {
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..])
+        .env_clear()
+        .envs(env)
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -525,13 +581,15 @@ pub async fn run_agentic_op(ctx: &ShimContext, req: &OpsRequest) -> Result<OpsRe
     let _active = ActiveOperation::new();
     let (argv, _temps) = build_argv(ctx, req)?;
     let timeout = timeout_for(ctx, req);
-    let (code, stdout, stderr) = run_argv(&argv, &ctx.cwd, timeout).await.map_err(|e| match e {
-        ShimError::Timeout { timeout_sec, .. } => ShimError::Timeout {
-            action: req.action.clone(),
-            timeout_sec,
-        },
-        other => other,
-    })?;
+    let (code, stdout, stderr) = run_argv_with_env(&argv, &ctx.cwd, timeout, child_environment(&req.action))
+        .await
+        .map_err(|e| match e {
+            ShimError::Timeout { timeout_sec, .. } => ShimError::Timeout {
+                action: req.action.clone(),
+                timeout_sec,
+            },
+            other => other,
+        })?;
     let (ok, label) = label_for(code);
     let parsed = if ok && JSON_ACTIONS.contains(&req.action.as_str()) {
         serde_json::from_str::<Value>(&stdout).ok()

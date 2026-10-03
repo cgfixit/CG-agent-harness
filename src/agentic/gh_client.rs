@@ -81,10 +81,10 @@ pub fn is_transient_gh_error(stderr: &str) -> bool {
     transient_re().is_match(stderr)
 }
 
-/// Full inherited env with the gh opt-outs forced on top, so an ambient
-/// `GH_TELEMETRY=true` can never reach a gh child.
+/// Git credentials and runtime settings (no provider keys), with the gh
+/// opt-outs forced on top.
 pub fn gh_env() -> BTreeMap<String, String> {
-    let mut env: BTreeMap<String, String> = std::env::vars().collect();
+    let mut env = super::git::environment(&[]);
     env.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
     child_env::apply(&mut env, Child::Gh);
     env
