@@ -314,8 +314,9 @@ time, byte, or URL-permission limits.
 
 The console separates provider and source data from the model answer. Tool calls
 show links, outcomes, and failures. Listings and snippets come from the search
-provider; linked pages have not been fetched. For checked quote references, use
-`/web research`.
+provider; linked pages have not been fetched. Model answers are not validated
+research citations; use `/web research` when checked quote references are
+required.
 
 ### Google search
 
@@ -436,9 +437,9 @@ are refused, and reverse proxies are unsupported. The dedicated
 Sessions, transcript search/export, jobs, and schedules are account scoped; see
 [session ownership](#session-ownership-and-legacy-adoption). Run records, spend,
 persona, pinned notes, model selection, and public-page cache are shared among
-authorized operators and administrators. Research questions, answers, controller
-state, and web selections belong to the initiating random account identity, so a
-recreated username inherits nothing. Auth-off mode uses owner `local`. Deleted
+authorized operators and administrators. This is not universal tenant isolation.
+Research questions, answers, controller state, and web selections belong to the
+initiating random account identity, so a recreated username inherits nothing. Auth-off mode uses owner `local`. Deleted
 accounts can leave private selections on disk, inaccessible to replacements.
 
 A non-empty allowlist is an armed content surface: every granted origin or path
