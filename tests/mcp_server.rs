@@ -22,31 +22,72 @@ fn private_home(home: &Home) {
     let _ = home;
 }
 async fn fixture(tools: &str, extra: &[(&str, &str)]) -> (TestServer, mcp_server::Listener, KeyStore, String, String) {
-    let model = start_mock_model().await;
-    let socket = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap(); // DevSkim: ignore DS162092 because fixture listeners are loopback only.
-    let port = socket.local_addr().unwrap().port().to_string();
-    drop(socket);
-    let mut opts = ServerOptions::default()
-        .with("mcp.server.enabled", "true")
-        .with("mcp.server.port", &port)
-        .with("mcp.server.tools", tools)
-        .with("structured_memory.enabled", "true");
-    for (k, v) in extra {
-        opts = opts.with(k, v);
-    }
-    let s = spawn_server(&model.base_url(), opts).await;
-    private_home(&s.state.home);
-    let keys = KeyStore::open(&s.state.home, 8).unwrap();
-    let owners = ["user_alice".to_string(), "user_bob".to_string()];
-    let (_, alice) = keys
-        .mint("user_alice", "Alice fixture", OwnerCheck::EnabledOwners(&owners))
-        .unwrap();
-    let (_, bob) = keys
-        .mint("user_bob", "Bob fixture", OwnerCheck::EnabledOwners(&owners))
-        .unwrap();
-    let gateway = mcp_server::start(s.state.clone()).await.unwrap().unwrap();
-    (s, gateway, keys, alice, bob)
+    fixture_from(tools, extra, None).await
 }
+
+/// The gateway's Host check binds it to the configured port, so the fixture
+/// must name a concrete port before the server starts. A port reserved and
+/// released here can be taken by a concurrent test before `start` binds it;
+/// a bind refused with `AddrInUse` retries on a fresh port. `first_port`
+/// lets a test force that path with a port it already holds.
+async fn fixture_from(
+    tools: &str,
+    extra: &[(&str, &str)],
+    first_port: Option<u16>,
+) -> (TestServer, mcp_server::Listener, KeyStore, String, String) {
+    const ATTEMPTS: usize = 8;
+    let model = start_mock_model().await;
+    for attempt in 1..=ATTEMPTS {
+        let port = match first_port.filter(|_| attempt == 1) {
+            Some(port) => port,
+            None => {
+                let socket = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap(); // DevSkim: ignore DS162092 because fixture listeners are loopback only.
+                let port = socket.local_addr().unwrap().port();
+                drop(socket);
+                port
+            }
+        }
+        .to_string();
+        let mut opts = ServerOptions::default()
+            .with("mcp.server.enabled", "true")
+            .with("mcp.server.port", &port)
+            .with("mcp.server.tools", tools)
+            .with("structured_memory.enabled", "true");
+        for (k, v) in extra {
+            opts = opts.with(k, v);
+        }
+        let s = spawn_server(&model.base_url(), opts).await;
+        private_home(&s.state.home);
+        let keys = KeyStore::open(&s.state.home, 8).unwrap();
+        let owners = ["user_alice".to_string(), "user_bob".to_string()];
+        let (_, alice) = keys
+            .mint("user_alice", "Alice fixture", OwnerCheck::EnabledOwners(&owners))
+            .unwrap();
+        let (_, bob) = keys
+            .mint("user_bob", "Bob fixture", OwnerCheck::EnabledOwners(&owners))
+            .unwrap();
+        match mcp_server::start(s.state.clone()).await {
+            Ok(Some(gateway)) => return (s, gateway, keys, alice, bob),
+            Err(e)
+                if attempt < ATTEMPTS
+                    && e.downcast_ref::<std::io::Error>()
+                        .is_some_and(|io| io.kind() == std::io::ErrorKind::AddrInUse) => {}
+            Ok(None) => panic!("fixture enables the MCP gateway"),
+            Err(e) => panic!("MCP gateway failed to start: {e}"),
+        }
+    }
+    unreachable!("the last attempt returns or panics")
+}
+
+#[tokio::test]
+async fn fixture_retries_a_port_taken_before_the_gateway_binds() {
+    let held = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap(); // DevSkim: ignore DS162092 because fixture listeners are loopback only.
+    let taken = held.local_addr().unwrap().port();
+    let (_s, g, _keys, _alice, _bob) = fixture_from("[]", &[], Some(taken)).await;
+    assert_ne!(g.address.port(), taken);
+    drop(held);
+}
+
 fn url(g: &mcp_server::Listener) -> String {
     format!("http://{}/mcp", g.address) // DevSkim: ignore DS137138 because this is the private loopback gateway fixture.
 }
