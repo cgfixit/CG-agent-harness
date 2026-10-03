@@ -579,6 +579,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
     (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1400),
+    // why: port of CyClaw's otel-hardening skill (telemetry-kill contract for a Rust tree); 1241 words, rounded up to the next 100.
+    (".claude/skills/cgagentharness-otel-hardening/SKILL.md", Agent, 1300),
     (".claude/skills/cgagentharness-parity/SKILL.md", Agent, 500),
     (".claude/skills/cgagentharness-project-guidance/SKILL.md", Agent, 800),
     (
@@ -676,7 +678,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: read-only netconnect panel and slash rules; Root total 7506 words, rounded up to the next 500.
 // why: netconnect user guide; Guide total 50046 words after the review corrections, rounded up to the next 500.
 // why: README refresh (#284) plus the OS credential store section and its #286 caveat; set to the reported Root total of 8145 words.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 50_500), (Evidence, 3_500), (Agent, 23_000)];
+// why: the cgagentharness-otel-hardening skill brought Agent to 23,860 words; rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 50_500), (Evidence, 3_500), (Agent, 24_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
