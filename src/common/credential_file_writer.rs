@@ -198,7 +198,7 @@ impl PrivateStage {
             return Err(refused());
         }
         let mut owner = null_mut();
-        let mut dacl = null_mut();
+        let mut dacl = std::mem::MaybeUninit::<*mut ACL>::uninit();
         let mut raw = null_mut();
         // SAFETY: all out-pointers are writable and the file handle remains open.
         let status = unsafe {
@@ -208,7 +208,7 @@ impl PrivateStage {
                 OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
                 &mut owner,
                 null_mut(),
-                &mut dacl,
+                dacl.as_mut_ptr(),
                 null_mut(),
                 &mut raw,
             )
@@ -217,6 +217,8 @@ impl PrivateStage {
             return Err(refused());
         }
         let _descriptor = LocalAllocation(raw);
+        // SAFETY: success with DACL_SECURITY_INFORMATION initializes this output, possibly to null.
+        let dacl = unsafe { dacl.assume_init() };
         let mut control = 0;
         let mut revision = 0;
         // SAFETY: successful GetSecurityInfo supplies a self-contained security descriptor.
@@ -238,8 +240,13 @@ impl PrivateStage {
             if acl_header.AceCount != 1 {
                 return Err(refused());
             }
-            let mut ace = null_mut();
-            if GetAce(dacl, 0, &mut ace) == 0 || ace.is_null() {
+            let mut ace = std::mem::MaybeUninit::<*mut c_void>::uninit();
+            if GetAce(dacl, 0, ace.as_mut_ptr()) == 0 {
+                return Err(refused());
+            }
+            // SAFETY: GetAce initializes its output only on success; the descriptor owns its lifetime.
+            let ace = ace.assume_init();
+            if ace.is_null() {
                 return Err(refused());
             }
             let ace_offset = (ace as usize).checked_sub(dacl as usize).ok_or_else(refused)?;
