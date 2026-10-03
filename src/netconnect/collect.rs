@@ -34,6 +34,24 @@ pub trait InterfaceSource {
     fn load(&self) -> Result<Vec<InterfaceRecord>>;
 }
 
+impl<T: NeighborSource + ?Sized> NeighborSource for std::sync::Arc<T> {
+    fn load(&self) -> Result<Vec<NeighborRecord>> {
+        (**self).load()
+    }
+}
+
+impl<T: RouteSource + ?Sized> RouteSource for std::sync::Arc<T> {
+    fn load(&self) -> Result<Vec<RouteRecord>> {
+        (**self).load()
+    }
+}
+
+impl<T: InterfaceSource + ?Sized> InterfaceSource for std::sync::Arc<T> {
+    fn load(&self) -> Result<Vec<InterfaceRecord>> {
+        (**self).load()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FixtureNeighbors {
     records: Vec<NeighborRecord>,
