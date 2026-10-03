@@ -1,19 +1,16 @@
 # Session, token and coding analytics
 
-Choose **Analytics** in the header (shown after sign-in) or enter `/analytics` in the native or browser
-console. The overview shows retained session tokens, readable sessions and listed
-coding runs. A `+` on the run count means the list is truncated. **Refresh** rereads
-retained history and shows the time of the latest successful refresh. **Close** or
-Escape clears the dialog and returns focus to the opening control. Logout and login transitions
-invalidate cached results, including responses that arrive after the transition.
-The command is in the alphabetical Commands pane and `/help`.
+After sign-in, choose **Analytics** or `/analytics` in the native or browser
+console. The overview shows retained session tokens, readable sessions and coding
+runs. A `+` marks a truncated run list. **Refresh** rereads history and timestamps
+success. **Close** or Escape clears the dialog and restores focus. Account
+transitions invalidate cached and late responses. The command also appears in
+Commands and `/help`.
 
-The view is available to administrators who have replaced the bootstrap password
-and to portal operators. Auditors cannot read it. Sessions, spend and coding runs
-include account-owned session histories and shared aggregate spend/coding-run records.
-Session counts and token totals from sessions are owner filtered; the spend ledger
-and underlying run inventory remain portal-wide. Existing explicit
-legacy auth-disabled configuration keeps its existing local access semantics.
+Administrators who replaced the bootstrap password and operators can read the
+view; auditors cannot. Session counts and tokens are owner-filtered. Spend and
+coding-run records are portal-wide. Explicit legacy auth-disabled configurations
+retain local access semantics.
 
 ## Read the three sections
 
@@ -35,28 +32,23 @@ legacy auth-disabled configuration keeps its existing local access semantics.
   Missing metrics, including unreadable records or an older backend, display
   **Unknown**. Disabled or failed coding reads display **Unavailable**.
 
-Choose **Tokens and cost**, **Sessions** or **Code** to inspect one section at a
-time. Arrow keys, Home and End move between section tabs. Each section keeps its
-own filter and page, so paging sessions does not hide a shorter token or run
-table. Filter by displayed values (including session IDs); **Clear filter**
-restores all rows. Each table shows at most 25 rows per page, with a visible record
-range. The overview and charts always cover all retained records, not just matches.
-Refresh preserves filters and clamps pages if the source shrinks. Closing or
-changing accounts clears filters, sorting and cached data. Tables scroll within
-the dialog; Close and Refresh stay at its top and page controls stay at its bottom.
-Empty, no-match and unavailable states are distinct.
+Arrow keys, Home and End switch section tabs. Each keeps its own filter and
+page. Filter displayed values, including session IDs; **Clear filter** restores
+all rows. Tables show at most 25 rows per page and the record range. Charts and
+overview cover all retained records. Refresh preserves filters and clamps pages
+if records shrink. Closing or changing accounts clears filters, sorting and cache.
+Tables scroll within fixed Close/Refresh and paging controls. Empty, no-match
+and unavailable states are distinct.
 
 Run listing scans at most 4,097 directory entries to detect overflow and returns at most 128
 records. A truncated listing is marked partial, and its totals cover only the
 listed records. Session totals and ledger totals have different retention and
 accounting rules; they are shown separately and never added together.
 
-Opening the view starts no inference, repository edit, verification, push or PR.
-Only an explicit **Estimate draft** sends the unsent draft for token counting.
-The existing run-list operation can reconcile a stale `running` record to
-`interrupted`; analytics retains that recovery behavior. No new analytics files,
-background polling, cloud calls, charting dependencies or CSP permissions are
-introduced. User-controlled labels render as text.
+Opening analytics starts no inference, repository edit, verification, push or PR.
+Only **Estimate draft** sends a token-counting request. Run listing can reconcile
+stale `running` records to `interrupted`. Analytics adds no files, polling, cloud
+calls, chart dependencies or CSP permissions. User labels render as text.
 
 ## API and compatibility
 
@@ -64,7 +56,7 @@ introduced. User-controlled labels render as text.
 CSRF guards as `GET /api/spend/summary`. Supply the existing `X-CyClaw-CSRF` header
 with the authenticated session. No new configuration is required.
 
-The response composes the existing sources:
+The response combines these sources:
 
 | Field | Source and meaning |
 |---|---|
@@ -75,10 +67,9 @@ The response composes the existing sources:
 | `sessions_without_created_date` | Sessions with unusable creation timestamps |
 | `code` | Parsed run list through the existing shim, with `runs`, `truncated` and `outcomes` counts; or a typed `error` with `code` and `message` |
 
-Run-list rows now include `iterations`, `changed_file_count` and `reject_code`
+Run-list rows include `iterations`, `changed_file_count` and `reject_code`
 from existing records. File names, diffs and source contents are not added.
-A coding-source failure leaves spend and session data available; it never
-becomes an empty successful run list. A snapshot-task failure returns
+Coding-source failure preserves spend/session data and reports an error, not an empty run list. A snapshot-task failure returns
 `ANALYTICS_UNAVAILABLE`. Reads are a best-effort composition, not a transaction
 across files; concurrent activity may change the next refresh.
 

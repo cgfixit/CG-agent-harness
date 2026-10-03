@@ -1,13 +1,11 @@
 # Subprocess lifetime and capture
 
-The synchronous argv runner and Unix server shim share one subprocess owner.
-Pipe reads and stdin writes are nonblocking and share the operation deadline.
-Capture refuses more than 4 MiB of aggregate raw stdout/stderr bytes instead of
-returning successful truncated machine data. This fixed internal safety ceiling
-also applies to Git/gh output. Verification capture failure is a setup/resource
-error, not a request for another model attempt. A publishing command can have
-succeeded before capture fails: the writer reports an indeterminate outcome,
-records its operation and does not retry it.
+The synchronous argv runner and Unix shim share one subprocess owner. Nonblocking
+pipe reads and stdin writes share the operation deadline. Capture refuses more
+than 4 MiB of raw stdout and stderr instead of returning truncated machine data;
+the same ceiling covers Git and `gh`. Verification overflow is a setup error.
+Publication overflow is indeterminate because the command may have succeeded;
+the writer records the operation and does not retry it.
 
 The shim uses a blocking worker with an atomic cancellation flag. Aborting the
 owning future sets that flag; the worker observes it during bounded I/O and
@@ -17,11 +15,9 @@ The direct child remains unreaped until cleanup, so its process-group identity
 cannot be reused before group signaling. This also covers ordinary background
 children whose leader exits while they retain its pipes.
 
-On macOS, the owner records descendants through public `libproc` interfaces,
-including children in separate process groups. Cleanup stops observed parents,
-checks process start identity again, then kills observed descendants. Traversal
-has time, count and per-parent buffer ceilings. This improves actual nested
-check cancellation without changing Seatbelt permissions.
+On macOS, public `libproc` interfaces record descendants across process groups.
+Cleanup stops observed parents, rechecks process identity, and kills observed
+descendants under time, count, and buffer ceilings. Seatbelt permissions do not change.
 
 **Ancestry cleanup is best-effort, not process containment.** A child that forks
 and reparents before observation may escape; enumeration can fail or truncate.
@@ -30,26 +26,39 @@ crash does not run the owner's destructor. Linux keeps group cleanup without
 macOS descendant enumeration. The non-Unix runners retain their prior behavior;
 these Unix capture/lifetime claims do not apply to Windows.
 
-Filesystem and network denial are separate boundaries. There is still no
-per-run disk quota or general memory/process-count limit for the synchronous runner. Kernel calls and
-cleanup/reaping can add time beyond the requested deadline. Use isolated
+Filesystem and network denial are separate boundaries. The synchronous runner
+has no per-run disk quota or general memory or process-count limit. Kernel calls
+and cleanup can extend the requested deadline. Use isolated
 fixtures and inspect surviving work after interruption; the console correctly
 keeps its descendant-survival warning.
 
+## Child environments
+
+`src/common/child_env.rs` owns opt-outs for three child kinds.
+`src/common/mcp.rs` applies the MCP kind to stdio servers, which receive
+`DO_NOT_TRACK=1`. `src/agentic/git.rs` and `src/agentic/gh_client.rs` apply the
+GitHub CLI kind, which also receives `GH_TELEMETRY=false`,
+`GH_NO_UPDATE_NOTIFIER=1`, and `GH_NO_EXTENSION_UPDATE_NOTIFIER=1`.
+`src/agentic/executor/runner.rs` applies the verification-check kind, which
+receives `GH_TELEMETRY=false`,
+`HF_HUB_DISABLE_TELEMETRY=1`, and `ANONYMIZED_TELEMETRY=false` with
+`DO_NOT_TRACK=1`. Each spawn site applies these values last and removes
+case-insensitive aliases, so declared or inherited values cannot re-enable
+telemetry on Windows. This proves delivery, not that an arbitrary child honors
+`DO_NOT_TRACK`.
+
 ## MCP stdio diagnostics
 
-MCP stdio uses its own Tokio child owner; the 4 MiB synchronous-runner capture
-rule above does not describe it. With [PR #178](https://github.com/cgfixit/CG-agent-harness/pull/178)
-in the installed build, stderr is continuously drained and excess bytes discarded.
-At most 2 KiB is retained in memory; EOF diagnostics expose at most 512 Unicode
-characters. No MCP stderr log file is created. Earlier builds bounded diagnostic
-reads but still wrote the full stderr stream to a file.
+MCP stdio has a separate Tokio child owner. It drains stderr continuously,
+discards excess bytes, retains at most 2 KiB, and exposes at most 512 Unicode
+characters at EOF. It creates no stderr log file. The 4 MiB synchronous-runner
+limit does not apply.
 
-The drain lets a noisy child finish a valid protocol response without filling
-its stderr pipe. Each response is one newline-delimited JSON line, refused once it
-passes `mcp.max_result_bytes` even if unterminated. The configured `mcp.timeout_sec`
-and existing child/process-group cleanup still apply. A diagnostic prefix does not
-prove complete capture or descendant containment. See [troubleshooting](TROUBLESHOOTING.md).
+The drain lets a noisy child finish a valid response without filling its stderr
+pipe. Each response is one newline-delimited JSON line and is refused above
+`mcp.max_result_bytes`, even if unterminated. `mcp.timeout_sec` and child cleanup
+still apply. A diagnostic prefix proves neither complete capture nor descendant
+containment. See [troubleshooting](TROUBLESHOOTING.md).
 
 ### Explicit MCP lifecycle policy
 
@@ -98,32 +107,25 @@ directories on disk. It does not automatically delete operator-granted outputs.
 
 ## Evidence
 
-`tests/mcp_client.rs` requires actual allowed reads/writes and denied secret,
-symlink and network probes in the dedicated Linux bubblewrap job and on macOS.
-`tests/mcp_lifecycle.rs` runs in the required native Linux service job. It proves
-that a detached grandchild runs before cancellation, Drop, protocol failure,
-tool crash, deadline, harness SIGKILL and supervisor SIGKILL; then checks the
-cgroup is empty, its heartbeat stops and the next invocation succeeds. It also
-checks aggregate memory/process settings, migration denial and process-limit
-enforcement. Ordinary runners report that native service acceptance was not
-executed; only the required job can establish that result.
+`tests/mcp_client.rs` checks allowed reads and writes plus denied secret, symlink,
+and network probes on Linux and macOS. The required native Linux
+`tests/mcp_lifecycle.rs` job exercises cancellation, Drop, protocol failure,
+crashes, deadlines, and SIGKILL with a detached grandchild. It then checks an
+empty cgroup, stopped heartbeat, successful reuse, limits, and migration denial.
+Ordinary runners report that they did not execute this native acceptance.
 
-`tests/process_lifecycle.rs` exercises inherited pipes in both runners, blocked
-stdin, output overflow, complete JSON/diagnostic output and exit status, and a
-short-lived leader with a background child. Its required macOS test cancels a
-JobStore task owning an actual Seatbelt check in a different process group and
-asserts that both wrapper/check stop while an unrelated sibling survives.
-Missing native sandbox capability fails that test.
+`tests/process_lifecycle.rs` covers inherited pipes, blocked stdin, overflow,
+complete output and status, and a short-lived leader with a background child.
+Its required macOS case cancels a JobStore task with a Seatbelt check in another
+process group; the wrapper and check stop while an unrelated sibling survives.
+Missing native sandbox capability fails this required test.
 
 `tests/process_writer_outcome.rs` uses a local fake `gh` that records one accepted
 mutation then floods stdout. It verifies exactly one invocation, an indeterminate
 error identifying the operation, and an audit record. No remote service is used.
 
-CI exposed timer throttling from sleeping after ready output chunks. The runner
-now continues draining ready data while retaining per-chunk budget/cancellation
-checks; it sleeps only when neither stream advances. The early-exit fixture
-uses one second for process startup and a five-second descendant, preserving
-its termination assertion; the separate 100 ms deadline regressions remain.
+The runner drains ready data while checking budget and cancellation, and sleeps
+only when neither stream advances. Deadline tests retain separate 100 ms cases.
 
 ## Desktop ownership and recovery
 

@@ -29,7 +29,7 @@ pub async fn replay(
             "Replay requires explicit confirmation and a reason",
         ));
     }
-    if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+    if !crate::common::is_lower_hex(&id, 64) {
         return Err(ApiError::bad_request(
             "INVALID_DELIVERY_ID",
             "delivery_id must be 64 lowercase hex characters",

@@ -676,7 +676,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: netconnect user guide; Guide total 50046 words after the review corrections, rounded up to the next 500.
 // why: README refresh (#284) plus the OS credential store section and its #286 caveat; set to the reported Root total of 8145 words.
 // why: the cgagentharness-otel-hardening skill brought Agent to 23,860 words; rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 50_500), (Evidence, 3_500), (Agent, 24_000)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 45_500), (Evidence, 3_500), (Agent, 24_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

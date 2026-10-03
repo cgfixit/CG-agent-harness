@@ -1,0 +1,244 @@
+use std::cell::OnceCell;
+use std::collections::{BTreeMap, BTreeSet};
+
+const CHUNK_CHARS: usize = 1200;
+const MAX_TERMS: usize = 32;
+pub(super) const CANDIDATE_LIMIT: usize = 64;
+const HIT_CAP: usize = 16;
+
+pub(super) struct PreparedQuery {
+    pub expression: String,
+    identifier: Option<regex::Regex>,
+    lowercase: String,
+}
+
+impl PreparedQuery {
+    pub fn new(query: &str) -> std::result::Result<Option<Self>, regex::Error> {
+        let terms: Vec<_> = query
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|s| !s.is_empty())
+            .take(MAX_TERMS)
+            .collect();
+        if terms.is_empty() {
+            return Ok(None);
+        }
+        let quoted = query.replace('\\', "\\\\").replace('"', "\\\"");
+        let expression = format!(
+            "\"{quoted}\"^2 {}",
+            terms.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(" ")
+        );
+        let identifier = if query.contains('_') || query.contains("::") {
+            Some(
+                regex::RegexBuilder::new(&format!(
+                    r"(?:^|[^\p{{L}}\p{{N}}_]){}(?:$|[^\p{{L}}\p{{N}}_])",
+                    regex::escape(query)
+                ))
+                .case_insensitive(true)
+                .build()?,
+            )
+        } else {
+            None
+        };
+        Ok(Some(Self {
+            expression,
+            identifier,
+            lowercase: query.to_lowercase(),
+        }))
+    }
+
+    pub fn identifier_matches<'a>(&self, fields: impl IntoIterator<Item = &'a str>) -> bool {
+        self.identifier
+            .as_ref()
+            .is_none_or(|identifier| fields.into_iter().any(|field| identifier.is_match(field)))
+    }
+
+    pub fn exact_bonus(&self, text: &str) -> f32 {
+        if text.to_lowercase().contains(&self.lowercase) {
+            2.0
+        } else {
+            0.0
+        }
+    }
+}
+
+pub(super) struct RankedCandidate<T> {
+    item: T,
+    score: f32,
+    tie_key: String,
+    diversity_key: String,
+}
+
+impl<T> RankedCandidate<T> {
+    pub fn new(item: T, score: f32, tie_key: String, diversity_key: String) -> Self {
+        Self {
+            item,
+            score,
+            tie_key,
+            diversity_key,
+        }
+    }
+}
+
+pub(super) fn select_diverse<T: Clone>(
+    mut candidates: Vec<RankedCandidate<T>>,
+    limit: usize,
+    text: impl Fn(&T) -> &str,
+) -> Vec<T> {
+    candidates.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.tie_key.cmp(&b.tie_key)));
+    let mut selected = Vec::new();
+    let normalized: Vec<OnceCell<String>> = (0..candidates.len()).map(|_| OnceCell::new()).collect();
+    let hashes: Vec<OnceCell<String>> = (0..candidates.len()).map(|_| OnceCell::new()).collect();
+    let words: Vec<OnceCell<BTreeSet<String>>> = (0..candidates.len()).map(|_| OnceCell::new()).collect();
+    let mut selected_words: Vec<usize> = Vec::new();
+    let mut seen_text = BTreeSet::new();
+    let mut source_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let limit = limit.min(HIT_CAP);
+    for cap in [1, 2] {
+        for (candidate_index, candidate) in candidates.iter().enumerate() {
+            if selected.len() >= limit {
+                break;
+            }
+            if source_counts.get(&candidate.diversity_key).copied().unwrap_or(0) >= cap {
+                continue;
+            }
+            let current_normalized = normalized[candidate_index]
+                .get_or_init(|| text(&candidate.item).split_whitespace().collect::<Vec<_>>().join(" "));
+            let hash = hashes[candidate_index].get_or_init(|| crate::common::sha256_hex(current_normalized));
+            if seen_text.contains(hash)
+                || selected_words.iter().any(|&old_index| {
+                    let current = words[candidate_index]
+                        .get_or_init(|| current_normalized.split_whitespace().map(str::to_string).collect());
+                    let old = words[old_index].get_or_init(|| {
+                        normalized[old_index]
+                            .get_or_init(|| {
+                                text(&candidates[old_index].item)
+                                    .split_whitespace()
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            })
+                            .split_whitespace()
+                            .map(str::to_string)
+                            .collect()
+                    });
+                    !current.is_empty() && current.intersection(old).count() * 10 > current.union(old).count() * 9
+                })
+            {
+                continue;
+            }
+            seen_text.insert(hash.clone());
+            *source_counts.entry(candidate.diversity_key.clone()).or_default() += 1;
+            selected_words.push(candidate_index);
+            selected.push(candidate.item.clone());
+        }
+    }
+    selected
+}
+
+pub(super) fn chunk_text(text: &str) -> Vec<(usize, usize, String, String)> {
+    let mut output = Vec::new();
+    let mut start = 0;
+    let mut heading = String::new();
+    while start < text.len() {
+        let tail = &text[start..];
+        let mut len = tail
+            .char_indices()
+            .nth(CHUNK_CHARS)
+            .map(|(i, _)| i)
+            .unwrap_or(tail.len());
+        if len < tail.len() {
+            if let Some(end) = tail[..len].rfind(['\n', ' ']).filter(|n| *n > len / 2) {
+                len = end + 1;
+            }
+        }
+        let end = start + len;
+        let chunk = &text[start..end];
+        let label = |line: &str| line.trim_start_matches("# ").trim().to_string();
+        let chunk_heading = chunk.lines().find(|line| line.starts_with("# ")).map(label);
+        if let Some(line) = chunk.lines().rev().find(|line| line.starts_with("# ")) {
+            heading = label(line);
+        }
+        if !chunk.trim().is_empty() {
+            output.push((
+                start,
+                end,
+                chunk_heading.unwrap_or_else(|| heading.clone()),
+                chunk.to_string(),
+            ));
+        }
+        start = end;
+    }
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct Item {
+        id: String,
+        text: String,
+    }
+
+    fn candidate(id: &str, source: &str, score: f32, text: &str) -> RankedCandidate<Item> {
+        RankedCandidate::new(
+            Item {
+                id: id.into(),
+                text: text.into(),
+            },
+            score,
+            id.into(),
+            source.into(),
+        )
+    }
+
+    #[test]
+    fn overlap_threshold_is_strictly_greater_than_ninety_percent() {
+        let ten = "a b c d e f g h i j";
+        let exact_ninety = "a b c d e f g h i";
+        let over_ninety = "a b c d e f g h i j k";
+        let selected = select_diverse(
+            vec![
+                candidate("base", "a", 3.0, ten),
+                candidate("exact", "b", 2.0, exact_ninety),
+                candidate("over", "c", 1.0, over_ninety),
+            ],
+            16,
+            |item| &item.text,
+        );
+        assert_eq!(
+            selected.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            ["base", "exact"]
+        );
+    }
+
+    #[test]
+    fn diversity_allows_two_per_source() {
+        let candidates = vec![
+            candidate("a1", "a", 30.0, "shared a one"),
+            candidate("a2", "a", 29.0, "shared a two"),
+            candidate("a3", "a", 28.0, "shared a three"),
+            candidate("b1", "b", 27.0, "shared b one"),
+        ];
+        let selected = select_diverse(candidates, 16, |item| &item.text);
+        assert_eq!(
+            selected.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            ["a1", "b1", "a2"]
+        );
+    }
+
+    #[test]
+    fn total_hits_are_capped_at_sixteen() {
+        let mut candidates = Vec::new();
+        for i in 0..20 {
+            candidates.push(candidate(
+                &format!("s{i}"),
+                &format!("s{i}"),
+                20.0 - i as f32,
+                &format!("shared unique marker {i}"),
+            ));
+        }
+        let selected = select_diverse(candidates, 100, |item| &item.text);
+        assert_eq!(selected.len(), 16);
+    }
+}

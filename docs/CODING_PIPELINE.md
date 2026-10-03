@@ -7,9 +7,9 @@ Optional, disarmed-by-default coding loop. Index: [README.md](../README.md).
 Coding execution is optional and disarmed by default. Complete this section only
 when you intend to authorize work in a selected repository.
 
-The coding pipeline can clone a GitHub repository, have the local model (or, optionally, a cloud
-model) propose a patch, verify that patch in a locked-down sandbox, and — only after you
-personally review and approve it — commit, push, and open a draft pull request.
+The pipeline clones a GitHub repository, asks a local or optional cloud model to
+propose a patch, verifies it in a sandbox, and waits for personal review before
+commit, push, and draft pull request creation.
 The combined write policy ships closed: `agentic.enabled`,
 `agentic.deepagent_github.enabled` and `allow_git_write_tools` are false. Individual
 settings such as `mode: write`, `writes_enabled: true` and cloud-provider flags
@@ -32,9 +32,8 @@ gh auth status
 
 ### 9.2 Edit the configuration file
 
-The console's full configuration lives at `~/.CGagentHarness/config.yaml` (created automatically
-the first time you ran `serve` in [first run](INSTALL.md#6-first-run) — it's a copy of this repository's
-`assets/config.default.yaml`). Open it in your editor of choice:
+The first `serve` creates `~/.CGagentHarness/config.yaml` from
+`assets/config.default.yaml`. Open it:
 
 ```bash
 open -e ~/.CGagentHarness/config.yaml
@@ -63,10 +62,10 @@ agentic:
         enabled: false
 ```
 
-Master enablement, write mode, writes-enabled, deepagent enablement and clone-write
-capability must all permit the operation. The emergency switch can only disable
-writes. Local approval, push and publication each also require their own explicit
-reason and confirmation; an earlier approval does not override later policy.
+Master enablement, write mode, writes-enabled, deepagent enablement, and clone
+write capability must all permit an operation. The emergency switch only disables
+writes. Approval, push, and publication each require a reason and confirmation;
+an earlier approval does not authorize a later boundary.
 Keep cloud-provider child flags false when their parent allow flag is false.
 
 Quit/relaunch the app, or stop/restart `serve`, to load the changed configuration.
@@ -89,9 +88,9 @@ bundled action. Setup discovers standard tool locations; custom paths use the
 private `desktop-tools.json` described in [desktop setup](DESKTOP.md).
 
 Preparation defaults to offline. If locked dependencies are missing, review the
-repository and rerun with `--online` only while explicitly allowing engineering
-dependency access. Actual checks remain offline, with fresh bounded writable
-locations and read-only prepared sources. See [Offline Cargo verification](#offline-cargo-verification).
+repository and rerun with `--online` while allowing dependency access. Checks
+remain offline, with fresh bounded writable locations and read-only prepared
+sources. See [offline Cargo verification](#offline-cargo-verification).
 
 Back in the app or browser console:
 
@@ -165,12 +164,11 @@ this environment variable before launch (shown here for `serve`):
 export CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1
 ```
 
-This is a disable-only switch: setting it to any of `1`, `true`, `yes`, or `on` blocks the write
-path regardless of what `config.yaml` says. It cannot be used to turn writes *on* — only off.
-An export in another shell does not update a running server or child. Restart with the
-switch set for new processes, or revoke `agentic.writes_enabled` in YAML to block later
-mutation boundaries in an active child. Neither action cancels an already executing
-Git command or check. Scope/budget changes also refuse later writes until a fresh invocation.
+Values `1`, `true`, `yes`, and `on` block writes regardless of YAML. The switch
+cannot enable writes. An export in another shell does not update a running process.
+Restart with the switch set, or revoke `agentic.writes_enabled` to block later
+mutation boundaries in an active child. Neither action cancels a running Git
+command or check. Scope and budget changes also refuse later writes.
 
 ## Bounded edits
 
@@ -250,13 +248,11 @@ an externally relocated directory remains reachable through its open handle.
 Do not concurrently edit an active disposable clone. Empty newly-created parent
 directories may remain after staging failure.
 
-`tests/exact_edits.rs` drives a >12 KB Rust source edit near line 600, real
-offline Seatbelt Cargo failure with the actual assertion in feedback, then a
-successful exact correction preserving every unrelated byte. Other regressions
-cover multi-file edits, stale state, protected aliases, budget and parser
-refusal. Workspace unit tests exercise rollback after an actual first rename.
-Scripted planner responses prove execution semantics; real-Qwen acceptance is
-separate.
+`tests/exact_edits.rs` drives a greater-than-12-KB Rust edit through a real
+offline Seatbelt Cargo failure and exact correction while preserving unrelated
+bytes. Other tests cover multi-file edits, stale state, protected aliases,
+budgets, parser refusal, and rollback after the first rename. Scripted planners
+test execution semantics; real-Qwen acceptance remains separate.
 
 ## Optional repository retrieval
 
@@ -281,16 +277,13 @@ local-planner-only and grants no execution authority. The same staged request,
 steps remain necessary. Cloud planners never receive automatically retrieved
 files. `/agent read` and accepted local model READ requests take priority.
 
-The child lists tracked and non-ignored untracked paths in the target clone,
-examines at most `max_files` candidate paths in lexical order, and uses the
-existing Tantivy engine in a separate RAM index. It scans bounded UTF-8 source,
-then retrieves at most `top_k` additional files using up to 32 query terms with
-path boosting. Excerpts center on matching words; this is lexical matching,
-not embeddings or guaranteed whole-repository coverage. A large repository,
-unrelated synonyms or a very long single line may need explicit file windows.
-There is no durable index: each step rebuilds from current content. A capability
-re-read must match the indexed full-file SHA-256 before the excerpt is included.
-Same-size edits within one timestamp tick therefore cannot reuse stale content.
+The child lists tracked and non-ignored untracked paths, examines at most `max_files`
+paths in lexical order, and builds a separate Tantivy RAM index over bounded
+UTF-8 source. It retrieves at most `top_k` files using up to 32 path-boosted
+terms. Excerpts center on matches; lexical search does not guarantee repository
+coverage. Use explicit windows for large repositories, synonyms, or long lines.
+Each step rebuilds the index and re-reads each selected file; its full SHA-256
+must still match before inclusion.
 
 | Setting | Accepted range | Bound |
 |---|---:|---|
@@ -429,26 +422,20 @@ The retained clone is data, including its local Git configuration and index.
 Approval must commit the bytes and modes that were reviewed. Separate push and
 publication must continue to refer to that approved commit.
 
-Ordinary Git commands do not guarantee that: a pre-staged unrelated file enters
-the commit; an approved filename containing a literal `*` also stages a matching
-neighbor; `post-checkout`, `prepare-commit-msg`, `post-commit` and `pre-push`
-hooks run despite commit's `--no-verify`; a configured clean filter runs during
-ordinary staging and diff inspection and can substitute index bytes without
-changing the reviewed worktree bytes; and Git replacement refs can change the
-accepted base tree while HEAD still prints its original object ID. Remote Git
-trees do not ordinarily install `.git/config` or hooks. Executable configuration
-attacks require effective configuration pointing at untrusted source or
-contaminated retained metadata. Index/pathspec integrity failures do not require
-a hook. These distinctions matter when assessing exposure.
+Ordinary Git commands do not guarantee that binding. Pre-staged files can enter
+a commit; a literal `*` filename can match neighbors; hooks can run despite
+`--no-verify`; clean filters can replace index bytes; and replacement refs can
+reinterpret the base tree. Remote trees do not normally install `.git/config`
+or hooks, but contaminated retained metadata can. Index and pathspec failures
+need no hook.
 
-Workspace operations, live manifest reads and disposable-copy verification use
-one agentic Git helper. It clears ambient Git variables, global/system config
-and system attributes; pins hooks, fsmonitor, signing and automatic maintenance
-off; uses literal pathspecs; and disables replacement objects. Local configuration
-is restricted to ordinary clone metadata. Includes, custom programs, filters,
-transport rewrites and unsupported metadata are refused without echoing values.
-Read-only diff inspection still works with inert local external-diff and
-fsmonitor settings.
+Workspace operations, manifest reads, and disposable verification use one Git
+helper. It clears ambient variables, global and system config, and system
+attributes; disables hooks, fsmonitor, signing, maintenance, and replacement
+objects; and uses literal pathspecs. Local config is limited to ordinary clone
+metadata. Includes, custom programs, filters, transport rewrites, and unsupported
+metadata refuse without echoing values. Read-only diff inspection accepts inert
+local external-diff and fsmonitor settings.
 
 Authenticated `gh repo clone` also receives isolated Git settings and an empty
 Git template before initial checkout. Publishing Git operations use the installed
@@ -458,13 +445,11 @@ can use the operator's SSH configuration and keys. Custom Git credential
 helpers and enterprise hosts are not accepted; absolute local remotes remain
 available for offline runs.
 
-Approval refuses a pre-existing staged change or index lock. It holds the normal
-Git index lock, constructs a fresh private index from the accepted base, inserts
-only accepted raw blobs with accepted executable modes, and writes that exact
-tree. Git replacement objects and graft metadata cannot reinterpret the base.
-The acceptance digest includes mode; older pending records without it require a
-new run. A failure after the branch commit becomes durable is explicitly
-indeterminate and requires inspection before retry.
+Approval refuses staged changes and index locks. Under the normal index lock, it
+builds a private index from the accepted base, inserts only accepted raw blobs
+and modes, and writes that tree. Replacement objects and grafts cannot reinterpret
+the base. Acceptance digests include mode; older records need a new run. Failure
+after a durable branch commit is indeterminate and requires inspection.
 
 Content-transforming attributes (`filter`, `text`, `eol`, `working-tree-encoding`,
 `ident`) are refused for selected changes. This deliberately includes LFS and
@@ -472,42 +457,30 @@ newline-normalizing workflows: silently bypassing their transformations could
 commit incorrect representations. Supporting them requires a separately reviewed
 acceptance contract for both worktree and committed representations.
 
-Run records pin the origin before proposal and retain the approved commit ID.
-Push refuses changed local branches or destinations, and sends an object-ID
-refspec to the pinned URL. Publication reads the remote branch and refuses a
-commit mismatch. Each operation still checks current write policy and its own
-reason/confirmation. Older approved records without these pins cannot be pushed;
-inspection and cleanup remain available.
+Run records pin the origin and approved commit. Push refuses changed branches or
+destinations and sends an object-ID refspec to the pinned URL. Publication reads
+the remote branch and refuses mismatches. Every operation rechecks write policy,
+reason, and confirmation. Older unpinned records cannot be pushed; inspection and cleanup remain available.
 
-`tests/git_approval.rs` uses real disposable Git repositories and no model/mock
-substitute for Git. It covers unrelated staged changes, literal glob filenames,
-hook/filter markers, transformation refusal, index locks, file modes, local and
-remote branch drift, destination drift and replacement objects. Policy
-revocation, safe inspection, CLI/API and local-bare end-to-end paths have their
-own tests. An independent review of this boundary was interrupted before
-completion; this is not an exhaustive Git security audit.
+`tests/git_approval.rs` uses disposable Git repositories to cover unrelated staged
+changes, glob filenames, hooks, filters, index locks, file modes, branch and
+destination drift, and replacement objects. Other tests cover policy revocation,
+inspection, CLI and API paths, and local-bare operation. This is not an exhaustive
+Git security audit.
 
-The index lock coordinates normal Git writers. No atomic transaction against a
-hostile process ignoring locks and racing arbitrary filesystem metadata is
-claimed. Remote readback is a point-in-time check; a different authorized actor
-can change a branch afterward. Abrupt server death and escaped descendants retain
-the documented [process-lifecycle](PROCESS_LIFECYCLE.md) limitations. No global
-Git settings are changed.
+The index lock coordinates normal Git writers, not a hostile process that ignores
+locks and races filesystem metadata. Remote readback is point in time; another
+authorized actor can later change the branch. Abrupt death and escaped descendants
+retain the [process-lifecycle](PROCESS_LIFECYCLE.md) limits. Global Git settings
+remain unchanged.
 
 ## Isolation check
 
-The HTTP server reaches agentic execution only by spawning one of twelve
-whitelisted actions through `src/shim`. The bar is wider than the server module:
-`tests/invariant_guard.rs` checks all four console-side trees — `src/server`,
-`src/shim`, `src/llm` and `src/common` — two ways, and checks the pipeline the
-same two ways back. First, four literal substrings (`crate::agentic`,
-`agentic::`, `super::agentic`, `use crate::agentic`), which catch an inline
-path used without an import. Second, every `use` item is parsed and each
-identifier it binds is compared against the far side, so a grouped, nested or
-renamed import — `use crate::{agentic as pipeline}` — is caught even though it
-contains none of those substrings. The parse covers imports inside inline `mod`
-blocks and function bodies, and `syn` skips comments, so a doc comment naming
-the far side (how the duplicated constants document each other) stays legal.
+The HTTP server reaches agentic execution only through twelve actions in
+`src/shim`. `tests/invariant_guard.rs` checks `src/server`, `src/shim`, `src/llm`,
+and `src/common` against the agentic tree in both directions. It checks literal
+agentic paths and parses `use` bindings, including grouped, nested, renamed,
+inline-module, and function-local imports. Comments do not trigger the guard.
 Child exit codes are the entire
 interface: `0` ok, `2` failed, `3` env/config, `4` write refused. A non-zero
 child exit is HTTP 200 with `ok=false`; only shim failures map to 400/502/504
