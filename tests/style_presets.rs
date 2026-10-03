@@ -14,10 +14,11 @@ async fn every_builtin_style_reaches_chat_and_off_reverts_without_touching_defau
     let sid = created["session_id"].as_str().unwrap();
 
     for (name, body) in [
-        ("beginner", include_str!("../data/styles/beginner.md")),
+        ("code-review", include_str!("../data/styles/code-review.md")),
         ("concise", include_str!("../data/styles/concise.md")),
-        ("technical-deep", include_str!("../data/styles/technical-deep.md")),
-        ("unslop", include_str!("../data/styles/unslop.md")),
+        ("design", include_str!("../data/styles/design.md")),
+        ("research", include_str!("../data/styles/research.md")),
+        ("technical", include_str!("../data/styles/technical.md")),
     ] {
         let (status, set) = s
             .post_json("/api/style", json!({"session_id": sid, "name": name}))
@@ -221,7 +222,7 @@ async fn style_with_no_budget_left_after_the_soul_is_reported_inactive_everywher
     assert_eq!(read["unavailable_reason"], "budget", "{read}");
     // Selecting another style while nothing is left is refused with the reason.
     let (status, body) = s
-        .post_json("/api/style", json!({"session_id": sid, "name": "beginner"}))
+        .post_json("/api/style", json!({"session_id": sid, "name": "technical"}))
         .await;
     assert_eq!(status, 400, "{body}");
     assert_eq!(body["detail"]["code"], "STYLE_UNAVAILABLE", "{body}");
