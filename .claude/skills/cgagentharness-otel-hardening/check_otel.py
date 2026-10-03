@@ -20,11 +20,12 @@ sold as a general network kill switch -- but the mechanism is different:
     operator-declared MCP servers, the bundled python helper) and the
     policy-gated network features it implements itself with reqwest.
   * So the kill switch here is the per-spawn-site child environment: every
-    function that BUILDS a child env must still carry exactly the opt-out
-    pairs this file pins (T2), every env allowlist/denylist must still be the
-    expected set (T3), every gh spawn must still route through gh_env() (T9),
-    and a new spawn site, dependency, or binary cannot land unclassified
-    (T7, T10).
+    function that BUILDS a child env must still deliver exactly the pairs this
+    file pins (T2) -- its own literals plus the arm of the shared
+    `common::child_env` builder it names, whose per-kind table is pinned the
+    same way -- every env allowlist/denylist must still be the expected set
+    (T3), every gh spawn must still route through gh_env() (T9), and a new
+    spawn site, dependency, or binary cannot land unclassified (T7, T10).
 
 Everything below is an INDEPENDENT oracle: never derived from the Rust source,
 so deleting a pair, flipping "false" to "true", or widening an allowlist
@@ -59,19 +60,59 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # ORACLE 1 -- child-environment builders. One entry per function that
 # constructs the environment of a spawned process. `pairs` is the EXACT set of
-# literal name -> value pairs the function body must contain (missing, extra,
-# or mismatched all FAIL); values assigned from a variable (the git `null`
-# device, the home path) cannot be pinned as literals and are listed under
-# `mentions` instead, which only proves the name is still handled.
+# name -> value pairs the function delivers (missing, extra, or mismatched all
+# FAIL): its own literals plus, for a site carrying `child_env`, the arm of the
+# shared builder it names. The builder's own entry pins each arm under `arms`
+# and their union under `pairs`. A name an arm owns may not also be pinned
+# literally by a site that routes through it (one owner per name). Values
+# assigned from a variable (the git `null` device, the home path) cannot be
+# pinned as literals and are listed under `mentions` instead, which only
+# proves the name is still handled.
 # ---------------------------------------------------------------------------
 
 SITES: dict[str, dict[str, object]] = {
+    # The shared builder (parity row O6): the one table every routed site
+    # reaches through `child_env::apply(&mut env, Child::<Kind>)`, called LAST
+    # at each site so nothing inherited, caller-supplied or operator-declared
+    # can switch telemetry back on. Every arm carries DO_NOT_TRACK=1; the gh
+    # arm adds gh's telemetry switch and both of its update notifiers; the
+    # verifier arm adds what a verified Python repository's checks read.
+    "child-env": {
+        "file": "src/common/child_env.rs",
+        "signature": r"pub fn telemetry_opt_outs\(",
+        "launches": ("every child of a site that names one of its arms",),
+        "pairs": {
+            "DO_NOT_TRACK": "1",
+            "GH_TELEMETRY": "false",
+            "GH_NO_UPDATE_NOTIFIER": "1",
+            "GH_NO_EXTENSION_UPDATE_NOTIFIER": "1",
+            "HF_HUB_DISABLE_TELEMETRY": "1",
+            "ANONYMIZED_TELEMETRY": "false",
+        },
+        "mentions": ("match child",),
+        "arms": {
+            "McpServer": {"DO_NOT_TRACK": "1"},
+            "Gh": {
+                "DO_NOT_TRACK": "1",
+                "GH_TELEMETRY": "false",
+                "GH_NO_UPDATE_NOTIFIER": "1",
+                "GH_NO_EXTENSION_UPDATE_NOTIFIER": "1",
+            },
+            "VerificationCheck": {
+                "DO_NOT_TRACK": "1",
+                "GH_TELEMETRY": "false",
+                "HF_HUB_DISABLE_TELEMETRY": "1",
+                "ANONYMIZED_TELEMETRY": "false",
+            },
+        },
+    },
     # git is spawned with `credential.helper=!gh auth git-credential`, so git's
-    # child env is ALSO gh's env: the gh opt-outs must ride here too.
+    # child env is ALSO gh's env: the gh arm rides here too, after `extra`.
     "agentic-git": {
         "file": "src/agentic/git.rs",
         "signature": r"fn environment\(",
         "launches": ("git", "gh"),
+        "child_env": "Gh",
         "pairs": {
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_ATTR_NOSYSTEM": "1",
@@ -80,19 +121,22 @@ SITES: dict[str, dict[str, object]] = {
             "GIT_TERMINAL_PROMPT": "0",
             "GH_TELEMETRY": "false",
             "GH_NO_UPDATE_NOTIFIER": "1",
+            "GH_NO_EXTENSION_UPDATE_NOTIFIER": "1",
             "DO_NOT_TRACK": "1",
         },
         "mentions": ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"),
     },
-    # Full inherited env (std::env::vars()) with the opt-outs forced on top, so
+    # Full inherited env (std::env::vars()) with the gh arm forced on top, so
     # an ambient GH_TELEMETRY=true can never reach a gh child.
     "agentic-gh": {
         "file": "src/agentic/gh_client.rs",
         "signature": r"pub fn gh_env\(",
         "launches": ("gh",),
+        "child_env": "Gh",
         "pairs": {
             "GH_TELEMETRY": "false",
             "GH_NO_UPDATE_NOTIFIER": "1",
+            "GH_NO_EXTENSION_UPDATE_NOTIFIER": "1",
             "GIT_TERMINAL_PROMPT": "0",
             "DO_NOT_TRACK": "1",
         },
@@ -100,11 +144,14 @@ SITES: dict[str, dict[str, object]] = {
     },
     # Caller-declared verification checks (pytest, ruff, cargo, ...) run inside
     # the hard sandbox with network denied; these pairs are the second layer
-    # for whatever the verified repository's own toolchain reads.
+    # for whatever the verified repository's own toolchain reads. The proxy,
+    # pip and cargo pairs stay literal here (they are not telemetry switches);
+    # the verifier arm supplies the rest.
     "executor-runner": {
         "file": "src/agentic/executor/runner.rs",
         "signature": r"pub fn scrubbed_env\(",
         "launches": ("caller-declared checks",),
+        "child_env": "VerificationCheck",
         "pairs": {
             "NO_PROXY": "*",
             "no_proxy": "*",
@@ -119,16 +166,17 @@ SITES: dict[str, dict[str, object]] = {
         "mentions": ("ALLOWED_ENV_VARS",),
     },
     # Operator-declared MCP stdio servers: env_clear(), operator `env` through
-    # filter_env() (secret + linker-hijack names dropped), fixed PATH/locale,
-    # every home-ish variable pointed at a scratch dir. No telemetry opt-outs
-    # are delivered here today: confinement denies network by default, and a
-    # server granted `network: unrestricted` runs with whatever the operator
-    # declared (SKILL.md step 4 lists this as the open candidate).
+    # filter_env() (secret + linker-hijack names dropped), then the MCP arm
+    # (DO_NOT_TRACK only -- an arbitrary server reads nothing else) applied
+    # AFTER the filter so a declared `env` cannot override it, which matters
+    # for a server granted `network: unrestricted`; fixed PATH/locale, every
+    # home-ish variable pointed at a scratch dir.
     "mcp-stdio": {
         "file": "src/common/mcp.rs",
         "signature": r"pub async fn spawn\(",
         "launches": ("operator-declared MCP servers",),
-        "pairs": {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+        "child_env": "McpServer",
+        "pairs": {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "DO_NOT_TRACK": "1"},
         "mentions": ("env_clear()", "filter_env(", "HOME", "TMPDIR"),
     },
     # Linux strict containment, two spawns: `prepare()` launches the transient
@@ -180,9 +228,10 @@ SITES: dict[str, dict[str, object]] = {
 }
 
 # Sites that launch an EXTERNAL binary which has a documented telemetry or
-# update-check switch. Each must carry every CANONICAL_BASE pair (T9): the
-# harness has no shared child-env builder (parity row O6 is still pending), so
-# this convention is the only thing keeping the three sites from drifting.
+# update-check switch. Each must carry every CANONICAL_BASE pair (T9). The
+# shared builder delivers them today; the check stays so a site that drops its
+# `child_env::apply` call, or routes through an arm that lacks them, still
+# fails on the effective pairs rather than on wording.
 EXTERNAL_BINARY_SITES = ("agentic-git", "agentic-gh", "executor-runner")
 CANONICAL_BASE: dict[str, str] = {"DO_NOT_TRACK": "1", "GH_TELEMETRY": "false"}
 
@@ -306,13 +355,16 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "controls": {"GH_TELEMETRY": "false"},
         "url": "https://cli.github.com/manual/gh_help_environment",
         "versions": "external binary >= 2.40.0 (DEFAULT_MIN_GH in src/agentic/gh_client.rs)",
-        "enforcement": "forced at every spawn: gh_env() for direct gh (gh_client.rs x2, writer.rs), and "
-                       "git.rs environment() because git's credential.helper is `!gh auth git-credential`; "
-                       "executor-runner carries it for checks that shell out to gh",
+        "enforcement": "forced at every spawn through the shared builder's gh arm "
+                       "(src/common/child_env.rs, Child::Gh): gh_env() for direct gh (gh_client.rs x2, "
+                       "writer.rs) and git.rs environment() because git's credential.helper is "
+                       "`!gh auth git-credential`; executor-runner carries it in the verifier arm for "
+                       "checks that shell out to gh",
         "scope": "agentic read/write ops", "reviewed": "2026-10-03",
-        "evidence": "code read 2026-10-03: three builders pin it; the control name and true/false/log "
-                    "semantics are inherited from CyClaw's 2026-08-27 vendor-doc read, not re-read here "
-                    "-- step 3 re-verifies against gh help environment",
+        "evidence": "code read 2026-10-03: one builder arm delivers it to both gh sites and the verifier "
+                    "(parity O6 closed); the control name and true/false/log semantics are inherited "
+                    "from CyClaw's 2026-08-27 vendor-doc read, not re-read here -- step 3 re-verifies "
+                    "against gh help environment",
     },
     {
         "name": "huggingface-hub telemetry ping (inside verified repositories)", "category": 1,
@@ -320,32 +372,38 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "url": "https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables",
         "versions": "not a harness dependency; whatever the verified repo's checks import (CyClaw pins "
                     "huggingface-hub itself). finetune/ mlx-lm is operator-shell only (see its row)",
-        "enforcement": "executor-runner scrubbed_env(); the hard sandbox already denies network, so this "
-                       "is the second layer for a repo whose pytest imports huggingface_hub",
+        "enforcement": "executor-runner scrubbed_env() via the builder's verifier arm "
+                       "(child_env Child::VerificationCheck); the hard sandbox already denies network, so "
+                       "this is the second layer for a repo whose pytest imports huggingface_hub",
         "scope": "caller-declared verification checks", "reviewed": "2026-10-03",
-        "evidence": "runner.rs pairs read 2026-10-03; three-name OR (HF_HUB_DISABLE_TELEMETRY / "
-                    "DISABLE_TELEMETRY / DO_NOT_TRACK) per CyClaw's 2026-09-28 read of v1.32.0 constants.py",
+        "evidence": "child_env.rs VerificationCheck arm read 2026-10-03; three-name OR "
+                    "(HF_HUB_DISABLE_TELEMETRY / DISABLE_TELEMETRY / DO_NOT_TRACK) per CyClaw's "
+                    "2026-09-28 read of v1.32.0 constants.py",
     },
     {
         "name": "chromadb posthog telemetry (inside verified repositories)", "category": 1,
         "controls": {"ANONYMIZED_TELEMETRY": "false"},
         "url": "https://docs.trychroma.com/docs/overview/telemetry",
         "versions": "not a harness dependency; a verified repo's own pin",
-        "enforcement": "executor-runner scrubbed_env() (lower-case `false`, which chromadb's pydantic "
-                       "settings parse the same as CyClaw's `False`); network denied by the sandbox first",
+        "enforcement": "executor-runner scrubbed_env() via the builder's verifier arm (lower-case "
+                       "`false`, which chromadb's pydantic settings parse the same as CyClaw's `False`); "
+                       "network denied by the sandbox first",
         "scope": "caller-declared verification checks", "reviewed": "2026-10-03",
-        "evidence": "runner.rs pair read 2026-10-03",
+        "evidence": "child_env.rs VerificationCheck arm read 2026-10-03",
     },
     {
         "name": "gh update notifier", "category": 2,
-        "controls": {"GH_NO_UPDATE_NOTIFIER": "1"},
+        "controls": {"GH_NO_UPDATE_NOTIFIER": "1", "GH_NO_EXTENSION_UPDATE_NOTIFIER": "1"},
         "url": "https://cli.github.com/manual/gh_help_environment",
         "versions": "external binary",
-        "enforcement": "agentic-git and agentic-gh sites. GH_NO_EXTENSION_UPDATE_NOTIFIER is NOT set "
-                       "anywhere yet (CyClaw sets it) -- SKILL.md step 4 candidate; not a control here "
-                       "until a site delivers it",
+        "enforcement": "the builder's gh arm (child_env Child::Gh), reached by agentic-git and agentic-gh. "
+                       "GH_NO_EXTENSION_UPDATE_NOTIFIER landed with the shared builder (parity O6), "
+                       "closing the step 4 candidate: extension update checks are a second release-"
+                       "endpoint lookup gh runs on its own, independent of the CLI's own notifier",
         "scope": "agentic gh children", "reviewed": "2026-10-03",
-        "evidence": "version-check egress to the release endpoint; reports nothing about usage",
+        "evidence": "version-check egress to the release endpoint (CLI and installed extensions); "
+                    "reports nothing about usage; both names mirror CyClaw's utils/telemetry_kill.py "
+                    "UPDATE_CHECK_OPT_OUT",
     },
     {
         "name": "pip index / version check", "category": 2,
@@ -727,10 +785,31 @@ def _diff_mapping(check: str, label: str, actual: dict, expected: dict) -> bool:
 # Checks
 # ---------------------------------------------------------------------------
 
+_ARM_RE = re.compile(r"Child::([A-Za-z_][A-Za-z0-9_]*)\s*=>")
+
+
+def _builder_arms(body: str) -> dict[str, dict[str, str]]:
+    """Literal pairs per `Child::<Kind> =>` arm of the shared builder's match."""
+    parts = _ARM_RE.split(body)
+    return {parts[i]: _literal_pairs(parts[i + 1]) for i in range(1, len(parts), 2)}
+
+
+# `Child::K` may be path-qualified (`child_env::Child::K`): mcp.rs already
+# binds tokio's process `Child`, so it names the builder's enum by path.
+_APPLY_RE = re.compile(r"child_env::apply\(\s*&mut\s+[A-Za-z_][A-Za-z0-9_]*\s*,\s*"
+                       r"(?:[A-Za-z_][A-Za-z0-9_]*::)*Child::([A-Za-z_][A-Za-z0-9_]*)\s*\)")
+
+
 def check_sites(root: Path) -> dict[str, dict[str, str]]:
-    """T1 shapes + T2 exact pairs. Returns the ACTUAL pairs per site for T9."""
+    """T1 shapes + T2 exact pairs. Returns the EFFECTIVE pairs per site for T9:
+    a site's own literals plus the shared-builder arm it names."""
     actual: dict[str, dict[str, str]] = {}
-    for site, spec in SITES.items():
+    arms: dict[str, dict[str, str]] = {}
+    # The builder first, whatever the dict order, so every routed site can
+    # resolve its arm; a missing or renamed builder then fails T1 once and
+    # each routed site on its missing pairs (never a KeyError).
+    for site in sorted(SITES, key=lambda s: "arms" not in SITES[s]):
+        spec = SITES[site]
         text = _read(root, str(spec["file"]))
         if text is None:
             fail("T1", f"{site}: {spec['file']} missing")
@@ -740,10 +819,37 @@ def check_sites(root: Path) -> dict[str, dict[str, str]]:
             fail("T1", f"{site}: no function matching /{spec['signature']}/ in {spec['file']}")
             continue
         ok("T1", f"{site}: builder present in {spec['file']}")
-        pairs = _literal_pairs(_strip_line_comments(body))
+        clean = _strip_line_comments(body)
+        pairs = _literal_pairs(clean)
+        expected_arms = spec.get("arms")
+        if expected_arms is not None:
+            arms = _builder_arms(clean)
+            for kind in sorted(set(expected_arms) - set(arms)):  # type: ignore[arg-type]
+                fail("T2", f"{site}: builder has no `Child::{kind} =>` arm")
+            for kind in sorted(set(arms) - set(expected_arms)):  # type: ignore[arg-type]
+                fail("T2", f"{site}: unclassified arm Child::{kind} (pin it under `arms` in the oracle)")
+            for kind in sorted(set(arms) & set(expected_arms)):  # type: ignore[arg-type]
+                if _diff_mapping("T2", f"{site}/{kind}", arms[kind], dict(expected_arms[kind])):  # type: ignore[index]
+                    ok("T2", f"{site}/{kind}: {len(arms[kind])} pair(s) match the oracle")
+        # Credit a site only with the arms it ACTUALLY calls: a dropped or
+        # misrouted apply() must lose those pairs, not inherit the oracle's
+        # expectation (verify.sh's drop-apply and wrong-arm scenarios).
+        called = _APPLY_RE.findall(clean)
+        kind = spec.get("child_env")
+        if kind is not None and str(kind) not in called:
+            fail("T2", f"{site}: body no longer routes through `child_env::apply(&mut env, ...Child::{kind})` "
+                       "(the site's own literals are not the whole contract)")
+        if kind is None and called:
+            fail("T2", f"{site}: calls child_env::apply but the oracle names no `child_env` arm for it")
+        for called_kind in called:
+            arm = arms.get(called_kind, {})
+            for k in sorted(set(pairs) & set(arm)):
+                fail("T2", f"{site}: pins {k} itself; the child_env `{called_kind}` arm owns it "
+                           "(one owner per name)")
+            pairs = {**pairs, **arm}
         actual[site] = pairs
         if _diff_mapping("T2", site, pairs, dict(spec["pairs"])):  # type: ignore[arg-type]
-            ok("T2", f"{site}: {len(pairs)} literal pair(s) match the oracle")
+            ok("T2", f"{site}: {len(pairs)} effective pair(s) match the oracle")
         for needle in spec["mentions"]:  # type: ignore[union-attr]
             if needle not in body:
                 fail("T2", f"{site}: body no longer mentions {needle!r}")
@@ -938,8 +1044,9 @@ def check_wiring(root: Path, actual: dict[str, dict[str, str]]) -> None:
         for k, v in CANONICAL_BASE.items():
             if pairs.get(k) != v:
                 fail("T9", f"{site}: external-binary site lacks canonical {k}={v!r}")
-    info("T9", "no shared child-env builder exists yet (parity O6 pending): the three external-binary "
-               "sites hand-roll the same pairs; T9 holds them to CANONICAL_BASE by convention")
+    routed = [s for s, spec in SITES.items() if spec.get("child_env")]
+    ok("T9", f"shared builder src/common/child_env.rs (parity O6) feeds {len(routed)} site(s): "
+             f"{', '.join(routed)}; the external-binary sites hold CANONICAL_BASE through it")
 
 
 def _manifest_direct_deps(root: Path, rel: str) -> set[str] | None:

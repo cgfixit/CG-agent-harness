@@ -379,7 +379,7 @@ Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
 commit, and uses an object-ID refspec; publication checks the remote branch.
 HTTPS credentials use `gh`, with ambient Git helpers, hooks and prompts disabled
-and `GH_NO_UPDATE_NOTIFIER=1`, `DO_NOT_TRACK=1` forced.
+and `child_env` gh opt-outs forced.
 Accepted SSH origins can use the operator's SSH configuration and keys.
 Current policy and separate reason/confirmation remain required.
 Older records without these bindings need a new reviewed run. No transaction

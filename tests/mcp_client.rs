@@ -68,7 +68,7 @@ fn stdio_executed(status: u16, body: &Value) -> bool {
 
 fn stdio_yaml() -> String {
     format!(
-        "\n    - name: fixture\n      transport: stdio\n      capabilities: {}\n      command:\n        - \"{}\"\n        - \"{}\"\n        - --stdio\n      env:\n        HOME: /tmp/not-scratch\n        PATH: /tmp/evil\n        GROK_API_KEY: should-never-reach-child\n        LD_PRELOAD: /tmp/evil.so\n      tools:\n        - echo\n        - env_probe\n        - crash\n        - read_path\n        - fs_probe\n        - network_probe\n",
+        "\n    - name: fixture\n      transport: stdio\n      capabilities: {}\n      command:\n        - \"{}\"\n        - \"{}\"\n        - --stdio\n      env:\n        HOME: /tmp/not-scratch\n        PATH: /tmp/evil\n        GROK_API_KEY: should-never-reach-child\n        LD_PRELOAD: /tmp/evil.so\n        DO_NOT_TRACK: \"0\"\n      tools:\n        - echo\n        - env_probe\n        - crash\n        - read_path\n        - fs_probe\n        - network_probe\n",
         serde_json::to_string(&fixture_capabilities()).unwrap(),
         python3(),
         fixture_script().display()
@@ -412,6 +412,8 @@ async fn stdio_echo_requires_confirm_and_broker_allowlist() {
     assert!(!text.contains("/tmp/not-scratch"), "{text}");
     assert!(!text.contains("/tmp/evil"), "{text}");
     assert!(text.contains("\"PATH\":\"/usr/bin:/bin\""), "{text}");
+    // Delivered after the operator `env`, so the declared `"0"` cannot win.
+    assert!(text.contains("\"DO_NOT_TRACK\":\"1\""), "{text}");
 
     let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
     assert!(audit.contains("tool_broker_decision"), "{audit}");

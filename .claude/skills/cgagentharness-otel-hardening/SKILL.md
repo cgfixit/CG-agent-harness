@@ -22,17 +22,17 @@ one.
 
 | Piece | File | What |
 |---|---|---|
-| gh + git builder | `src/agentic/git.rs` `environment()` | allowlist inherit (PATH/HOME/LANG/LC_ALL/GH_TOKEN/GITHUB_TOKEN) + git hygiene + `GH_TELEMETRY=false`, `GH_NO_UPDATE_NOTIFIER=1`, `DO_NOT_TRACK=1`. git's `credential.helper` is `!gh auth git-credential`, so git's env is gh's env |
-| gh builder | `src/agentic/gh_client.rs` `gh_env()` | full inherit with the same opt-outs forced on top; every `RunSpec` in `gh_client.rs`/`writer.rs` passes `env: Some(&gh_env())` |
-| verifier builder | `src/agentic/executor/runner.rs` `scrubbed_env()` | `ALLOWED_ENV_VARS` (6) + `NO_PROXY=*`, `PIP_NO_INDEX`, `PIP_DISABLE_PIP_VERSION_CHECK`, `CARGO_NET_OFFLINE`, `DO_NOT_TRACK`, `GH_TELEMETRY`, `HF_HUB_DISABLE_TELEMETRY`, `ANONYMIZED_TELEMETRY` for whatever a verified repo's checks read |
-| MCP stdio | `src/common/mcp.rs` `spawn()` + `mcp_worker.rs` | `env_clear()`, operator `env` through `filter_env()` (`SECRET_ENV` + `HIJACK_ENV` dropped), fixed PATH/locale, scratch HOME. No opt-outs delivered (see step 4) |
+| shared builder | `src/common/child_env.rs` | one opt-out table per child kind (`Gh`, `VerificationCheck`, `McpServer`), applied last at each routed site; in `common`, so no `crate::agentic` (I6) |
+| gh + git builder | `src/agentic/git.rs` `environment()` | allowlist inherit (PATH/HOME/LANG/LC_ALL/GH_TOKEN/GITHUB_TOKEN) + git hygiene + `Gh` arm. git's `credential.helper` is `!gh auth git-credential`, so git's env is gh's env |
+| gh builder | `src/agentic/gh_client.rs` `gh_env()` | full inherit + `GIT_TERMINAL_PROMPT=0` + `Gh` arm; every `RunSpec` in `gh_client.rs`/`writer.rs` passes `env: Some(&gh_env())` |
+| verifier builder | `src/agentic/executor/runner.rs` `scrubbed_env()` | `ALLOWED_ENV_VARS` (6) + `NO_PROXY=*`, `PIP_NO_INDEX`, `PIP_DISABLE_PIP_VERSION_CHECK`, `CARGO_NET_OFFLINE` + `VerificationCheck` arm |
+| MCP stdio | `src/common/mcp.rs` `spawn()` + `mcp_worker.rs` | `env_clear()`, operator `env` through `filter_env()` (`SECRET_ENV` + `HIJACK_ENV` dropped), then `McpServer` arm (operator `env` cannot override it), fixed PATH/locale, scratch HOME |
 | desktop | `desktop/src/backend.rs` `start()`, `main.rs` `prepare_cargo()`/`external_link()` | sidecar + python helper carry `RUSTUP_AUTO_INSTALL=0`; the opener runs `env_clear()` with a fixed PATH |
 | lock graphs | `Cargo.lock`, `desktop/Cargo.lock` | no `opentelemetry*`, `sentry*`, `posthog*`, `*telemetry*`, `*analytics*` crate |
 | oracle + inventory | `check_otel.py` | the independent second copy of every pair, allowlist and strip list, plus the category 1–5 row for every crate, binary, launcher and provider |
 
-There is **no shared builder** yet (parity row O6, `docs/parity/STATUS.md`): the
-three external-binary sites hand-roll the same pairs, and T9 holds them to a
-common base by convention.
+The builder closed parity O6. The oracle credits each site only with the arm
+it actually calls, and an arm's names are never re-pinned at a site.
 
 ## Steps
 
@@ -42,8 +42,9 @@ common base by convention.
    python3 .claude/skills/cgagentharness-otel-hardening/check_otel.py --strict --as-of $(date +%F)
    ```
 
-   T1 builders present · T2 exact literal pairs per site (missing / extra /
-   flipped all FAIL) · T3 allowlists and strip lists exact · T4 inventory
+   T1 builders present · T2 exact pairs per site, literals plus the arm it
+   calls (missing / extra / flipped / unrouted all FAIL) · T3 allowlists and
+   strip lists exact · T4 inventory
    staleness (120d) · T5 lock-graph telemetry-crate denylist, both crates · T6
    verified-pin drift (reqwest, rmcp, axum, rustls, hyper, keyring, tantivy,
    tracing-subscriber, tauri; `DEFAULT_MIN_GH`) · T7 every `Command::new(` file
@@ -81,11 +82,8 @@ common base by convention.
    `check_otel.py`'s oracle AND the inventory row (`reviewed`, evidence) in one
    commit, add a `verify.sh` mutation for any new rule, re-run steps 1–2, then
    `cargo test` (the sites have unit tests: `git.rs`, `mcp.rs`
-   `secret_env_names_are_stripped`). Candidates found at port time, none
-   closed here: `GH_NO_EXTENSION_UPDATE_NOTIFIER=1` is set nowhere (CyClaw sets
-   it); MCP stdio children get no `DO_NOT_TRACK`, so a server declared with
-   `network: unrestricted` runs telemetry-live; a `common::child_env` builder
-   would retire the T9 convention and close parity O6. A `[bans].deny` list in
+   `secret_env_names_are_stripped`, `child_env.rs`). A new opt-out goes in a
+   `child_env` arm, never a site literal. Still open: a `[bans].deny` list in
    `deny.toml` for the T5 patterns would make CI enforce the lock-graph half.
 
 5. **Classify anything new; retire anything gone.** A new crate, binary,

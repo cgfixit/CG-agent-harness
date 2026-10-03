@@ -80,6 +80,7 @@ def _handle(message):
                 "keys": sorted(os.environ),
                 "HOME": os.environ.get("HOME", ""),
                 "PATH": os.environ.get("PATH", ""),
+                "DO_NOT_TRACK": os.environ.get("DO_NOT_TRACK", ""),
             }
         elif name == "echo":
             payload = {"echo": args}

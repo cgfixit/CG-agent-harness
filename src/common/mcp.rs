@@ -22,6 +22,7 @@ type ChildStdin = tokio::fs::File;
 #[cfg(windows)]
 type ChildStdout = tokio::fs::File;
 
+use super::child_env;
 use super::errors::{HarnessError, Result};
 use super::mcp_policy::{Containment, StdioCapabilities};
 use super::sandbox_wrap::{wrap_mcp_stdio, WrappedStdio};
@@ -162,7 +163,11 @@ impl StdioClient {
         let mut cmd = Command::new(&wrap.argv[0]);
         cmd.args(&wrap.argv[1..]);
         cmd.env_clear();
-        for (key, value) in filter_env(extra_env) {
+        let mut env = filter_env(extra_env);
+        // After filter_env, so an operator-declared `env` cannot switch
+        // telemetry back on for a server granted `network: unrestricted`.
+        child_env::apply(&mut env, child_env::Child::McpServer);
+        for (key, value) in env {
             cmd.env(key, value);
         }
         #[cfg(not(windows))]
@@ -685,8 +690,17 @@ mod tests {
         extra.insert("LD_PRELOAD".into(), "/tmp/evil.so".into());
         extra.insert("dyld_insert_libraries".into(), "/tmp/evil.dylib".into());
         extra.insert("PYTHONHOME".into(), "/tmp/py".into());
+        extra.insert("DO_NOT_TRACK".into(), "0".into());
         let filtered = filter_env(&extra);
         assert_eq!(filtered.get("SAFE_FLAG").map(String::as_str), Some("1"));
+        // Not a secret, so the filter passes it through; the opt-out applied
+        // after the filter is what wins, exactly as spawn() orders them.
+        assert_eq!(filtered.get("DO_NOT_TRACK").map(String::as_str), Some("0"));
+        let mut env = filtered.clone();
+        child_env::apply(&mut env, child_env::Child::McpServer);
+        assert_eq!(env.get("DO_NOT_TRACK").map(String::as_str), Some("1"));
+        assert_eq!(env.get("SAFE_FLAG").map(String::as_str), Some("1"));
+        assert_eq!(env.len(), filtered.len());
         assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("GROK_API_KEY")));
         assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("LD_PRELOAD")));
         assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("DYLD_INSERT_LIBRARIES")));
