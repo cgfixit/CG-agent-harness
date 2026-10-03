@@ -13,7 +13,7 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
-use crate::common::atomic::write_atomic;
+use crate::common::credential_store::write_private_text_atomic;
 use crate::common::errors::{HarnessError, Result};
 
 pub const ENV_KEY_ERROR: &str = "ENV_KEY_REJECTED";
@@ -291,7 +291,7 @@ pub fn update_keys(path: &Path, updates: &BTreeMap<String, String>, clear: &[Str
     if rendered.len() > 65536 {
         return Err(err("credential file exceeds 64 KiB"));
     }
-    write_atomic(path, rendered.as_bytes(), Some(0o600))?;
+    write_private_text_atomic(path, rendered.as_bytes())?;
     Ok(result_json(&cleaned, clear, &path.display().to_string()))
 }
 
@@ -334,7 +334,7 @@ pub fn load_startup(
         .iter()
         .map(|(name, error)| migration_warning(name, *error))
         .collect();
-    if report.text != text && write_atomic(path, report.text.as_bytes(), Some(0o600)).is_err() {
+    if report.text != text && write_private_text_atomic(path, report.text.as_bytes()).is_err() {
         warnings.push(
             "Migrated keys could not be removed from the private .env file. Fix that file's permissions and restart."
                 .to_string(),
@@ -510,12 +510,7 @@ mod tests {
     fn plaintext_opt_in_reads_the_file_and_does_not_touch_the_store() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".env");
-        write_atomic(
-            &path,
-            b"export DEEPAGENT_API_KEY='dak-plaintext-opt-in-1234'\n",
-            Some(0o600),
-        )
-        .unwrap();
+        write_private_text_atomic(&path, b"export DEEPAGENT_API_KEY='dak-plaintext-opt-in-1234'\n").unwrap();
         let loaded = load_startup(&path, true, &PanicStore).unwrap();
         assert_eq!(
             loaded.values.get("DEEPAGENT_API_KEY").map(String::as_str),
@@ -528,10 +523,9 @@ mod tests {
     fn startup_migration_loads_the_store_and_strips_the_verified_line() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".env");
-        write_atomic(
+        write_private_text_atomic(
             &path,
             b"# keep\nexport OTHER='x'\nexport DEEPAGENT_API_KEY='dak-migrate-value-1234'\n",
-            Some(0o600),
         )
         .unwrap();
         let store = MemoryStore {

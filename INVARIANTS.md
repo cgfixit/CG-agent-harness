@@ -417,24 +417,25 @@ callers append inline.
 
 Managed provider keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
 `SERPAPI_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
-`CGAGENTHARNESS_WEBHOOK_TOKEN`) are stored in the OS credential store: macOS
-Keychain, Linux Secret Service, or Windows Credential Manager. An inherited
-environment variable wins, including an empty value. A legacy home `.env` is read
-only by the one-time migration, which removes a managed line only after the store
-write verifies. Unknown lines stay. If the store write or verify fails, that line
-stays, startup warns without the value, and the key is not loaded. Settings save
-and clear use the store and fail closed when it is unavailable.
-`security.allow_plaintext_key_file` ships false; only the literal boolean `true`
-keeps the private 0600 file. Quoted `"true"` stays off. Each entry's service name
-includes the canonical home; keyring's target is not a namespace (a macOS
-keychain domain, the sole Windows credential name). A credential-file path with
-a `..` component is refused before open, and a store entry that is not UTF-8
-text is dropped unread. Values never appear in argv, logs, diagnostics, or
-`/api` responses (presence and a masked tail only). Account passwords stay
-scrypt-hashed in `auth.sqlite3`. Startup loads keys into the harness environment.
-Git/`gh` children receive an allowlist without provider keys. Shim children
-receive a separate allowlist; only `real-repo-run` receives `DEEPAGENT_API_KEY`
-for its local planner. Sandboxed checks receive a scrubbed environment.
+`CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or
+Windows Credential Manager. Inherited environment values, including empty, win.
+Legacy home `.env` is read for migration or explicit opt-in. Migration removes
+managed lines only after verified store writes. Unknown lines and failed assignments stay; failures warn without values
+and are not loaded. Settings save/clear fail closed if the store is unavailable.
+`security.allow_plaintext_key_file` ships false; only literal boolean `true`
+keeps the legacy file; quoted `"true"` is off. Unix writes retain 0600. Windows
+saves and migration cleanup create an explicit current-user owner and protected
+user-only DACL, verify the empty staged file, then sync and replace through its
+held handle. Failures preserve the destination. Entries use canonical-home
+service names; keyring targets select a macOS domain or the sole Windows
+credential name. Paths containing a `..` component are refused before open.
+Non-UTF-8 store entries are dropped unread. Values never enter argv, logs,
+diagnostics or `/api` responses, which show presence and masked tails only.
+Account passwords stay scrypt-hashed in `auth.sqlite3`. Startup loads keys into
+the harness environment. Git/`gh` children receive an allowlist without provider
+keys. Shim children receive a separate allowlist; only `real-repo-run` receives
+`DEEPAGENT_API_KEY` for its local planner. Sandboxed checks receive a scrubbed
+environment.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
   `tests/panels.rs`, `tests/child_env.rs`, and

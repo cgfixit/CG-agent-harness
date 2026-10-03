@@ -1,5 +1,8 @@
 #![cfg(windows)]
 
+#[path = "../src/common/credential_file_writer.rs"]
+mod writer_stage_probe;
+
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::fs::{File, OpenOptions};
@@ -10,6 +13,7 @@ use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
 use std::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use cgagentharness::common::atomic::write_atomic;
@@ -267,7 +271,37 @@ fn legacy_control_inherits_foreign_access_but_real_save_is_private() {
     update_keys(&path, &updates("synthetic-save"), &[]).unwrap();
     assert_private(&path, &user_sid());
     assert!(std::fs::read_to_string(&path).unwrap().contains("synthetic-save"));
+    let store = MockStore::default();
+    let loaded = load_startup(&path, true, &store).unwrap();
+    assert_eq!(
+        loaded.values.get("DEEPAGENT_API_KEY").map(String::as_str),
+        Some("synthetic-save")
+    );
+    assert_eq!(store.1.load(Ordering::Relaxed), 0);
     no_staged_files(dir.path());
+}
+
+#[test]
+fn production_writer_source_publishes_private_bytes() {
+    let dir = broad_parent();
+    let path = dir.path().join(".env");
+    writer_stage_probe::write(&path, b"synthetic-probe").unwrap();
+    assert_private(&path, &user_sid());
+    assert_eq!(std::fs::read(&path).unwrap(), b"synthetic-probe");
+    no_staged_files(dir.path());
+}
+
+#[test]
+fn canonical_unicode_parent_supports_private_publication() {
+    let dir = broad_parent();
+    let parent = dir.path().join("keys-ø-汉字-🔑");
+    std::fs::create_dir(&parent).unwrap();
+    let parent = std::fs::canonicalize(parent).unwrap();
+    let path = parent.join(".env");
+    update_keys(&path, &updates("unicode-path-value"), &[]).unwrap();
+    assert_private(&path, &user_sid());
+    assert!(std::fs::read_to_string(&path).unwrap().contains("unicode-path-value"));
+    no_staged_files(&parent);
 }
 
 #[test]
@@ -288,13 +322,15 @@ fn replacement_keeps_unknown_lines_and_private_security() {
 }
 
 #[derive(Default)]
-struct MockStore(Mutex<BTreeMap<String, String>>);
+struct MockStore(Mutex<BTreeMap<String, String>>, AtomicUsize);
 
 impl CredentialStore for MockStore {
     fn get(&self, name: &str) -> Result<Option<String>, StoreError> {
+        self.1.fetch_add(1, Ordering::Relaxed);
         Ok(self.0.lock().unwrap().get(name).cloned())
     }
     fn set(&self, name: &str, value: &str) -> Result<(), StoreError> {
+        self.1.fetch_add(1, Ordering::Relaxed);
         if name == "GROK_API_KEY" {
             return Err(StoreError::WriteFailed);
         }
@@ -302,6 +338,7 @@ impl CredentialStore for MockStore {
         Ok(())
     }
     fn delete(&self, name: &str) -> Result<(), StoreError> {
+        self.1.fetch_add(1, Ordering::Relaxed);
         self.0.lock().unwrap().remove(name);
         Ok(())
     }
@@ -346,6 +383,37 @@ fn locked_target_preserves_old_bytes_and_cleans_stage() {
         .unwrap();
     let error = update_keys(&path, &updates("must-not-publish"), &[]).unwrap_err();
     assert!(!error.to_string().contains("must-not-publish"));
+    drop(lock);
+    assert_eq!(std::fs::read(&path).unwrap(), prior);
+    assert_private(&path, &user_sid());
+    no_staged_files(dir.path());
+}
+
+#[test]
+fn failed_migration_cleanup_keeps_original_file_and_redacted_warning() {
+    let dir = broad_parent();
+    let path = dir.path().join(".env");
+    let prior = b"export DEEPAGENT_API_KEY='verified-value'\n";
+    private_fixture(&path, prior);
+    let lock = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&path)
+        .unwrap();
+    let store = MockStore::default();
+    let loaded = load_startup(&path, false, &store).unwrap();
+    assert_eq!(
+        loaded.values.get("DEEPAGENT_API_KEY").map(String::as_str),
+        Some("verified-value")
+    );
+    assert!(loaded
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("could not be removed")));
+    assert!(loaded
+        .warnings
+        .iter()
+        .all(|warning| !warning.contains("verified-value")));
     drop(lock);
     assert_eq!(std::fs::read(&path).unwrap(), prior);
     assert_private(&path, &user_sid());

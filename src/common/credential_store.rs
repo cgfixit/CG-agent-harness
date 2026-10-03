@@ -262,6 +262,31 @@ pub(crate) fn strip_assignments(text: &str, remove: &BTreeSet<String>) -> String
     out
 }
 
+#[cfg(windows)]
+#[path = "credential_file_writer.rs"]
+mod windows_private_writer;
+
+/// Replace a bounded credential file without exposing staged secret bytes.
+pub(crate) fn write_private_text_atomic(path: &Path, bytes: &[u8]) -> super::errors::Result<()> {
+    let refusal = || super::errors::HarnessError::new("IO_ERROR", "private credential file write refused");
+    if bytes.len() > 65536
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        || path.file_name().is_none()
+    {
+        return Err(refusal());
+    }
+    #[cfg(not(windows))]
+    {
+        super::atomic::write_atomic(path, bytes, Some(0o600)).map_err(|_| refusal())
+    }
+    #[cfg(windows)]
+    {
+        windows_private_writer::write(path, bytes).map_err(|_| refusal())
+    }
+}
+
 /// Private credential file: regular, owner-only, not a symlink, at most 64 KiB.
 /// Missing is empty. The bytes are migration input or the plaintext opt-in, never a log line.
 pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
