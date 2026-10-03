@@ -538,8 +538,12 @@ mod tests {
         audit.log(json!({"event":"probe","detail":format!("key {serpapi}")}));
         let lines = written(&dir.path().join("logs/audit.jsonl"));
         assert_eq!(lines[0]["detail"], "key [REDACTED_SECRET]");
+        // Never echo the formatted value: on failure it would hold a secret.
         let shown = format!("{audit:?}");
-        assert!(!shown.contains(&serpapi) && !shown.contains(custom), "{shown}");
+        assert!(
+            !shown.contains(&serpapi) && !shown.contains(custom),
+            "Redactors Debug output contained a literal secret"
+        );
     }
 
     #[test]
