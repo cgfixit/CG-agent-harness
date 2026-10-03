@@ -701,6 +701,15 @@ mod tests {
         assert_eq!(env.get("DO_NOT_TRACK").map(String::as_str), Some("1"));
         assert_eq!(env.get("SAFE_FLAG").map(String::as_str), Some("1"));
         assert_eq!(env.len(), filtered.len());
+        // A lowercase alias would win on Windows (case-insensitive names, later
+        // key applied last); apply() must leave only the canonical spelling.
+        let mut aliased = BTreeMap::new();
+        aliased.insert("do_not_track".to_string(), "0".to_string());
+        let mut env = filter_env(&aliased);
+        assert_eq!(env.get("do_not_track").map(String::as_str), Some("0"));
+        child_env::apply(&mut env, child_env::Child::McpServer);
+        assert_eq!(env.len(), 1);
+        assert_eq!(env.get("DO_NOT_TRACK").map(String::as_str), Some("1"));
         assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("GROK_API_KEY")));
         assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("LD_PRELOAD")));
         assert!(!filtered.keys().any(|k| k.eq_ignore_ascii_case("DYLD_INSERT_LIBRARIES")));

@@ -47,8 +47,14 @@ pub fn telemetry_opt_outs(child: Child) -> &'static [(&'static str, &'static str
 /// Insert the child's opt-outs into `env`, replacing any existing value. Call
 /// it last: after the inherited allowlist, after caller extras and after an
 /// operator-declared `env`, so none of them can switch telemetry back on.
+///
+/// Every other spelling of an opt-out name (`do_not_track`, `Gh_Telemetry`) is
+/// removed first. Windows environment names are case-insensitive, and the
+/// spawn sites hand the map to `Command::env` in key order, where a lowercase
+/// alias sorts after the canonical name and would overwrite it in the child.
 pub fn apply(env: &mut BTreeMap<String, String>, child: Child) {
     for (key, value) in telemetry_opt_outs(child) {
+        env.retain(|name, _| name == key || !name.eq_ignore_ascii_case(key));
         env.insert((*key).into(), (*value).into());
     }
 }
@@ -99,6 +105,23 @@ mod tests {
         assert_eq!(env.get("DO_NOT_TRACK").map(String::as_str), Some("1"));
         assert_eq!(env.get("KEEP").map(String::as_str), Some("me"));
         // KEEP plus the four gh pairs: the two overridden keys were not duplicated.
+        assert_eq!(env.len(), 1 + telemetry_opt_outs(Child::Gh).len());
+    }
+
+    #[test]
+    fn apply_removes_case_aliases_that_windows_would_let_win() {
+        let mut env: BTreeMap<String, String> = BTreeMap::new();
+        env.insert("do_not_track".into(), "0".into());
+        env.insert("Gh_Telemetry".into(), "true".into());
+        env.insert("gh_no_extension_update_notifier".into(), "0".into());
+        // Not an opt-out name for this kind: its spelling is left alone.
+        env.insert("no_proxy".into(), "*".into());
+        apply(&mut env, Child::Gh);
+        for (key, value) in telemetry_opt_outs(Child::Gh) {
+            let spellings: Vec<_> = env.iter().filter(|(k, _)| k.eq_ignore_ascii_case(key)).collect();
+            assert_eq!(spellings, vec![(&key.to_string(), &value.to_string())], "{key}");
+        }
+        assert_eq!(env.get("no_proxy").map(String::as_str), Some("*"));
         assert_eq!(env.len(), 1 + telemetry_opt_outs(Child::Gh).len());
     }
 }
