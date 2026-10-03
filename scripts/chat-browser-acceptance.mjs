@@ -52,6 +52,9 @@ const server=createServer(async(req,res)=>{
    if(['pages','search'].includes(action)&&words.length){reply({kind:'dispatch',dispatch:true,canonical:body.line,web:{action,body:{query:words.join(' '),engine:action==='search'?'google':'pages',group:null,count:5}}});return;}
    reply({kind:'suggest',dispatch:false,suggestions:[{line:'/help web'}],notice:'Missing arguments for /web '+action+'; use /help web.'});return;
   }
+  // Mirrors echoable_args: the parser never returns an /api set credential.
+  const apiSet=body.line.trim().match(/^\/api\s+set\s+(\S+)/i);
+  if(apiSet){reply({kind:'dispatch',dispatch:true,canonical:'/api set '+apiSet[1],command:'api',sub:'set',rest:apiSet[1]});return;}
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
  if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
@@ -68,7 +71,7 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/keys'){
   if(!signedIn || mustChange || authRole!=='admin'){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
   if(req.method==='POST'){if(body.clear?.includes('DEEPAGENT_API_KEY'))savedKey='';if(body.clear?.includes('SERPAPI_API_KEY'))savedSearchKey='';if(body.keys?.DEEPAGENT_API_KEY)savedKey=body.keys.DEEPAGENT_API_KEY;if(body.keys?.SERPAPI_API_KEY)savedSearchKey=body.keys.SERPAPI_API_KEY;}
-  reply({keys:[{name:'SERPAPI_API_KEY',label:'Google results (SerpAPI)',detail:'Public Google fallback when unset',saved_configured:!!savedSearchKey,saved_masked:savedSearchKey?'••••••••5678':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedSearchKey,environment_override:false},{name:'DEEPAGENT_API_KEY',label:'Planner key',detail:'Optional fixture provider',saved_configured:!!savedKey,saved_masked:savedKey?'••••••••1234':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedKey,environment_override:false}]});return;
+  reply({...(req.method==='POST'&&body.keys?{written:Object.keys(body.keys),path:'fixture-store'}:{}),keys:[{name:'SERPAPI_API_KEY',label:'Google results (SerpAPI)',detail:'Public Google fallback when unset',saved_configured:!!savedSearchKey,saved_masked:savedSearchKey?'••••••••5678':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedSearchKey,environment_override:false},{name:'DEEPAGENT_API_KEY',label:'Planner key',detail:'Optional fixture provider',saved_configured:!!savedKey,saved_masked:savedKey?'••••••••1234':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedKey,environment_override:false}]});return;
  }
  if(path==='/api/status'&&authFixture&&(!signedIn||mustChange||authRole==='audit')){reply({version:'fixture',auth_enabled:true});return;}
  if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:987654});return;}
@@ -597,6 +600,14 @@ try {
 
  assert.equal(await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value'),'');
  assert.equal(await evaluate('document.body.textContent.includes("fixture-secret-value-1234")'),false);
+ // /api set takes the value from the operator's line, not the parse echo,
+ // and the transcript never prints it (no "normalized:" copy).
+ await send('/API  set DEEPAGENT_API_KEY slash-secret-value-4321');
+ await until('document.getElementById("stream").innerText.includes("saved: DEEPAGENT_API_KEY")');
+ assert.equal(savedKey,'slash-secret-value-4321');
+ assert.equal(requests.filter(r=>r[1]==='/api/slash/parse').at(-1)[2].line,'/API  set DEEPAGENT_API_KEY slash-secret-value-4321');
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("slash-secret-value-4321")'),false);
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("normalized: /api set")'),false);
  await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
  // The cleared SerpAPI row already reads "Saved: unset", so wait on this row's status (the <p> before its input).
  await until('document.getElementById("saved-DEEPAGENT_API_KEY")?.previousElementSibling?.textContent.startsWith("Saved: unset")');assert.equal(savedKey,'');
