@@ -459,6 +459,17 @@ mod tests {
     use crate::common::credential_store::{CredentialStore, StoreError};
     use std::sync::Mutex;
 
+    #[test]
+    fn every_managed_key_is_a_known_secret_for_redaction() {
+        for spec in MANAGED_KEYS {
+            assert!(
+                crate::common::mcp::SECRET_ENV.contains(&spec.name),
+                "{} must be listed in common::mcp::SECRET_ENV",
+                spec.name
+            );
+        }
+    }
+
     struct MemoryStore {
         values: Mutex<BTreeMap<String, String>>,
     }
