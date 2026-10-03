@@ -1,7 +1,6 @@
 //! Owner-jailed `.md`/`.txt` notes for local chat. Separate from `memory_notes`.
 //! Ranking never confers permission; bytes leave this jail only after owner match.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -14,12 +13,13 @@ use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
 use crate::common::sha256_bytes_hex;
-use crate::server::attachments::{blob_section, wrap_fence, IncomingFile, VerifiedAttachment, FENCE_CLOSE, FENCE_OPEN};
+use crate::server::attachments::{
+    atomic_write_in_jail, blob_section, unlink_all, wrap_fence, IncomingFile, VerifiedAttachment, FENCE_CLOSE,
+    FENCE_OPEN,
+};
 use crate::server::passage_index::{chunk_text, retrieve_passages, PassageDoc, SourceKind};
 
 const INDEX_NAME: &str = "index.json";
-#[cfg(unix)]
-const BLOB_MODE: u32 = 0o600;
 const DEFAULT_MAX_FILES_PER_OWNER: u64 = 64;
 const DEFAULT_MAX_FILE_BYTES: u64 = 524_288;
 const DEFAULT_MAX_HOME_BYTES: u64 = 8_388_608;
@@ -507,40 +507,16 @@ thread_local! {
     static FAIL_INDEX_BEFORE_RENAME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Atomic, mode-0600 write of `rel` performed entirely through the
-/// capability handle: a fresh temp name is created relative to the jail, the
-/// bytes are written and synced, and the temp is renamed over the target.
-/// The destination is never truncated before rename succeeds.
+/// The shared jailed atomic write, labelled for notes errors. Tests can fail
+/// the index write after the temp is synced and before it replaces the index.
 fn write_in_jail(jail: &Dir, rel: &Path, data: &[u8]) -> Result<()> {
-    let io = |e: std::io::Error| HarnessError::new("IO_ERROR", format!("cannot write notes blob: {e}"));
-    let tmp = PathBuf::from(format!("{}.{}.tmp", rel.display(), Uuid::new_v4().simple()));
-    let mut options = cap_std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use cap_std::fs::OpenOptionsExt;
-        options.mode(BLOB_MODE);
-    }
-    let result = (|| {
-        let mut file = jail.open_with(&tmp, &options)?;
-        file.write_all(data)?;
-        file.sync_all()?;
+    atomic_write_in_jail(jail, rel, data, "notes blob", || {
         #[cfg(test)]
         if rel == Path::new(INDEX_NAME) && FAIL_INDEX_BEFORE_RENAME.with(|c| c.replace(false)) {
             return Err(std::io::Error::other("injected notes index write failure"));
         }
-        jail.rename(&tmp, jail, rel)
-    })();
-    if result.is_err() {
-        let _ = jail.remove_file(&tmp);
-    }
-    result.map_err(io)
-}
-
-fn unlink_all(jail: &Dir, rels: &[PathBuf]) {
-    for rel in rels {
-        let _ = jail.remove_file(rel);
-    }
+        Ok(())
+    })
 }
 
 pub fn list_json(notes: &[NoteBlob]) -> Value {
