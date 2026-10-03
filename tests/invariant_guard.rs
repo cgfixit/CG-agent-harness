@@ -209,7 +209,12 @@ fn duplicated_constants_still_agree() {
 #[test]
 fn deny_lists_ban_the_same_telemetry_crates() {
     fn entries(name: &str) -> Vec<String> {
-        let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(name)).unwrap();
+        // A Git for Windows checkout with core.autocrlf=true carries CRLF, and
+        // no .gitattributes pins these files to LF; the table split below must
+        // not depend on the line ending (Codex P2 on #315).
+        let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(name))
+            .unwrap()
+            .replace("\r\n", "\n");
         let bans = text
             .split("\n[bans]\n")
             .nth(1)
