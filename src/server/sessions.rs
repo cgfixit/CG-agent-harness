@@ -165,6 +165,17 @@ fn session_error(message: &str, session_id: &str) -> HarnessError {
     HarnessError::new(SESSION_ERROR_CODE, message).detail("session_id", session_id)
 }
 
+/// The read path and the list path apply the same identity rule: the body's
+/// id matches its file stem and the ownership version is consistent.
+fn identity_ok(session: &Session, stem: &str) -> bool {
+    session.session_id == stem
+        && match (session.schema_version, session.owner.as_deref()) {
+            (0, None) => true,
+            (1, Some(owner)) => crate::server::structured_memory::valid_owner(owner),
+            _ => false,
+        }
+}
+
 pub struct SessionStore {
     dir: PathBuf,
     lock: Mutex<()>,
@@ -213,16 +224,7 @@ impl SessionStore {
                 format!("unreadable session file: {session_id}.json"),
             )
         })?;
-        if session.session_id != session_id
-            || !matches!(
-                (session.schema_version, session.owner.as_deref()),
-                (0, None) | (1, Some(_))
-            )
-            || session
-                .owner
-                .as_deref()
-                .is_some_and(|owner| !crate::server::structured_memory::valid_owner(owner))
-        {
+        if !identity_ok(&session, session_id) {
             return Err(session_error(
                 "invalid session identity or ownership version",
                 session_id,
@@ -287,14 +289,7 @@ impl SessionStore {
             let summary = std::fs::read_to_string(&p)
                 .ok()
                 .and_then(|text| serde_json::from_str::<Session>(&text).ok())
-                .filter(|session| {
-                    session.session_id == p.file_stem().unwrap().to_string_lossy()
-                        && match (session.schema_version, session.owner.as_deref()) {
-                            (0, None) => true,
-                            (1, Some(owner)) => crate::server::structured_memory::valid_owner(owner),
-                            _ => false,
-                        }
-                })
+                .filter(|session| identity_ok(session, &p.file_stem().unwrap().to_string_lossy()))
                 .map(|session| session.summary());
             match summary {
                 Some(summary) => {
@@ -501,7 +496,7 @@ impl OwnedSessionStore<'_> {
                 // Unassigned/corrupt/interrupted writes are retained for explicit inspection.
                 if session_file && self.get(name.strip_suffix(".json").unwrap()).is_ok() {
                     dir.remove_file(name)?;
-                    count += usize::from(session_file);
+                    count += 1;
                 }
             }
             Ok(count)
@@ -824,6 +819,43 @@ mod tests {
         symlink(outside.path(), &dir).unwrap();
         assert!(store.clear().is_err());
         assert_eq!(std::fs::read_to_string(private).unwrap(), "keep");
+    }
+
+    #[test]
+    fn read_and_list_paths_agree_on_session_identity() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("sessions");
+        let created = SessionStore::new(&dir)
+            .unwrap()
+            .for_owner("local")
+            .create("m", "t")
+            .unwrap();
+        let id = created.session_id.clone();
+        let base = serde_json::to_value(&created).unwrap();
+        let cases = [
+            ("current owner", json!({"schema_version": 1, "owner": "local"}), true),
+            ("legacy unowned", json!({"schema_version": 0, "owner": null}), true),
+            (
+                "legacy with owner",
+                json!({"schema_version": 0, "owner": "local"}),
+                false,
+            ),
+            ("v1 without owner", json!({"schema_version": 1, "owner": null}), false),
+            ("v1 invalid owner", json!({"schema_version": 1, "owner": "../x"}), false),
+            ("unknown version", json!({"schema_version": 2, "owner": "local"}), false),
+            ("id not the stem", json!({"session_id": "ffffffffffff"}), false),
+        ];
+        for (label, patch, ok) in cases {
+            let mut body = base.clone();
+            for (k, v) in patch.as_object().unwrap() {
+                body[k] = v.clone();
+            }
+            std::fs::write(dir.join(format!("{id}.json")), body.to_string()).unwrap();
+            // A fresh store each case, so the summary cache cannot answer.
+            let store = SessionStore::new(&dir).unwrap();
+            assert_eq!(store.get_raw(&id).is_ok(), ok, "get_raw: {label}");
+            assert_eq!(store.list_all().len(), usize::from(ok), "list_all: {label}");
+        }
     }
 
     #[test]

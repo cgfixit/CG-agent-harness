@@ -65,19 +65,22 @@ pub async fn status(
     let sessions = state.store.for_owner(&owner).list();
     let total_tokens: u64 = sessions.iter().filter_map(|s| s["tokens"]["total"].as_u64()).sum();
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    // One model read, so model, provider, base_url and tools agree.
+    let model = state.current_model();
+    let cloud = state.cloud_chat.is_cloud_selection(&model);
     Json(json!({
         "version": crate::VERSION,
-        "model": state.current_model(),
-        "provider": state.current_provider(),
+        "model": model,
+        "provider": state.provider_for(&model),
         "api_key_optional": state.api_key_optional,
-        "base_url": if state.cloud_chat.is_cloud_selection(&state.current_model()) { Value::Null } else { json!(state.backend.base_url) },
+        "base_url": if cloud { Value::Null } else { json!(state.backend.base_url) },
         "soul_enabled": settings.soul_enabled,
         "soul": soul_status(&state, settings.soul_enabled),
         "memory_enabled": settings.memory_enabled,
         "home": state.home.root.display().to_string(),
         "repo_root": Value::Null,
         "chat_mode": "conversation",
-        "chat_tools_available": settings.web_enabled && !state.cloud_chat.is_cloud_selection(&state.current_model()),
+        "chat_tools_available": settings.web_enabled && !cloud,
         "sessions": sessions.len(),
         "total_tokens": total_tokens,
         "layout": {

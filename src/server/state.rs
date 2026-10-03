@@ -228,8 +228,12 @@ impl AppState {
     }
 
     pub fn current_provider(&self) -> String {
+        self.provider_for(&self.current_model())
+    }
+
+    pub fn provider_for(&self, model: &str) -> String {
         self.cloud_chat
-            .provider_name(&self.current_model())
+            .provider_name(model)
             .unwrap_or(&self.backend.provider)
             .to_string()
     }
