@@ -415,30 +415,32 @@ callers append inline.
 
 ## Provider keys live in the OS credential store
 
-Managed provider keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
+Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
 `SERPAPI_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
 `CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or
 Windows Credential Manager. Inherited environment values, including empty, win.
-Legacy home `.env` migration removes only assignments verified in the store;
-unknown and failed lines stay. Failures warn without values and leave keys unloaded.
-Settings save and clear use the store and fail closed when unavailable.
-`security.allow_plaintext_key_file` ships false; only the literal boolean `true`
-keeps the private file. Unix requires owner uid, 0600 access and one link. Windows
-requires a regular non-reparse file owned by the effective current user, with
-only ordinary allow ACEs for that user in a verifiable DACL. Windows atomic
-replacements inherit home ACLs, which must be private.
-Quoted `"true"` stays off. Entry service names include the canonical home;
-keyring targets select a macOS keychain domain or the sole Windows credential
-name, not a namespace. Credential paths containing a `..` component are refused
-before open; non-UTF-8 store entries are dropped unread. Values never appear in argv, logs, diagnostics, or
-`/api` responses (presence and a masked tail only). Account passwords stay
-scrypt-hashed in `auth.sqlite3`. Startup loads keys into the harness environment.
-Git/`gh` children receive an allowlist without provider keys. Shim children
-receive a separate allowlist; only `real-repo-run` receives `DEEPAGENT_API_KEY`
-for its local planner. Sandboxed checks receive a scrubbed environment.
+Legacy home `.env` migration removes only store-verified assignments;
+unknown/failed lines stay. Failures warn without values and leave keys unloaded.
+Settings save/clear use the store and fail closed when unavailable.
+`security.allow_plaintext_key_file` ships false; only literal boolean `true`
+permits live plaintext; quoted `"true"` is off. Unix requires owner uid, 0600
+access and one link. Windows requires a regular non-reparse file owned by the
+effective user with a verifiable DACL containing only ordinary allow
+ACEs for that user. Windows writes create an explicit owner and
+protected DACL matching these checks, verify empty stages, sync and replace
+through the held handle. Failures preserve destinations. Services
+include canonical home; keyring targets select a macOS domain or the sole Windows
+credential name, not a namespace. `..` path components are refused before open;
+non-UTF-8 store entries are dropped unread. Values never enter argv,
+logs, diagnostics or `/api` responses, which show presence and masked tails only.
+Account passwords stay scrypt-hashed in `auth.sqlite3`. Startup loads keys into
+the harness environment. Git/`gh` children receive an allowlist without provider
+keys. Shim children receive a separate allowlist; only `real-repo-run` receives
+`DEEPAGENT_API_KEY` for its local planner. Sandboxed checks receive a scrubbed
+environment.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
-  `tests/panels.rs`, `tests/child_env.rs`, and
+  `tests/windows_private_credentials.rs`, `tests/panels.rs`, `tests/child_env.rs`, and
   `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 
 ## A detached run cannot outlive its gates
