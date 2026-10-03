@@ -41,8 +41,8 @@ agent, chat, or loop tool.
      --confirm --reason 'Allow this workstation to read the selected memory namespace'
    ```
 
-   The CLI uses trusted local filesystem authority, so `issued_by_user_id` is
-   null. Creation neither adds facts nor copies memory. Store the one-time bearer
+   The CLI uses trusted local filesystem authority; it does not impersonate a
+   console administrator, so `issued_by_user_id` is null. Creation neither adds facts nor copies memory. Store the one-time bearer
    token in protected client storage, never config, URLs, logs, or screenshots.
 4. Start `cgagentharness serve` or the native sidecar. Configure the MCP client
    to POST Streamable HTTP to `http://127.0.0.1:8791/mcp` with

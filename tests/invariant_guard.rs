@@ -676,10 +676,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // trimming AGENTS.md and CLAUDE.md (moved to the root) brought it to 22186, rounded up to the next 500.
 // why: netconnect LAN-scope bullet in AGENTS.md; Agent total 22541 words, rounded up to the next 500.
 // why: read-only netconnect panel and slash rules; Root total 7506 words, rounded up to the next 500.
-// why: netconnect user guide; Guide total 50046 words after the review corrections, rounded up to the next 500.
+// why: #305 docs refresh plus its restored SECURE_RESEARCH and MCP_SERVER caveats; set to the reported Guide total of 45272 words.
 // why: README refresh (#284) plus the OS credential store section and its #286 caveat; set to the reported Root total of 8145 words.
 // why: the cgagentharness-otel-hardening skill brought Agent to 23,860 words; rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 45_500), (Evidence, 3_500), (Agent, 24_000)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 45_272), (Evidence, 3_500), (Agent, 24_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
