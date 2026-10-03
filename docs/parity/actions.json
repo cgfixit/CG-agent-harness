@@ -4720,18 +4720,19 @@
       "rust": {
         "baseline": "https://github.com/cgfixit/CG-agent-harness/commit/22520f3ba5981c361ceb57dddd7ff96234a69290",
         "paths": [
-          "src/common/process.rs",
+          "src/common/child_env.rs",
+          "src/agentic/git.rs",
+          "src/agentic/gh_client.rs",
           "src/agentic/executor/runner.rs",
-          "src/shim/mod.rs",
-          "desktop/src/backend.rs"
+          "src/common/mcp.rs"
         ],
         "entrypoint_evidence": "See current router, CLI dispatch and desktop private protocol; no missing feature is counted as wired."
       },
       "implementation": {
-        "status": "needs-extension",
-        "existing": "Verification children have scrubbed environment/opt-outs; all launchers and new consumers require dependency-specific inventory.",
-        "remaining": "Central telemetry/update-check opt-outs and safe child-environment construction for all relevant entrypoints, launchers and new integrations.",
-        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters."
+        "status": "implemented",
+        "existing": "src/common/child_env.rs holds one per-kind opt-out table (Gh, VerificationCheck, McpServer), applied last at every spawn site that launches a telemetry-capable child: git.rs environment(), gh_client.rs gh_env() (also writer.rs), runner.rs scrubbed_env(), and mcp.rs StdioClient::spawn after filter_env. Each site's prior pairs are unchanged; GH_NO_EXTENSION_UPDATE_NOTIFIER=1 now reaches both gh sites and DO_NOT_TRACK=1 now reaches MCP stdio children. The otel-hardening oracle pins every arm and credits each site only with the arm it calls.",
+        "remaining": "None for this action; startup still loads managed keys into the harness process environment.",
+        "adaptation": "See CONTRACTS.md; original scope excludes RAG and explicitly changes generation/sync adapters. The desktop crate (desktop/) does not depend on the backend crate, so its two launchers keep their own RUSTUP_AUTO_INSTALL=0 literal, pinned by the otel oracle; they launch the harness binary and a stdlib helper, neither of which has a telemetry switch."
       },
       "dependencies": [],
       "surfaces": {
@@ -4739,25 +4740,46 @@
         "cli_api": "Bounded corresponding administration or worker interface required; see scope."
       },
       "configuration_and_authorization": "No analytics/updater; preserve stricter operator settings; real dependency controls only.",
-      "credentials_network_side_effects": "Git/gh children use the Git allowlist without provider keys. Shim children use an explicit allowlist; only real-repo-run receives DEEPAGENT_API_KEY for its local planner. Startup still loads managed keys into the harness process environment.",
+      "credentials_network_side_effects": "Telemetry/update-check opt-outs are central and cannot be overridden by caller extras or operator MCP env. Git/gh children use the Git allowlist without provider keys. Shim children use an explicit allowlist; only real-repo-run receives DEEPAGENT_API_KEY for its local planner. Startup still loads managed keys into the harness process environment.",
       "validation": {
         "implementation_inspection": "static-inventoried",
-        "fixtures": "pending",
+        "fixtures": "fixture-verified",
         "integration_environment": "pending",
         "native_platform": "unavailable",
         "real_model": "pending",
         "optional_live_service": "not-applicable",
-        "commands": [],
+        "commands": [
+          {
+            "command": "python3 .claude/skills/cgagentharness-otel-hardening/check_otel.py --strict --as-of 2026-10-03",
+            "exit_code": 0,
+            "outcome": "0 failures, 0 warnings; child-env arms and all four routed sites match the oracle."
+          },
+          {
+            "command": "bash .claude/skills/cgagentharness-otel-hardening/verify.sh",
+            "exit_code": 0,
+            "outcome": "33 scenarios pass, including dropped apply, wrong arm, unpinned arm, re-pinned builder name and the extension-notifier regression."
+          },
+          {
+            "command": "GROK_API_KEY=\"\" ANTHROPIC_API_KEY=\"\" DEEPAGENT_API_KEY=\"\" cargo test --all-targets --no-fail-fast",
+            "exit_code": 101,
+            "outcome": "870 passed, 4 failed; only linux_bwrap fails (bwrap cannot execvp /usr/bin/python3, an /etc/alternatives symlink, in the Linux cloud container) and fails identically on main 303755c. tests/mcp_client.rs stdio_echo_requires_confirm_and_broker_allowlist shows a real MCP child receives DO_NOT_TRACK=1 over an operator-declared \"0\"."
+          },
+          {
+            "command": "cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo deny check",
+            "exit_code": 0,
+            "outcome": "Clean."
+          }
+        ],
         "baseline_evidence": "WORK.md; clean baseline checks validate existing code only."
       },
       "delivery": {
-        "branch": null,
+        "branch": "claude/shared-child-env-builder",
         "pr": null,
         "implementation_commit": null,
         "artifact": null
       },
       "limitations": [
-        "This inventory does not close this action.",
+        "Windows verification children still rely on these env pairs alone; the Job Object does not deny network.",
         "Native desktop interactions unavailable: AXIsProcessTrusted=false and CGPreflightScreenCaptureAccess=false."
       ]
     },

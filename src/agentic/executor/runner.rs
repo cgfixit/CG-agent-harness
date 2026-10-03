@@ -7,6 +7,7 @@ use std::path::Path;
 use serde_json::json;
 
 use crate::common::audit::Audit;
+use crate::common::child_env::{self, Child};
 use crate::common::errors::{HarnessError, Result};
 
 use super::sandbox::{production_sandbox, HardSandbox, SandboxOutcome};
@@ -33,13 +34,10 @@ pub fn scrubbed_env() -> BTreeMap<String, String> {
         ("PIP_NO_INDEX", "1"),
         ("PIP_DISABLE_PIP_VERSION_CHECK", "1"),
         ("CARGO_NET_OFFLINE", "true"),
-        ("DO_NOT_TRACK", "1"),
-        ("GH_TELEMETRY", "false"),
-        ("HF_HUB_DISABLE_TELEMETRY", "1"),
-        ("ANONYMIZED_TELEMETRY", "false"),
     ] {
         env.insert(k.into(), v.into());
     }
+    child_env::apply(&mut env, Child::VerificationCheck);
     env
 }
 
@@ -195,4 +193,41 @@ pub fn run_verification(
         ok: results.iter().all(|r| r.ok),
         results,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{scrubbed_env, ALLOWED_ENV_VARS};
+    use crate::common::child_env::{telemetry_opt_outs, Child};
+
+    #[test]
+    fn scrubbed_env_is_the_allowlist_plus_proxy_hostility_plus_the_verifier_opt_outs() {
+        let env = scrubbed_env();
+        for key in env.keys() {
+            let fixed = [
+                "NO_PROXY",
+                "no_proxy",
+                "PIP_NO_INDEX",
+                "PIP_DISABLE_PIP_VERSION_CHECK",
+                "CARGO_NET_OFFLINE",
+            ];
+            let opt_out = telemetry_opt_outs(Child::VerificationCheck)
+                .iter()
+                .any(|(k, _)| k == key);
+            assert!(
+                ALLOWED_ENV_VARS.contains(&key.as_str()) || fixed.contains(&key.as_str()) || opt_out,
+                "{key} is not allowlisted, fixed or an opt-out"
+            );
+        }
+        assert_eq!(env.get("NO_PROXY").map(String::as_str), Some("*"));
+        assert_eq!(env.get("CARGO_NET_OFFLINE").map(String::as_str), Some("true"));
+        for (key, value) in telemetry_opt_outs(Child::VerificationCheck) {
+            assert_eq!(env.get(*key).map(String::as_str), Some(*value), "{key}");
+        }
+        assert!(
+            !env.contains_key("GH_NO_UPDATE_NOTIFIER"),
+            "the verifier set is not the gh set"
+        );
+        assert!(!env.contains_key("HTTPS_PROXY"));
+    }
 }

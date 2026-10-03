@@ -1,6 +1,7 @@
 //! Git's execution boundary for retained clones. Repository metadata is not a
 //! source of executable configuration; authentication uses the installed gh.
 use crate::common::{
+    child_env::{self, Child},
     errors::{HarnessError, Result},
     process::{self, Output, RunSpec},
 };
@@ -47,9 +48,9 @@ pub(super) fn environment(extra: &[(&str, &str)]) -> BTreeMap<String, String> {
     for (key, value) in extra {
         env.insert((*key).into(), (*value).into());
     }
-    env.insert("GH_TELEMETRY".into(), "false".into());
-    env.insert("GH_NO_UPDATE_NOTIFIER".into(), "1".into());
-    env.insert("DO_NOT_TRACK".into(), "1".into());
+    // Last: git's credential.helper is `!gh auth git-credential`, so this env
+    // is gh's env too, and `extra` must not be able to switch telemetry back on.
+    child_env::apply(&mut env, Child::Gh);
     env
 }
 
@@ -244,12 +245,25 @@ mod tests {
         assert_eq!(env.get("GIT_CONFIG_NOSYSTEM").map(String::as_str), Some("1"));
         assert_eq!(env.get("GH_TELEMETRY").map(String::as_str), Some("false"));
         assert_eq!(env.get("GH_NO_UPDATE_NOTIFIER").map(String::as_str), Some("1"));
+        assert_eq!(
+            env.get("GH_NO_EXTENSION_UPDATE_NOTIFIER").map(String::as_str),
+            Some("1")
+        );
         assert_eq!(env.get("DO_NOT_TRACK").map(String::as_str), Some("1"));
+        for (key, value) in super::child_env::telemetry_opt_outs(super::Child::Gh) {
+            assert_eq!(env.get(*key).map(String::as_str), Some(*value), "{key}");
+        }
         assert_eq!(
             super::environment(&[("GH_TELEMETRY", "true")])
                 .get("GH_TELEMETRY")
                 .map(String::as_str),
             Some("false")
+        );
+        assert_eq!(
+            super::environment(&[("GH_NO_EXTENSION_UPDATE_NOTIFIER", "0"), ("DO_NOT_TRACK", "0")])
+                .get("DO_NOT_TRACK")
+                .map(String::as_str),
+            Some("1")
         );
     }
 }

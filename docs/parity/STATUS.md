@@ -54,7 +54,7 @@ See [execution state](WORK.md) for baseline evidence and native acceptance block
 | O3 | 7 | needs-extension | pending | unavailable | Audit summary API/CLI, aggregate operational metrics, provider spend estimation and price-freshness/cost comparison. |
 | O4 | 7 | missing | pending | unavailable | Numbat derived event stream and producers: structured redacted/hash-based events, rotation/dedup and fail-soft projection from authoritative audit. |
 | O5 | 7 | missing | pending | unavailable | Optional CEL observation and non-RAG-relevant sequence analysis. |
-| O6 | 1 | needs-extension | pending | unavailable | Central telemetry/update-check opt-outs and safe child-environment construction for all relevant entrypoints, launchers and new integrations. |
+| O6 | 1 | implemented | fixture-verified | unavailable | Central telemetry/update-check opt-outs and safe child-environment construction for all relevant entrypoints, launchers and new integrations. |
 | O7 | 1 | needs-extension | pending | unavailable | macOS installation/launch/service management and supervised launchd plist generation, plus connector schedules and secrets delivery. |
 | O8 | 11 | missing | pending | unavailable | Equivalent optional container/service deployment and TLS/certificate tooling for a network-facing deployment. |
 | O9 | 11 | needs-extension | pending | unavailable | Cross-platform install/scheduling/acceptance coverage. |

@@ -7,6 +7,7 @@ pub mod audit;
 pub mod auth_store;
 pub mod authn;
 pub mod bounded_log;
+pub mod child_env;
 pub mod config;
 pub mod credential_store;
 pub mod errors;
