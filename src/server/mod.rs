@@ -36,6 +36,7 @@ pub mod passage_index;
 pub mod prompts;
 pub mod request_log;
 pub mod retrieval;
+mod retrieval_ranking;
 pub mod routes;
 pub mod schedule_time;
 pub mod schemas;

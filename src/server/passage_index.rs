@@ -4,19 +4,13 @@
 //! `AttachmentStore` or the notes jail, then pass the classified text here.
 //! This index is not `web_index` and is not session-search.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::{IndexRecordOption, Schema, TantivyDocument, TextFieldIndexing, TextOptions, Value as _, STORED};
 use tantivy::{doc, Index};
 
 use crate::common::errors::{HarnessError, Result};
-
-const CHUNK_CHARS: usize = 1200;
-const MAX_TERMS: usize = 32;
-const CANDIDATE_LIMIT: usize = 64;
-const HIT_CAP: usize = 16;
+use crate::server::retrieval_ranking::{PreparedQuery, RankedCandidate, CANDIDATE_LIMIT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceKind {
@@ -53,34 +47,10 @@ impl PassageDoc {
 
 /// Split `text` into ~1200-scalar windows. Offsets are UTF-8 bytes.
 /// Snap back to the last newline or space after `len/2`. No overlap.
-/// Heading is the last `# ` line seen in that chunk.
+/// Heading is the first `# ` line in the chunk; later chunks inherit the last
+/// heading from the preceding chunk.
 pub fn chunk_text(text: &str) -> Vec<(usize, usize, String, String)> {
-    let mut output = Vec::new();
-    let mut start = 0;
-    let mut heading = String::new();
-    while start < text.len() {
-        let tail = &text[start..];
-        let mut len = tail
-            .char_indices()
-            .nth(CHUNK_CHARS)
-            .map(|(i, _)| i)
-            .unwrap_or(tail.len());
-        if len < tail.len() {
-            if let Some(end) = tail[..len].rfind(['\n', ' ']).filter(|n| *n > len / 2) {
-                len = end + 1;
-            }
-        }
-        let end = start + len;
-        let chunk = &text[start..end];
-        if let Some(line) = chunk.lines().rev().find(|l| l.starts_with("# ")) {
-            heading = line.trim_start_matches("# ").trim().to_string();
-        }
-        if !chunk.trim().is_empty() {
-            output.push((start, end, heading.clone(), chunk.to_string()));
-        }
-        start = end;
-    }
-    output
+    crate::server::retrieval_ranking::chunk_text(text)
 }
 
 pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Result<Vec<PassageDoc>> {
@@ -116,35 +86,14 @@ pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Resu
     let mut parser = QueryParser::for_index(&index, vec![heading, body]);
     parser.set_field_boost(heading, 1.3);
 
-    let terms: Vec<_> = query
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|s| !s.is_empty())
-        .take(MAX_TERMS)
-        .collect();
-    if terms.is_empty() {
+    let Some(prepared) =
+        PreparedQuery::new(query).map_err(|_| HarnessError::new("ATTACHMENT_INDEX_FAILED", "invalid identifier"))?
+    else {
         return Ok(Vec::new());
-    }
-    let quoted = query.replace('\\', "\\\\").replace('"', "\\\"");
-    let expression = format!(
-        "\"{quoted}\"^2 {}",
-        terms.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(" ")
-    );
-    let query_expr = parser
-        .parse_query(&expression)
-        .map_err(|_| HarnessError::new("ATTACHMENT_INDEX_FAILED", "query cannot be indexed"))?;
-    let identifier = if query.contains('_') || query.contains("::") {
-        Some(
-            regex::RegexBuilder::new(&format!(
-                r"(?:^|[^\p{{L}}\p{{N}}_]){}(?:$|[^\p{{L}}\p{{N}}_])",
-                regex::escape(query)
-            ))
-            .case_insensitive(true)
-            .build()
-            .map_err(|_| HarnessError::new("ATTACHMENT_INDEX_FAILED", "invalid identifier"))?,
-        )
-    } else {
-        None
     };
+    let query_expr = parser
+        .parse_query(&prepared.expression)
+        .map_err(|_| HarnessError::new("ATTACHMENT_INDEX_FAILED", "query cannot be indexed"))?;
     let mut candidates = Vec::new();
     for (score, address) in searcher
         .search(&query_expr, &TopDocs::with_limit(CANDIDATE_LIMIT).order_by_score())
@@ -160,51 +109,20 @@ pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Resu
             .get(i)
             .cloned()
             .ok_or_else(|| HarnessError::new("ATTACHMENT_INDEX_FAILED", "invalid passage index row"))?;
-        if identifier
-            .as_ref()
-            .is_some_and(|re| !re.is_match(&p.text) && !re.is_match(&p.heading))
-        {
+        if !prepared.identifier_matches([p.text.as_str(), p.heading.as_str()]) {
             continue;
         }
-        p.score = score
-            + if p.text.to_lowercase().contains(&query.to_lowercase()) {
-                2.0
-            } else {
-                0.0
-            };
-        candidates.push(p);
+        p.score = score + prepared.exact_bonus(&p.text);
+        let tie_key = p.passage_id();
+        let diversity_key = p.source_id.clone();
+        let score = p.score;
+        candidates.push(RankedCandidate::new(p, score, tie_key, diversity_key));
     }
-    candidates.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.passage_id().cmp(&b.passage_id()))
-    });
-    let mut output = Vec::new();
-    let mut seen_text = BTreeSet::new();
-    let mut source_counts: BTreeMap<String, usize> = BTreeMap::new();
-    for cap in [1, 2] {
-        for p in &candidates {
-            if output.len() >= limit.min(HIT_CAP) {
-                return Ok(output);
-            }
-            let normalized = p.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            let hash = crate::common::sha256_hex(&normalized);
-            if source_counts.get(&p.source_id).copied().unwrap_or(0) >= cap || seen_text.contains(&hash) {
-                continue;
-            }
-            let words: BTreeSet<_> = normalized.split_whitespace().collect();
-            if output.iter().any(|prior: &PassageDoc| {
-                let old: BTreeSet<_> = prior.text.split_whitespace().collect();
-                !words.is_empty() && words.intersection(&old).count() * 10 > words.union(&old).count() * 9
-            }) {
-                continue;
-            }
-            seen_text.insert(hash);
-            *source_counts.entry(p.source_id.clone()).or_default() += 1;
-            output.push(p.clone());
-        }
-    }
-    Ok(output)
+    Ok(crate::server::retrieval_ranking::select_diverse(
+        candidates,
+        limit,
+        |p| &p.text,
+    ))
 }
 
 #[cfg(test)]

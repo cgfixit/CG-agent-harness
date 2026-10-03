@@ -1,31 +1,27 @@
 # Non-RAG parity contracts
 
-The fixed 48 actions are tracked in [actions.json](actions.json). This document
-defines intended adaptations; it does not claim they are implemented. Current
-source pins and implementation/verification states belong to the ledger. Its
-validation entries describe the pinned baseline, not current release acceptance.
-For current memory defaults and controls see [MEMORY_GUIDE.md](../MEMORY_GUIDE.md).
+The fixed 48 actions in [actions.json](actions.json) record source pins and
+implementation/verification states. These contracts define intended adaptations,
+not implementation claims. Ledger validation covers its pinned baseline, not
+current releases. Current memory controls: [MEMORY_GUIDE.md](../MEMORY_GUIDE.md).
 
 Memory facts are explicitly reviewed operator data, separate from short notes.
-Issue #87 M1+M3+M5+Phase 4+Phase 5 implement account-private facts, governed
-proposals, optional bounded episodes, explicit selected-fact recall, and
-facts-only FTS5 retrieval, and manual consolidation behind `structured_memory.enabled`,
+Harness memory implements account-private facts, governed proposals, bounded
+episodes, selected-fact recall, facts-only FTS5 retrieval and consolidation behind `structured_memory.enabled`,
 `episode_capture`, `explicit_recall`, `retrieval`, `auto_retrieval`,
 `consolidation`, and `auto_consolidation`
-(literal booleans, all ship true for fresh homes; existing explicit off choices survive).
+(literal booleans, true for fresh homes; explicit off choices survive).
 Proposals bind an action, payload and expected fact version; application needs
-an operator reason, confirmation, and scan. Episode v1 stores opaque
-session/turn refs plus a privacy-filtered metadata summary — not a raw query,
-full answer, or query-content hash. Staging is post-success and non-fatal.
+an operator reason, confirmation, and scan. Episode v1 stores opaque session/turn refs and privacy-filtered metadata,
+excluding raw queries, full answers and query-content hashes. Post-success
+staging is non-fatal.
 Pinned `/memory` notes are unchanged. FTS search is not prompt injection:
 hits require `/memory retrieve` / the per-request `retrieve` flag, or the
 separately gated `auto_retrieval` silent path, plus assembly-time
 owner/active/revision recheck. Episode FTS, embeddings, retrieval fusion,
 and episode prompt injection are not shipped; those status flags remain
-false. Manual consolidation writes pending proposals only. Optional
-auto-consolidation is a harness-only default-on idle worker that reuses
-that runner and still never applies facts. The existing 3000-character memory budget
-(reserved 1500/1500 when notes and facts both compete) still applies.
+false. Manual consolidation writes pending proposals only. The harness-only default-on idle auto-consolidator reuses that runner and
+never applies facts. The 3000-character budget reserves 1500/1500 when notes and facts compete.
 
 Sync operates on approved non-RAG roots and one approved remote. It excludes
 credentials, soul and Git internals. Active managed coding workspaces cannot be
@@ -53,21 +49,19 @@ CEL and sequence analysis are bounded optional observation of redacted events.
 Neither replaces authoritative audit nor changes policy verdicts. Retrieval-only
 rules are excluded; coding/connector rules beyond upstream are labeled additions.
 
-The current desktop already owns the backend, checks exact model inventories,
-loads provider keys from the OS credential store and recovers bounded jobs. Preserve those paths.
+Desktop owns the backend, checks exact model inventories, loads OS-stored keys
+and recovers bounded jobs. Preserve these paths.
 Exports require a narrow operator-selected save workflow; the remote console
 must not gain generic native filesystem capabilities or unrestricted downloads.
 
 The credential-free local default remains. Optional identity is a distinct
 role-bearing principal; an API key is not connector scope or action consent.
-New filesystem roots and optional network deployment deliberately extend the
-existing home/clone and loopback invariants only behind explicit configuration
-and their own enforcement/tests. They must not weaken the default boundaries.
+New filesystem roots or network deployment require explicit configuration,
+enforcement and tests while preserving default home/clone and loopback boundaries.
 
-CyClaw `memory/consolidation.py` is still a no-op stub. Harness Phase 6 adds
-manual selected-episode consolidation and a default-on idle auto worker;
-both still never apply facts. Retired DeepAgents graph/optimizer
-work stays excluded (`CLAUDE.md` describes its retirement; builder/scaffold
-presence does not make it an active parity requirement). RAG ingestion,
-retrieval-only MCP, retrieval fusion and RAG grounding remain excluded. Catalog
-entries alone are never callable capability evidence.
+At the ledger's CyClaw pin, `memory/consolidation.py` is a no-op stub.
+Harness consolidation only creates pending proposals. Retired DeepAgents
+graph/optimizer work, RAG ingestion, upstream retrieval-only MCP, retrieval
+fusion and RAG grounding remain excluded. The harness's separate
+[read-only MCP memory gateway](../MCP_SERVER.md) does not change that parity
+scope. Catalog entries alone never prove callable capabilities.

@@ -40,9 +40,11 @@ The validator accepts an entry only when all of the following hold. One rejected
 - The whole block sits inside one of these containers: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or `127.0.0.0/8`. Anything else is `outside RFC1918 and loopback`.
 - The same canonical CIDR is not repeated.
 
-Accepted examples from the validator tests: `10.0.0.0/16`, `10.255.0.0/16`, `10.1.2.0/24`, `172.16.0.0/16`, `172.31.255.0/24`, `192.168.0.0/16`, `192.168.1.0/24`, `127.0.0.0/16`, `127.0.0.1/32`.
-
-Rejected on purpose, including forms that look private or local: `8.8.8.8/32`, `0.0.0.0/8`, `0.0.0.0/16`, `169.254.0.0/16`, `169.254.1.0/24`, `100.64.0.0/10`, `100.64.0.0/16`, `224.0.0.0/4`, `224.0.0.0/16`, `240.0.0.0/4`, `255.255.255.255/32`, `172.15.0.0/16`, `172.32.0.0/16`, `192.167.0.0/16`, `192.169.0.0/16`, `2001:db8::/32`, `::1`. Control characters in a bad entry are stripped from the error text.
+Accepted examples include `10.0.0.0/16`, `10.1.2.0/24`,
+`172.31.255.0/24`, `192.168.1.0/24`, `127.0.0.0/16`, and `127.0.0.1/32`.
+Public, link-local, CGNAT, multicast, reserved, adjacent non-private, IPv6, and
+overly broad private blocks are rejected. Control characters are removed from
+error text.
 
 A route is kept only when some allowed CIDR covers that route's entire prefix. A neighbor or interface address is kept only when some allowed CIDR contains that address. A default gateway is kept only when the gateway address itself is inside the scope.
 
@@ -88,7 +90,10 @@ JSON goes to stdout. Warnings, and the `message` on a non-zero exit, go to stder
 | 3 | Config load failed: missing file, invalid YAML, `netconnect` not a mapping, a rejected CIDR, a bad limit, or a bad endpoint. Code `CONFIG_ERROR`. |
 | 4 | `enabled` is false. Code `NETCONNECT_DISABLED`, message `netconnect.enabled is false`. Both `status` and `devices` refuse before any collector runs. `NETCONNECT_REFUSED` uses this exit too. |
 
-`status` prints gates, scope, limits, endpoints, warnings, and one row per tier (`tier`, `flag`, `tier_enabled`, `runnable`). It also prints `scope_empty` and `active_tiers_refused`. It does not load a collector. With `enabled: true` and `discovery: true` and no CIDRs, the process exits 0, `scope_empty` is true, `active_tiers_refused` is true, and discovery is `tier_enabled: true`, `runnable: false`.
+`status` prints gates, scope, limits, endpoints, warnings, `scope_empty`,
+`active_tiers_refused`, and one row per tier. It does not load a collector. An
+enabled tier with no CIDRs is `tier_enabled: true`, `runnable: false`; status
+still exits 0.
 
 `devices` reads the passive tables, then drops every address outside the scope. The body includes `packets_sent` (always 0), `interfaces`, `routes`, `default_gateways`, and `neighbors`. An empty scope still reads the tables and then emits no addresses. On Linux the readers are `/proc/net/arp`, `/proc/net/route`, and `getifaddrs`. On macOS they are the fixed argv `/usr/sbin/arp -an` and `/usr/sbin/netstat -rn -f inet` (no shell, two-second timeout) plus `getifaddrs`. Other platforms return `NETCONNECT_UNSUPPORTED` and exit 2. `status` does not need those readers.
 
@@ -109,7 +114,12 @@ Names that survive filtering are JSON objects `{"value":"...","untrusted":true}`
 
 The slash roots are `/net`, `/netconnect`, `/lan`, `/scan`, `/ports`, and `/speed`. Each alias is kept only when it does not collide with a slash root that already existed. The current registry keeps all six. A colliding alias is dropped. `/netconnect` is an exact alias of `/net`. It does not enable a scan. `/scan`, `/ports`, and `/speed` are the same read-only family.
 
-The parser lowercases the command and the single subcommand. Exact subcommands are `status`, `devices`, `ports`, `diag`, `watch`, and `device`. A different token only suggests: edit distance 1, or a prefix of at least 3 characters, offers the nearby names; a distant token offers `/net status` only. `device` is omitted from fuzzy matching, so a near-miss never suggests `/net device`. The exact line `/net device` is recognized and then refused: `device control is refused; home_automation is not in this build`. Extra words (`/net status please`), a missing subcommand, and control characters only suggest. A near-miss of the root (`/nett`, `/scann`, `/lanx`) suggests `/net status` or `/net devices` and does not read tables.
+The parser lowercases the command and one subcommand. Exact subcommands are
+`status`, `devices`, `ports`, `diag`, `watch`, and `device`. Other tokens only
+suggest a command. Edit distance 1 or a prefix of at least three characters can
+offer nearby names; distant input offers `/net status`. Fuzzy matching omits
+`device`. Extra words, missing subcommands, control characters, and root
+near-misses only suggest and never read tables.
 
 Suggestions are not execution. The console shows `did you mean ...?` and inserts a button you can edit and send. The library evaluator sets `executed` false and exits 2 with code `NETCONNECT_SUGGEST`.
 
@@ -150,18 +160,21 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 
 ## Security and trust boundaries
 
-- Gates ship closed. Quoted `"true"` is off. An empty scope refuses every armed tier.
-- Scope is the operator CIDR list after the validator above. Interface addresses never become scope.
-- `status` and `netconnect_status` serialize config. They do not call a collector. Tests install a collector that panics on `load` and assert the load counter stays 0.
-- `devices`, `netconnect_devices`, and the enabled panel call the neighbor, route, and interface sources once each, then drop out-of-scope and IPv6 rows. Tests assert that load count. A disabled panel, disabled `devices`, a rejected Host, a missing CSRF token, and a non-GET method do not load.
-- The JSON field `packets_sent` is 0 on `devices` and on the panel. Tests assert that field. Passive collection is a local table read.
-- This crate's collector source is scanned so it does not contain `SOCK_RAW`, `AF_PACKET`, `AF_NETLINK`, `Command::new`, `/bin/sh`, `sudo`, or `setcap`. The tests do not count sockets with strace or seccomp. They do not assert that `status` opens 0 sockets or that `devices` opens exactly one `AF_NETLINK`.
-- The collector comment states that this code opens no netlink, packet, raw, UDP, or TCP socket. On Linux, `devices` and the enabled panel call `getifaddrs`, and glibc opens a netlink socket inside that call. `status` never reaches `getifaddrs`. macOS `devices` runs the two fixed sbin commands above and `getifaddrs`. There is no privilege change and no caller-supplied argv.
-- Device strings are length-capped, stripped of control characters, and marked `untrusted`. Interface labels that fail the label rule are dropped. Those strings are not placed in argv, a shell command, a filesystem path, or a URL this process fetches.
-- The browser cannot supply a command. The panel query is ignored. The pane has no control that posts a body. Active slash subcommands in the console print a refusal without the panel GET. They do not call `invoke_tier`.
-- `check_target` rechecks a final `Ipv4Addr` before any later connect. This build's tier path refuses after that check because no tier tool exists. A host name is not accepted as a target.
-- Throughput is labeled internet egress outside this LAN scope. Passive commands do not use it. An endpoint is rejected when it is empty, longer than 256 characters, contains a control character, or contains `@`, `?`, or `#`. The error names the key and does not echo the value. A token in the path is accepted, and a successful `status` prints that endpoint as stored.
-- No secret belongs in this config. The keys are restart-only.
+- Gates ship closed, quoted `"true"` is off, and an empty scope refuses every tier.
+- Only the validated operator CIDRs define scope. Interface addresses do not.
+- `status` and `netconnect_status` read config without loading collectors.
+- `devices`, `netconnect_devices`, and the enabled panel load each passive source
+  once, then remove IPv6 and out-of-scope rows. Failed guards do not load them.
+- `packets_sent` is always 0. Linux `getifaddrs` can open a netlink socket inside
+  libc; this crate opens no packet, raw, UDP, or TCP socket. macOS uses two fixed
+  commands plus `getifaddrs`, without caller-supplied argv or privilege changes.
+- Device text is capped, stripped of controls, marked untrusted, and never used
+  as argv, a path, or a fetched URL. The browser cannot supply a command.
+- A future connect path must recheck the final IPv4 address. This build refuses
+  after that check because no tier tool exists.
+- Throughput is internet egress outside LAN scope. Passive commands ignore it.
+  Endpoint errors omit the rejected value, but successful status prints it.
+- These restart-only keys must not contain secrets.
 
 ## Troubleshooting
 
