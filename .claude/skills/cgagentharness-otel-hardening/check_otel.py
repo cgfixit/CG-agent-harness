@@ -396,7 +396,7 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "name": "ollama (loopback daemon)", "category": 3, "controls": {},
         "url": "docs/MODELS.md",
         "versions": "HTTP client only (src/llm/ollama.rs, src/llm/inventory.rs); never spawned",
-        "enforcement": "127.0.0.1:11434 by default; POST /api/ollama/pull asks the DAEMON to fetch a "
+        "enforcement": "loopback port 11434 by default; POST /api/ollama/pull asks the DAEMON to fetch a "
                        "model, admin/operator roles only. The daemon's own registry egress is outside "
                        "this process and has no documented telemetry switch -- do not invent one",
         "scope": "local inference + explicit pulls", "reviewed": "2026-10-03",
@@ -623,9 +623,9 @@ def _strip_test_tail(text: str) -> str:
 
 
 def _strip_line_comments(text: str) -> str:
-    """Drop `//` comments but leave string literals intact: a value such as
-    "http://127.0.0.1:8080" must survive, or a proxy pointed at a child would
-    vanish from the sweep (verify.sh's T2 unexpected-pair scenario)."""
+    """Drop `//` comments but leave string literals intact: an `http://` URL
+    value must survive, or a proxy pointed at a child would vanish from the
+    sweep (verify.sh's T2 unexpected-pair scenario)."""
     out: list[str] = []
     i, n = 0, len(text)
     while i < n:

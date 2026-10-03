@@ -19,18 +19,25 @@ AS_OF="2026-10-03"
 
 echo "== cgagentharness-otel-hardening verify =="
 
-if python3 "$checker" --repo-root "$repo_root" >/tmp/cgah_otel_live.txt 2>&1; then
+# Unique capture files, never a fixed name under the world-writable /tmp: a
+# predictable path can be pre-created as a symlink by another local user and
+# the `>` redirection would follow it (CodeQL finding on PR #295).
+live_out="$(mktemp)"
+strict_out="$(mktemp)"
+trap 'rm -f "$live_out" "$strict_out"' EXIT INT TERM
+
+if python3 "$checker" --repo-root "$repo_root" >"$live_out" 2>&1; then
   echo "clean tree (default): PASS (exit 0)"
 else
   echo "clean tree (default): FAIL — the shipped kill-switch contract is broken" >&2
-  cat /tmp/cgah_otel_live.txt >&2
+  cat "$live_out" >&2
   exit 1
 fi
-if python3 "$checker" --repo-root "$repo_root" --strict --as-of "$AS_OF" >/tmp/cgah_otel_strict.txt 2>&1; then
+if python3 "$checker" --repo-root "$repo_root" --strict --as-of "$AS_OF" >"$strict_out" 2>&1; then
   echo "clean tree (--strict @ $AS_OF): PASS (exit 0)"
 else
   echo "clean tree (--strict @ $AS_OF): FAIL — a WARN-class regression landed" >&2
-  cat /tmp/cgah_otel_strict.txt >&2
+  cat "$strict_out" >&2
   exit 1
 fi
 
@@ -111,7 +118,7 @@ _expect "T2 desktop sidecar value-flip mutation" 2 "FAIL  \[T2\] desktop-sidecar
 # T2: an unclassified literal pair joins a builder (a proxy pointed at a child).
 a="$(_mktree)"
 _mutate "$a/src/agentic/executor/runner.rs" '
-text = text.replace("        (\"NO_PROXY\", \"*\"),\n", "        (\"NO_PROXY\", \"*\"),\n        (\"HTTP_PROXY\", \"http://127.0.0.1:8080\"),\n", 1)'
+text = text.replace("        (\"NO_PROXY\", \"*\"),\n", "        (\"NO_PROXY\", \"*\"),\n        (\"HTTP_PROXY\", \"http://proxy.invalid:8080\"),\n", 1)'
 _expect "T2 runner unexpected-pair mutation" 2 "FAIL  \[T2\] executor-runner: unexpected literal pair HTTP_PROXY"
 
 # T3: inherit allowlist widened.
