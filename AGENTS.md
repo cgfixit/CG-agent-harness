@@ -224,8 +224,11 @@ above, except release and verify, are mirrored there; `fable-protocol` and
 `cgagentharness-optimize` are long playbooks behind the short Codex versions.
 Claude-only: the two report-only skills, `dep-sync` (fixes Cargo, toolchain,
 `deny.toml` and CI/release drift against `origin/main`), `doc-sync` (rewrites
-existing docs to match the code) and `run-cg-agent-harness` (fake-model console
-smoke; its `driver.mjs` is historical, not acceptance evidence).
+existing docs to match the code), `run-cg-agent-harness` (fake-model console
+smoke; its `driver.mjs` is historical, not acceptance evidence) and
+`cgagentharness-otel-hardening` (telemetry-kill contract: per-spawn-site child
+envs, telemetry-free lock graphs, egress classification; its `check_otel.py`
+and `verify.sh` run outside the pre-approved list).
 
 Both skill trees are repository guidance, not application `/api/skills` runtime
 plugins. Existing user authorization governs publication; selecting a skill adds none.
