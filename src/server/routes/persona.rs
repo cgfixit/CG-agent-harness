@@ -9,8 +9,8 @@ use axum::http::{header, StatusCode};
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
+use crate::common::sha256_hex;
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::prompts::{load_text, PromptInputs};
 use crate::server::schemas::{StructuredFactSelection, ValidJson, Validate, MAX_SELECTED_FACTS};
@@ -33,9 +33,6 @@ fn io_error() -> ApiError {
         "SOUL_IO",
         "Persona storage failed; inspect the current document and proposal status before retrying",
     )
-}
-fn revision(text: &str) -> String {
-    hex::encode(Sha256::digest(text.as_bytes()))
 }
 fn valid_id(id: &str) -> bool {
     id.len() == 64 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -123,7 +120,7 @@ fn validate_content(state: &AppState, text: &str) -> ApiResult<()> {
 }
 fn current(state: &AppState) -> ApiResult<(String, String)> {
     let content = read(&home_dir(state)?, "soul.md")?;
-    let rev = content.as_deref().map(revision).unwrap_or_else(|| "missing".into());
+    let rev = content.as_deref().map(sha256_hex).unwrap_or_else(|| "missing".into());
     Ok((content.unwrap_or_default(), rev))
 }
 
@@ -145,7 +142,7 @@ fn recover_apply(state: &AppState) -> ApiResult<()> {
         || record["id"] != id
         || record["base_revision"] != base
         || record["revision"] != target
-        || revision(record["content"].as_str().ok_or_else(io_error)?) != target
+        || sha256_hex(record["content"].as_str().ok_or_else(io_error)?) != target
         || !matches!(record["status"].as_str(), Some("pending" | "applied" | "interrupted"))
     {
         return Err(io_error());
@@ -204,7 +201,7 @@ fn save(state: &AppState, content: &str, expected: &str) -> ApiResult<String> {
         }
     }
     write(&home_dir(state)?, "soul.md", content.as_bytes())?;
-    Ok(revision(content))
+    Ok(sha256_hex(content))
 }
 
 #[derive(Deserialize, Default)]
@@ -479,7 +476,7 @@ pub async fn propose(
         return Err(error("SOUL_HISTORY_FULL", "History limit reached"));
     }
     let id = crate::common::random_hex(32);
-    let proposal = json!({"id":id,"content":req.content,"base_revision":req.base_revision,"revision":revision(&req.content),"status":"pending","origin":"operator-submitted proposal; may contain model-authored text"});
+    let proposal = json!({"id":id,"content":req.content,"base_revision":req.base_revision,"revision":sha256_hex(&req.content),"status":"pending","origin":"operator-submitted proposal; may contain model-authored text"});
     write(
         &dir,
         &format!("{id}.json"),
@@ -542,7 +539,7 @@ pub async fn decide(
     if record["status"] != "pending"
         || record["id"] != id
         || record["revision"] != req.revision
-        || revision(content) != req.revision
+        || sha256_hex(content) != req.revision
     {
         return Err(error(
             "SOUL_PROPOSAL_CHANGED",

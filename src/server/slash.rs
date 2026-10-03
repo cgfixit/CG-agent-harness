@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::common::edit_distance;
 use crate::server::schemas::{Validate, MAX_MESSAGE_LEN};
 
 const DISPATCH_THRESHOLD: u8 = 80;
@@ -654,24 +655,6 @@ fn adjacent_transposition(a: &str, b: &str) -> bool {
     }
     let differences: Vec<usize> = (0..a.len()).filter(|&i| a[i] != b[i]).collect();
     matches!(differences.as_slice(), [i, j] if *j == i + 1 && a[*i] == b[*j] && a[*j] == b[*i])
-}
-
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let ins = cur[j] + 1;
-            let del = prev[j + 1] + 1;
-            let sub = prev[j] + usize::from(ca != cb);
-            cur[j + 1] = ins.min(del).min(sub);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
 }
 
 fn suggest_only(notice: &str, near: &[(&str, u8)]) -> SlashParse {

@@ -164,7 +164,7 @@ fn prefix_mask(prefix: u8) -> u32 {
     }
 }
 
-fn network_address(addr: Ipv4Addr, prefix: u8) -> Ipv4Addr {
+pub(super) fn network_address(addr: Ipv4Addr, prefix: u8) -> Ipv4Addr {
     Ipv4Addr::from(u32::from(addr) & prefix_mask(prefix))
 }
 

@@ -1,6 +1,7 @@
 //! Private, bounded metadata outbox. Dispatch attempts persist before networking.
 use super::notifications::Completion;
 use crate::common::errors::{HarnessError, Result};
+use crate::common::sha256_bytes_hex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -47,10 +48,6 @@ pub struct Outbox {
 }
 fn invalid() -> HarnessError {
     HarnessError::config("invalid notification outbox; preserve the file for inspection")
-}
-pub fn digest(value: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    hex::encode(Sha256::digest(value))
 }
 
 /// Bounded regular-file read; refuses links and FIFOs rather than blocking.
@@ -112,7 +109,9 @@ impl Outbox {
                 || d.destination_revision.len() != 64
                 || !d.destination_revision.bytes().all(|b| b.is_ascii_hexdigit())
                 || d.delivery_id
-                    != digest(format!("{}:{}:{}", d.event_id, d.destination_id, d.destination_revision).as_bytes())
+                    != sha256_bytes_hex(
+                        format!("{}:{}:{}", d.event_id, d.destination_id, d.destination_revision).as_bytes(),
+                    )
                 || d.last_code.as_ref().is_some_and(|s| s.len() > 64)
                 || !d.next_attempt_at.is_finite()
                 || d.next_attempt_at < 0.0

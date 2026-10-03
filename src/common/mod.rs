@@ -79,6 +79,25 @@ pub fn clip_chars(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
+/// Levenshtein distance in characters, for "did you mean" suggestions.
+pub fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let ins = cur[j] + 1;
+            let del = prev[j + 1] + 1;
+            let sub = prev[j] + usize::from(ca != cb);
+            cur[j + 1] = ins.min(del).min(sub);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
 /// Fixed byte ceiling for an explicitly reviewed pull-request description.
 pub const MAX_PR_BODY_BYTES: usize = 65_536;
 
@@ -105,5 +124,17 @@ mod tests {
         let encoded = serde_json::to_string(&now).unwrap();
         let back: f64 = serde_json::from_str(&encoded).unwrap();
         assert_eq!(back.to_bits(), now.to_bits(), "{encoded}");
+    }
+
+    #[test]
+    fn edit_distance_counts_characters_not_bytes() {
+        use super::edit_distance;
+        assert_eq!(edit_distance("", ""), 0);
+        assert_eq!(edit_distance("", "web"), 3);
+        assert_eq!(edit_distance("web", ""), 3);
+        assert_eq!(edit_distance("serach", "search"), 2);
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+        assert_eq!(edit_distance("café", "cafe"), 1);
+        assert_eq!(edit_distance("status", "status"), 0);
     }
 }

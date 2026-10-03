@@ -117,7 +117,7 @@ fn field(raw: Option<&str>, max_chars: usize) -> Value {
         .unwrap_or(Value::Null)
 }
 
-fn tier_rows(cfg: &NetconnectConfig) -> Vec<Value> {
+pub(super) fn tier_rows(cfg: &NetconnectConfig) -> Vec<Value> {
     Tier::ALL
         .into_iter()
         .map(|tier| {
@@ -411,11 +411,6 @@ impl InterfaceSource for LoadProbe {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         panic!("netconnect panel must not call a collector");
     }
-}
-
-/// Read-only console payload using the process-local passive tables.
-pub fn panel_live(cfg: &NetconnectConfig) -> Result<Value> {
-    panel_sources(cfg, &PassiveSources::live())
 }
 
 /// Same payload as [`panel`], using the sources the HTTP handler was given.
