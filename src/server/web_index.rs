@@ -15,6 +15,7 @@ use super::web_policy::{canonical_url, error, valid_group, Policy};
 use super::web_search::{Page, WebTool};
 use crate::common::audit::Audit;
 use crate::common::errors::Result;
+use crate::server::retrieval_ranking::{PreparedQuery, RankedCandidate, CANDIDATE_LIMIT};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Passage {
@@ -45,46 +46,23 @@ pub fn passages(page: &Page, policy: &Policy) -> Vec<Passage> {
         .into_iter()
         .collect();
     let source_id = crate::common::sha256_hex(&page.url)[..16].to_string();
-    let mut output = Vec::new();
-    let mut start = 0;
-    let mut heading = String::new();
-    while start < page.text.len() {
-        let tail = &page.text[start..];
-        let mut len = tail.char_indices().nth(1200).map(|(i, _)| i).unwrap_or(tail.len());
-        if len < tail.len() {
-            if let Some(end) = tail[..len].rfind(['\n', ' ']).filter(|n| *n > len / 2) {
-                len = end + 1;
-            }
-        }
-        let end = start + len;
-        let text = &page.text[start..end];
-        // A chunk is labelled by its first heading; the next chunk inherits the
-        // last one, since that is the section the text after this chunk is in.
-        let label = |line: &str| line.trim_start_matches("# ").trim().to_string();
-        let chunk_heading = text.lines().find(|l| l.starts_with("# ")).map(label);
-        if let Some(line) = text.lines().rev().find(|l| l.starts_with("# ")) {
-            heading = label(line);
-        }
-        if !text.trim().is_empty() {
-            output.push(Passage {
-                id: crate::common::sha256_hex(&format!("{}:{}:{start}:{end}", page.url, page.content_hash))[..20]
-                    .into(),
-                source_id: source_id.clone(),
-                url: page.url.clone(),
-                title: page.title.clone(),
-                heading: chunk_heading.unwrap_or_else(|| heading.clone()),
-                text: text.into(),
-                start,
-                end,
-                fetched_at: page.fetched_at,
-                content_hash: page.content_hash.clone(),
-                groups: groups.clone(),
-                score: 0.0,
-            });
-        }
-        start = end;
-    }
-    output
+    crate::server::retrieval_ranking::chunk_text(&page.text)
+        .into_iter()
+        .map(|(start, end, heading, text)| Passage {
+            id: crate::common::sha256_hex(&format!("{}:{}:{start}:{end}", page.url, page.content_hash))[..20].into(),
+            source_id: source_id.clone(),
+            url: page.url.clone(),
+            title: page.title.clone(),
+            heading,
+            text,
+            start,
+            end,
+            fetched_at: page.fetched_at,
+            content_hash: page.content_hash.clone(),
+            groups: groups.clone(),
+            score: 0.0,
+        })
+        .collect()
 }
 
 pub fn retrieve(
@@ -149,38 +127,16 @@ pub fn retrieve_many(
         .map(|&query| {
             // User input is data, never Tantivy query syntax. Split terms support BM25;
             // the quoted full query adds a phrase boost without an operator escape.
-            let terms: Vec<_> = query
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|s| !s.is_empty())
-                .take(32)
-                .collect();
-            if terms.is_empty() {
+            let Some(prepared) = PreparedQuery::new(query).map_err(|_| error("WEB_BAD_QUERY", "invalid identifier"))?
+            else {
                 return Ok(Vec::new());
-            }
-            let quoted = query.replace('\\', "\\\\").replace('"', "\\\"");
-            let expression = format!(
-                "\"{quoted}\"^2 {}",
-                terms.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(" ")
-            );
-            let query_expr = parser
-                .parse_query(&expression)
-                .map_err(|_| error("WEB_BAD_QUERY", "query cannot be indexed"))?;
-            let identifier = if query.contains('_') || query.contains("::") {
-                Some(
-                    regex::RegexBuilder::new(&format!(
-                        r"(?:^|[^\p{{L}}\p{{N}}_]){}(?:$|[^\p{{L}}\p{{N}}_])",
-                        regex::escape(query)
-                    ))
-                    .case_insensitive(true)
-                    .build()
-                    .map_err(|_| error("WEB_BAD_QUERY", "invalid identifier"))?,
-                )
-            } else {
-                None
             };
+            let query_expr = parser
+                .parse_query(&prepared.expression)
+                .map_err(|_| error("WEB_BAD_QUERY", "query cannot be indexed"))?;
             let mut candidates = Vec::new();
             for (score, address) in searcher
-                .search(&query_expr, &TopDocs::with_limit(64).order_by_score())
+                .search(&query_expr, &TopDocs::with_limit(CANDIDATE_LIMIT).order_by_score())
                 .map_err(failed)?
             {
                 let found: TantivyDocument = searcher.doc(address).map_err(failed)?;
@@ -193,51 +149,20 @@ pub fn retrieve_many(
                     .get(i)
                     .ok_or_else(|| error("WEB_INDEX_FAILED", "invalid passage index row"))?
                     .clone();
-                if identifier
-                    .as_ref()
-                    .is_some_and(|re| !re.is_match(&p.text) && !re.is_match(&p.title) && !re.is_match(&p.heading))
-                {
+                if !prepared.identifier_matches([p.text.as_str(), p.title.as_str(), p.heading.as_str()]) {
                     continue;
                 }
-                // Exact identifiers/phrases get a modest deterministic bonus.
-                p.score = score
-                    + if p.text.to_lowercase().contains(&query.to_lowercase()) {
-                        2.0
-                    } else {
-                        0.0
-                    };
-                candidates.push(p);
+                p.score = score + prepared.exact_bonus(&p.text);
+                let score = p.score;
+                let tie_key = p.id.clone();
+                let diversity_key = p.url.clone();
+                candidates.push(RankedCandidate::new(p, score, tie_key, diversity_key));
             }
-            candidates.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
-            let mut output = Vec::new();
-            let mut seen_text = BTreeSet::new();
-            let mut source_counts: BTreeMap<String, usize> = BTreeMap::new();
-            // First pass keeps source diversity; second allows a neighboring passage.
-            for cap in [1, 2] {
-                for p in &candidates {
-                    if output.len() >= limit.min(16) {
-                        return Ok(output);
-                    }
-                    let normalized = p.text.split_whitespace().collect::<Vec<_>>().join(" ");
-                    let hash = crate::common::sha256_hex(&normalized);
-                    if source_counts.get(&p.url).copied().unwrap_or(0) >= cap || seen_text.contains(&hash) {
-                        continue;
-                    }
-                    // Substantially overlapping boilerplate: compare word sets for this
-                    // small top-64 candidate set, never the whole corpus pairwise.
-                    let words: BTreeSet<_> = normalized.split_whitespace().collect();
-                    if output.iter().any(|prior: &Passage| {
-                        let old: BTreeSet<_> = prior.text.split_whitespace().collect();
-                        !words.is_empty() && words.intersection(&old).count() * 10 > words.union(&old).count() * 9
-                    }) {
-                        continue;
-                    }
-                    seen_text.insert(hash);
-                    *source_counts.entry(p.url.clone()).or_default() += 1;
-                    output.push(p.clone());
-                }
-            }
-            Ok(output)
+            Ok(crate::server::retrieval_ranking::select_diverse(
+                candidates,
+                limit,
+                |p| &p.text,
+            ))
         })
         .collect()
 }
