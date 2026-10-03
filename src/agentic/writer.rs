@@ -386,17 +386,7 @@ pub fn execute_write(ctx: &super::ctx::AgenticCtx, plan: &Value, confirm: bool, 
         return Err(
             HarnessError::agentic(format!("gh {op} failed with exit code {}", out.status.unwrap_or(-1)))
                 .detail("op", op)
-                .detail(
-                    "stderr",
-                    out.stderr
-                        .chars()
-                        .rev()
-                        .take(2000)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect::<String>(),
-                ),
+                .detail("stderr", crate::common::tail_chars(&out.stderr, 2000)),
         );
     }
     Ok(

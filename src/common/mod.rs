@@ -85,6 +85,17 @@ pub fn clip_chars(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
+/// The last `max` characters of a string (not bytes), borrowed in place.
+pub fn tail_chars(text: &str, max: usize) -> &str {
+    if max == 0 {
+        return "";
+    }
+    match text.char_indices().rev().nth(max - 1) {
+        Some((start, _)) => &text[start..],
+        None => text,
+    }
+}
+
 /// Levenshtein distance in characters, for "did you mean" suggestions.
 pub fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -109,6 +120,17 @@ pub const MAX_PR_BODY_BYTES: usize = 65_536;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tail_chars_keeps_the_last_chars_on_char_boundaries() {
+        let reference =
+            |t: &str, n: usize| -> String { t.chars().rev().take(n).collect::<Vec<_>>().into_iter().rev().collect() };
+        for text in ["", "abc", "héllo wörld", "日本語テキスト", "a😀b😀c"] {
+            for max in 0..=text.chars().count() + 1 {
+                assert_eq!(super::tail_chars(text, max), reference(text, max), "{text:?} {max}");
+            }
+        }
+    }
+
     #[test]
     fn lowercase_hex_requires_exact_length_and_canonical_case() {
         assert!(super::is_lower_hex("0123456789ab", 12));

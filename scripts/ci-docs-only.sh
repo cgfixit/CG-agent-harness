@@ -12,7 +12,8 @@
 #              *.md under .claude/ or .codex/, and LICENSE.
 #   code:      everything else. assets/ and data/ hold Markdown compiled in
 #              with include_str!; tests/invariant_guard.rs includes README.md
-#              and asserts AGENTS.md exists and a root CLAUDE.md does not.
+#              and the root CLAUDE.md, and asserts AGENTS.md exists and a
+#              .claude/CLAUDE.md does not.
 #
 # tests/invariant_guard.rs also reads every Markdown file for the docs budget,
 # so ci.yml runs its invariant-guard job whatever this script says.
