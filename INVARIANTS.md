@@ -437,7 +437,7 @@ receive a separate allowlist; only `real-repo-run` receives `DEEPAGENT_API_KEY`
 for its local planner. Sandboxed checks receive a scrubbed environment.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
-  `tests/panels.rs`, `tests/child_env.rs`, `shim::child_env_tests`, and
+  `tests/panels.rs`, `tests/child_env.rs`, and
   `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 
 ## A detached run cannot outlive its gates

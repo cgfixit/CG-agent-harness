@@ -146,3 +146,86 @@ fn shim_child_fixture() {
         assert_eq!(std::env::var(key).unwrap(), expected, "{key}");
     }
 }
+
+#[test]
+fn provider_credentials_are_action_scoped() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("probe.rs");
+    let probe = dir
+        .path()
+        .join(format!("child_env_probe{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(
+        &source,
+        r#"fn main() {
+    for key in ["ANTHROPIC_API_KEY", "GROK_API_KEY", "SERPAPI_API_KEY", "CGAH_CHILD_ENV_PROBE"] {
+        assert!(std::env::var_os(key).is_none(), "unexpected child variable {key}");
+    }
+    let action = std::env::args().nth(4).unwrap();
+    let key = std::env::var_os("DEEPAGENT_API_KEY");
+    assert_eq!(key.is_some(), action == "real-repo-run");
+    println!("{{\"present\":{},\"empty\":{}}}", key.is_some(), key.is_some_and(|v| v.is_empty()));
+}
+"#,
+    )
+    .unwrap();
+    let build = Command::new("rustc")
+        .args(["--edition=2021", "--crate-name", "child_env_probe"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&probe)
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    for deepagent in ["fake-deepagent-key", ""] {
+        let argv = fixture_argv("action_parent_fixture");
+        let output = Command::new(&argv[0])
+            .args(&argv[1..])
+            .env("CGAH_CHILD_ENV_PROBE", &probe)
+            .env("DEEPAGENT_API_KEY", deepagent)
+            .env("ANTHROPIC_API_KEY", "fake-anthropic-key")
+            .env("GROK_API_KEY", "fake-grok-key")
+            .env("SERPAPI_API_KEY", "fake-serpapi-key")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "subprocess fixture"]
+async fn action_parent_fixture() {
+    let inherited_empty = std::env::var_os("DEEPAGENT_API_KEY").unwrap().is_empty();
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.yaml");
+    std::fs::write(&config, "agentic:\n  enabled: false\n").unwrap();
+    let mut ctx = shim::ShimContext::new(&config, dir.path(), &dir.path().join("tmp"), 720).unwrap();
+    ctx.exe = std::env::var_os("CGAH_CHILD_ENV_PROBE").unwrap().into();
+    for action in shim::ACTIONS {
+        let req = shim::OpsRequest {
+            action: action.into(),
+            name: Some("fixture".into()),
+            desc: Some("Fixture skill".into()),
+            body: Some("Reviewed fixture body".into()),
+            reason: Some("Verify child environment".into()),
+            confirm: true,
+            instruction: Some("Fixture instruction".into()),
+            checks: Some(vec![serde_json::json!("cargo-test")]),
+            branch: Some("agent/fixture".into()),
+            commit_message: Some("Fixture commit".into()),
+            run_id: Some("a".repeat(32)),
+            decision: Some("approve".into()),
+            ..Default::default()
+        };
+        let result = shim::run_agentic_op(&ctx, &req).await.unwrap();
+        assert_eq!(result.exit_code, 0, "{action}: {}\n{}", result.stdout, result.stderr);
+        assert!(result.ok, "{action}");
+        let flags: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert_eq!(flags["present"], action == "real-repo-run", "{action}");
+        assert_eq!(flags["empty"], action == "real-repo-run" && inherited_empty, "{action}");
+    }
+}
