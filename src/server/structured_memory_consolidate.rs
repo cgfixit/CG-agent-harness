@@ -379,14 +379,14 @@ async fn generate_and_finish(
     store.finish_consolidation_run(owner, &run.id, &reply.model, parsed.candidates.len(), rejected, &drafts)
 }
 
-pub fn prompt_contains_recalled_facts(payload: &str) -> bool {
-    payload.contains("\"facts\"") || payload.contains("recalled_fact")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::server::structured_memory::Fact;
+
+    fn prompt_contains_recalled_facts(payload: &str) -> bool {
+        payload.contains("\"facts\"") || payload.contains("recalled_fact")
+    }
 
     fn fact(content: &str) -> Fact {
         Fact {

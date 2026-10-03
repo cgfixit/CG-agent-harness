@@ -2094,28 +2094,6 @@ impl StructuredMemoryStore {
             .map_err(sql)
     }
 
-    /// Owner-scoped eligible episode ids (`none`/`pending`), oldest first, capped.
-    pub fn eligible_consolidation_ids(&self, owner: &str) -> Result<Vec<String>> {
-        Self::require_owner(owner)?;
-        let conn = self.lock();
-        let mut stmt = conn
-            .prepare(
-                "SELECT public_id FROM episodes
-                 WHERE owner_id=?1 AND consolidation_state IN ('none','pending')
-                 ORDER BY created_ts ASC, public_id ASC
-                 LIMIT ?2",
-            )
-            .map_err(sql)?;
-        let rows = stmt
-            .query_map(params![owner, self.limits.max_consolidation_episodes as i64], |r| {
-                r.get(0)
-            })
-            .map_err(sql)?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(sql)?;
-        Ok(rows)
-    }
-
     /// Unexpired, human-summarized episodes only. Skips owners that already
     /// have a `running` consolidation row.
     pub fn next_auto_consolidation_batch(&self) -> Result<Option<(String, Vec<String>)>> {
@@ -3881,7 +3859,7 @@ mod tests {
     }
 
     #[test]
-    fn eligible_consolidation_ids_are_owner_scoped_and_capped() {
+    fn auto_batch_is_owner_scoped_and_skips_running_owners() {
         let dir = tempfile::tempdir().unwrap();
         let store = store(dir.path());
         let alice = store
@@ -3908,8 +3886,6 @@ mod tests {
                 },
             )
             .unwrap();
-        let alice_ids = store.eligible_consolidation_ids("user_alice").unwrap();
-        assert_eq!(alice_ids, vec![alice.id.clone()]);
         assert!(store.next_auto_consolidation_batch().unwrap().is_none());
         store
             .set_episode_summary("user_alice", &alice.id, "Prefer metric units.", "operator summary")
@@ -3926,6 +3902,49 @@ mod tests {
         let next = store.next_auto_consolidation_batch().unwrap().unwrap();
         assert_eq!(next.0, "user_bob");
         assert!(!next.1.contains(&alice.id));
+    }
+
+    #[test]
+    fn auto_batch_caps_oldest_episodes_and_orders_timestamp_ties_by_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str(
+            "structured_memory:\n  max_consolidation_episodes: 2\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
+        let store = StructuredMemoryStore::open(&dir.path().join("structured.sqlite3"), &cfg).unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            let episode = store
+                .stage_episode(
+                    "user_alice",
+                    EpisodeDraft {
+                        model_id: "local-test-model",
+                        outcome: "completed",
+                        user_chars: 8,
+                        assistant_chars: 8,
+                        sensitivity: "normal",
+                    },
+                )
+                .unwrap();
+            store
+                .set_episode_summary("user_alice", &episode.id, "Prefer metric units.", "operator summary")
+                .unwrap();
+            ids.push(episode.id);
+        }
+        ids.sort();
+        for (id, timestamp) in ids.iter().zip([3.0, 2.0, 2.0, 1.0]) {
+            store
+                .lock()
+                .execute(
+                    "UPDATE episodes SET created_ts=?1 WHERE public_id=?2",
+                    params![timestamp, id],
+                )
+                .unwrap();
+        }
+        let (owner, batch) = store.next_auto_consolidation_batch().unwrap().unwrap();
+        assert_eq!(owner, "user_alice");
+        assert_eq!(batch, vec![ids[3].clone(), ids[1].clone()]);
     }
 
     #[test]
