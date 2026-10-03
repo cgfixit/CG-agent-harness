@@ -624,7 +624,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: read-only tool, slash, and panel rules; 5790 words, rounded up to the next 100.
     // why: credential and preemption contracts matched to runtime, then the OS credential store section; 5997 words, rounded up to the next 100.
     // why: caveat that loaded keys still reach gh and the shim child until #286; set to the reported 6026 words.
-    ("INVARIANTS.md", Root, 6026),
+    // why: redaction claim narrowed to startup-loaded key values (#313); set to the reported
+    // 6027 words after merging main 17b28d9. Whichever of #312/#313 lands second resets it exactly.
+    ("INVARIANTS.md", Root, 6027),
     ("README.md", Root, 1700),
     ("SECURITY.md", Root, 500),
     ("docs/ANALYTICS.md", Guide, 900),
