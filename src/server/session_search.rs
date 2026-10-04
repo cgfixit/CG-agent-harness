@@ -12,7 +12,6 @@ const MAX_SESSIONS: usize = 200;
 const MAX_BYTES: usize = 2_000_000;
 const CHUNK_CHARS: usize = 1200;
 const MAX_QUERY_CHARS: usize = 200;
-const MAX_TERMS: usize = 32;
 const CANDIDATES: usize = 64;
 const MAX_HITS: usize = 16;
 const SNIPPET_CHARS: usize = 160;
@@ -33,15 +32,9 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
     if query.is_empty() || query.chars().count() > MAX_QUERY_CHARS {
         return Ok(Vec::new());
     }
-    let terms: Vec<String> = query
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|s| !s.is_empty())
-        .take(MAX_TERMS)
-        .map(str::to_string)
-        .collect();
-    if terms.is_empty() {
+    let Some(expression) = super::retrieval_ranking::tantivy_expression(query) else {
         return Ok(Vec::new());
-    }
+    };
     let lower_query = query.to_lowercase();
     let overlap = lower_query.chars().count() - 1;
 
@@ -118,11 +111,6 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
         .map_err(|_| HarnessError::new("SESSION_SEARCH_FAILED", "could not open session index"))?;
     let searcher = reader.searcher();
     let parser = QueryParser::for_index(&index, vec![f_title, f_body]);
-    let quoted = query.replace('\\', "\\\\").replace('"', "\\\"");
-    let expression = format!(
-        "\"{quoted}\"^2 {}",
-        terms.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(" ")
-    );
     let parsed = parser
         .parse_query(&expression)
         .map_err(|_| HarnessError::new("SESSION_SEARCH_FAILED", "query cannot be indexed"))?;

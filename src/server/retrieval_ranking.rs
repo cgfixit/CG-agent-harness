@@ -12,21 +12,29 @@ pub(super) struct PreparedQuery {
     lowercase: String,
 }
 
+/// Tantivy query text: the whole query as a boosted phrase plus each
+/// alphanumeric term quoted. `None` when the query has no terms.
+pub(super) fn tantivy_expression(query: &str) -> Option<String> {
+    let terms: Vec<_> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .take(MAX_TERMS)
+        .collect();
+    if terms.is_empty() {
+        return None;
+    }
+    let quoted = query.replace('\\', "\\\\").replace('"', "\\\"");
+    Some(format!(
+        "\"{quoted}\"^2 {}",
+        terms.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(" ")
+    ))
+}
+
 impl PreparedQuery {
     pub fn new(query: &str) -> std::result::Result<Option<Self>, regex::Error> {
-        let terms: Vec<_> = query
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|s| !s.is_empty())
-            .take(MAX_TERMS)
-            .collect();
-        if terms.is_empty() {
+        let Some(expression) = tantivy_expression(query) else {
             return Ok(None);
-        }
-        let quoted = query.replace('\\', "\\\\").replace('"', "\\\"");
-        let expression = format!(
-            "\"{quoted}\"^2 {}",
-            terms.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(" ")
-        );
+        };
         let identifier = if query.contains('_') || query.contains("::") {
             Some(
                 regex::RegexBuilder::new(&format!(

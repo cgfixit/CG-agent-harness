@@ -313,44 +313,40 @@ pub async fn audit_events(State(state): State<Arc<AppState>>) -> ApiResult<Json<
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
+    let unavailable = |_: std::io::Error| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "AUDIT_UNAVAILABLE",
+            "audit unavailable",
+        )
+    };
     let mut file = match options.open(state.audit.path()) {
         Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Json(json!({"events":[]}))),
-        Err(_) => {
-            return Err(ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "AUDIT_UNAVAILABLE",
-                "audit unavailable",
-            ))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Json(json!({"events": []}))),
+        Err(e) => return Err(unavailable(e)),
     };
-    let size = file
-        .metadata()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "AUDIT_UNAVAILABLE",
-                "audit unavailable",
-            )
-        })?
-        .len();
-    file.seek(SeekFrom::Start(size.saturating_sub(65536))).map_err(|_| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "AUDIT_UNAVAILABLE",
-            "audit unavailable",
-        )
-    })?;
+    let size = file.metadata().map_err(unavailable)?.len();
+    file.seek(SeekFrom::Start(size.saturating_sub(65536)))
+        .map_err(unavailable)?;
     let mut text = String::new();
-    file.take(65536).read_to_string(&mut text).map_err(|_| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "AUDIT_UNAVAILABLE",
-            "audit unavailable",
-        )
-    })?;
-    let events:Vec<Value>=text.lines().rev().filter_map(|line|serde_json::from_str::<Value>(line).ok()).filter(|v|v["event"]=="portal.request").take(100).map(|v|json!({"timestamp":v["timestamp"],"actor":v["actor"],"method":v["method"],"route":v["route"],"status":v["status"]})).collect();
-    Ok(Json(json!({"events":events,"bounded":true})))
+    file.take(65536).read_to_string(&mut text).map_err(unavailable)?;
+    let events: Vec<Value> = text
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|v| v["event"] == "portal.request")
+        .take(100)
+        .map(|v| {
+            json!({
+                "timestamp": v["timestamp"],
+                "actor": v["actor"],
+                "method": v["method"],
+                "route": v["route"],
+                "status": v["status"],
+            })
+        })
+        .collect();
+    Ok(Json(json!({"events": events, "bounded": true})))
 }
 
 pub async fn list_users(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {

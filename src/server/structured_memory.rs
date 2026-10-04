@@ -214,145 +214,101 @@ impl Limits {
             DEFAULT_MIN_CONSOLIDATION_CONFIDENCE,
         );
         Self {
-            max_facts_per_owner: clamp_u64(
-                cfg.u64_or("structured_memory.max_facts_per_owner", DEFAULT_MAX_FACTS),
-                1,
-                256,
-            ) as usize,
-            max_fact_chars: clamp_u64(
-                cfg.u64_or("structured_memory.max_fact_chars", DEFAULT_MAX_FACT_CHARS),
-                1,
-                4000,
-            ) as usize,
-            max_category_chars: clamp_u64(
-                cfg.u64_or("structured_memory.max_category_chars", DEFAULT_MAX_CATEGORY_CHARS),
-                1,
-                64,
-            ) as usize,
-            max_proposals_per_owner: clamp_u64(
-                cfg.u64_or("structured_memory.max_proposals_per_owner", DEFAULT_MAX_PROPOSALS),
-                1,
-                128,
-            ) as usize,
-            max_reason_chars: clamp_u64(
-                cfg.u64_or("structured_memory.max_reason_chars", DEFAULT_MAX_REASON_CHARS),
-                1,
-                1000,
-            ) as usize,
-            max_episodes_per_owner: clamp_u64(
-                cfg.u64_or("structured_memory.max_episodes_per_owner", DEFAULT_MAX_EPISODES),
-                1,
-                1024,
-            ) as usize,
-            max_episode_summary_chars: clamp_u64(
-                cfg.u64_or(
+            max_facts_per_owner: cfg
+                .u64_or("structured_memory.max_facts_per_owner", DEFAULT_MAX_FACTS)
+                .clamp(1, 256) as usize,
+            max_fact_chars: cfg
+                .u64_or("structured_memory.max_fact_chars", DEFAULT_MAX_FACT_CHARS)
+                .clamp(1, 4000) as usize,
+            max_category_chars: cfg
+                .u64_or("structured_memory.max_category_chars", DEFAULT_MAX_CATEGORY_CHARS)
+                .clamp(1, 64) as usize,
+            max_proposals_per_owner: cfg
+                .u64_or("structured_memory.max_proposals_per_owner", DEFAULT_MAX_PROPOSALS)
+                .clamp(1, 128) as usize,
+            max_reason_chars: cfg
+                .u64_or("structured_memory.max_reason_chars", DEFAULT_MAX_REASON_CHARS)
+                .clamp(1, 1000) as usize,
+            max_episodes_per_owner: cfg
+                .u64_or("structured_memory.max_episodes_per_owner", DEFAULT_MAX_EPISODES)
+                .clamp(1, 1024) as usize,
+            max_episode_summary_chars: cfg
+                .u64_or(
                     "structured_memory.max_episode_summary_chars",
                     DEFAULT_MAX_EPISODE_SUMMARY_CHARS,
-                ),
-                32,
-                4000,
-            ) as usize,
-            max_episode_bytes_per_owner: clamp_u64(
-                cfg.u64_or(
+                )
+                .clamp(32, 4000) as usize,
+            max_episode_bytes_per_owner: cfg
+                .u64_or(
                     "structured_memory.max_episode_bytes_per_owner",
                     DEFAULT_MAX_EPISODE_BYTES,
-                ),
-                256,
-                8 * 1024 * 1024,
-            ) as usize,
-            episode_ttl_secs: clamp_u64(
-                cfg.u64_or("structured_memory.episode_ttl_secs", DEFAULT_EPISODE_TTL_SECS),
-                60,
-                366 * 24 * 3600,
-            ) as i64,
-            max_export_bytes: clamp_u64(
-                cfg.u64_or("structured_memory.max_export_bytes", DEFAULT_MAX_EXPORT_BYTES),
-                1024,
-                8 * 1024 * 1024,
-            ) as usize,
-            max_selected_facts: clamp_u64(
-                cfg.u64_or("structured_memory.max_selected_facts", DEFAULT_MAX_SELECTED_FACTS),
-                1,
-                32,
-            ) as usize,
-            max_search_query_chars: clamp_u64(
-                cfg.u64_or(
+                )
+                .clamp(256, 8 * 1024 * 1024) as usize,
+            episode_ttl_secs: cfg
+                .u64_or("structured_memory.episode_ttl_secs", DEFAULT_EPISODE_TTL_SECS)
+                .clamp(60, 366 * 24 * 3600) as i64,
+            max_export_bytes: cfg
+                .u64_or("structured_memory.max_export_bytes", DEFAULT_MAX_EXPORT_BYTES)
+                .clamp(1024, 8 * 1024 * 1024) as usize,
+            max_selected_facts: cfg
+                .u64_or("structured_memory.max_selected_facts", DEFAULT_MAX_SELECTED_FACTS)
+                .clamp(1, 32) as usize,
+            max_search_query_chars: cfg
+                .u64_or(
                     "structured_memory.max_search_query_chars",
                     DEFAULT_MAX_SEARCH_QUERY_CHARS,
-                ),
-                1,
-                256,
-            ) as usize,
-            max_search_results: clamp_u64(
-                cfg.u64_or("structured_memory.max_search_results", DEFAULT_MAX_SEARCH_RESULTS),
-                1,
-                64,
-            ) as usize,
-            max_retrieval_results: clamp_u64(
-                cfg.u64_or("structured_memory.max_retrieval_results", DEFAULT_MAX_RETRIEVAL_RESULTS),
-                1,
-                16,
-            ) as usize,
-            max_retrieval_tokens: clamp_u64(
-                cfg.u64_or("structured_memory.max_retrieval_tokens", DEFAULT_MAX_RETRIEVAL_TOKENS),
-                1,
-                16,
-            ) as usize,
-            max_retrieval_token_chars: clamp_u64(
-                cfg.u64_or(
+                )
+                .clamp(1, 256) as usize,
+            max_search_results: cfg
+                .u64_or("structured_memory.max_search_results", DEFAULT_MAX_SEARCH_RESULTS)
+                .clamp(1, 64) as usize,
+            max_retrieval_results: cfg
+                .u64_or("structured_memory.max_retrieval_results", DEFAULT_MAX_RETRIEVAL_RESULTS)
+                .clamp(1, 16) as usize,
+            max_retrieval_tokens: cfg
+                .u64_or("structured_memory.max_retrieval_tokens", DEFAULT_MAX_RETRIEVAL_TOKENS)
+                .clamp(1, 16) as usize,
+            max_retrieval_token_chars: cfg
+                .u64_or(
                     "structured_memory.max_retrieval_token_chars",
                     DEFAULT_MAX_RETRIEVAL_TOKEN_CHARS,
-                ),
-                1,
-                64,
-            ) as usize,
-            max_search_time_ms: clamp_u64(
-                cfg.u64_or("structured_memory.max_search_time_ms", DEFAULT_MAX_SEARCH_TIME_MS),
-                10,
-                5_000,
-            ),
-            pinned_prompt_chars: clamp_u64(
-                cfg.u64_or("structured_memory.pinned_prompt_chars", DEFAULT_PINNED_PROMPT_CHARS),
-                1,
-                3000,
-            ) as usize,
-            selected_fact_prompt_chars: clamp_u64(
-                cfg.u64_or(
+                )
+                .clamp(1, 64) as usize,
+            max_search_time_ms: cfg
+                .u64_or("structured_memory.max_search_time_ms", DEFAULT_MAX_SEARCH_TIME_MS)
+                .clamp(10, 5_000),
+            pinned_prompt_chars: cfg
+                .u64_or("structured_memory.pinned_prompt_chars", DEFAULT_PINNED_PROMPT_CHARS)
+                .clamp(1, 3000) as usize,
+            selected_fact_prompt_chars: cfg
+                .u64_or(
                     "structured_memory.selected_fact_prompt_chars",
                     DEFAULT_SELECTED_FACT_PROMPT_CHARS,
-                ),
-                1,
-                3000,
-            ) as usize,
-            max_consolidation_episodes: clamp_u64(
-                cfg.u64_or(
+                )
+                .clamp(1, 3000) as usize,
+            max_consolidation_episodes: cfg
+                .u64_or(
                     "structured_memory.max_consolidation_episodes",
                     DEFAULT_MAX_CONSOLIDATION_EPISODES,
-                ),
-                1,
-                16,
-            ) as usize,
-            max_consolidation_candidates: clamp_u64(
-                cfg.u64_or(
+                )
+                .clamp(1, 16) as usize,
+            max_consolidation_candidates: cfg
+                .u64_or(
                     "structured_memory.max_consolidation_candidates",
                     DEFAULT_MAX_CONSOLIDATION_CANDIDATES,
-                ),
-                1,
-                16,
-            ) as usize,
+                )
+                .clamp(1, 16) as usize,
             min_consolidation_confidence: if confidence.is_finite() {
                 confidence.clamp(0.0, 1.0)
             } else {
                 DEFAULT_MIN_CONSOLIDATION_CONFIDENCE
             },
-            auto_consolidation_idle_ms: clamp_u64(
-                cfg.u64_or(
+            auto_consolidation_idle_ms: cfg
+                .u64_or(
                     "structured_memory.auto_consolidation_idle_ms",
                     DEFAULT_AUTO_CONSOLIDATION_IDLE_MS,
-                ),
-                20,
-                60_000,
-            ),
+                )
+                .clamp(20, 60_000),
         }
     }
 
@@ -383,10 +339,6 @@ impl Limits {
             "auto_consolidation_idle_ms": self.auto_consolidation_idle_ms,
         })
     }
-}
-
-fn clamp_u64(value: u64, min: u64, max: u64) -> u64 {
-    value.clamp(min, max)
 }
 
 /// Home-local administrator override. Version 2 records explicit true/false;

@@ -577,10 +577,15 @@ pub async fn harness_runs(State(state): State<Arc<AppState>>) -> Json<Value> {
     if let Ok(rd) = std::fs::read_dir(&accepted) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().and_then(|s| s.to_str()) != Some("json") || !p.is_file() {
+            if p.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+            // One lstat per entry; a symlink is not an accepted run record.
+            let Ok(meta) = e.metadata() else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
             files.push((mtime, p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()));
         }
     }
