@@ -16,6 +16,13 @@ path = "src/lib.rs"
 name = "cgagentharness"
 path = "src/main.rs"
 
+[features]
+# Test-only fixtures and fault hooks (netconnect fixture/probe sources, the
+# structured-memory proposal-insert failure trigger). Off by default so release
+# builds never compile them; the self dev-dependency below turns it on for every
+# test target, so plain `cargo test --all-targets` keeps full coverage.
+test-support = []
+
 [dependencies]
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 axum = "0.8"
@@ -80,6 +87,10 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
+# Self dev-dependency: enables `test-support` for integration tests only. Resolver 2
+# keeps dev-dependency features out of `cargo build --release`. The exact version
+# pin satisfies deny.toml `wildcards = "deny"`; bump it with `package.version`.
+cgagentharness = { path = ".", version = "=0.1.0", features = ["test-support"] }
 proptest = "1.6"
 # I6 is enforced by parsing `use` trees in tests/invariant_guard.rs, not by
 # scanning for substrings: `use crate::{agentic as pipeline}` defeats a substring

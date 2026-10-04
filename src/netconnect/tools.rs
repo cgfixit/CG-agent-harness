@@ -15,16 +15,16 @@
 //! module does not open a socket.
 
 use std::net::Ipv4Addr;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
 use crate::common::errors::{HarnessError, Result};
 
-use super::collect::{
-    collect_passive, FixtureInterfaces, FixtureNeighbors, FixtureRoutes, InterfaceSource, NeighborSource,
-    PassiveReport, RouteSource,
-};
+use super::collect::{collect_passive, InterfaceSource, NeighborSource, PassiveReport, RouteSource};
+#[cfg(any(test, feature = "test-support"))]
+use super::collect::{FixtureInterfaces, FixtureNeighbors, FixtureRoutes};
 use super::config::{NetconnectConfig, Tier};
 use super::sanitize::{sanitize_untrusted, UntrustedString};
 use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
@@ -253,16 +253,19 @@ pub struct PassiveSources {
 
 enum NeighborSlot {
     Live(LiveNeighbors),
+    #[cfg(any(test, feature = "test-support"))]
     Shared(Arc<dyn NeighborSource + Send + Sync>),
 }
 
 enum RouteSlot {
     Live(LiveRoutes),
+    #[cfg(any(test, feature = "test-support"))]
     Shared(Arc<dyn RouteSource + Send + Sync>),
 }
 
 enum InterfaceSlot {
     Live(LiveInterfaces),
+    #[cfg(any(test, feature = "test-support"))]
     Shared(Arc<dyn InterfaceSource + Send + Sync>),
 }
 
@@ -270,6 +273,7 @@ impl Clone for NeighborSlot {
     fn clone(&self) -> Self {
         match self {
             NeighborSlot::Live(_) => NeighborSlot::Live(LiveNeighbors),
+            #[cfg(any(test, feature = "test-support"))]
             NeighborSlot::Shared(source) => NeighborSlot::Shared(Arc::clone(source)),
         }
     }
@@ -279,6 +283,7 @@ impl Clone for RouteSlot {
     fn clone(&self) -> Self {
         match self {
             RouteSlot::Live(_) => RouteSlot::Live(LiveRoutes),
+            #[cfg(any(test, feature = "test-support"))]
             RouteSlot::Shared(source) => RouteSlot::Shared(Arc::clone(source)),
         }
     }
@@ -288,6 +293,7 @@ impl Clone for InterfaceSlot {
     fn clone(&self) -> Self {
         match self {
             InterfaceSlot::Live(_) => InterfaceSlot::Live(LiveInterfaces),
+            #[cfg(any(test, feature = "test-support"))]
             InterfaceSlot::Shared(source) => InterfaceSlot::Shared(Arc::clone(source)),
         }
     }
@@ -297,6 +303,7 @@ impl NeighborSource for NeighborSlot {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
         match self {
             NeighborSlot::Live(source) => source.load(),
+            #[cfg(any(test, feature = "test-support"))]
             NeighborSlot::Shared(source) => source.load(),
         }
     }
@@ -306,6 +313,7 @@ impl RouteSource for RouteSlot {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
         match self {
             RouteSlot::Live(source) => source.load(),
+            #[cfg(any(test, feature = "test-support"))]
             RouteSlot::Shared(source) => source.load(),
         }
     }
@@ -315,6 +323,7 @@ impl InterfaceSource for InterfaceSlot {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
         match self {
             InterfaceSlot::Live(source) => source.load(),
+            #[cfg(any(test, feature = "test-support"))]
             InterfaceSlot::Shared(source) => source.load(),
         }
     }
@@ -330,6 +339,7 @@ impl PassiveSources {
     }
 
     /// Fixture rows with one shared load counter. Each `load` increments it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn fixtures(
         neighbors: FixtureNeighbors,
         routes: FixtureRoutes,
@@ -350,6 +360,7 @@ impl PassiveSources {
     }
 
     /// A source that records a call and then panics. Disabled routes must not reach it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn probe(loads: Arc<std::sync::atomic::AtomicUsize>) -> Self {
         let probe = Arc::new(LoadProbe { loads });
         Self {
@@ -360,6 +371,7 @@ impl PassiveSources {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct CountedFixtures {
     neighbors: FixtureNeighbors,
     routes: FixtureRoutes,
@@ -367,6 +379,7 @@ struct CountedFixtures {
     loads: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl NeighborSource for CountedFixtures {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -374,6 +387,7 @@ impl NeighborSource for CountedFixtures {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl RouteSource for CountedFixtures {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -381,6 +395,7 @@ impl RouteSource for CountedFixtures {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl InterfaceSource for CountedFixtures {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -388,10 +403,12 @@ impl InterfaceSource for CountedFixtures {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct LoadProbe {
     loads: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl NeighborSource for LoadProbe {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -399,6 +416,7 @@ impl NeighborSource for LoadProbe {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl RouteSource for LoadProbe {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -406,6 +424,7 @@ impl RouteSource for LoadProbe {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl InterfaceSource for LoadProbe {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -419,6 +438,7 @@ pub fn panel_sources(cfg: &NetconnectConfig, sources: &PassiveSources) -> Result
 }
 
 /// Same device listing as [`call_devices`], using the sources the HTTP handler was given.
+#[cfg(any(test, feature = "test-support"))]
 pub fn devices_sources(cfg: &NetconnectConfig, sources: &PassiveSources) -> Result<Value> {
     call_devices(cfg, &sources.neighbors, &sources.routes, &sources.interfaces)
 }
