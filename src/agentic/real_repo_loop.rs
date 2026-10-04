@@ -18,7 +18,7 @@ use crate::common::errors::{HarnessError, Result};
 
 use super::ctx::AgenticCtx;
 use super::executor::{run_verification, Check, HardSandbox, VerificationReport};
-use super::governance::{inspect_candidate_text, inspect_code_shape, GovernanceFinding, CRITICAL_SEVERITY};
+use super::governance::{inspect_candidate_text, inspect_code_shape, GovernanceFinding};
 use super::proposer::ProposerClient;
 use super::unslop::UnslopProbe;
 use super::workspace::{canonical_repo_path, fs_equiv_path, is_proposal_rollback_quarantine, RepoWorkspace};
@@ -388,7 +388,7 @@ pub struct DecisionInputs<'a> {
 /// The real-repo acceptance gate. Gate order is part of the contract.
 pub fn decide_real_repo_candidate(inp: &DecisionInputs<'_>) -> RealRepoDecision {
     let mut rejected: Vec<String> = Vec::new();
-    let has_critical = inp.governance_findings.iter().any(|f| f.severity == CRITICAL_SEVERITY);
+    let has_critical = !inp.governance_findings.is_empty();
     let quarantined = has_critical || inp.out_of_scope || inp.write_budget_exceeded;
     if inp.changed_files.is_empty() && !quarantined {
         rejected.push("no_files_changed".into());
@@ -680,7 +680,7 @@ pub fn run_real_repo_loop(
             governance.extend(inspect_candidate_text(&ctx.scanner, content));
             governance.extend(inspect_code_shape(content, p.scan_code_shape));
         }
-        let has_critical = governance.iter().any(|f| f.severity == CRITICAL_SEVERITY);
+        let has_critical = !governance.is_empty();
         let out_of_scope: Vec<String> = proposed_files
             .keys()
             .filter(|k| matches_protected_path(k, p.protected_write_paths))
@@ -730,7 +730,7 @@ pub fn run_real_repo_loop(
             step,
             changed_files: written.clone(),
             decision: decision.clone(),
-            governance_findings: governance.clone(),
+            governance_findings: governance,
             retrieval,
         });
         ctx.audit.log(json!({

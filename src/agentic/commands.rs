@@ -10,7 +10,7 @@ use crate::common::errors::{HarnessError, Result};
 use crate::llm::backend::resolve_reasoning_effort;
 
 use super::cli::{
-    deepagent_disabled_noop, disabled_noop, exit_code_for, Opts, EXIT_ENV, EXIT_FAIL, EXIT_OK, EXIT_REFUSED,
+    deepagent_disabled_noop, disabled_noop, exit_code_for, heading, Opts, EXIT_ENV, EXIT_FAIL, EXIT_OK, EXIT_REFUSED,
 };
 use super::cloud_proposer::{cloud_key_available, settings_for, CloudProposerClient};
 use super::context::{self, blocking_context_findings, describe_findings};
@@ -37,10 +37,6 @@ const MAX_STATUS_DIFF_CHARS: usize = 20_000;
 
 fn err(msg: &str) {
     eprintln!("  [error] {msg}");
-}
-
-fn heading(t: &str) {
-    println!("== {t} ==");
 }
 
 fn kv(k: &str, v: impl std::fmt::Display) {
