@@ -2898,7 +2898,7 @@ async function finishChat(r) {
   agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
         ' tok · session total ' + (tally.total || 0));
   if (r && r.memory_suggestion && r.memory_suggestion.queued) {
-    sys('Memory suggestions queued. Use /memory proposals and Refresh proposals to review after generation. Nothing is applied without your approval and reason.');
+    sys('Memory suggestion queued, not yet a proposal. Open /memory proposals and Refresh proposals to see the result. The model may return no candidates; nothing is applied without your approval and reason.');
   }
   await refreshStatus();
   await refreshSessions();
@@ -4017,6 +4017,28 @@ async function refreshMemoryProposals() {
     if (!feedback.isConnected) return;
     const pending = (result.proposals || []).filter(p => p.status === 'pending');
     feedback.textContent = pending.length ? 'Review each proposal. Apply saves a canonical fact; Reject dismisses the suggestion. Both require your reason.' : 'No pending proposals.';
+    if (!pending.length) {
+      if ((automatic && (automatic.queued || automatic.running)) || (status.consolidation_health && status.consolidation_health.running)) {
+        feedback.textContent = 'No pending proposals yet. Memory generation is queued or running. Refresh after it finishes.';
+      } else {
+        try {
+          const history = await api('/api/structured-memory/consolidation');
+          if (!feedback.isConnected) return;
+          const latest = (history.runs || []).find(run => run.summarizer_version === 'completion-suggestions-v1');
+          if (latest && latest.state === 'failed') {
+            feedback.textContent = 'No pending proposals. The latest automatic suggestion failed (' + (latest.error_class || 'unknown error') + ').';
+          } else if (latest && latest.state === 'done' && latest.proposal_count === 0) {
+            feedback.textContent = latest.candidate_count === 0
+              ? 'No pending proposals. The latest automatic suggestion completed, but the model returned no candidates.'
+              : 'No pending proposals. The latest automatic suggestion produced candidates, but none passed review rules.';
+          } else if (latest && latest.state === 'done' && latest.proposal_count > 0) {
+            feedback.textContent = 'No pending proposals. The latest automatic suggestion created ' + latest.proposal_count + ' proposal(s), but none remain pending.';
+          }
+        } catch (error) {
+          feedback.textContent = 'No pending proposals. The latest suggestion outcome could not be loaded (' + error.message + ').';
+        }
+      }
+    }
     for (const proposal of pending) {
       const form = document.createElement('form');
       const summary = document.createElement('p');

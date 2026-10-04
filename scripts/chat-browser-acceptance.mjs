@@ -16,6 +16,7 @@ let automationFixture=null; // null keeps the unknown-path {} reply for the head
 const headerState='["openAnalytics","openDeliveries","openSchedules"].filter(id=>!document.getElementById(id).hidden).join()';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 let memoryEnabled=false, structuredOpen=true;
+let suggestionRun=null;
 let latestEpisode={id:'episode_labeled_latest',outcome:'completed',semantic_summary:null};
 const memoryProposals=[
  {id:'proposal_labeled_apply',revision:'revision_apply',action:'add',category:'pref',content:'Prefer metric units <script>throw new Error("unsafe")</script>',source_episode_ids:['episode_labeled_latest'],status:'pending'},
@@ -154,6 +155,7 @@ const server=createServer(async(req,res)=>{
   reply(gatePayload());return;
  }
  if(path==='/api/structured-memory/consolidation'||path.startsWith('/api/structured-memory/consolidation?')){
+  if(req.method==='GET'){reply({runs:suggestionRun?[suggestionRun]:[],count:suggestionRun?1:0});return;}
   if(!structuredGates.consolidation){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured consolidation is disabled; selected episodes are not summarized'}},409);return;}
   reply({id:'run_labeled_alpha',state:'done',proposal_count:0,candidate_count:0,rejected_count:0,auto:false});return;
  }
@@ -418,6 +420,14 @@ try {
  await until('document.getElementById("pane-memory").textContent.includes("Proposal rejected.")');
  assert.equal(decisions().at(-1)[2].apply,false);
  assert.equal(chatCount(),beforeRememberChat);
+ suggestionRun={summarizer_version:'completion-suggestions-v1',state:'done',proposal_count:0,candidate_count:0,rejected_count:0};
+ await evaluate('refreshMemoryProposals()');
+ assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("model returned no candidates")'));
+ suggestionRun={...suggestionRun,state:'failed',error_class:'STRUCTURED_MEMORY_SCHEMA'};
+ await evaluate('refreshMemoryProposals()');
+ assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("STRUCTURED_MEMORY_SCHEMA")'));
+ await evaluate('finishChat({reply:"synthetic reply",model:"mock",memory_suggestion:{queued:true}})');
+ assert.ok(await evaluate('document.getElementById("stream").textContent.includes("queued, not yet a proposal")'));
  await evaluate(`document.querySelector('[data-pane="commands"]').click()`);
  const beforeDisabledSearch=chatCount();
  await send('/memory search metric');
