@@ -674,3 +674,346 @@ async fn stdio_stderr_is_drained_without_a_log_file_or_blocked_response() {
     assert_eq!(result["echo"]["marker"], "after_stderr");
     assert_eq!(result["stderr_file_exists"], false);
 }
+
+// #304 W2 contract: the SSE `endpoint` event may only name the configured
+// origin (scheme, host, port), refusals never echo the URL, and the JSON-RPC
+// POST body is capped while it streams instead of after full buffering.
+
+#[derive(Clone, Copy)]
+enum PostReply {
+    Echo,
+    /// Declare a huge Content-Length, send `send` bytes, then stall.
+    DeclaredHuge {
+        send: usize,
+    },
+    /// Chunked, no Content-Length: one `send`-byte chunk, then stall.
+    ChunkedStall {
+        send: usize,
+    },
+}
+
+struct SseStub {
+    port: u16,
+    connections: Arc<std::sync::atomic::AtomicUsize>,
+    posts: Arc<std::sync::atomic::AtomicUsize>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for SseStub {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl SseStub {
+    fn connections(&self) -> usize {
+        self.connections.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn posts(&self) -> usize {
+        self.posts.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// Owned HTTP/1.1 SSE stub. `endpoint` maps the stub's own port to the
+/// `data:` line of the endpoint event.
+async fn sse_stub(bind: &str, endpoint: impl Fn(u16) -> String, reply: PostReply) -> Option<SseStub> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind(bind).await.ok()?;
+    let port = listener.local_addr().unwrap().port();
+    let data = endpoint(port);
+    let connections = Arc::new(AtomicUsize::new(0));
+    let posts = Arc::new(AtomicUsize::new(0));
+    let (conns, post_count) = (connections.clone(), posts.clone());
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            conns.fetch_add(1, Ordering::SeqCst);
+            let data = data.clone();
+            let post_count = post_count.clone();
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let head_end = loop {
+                    let Ok(n) = stream.read(&mut chunk).await else { return };
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break i + 4;
+                    }
+                    if buf.len() > 65_536 {
+                        return;
+                    }
+                };
+                let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
+                if head.starts_with("get ") {
+                    let body = format!("event: endpoint\ndata: {data}\n\n");
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\n\r\n{body}"
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    // Keep the event stream open like a real SSE server.
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    return;
+                }
+                post_count.fetch_add(1, Ordering::SeqCst);
+                let length = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                while buf.len() < head_end + length {
+                    let Ok(n) = stream.read(&mut chunk).await else { return };
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let request: Value = serde_json::from_slice(&buf[head_end..head_end + length]).unwrap_or(Value::Null);
+                let Some(id) = request.get("id").cloned() else {
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                        .await;
+                    return;
+                };
+                match reply {
+                    PostReply::Echo => {
+                        let result = if request["method"] == "tools/call" {
+                            let text = serde_json::to_string(&request["params"]["arguments"]).unwrap();
+                            json!({"content":[{"type":"text","text":text}]})
+                        } else {
+                            json!({"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"stub"}})
+                        };
+                        let body = json!({"jsonrpc":"2.0","id":id,"result":result}).to_string();
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(response.as_bytes()).await;
+                    }
+                    PostReply::DeclaredHuge { send } => {
+                        let head =
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 10485760\r\n\r\n";
+                        let _ = stream.write_all(head.as_bytes()).await;
+                        let _ = stream.write_all(&vec![b' '; send]).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    }
+                    PostReply::ChunkedStall { send } => {
+                        let head =
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ntransfer-encoding: chunked\r\n\r\n";
+                        let _ = stream.write_all(head.as_bytes()).await;
+                        let _ = stream.write_all(format!("{send:x}\r\n").as_bytes()).await;
+                        let _ = stream.write_all(&vec![b' '; send]).await;
+                        let _ = stream.write_all(b"\r\n").await;
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    }
+                }
+            });
+        }
+    });
+    Some(SseStub {
+        port,
+        connections,
+        posts,
+        task,
+    })
+}
+
+fn sse_stub_yaml(port: u16) -> String {
+    format!(
+        "\n    - name: stub\n      transport: sse\n      url: http://127.0.0.1:{port}/sse\n      tools:\n        - echo\n", // DevSkim: ignore DS162092 DS137138 because this test uses an owned loopback HTTP stub on purpose.
+    )
+}
+
+async fn sse_stub_call(server: &McpServer) -> (u16, Value) {
+    server
+        .call(json!({"server":"stub","tool":"echo","arguments":{"k":"v"},"confirm":true}))
+        .await
+}
+
+#[tokio::test]
+async fn sse_relative_and_same_origin_endpoints_are_accepted() {
+    for absolute in [false, true] {
+        let stub = sse_stub(
+            "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+            move |port| {
+                if absolute {
+                    format!("http://127.0.0.1:{port}/messages?session_id=same") // DevSkim: ignore DS162092 DS137138 because the same-origin endpoint is the owned loopback stub.
+                } else {
+                    "/messages?session_id=relative".to_string()
+                }
+            },
+            PostReply::Echo,
+        )
+        .await
+        .expect("bind loopback stub");
+        let server = McpServer::boot(&sse_stub_yaml(stub.port), &[("mcp.sse_allow_loopback", "true")]).await;
+        let (status, body) = sse_stub_call(&server).await;
+        assert_eq!(status, 200, "absolute={absolute}: {body}");
+        let text = body["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("\"k\":\"v\""), "{text}");
+        assert!(
+            stub.posts() >= 2,
+            "initialize and tools/call must reach the configured origin"
+        );
+    }
+}
+
+fn assert_endpoint_refused(status: u16, body: &Value, audit: &str, leaked: &[&str]) {
+    assert_ne!(status, 200, "cross-origin endpoint must be refused: {body}");
+    assert_eq!(code(body), "MCP_SSE", "{body}");
+    let shown = body.to_string();
+    for needle in leaked.iter().chain(["/messages", "session_id"].iter()) {
+        assert!(
+            !shown.contains(needle),
+            "refusal echoed the endpoint ({needle}): {shown}"
+        );
+        assert!(!audit.contains(needle), "audit echoed the endpoint ({needle})");
+    }
+}
+
+#[tokio::test]
+async fn sse_endpoint_on_another_port_is_refused_before_any_post() {
+    let target = sse_stub(
+        "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+        |_| "/unused".into(),
+        PostReply::Echo,
+    )
+    .await
+    .expect("bind loopback target");
+    let other = target.port;
+    let stub = sse_stub(
+        "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+        move |_| format!("http://127.0.0.1:{other}/messages?session_id=port"), // DevSkim: ignore DS162092 DS137138 because the cross-port target is an owned loopback stub.
+        PostReply::Echo,
+    )
+    .await
+    .expect("bind loopback stub");
+    let server = McpServer::boot(&sse_stub_yaml(stub.port), &[("mcp.sse_allow_loopback", "true")]).await;
+    let (status, body) = sse_stub_call(&server).await;
+    let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
+    assert_endpoint_refused(status, &body, &audit, &[&format!(":{other}")]);
+    assert_eq!(
+        target.connections(),
+        0,
+        "the other-port listener must never be contacted"
+    );
+    assert_eq!(stub.posts(), 0);
+}
+
+#[tokio::test]
+async fn sse_endpoint_on_another_host_is_refused_before_any_post() {
+    // [::1] is loopback but a different host than the configured 127.0.0.1. // DevSkim: ignore DS162092 because this is a loopback test fixture.
+    match sse_stub("[::1]:0", |_| "/unused".into(), PostReply::Echo).await {
+        Some(target) => {
+            let other = target.port;
+            let stub = sse_stub(
+                "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+                move |_| format!("http://[::1]:{other}/messages?session_id=host"), // DevSkim: ignore DS137138 because the cross-host target is an owned loopback stub.
+                PostReply::Echo,
+            )
+            .await
+            .expect("bind loopback stub");
+            let server = McpServer::boot(&sse_stub_yaml(stub.port), &[("mcp.sse_allow_loopback", "true")]).await;
+            let (status, body) = sse_stub_call(&server).await;
+            let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
+            assert_endpoint_refused(status, &body, &audit, &["[::1]", &format!(":{other}")]);
+            assert_eq!(
+                target.connections(),
+                0,
+                "the other-host listener must never be contacted"
+            );
+        }
+        None => eprintln!("SKIP [::1] case: IPv6 loopback unavailable on this runner"),
+    }
+    // Cloud metadata literal: refused before any connection is attempted.
+    let stub = sse_stub(
+        "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+        |_| "http://169.254.169.254/messages?session_id=imds".into(), // DevSkim: ignore DS137138 because this asserts the metadata endpoint is refused.
+        PostReply::Echo,
+    )
+    .await
+    .expect("bind loopback stub");
+    let server = McpServer::boot(
+        &sse_stub_yaml(stub.port),
+        &[("mcp.sse_allow_loopback", "true"), ("mcp.timeout_sec", "10")],
+    )
+    .await;
+    let started = std::time::Instant::now();
+    let (status, body) = sse_stub_call(&server).await;
+    let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
+    assert_endpoint_refused(status, &body, &audit, &["169.254"]);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "refusal must not wait on a connection attempt"
+    );
+}
+
+#[tokio::test]
+async fn sse_endpoint_scheme_switch_is_refused_before_any_post() {
+    // Configured http; the endpoint switches scheme on the same host and port.
+    // A trusted TLS stub is not available here, so https-to-http downgrade is
+    // covered by the sse_endpoint unit test in src/server/mcp.rs.
+    let stub = sse_stub(
+        "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+        |port| format!("https://127.0.0.1:{port}/messages?session_id=scheme"), // DevSkim: ignore DS162092 because the scheme switch targets the owned loopback stub.
+        PostReply::Echo,
+    )
+    .await
+    .expect("bind loopback stub");
+    let server = McpServer::boot(&sse_stub_yaml(stub.port), &[("mcp.sse_allow_loopback", "true")]).await;
+    let (status, body) = sse_stub_call(&server).await;
+    let audit = std::fs::read_to_string(server.state.audit.path()).unwrap_or_default();
+    assert_endpoint_refused(status, &body, &audit, &["https://"]);
+    assert_eq!(
+        stub.connections(),
+        1,
+        "only the SSE GET may connect; no TLS attempt to the endpoint"
+    );
+}
+
+#[tokio::test]
+async fn sse_post_body_over_the_cap_is_refused_while_streaming() {
+    for reply in [
+        PostReply::DeclaredHuge { send: 4096 },
+        PostReply::ChunkedStall { send: 4096 },
+    ] {
+        let stub = sse_stub(
+            "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+            |_| "/messages?session_id=cap".into(),
+            reply,
+        )
+        .await
+        .expect("bind loopback stub");
+        let server = McpServer::boot(
+            &sse_stub_yaml(stub.port),
+            &[
+                ("mcp.sse_allow_loopback", "true"),
+                ("mcp.max_result_bytes", "1024"),
+                ("mcp.timeout_sec", "10"),
+            ],
+        )
+        .await;
+        let started = std::time::Instant::now();
+        let (status, body) = sse_stub_call(&server).await;
+        let label = match reply {
+            PostReply::DeclaredHuge { .. } => "declared Content-Length",
+            PostReply::ChunkedStall { .. } => "chunked",
+            PostReply::Echo => unreachable!(),
+        };
+        assert_eq!(status, 502, "{label}: {body}");
+        assert_eq!(
+            code(&body),
+            "MCP_RESULT_TOO_LARGE",
+            "{label}: an over-cap body must be refused, not buffered until timeout: {body}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{label}: refusal must not wait for the stalled body to finish"
+        );
+    }
+}

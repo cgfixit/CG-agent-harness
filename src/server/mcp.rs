@@ -560,13 +560,41 @@ fn sse_endpoint(base: &Url, body: &str) -> Result<Url> {
             event = rest.trim();
         } else if let Some(rest) = line.strip_prefix("data:") {
             if event == "endpoint" {
-                return base
+                let endpoint = base
                     .join(rest.trim())
-                    .map_err(|_| mcp_err("MCP_SSE", "sse endpoint is not a valid URL"));
+                    .map_err(|_| mcp_err("MCP_SSE", "sse endpoint is not a valid URL"))?;
+                // The pinned client only validated the configured host. An endpoint
+                // on another scheme, host, or port (an IP literal skips DNS entirely)
+                // would send JSON-RPC to an unvalidated target, so refuse it without
+                // echoing either URL.
+                if endpoint.origin() != base.origin() {
+                    return Err(mcp_err(
+                        "MCP_SSE",
+                        "sse endpoint must share the configured url's scheme, host, and port",
+                    ));
+                }
+                return Ok(endpoint);
             }
         }
     }
     Err(mcp_err("MCP_SSE", "sse stream missing endpoint event"))
+}
+
+/// Read a JSON-RPC POST body under `max` bytes, refusing early on an
+/// oversized Content-Length and otherwise as soon as the bytes read pass it.
+async fn read_capped_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    let too_large = || mcp_err("MCP_RESULT_TOO_LARGE", "sse MCP frame exceeds cap");
+    if response.content_length().is_some_and(|len| len > max as u64) {
+        return Err(too_large());
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(sse_transport_error)? {
+        if buf.len() + chunk.len() > max {
+            return Err(too_large());
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
 }
 
 async fn jsonrpc_post(
@@ -597,10 +625,7 @@ async fn jsonrpc_post(
     if !response.status().is_success() {
         return Err(mcp_err("MCP_SSE", format!("sse POST status {}", response.status())));
     }
-    let bytes = response.bytes().await.map_err(sse_transport_error)?;
-    if bytes.len() > runtime.max_result_bytes {
-        return Err(mcp_err("MCP_RESULT_TOO_LARGE", "sse MCP frame exceeds cap"));
-    }
+    let bytes = read_capped_body(response, runtime.max_result_bytes).await?;
     let reply: Value = serde_json::from_slice(&bytes).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?;
     if let Some(id) = id {
         if reply.get("id") != Some(&json!(id)) {
@@ -653,6 +678,112 @@ mod config_tests {
             !shown.contains("sse-url-secret-token") && !shown.contains("/sse?"),
             "transport error echoed the SSE URL"
         );
+    }
+
+    fn endpoint_event(data: &str) -> String {
+        format!("event: endpoint\ndata: {data}\n\n")
+    }
+
+    #[test]
+    fn sse_endpoint_accepts_same_origin() {
+        let base = Url::parse("http://127.0.0.1:8791/sse?token=t").unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+        let relative = sse_endpoint(&base, &endpoint_event("/messages?session=1")).unwrap();
+        assert_eq!(relative.as_str(), "http://127.0.0.1:8791/messages?session=1"); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+        let absolute = sse_endpoint(&base, &endpoint_event("http://127.0.0.1:8791/m")).unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+        assert_eq!(absolute.path(), "/m");
+        let https = Url::parse("https://mcp.example.org/sse").unwrap();
+        let default_port = sse_endpoint(&https, &endpoint_event("https://MCP.example.org:443/m")).unwrap();
+        assert_eq!(default_port.host_str(), Some("mcp.example.org"));
+    }
+
+    #[test]
+    fn sse_endpoint_refuses_cross_origin_without_echoing() {
+        let base = Url::parse("http://127.0.0.1:8791/sse").unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+        for data in [
+            "http://127.0.0.1:8792/m", // other port DevSkim: ignore DS162092 because this is a loopback test fixture.
+            "http://169.254.169.254/latest", // other host (metadata IP literal) DevSkim: ignore DS137138,DS162092 because this metadata IP is a cross-origin input the test expects refused and is never contacted.
+            "http://[::1]:8791/m", // other host (v6 loopback) DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+            "//evil.example/m",    // scheme-relative other host
+            "https://127.0.0.1:8791/m", // scheme switch DevSkim: ignore DS162092 because this is a loopback test fixture.
+        ] {
+            let err = sse_endpoint(&base, &endpoint_event(data)).unwrap_err();
+            assert_eq!(err.code, "MCP_SSE", "{data}");
+            assert!(
+                !err.message.contains("://") && !err.message.contains("169.254") && !err.message.contains("evil"),
+                "error echoed a URL for {data}"
+            );
+        }
+        let https = Url::parse("https://mcp.example.org/sse").unwrap();
+        let downgrade = endpoint_event("http://mcp.example.org/m"); // DevSkim: ignore DS137138,DS162092 because this is an https-to-http downgrade the test expects refused and is never contacted.
+        assert!(sse_endpoint(&https, &downgrade).is_err());
+    }
+
+    /// One-shot loopback HTTP server that answers the first request with `response`.
+    fn one_shot_server(response: Vec<u8>) -> (u16, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); // DevSkim: ignore DS162092 because this fixture listener is loopback only.
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut seen = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => seen.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let _ = stream.write_all(&response);
+            }
+        });
+        (port, handle)
+    }
+
+    async fn post_to(port: u16, max: usize) -> Result<Value> {
+        let runtime = McpRuntime {
+            max_result_bytes: max,
+            ..McpRuntime::disabled()
+        };
+        let endpoint = Url::parse(&format!("http://127.0.0.1:{port}/m")).unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        jsonrpc_post(&client, &runtime, &endpoint, "tools/call", json!({})).await
+    }
+
+    #[tokio::test]
+    async fn jsonrpc_post_refuses_oversized_content_length_before_reading() {
+        // Declares 10 MB but sends nothing more: must refuse on the header alone.
+        let head = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 10485760\r\n\r\n".to_vec();
+        let (port, server) = one_shot_server(head);
+        let err = post_to(port, 1024).await.unwrap_err();
+        assert_eq!(err.code, "MCP_RESULT_TOO_LARGE");
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn jsonrpc_post_refuses_streamed_body_past_cap() {
+        let mut resp = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n".to_vec();
+        resp.extend(std::iter::repeat_n(b' ', 4096));
+        let (port, server) = one_shot_server(resp);
+        let err = post_to(port, 1024).await.unwrap_err();
+        assert_eq!(err.code, "MCP_RESULT_TOO_LARGE");
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn jsonrpc_post_accepts_body_at_cap() {
+        let body = br#"{"jsonrpc":"2.0","id":ID,"result":{}}"#;
+        // The id is process-global; accept any id by checking the error kind instead.
+        let mut resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        resp.extend_from_slice(body);
+        let (port, server) = one_shot_server(resp);
+        let err = post_to(port, body.len()).await.unwrap_err();
+        // Not refused for size: it reached JSON parsing (the placeholder id is not valid JSON).
+        assert_eq!(err.code, "MCP_PROTOCOL");
+        server.join().unwrap();
     }
 
     #[test]
