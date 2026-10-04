@@ -422,7 +422,13 @@ fn sandbox_runs_checks_kills_on_timeout_and_scrubs_env() {
     let report = run_verification(&work, &checks, &audit, Some(&ArgvListSandbox), None).unwrap();
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     assert!(!report.ok);
-    assert_eq!(report.failed_names(), vec!["fail", "slow"]);
+    let failed: Vec<&str> = report
+        .results
+        .iter()
+        .filter(|r| !r.ok)
+        .map(|r| r.name.as_str())
+        .collect();
+    assert_eq!(failed, ["fail", "slow"]);
     assert!(report.results[0].ok, "{:?}", report.results[0]);
     assert_eq!(report.results[1].exit_code, 3);
     assert!(report.results[1].stderr.contains("boom"));

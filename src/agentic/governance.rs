@@ -9,23 +9,10 @@ use regex::RegexBuilder;
 
 use crate::common::injection::Scanner;
 
-pub const CRITICAL_SEVERITY: &str = "critical";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A governance hit. Every finding blocks the candidate; `code` names the rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GovernanceFinding {
-    pub severity: String,
-    pub code: String,
-    pub message: String,
-}
-
-impl GovernanceFinding {
-    pub fn critical(code: &str, message: &str) -> Self {
-        Self {
-            severity: CRITICAL_SEVERITY.into(),
-            code: code.into(),
-            message: message.into(),
-        }
-    }
+    pub code: &'static str,
 }
 
 fn re(pattern: &str) -> regex::Regex {
@@ -67,42 +54,38 @@ pub fn inspect_code_shape(candidate_text: &str, enabled: bool) -> Vec<Governance
     }
     let r = rules();
     let hits = [
+        // reads a credential/private-key path AND carries an egress or exec mechanism
         (
             r.secret_path.is_match(candidate_text) && r.egress.is_match(candidate_text),
             "candidate_credential_egress",
-            "reads a credential/private-key path AND carries an egress or exec mechanism",
         ),
+        // decodes an encoded blob AND passes it to a dynamic exec/eval
         (
             r.decode.is_match(candidate_text) && r.dynamic_exec.is_match(candidate_text),
             "candidate_obfuscated_exec",
-            "decodes an encoded blob AND passes it to a dynamic exec/eval",
         ),
+        // opens a socket AND duplicates file descriptors or spawns a shell
         (
             r.socket.is_match(candidate_text)
                 && (r.fd_dup.is_match(candidate_text) || r.shell_path.is_match(candidate_text)),
             "candidate_reverse_shell",
-            "opens a socket AND duplicates file descriptors or spawns a shell",
         ),
-        (
-            r.pipe_to_shell.is_match(candidate_text),
-            "candidate_pipe_to_shell",
-            "pipes a network download directly into a shell",
-        ),
+        // pipes a network download directly into a shell
+        (r.pipe_to_shell.is_match(candidate_text), "candidate_pipe_to_shell"),
     ];
-    hits.iter()
-        .filter(|(hit, _, _)| *hit)
-        .map(|(_, code, msg)| GovernanceFinding::critical(code, &format!("proposed file content {msg}")))
+    hits.into_iter()
+        .filter(|(hit, _)| *hit)
+        .map(|(_, code)| GovernanceFinding { code })
         .collect()
 }
 
-/// Flag prompt-injection-shaped candidate content (one critical finding on the first hit).
+/// Flag prompt-injection-shaped candidate content (one finding on the first hit).
 pub fn inspect_candidate_text(scanner: &Scanner, candidate_text: &str) -> Vec<GovernanceFinding> {
     if scanner.scan(candidate_text).is_empty() {
         Vec::new()
     } else {
-        vec![GovernanceFinding::critical(
-            "candidate_injection_pattern",
-            "candidate content matches a governed injection pattern",
-        )]
+        vec![GovernanceFinding {
+            code: "candidate_injection_pattern",
+        }]
     }
 }

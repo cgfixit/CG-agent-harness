@@ -84,12 +84,6 @@ pub struct VerificationReport {
     pub results: Vec<CheckResult>,
 }
 
-impl VerificationReport {
-    pub fn failed_names(&self) -> Vec<String> {
-        self.results.iter().filter(|r| !r.ok).map(|r| r.name.clone()).collect()
-    }
-}
-
 /// Run every check sequentially inside the sandbox. `sandbox` is for tests;
 /// production callers pass `None` and get `production_sandbox()`.
 pub fn run_verification(

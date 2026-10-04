@@ -32,7 +32,7 @@ pub fn exit_code_for(err: &HarnessError) -> u8 {
     }
 }
 
-fn heading(title: &str) {
+pub(super) fn heading(title: &str) {
     println!("== {title} ==");
 }
 
