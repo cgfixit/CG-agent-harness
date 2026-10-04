@@ -167,14 +167,17 @@ fn revoked_owners(home: &Home) -> Result<BTreeSet<String>> {
 fn bearers_refused() -> HarnessError {
     HarnessError::config(
         "notifications/bearers.json must be a regular file owned by this user, not a link, \
-         with mode 0600 (run `chmod 600` on it); restart after fixing",
+         with mode 0600 and no ACL entries (run `chmod 600 <path>`, and on macOS \
+         `chmod -N <path>`); restart after fixing",
     )
 }
 
 /// Read `bearers.json` only when it is private to this user. On Unix the
 /// opened descriptor (not the path) must be a regular file owned by the euid
 /// with no group/other bits and a single link; symlinks are refused by
-/// `O_NOFOLLOW`. The error never includes the file's contents.
+/// `O_NOFOLLOW`. On macOS the descriptor must also carry no extended ACL
+/// entries, because an ACL can grant other accounts read access that the mode
+/// bits do not show. The error never includes the file's contents.
 fn read_bearers_json(path: &std::path::Path) -> Result<Option<Value>> {
     use std::io::Read;
     // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
@@ -210,6 +213,13 @@ fn read_bearers_json(path: &std::path::Path) -> Result<Option<Value>> {
             return Err(bearers_refused());
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::io::AsRawFd;
+        if macos_acl::fd_has_acl_entries(file.as_raw_fd()) != Some(false) {
+            return Err(bearers_refused());
+        }
+    }
     let limit = 65_536;
     let mut bytes = Vec::new();
     file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
@@ -217,6 +227,58 @@ fn read_bearers_json(path: &std::path::Path) -> Result<Option<Value>> {
         return Err(invalid());
     }
     Ok(Some(serde_json::from_slice(&bytes).map_err(|_| invalid())?))
+}
+
+/// Minimal libSystem ACL bindings (no crate): only what the `bearers.json`
+/// check needs. Declarations follow `<sys/acl.h>` on Darwin.
+#[cfg(target_os = "macos")]
+mod macos_acl {
+    use std::os::raw::{c_int, c_void};
+
+    type AclT = *mut c_void;
+    type AclEntryT = *mut c_void;
+    /// `ACL_TYPE_EXTENDED` in `<sys/acl.h>`.
+    const ACL_TYPE_EXTENDED: u32 = 0x0000_0100;
+    /// `ACL_FIRST_ENTRY` in `<sys/acl.h>`.
+    const ACL_FIRST_ENTRY: c_int = 0;
+
+    extern "C" {
+        fn acl_get_fd_np(fd: c_int, kind: u32) -> AclT;
+        fn acl_get_entry(acl: AclT, entry_id: c_int, entry: *mut AclEntryT) -> c_int;
+        fn acl_free(obj: *mut c_void) -> c_int;
+    }
+
+    /// Frees the ACL on every return path.
+    struct Acl(AclT);
+
+    impl Drop for Acl {
+        fn drop(&mut self) {
+            // SAFETY: `self.0` is a non-null ACL from `acl_get_fd_np`, freed once.
+            unsafe {
+                acl_free(self.0);
+            }
+        }
+    }
+
+    /// `Some(true)` when the open file has at least one extended ACL entry,
+    /// `Some(false)` when it has none (or the filesystem has no ACLs), and
+    /// `None` when the ACL could not be read; callers refuse on `None`.
+    pub(super) fn fd_has_acl_entries(fd: c_int) -> Option<bool> {
+        // SAFETY: `fd` is a live descriptor owned by the caller for this call.
+        let raw = unsafe { acl_get_fd_np(fd, ACL_TYPE_EXTENDED) };
+        if raw.is_null() {
+            return match std::io::Error::last_os_error().raw_os_error() {
+                // No extended ACL on this file, or none possible on this filesystem.
+                Some(libc::ENOENT) | Some(libc::ENOTSUP) => Some(false),
+                _ => None,
+            };
+        }
+        let acl = Acl(raw);
+        let mut entry: AclEntryT = std::ptr::null_mut();
+        // SAFETY: `acl.0` is a valid ACL and `entry` is a valid out-pointer.
+        let found = unsafe { acl_get_entry(acl.0, ACL_FIRST_ENTRY, &mut entry) } == 0;
+        Some(found)
+    }
 }
 
 fn bearer_tokens(home: &Home) -> Result<std::collections::BTreeMap<String, String>> {
