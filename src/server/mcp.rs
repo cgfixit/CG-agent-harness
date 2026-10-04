@@ -701,7 +701,7 @@ mod config_tests {
         let base = Url::parse("http://127.0.0.1:8791/sse").unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
         for data in [
             "http://127.0.0.1:8792/m", // other port DevSkim: ignore DS162092 because this is a loopback test fixture.
-            "http://169.254.169.254/latest", // other host (metadata IP literal) DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+            "http://169.254.169.254/latest", // other host (metadata IP literal) DevSkim: ignore DS137138,DS162092 because this metadata IP is a cross-origin input the test expects refused and is never contacted.
             "http://[::1]:8791/m", // other host (v6 loopback) DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
             "//evil.example/m",    // scheme-relative other host
             "https://127.0.0.1:8791/m", // scheme switch DevSkim: ignore DS162092 because this is a loopback test fixture.
@@ -714,7 +714,7 @@ mod config_tests {
             );
         }
         let https = Url::parse("https://mcp.example.org/sse").unwrap();
-        let downgrade = endpoint_event("http://mcp.example.org/m"); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+        let downgrade = endpoint_event("http://mcp.example.org/m"); // DevSkim: ignore DS137138,DS162092 because this is an https-to-http downgrade the test expects refused and is never contacted.
         assert!(sse_endpoint(&https, &downgrade).is_err());
     }
 
