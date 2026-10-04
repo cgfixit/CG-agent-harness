@@ -113,6 +113,10 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   `cargo test --all-targets` green; `cargo deny check` clean. Rust 1.88 is
   pinned. `scripts/verify-local.sh` skips deny when cargo-deny is missing, so
   its green run is not deny evidence.
+- Testing and verification rules when making code changes: lint GitHub
+  Actions workflows rather than running tests where you can. When you verify a
+  local change, run only the code tied to that change, not the whole suite. CI
+  still runs the full gate above.
 - New routes: add to `routes/mod.rs::REGISTERED_PATHS` (and `views.rs` if the
   console lists them) or `/api/tools` reports them unwired.
 - New shim actions: extend `shim::ACTIONS`, `agentic/commands.rs::dispatch`, and
