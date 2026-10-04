@@ -18,32 +18,18 @@ pub const PROMPT_HISTORY_LIMIT: usize = 50;
 pub const MAX_PINNED_ATTACHMENTS: usize = 12;
 const SESSION_ID_CHARS: usize = 12;
 
-fn id_re() -> &'static regex::Regex {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"\A[0-9a-f]{12}\z").expect("static regex"))
-}
-
 /// Twelve lowercase hex chars. Export paths must use this, not a deserialized field blindly.
 pub fn session_id_ok(id: &str) -> bool {
-    id_re().is_match(id)
+    crate::common::is_lower_hex(id, SESSION_ID_CHARS)
 }
 
 /// Parse twelve lowercase hex digits into an integer. The integer, not the
 /// original string, is what export uses to build a filename.
 pub fn session_id_u64(raw: &str) -> Result<u64> {
-    if raw.len() != SESSION_ID_CHARS {
+    if !session_id_ok(raw) {
         return Err(session_error("invalid session id", raw));
     }
-    let mut n = 0u64;
-    for b in raw.bytes() {
-        let digit = match b {
-            b'0'..=b'9' => u64::from(b - b'0'),
-            b'a'..=b'f' => u64::from(b - b'a' + 10),
-            _ => return Err(session_error("invalid session id", raw)),
-        };
-        n = (n << 4) | digit;
-    }
-    Ok(n)
+    u64::from_str_radix(raw, 16).map_err(|_| session_error("invalid session id", raw))
 }
 
 /// Rebuild a session id from an integer so filesystem names cannot carry `../`.
@@ -201,7 +187,7 @@ impl SessionStore {
     }
 
     fn path_for(&self, session_id: &str) -> Result<PathBuf> {
-        if !id_re().is_match(session_id) {
+        if !session_id_ok(session_id) {
             return Err(session_error("invalid session id", session_id));
         }
         Ok(self.dir.join(format!("{session_id}.json")))
@@ -264,7 +250,7 @@ impl SessionStore {
             for e in rd.flatten() {
                 let p = e.path();
                 let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if p.extension().and_then(|s| s.to_str()) != Some("json") || !id_re().is_match(stem) {
+                if p.extension().and_then(|s| s.to_str()) != Some("json") || !session_id_ok(stem) {
                     continue;
                 }
                 let (mtime, len) = e
@@ -321,7 +307,7 @@ impl SessionStore {
             for e in rd.flatten() {
                 let p = e.path();
                 let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if p.extension().and_then(|s| s.to_str()) == Some("json") && id_re().is_match(stem) {
+                if p.extension().and_then(|s| s.to_str()) == Some("json") && session_id_ok(stem) {
                     // Rebuild from the integer so a directory stem cannot carry `../`
                     // into `path_for` / `join`. Skip names the parser refuses.
                     let Ok(id) = canonical_session_id(stem) else {
@@ -489,7 +475,7 @@ impl OwnedSessionStore<'_> {
             for entry in dir.entries()? {
                 let name = entry?.file_name();
                 let Some(name) = name.to_str() else { continue };
-                let session_file = name.strip_suffix(".json").is_some_and(|id| id_re().is_match(id));
+                let session_file = name.strip_suffix(".json").is_some_and(session_id_ok);
                 if session_file && dir.symlink_metadata(name)?.is_dir() {
                     return Err(std::io::Error::other("session file is a directory"));
                 }
@@ -1151,7 +1137,7 @@ mod attachment_pin_tests {
         let hostile_payload = r#"{"session_id":"deadbeefdead","attachment_pins":[{"owner":"alice","id":"leak"}]}"#;
         std::fs::write(&secret, hostile_payload).unwrap();
 
-        // Names that match neither `id_re` nor `canonical_session_id`.
+        // Names that match neither `session_id_ok` nor `canonical_session_id`.
         let hostile_upper = dir.path().join("AAAAAAAAAAAA.json");
         let hostile_short = dir.path().join("aaaa.json");
         std::fs::write(&hostile_upper, hostile_payload).unwrap();

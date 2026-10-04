@@ -68,7 +68,7 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
     let summaries = store.list();
     let mut evidence: Vec<(String, String, String, f64, String)> = Vec::new();
     let mut bytes = 0usize;
-    for (i, summary) in summaries.iter().take(MAX_SESSIONS).enumerate() {
+    for summary in summaries.iter().take(MAX_SESSIONS) {
         let Some(id) = summary["session_id"].as_str() else {
             continue;
         };
@@ -83,13 +83,6 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
             }
             for chunk in chunks(&msg.text, overlap) {
                 let row = evidence.len() as u64;
-                evidence.push((
-                    session.session_id.clone(),
-                    title.clone(),
-                    msg.role.clone(),
-                    msg.ts,
-                    chunk.clone(),
-                ));
                 writer
                     .add_document(doc!(
                         f_title => title.as_str(),
@@ -100,10 +93,16 @@ pub fn search_sessions(store: &OwnedSessionStore<'_>, query: &str) -> Result<Vec
                         f_row => row,
                     ))
                     .map_err(|_| HarnessError::new("SESSION_SEARCH_FAILED", "could not index session"))?;
+                evidence.push((
+                    session.session_id.clone(),
+                    title.clone(),
+                    msg.role.clone(),
+                    msg.ts,
+                    chunk,
+                ));
             }
         }
         if bytes > MAX_BYTES {
-            let _ = i;
             break;
         }
     }
