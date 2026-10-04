@@ -63,4 +63,46 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2
 quick-xml = "0.42.0"
 dunce = "1"
 cap-std = "4"
-scraper = { version = "0.27", default-features =false }
+scraper = { version = "0.27", default-features = false }
+robotstxt = "0.3"
+tantivy = { version = "0.26.2", default-features = false, features = ["mmap", "lz4-compression", "stemmer"] }
+# Pinned to the 3.6 Entry API. Platform stores are explicit features: macOS Keychain,
+# Windows Credential Manager, and Linux Secret Service (dbus). No default features.
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+# Self dev-dependency: enables `test-support` for integration tests only. Resolver 2
+# keeps dev-dependency features out of `cargo build --release`. The exact version
+# pin satisfies deny.toml `wildcards = "deny"`; bump it with `package.version`.
+cgagentharness = { path = ".", version = "=0.1.0", features = ["test-support"] }
+proptest = "1.6"
+# I6 is enforced by parsing `use` trees in tests/invariant_guard.rs, not by
+# scanning for substrings: `use crate::{agentic as pipeline}` defeats a substring
+# scan. syn is already in the lock graph via the derive macros, so this adds no
+# new crates to the build.
+syn = { version = "2", default-features = false, features = ["full", "parsing", "visit"] }
+
+# scrypt at n=2^17 is unusably slow unoptimized; optimize dependencies even in dev/test.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
