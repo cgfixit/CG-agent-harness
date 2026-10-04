@@ -164,8 +164,63 @@ fn revoked_owners(home: &Home) -> Result<BTreeSet<String>> {
     Ok(set)
 }
 
+fn bearers_refused() -> HarnessError {
+    HarnessError::config(
+        "notifications/bearers.json must be a regular file owned by this user, not a link, \
+         with mode 0600 (run `chmod 600` on it); restart after fixing",
+    )
+}
+
+/// Read `bearers.json` only when it is private to this user. On Unix the
+/// opened descriptor (not the path) must be a regular file owned by the euid
+/// with no group/other bits and a single link; symlinks are refused by
+/// `O_NOFOLLOW`. The error never includes the file's contents.
+fn read_bearers_json(path: &std::path::Path) -> Result<Option<Value>> {
+    use std::io::Read;
+    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+    let raw = path.to_string_lossy();
+    if raw.contains("..") {
+        return Err(invalid());
+    }
+    let path = std::path::Path::new(raw.as_ref());
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+        Ok(meta) if !meta.is_file() => return Err(bearers_refused()),
+        Ok(_) => {}
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let file = options.open(path).map_err(|_| bearers_refused())?;
+    let meta = file.metadata().map_err(|_| bearers_refused())?;
+    if !meta.is_file() {
+        return Err(bearers_refused());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        if meta.uid() != euid || meta.mode() & 0o077 != 0 || meta.nlink() != 1 {
+            return Err(bearers_refused());
+        }
+    }
+    let limit = 65_536;
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(invalid());
+    }
+    Ok(Some(serde_json::from_slice(&bytes).map_err(|_| invalid())?))
+}
+
 fn bearer_tokens(home: &Home) -> Result<std::collections::BTreeMap<String, String>> {
-    let Some(value) = read_optional_json(&bearer_path(home))? else {
+    let Some(value) = read_bearers_json(&bearer_path(home))? else {
         return Ok(std::collections::BTreeMap::new());
     };
     if value.get("version").and_then(|v| v.as_u64()) != Some(1) {
@@ -809,6 +864,78 @@ async fn send_pinned(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    mod bearers_private {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        const SECRET: &str = "bearer-unit-fixture-secret";
+
+        fn write(dir: &std::path::Path, mode: u32) -> std::path::PathBuf {
+            let path = dir.join("bearers.json");
+            let body = format!(r#"{{"version":1,"tokens":{{"hook":"{SECRET}"}}}}"#);
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            path
+        }
+
+        fn assert_refused(path: &std::path::Path) {
+            let err = read_bearers_json(path).unwrap_err();
+            let shown = format!("{err} {err:?}");
+            assert!(shown.contains("chmod 600"), "error must say how to fix it");
+            assert!(!shown.contains(SECRET), "error leaked the bearer secret");
+        }
+
+        #[test]
+        fn private_file_loads() {
+            let dir = tempfile::tempdir().unwrap();
+            let value = read_bearers_json(&write(dir.path(), 0o600)).unwrap().unwrap();
+            assert_eq!(value["tokens"]["hook"], SECRET);
+        }
+
+        #[test]
+        fn missing_file_is_none() {
+            let dir = tempfile::tempdir().unwrap();
+            assert!(read_bearers_json(&dir.path().join("bearers.json")).unwrap().is_none());
+        }
+
+        #[test]
+        fn group_or_world_bits_are_refused() {
+            for mode in [0o644, 0o640, 0o604, 0o620, 0o660] {
+                let dir = tempfile::tempdir().unwrap();
+                assert_refused(&write(dir.path(), mode));
+            }
+        }
+
+        #[test]
+        fn hard_link_is_refused() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = write(dir.path(), 0o600);
+            std::fs::hard_link(&path, dir.path().join("other")).unwrap();
+            assert_refused(&path);
+        }
+
+        #[test]
+        fn symlink_is_refused() {
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("real");
+            std::fs::create_dir(&target).unwrap();
+            let real = write(&target, 0o600);
+            let link = dir.path().join("bearers.json");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            assert_refused(&link);
+        }
+
+        #[test]
+        fn directory_is_refused() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("bearers.json");
+            std::fs::create_dir(&path).unwrap();
+            assert_refused(&path);
+        }
+    }
+
     #[test]
     fn optional_json_refuses_parent_components() {
         let err = read_optional_json(std::path::Path::new("/tmp/harness/../bearers.json")).unwrap_err();
