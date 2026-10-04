@@ -17,7 +17,7 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::mcp::{call_stdio, mcp_err, namespaced, validate_server_name, validate_tool_name};
 use crate::common::mcp_policy::StdioCapabilities;
 use crate::common::tool_broker::assert_allowed;
-use crate::llm::backend::{is_loopback_url, LOOPBACK_HOSTS};
+use crate::llm::backend::LOOPBACK_HOSTS;
 
 use super::web_policy::is_public_ip;
 use super::web_search::validate_addresses;
@@ -428,9 +428,6 @@ async fn pinned_client(runtime: &McpRuntime, target: &Url) -> Result<reqwest::Cl
             "MCP_SSRF_DENIED",
             "loopback SSE MCP is disabled (mcp.sse_allow_loopback)",
         ));
-    }
-    if !loopback_host && is_loopback_url(target.as_str()) {
-        return Err(mcp_err("MCP_SSRF_DENIED", "sse url host is loopback"));
     }
     let addresses = if let Some((test_host, addr)) = &runtime.test_resolve {
         if test_host == &host {

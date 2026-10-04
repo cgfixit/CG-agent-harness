@@ -24,15 +24,14 @@ pub struct ResolvedLocalBackend {
     pub reasoning_effort: Option<String>,
 }
 
-/// Whether `url`'s host is one of the supported loopback names.
+/// Whether `url`'s host is one of the supported loopback names. `host_str()`
+/// keeps IPv6 brackets (`[::1]`), so strip them before matching, as the
+/// request-authority guards do; the url crate already lowercases hosts.
 pub fn is_loopback_url(url: &str) -> bool {
-    match url::Url::parse(url) {
-        Ok(u) => u
-            .host_str()
-            .map(|h| LOOPBACK_HOSTS.contains(&h.to_lowercase().as_str()))
-            .unwrap_or(false),
-        Err(_) => false,
-    }
+    url::Url::parse(url).is_ok_and(|u| {
+        u.host_str()
+            .is_some_and(|h| LOOPBACK_HOSTS.contains(&h.trim_matches(['[', ']'])))
+    })
 }
 
 /// `models.local_llm.reasoning_effort`: absent/empty -> None; invalid -> CONFIG_ERROR.
