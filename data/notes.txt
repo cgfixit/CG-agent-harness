@@ -1,44 +1,128 @@
-I'll dig into the actual code paths for web, loop, and goal in cg-agent-harness, then compare against how Codex-style harnesses handle local models, and give you concrete levers. Let me pull the repo state first.
-I've read the current main (ollama.rs, backend.rs, openai_chat.rs, agentic config, config.default.yaml). Here's the honest picture: most of the "errors" you're hitting are not the model being dumb — they're the harness's strict contract colliding with the server's actual context window, plus a few Codex-style behaviors your harness deliberately doesn't have. Breaking it down:
+Verified against cg-agent-harness main (openai_chat.rs parse_chat_response,
+docs/MODELS.md, assets/config.default.yaml, src/llm/ollama.rs). Skill
+orientation SHA 9596658f. This is operator guidance, not a PR and not a
+write-gate change.
 
-## Why Codex + qwen feels smoother
+Three different "memory" problems. Do not treat them as one knob.
 
-Codex runs qwen as a **tool-calling loop with small incremental prompts**: each turn is short, the model emits one structured tool call, gets a small result back, and repeats. Failures are cheap and retried per-step. Your harness instead does **big single-shot completions** (chat turn, web synthesis, /loop plan) with a hard rule: `finish_reason` must be exactly `"stop"`, or the whole turn errors out (openai_chat.rs `parse_chat_response`). One truncation = one user-visible error, no retry. That's the core smoothness gap.
+1. Harness memory is disk under ~/.CGagentHarness. Pinned notes and
+   structured memory cannot authorize tools, coding, or network. Mode 0600
+   is not encryption. Compaction (chat.compact_prompt_tokens seeded 24000,
+   keep 8) shrinks the next on-disk prompt. It does not free KV and it
+   does not reserve RAM. Immediate GPU release is not claimed.
 
-## The #1 suspect: your server window isn't what the config assumes
+2. KV cache is the attention K/V working set inside Ollama or MLX. It
+   grows with layers, KV heads, head dim, sequence, and batch. The harness
+   never sends num_ctx (ollama.rs, INVARIANTS.md, MODELS.md). The server
+   window is whatever Ollama was started with. Seeded web.total_tokens
+   28000 and evidence_tokens 6000 assume a verified 32768 window. If you
+   cannot verify it, home config stays 16000/3000. Existing homes are not
+   rewritten. Confirm with a short generate that does not send num_ctx,
+   then curl 127.0.0.1:11434/api/ps. context_length must match the budget.
+   OLLAMA_CONTEXT_LENGTH=32768 before ollama serve (or launchctl setenv,
+   then full quit). OLLAMA_CONTEXT is not the documented lever.
+   finetune/Modelfile.cgagent PARAMETER num_ctx 32768 is the GGUF re-export
+   only, not the live chat path.
 
-The harness **never sends `num_ctx`** — it inherits whatever Ollama was started with, and the config is sized for a **verified 32768** window. If Ollama is actually running at its default (4096), every fat web-research or goal prompt blows the window, the model returns `finish_reason=length`, and you get "model response did not report a normal completion" / truncated-output errors. Check:
+3. Host memory pressure is the OS or hypervisor reclaiming that working
+   set. On the 48GB M5 Pro there is no VMware balloon. The analog is
+   macOS compressor / jetsam: weights + KV + OS + other apps over the
+   unified pool, decode stalls, then ReadTimeout or "model server
+   unreachable". In a VMware guest the mechanism is balloon (vmmemctl),
+   compression, and .vswp. Same symptom, different knob. A ballooned
+   guest can report the stall while /api/ps still says 32768. Quantizing
+   KV does not fix an overcommitted VM; a reservation does not fix a
+   4096 server window.
 
-```
-OLLAMA_CONTEXT_LENGTH=32768 ollama serve
-curl 127.0.0.1:11434/api/ps   # context_length must read 32768
-```
+parse_chat_response accepts only finish_reason "stop". "length" is a
+typed truncation error ("reduce the requested output or adjust the
+configured token budget"). Any other reason, including null, is "did not
+report a normal completion (finish_reason=stop required)". No retry.
+That is why a Codex-style short tool loop feels smoother: one truncation
+there is one cheap step; here it fails the whole chat, web, or /loop
+turn. Web tool turns also require finish_reason "tool_calls" before the
+dispatcher runs. Cloud chat is a different client (Claude end_turn, Grok
+completed) and is not this path.
 
-If `/api/ps` shows anything smaller (or you can't verify), config.default.yaml itself tells you the fallback: `web.total_tokens: 16000`, `web.evidence_tokens: 3000`, `chat.compact_prompt_tokens` correspondingly lower. Running 28k web budgets against a smaller real window is guaranteed errors.
+Use which model for which job (48GB unified, not a VMware guest):
 
-## Concrete config levers (no code changes)
+- qwen3.8:27b at a verified 32768. Default for planner and hard coding.
+  Quality over context. fp16 KV at 32k is on the order of several GB
+  (q8_0 roughly halves that). 128k on this class is tens of GB of KV
+  plus ~18GB weights and does not fit beside the OS. The harness seed
+  is 32k because that is the verified window, not because 32k is a
+  hardware constant. OLLAMA_KV_CACHE_TYPE=q8_0 and OLLAMA_FLASH_ATTENTION=1
+  are Ollama process env, not harness keys. They are a quality trade.
+  Keep OLLAMA_NUM_PARALLEL=1. Do not drop to 7B just to chase context
+  if the failure is a 4096 server window.
 
-1. **KV cache + parallelism on 48GB**: start Ollama with `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` — a 32k KV cache for a 27B model is several GB in fp16; q8_0 halves it and prevents memory pressure that causes mid-request stalls (which surface as `ReadTimeout` errors). Keep `OLLAMA_NUM_PARALLEL=1`.
-2. **`warmup.keep_alive_sec: 300 → 1800–3600`**: web research does multiple model calls over minutes (2 planning rounds + synthesis). At 300s the model unloads between phases and you pay a reload (and a possible stall) mid-flow. Longer keep-alive = fewer "model server unreachable" flakes.
-3. **`reasoning_effort: "none"`** — you already have this; keep it. With qwen3 thinking enabled, the 2x reservation halves your effective max_tokens and truncations get much more likely.
-4. **`web.model_tokens`** (synthesis completion, default 1024): fine. But if you see `finish_reason=length` specifically on web turns, this plus `evidence_tokens` is where to trim first.
-5. **`agentic.deepagent_github.retrieval.enabled: true`**: ships off. Turning it on lets the planner pull 3 small file excerpts instead of you pasting big context — smaller prompts, fewer window overflows on goal/loop work.
-6. **`/loop` has its own tight budget**: `harness_loop_rate_limit.max_tokens: 2048` and 8 requests / 5 min. Keep loop goals small and atomic; a sprawling goal guarantees truncation errors at 2048.
+- 7B-8B class (qwen2.5:7b, qwen3:8b, qwen2.5-coder:7b) when the job is
+  long evidence: web synthesis, big logs, stuffed goal context. Advertised
+  window is 128k. Weights ~5GB. fp16 KV at 128k is on the order of
+  ~5-8GB for a 7B GQA model, not "zero pressure", and not 40GB free.
+  Weights + KV + overhead land nearer 12-20GB. 128k fits. Past the
+  trained window, RAM fit is not quality. Sweet spot is the trained
+  window, usually 128k, after /api/ps proves it.
 
-## Code-level gaps vs Codex (PR candidates)
+- 14B coder when 7B quality is not enough and 27B at 32k keeps
+  truncating. 128k fits with less headroom than 7B. Still verify
+  context_length. Still not a harness num_ctx.
 
-These are the real "make it feel like Codex" changes, each small and reviewable:
+- 20B-class MoE only if the exact tag is installed and /api/ps proves
+  the window. Tighter than 8B. Not a default.
 
-1. **Bounded retry on `finish_reason=length`**: on truncation, retry once with a smaller `max_tokens` (or trimmed context) instead of erroring the turn. Single biggest smoothness win — converts the most common error into a silent recovery. Lives in `parse_chat_response` callers.
-2. **Fallback-reason tolerance for MLX servers**: some OpenAI-compatible local servers report `finish_reason` inconsistently (`null`, `"eos"`). Whitelist additional terminal reasons when usage shows a completed short output, so MLX/LM Studio backends don't error on cosmetic differences.
-3. **Loop step-wise decomposition**: instead of one 2048-token plan response, iterate plan→step→step with per-step calls (Codex shape). Bigger change, would slot behind the existing loop budget.
-4. **Per-call `num_ctx` probe logging**: log the `/api/ps` context_length at warmup and warn in audit if it diverges from what `web.total_tokens` assumes — turns silent misconfiguration into a loud, actionable line.
+Do not wire num_ctx 131072 into the harness model list. /model use
+changes the chat tag only; the planner has its own tag and base_url.
+A Modelfile PARAMETER num_ctx or OLLAMA_CONTEXT_LENGTH is the server
+lever. After a larger window, home web.total_tokens still has to match
+it. The seed comment caps total_tokens at 32000. Raising that is a
+home-config edit plus restart, not a model-list field.
 
-Items 1 and 4 are small, high-value, and squarely within the repo's existing invariants (no new providers, no authority changes). Want me to draft #1 (and optionally #4) as a PR on a `kimi/` branch? CI would be the verification of record per the usual contract.
+Config levers that are real, and what they are for:
 
-verify and determine use cases where to use what:
+- Server window first. Almost every "model did not report a normal
+  completion" on a fat web or goal turn is finish_reason=length or a
+  non-stop reason because the live window is below the budget. Fix the
+  window or lower the budget. Do not start with a smaller model.
 
-Context on 48 GB is just "whatever's left after the weights fit." Your 27B is too big to hold a large KV cache, which is exactly why it's capped at 32k. To get more context, drop to the 7B–8B class — those support 128k and leave ~40 GB for the cache, so 128k runs comfortably and you can even push toward 192–256k.
+- warmup.keep_alive_sec seeded 300, allowed 1-3600, sent as keep_alive,
+  never num_ctx. Raise toward 1800-3600 only if web research (plan,
+  plan, synthesis) unloads the model between calls. Does not enlarge KV.
+  Existing homes keep their value.
+
+- reasoning_effort "none" is already the seed. Leave it. Thinking-mode
+  token use is a model behavior, not a second harness budget I verified
+  in this pass.
+
+- web.model_tokens seeded 1024 (256-2048) is the synthesis completion
+  cap. Trim this and evidence_tokens when web turns return length.
+  Trim total_tokens when the prompt itself overflows.
+
+- agentic.deepagent_github.retrieval.enabled ships off (literal true
+  only). Child-only Tantivy over the clone jail. Cuts pasted planner
+  context. Does not run on cloud proposers, does not arm writes, does
+  not change chat or /loop.
+
+- /loop is a separate tighter budget (harness_loop_rate_limit,
+  max_requests seeded 8). Keep goals atomic. Do not quote a 2048
+  max_tokens or a 5-minute window until you read the home file. /loop
+  is not /agent.
+
+Not config. Do not do these from advice:
+
+- Retry on finish_reason=length. Real gap vs Codex. Behavior change in
+  the parse_chat_response callers. One concern, draft PR, grok/ branch.
+- Whitelist null or "eos" for MLX. Also a code change. MLX is loopback
+  OpenAI-compatible only; an -mlx tag does not prove the backend.
+- Per-call num_ctx. The invariant is that pull and chat never send it.
+  Logging /api/ps context_length at warmup is the compatible version
+  of that idea.
+
+VMware only if Ollama actually runs in a guest. Reservation at or above
+weights + peak KV + OS, balloon off or pinned, no overcommit. Then the
+same /api/ps check. Harness compaction still only shrinks the next
+prompt. On the Mac, skip the balloon work and treat compressor stalls
+as the same working-set rule.
 
 --
 
