@@ -126,7 +126,8 @@ pub(super) fn tier_rows(cfg: &NetconnectConfig) -> Vec<Value> {
                 "tier_enabled": cfg.tier_enabled(tier),
                 "runnable": cfg.tier_may_run(tier),
             })
-        }n        .collect()
+        })
+        .collect()
 }
 
 fn disabled() -> HarnessError {
