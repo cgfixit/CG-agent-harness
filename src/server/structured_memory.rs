@@ -3154,6 +3154,8 @@ impl StructuredMemoryStore {
     }
 
     /// Test hook: fail the next proposal insert so finish rolls back.
+    /// Integration tests reach it through the `test-support` feature.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_proposal_insert_failure(&self, enabled: bool) -> Result<()> {
         let conn = self.lock();
         if enabled {

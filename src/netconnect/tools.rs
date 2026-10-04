@@ -21,10 +21,9 @@ use serde_json::{json, Value};
 
 use crate::common::errors::{HarnessError, Result};
 
-use super::collect::{
-    collect_passive, FixtureInterfaces, FixtureNeighbors, FixtureRoutes, InterfaceSource, NeighborSource,
-    PassiveReport, RouteSource,
-};
+use super::collect::{collect_passive, InterfaceSource, NeighborSource, PassiveReport, RouteSource};
+#[cfg(any(test, feature = "test-support"))]
+use super::collect::{FixtureInterfaces, FixtureNeighbors, FixtureRoutes};
 use super::config::{NetconnectConfig, Tier};
 use super::sanitize::{sanitize_untrusted, UntrustedString};
 use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
@@ -261,6 +260,7 @@ impl PassiveSources {
     }
 
     /// Fixture rows with one shared load counter. Each `load` increments it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn fixtures(
         neighbors: FixtureNeighbors,
         routes: FixtureRoutes,
@@ -281,6 +281,7 @@ impl PassiveSources {
     }
 
     /// A source that records a call and then panics. Disabled routes must not reach it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn probe(loads: Arc<std::sync::atomic::AtomicUsize>) -> Self {
         let probe = Arc::new(LoadProbe { loads });
         Self {
@@ -291,6 +292,7 @@ impl PassiveSources {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct CountedFixtures {
     neighbors: FixtureNeighbors,
     routes: FixtureRoutes,
@@ -298,6 +300,7 @@ struct CountedFixtures {
     loads: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl NeighborSource for CountedFixtures {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -305,6 +308,7 @@ impl NeighborSource for CountedFixtures {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl RouteSource for CountedFixtures {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -312,6 +316,7 @@ impl RouteSource for CountedFixtures {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl InterfaceSource for CountedFixtures {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -319,10 +324,12 @@ impl InterfaceSource for CountedFixtures {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct LoadProbe {
     loads: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl NeighborSource for LoadProbe {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -330,6 +337,7 @@ impl NeighborSource for LoadProbe {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl RouteSource for LoadProbe {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -337,6 +345,7 @@ impl RouteSource for LoadProbe {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl InterfaceSource for LoadProbe {
     fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
         self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -350,6 +359,7 @@ pub fn panel_sources(cfg: &NetconnectConfig, sources: &PassiveSources) -> Result
 }
 
 /// Same device listing as [`call_devices`], using the sources the HTTP handler was given.
+#[cfg(any(test, feature = "test-support"))]
 pub fn devices_sources(cfg: &NetconnectConfig, sources: &PassiveSources) -> Result<Value> {
     call_devices(cfg, &sources.neighbors, &sources.routes, &sources.interfaces)
 }

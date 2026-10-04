@@ -549,6 +549,7 @@ dependencies = [
  "axum-server",
  "base64 0.22.1",
  "cap-std",
+ "cgagentharness",
  "chrono",
  "chrono-tz",
  "clap",
