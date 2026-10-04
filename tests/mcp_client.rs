@@ -907,7 +907,7 @@ async fn sse_endpoint_on_another_port_is_refused_before_any_post() {
 
 #[tokio::test]
 async fn sse_endpoint_on_another_host_is_refused_before_any_post() {
-    // [::1] is loopback but a different host than the configured 127.0.0.1.
+    // [::1] is loopback but a different host than the configured 127.0.0.1. // DevSkim: ignore DS162092 because this is a loopback test fixture.
     match sse_stub("[::1]:0", |_| "/unused".into(), PostReply::Echo).await {
         Some(target) => {
             let other = target.port;
