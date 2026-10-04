@@ -1,7 +1,7 @@
 //! Linux bubblewrap acceptance. Set CGAH_REQUIRE_LINUX_BWRAP (any value) to
 //! require execution: unavailable confinement or a non-Linux host then fails.
 //! Ordinary Linux CI still diagnoses runner limitations without claiming proof.
-//! SIGKILL of a live grandchild is not covered.
+//! A timed-out run must also take down a live grandchild (no orphans).
 
 use cgagentharness::agentic::executor::sandbox::LinuxBubblewrapSandbox;
 
@@ -215,24 +215,27 @@ with socket.socket() as client:
     );
 }
 
-// #304 E1 contract: the sandboxed command never shares the harness session or
-// its controlling terminal; bwrap must be told `--new-session`.
+// #304 E1 contract, revised on #349: the harness runs the outer bwrap under
+// `setsid`, so the sandboxed tree already has no controlling terminal (TIOCSTI
+// is closed). bwrap's own `--new-session` would move the command out of the
+// process group the timeout and cancel paths kill (bubblewrap #726), so it must
+// not be requested.
 
 #[cfg(target_os = "linux")]
-fn assert_new_session_before_command(argv: &[String]) {
+fn assert_no_new_session_before_command(argv: &[String]) {
     let split = argv
         .iter()
         .position(|a| a == "--")
         .expect("bwrap argv has a `--` separator");
     assert!(
-        argv[..split].iter().any(|a| a == "--new-session"),
-        "bwrap options must include --new-session: {argv:?}"
+        !argv[..split].iter().any(|a| a == "--new-session"),
+        "bwrap options must not include --new-session (it splits the killed process group): {argv:?}"
     );
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn bwrap_argv_requests_a_new_session() {
+fn bwrap_argv_does_not_request_a_new_session() {
     let tmp = tempfile::tempdir().unwrap();
     let candidate = tmp.path().join("candidate");
     let scratch = tmp.path().join("scratch");
@@ -247,13 +250,13 @@ fn bwrap_argv_requests_a_new_session() {
         &[],
     )
     .expect("argv");
-    assert_new_session_before_command(&argv);
+    assert_no_new_session_before_command(&argv);
     assert_eq!(argv.last().map(String::as_str), Some("/bin/true"));
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn mcp_stdio_bwrap_wrap_requests_a_new_session_for_both_network_policies() {
+fn mcp_stdio_bwrap_wrap_does_not_request_a_new_session_for_both_network_policies() {
     use cgagentharness::common::mcp_policy::{Containment, NetworkPolicy, StdioCapabilities};
     for network in [NetworkPolicy::Deny, NetworkPolicy::Unrestricted] {
         let capabilities = StdioCapabilities {
@@ -268,7 +271,7 @@ fn mcp_stdio_bwrap_wrap_requests_a_new_session_for_both_network_policies() {
         match cgagentharness::common::sandbox_wrap::wrap_mcp_stdio(&["/bin/true".into()], None, None, &capabilities) {
             Ok(wrapped) => {
                 assert!(wrapped.backend.starts_with("linux-bwrap"), "{}", wrapped.backend);
-                assert_new_session_before_command(&wrapped.argv);
+                assert_no_new_session_before_command(&wrapped.argv);
             }
             Err(e) => {
                 assert_eq!(e.code, "HARD_SANDBOX_UNAVAILABLE", "{network:?}: {}", e.message);
@@ -286,7 +289,7 @@ fn mcp_stdio_bwrap_wrap_requests_a_new_session_for_both_network_policies() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn linux_bwrap_child_session_is_owned_by_the_sandbox() {
+fn linux_bwrap_child_has_no_controlling_terminal() {
     let Some(sb) = try_bwrap() else {
         return;
     };
@@ -295,11 +298,13 @@ fn linux_bwrap_child_session_is_owned_by_the_sandbox() {
     let scratch = tmp.path().join("scratch");
     std::fs::create_dir(&candidate).unwrap();
     std::fs::create_dir(&scratch).unwrap();
+    // tty_nr (field 7 of /proc/self/stat) is a device number, not a namespaced
+    // id, so 0 means no controlling terminal inside the sandbox.
     let out = sb.run_prepared(
         &[
             "/usr/bin/python3".into(),
             "-c".into(),
-            "import os; print(os.getsid(0))".into(),
+            "print(open('/proc/self/stat').read().rsplit(')', 1)[1].split()[4])".into(),
         ],
         &candidate,
         &env(),
@@ -307,13 +312,89 @@ fn linux_bwrap_child_session_is_owned_by_the_sandbox() {
         &scratch,
         &[],
     );
-    assert_eq!(out.exit_code, 0, "session probe must execute: {out:?}");
-    // Inside the PID namespace getsid() reports 0 when the session leader is a
-    // host process (the harness session). A sandbox-owned session is nonzero.
-    assert_ne!(
+    assert_eq!(out.exit_code, 0, "tty probe must execute: {out:?}");
+    assert_eq!(
         out.stdout.trim(),
         "0",
-        "sandboxed command still shares a host session: {out:?}"
+        "sandboxed command still has a controlling terminal: {out:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn grandchild_pids(token: &str) -> Vec<i32> {
+    let mut pids = Vec::new();
+    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else {
+            continue;
+        };
+        let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
+        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        if comm.trim() == "sleep" && cmdline.split(|b| *b == 0).any(|arg| arg == token.as_bytes()) {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+#[cfg(target_os = "linux")]
+fn pid_gone_or_zombie(pid: i32) -> bool {
+    // SAFETY: signal 0 only probes for existence; no signal is delivered.
+    if unsafe { libc::kill(pid, 0) } == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        return true;
+    }
+    // A killed grandchild may sit briefly as a zombie until its new parent reaps it.
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .map(|stat| stat.rsplit(')').next().unwrap_or("").split_whitespace().next() == Some("Z"))
+        .unwrap_or(true)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_bwrap_timeout_kills_a_live_grandchild() {
+    let Some(sb) = try_bwrap() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let candidate = tmp.path().join("candidate");
+    let scratch = tmp.path().join("scratch");
+    std::fs::create_dir(&candidate).unwrap();
+    std::fs::create_dir(&scratch).unwrap();
+    // A unique sleep duration tags the grandchild's argv so the host-side /proc
+    // scan cannot match any other process (pids inside the sandbox are namespaced).
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos();
+    let token = format!("300.{nanos:09}");
+    let argv: Vec<String> = vec!["/bin/sh".into(), "-c".into(), format!("sleep {token} & echo $! ; wait")];
+    let runner = {
+        let (candidate, scratch) = (candidate.clone(), scratch.clone());
+        std::thread::spawn(move || sb.run_prepared(&argv, &candidate, &env(), 1, &scratch, &[]))
+    };
+    let mut seen = Vec::new();
+    while seen.is_empty() && !runner.is_finished() {
+        seen = grandchild_pids(&token);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = runner.join().expect("runner thread");
+    assert!(out.timed_out, "the 1s timeout must fire while sleep 300 runs: {out:?}");
+    assert!(
+        !seen.is_empty(),
+        "grandchild never observed alive; the test would prove nothing: {out:?}"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut alive: Vec<i32> = seen.clone();
+    while !alive.is_empty() && std::time::Instant::now() < deadline {
+        alive.retain(|pid| !pid_gone_or_zombie(*pid));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    for pid in &alive {
+        // SAFETY: best-effort cleanup of a pid this test observed; avoids leaking it.
+        unsafe { libc::kill(*pid, libc::SIGKILL) };
+    }
+    assert!(
+        alive.is_empty(),
+        "grandchild {alive:?} outlived the timeout by 2s (orphaned)"
     );
 }
 
