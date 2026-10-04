@@ -597,3 +597,109 @@ async fn rotating_one_bearer_revokes_only_that_destination() {
     alice_task.abort();
     bob_task.abort();
 }
+
+// ---- bearers-private: bearers.json must be an owner-only, single-link regular file ----
+
+#[cfg(unix)]
+const BEARER_FIXTURE_SECRET: &str = "bearer-private-fixture-secret";
+
+#[cfg(unix)]
+fn bearer_cfg(home: &Home) -> cgagentharness::common::config::AppConfig {
+    let url = "http://127.0.0.1:9/hook"; // DevSkim: ignore DS137138 because this is a loopback fixture URL.
+    config_with(
+        &home.root,
+        &[
+            ("notifications.enabled", "true"),
+            ("auth.enabled", "false"),
+            ("notifications.destinations", &json!([{"id":"fixture","owner":"local","enabled":true,"url":url,"events":["finished"],"use_bearer":true,"rate_per_minute":1}]).to_string()),
+            ("notifications.private_url_allowlist", &json!([url]).to_string()),
+        ],
+    )
+}
+
+/// Writes `notifications/bearers.json` with exactly `mode` and returns its path.
+#[cfg(unix)]
+fn write_bearers(home: &Home, mode: u32) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = home.data_dir().join("notifications");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("bearers.json");
+    let body = serde_json::to_vec(&json!({"version":1,"tokens":{"fixture":BEARER_FIXTURE_SECRET}})).unwrap();
+    std::fs::write(&path, body).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    path
+}
+
+#[cfg(unix)]
+fn fresh_home() -> (tempfile::TempDir, Home) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::at(dir.path().join("home"));
+    home.ensure_layout().unwrap();
+    (dir, home)
+}
+
+/// Startup must refuse, say how to fix it, and never echo the secret.
+#[cfg(unix)]
+fn assert_bearers_refused(home: &Home, case: &str) {
+    let err = Notifier::start(home, &bearer_cfg(home), None)
+        .err()
+        .unwrap_or_else(|| panic!("{case}: bearers.json must be refused at startup"));
+    let shown = format!("{err} {err:?}");
+    assert!(
+        shown.contains("chmod 600"),
+        "{case}: error must say how to fix it: {shown}"
+    );
+    assert!(
+        !shown.contains(BEARER_FIXTURE_SECRET),
+        "{case}: error echoed the bearer secret"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn owner_only_bearer_file_is_loaded() {
+    let (_dir, home) = fresh_home();
+    write_bearers(&home, 0o600);
+    // No legacy token exists, so a successful start proves the file's secret was used.
+    let notifier = Notifier::start(&home, &bearer_cfg(&home), None)
+        .unwrap_or_else(|e| panic!("0600 bearers.json must load: {e:?}"))
+        .expect("notifier enabled");
+    notifier.stop();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn bearer_file_with_group_or_world_bits_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    for mode in [0o644, 0o640, 0o604, 0o660, 0o620] {
+        let (_dir, home) = fresh_home();
+        let path = write_bearers(&home, mode);
+        assert_bearers_refused(&home, &format!("mode {mode:o}"));
+        let after = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(after, mode, "refusal must not silently rewrite the operator's file");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn hard_linked_bearer_file_is_refused() {
+    let (dir, home) = fresh_home();
+    let path = write_bearers(&home, 0o600);
+    // A second name for the same inode lets another path holder read or swap the secret.
+    std::fs::hard_link(&path, dir.path().join("bearers-alias.json")).unwrap();
+    assert_bearers_refused(&home, "nlink 2");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_bearer_file_is_refused_even_when_the_target_is_private() {
+    let (dir, home) = fresh_home();
+    let real = write_bearers(&home, 0o600);
+    let outside = dir.path().join("elsewhere.json");
+    std::fs::rename(&real, &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &real).unwrap();
+    assert!(
+        Notifier::start(&home, &bearer_cfg(&home), None).is_err(),
+        "symlinked bearers.json must be refused"
+    );
+}
