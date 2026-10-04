@@ -461,6 +461,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl StdioClient {
     pub fn child_pid(&self) -> Option<u32> {
         self.child.id()

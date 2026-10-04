@@ -117,6 +117,7 @@ impl RateLimiter {
         (window_seconds - (now - oldest)).max(0.0)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn tracked_clients(&self) -> usize {
         self.state.lock().unwrap_or_else(|p| p.into_inner()).hits.len()
     }
