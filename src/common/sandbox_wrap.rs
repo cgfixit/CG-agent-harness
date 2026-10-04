@@ -194,13 +194,11 @@ fn bwrap_argv_inner(
     }
     exclusive_scratch_probe(&unique_scratch_probe(&scratch_dir))?;
 
-    // --new-session: setsid inside the sandbox so the child cannot reach the
-    // controlling terminal (TIOCSTI injection, CVE-2017-5226).
-    let mut out = vec![
-        bwrap.display().to_string(),
-        "--die-with-parent".into(),
-        "--new-session".into(),
-    ];
+    // No `--new-session`: the spawner already runs `setsid` on bwrap itself
+    // (see `process::setsid_in_child`), so the tree has no controlling terminal
+    // (TIOCSTI, CVE-2017-5226). `--new-session` would move the child out of the
+    // process group that timeout and cancel kill, orphaning it.
+    let mut out = vec![bwrap.display().to_string(), "--die-with-parent".into()];
     if unshare_net {
         out.push("--unshare-net".into());
     }
@@ -483,9 +481,11 @@ mod tests {
         .expect("bwrap argv");
         assert!(!argv_binds_host_root(&argv));
         let sep = argv.iter().position(|a| a == "--").expect("argv separator");
+        // The outer `setsid` already removes the controlling terminal;
+        // `--new-session` would split the process group the cancel path kills.
         assert!(
-            argv[..sep].iter().any(|a| a == "--new-session"),
-            "bwrap must detach the child from the controlling terminal"
+            !argv[..sep].iter().any(|a| a == "--new-session"),
+            "bwrap must not split the child out of the killable process group"
         );
     }
 
