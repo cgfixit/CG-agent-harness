@@ -194,7 +194,13 @@ fn bwrap_argv_inner(
     }
     exclusive_scratch_probe(&unique_scratch_probe(&scratch_dir))?;
 
-    let mut out = vec![bwrap.display().to_string(), "--die-with-parent".into()];
+    // --new-session: setsid inside the sandbox so the child cannot reach the
+    // controlling terminal (TIOCSTI injection, CVE-2017-5226).
+    let mut out = vec![
+        bwrap.display().to_string(),
+        "--die-with-parent".into(),
+        "--new-session".into(),
+    ];
     if unshare_net {
         out.push("--unshare-net".into());
     }
@@ -476,6 +482,11 @@ mod tests {
         )
         .expect("bwrap argv");
         assert!(!argv_binds_host_root(&argv));
+        let sep = argv.iter().position(|a| a == "--").expect("argv separator");
+        assert!(
+            argv[..sep].iter().any(|a| a == "--new-session"),
+            "bwrap must detach the child from the controlling terminal"
+        );
     }
 
     #[cfg(target_os = "macos")]

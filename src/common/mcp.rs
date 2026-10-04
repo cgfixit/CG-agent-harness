@@ -209,7 +209,11 @@ impl StdioClient {
             .kill_on_drop(true);
         #[cfg(unix)]
         {
-            cmd.process_group(0);
+            // SAFETY: the hook runs between fork and exec and only calls the
+            // async-signal-safe `setsid(2)`; the child leads a new session and group.
+            unsafe {
+                cmd.pre_exec(super::process::setsid_in_child);
+            }
         }
         #[cfg(not(windows))]
         let mut child = cmd

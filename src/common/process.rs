@@ -66,9 +66,29 @@ fn build_command(spec: &RunSpec<'_>) -> Command {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
+        // SAFETY: the hook runs between fork and exec and only calls `setsid(2)`,
+        // which is async-signal-safe; it neither allocates nor takes locks.
+        unsafe {
+            cmd.pre_exec(setsid_in_child);
+        }
     }
     cmd
+}
+
+/// Child-side `pre_exec` hook: start a new session before exec.
+///
+/// The child then leads a fresh session and process group (sid == pgid == pid),
+/// so it has no controlling terminal and cannot read or signal the parent's TTY.
+/// Group kills (`killpg(pid)`) on timeout or cancel keep working because the
+/// group id still equals the child's pid. Do not combine with `process_group(0)`:
+/// a group leader cannot call `setsid` (EPERM).
+#[cfg(unix)]
+pub(crate) fn setsid_in_child() -> std::io::Result<()> {
+    // SAFETY: setsid takes no pointers; failure is reported through errno.
+    if unsafe { libc::setsid() } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Run to completion or timeout. A timed-out child is SIGKILLed (whole
@@ -147,7 +167,7 @@ pub fn kill_pid_group(pid: u32) {
     {
         if pid > 1 {
             let pid = pid as libc::pid_t;
-            // SAFETY: killpg on a pid we spawned into its own group.
+            // SAFETY: killpg on a pid we spawned as its own session and group leader.
             unsafe {
                 libc::killpg(pid, libc::SIGKILL);
             }
@@ -220,4 +240,43 @@ pub fn which(name: &str) -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    /// Fields 1 (pid), 5 (pgrp), 6 (session) of /proc/self/stat, read by the exec'd child.
+    fn child_ids() -> (i64, i64, i64) {
+        let argv = vec!["/bin/cat".to_string(), "/proc/self/stat".to_string()];
+        let out = run(RunSpec {
+            argv: &argv,
+            cwd: None,
+            env: None,
+            timeout: Duration::from_secs(10),
+            stdin: None,
+        })
+        .expect("cat /proc/self/stat");
+        assert_eq!(out.status, Some(0));
+        let pid: i64 = out.stdout.split_whitespace().next().unwrap().parse().unwrap();
+        // comm (field 2) may contain spaces; parse after the closing paren.
+        let rest = &out.stdout[out.stdout.rfind(')').unwrap() + 1..];
+        let f: Vec<i64> = rest
+            .split_whitespace()
+            .skip(1)
+            .take(4)
+            .map(|v| v.parse().unwrap())
+            .collect();
+        (pid, f[1], f[2])
+    }
+
+    #[test]
+    fn child_leads_its_own_session_and_group() {
+        let (pid, pgrp, session) = child_ids();
+        assert_eq!(pgrp, pid, "child must lead its own process group");
+        assert_eq!(session, pid, "child must lead its own session (setsid)");
+        // SAFETY: getsid(0) only queries the calling process.
+        let ours = unsafe { libc::getsid(0) } as i64;
+        assert_ne!(session, ours, "child must not share the harness session");
+    }
 }
