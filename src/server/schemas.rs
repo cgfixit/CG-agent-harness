@@ -1145,11 +1145,7 @@ pub fn field_from_serde_error(msg: &str) -> String {
             return rest[..end].chars().take(MAX_ERROR_FIELD_LEN).collect();
         }
     }
-    if let Some(rest) = msg.strip_prefix("invalid type") {
-        // "invalid type: string \"x\", expected a boolean" -> "body"
-        let _ = rest;
-        return "body".to_string();
-    }
+    // Everything else, e.g. "invalid type: string \"x\", expected a boolean".
     "body".to_string()
 }
 

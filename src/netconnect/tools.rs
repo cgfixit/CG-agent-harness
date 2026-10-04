@@ -15,7 +15,6 @@
 //! module does not open a socket.
 
 use std::net::Ipv4Addr;
-#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -246,95 +245,17 @@ fn devices_body(cfg: &NetconnectConfig, report: &PassiveReport) -> Value {
 /// reach rows only through these traits and [`collect_passive`].
 #[derive(Clone)]
 pub struct PassiveSources {
-    neighbors: NeighborSlot,
-    routes: RouteSlot,
-    interfaces: InterfaceSlot,
-}
-
-enum NeighborSlot {
-    Live(LiveNeighbors),
-    #[cfg(any(test, feature = "test-support"))]
-    Shared(Arc<dyn NeighborSource + Send + Sync>),
-}
-
-enum RouteSlot {
-    Live(LiveRoutes),
-    #[cfg(any(test, feature = "test-support"))]
-    Shared(Arc<dyn RouteSource + Send + Sync>),
-}
-
-enum InterfaceSlot {
-    Live(LiveInterfaces),
-    #[cfg(any(test, feature = "test-support"))]
-    Shared(Arc<dyn InterfaceSource + Send + Sync>),
-}
-
-impl Clone for NeighborSlot {
-    fn clone(&self) -> Self {
-        match self {
-            NeighborSlot::Live(_) => NeighborSlot::Live(LiveNeighbors),
-            #[cfg(any(test, feature = "test-support"))]
-            NeighborSlot::Shared(source) => NeighborSlot::Shared(Arc::clone(source)),
-        }
-    }
-}
-
-impl Clone for RouteSlot {
-    fn clone(&self) -> Self {
-        match self {
-            RouteSlot::Live(_) => RouteSlot::Live(LiveRoutes),
-            #[cfg(any(test, feature = "test-support"))]
-            RouteSlot::Shared(source) => RouteSlot::Shared(Arc::clone(source)),
-        }
-    }
-}
-
-impl Clone for InterfaceSlot {
-    fn clone(&self) -> Self {
-        match self {
-            InterfaceSlot::Live(_) => InterfaceSlot::Live(LiveInterfaces),
-            #[cfg(any(test, feature = "test-support"))]
-            InterfaceSlot::Shared(source) => InterfaceSlot::Shared(Arc::clone(source)),
-        }
-    }
-}
-
-impl NeighborSource for NeighborSlot {
-    fn load(&self) -> Result<Vec<crate::netconnect::parse::NeighborRecord>> {
-        match self {
-            NeighborSlot::Live(source) => source.load(),
-            #[cfg(any(test, feature = "test-support"))]
-            NeighborSlot::Shared(source) => source.load(),
-        }
-    }
-}
-
-impl RouteSource for RouteSlot {
-    fn load(&self) -> Result<Vec<crate::netconnect::parse::RouteRecord>> {
-        match self {
-            RouteSlot::Live(source) => source.load(),
-            #[cfg(any(test, feature = "test-support"))]
-            RouteSlot::Shared(source) => source.load(),
-        }
-    }
-}
-
-impl InterfaceSource for InterfaceSlot {
-    fn load(&self) -> Result<Vec<crate::netconnect::parse::InterfaceRecord>> {
-        match self {
-            InterfaceSlot::Live(source) => source.load(),
-            #[cfg(any(test, feature = "test-support"))]
-            InterfaceSlot::Shared(source) => source.load(),
-        }
-    }
+    neighbors: Arc<dyn NeighborSource + Send + Sync>,
+    routes: Arc<dyn RouteSource + Send + Sync>,
+    interfaces: Arc<dyn InterfaceSource + Send + Sync>,
 }
 
 impl PassiveSources {
     pub fn live() -> Self {
         Self {
-            neighbors: NeighborSlot::Live(LiveNeighbors),
-            routes: RouteSlot::Live(LiveRoutes),
-            interfaces: InterfaceSlot::Live(LiveInterfaces),
+            neighbors: Arc::new(LiveNeighbors),
+            routes: Arc::new(LiveRoutes),
+            interfaces: Arc::new(LiveInterfaces),
         }
     }
 
@@ -353,9 +274,9 @@ impl PassiveSources {
             loads,
         });
         Self {
-            neighbors: NeighborSlot::Shared(counted.clone()),
-            routes: RouteSlot::Shared(counted.clone()),
-            interfaces: InterfaceSlot::Shared(counted),
+            neighbors: counted.clone(),
+            routes: counted.clone(),
+            interfaces: counted,
         }
     }
 
@@ -364,9 +285,9 @@ impl PassiveSources {
     pub fn probe(loads: Arc<std::sync::atomic::AtomicUsize>) -> Self {
         let probe = Arc::new(LoadProbe { loads });
         Self {
-            neighbors: NeighborSlot::Shared(probe.clone()),
-            routes: RouteSlot::Shared(probe.clone()),
-            interfaces: InterfaceSlot::Shared(probe),
+            neighbors: probe.clone(),
+            routes: probe.clone(),
+            interfaces: probe,
         }
     }
 }

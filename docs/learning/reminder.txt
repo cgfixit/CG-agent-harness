@@ -1,3 +1,4 @@
+
 nothing wrong with learning rust especially if it’s not as a distraction but may be better to focus more on high level ai and just overall programming best practices and only knowing what I need to know in rust or whichever language
 
 also jev. haha def need to look into that next time I’m motivated to revisit this whole thing .. probably tomorrow lol
@@ -13,3 +14,37 @@ kimi thread re: jev
 anyways prob just skim those pdfs this week and maybe this weekend depending on if moving try the new stuff hands on for a couple hours. 
 aside from that coding projects should pivot to something i can add here that helps me learn iac, public cloud beyond stuff i already do (need to maybe look at iam/pam/so many am's in the json files (although firewalls were disgusting aesthetically too its just a new thing) and whatevs those certs are like memorization coty but it does matter for hiring perception so i should add a cloud cert before doing another deep dive into things that are fun, valueavle to me i think , but almost like a slight distraction from what would actually benefit my current resume.
 dats ta truf' and it must be if i dissed my self wit it
+
+--
+
+haha so no never use jev for anything perception related ;)
+
+--
+
+My recommendation: SC-300 Identity and Access Administrator Associate first. Reasons:
+ • It's the literal IAM/PAM cert — Entra ID, Conditional Access, Privileged Identity Management (just-in-time elevation, which is the Azure name for what you called PAM), access reviews, entitlement management, B2B ​￼​. You said you want to look at IAM/PAM — this is that, as a cert, with no prerequisites and no fundamentals tax.
+ • Skip AZ-900. It carries near-zero hiring signal for technical roles and is optional for everything ​￼​. Given your baseline (you administer real systems, just not Azure), you'd be paying exam money to certify vocabulary you already have.
+ • It's the standard feeder into the expert credential. SC-100 Cybersecurity Architect Expert requires SC-100 plus one qualifying associate — SC-300, SC-200, or SC-500 — before the badge is awarded ​￼​. So the natural ladder for you is:
+SC-300 → SC-500 → SC-100.
+SC-500 as step two because it's the broad platform-security cert and, notably, it's the "Cloud and AI Security" cert — securing AI workloads is in its scope, which matches where your actual engineering work lives. It's one of the harder associate exams with no hard prerequisites but a real expectation of admin-level fluency ​￼​ — doing SC-300 first plus hands-on labs covers that gap. SC-100 last, since it's a strategy/design exam that only pays off once you have the implementation depth underneath it ​￼​.
+One alternative worth naming honestly: if hiring-signal breadth mattered more than your security interest, the AZ-104 → AZ-305 route is the more commonly-recognized generalist path (AZ-104 is the mandatory prereq for AZ-305) ​￼​. But you said security/IAM is the interest, and the SC ladder gets you to an Expert-tier credential in three exams versus drifting through generalist admin land. For a security-inclined builder with a GitHub full of fail-closed adapters, the SC track is the coherent story — identity first, platform second, architecture last.
+On study approach, one thing that fits how you actually work: Microsoft certs renew free annually via an online assessment, and the exams are scenario-heavy rather than pure memorization ​￼​. The highest-ROI prep for someone like you isn't a video course — it's a free Azure tenant (you can get sandbox access via Microsoft Learn's free tier) and actually building Conditional Access policies, PIM role assignments, and break-glass accounts in a lab. That's the same build-to-ship instinct, pointed at a bounded deliverable.
+One caveat, stated per our contract: exam objectives and prerequisite rules churn — Microsoft updated AZ-305 as recently as April 2026 ​￼​. Verify the current SC-500 skills outline on learn.microsoft.com the week you commit
+
+--
+
+**What Jev actually is.** It's TypeSafe AI's "System One" model, released September 15, 2026, founded by ex-OpenAI engineer Diogo Almeida. The defining trait: it cannot write a sentence. You give it application state plus declared questions, and it returns typed answers — Choice (pick from up to 255 options), Score (a rating), or Noul (yes/no) — with calibrated probabilities. No token-by-token generation, so no parsing, no schema validation, no hallucinated enum values. Pricing is $0.042/M input tokens with output free, and vendor-reported latency is 70–500ms end-to-end  . Your "nested if-statement" framing is almost exactly how practitioners describe it: "an if-statement that understands language." 
+
+**Your mental model is basically the catalog.** Not a blathering fool. Market bots in a tight decision window: there's literally jev-trader, buying/selling inside a 300ms Monad block, and jev-drone doing tactical control at 2.5Hz on hardware . Robotics-style threshold logic is squarely in scope. Where you're slightly off: it isn't doing the perception (the "seeing the dotted line" part) — it's the *decision over a closed candidate set*. Text-only input, 255-option cap, and it's bad at anything requiring arithmetic or free-form reasoning. Prices, sizes, exact calculations stay in deterministic code.
+
+**Your orchestrator idea already has a name: model routing.** It's the most crowded Jev use case — jev-router for Claude Code/Codex, a LiteLLM-based open router, LangChain skill routers, per-turn "pick model + thinking depth + speed mode" setups . The pattern you'd build is exactly what you described: hard policy in code first, then one parallel Jev call asking route + difficulty + privacy-risk questions, then confidence thresholds with fallback to the strong tier when it's unsure . Your perplexity validator anecdote maps onto the Score/rubric job — same mechanism, you're just the one writing the rubric.
+
+**Two caveats worth holding onto:**
+
+- The numbers are vendor-biased. TypeSafe's 193x faster / 444x cheaper headline comes from their own team's workflows, and their own technical notes admit it likely sits at the high end . Independent-ish measurements (the Jev-IDS paper) show ~6–8x latency and ~10–25x cost vs a flash LLM, which is still excellent but not 400x .
+- You won't be able to use it offline as-is. It's hosted, waitlist/API-gateway only — which clashes with your fail-closed, offline-first posture. Speculating: CLM-8B (Stanford+NVIDIA, Apache 2.0, Sept 23, claims up to 9x lower latency than Jev, runs on a single 4090, TypeSafe-compatible API) is the one to watch for your sandbox, and there's CLM-35B-A3B multimodal due early this month . Given your Ollama setup, an open contrastive model is far more integrable than the waitlisted API.
+
+**One housekeeping note:** I checked — the "kimi thread re: jev" doesn't exist anywhere I can find. The only trace is the reminder line itself in `CG-agent-harness/docs/learning/reminder.txt`. If that thread had substance worth keeping, it's not saved.
+
+**On the pivot:** agreed, and for a concrete reason beyond hiring optics. Your stated goal was "learn what I need in Rust" — and your harness work already answers that: you can read the diff, drive CI, and ship PRs without being a Rust systems engineer. That's the 80/20 point. Rust-to-WebApp is build-for-building's-sake, and candidly it feeds the build-vs-ship gap more than the resume. A cloud cert (Security+/SCP-level or an associate-tier) is the opposite shape: bounded scope, defined finish line, artifact at the end. Given you plan phases on tracking issues, a cert is one of the few things that can't sprawl into a seventh month. That's the truf'.
+^ai actually wrote that back - in terms of the hev thing prob makes. ore sense to wait a few weeks or so and see what others do - its interesting but theres too many things right now. it does sound like a good fit for a real market or prediction market trading bot

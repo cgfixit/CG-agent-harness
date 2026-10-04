@@ -202,7 +202,7 @@ impl NotesCorpus {
             .iter()
             .map(|f| {
                 let ext = allowed_ext(&f.filename)?;
-                let text = classify_note(&f.data, ext, self.limits.max_file_bytes)?;
+                let text = classify_note(&f.data, self.limits.max_file_bytes)?;
                 Ok((
                     IncomingFile {
                         filename: String::new(),
@@ -311,12 +311,7 @@ impl NotesCorpus {
             if bytes.len() as u64 != blob.byte_len || sha256_bytes_hex(&bytes) != blob.sha256 {
                 return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable"));
             }
-            let ext = if blob.magic_mime == "text/markdown" {
-                "md"
-            } else {
-                "txt"
-            };
-            let text = classify_note(&bytes, ext, self.limits.max_file_bytes)?;
+            let text = classify_note(&bytes, self.limits.max_file_bytes)?;
             let injection_hits = scanner.scan(&text).len();
             let (text, sentinels_removed) = neutralize(&text);
             out.push(VerifiedAttachment {
@@ -473,7 +468,7 @@ fn mime_for(ext: &str) -> &'static str {
     }
 }
 
-fn classify_note(data: &[u8], ext: &str, max_bytes: u64) -> Result<String> {
+fn classify_note(data: &[u8], max_bytes: u64) -> Result<String> {
     if data.is_empty() {
         return Err(HarnessError::new("NOTES_EMPTY", "file is empty"));
     }
@@ -485,11 +480,9 @@ fn classify_note(data: &[u8], ext: &str, max_bytes: u64) -> Result<String> {
     if data.contains(&0) {
         return Err(HarnessError::new("NOTES_NUL", "NUL bytes are not allowed in notes"));
     }
-    let text = std::str::from_utf8(data)
-        .map_err(|_| HarnessError::new("NOTES_ENCODING", "file is not valid UTF-8 text"))?
-        .to_string();
-    let _ = ext;
-    Ok(text)
+    std::str::from_utf8(data)
+        .map(str::to_string)
+        .map_err(|_| HarnessError::new("NOTES_ENCODING", "file is not valid UTF-8 text"))
 }
 
 fn note_rel(blob: &NoteBlob) -> Result<PathBuf> {

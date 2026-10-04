@@ -110,24 +110,19 @@ fn reclaim_lock(lock_dir: &Path) -> Result<bool> {
         }
     }
     let result = (|| {
-        let present = match std::fs::metadata(lock_dir) {
-            Ok(m) => {
-                let mtime = m
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs_f64())
-                    .unwrap_or(0.0);
-                let age = crate::common::now_ts() - mtime;
-                if !can_reclaim(lock_dir, age) {
-                    return false;
-                }
-                let _ = std::fs::remove_dir_all(lock_dir);
-                true
+        if let Ok(m) = std::fs::metadata(lock_dir) {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            let age = crate::common::now_ts() - mtime;
+            if !can_reclaim(lock_dir, age) {
+                return false;
             }
-            Err(_) => false,
-        };
-        let _ = present;
+            let _ = std::fs::remove_dir_all(lock_dir);
+        }
         match std::fs::create_dir(lock_dir) {
             Ok(()) => {
                 write_lock_token(lock_dir);
