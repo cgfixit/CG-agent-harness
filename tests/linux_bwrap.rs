@@ -215,6 +215,108 @@ with socket.socket() as client:
     );
 }
 
+// #304 E1 contract: the sandboxed command never shares the harness session or
+// its controlling terminal; bwrap must be told `--new-session`.
+
+#[cfg(target_os = "linux")]
+fn assert_new_session_before_command(argv: &[String]) {
+    let split = argv
+        .iter()
+        .position(|a| a == "--")
+        .expect("bwrap argv has a `--` separator");
+    assert!(
+        argv[..split].iter().any(|a| a == "--new-session"),
+        "bwrap options must include --new-session: {argv:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn bwrap_argv_requests_a_new_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let candidate = tmp.path().join("candidate");
+    let scratch = tmp.path().join("scratch");
+    std::fs::create_dir(&candidate).unwrap();
+    std::fs::create_dir(&scratch).unwrap();
+    // Pure argv construction: no bwrap binary is executed here.
+    let argv = cgagentharness::common::sandbox_wrap::bwrap_argv(
+        Path::new("/usr/bin/bwrap"),
+        &["/bin/true".into()],
+        &candidate,
+        &scratch,
+        &[],
+    )
+    .expect("argv");
+    assert_new_session_before_command(&argv);
+    assert_eq!(argv.last().map(String::as_str), Some("/bin/true"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn mcp_stdio_bwrap_wrap_requests_a_new_session_for_both_network_policies() {
+    use cgagentharness::common::mcp_policy::{Containment, NetworkPolicy, StdioCapabilities};
+    for network in [NetworkPolicy::Deny, NetworkPolicy::Unrestricted] {
+        let capabilities = StdioCapabilities {
+            version: 1,
+            filesystem: Default::default(),
+            read_roots: vec![],
+            write_roots: vec![],
+            network,
+            containment: Containment::ProcessGroup,
+            limits: None,
+        };
+        match cgagentharness::common::sandbox_wrap::wrap_mcp_stdio(&["/bin/true".into()], None, None, &capabilities) {
+            Ok(wrapped) => {
+                assert!(wrapped.backend.starts_with("linux-bwrap"), "{}", wrapped.backend);
+                assert_new_session_before_command(&wrapped.argv);
+            }
+            Err(e) => {
+                assert_eq!(e.code, "HARD_SANDBOX_UNAVAILABLE", "{network:?}: {}", e.message);
+                if required() {
+                    panic!(
+                        "linux-bwrap required; MCP wrap unavailable for {network:?}: {}",
+                        e.message
+                    );
+                }
+                eprintln!("SKIP mcp bwrap wrap ({network:?}): {}", e.message);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_bwrap_child_session_is_owned_by_the_sandbox() {
+    let Some(sb) = try_bwrap() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let candidate = tmp.path().join("candidate");
+    let scratch = tmp.path().join("scratch");
+    std::fs::create_dir(&candidate).unwrap();
+    std::fs::create_dir(&scratch).unwrap();
+    let out = sb.run_prepared(
+        &[
+            "/usr/bin/python3".into(),
+            "-c".into(),
+            "import os; print(os.getsid(0))".into(),
+        ],
+        &candidate,
+        &env(),
+        10,
+        &scratch,
+        &[],
+    );
+    assert_eq!(out.exit_code, 0, "session probe must execute: {out:?}");
+    // Inside the PID namespace getsid() reports 0 when the session leader is a
+    // host process (the harness session). A sandbox-owned session is nonzero.
+    assert_ne!(
+        out.stdout.trim(),
+        "0",
+        "sandboxed command still shares a host session: {out:?}"
+    );
+}
+
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn linux_bwrap_suite_is_linux_only() {
