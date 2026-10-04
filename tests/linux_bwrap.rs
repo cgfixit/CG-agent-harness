@@ -220,7 +220,10 @@ with socket.socket() as client:
 
 #[cfg(target_os = "linux")]
 fn assert_new_session_before_command(argv: &[String]) {
-    let split = argv.iter().position(|a| a == "--").expect("bwrap argv has a `--` separator");
+    let split = argv
+        .iter()
+        .position(|a| a == "--")
+        .expect("bwrap argv has a `--` separator");
     assert!(
         argv[..split].iter().any(|a| a == "--new-session"),
         "bwrap options must include --new-session: {argv:?}"
@@ -270,7 +273,10 @@ fn mcp_stdio_bwrap_wrap_requests_a_new_session_for_both_network_policies() {
             Err(e) => {
                 assert_eq!(e.code, "HARD_SANDBOX_UNAVAILABLE", "{network:?}: {}", e.message);
                 if required() {
-                    panic!("linux-bwrap required; MCP wrap unavailable for {network:?}: {}", e.message);
+                    panic!(
+                        "linux-bwrap required; MCP wrap unavailable for {network:?}: {}",
+                        e.message
+                    );
                 }
                 eprintln!("SKIP mcp bwrap wrap ({network:?}): {}", e.message);
             }

@@ -278,7 +278,10 @@ fn run_child_leads_its_own_session() {
     .expect("session probe runs");
     assert_eq!(out.status, Some(0), "{out:?}");
     let (pid, pgid, sid) = session_triple(&out.stdout);
-    assert_eq!(sid, pid, "child must be a session leader (setsid), not a group in our session");
+    assert_eq!(
+        sid, pid,
+        "child must be a session leader (setsid), not a group in our session"
+    );
     assert_eq!(pgid, pid, "group cleanup relies on pgid == pid");
     assert_ne!(sid, own_sid(), "child must not share the harness session");
 }
@@ -291,7 +294,11 @@ async fn shim_child_leads_its_own_session() {
         .expect("session probe runs");
     assert_eq!(code, 0, "{stderr}");
     let (pid, pgid, sid) = session_triple(&stdout);
-    assert_eq!((sid, pgid), (pid, pid), "shim child must lead its own session and group");
+    assert_eq!(
+        (sid, pgid),
+        (pid, pid),
+        "shim child must lead its own session and group"
+    );
     assert_ne!(sid, own_sid());
 }
 
@@ -338,7 +345,10 @@ fn setsid_child_timeout_still_kills_a_grandchild_in_its_session() {
     let leader_pid: i32 = std::fs::read_to_string(&leader).unwrap().trim().parse().unwrap();
     let (grandchild, grandchild_sid) = read_pair(&marker);
     let (stopped, state) = gone_or_reap(grandchild);
-    assert_eq!(grandchild_sid, leader_pid, "grandchild must inherit the child's own session");
+    assert_eq!(
+        grandchild_sid, leader_pid,
+        "grandchild must inherit the child's own session"
+    );
     assert!(stopped, "grandchild survived timeout: {state}");
 }
 
@@ -372,11 +382,17 @@ fn setsid_child_cancel_still_kills_a_grandchild_in_its_session() {
     );
     canceller.join().unwrap();
     assert!(result.is_err(), "cancelled run cannot be success: {result:?}");
-    assert!(start.elapsed() < Duration::from_secs(15), "cancel must not wait for the deadline");
+    assert!(
+        start.elapsed() < Duration::from_secs(15),
+        "cancel must not wait for the deadline"
+    );
     let leader_pid: i32 = std::fs::read_to_string(&leader).unwrap().trim().parse().unwrap();
     let (grandchild, grandchild_sid) = read_pair(&marker);
     let (stopped, state) = gone_or_reap(grandchild);
-    assert_eq!(grandchild_sid, leader_pid, "grandchild must inherit the child's own session");
+    assert_eq!(
+        grandchild_sid, leader_pid,
+        "grandchild must inherit the child's own session"
+    );
     assert!(stopped, "grandchild survived cancel: {state}");
 }
 
