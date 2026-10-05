@@ -576,7 +576,7 @@ dependencies = [
  "serde_yaml_ng",
  "sha2",
  "subtle",
- "syn 2.0.119",
+ "syn 3.0.5",
  "tantivy",
  "tempfile",
  "thiserror",
