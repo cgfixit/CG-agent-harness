@@ -171,6 +171,80 @@
   .command-guide .d { font-size: var(--fs-small); }
   .command-guide summary { cursor: pointer; margin: 8px 0; }
   .command-guide :focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+  /* ── COMMANDS pane ── the catalog folds by family; each row's ? opens the
+     command's manual in #commandHelpDialog. ── */
+  .cmd-row { display: flex; align-items: flex-start; gap: 2px; margin-bottom: 1px; }
+  .cmd-row > .cmd-item, .cmd-row > .cmd-tip { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+  .cmd-tip {
+    display: block; text-align: left; background: none; border: none; padding: 4px 8px;
+    border-radius: 6px; cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--text-primary);
+  }
+  .cmd-tip:hover { background: var(--bg-tertiary); }
+  .cmd-tip .s { color: var(--accent-amber); overflow-wrap: anywhere; }
+  .cmd-tip .d { display: block; color: var(--text-muted); font-size: 10px; font-family: var(--sans); }
+  .cmd-help {
+    flex: none; width: 24px; margin-top: 4px; padding: 2px 0; cursor: pointer; text-align: center;
+    font-family: var(--mono); font-size: 11px; font-weight: 700; line-height: 1.4;
+    color: var(--text-secondary); background: none; border: 1px solid var(--border); border-radius: 6px;
+  }
+  .cmd-help:hover { color: var(--accent-amber); border-color: var(--accent-amber); }
+  .cmd-family > summary {
+    cursor: pointer; padding: 6px 8px; border-radius: 6px; margin-bottom: 2px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--accent-blue);
+  }
+  .cmd-family > summary:hover { background: var(--bg-tertiary); }
+  .cmd-family[open] > summary { color: var(--accent-amber); }
+  .cmd-family > summary .n { margin-left: 6px; font-family: var(--sans); font-size: 10px; color: var(--text-muted); }
+  .cmd-family .cmd-row { margin-left: 8px; padding-left: 4px; border-left: 1px solid var(--border); }
+  .cmd-tips > summary { color: var(--accent-amber); }
+  .command-guide select {
+    display: block; width: 100%; margin: 8px 0; padding: 7px 8px; cursor: pointer;
+    color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+  }
+  .command-guide .guide-head {
+    margin: 12px 4px 4px; font-family: var(--mono); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted);
+  }
+  .command-guide .cmd-help:focus-visible, .cmd-tip:focus-visible, .cmd-family > summary:focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
+  /* The manual: one command's man page, sized as a small modal. */
+  #commandHelpDialog {
+    margin: auto; width: min(560px, calc(100% - 32px)); max-height: 85dvh; overflow: auto; padding: 0;
+    background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 24px 80px #0008;
+  }
+  #commandHelpDialog::backdrop { background: #0009; }
+  #commandHelpDialog .man-head {
+    position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 18px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+  }
+  #commandHelpDialog h2 { margin: 0; font-family: var(--mono); font-size: 14px; color: var(--accent-blue); overflow-wrap: anywhere; }
+  #commandHelpDialog .man-head button { flex: none; white-space: nowrap; }
+  #commandHelpDialog .man-body { padding: 4px 18px 16px; line-height: 1.5; font-size: 12.5px; }
+  #commandHelpDialog .man-body p { margin: 4px 0; }
+  #commandHelpDialog h3 { margin: 14px 0 4px; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
+  #commandHelpDialog pre {
+    margin: 0; padding: 8px 10px; font-family: var(--mono); font-size: 12px; color: var(--accent-blue);
+    white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px;
+  }
+  #commandHelpDialog .legend { font-size: 10.5px; color: var(--text-muted); }
+  #commandHelpDialog dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+  #commandHelpDialog dt { font-family: var(--mono); font-size: 11.5px; color: var(--accent-green); overflow-wrap: anywhere; }
+  #commandHelpDialog dd { margin: 0; }
+  #commandHelpDialog ul { margin: 0; padding-left: 18px; color: var(--text-secondary); }
+  #commandHelpDialog .man-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+  #commandHelpDialog button {
+    padding: 6px 10px; cursor: pointer; text-align: left; font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere;
+    color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px;
+  }
+  #commandHelpDialog button:hover { background: var(--border); }
+  #commandHelpDialog .man-foot {
+    position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px;
+    padding: 12px 18px; background: var(--bg-secondary); border-top: 1px solid var(--border);
+  }
+  #commandHelpDialog .man-foot .primary { background: var(--accent-amber); border-color: var(--accent-amber); color: #000; font-weight: 700; }
+  #commandHelpDialog .man-foot .primary:hover { background: #e8a31c; border-color: #e8a31c; }
+  #commandHelpDialog :focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
+  @media (max-width: 560px) { #commandHelpDialog dl { grid-template-columns: minmax(0, 1fr); } #commandHelpDialog dt { margin-top: 6px; } }
 
   .sess-item {
     padding: 7px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 3px;
@@ -622,6 +696,11 @@ dialog p { margin-bottom:12px; }
   <p>Destinations and subscriptions require explicit owner-bound configuration in the private home's config.yaml and a restart. Pending attempts recheck grants and account authority; this panel grants no new destination.</p>
   <p id="notificationStatus" role="status" aria-live="polite"></p>
   <div id="notificationDestinations"></div><div id="notificationRows"></div>
+</dialog>
+<dialog id="commandHelpDialog" aria-labelledby="commandHelpTitle">
+  <div class="man-head"><h2 id="commandHelpTitle"></h2><button id="commandHelpClose" type="button" autofocus>Close</button></div>
+  <div class="man-body" id="commandHelpBody"></div>
+  <div class="man-foot"><button id="commandHelpInsert" type="button" class="primary" title="Insert the command prefix into the composer; does not execute">Insert into composer</button></div>
 </dialog>
 <dialog id="passwordDialog" aria-labelledby="passwordTitle">
   <h2 id="passwordTitle">Change your password</h2>
@@ -1772,38 +1851,299 @@ function helpMatches(filter) {
   const topic = HELP_TOPICS[q];
   return COMMANDS.filter(([c,d]) => topic ? topic.roots.includes(c.slice(1).split(' ')[0]) : q.split(/\s+/).every(word => (c+' '+d).toLowerCase().includes(word)));
 }
+/* ── command manual ── one help page per catalog row. The syntax and the
+   one-line summary come from COMMANDS; the longer description, argument
+   meanings, extra examples and caveats live here. Placeholder meanings are
+   shared by name so every row can explain its arguments. Everything is
+   rendered as text nodes, never HTML. */
+const ARG_MEANINGS = {
+  'run-id': 'the run id shown by /agent runs, /agent status or a job watch',
+  'job-id': 'a job id from /agent confirm or /agent jobs; omitted, the job this page last watched',
+  'reason': 'why you are doing this, in your words; recorded with the write and never optional',
+  'profile': 'a fixed check profile name from /agent checks',
+  'n': 'a positive whole number',
+  'branch': 'the branch the coding run works on',
+  'instruction': 'the task in plain words; the rest of the line',
+  'repo-relative-path[#Lx-Ly]': 'a path inside the repository: no leading slash, no .., no drive letter, nothing starting with a dash',
+  'query': 'the search words; the rest of the line after any flags',
+  'question': 'the research question; the rest of the line after any flags',
+  'URL': 'an exact http(s) URL',
+  'pattern': 'an exact URL, or a wildcard such as https://www.example.org/* or https://*.example.org/*',
+  'id-or-pattern': 'a rule id from /web status, or the exact pattern it was granted with',
+  'id': 'the identifier shown by the matching list command',
+  'episode-id': 'an episode id from the Memory pane or a /memory remember reply',
+  'text': 'the fact to store, everything before the :: separator',
+  'sentence': 'the summary to attach, everything before the :: separator',
+  'note': 'the note text; the rest of the line',
+  'name': 'an exact name from the matching list',
+  'title': 'a title; the rest of the line',
+  'topic': 'a topic key: chat, session, web, memory, agent, tools or settings',
+  'search words': 'words matched against every command and summary, flags included',
+  'KEY': 'a credential name such as SERPAPI_API_KEY; upper-cased for you',
+  'value': 'the secret: everything after the key name, spaces included',
+  'id...': 'one or more skill ids separated by spaces',
+};
+const FLAG_MEANINGS = {
+  '--group': 'a named URL group; the operation is scoped to that group',
+  '--seed': 'a starting URL for the group; repeat the flag for each one',
+  '--url': 'a starting URL for research; repeat the flag for each one',
+  '--count': 'how many Google results to return, 1 to 10',
+  '--engine': 'google for web listings, pages for search inside permitted pages',
+};
+/* Keyed by the exact COMMANDS syntax. detail: what the command does when it
+   runs. notes: caveats worth a line. args: per-command placeholder meanings
+   that override ARG_MEANINGS. examples: inserted, never executed. */
+const COMMAND_MAN = {
+  '/agent [help]': {detail:'Lists every /agent command. The coding workflow is: stage a request, refine it, confirm it with a reason, review the result, approve the commit, then push and publish, each a separate step.', notes:['Nothing runs until /agent confirm. A command printed by the model is never approval.']},
+  '/agent approve <run-id> <reason>': {detail:'Commits a pending run’s diff locally, but only after this transcript has shown that run’s complete diff: through /agent status, the job watch, or a first approve call, which then asks you to repeat it. If the diff was already shown, the first call commits. Approval is withheld unless the run is pending and its diff loaded completely.', notes:['Approve does not push; that is /agent push.'], examples:['/agent status ']},
+  '/agent cancel': {detail:'Discards the staged request: branch, instruction, plan, declared reads and checks. Jobs already submitted keep running; /agent stop is for those.'},
+  '/agent checks [profile ...]': {detail:'Alone, lists the fixed check profiles and what each runs. With names, selects those profiles for the staged request; separate several with spaces or commas. Unknown names are refused and nothing changes.', examples:['/agent checks']},
+  '/agent confirm <reason>': {detail:'Submits the staged request as a detached job, with your reason. If the server refuses it, the request stays staged for correction. The console then watches the job in the transcript.', notes:['confirm is explicit here and never defaulted.']},
+  '/agent discard <run-id>': {detail:'Releases the clone a finished run owns. A run whose owner is unknown and still running cannot be discarded.'},
+  '/agent issue <n>|clear': {detail:'Attaches issue context to the staged request and clears any PR context; clear removes it. Needs a staged request.', args:{n:'the issue number'}},
+  '/agent iterations <n>|clear': {detail:'Caps how many planner iterations the staged run may take, 1 to ' + MAX_AGENT_ITERATIONS + '; clear restores the configured default.', args:{n:'1 to ' + MAX_AGENT_ITERATIONS}},
+  '/agent job [job-id]': {detail:'Watches a job’s progress in the transcript. Without an id, it uses the job this page last watched.'},
+  '/agent jobs': {detail:'Lists retained coding jobs with their status.'},
+  '/agent plan [clear]': {detail:'Opens a file chooser for a reviewed plan (.md or .txt) to attach to the staged request; clear detaches it. Needs a staged request.'},
+  '/agent pr <n>|clear': {detail:'Attaches pull-request context to the staged request and clears any issue context; clear removes it. Needs a staged request.', args:{n:'the pull request number'}},
+  '/agent pr-body <run-id>': {detail:'Opens a file chooser for the completed PR template and shows it for review. /agent publish refuses a run until this review happened.', args:{'run-id':'exactly 32 hexadecimal characters'}},
+  '/agent publish <run-id> <reason>': {detail:'Opens a draft pull request for the run with the PR body you reviewed through /agent pr-body. Refused until that review happened.'},
+  '/agent push <run-id> <reason>': {detail:'Pushes the approved commit. The server ships with pushing disabled, so the request is refused until an operator enables it in the configuration.'},
+  '/agent read <repo-relative-path[#Lx-Ly]>|clear': {detail:'Declares a file the planner may read, up to ' + MAX_AGENT_READ_FILES + ' paths per request. A path already declared is reported, not duplicated. clear drops every declared path. Needs a staged request.'},
+  '/agent reject <run-id>': {detail:'Rejects a pending run. Nothing is committed.'},
+  '/agent run <branch> <instruction>': {detail:'Stages a coding request and shows the server’s default check and planner model. Nothing executes: refine it with plan, read, checks, iterations, pr or issue, then authorize it with /agent confirm <reason>.', examples:['/agent run fix/login-timeout Return 408 instead of hanging when the upstream times out']},
+  '/agent runs': {detail:'Lists retained runs with status and recovery notes, reconciling interrupted ownership. The list is bounded; older records stay on disk.'},
+  '/agent status <run-id>': {detail:'Shows one run and its complete diff.'},
+  '/agent stop [job-id]': {detail:'Asks the server to cancel a job. Without an id, it uses the job this page last watched. Work the job already spawned may survive; inspect the run before further writes.'},
+  '/analytics': {detail:'Opens the Analytics dialog: tokens and cost, sessions and coding runs, filterable and paged.'},
+  '/api [set <KEY> <value>|clear <KEY>]': {detail:'Alone, shows the credential store and every key masked. set saves a value and clear removes it. Saved values load after a restart, except SERPAPI_API_KEY, which applies at once; an explicit environment variable always wins.', notes:['A secret typed here lands in chat history. The API Keys pane’s password fields do not.']},
+  '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
+  '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
+  '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
+  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
+  '/goal stage <branch>': {detail:'Turns the session goal into a staged coding request on that branch. It still needs /agent confirm <reason>.'},
+  '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
+  '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
+  '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
+  '/loop [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Chat only: it never starts a coding run and has no tools.'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
+  '/memory [on|off]': {detail:'Alone, shows memory status and the pinned notes. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
+  '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
+  '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
+  '/memory capture|recall|retrieval on|off': {detail:'Administrator switches for episode capture, explicit recall and fact retrieval. The reply shows every gate’s state. /memory on is unaffected; it covers pinned notes only.'},
+  '/memory clear': {detail:'Deletes every pinned note at once. There is no confirmation prompt.'},
+  '/memory consolidate <episode-id> [episode-id ...]': {detail:'Consolidates the named episodes into pending proposals. No fact is written; decide in the Memory pane or with /memory proposals.'},
+  '/memory consolidation on|off': {detail:'Administrator switch for manual consolidation.'},
+  '/memory forget <id>': {detail:'Removes one pinned note. Ids are listed by /memory.'},
+  '/memory proposals': {detail:'Opens the Memory pane with the pending proposals. Apply and Reject each require a reason.'},
+  '/memory remember <sentence> :: <reason>': {detail:'Attaches your summary to the latest completed episode of this account. The two colons separate the summary from the required reason. Needs capture on and a completed chat turn; no fact is written.'},
+  '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
+  '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
+  '/memory search <query>': {detail:'Lists matching fact candidates with scores. Nothing is injected into chat.'},
+  '/model [use <name>]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ']},
+  '/net status|devices': {detail:'status shows scope and gate state and loads no collector; devices lists passively seen neighbors. Both open the LAN pane. Anything else is refused: this console runs no scans or device control.'},
+  '/prompt': {detail:'Previews the next chat system prompt: persona, style, pinned notes, selected facts and web context. Shown only to you; nothing is sent to the model.'},
+  '/registry': {detail:'Lists skills, tools and connectors together.'},
+  '/session [list]': {detail:'Lists saved sessions with ids, titles, message and token counts.'},
+  '/session info': {detail:'Shows the current session’s id, title, model, message count and tokens.'},
+  '/session new [title]': {detail:'Starts a fresh conversation. Shared persona, enabled notes and web context carry over; /prompt shows what is included.'},
+  '/session rename <title>': {detail:'Renames the current session.'},
+  '/session use <id>': {detail:'Restores a saved session and replays its messages. Ids come from /session list or the Sessions pane.'},
+  '/skill [status]|use <id...>|clear': {detail:'Shows, replaces or clears the prompt skills selected for this session. Selected skills are prompt context, not tools. Creates a session if none is open.'},
+  '/skill check:<profile>': {insert:'/skill check:', detail:'Selects one fixed check profile for an already staged coding request. Written as one word with a colon. Nothing executes; /agent confirm <reason> still authorizes the run.'},
+  '/skills [all|help|<name>]': {detail:'Draws the registered runtime skills. all includes the unwired catalog; a name draws one skill; help lists these forms. Registration is not readiness.'},
+  '/soul [on|off|status]': {detail:'Shows persona status, or turns soul.md on or off in the system prompt. soul.md itself is never changed by this.'},
+  '/soul apply <id> <reason>': {detail:'Applies the persona proposal you reviewed with /soul review <id>. The id must match the reviewed proposal and a reason is required.'},
+  '/soul edit|history|propose': {detail:'edit opens the persona editor; propose opens it in proposal-only mode; history lists backup revisions.'},
+  '/soul reject <id> <reason>': {detail:'Rejects the persona proposal you reviewed with /soul review <id>. The id must match and a reason is required.'},
+  '/soul review <id>': {detail:'Shows a retained persona proposal. apply and reject require this review first.'},
+  '/status': {detail:'Shows version, model, provider, soul, style, memory, sessions, tokens, home, goal and loop state. Signed-out and audit accounts see a reduced view.'},
+  '/style [<name>|off]': {detail:'Shows or sets this session’s output style. The whole remainder is the name, so extra words are refused rather than ignored. soul.md is unchanged.', args:{name:'a style name from the status-bar menu'}},
+  '/tokens': {detail:'Shows this session’s prompt, completion and total tokens, and the exchange count.'},
+  '/tools [all|help|<name>]': {detail:'Draws the registered runtime tools. all includes unwired rows; mcp shows external MCP grants; a name draws one tool; help lists these forms.', examples:['/tools mcp']},
+  '/users': {detail:'Opens the Users pane for local accounts. Administrator only.'},
+  '/web [status|help]': {detail:'Shows web state: on or off, URL rules, groups and your selected context. help opens the web topic of this guide.'},
+  '/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]': {detail:'Grants URL patterns in one step, optionally into a named group with seed URLs. An exact URL covers only that page; https://host/* covers that host’s paths; *.example.org excludes the apex. Search listings never grant access.'},
+  '/web cancel': {detail:'Cancels your running research request.'},
+  '/web check <URL> [URL ...] [--group name]': {detail:'Reports whether each exact URL is permitted and by which rule. Nothing is fetched, resolved or granted.'},
+  '/web deny <id-or-pattern>': {detail:'Removes one URL permission rule. Administrator only.'},
+  '/web fetch <URL> [URL ...] [--group name]': {detail:'Fetches exact permitted URLs and shows a 2,000-character preview of each with coverage. Patterns and prose are refused.'},
+  '/web forget': {detail:'Clears the web extract you selected for chat.'},
+  '/web inject': {detail:'Selects your last fetch or page-search extract for later chat; /prompt previews it. It does not summarize, and it does not select a research answer.'},
+  '/web off': {detail:'Disables web for this home; rules and stored context are kept. Administrator only.'},
+  '/web on': {detail:'Enables web for this home; URLs still need permission rules. Administrator only.'},
+  '/web pages [--group name] <query>': {detail:'Finds permitted links and searches passages inside permitted pages. This is not Google; /web search gives listings.'},
+  '/web research [--group name] [--url URL ...] <question>': {detail:'Bounded multi-page research over permitted pages with checked citations, starting from the group or the --url seeds. Shows supported claims, conflicts, inferences, gaps and the sources. Not an exhaustive crawl; /web cancel stops it.'},
+  '/web search [--count 1..10] [--engine google|pages] [--group name] <query>': {detail:'Google result listings by default; --engine pages or a group searches permitted pages instead. Listings grant no permission to read a page.'},
+};
+/* Exact forms that are easy to get wrong. insert is what the composer gets;
+   key names the catalog row whose manual the ? opens. */
+const WORTH_KNOWING = [
+  {label:'/agent approve <run-id> <reason>', insert:'/agent approve ', hint:'Commits once this transcript has shown the diff; otherwise the first call shows it and asks for a repeat', key:'/agent approve <run-id> <reason>'},
+  {label:'/agent pr-body <run-id>', insert:'/agent pr-body ', hint:'Review the PR template here before /agent publish will accept', key:'/agent pr-body <run-id>'},
+  {label:'/memory save <text> :: <reason>', insert:'/memory save ', hint:'Two colons separate the fact from the required reason', key:'/memory save <text> :: <reason>'},
+  {label:'/skill check:<profile>', insert:'/skill check:', hint:'One word with a colon; needs a staged /agent run', key:'/skill check:<profile>'},
+  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [use <name>]'},
+  {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [n]|auto|stop'},
+  {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
+];
+function commandRoot(syntax) { return '/' + syntax.slice(1).split(' ')[0]; }
+/* What a click inserts: the fixed prefix, unless the manual names a form the
+   prefix rule cannot keep (check:<profile> is one word with a colon). */
+function commandInsert(syntax) { return (COMMAND_MAN[syntax] && COMMAND_MAN[syntax].insert) || commandPrefix(syntax); }
+function commandManual(syntax) {
+  const row = COMMANDS.find(([c]) => c === syntax) || [syntax, ''];
+  const man = COMMAND_MAN[syntax] || {};
+  const root = commandRoot(syntax);
+  const topicKey = Object.keys(HELP_TOPICS).find(k => HELP_TOPICS[k].roots.includes(root.slice(1))) || '';
+  const topic = topicKey ? HELP_TOPICS[topicKey] : null;
+  const prefix = commandPrefix(syntax).trim();
+  const unique = (v, i, all) => all.indexOf(v) === i;
+  const args = [...syntax.matchAll(/<([^>]+)>/g)].map(m => m[1]).filter(unique)
+    .map(name => ['<' + name + '>', (man.args && man.args[name]) || ARG_MEANINGS[name] || '']).filter(([, meaning]) => meaning);
+  const flags = [...syntax.matchAll(/--[a-z]+/g)].map(m => m[0]).filter(unique)
+    .map(flag => [flag, FLAG_MEANINGS[flag] || '']).filter(([, meaning]) => meaning);
+  const examples = (man.examples || []).concat(topic ? topic.examples.filter(e => e === prefix || e.startsWith(prefix + ' ')) : []).filter(unique);
+  const related = COMMANDS.filter(([c]) => c !== syntax && commandRoot(c) === root).map(([c]) => c);
+  return {syntax, summary: row[1], detail: man.detail || '', args, flags, examples, notes: (man.notes || []).concat(topic ? [topic.note] : []), related, topicKey, topic};
+}
+/* The manual dialog: a man page for one command. Buttons insert into the
+   composer or open a related page; none of them sends anything. */
+function openCommandHelp(syntax) {
+  const m = commandManual(syntax);
+  const dialog = $('commandHelpDialog'), body = $('commandHelpBody');
+  $('commandHelpTitle').textContent = m.syntax;
+  body.replaceChildren();
+  const heading = text => { const h = document.createElement('h3'); h.textContent = text; body.appendChild(h); };
+  const para = (text, className) => { const p = document.createElement('p'); if (className) p.className = className; p.textContent = text; body.appendChild(p); return p; };
+  const insertAndClose = line => { input.value = line; dialog.close(); input.focus(); };
+  heading('Synopsis');
+  const pre = document.createElement('pre'); pre.textContent = m.syntax; body.appendChild(pre);
+  para('<…> required · […] optional · a|b one of · one line, no control characters', 'legend');
+  heading('Description');
+  para(m.summary ? m.summary.charAt(0).toUpperCase() + m.summary.slice(1) + '.' : '');
+  if (m.detail) para(m.detail);
+  if (m.args.length || m.flags.length) {
+    heading('Arguments');
+    const dl = document.createElement('dl');
+    m.args.concat(m.flags).forEach(([name, meaning]) => {
+      const dt = document.createElement('dt'); dt.textContent = name;
+      const dd = document.createElement('dd'); dd.textContent = meaning;
+      dl.append(dt, dd);
+    });
+    body.appendChild(dl);
+  }
+  if (m.examples.length) {
+    heading('Examples — insert, review, then send');
+    const list = document.createElement('div'); list.className = 'man-buttons';
+    m.examples.forEach(e => { const b = document.createElement('button'); b.type = 'button'; b.textContent = e; b.title = 'Insert into the composer; does not execute'; b.addEventListener('click', () => insertAndClose(e)); list.appendChild(b); });
+    body.appendChild(list);
+  }
+  if (m.notes.length) {
+    heading('Notes');
+    const ul = document.createElement('ul');
+    m.notes.forEach(n => { const li = document.createElement('li'); li.textContent = n; ul.appendChild(li); });
+    body.appendChild(ul);
+  }
+  if (m.related.length || m.topic) {
+    heading('See also');
+    const list = document.createElement('div'); list.className = 'man-buttons';
+    m.related.forEach(c => { const b = document.createElement('button'); b.type = 'button'; b.textContent = c; b.title = 'Open the help page for ' + c; b.addEventListener('click', () => openCommandHelp(c)); list.appendChild(b); });
+    if (m.topic) { const b = document.createElement('button'); b.type = 'button'; b.textContent = '/help ' + m.topicKey + ' — ' + m.topic.title; b.title = 'Insert into the composer; does not execute'; b.addEventListener('click', () => insertAndClose('/help ' + m.topicKey)); list.appendChild(b); }
+    body.appendChild(list);
+  }
+  $('commandHelpInsert').onclick = () => insertAndClose(commandInsert(m.syntax));
+  if (!dialog.open) dialog.showModal();
+  body.scrollTop = 0; dialog.scrollTop = 0;
+}
+$('commandHelpClose').addEventListener('click', () => $('commandHelpDialog').close());
+/* One catalog row: the command inserts its fixed prefix, the ? opens its manual. */
+function commandRow(c, d) {
+  const row = document.createElement('div'); row.className = 'cmd-row';
+  const b = commandButton(commandInsert(c)); b.replaceChildren();
+  const syntax = document.createElement('span'); syntax.className = 'c'; syntax.textContent = c;
+  const desc = document.createElement('span'); desc.className = 'd'; desc.textContent = d; b.append(syntax, desc);
+  row.append(b, helpButton(c));
+  return row;
+}
+function helpButton(syntax) {
+  const help = document.createElement('button'); help.type = 'button'; help.className = 'cmd-help'; help.textContent = '?';
+  help.setAttribute('aria-label', 'Help for ' + syntax); help.title = 'Open the full help page for ' + syntax;
+  help.addEventListener('click', () => openCommandHelp(syntax));
+  return help;
+}
+/* The pane's resting view: the easy-to-miss forms, then every family folded.
+   Rows keep the catalog's alphabetical order across the folds, so the pane
+   and /help all expose the same list. */
+function renderFamilies(content) {
+  const tips = document.createElement('details'); tips.className = 'cmd-family cmd-tips'; tips.open = true;
+  const tipHead = document.createElement('summary'); tipHead.textContent = 'Worth knowing';
+  const tipCount = document.createElement('span'); tipCount.className = 'n'; tipCount.textContent = WORTH_KNOWING.length + ' exact forms'; tipHead.appendChild(tipCount);
+  tips.appendChild(tipHead);
+  WORTH_KNOWING.forEach(tip => {
+    const row = document.createElement('div'); row.className = 'cmd-row';
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'cmd-tip'; b.title = 'Insert into the composer; does not execute';
+    const label = document.createElement('span'); label.className = 's'; label.textContent = tip.label;
+    const hint = document.createElement('span'); hint.className = 'd'; hint.textContent = tip.hint; b.append(label, hint);
+    b.addEventListener('click', () => { input.value = tip.insert; input.focus(); });
+    row.append(b, helpButton(tip.key)); tips.appendChild(row);
+  });
+  content.appendChild(tips);
+  const head = document.createElement('div'); head.className = 'guide-head'; head.textContent = 'All commands by family'; content.appendChild(head);
+  const groups = new Map();
+  COMMANDS.forEach(([c, d]) => { const root = commandRoot(c); if (!groups.has(root)) groups.set(root, []); groups.get(root).push([c, d]); });
+  for (const [root, rows] of groups) {
+    if (rows.length === 1) { content.appendChild(commandRow(rows[0][0], rows[0][1])); continue; }
+    const family = document.createElement('details'); family.className = 'cmd-family';
+    const summary = document.createElement('summary'); summary.textContent = root;
+    const n = document.createElement('span'); n.className = 'n'; n.textContent = rows.length + ' commands'; summary.appendChild(n);
+    family.appendChild(summary);
+    rows.forEach(([c, d]) => family.appendChild(commandRow(c, d)));
+    content.appendChild(family);
+  }
+}
 function renderHelp(topic = '', compact = false) {
   const box = document.createElement('section'); box.className = 'command-guide'; box.setAttribute('aria-label','Command guide');
-  const title = document.createElement('h3'); title.textContent = 'Command guide'; box.appendChild(title);
-  const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click to insert a command, then review and send. <…> is required; […] is optional. Commands must be one line without control characters. Suggestions never execute.'; box.appendChild(note);
-  const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Search commands, e.g. web, session, --group'; search.setAttribute('aria-label','Search commands'); search.value = topic; box.appendChild(search);
-  const topics = document.createElement('div'); topics.className = 'help-topics'; box.appendChild(topics);
-  for (const [key,t] of Object.entries(HELP_TOPICS)) {
-    const b = document.createElement('button'); b.type='button'; b.textContent=t.title;
-    b.addEventListener('click', () => { search.value=key; paint(); }); topics.appendChild(b);
+  if (!compact) {
+    const title = document.createElement('h3'); title.textContent = 'Command guide'; box.appendChild(title);
+    const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click a command to insert it, then review and send; ? opens its full help page. <…> is required; […] is optional. Commands must be one line without control characters. Suggestions never execute.'; box.appendChild(note);
   }
-  const all = document.createElement('button'); all.type='button'; all.textContent='All commands'; all.addEventListener('click',()=>{search.value='all';paint();}); topics.appendChild(all);
+  const search = document.createElement('input'); search.type = 'search'; search.placeholder = compact ? 'Search commands or flags, e.g. --group' : 'Search commands, e.g. web, session, --group'; search.setAttribute('aria-label','Search commands'); search.value = topic; box.appendChild(search);
+  let topicSelect = null;
+  if (compact) {
+    /* The sidebar is narrow: one select instead of a wrapped row of chips. */
+    topicSelect = document.createElement('select'); topicSelect.setAttribute('aria-label', 'Filter by topic');
+    const all = document.createElement('option'); all.value = ''; all.textContent = 'All topics'; topicSelect.appendChild(all);
+    for (const [key,t] of Object.entries(HELP_TOPICS)) { const o = document.createElement('option'); o.value = key; o.textContent = t.title; topicSelect.appendChild(o); }
+    const flat = document.createElement('option'); flat.value = 'all'; flat.textContent = 'Every command, unfolded'; topicSelect.appendChild(flat);
+    topicSelect.addEventListener('change', () => { search.value = topicSelect.value; paint(); });
+    box.appendChild(topicSelect);
+  } else {
+    const topics = document.createElement('div'); topics.className = 'help-topics'; box.appendChild(topics);
+    for (const [key,t] of Object.entries(HELP_TOPICS)) {
+      const b = document.createElement('button'); b.type='button'; b.textContent=t.title;
+      b.addEventListener('click', () => { search.value=key; paint(); }); topics.appendChild(b);
+    }
+    const all = document.createElement('button'); all.type='button'; all.textContent='All commands'; all.addEventListener('click',()=>{search.value='all';paint();}); topics.appendChild(all);
+  }
   const content = document.createElement('div'); box.appendChild(content);
   function paint() {
     content.replaceChildren();
     const q = search.value.trim().toLowerCase().replace(/^\//,'');
+    if (topicSelect) topicSelect.value = (q in HELP_TOPICS || q === 'all') ? q : '';
     const selected = HELP_TOPICS[q] || Object.values(HELP_TOPICS).find(t=>t.roots.includes(q));
     if (selected) {
       const guidance = document.createElement('p'); guidance.textContent=selected.note; content.appendChild(guidance);
       const examples = document.createElement('details'); const summary=document.createElement('summary'); summary.textContent='Examples — insert, review, then send'; examples.appendChild(summary);
       examples.open=!compact; selected.examples.forEach(e=>examples.appendChild(commandButton(e))); content.appendChild(examples);
     }
-    if (!q && !compact) {
+    if (!q && compact) { renderFamilies(content); return; }
+    if (!q) {
       const start=document.createElement('p'); start.textContent='Choose a topic above, or start here:'; content.appendChild(start);
       ['/status','/session new','/web status','/help web','/memory proposals','/agent help'].forEach(c=>content.appendChild(commandButton(c)));
       return;
     }
     const rows=helpMatches(q); const count=document.createElement('p'); count.setAttribute('role','status'); count.textContent=rows.length ? rows.length+' matching commands' : 'No commands match. Try a topic or a shorter phrase.'; content.appendChild(count);
-    rows.forEach(([c,d])=>{
-      const b=commandButton(commandPrefix(c)); b.replaceChildren();
-      const syntax=document.createElement('span'); syntax.className='c'; syntax.textContent=c;
-      const desc=document.createElement('span'); desc.className='d'; desc.textContent=d; b.append(syntax,desc); content.appendChild(b);
-    });
+    rows.forEach(([c,d])=>content.appendChild(commandRow(c,d)));
   }
   search.addEventListener('input',paint); paint(); return box;
 }
