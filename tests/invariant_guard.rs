@@ -689,6 +689,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/DESKTOP_ACCEPTANCE.md", Evidence, 3000),
     // why: #241 folded the MLX QLoRA guide and finetune/README.md in here.
     ("docs/FINETUNE.md", Guide, 1200),
+    // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
+    ("docs/GITHOOKS.md", Guide, 1400),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     ("docs/INSTALL.md", Guide, 5600),
     ("docs/MCP_CLIENT.md", Guide, 1000),
@@ -727,7 +729,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: README refresh (#284) plus the OS credential store section and its #286 caveat; set to the reported Root total of 8145 words.
 // why: console accessibility port (keyboard, zoom and live-log note; Attach files wording); Guide is 45340 words with the other open PRs (#353, #354, #359) and before the sign-in docs cut.
 // why: the cgagentharness-otel-hardening skill brought Agent to 23,860 words; rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 45_340), (Evidence, 3_500), (Agent, 24_000)];
+// why: docs/GITHOOKS.md (.githooks security gate explainer, 1364 words) raised Guide from 45,311 to 46,675; set to 46,700.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 46_700), (Evidence, 3_500), (Agent, 24_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
