@@ -11,7 +11,7 @@ impl HomeLock {
         match FileLease::acquire(&home.join(".server.lock"), true) {
             Ok(lease) => Ok(Self { _lease: lease }),
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Err(anyhow::anyhow!(
-                "the server is running and holds this home; stop it before renewing the certificate or starting another server"
+                "another process holds this home (the server or a certificate renew); stop that process before renewing the certificate or starting another server"
             )),
             Err(err) => Err(err.into()),
         }
@@ -23,7 +23,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn busy_home_lock_names_the_server_and_does_not_wait() {
+    fn busy_home_lock_names_a_competing_holder_and_does_not_wait() {
         let dir = tempfile::tempdir().expect("temp home");
         let held = match HomeLock::acquire(dir.path()) {
             Ok(lock) => lock,
@@ -36,8 +36,9 @@ mod tests {
         };
         assert!(started.elapsed() < std::time::Duration::from_millis(500));
         let text = err.to_string();
-        assert!(text.contains("the server is running and holds this home"), "{text}");
-        assert!(text.contains("stop it before renewing the certificate"), "{text}");
+        assert!(text.contains("another process holds this home"), "{text}");
+        assert!(text.contains("the server or a certificate renew"), "{text}");
+        assert!(text.contains("stop that process before renewing the certificate"), "{text}");
         assert!(!text.contains("os error"), "{text}");
         drop(held);
         if let Err(err) = HomeLock::acquire(dir.path()) {
