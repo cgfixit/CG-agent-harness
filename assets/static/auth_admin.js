@@ -105,7 +105,7 @@
       if (!preserveStatus) onStatus(); // successful reload clears any transient error
       users.forEach(function (u) {
         const row = el("div", { class: "auth-user-row" });
-        row.appendChild(el("span", null, u.username + " · " + u.role + (u.disabled ? " · disabled" : "")));
+        row.appendChild(el("span", null, u.username + " · " + u.role + (u.user_id ? " · " + u.user_id : "") + (u.disabled ? " · disabled" : "")));
         if (actorRole === "admin") {
           const roleSel = el("select");
           ["admin", "operator", "audit"].forEach(function (r) {

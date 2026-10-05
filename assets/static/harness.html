@@ -4442,6 +4442,9 @@ async function refreshHeaderFeatures(usable) {
   $('openSchedules').hidden = !(Array.isArray(tools?.tools) && tools.tools.some(t => t?.path === '/api/agent/schedules' && t.enabled === true));
 }
 /* End header automation buttons. */
+function accountLabel(data) {
+  return data.username + ' · ' + data.role + (data.user_id ? ' · ' + data.user_id : '');
+}
 /* Both probes are bounded, matching terminal.js's refreshAuthUi. The catch
    below deliberately keeps the last-known UI on failure, but a bare fetch
    against a gateway that accepted the socket and then stalled never settles,
@@ -4466,7 +4469,7 @@ async function refreshHarnessAuth() {
       setHarnessLogoutVisible(true);
       refreshHeaderFeatures(!data.must_change_password);
       $('reloadLimits').hidden = data.role !== 'admin' || data.must_change_password;
-      if (who) who.textContent = data.username + ' · ' + data.role;
+      if (who) who.textContent = accountLabel(data);
       if (data.must_change_password) openPasswordChange(true);
       return;
     }
@@ -4514,7 +4517,7 @@ if (hAuthLogin) {
       const data = await r.json();
       clearPendingAttachments();
       window.__cyclawRole = data.role;
-      if (who) who.textContent = data.username + ' · ' + data.role;
+      if (who) who.textContent = accountLabel(data);
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
@@ -4609,7 +4612,7 @@ if (hAuthSetupBtn) {
       const data = await r.json();
       clearPendingAttachments();
       window.__cyclawRole = data.role;
-      if (who) who.textContent = data.username + ' · ' + data.role;
+      if (who) who.textContent = accountLabel(data);
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
