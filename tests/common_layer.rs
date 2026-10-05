@@ -353,12 +353,26 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     assert!(!mgr.bootstrap_if_empty().unwrap());
     assert!(!mgr.needs_password_setup());
     assert!(mgr.get_user("admin").unwrap().must_change_password);
+    // The shipped password is reported until it changes, across a reopen,
+    // without hashing it again.
+    assert!(mgr.default_password_active());
+    assert!(AuthManager::open(&dir.path().join("auth.json"), &cfg)
+        .unwrap()
+        .default_password_active());
     assert_eq!(
         mgr.login(BOOTSTRAP_USERNAME, "anything at all!").unwrap_err().code,
         "AUTH_LOGIN_FAILED"
     );
     let restricted = mgr.login("admin", "admin").unwrap();
+    assert!(
+        mgr.default_password_active(),
+        "a sign-in that skips the change keeps the note in this process"
+    );
     let first = mgr.change_password("admin", "admin", "first-admin-password").unwrap();
+    assert!(!mgr.default_password_active());
+    assert!(!AuthManager::open(&dir.path().join("auth.json"), &cfg)
+        .unwrap()
+        .default_password_active());
     assert!(mgr.validate_session(&restricted.session_id).is_none());
     assert!(!mgr.get_user("admin").unwrap().must_change_password);
     assert!(!mgr.needs_password_setup());

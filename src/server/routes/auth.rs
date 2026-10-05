@@ -97,7 +97,9 @@ fn map_auth_error(e: &HarnessError) -> ApiError {
         "AUTH_LAST_ADMIN" => ApiError::new(StatusCode::FORBIDDEN, &e.code, e.message.clone()),
         "AUTH_USER_EXISTS" => ApiError::new(StatusCode::CONFLICT, &e.code, e.message.clone()),
         "AUTH_BOOTSTRAP_COMPLETE" => ApiError::new(StatusCode::CONFLICT, &e.code, e.message.clone()),
-        "AUTH_ACCOUNT_LOCKED" => ApiError::new(StatusCode::LOCKED, &e.code, e.message.clone()),
+        // Only the wait crosses the wire; the stored details also name the account.
+        "AUTH_ACCOUNT_LOCKED" => ApiError::new(StatusCode::LOCKED, &e.code, e.message.clone())
+            .details(json!({"retry_after_sec": e.details.get("retry_after_sec").cloned().unwrap_or(Value::Null)})),
         "AUTH_LOGIN_FAILED" => ApiError::new(StatusCode::UNAUTHORIZED, &e.code, e.message.clone()),
         _ => ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", e.message.clone()),
     }
@@ -143,11 +145,23 @@ fn user_payload(u: &UserSummary) -> Value {
     json!({
         "username": u.username,
         "role": u.role,
+        "user_id": u.user_id,
         "disabled": u.disabled,
         "created_ts": u.created_ts,
         "last_login_ts": u.last_login_ts,
         "locked": u.locked_until_ts.is_some(),
         "must_change_password": u.must_change_password,
+    })
+}
+
+/// The caller's own account identity. `user_id` is the stable owner namespace,
+/// not a credential. This is not the administrator directory.
+fn account_identity(account: &UserSummary) -> Value {
+    json!({
+        "username": account.username,
+        "role": account.role,
+        "user_id": account.user_id,
+        "must_change_password": account.must_change_password,
     })
 }
 
@@ -157,6 +171,7 @@ pub async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<
     Ok(Json(json!({
         "enabled": true,
         "needs_password": pending,
+        "default_password": mgr.default_password_active(),
         "username": if pending { Some(BOOTSTRAP_USERNAME) } else { None },
     })))
 }
@@ -193,19 +208,23 @@ pub async fn login(
         manager(&st).and_then(|m| m.login(&req.username, &req.password).map_err(|e| map_auth_error(&e)))
     })
     .await?;
-    let role = manager(&state)?
-        .get_user(&result.username)
-        .map(|u| u.role)
+    let user = manager(&state)?.get_user(&result.username);
+    let role = user
+        .as_ref()
+        .map(|u| u.role.clone())
         .unwrap_or_else(|| ROLE_OPERATOR.to_string());
-    let must_change_password = manager(&state)?
-        .get_user(&result.username)
-        .is_some_and(|u| u.must_change_password);
+    let must_change_password = user.as_ref().is_some_and(|u| u.must_change_password);
+    let user_id = user.as_ref().map(|u| u.user_id.clone()).unwrap_or_default();
     state
         .audit
         .log(json!({"event":"account.login", "actor":result.username,"outcome":"success"}));
-    let mut resp =
-        Json(json!({"username": result.username, "role": role, "must_change_password": must_change_password}))
-            .into_response();
+    let mut resp = Json(json!({
+        "username": result.username,
+        "role": role,
+        "user_id": user_id,
+        "must_change_password": must_change_password,
+    }))
+    .into_response();
     set_cookie(&mut resp, &result.session_id, scheme.is_some_and(|s| s.0 .0 == "https"));
     Ok(resp)
 }
@@ -222,9 +241,7 @@ pub async fn logout(State(state): State<Arc<AppState>>, req: Request<Body>) -> A
 
 pub async fn whoami(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
     let account = actor(&state, &req)?;
-    Ok(Json(
-        json!({"username": account.username, "role": account.role,"must_change_password":account.must_change_password}),
-    ))
+    Ok(Json(account_identity(&account)))
 }
 
 pub async fn change_password(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
@@ -476,6 +493,14 @@ use axum::extract::FromRequest;
 mod tests {
     use super::*;
 
+    #[test]
+    fn lockout_reply_keeps_the_wait_but_not_the_account() {
+        let mapped = map_auth_error(&crate::common::errors::HarnessError::auth_locked(29.5, "admin"));
+        assert_eq!(mapped.status, StatusCode::LOCKED);
+        assert_eq!(mapped.details["retry_after_sec"], 29.5);
+        assert!(mapped.details.get("username").is_none());
+    }
+
     fn with_cookie(raw: &str) -> Option<String> {
         let req = Request::builder()
             .header(header::COOKIE, raw)
@@ -562,5 +587,27 @@ mod tests {
     fn only_the_first_equals_splits_the_value() {
         // Session tokens are opaque; an `=` inside one must survive.
         assert_eq!(with_cookie("cgagentharness_session=a=b=c"), Some("a=b=c".into()));
+    }
+
+    #[test]
+    fn account_payloads_publish_the_caller_or_admin_directory_id() {
+        let user = UserSummary {
+            user_id: "ab".repeat(16),
+            username: "ada".into(),
+            created_ts: 1.0,
+            disabled: false,
+            last_login_ts: None,
+            failed_count: 0,
+            locked_until_ts: None,
+            role: "operator".into(),
+            must_change_password: false,
+        };
+        let identity = account_identity(&user);
+        assert_eq!(identity["user_id"], user.user_id);
+        assert_eq!(identity["username"], "ada");
+        assert!(identity.get("disabled").is_none());
+        let listed = user_payload(&user);
+        assert_eq!(listed["user_id"], identity["user_id"]);
+        assert_eq!(listed["role"], "operator");
     }
 }

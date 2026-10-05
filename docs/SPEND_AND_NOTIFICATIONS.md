@@ -112,7 +112,7 @@ Provider contract: [Claude token counting](https://platform.claude.com/docs/en/b
 
 Notifications are **disabled by default**. The active home's `config.yaml` needs
 an explicit destination owner, subscriptions and enablement. Obtain the account's
-stable `user_id` from administrator account management; username is not an owner ID.
+stable `user_id` from `GET /api/auth/users` (administrator) or `GET /api/auth/whoami`; username is not an owner ID.
 Only deliberately auth-disabled homes use `local`.
 
 ```yaml

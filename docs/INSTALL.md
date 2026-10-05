@@ -233,10 +233,8 @@ the app, open it from Finder. For the standalone path, start the server:
 
 Existing settings are preserved on upgrade. Merge `auth.enabled: true` and
 `tls.enabled: true` into the active configuration to adopt the new boundaries.
-The fresh-install login hint appears between HARNESS and the authentication
-controls. Sign in as `admin` / `admin` on a fresh account store; the password
-replacement dialog opens automatically and requires a new password before
-portal use. See
+On a fresh account store the sign-in screen shows `admin` / `admin`; signing in
+opens password replacement, required before portal use. See
 [TLS trust, migration and recovery](SECURE_RESEARCH.md).
 
 The standalone server prints its address, for example:

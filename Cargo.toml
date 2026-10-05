@@ -32,7 +32,7 @@ rcgen = "0.14.10"
 x509-parser = "0.18"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-rmcp = { version = "=3.4.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
@@ -41,7 +41,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 unicode-normalization = "0.1"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 base64 = "0.22"
 subtle = "2"
@@ -98,7 +98,7 @@ proptest = "1.6"
 # scanning for substrings: `use crate::{agentic as pipeline}` defeats a substring
 # scan. syn is already in the lock graph via the derive macros, so this adds no
 # new crates to the build.
-syn = { version = "2", default-features = false, features = ["full", "parsing", "visit"] }
+syn = { version = "3", default-features = false, features = ["full", "parsing", "visit"] }
 
 # scrypt at n=2^17 is unusably slow unoptimized; optimize dependencies even in dev/test.
 [profile.dev.package."*"]

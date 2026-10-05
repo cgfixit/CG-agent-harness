@@ -6,11 +6,11 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 const source = html.slice(html.indexOf('async function previewChatPrompt('), html.indexOf('\nfunction isLoopStopCommand('));
 const calls = [];
-let uploads = 0, switchDuringUpload = false, failPreview = false;
+let uploads = 0, switchDuringUpload = false, failPreview = false, repaints = 0;
 const input = {files: ['a.md', 'b.md', 'c.md'], get value(){return '';}, set value(v){if(v==='')this.files=[];}};
 const context = vm.createContext({
   sessionRevision: 1, currentSession: 'one', retryAttachmentIds: null, attachInput: input,
-  sendBtn: {disabled:false}, sys(){}, awaitStyleWrites:async()=>{},
+  sendBtn: {disabled:false}, sys(){}, awaitStyleWrites:async()=>{}, paintAttach(){ repaints++; },
   releaseSendGate(){context.sendBtn.disabled=false;},
   uploadChatAttachments:async files=>{
     uploads++; assert.equal(files.length,3);
@@ -26,6 +26,7 @@ const context = vm.createContext({
 vm.runInContext(source,context);
 await context.previewChatPrompt();
 assert.equal(uploads,1);
+assert.equal(repaints,1,'clearing the uploaded selection repaints the Attach files button');
 assert.deepEqual(calls[0].body.attachment_ids,['id-a','id-b','id-c']);
 await context.previewChatPrompt({soul_content:'candidate'});
 assert.equal(uploads,1,'repeated preview must not re-upload');
