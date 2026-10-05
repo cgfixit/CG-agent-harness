@@ -8,7 +8,7 @@ description = "macOS desktop owner for the CG Agent Harness sidecar"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 [dependencies]
@@ -16,7 +16,7 @@ tauri = { version = "=2.11.5", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 base64 = "0.22"
 rand = "0.8"
