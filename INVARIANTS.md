@@ -179,11 +179,10 @@ only their stored fetch target, never old host aliases or implicit descendants.
 The fetcher resolves once, rejects every mixed/special-use address answer, then
 pins a fresh Reqwest client to the validated addresses with a refusing fallback
 resolver. Public TLS verification stays enabled; proxies, redirects, retries,
-compression and connection reuse are disabled. Deadlines include queueing, DNS
-and extraction; headers, bodies and concurrency are bounded. HTML parsing and
-extraction run off async workers, cooperatively stop on cancellation/deadline,
-and retain their permit until exit. Parser state is bounded by
-`web.html_parser_handles`; excessive complexity returns no partial evidence.
+compression and connection reuse are disabled. Deadlines include queueing, DNS, and extraction; headers, bodies, and
+concurrency are bounded. HTML parse/extract runs off async workers, stops on
+cancel/deadline, and keeps its permit until exit. `web.html_parser_handles`
+bounds parser state; excess complexity returns no partial evidence.
 
 Policy is reloaded before dispatch and before storage or delivery. Revoked or
 unproven saved evidence is inaccessible, including old shared plain-text context.
