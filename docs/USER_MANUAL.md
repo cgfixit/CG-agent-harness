@@ -12,6 +12,12 @@ again before confirming, approving, publishing or applying. Late responses canno
 restore reviews. Clearing the view stops monitoring but preserves submitted jobs
 and server records. Use `/agent jobs` or `/agent runs` to resume review.
 
+## Keyboard, zoom and screen readers
+
+Text follows browser zoom. In the sidebar tab list, arrow keys, Home and End
+move; Enter or Space opens a tab. The conversation is a polite live log, marked
+busy while a reply streams. The paperclip beside Send attaches files.
+
 ## Spend and completion notifications
 
 Open **Analytics** → **Tokens and cost** for retained provider/model/day usage.

@@ -696,6 +696,7 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
     let (status, body) = s.open_get("/api/auth/setup-status").await;
     assert_eq!(status, 200);
     assert_eq!(body["needs_password"], false);
+    assert_eq!(body["default_password"], true);
     assert_eq!(s.open_get("/api/auth/whoami").await.0, 401);
     let resp = s
         .client
@@ -722,6 +723,7 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(s.open_get("/api/auth/setup-status").await.1["default_password"], false);
     let cookie = resp.headers()["set-cookie"].to_str().unwrap().to_string();
     assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
     let session = cookie.split(';').next().unwrap().to_string();

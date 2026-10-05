@@ -31,7 +31,7 @@ Spend and outbound completion webhooks: [operator guide](SPEND_AND_NOTIFICATIONS
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/auth/setup-status` | Whether bootstrap password replacement is pending; public |
+| GET | `/api/auth/setup-status` | Pending bootstrap replacement; `default_password` while `admin` / `admin` works; public |
 | POST | `/api/auth/bootstrap-password` | Replace the fresh `admin` password (12+ characters) |
 | POST | `/api/auth/login` | Login; public with early guards |
 | POST | `/api/auth/logout` | Revoke the current session |

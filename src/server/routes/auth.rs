@@ -97,7 +97,9 @@ fn map_auth_error(e: &HarnessError) -> ApiError {
         "AUTH_LAST_ADMIN" => ApiError::new(StatusCode::FORBIDDEN, &e.code, e.message.clone()),
         "AUTH_USER_EXISTS" => ApiError::new(StatusCode::CONFLICT, &e.code, e.message.clone()),
         "AUTH_BOOTSTRAP_COMPLETE" => ApiError::new(StatusCode::CONFLICT, &e.code, e.message.clone()),
-        "AUTH_ACCOUNT_LOCKED" => ApiError::new(StatusCode::LOCKED, &e.code, e.message.clone()),
+        // Only the wait crosses the wire; the stored details also name the account.
+        "AUTH_ACCOUNT_LOCKED" => ApiError::new(StatusCode::LOCKED, &e.code, e.message.clone())
+            .details(json!({"retry_after_sec": e.details.get("retry_after_sec").cloned().unwrap_or(Value::Null)})),
         "AUTH_LOGIN_FAILED" => ApiError::new(StatusCode::UNAUTHORIZED, &e.code, e.message.clone()),
         _ => ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", e.message.clone()),
     }
@@ -169,6 +171,7 @@ pub async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<
     Ok(Json(json!({
         "enabled": true,
         "needs_password": pending,
+        "default_password": mgr.default_password_active(),
         "username": if pending { Some(BOOTSTRAP_USERNAME) } else { None },
     })))
 }
@@ -489,6 +492,14 @@ use axum::extract::FromRequest;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lockout_reply_keeps_the_wait_but_not_the_account() {
+        let mapped = map_auth_error(&crate::common::errors::HarnessError::auth_locked(29.5, "admin"));
+        assert_eq!(mapped.status, StatusCode::LOCKED);
+        assert_eq!(mapped.details["retry_after_sec"], 29.5);
+        assert!(mapped.details.get("username").is_none());
+    }
 
     fn with_cookie(raw: &str) -> Option<String> {
         let req = Request::builder()
