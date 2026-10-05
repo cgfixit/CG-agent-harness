@@ -805,7 +805,9 @@ function errorCopy(e, raw) {
     if (/unreachable/i.test(raw)) return { title: "Can't reach the model", action: 'Nothing is answering at ' + modelEndpoint() + '. Start the model service (Ollama: OLLAMA_CONTEXT_LENGTH=32768 ollama serve), then send again.' };
     if (/deadline/i.test(raw)) return { title: 'The model took too long to answer', action: 'It may still be loading. Wait a moment and send again, or choose a smaller model with /model use <tag>.' };
     if (/no model selected/i.test(raw)) return { title: 'No chat model is selected', action: 'Choose an installed model with /model use <exact-installed-tag>.' };
-    if (/HTTP 404/.test(raw)) return { title: "The model server doesn't have this model", action: 'Check the exact tag (ollama list), then /model use <tag>.' };
+    if (/HTTP 404/.test(raw)) return { title: 'The model server answered 404', action: lastStatus && lastStatus.provider === 'ollama'
+      ? 'The tag may not be installed. Check the exact tag (ollama list), then /model use <tag>.'
+      : 'Check the configured endpoint and model name, then /model use <name>.' };
     return { title: 'The model server returned an error', action: 'Check the model service, then send again.' };
   }
   if (code === 'CHAT_BUSY') return { title: 'A reply is still being generated', action: 'Wait for it to finish, or type /loop stop to abort it.' };
@@ -1319,6 +1321,9 @@ async function refreshReadiness(s) {
     paintChip('hWeb', 'unknown', 'not checked', 'Web status is unavailable for this account.');
   } else if (web.enabled !== true) {
     paintChip('hWeb', 'unknown', 'off', 'Chat has no web tools. An administrator can turn them on with /web on.');
+  } else if (s.chat_tools_available === false) {
+    // Cloud chat never receives web tools or web context (/api/status says so).
+    paintChip('hWeb', 'unknown', 'not used by this model', 'Web is on, but the selected cloud model gets no web tools. /web commands still work.');
   } else {
     const rules = Array.isArray(web.allowlist) ? web.allowlist.length : 0;
     if (rules) paintChip('hWeb', 'ok', rules + (rules === 1 ? ' URL rule' : ' URL rules'), 'Search is on; pages matching the permitted URL rules can be read.');
@@ -1349,10 +1354,17 @@ async function refreshStatus() {
     refreshReadiness(s);
     statusBackoffMs = STATUS_BASE_INTERVAL;
   } catch (e) {
-    readinessRevision++;
-    paintChip('hConsole', 'bad', 'unreachable', 'This page cannot reach the harness API. Check that it is still running.');
-    paintChip('hModelChip', 'unknown', 'not checked', 'The console is unreachable.');
-    paintChip('hWeb', 'unknown', 'not checked', 'The console is unreachable.');
+    /* Only a failed fetch means the harness is unreachable. A typed reply such
+       as RATE_LIMIT came from a running harness; the other chips keep their
+       last known state. */
+    if (e && (e.code === 'NETWORK' || e.name === 'NetworkError')) {
+      readinessRevision++;
+      paintChip('hConsole', 'bad', 'unreachable', 'This page cannot reach the harness API. Check that it is still running.');
+      paintChip('hModelChip', 'unknown', 'not checked', 'The console is unreachable.');
+      paintChip('hWeb', 'unknown', 'not checked', 'The console is unreachable.');
+    } else {
+      paintChip('hConsole', 'warn', 'answering with errors', 'The harness is running but the status check failed: ' + ((e && e.message) || String(e)));
+    }
     statusBackoffMs = Math.min(statusBackoffMs * 2, STATUS_MAX_INTERVAL);
   }
   scheduleStatusRefresh();
