@@ -703,3 +703,59 @@ async fn symlinked_bearer_file_is_refused_even_when_the_target_is_private() {
         "symlinked bearers.json must be refused"
     );
 }
+
+/// macOS evaluates ACL entries before mode bits, so an inherited or added
+/// `everyone allow read` entry makes a 0600 file readable by other accounts.
+/// Any ACL entry must fail closed, name the fix, and leave the file untouched.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn bearer_file_with_an_acl_entry_is_refused_on_macos() {
+    let (_dir, home) = fresh_home();
+    let path = write_bearers(&home, 0o600);
+    let added = std::process::Command::new("/bin/chmod")
+        .arg("+a")
+        .arg("everyone allow read")
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(added.success(), "fixture: chmod +a must add the ACL entry");
+    let listed = |path: &std::path::Path| {
+        let out = std::process::Command::new("/bin/ls")
+            .arg("-le")
+            .arg(path)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert!(
+        listed(&path).contains("everyone allow read"),
+        "fixture: ACL entry must be present before the check"
+    );
+
+    let err = Notifier::start(&home, &bearer_cfg(&home), None)
+        .err()
+        .expect("0600 bearers.json with an ACL entry must be refused at startup, loading no bearer");
+    let shown = format!("{err} {err:?}");
+    assert!(
+        shown.contains("chmod -N"),
+        "error must say how to strip the ACL: {shown}"
+    );
+    assert!(!shown.contains(BEARER_FIXTURE_SECRET), "error echoed the bearer secret");
+    assert!(
+        listed(&path).contains("everyone allow read"),
+        "refusal must not silently rewrite the operator's ACL"
+    );
+
+    // Control: the same file loads once the ACL is stripped, so the refusal above
+    // was the ACL and the suggested fix actually works.
+    let stripped = std::process::Command::new("/bin/chmod")
+        .arg("-N")
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(stripped.success(), "fixture: chmod -N must strip the ACL");
+    let notifier = Notifier::start(&home, &bearer_cfg(&home), None)
+        .unwrap_or_else(|e| panic!("0600 bearers.json without an ACL must load: {e:?}"))
+        .expect("notifier enabled");
+    notifier.stop();
+}
