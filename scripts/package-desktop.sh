@@ -16,6 +16,24 @@ if [[ -n "$(git status --porcelain --untracked-files=normal)" && "${CGAH_ALLOW_D
   echo 'Commit the reviewed change before packaging, or use CGAH_ALLOW_DIRTY=1 for a clearly marked development artifact.' >&2
   exit 2
 fi
+# Release builds only: stamp the tag's version into the clean, reviewed tree
+# for this build. The stamp is never committed; it is reverted right after the
+# Info.plist copy so Resources/COMMIT still describes the exact source commit.
+release_tag="${CGAH_RELEASE_TAG:-}"
+stamped=(Cargo.toml Cargo.lock desktop/Info.plist)
+stage=""
+stamp_active=0
+cleanup() {
+  [[ -z "$stage" ]] || rm -rf "$stage"
+  # Only ever revert our own stamp, never someone's uncommitted edits.
+  [[ "$stamp_active" != 1 ]] || git checkout -- "${stamped[@]}"
+}
+trap cleanup EXIT
+if [[ -n "$release_tag" ]]; then
+  [[ -z "$(git status --porcelain --untracked-files=normal)" ]] || { echo 'A release stamp requires a clean checkout.' >&2; exit 2; }
+  stamp_active=1
+  python3 scripts/stamp-version.py --tag "$release_tag"
+fi
 export MACOSX_DEPLOYMENT_TARGET=12.0
 export RUSTUP_AUTO_INSTALL=0
 # Explicit-target release builds compile host-side proc-macro dylibs alongside
@@ -49,12 +67,15 @@ else
 fi
 mkdir -p dist
 stage="$(mktemp -d "$PWD/dist/.desktop-stage.XXXXXX")"
-trap 'rm -rf "$stage"' EXIT
 app="$stage/CG Agent Harness.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp target/release/cgagentharness "$app/Contents/MacOS/"
 cp desktop/target/release/cg-agent-harness-desktop "$app/Contents/MacOS/"
 cp desktop/Info.plist "$app/Contents/Info.plist"
+if [[ "$stamp_active" == 1 ]]; then
+  git checkout -- "${stamped[@]}"
+  stamp_active=0
+fi
 cp desktop/icons/icon.icns scripts/prepare-cargo.py "$app/Contents/Resources/"
 cp docs/DESKTOP.md docs/DESKTOP_ACCEPTANCE.md docs/PROCESS_LIFECYCLE.md docs/SECURE_RESEARCH.md docs/DEPENDENCIES.md "$app/Contents/Resources/"
 git rev-parse HEAD > "$app/Contents/Resources/COMMIT"
@@ -64,6 +85,12 @@ fi
 codesign --force --sign - --options runtime "$app/Contents/MacOS/cg-agent-harness-desktop"
 codesign --force --sign - --options runtime "$app"
 scripts/verify-desktop-bundle.sh "$app" "$architecture"
+if [[ -n "$release_tag" ]]; then
+  python3 scripts/stamp-version.py --tag "$release_tag" --check-version "$("$app/Contents/MacOS/cgagentharness" --version)"
+  for key in CFBundleShortVersionString CFBundleVersion; do
+    [[ "$(/usr/libexec/PlistBuddy -c "Print $key" "$app/Contents/Info.plist")" == "${release_tag#v}" ]] || { echo "Bundled $key does not match $release_tag" >&2; exit 1; }
+  done
+fi
 # These paths contain only generated bundles, never application homes.
 rm -rf 'dist/CG Agent Harness.app'
 mv "$app" 'dist/CG Agent Harness.app'

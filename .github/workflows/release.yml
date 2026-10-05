@@ -35,6 +35,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 scripts/test-release-plan.py
+      - run: python3 scripts/test-stamp-version.py
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,7 +54,7 @@ jobs:
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
 
   build:
-    needs: verify
+    needs: [plan, verify]
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -88,7 +89,19 @@ jobs:
       - name: Install Linux credential-store build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
+      # Workspace-only stamp of the tag's version; never committed or pushed.
+      # Fails closed on a non-stable tag or any edit beyond the root package.
+      - name: Stamp release version
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: python3 scripts/stamp-version.py --tag "$TAG"
       - run: cargo build --release --locked
+      - name: Require the built binary to report the release version
+        shell: bash
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          BIN: ${{ matrix.bin }}
+        run: python3 scripts/stamp-version.py --tag "$TAG" --check-version "$("$BIN" --version)"
       - name: Stage artifact with checksum (shared with Bundle)
         shell: bash
         run: scripts/package-release.sh "${{ matrix.bin }}" "${{ matrix.artifact }}"
@@ -100,7 +113,7 @@ jobs:
           retention-days: 14
 
   desktop:
-    needs: verify
+    needs: [plan, verify]
     permissions:
       contents: read
     # No timeout-minutes here: actionlint rejects it on a reusable workflow call.
@@ -108,6 +121,7 @@ jobs:
     uses: ./.github/workflows/desktop.yml # zizmor: ignore[self-repository]
     with:
       artifact-name: release-cgagentharness-macos-universal-app
+      release-tag: ${{ needs.plan.outputs.tag }}
 
   publish:
     needs: [plan, build, desktop]
@@ -145,6 +159,10 @@ jobs:
             sha256sum --check --strict "$checksum"
           done
           sha256sum --check --strict SHA256SUMS
+      - name: Require the bundled app to report the release version
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: python3 scripts/stamp-version.py --tag "$TAG" --check-app-zip dist/CG-Agent-Harness-macos-universal.zip
       - name: Attach binaries to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
