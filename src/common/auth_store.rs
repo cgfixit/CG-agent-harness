@@ -110,9 +110,9 @@ pub struct AuthManager {
     absolute_timeout_sec: f64,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
     fresh_bootstrap: std::sync::atomic::AtomicBool,
-    /// The `admin` hash record known to verify the shipped `admin` password,
-    /// captured once at open. Any password write mints a new salt, so a stored
-    /// record that still equals this one is still the default password.
+    /// The `admin` hash record a fresh store was created with. Any password
+    /// write mints a new salt, so a stored record that still equals this one
+    /// is still the shipped password.
     default_password_record: Option<String>,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
@@ -126,14 +126,17 @@ impl std::fmt::Debug for AuthManager {
 impl AuthManager {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
         let (connection, db, fresh) = sqlite::open(path)?;
-        let default_password_record = db
-            .users
-            .get(BOOTSTRAP_USERNAME)
-            .filter(|u| u.must_change_password && !authn::is_pending_password_record(&u.password_hash))
-            // A fresh row was just hashed from the shipped password; an existing
-            // row pays one scrypt check here instead of on a public route.
-            .filter(|u| fresh || authn::verify_password(authn::BOOTSTRAP_PASSWORD, &u.password_hash).0)
-            .map(|u| u.password_hash.clone());
+        // Only a store created by this open holds the shipped password for
+        // certain. An existing home is never re-checked against it, so after a
+        // restart the note stays hidden even if the password is unchanged.
+        let default_password_record = if fresh {
+            db.users
+                .get(BOOTSTRAP_USERNAME)
+                .filter(|u| u.must_change_password && !authn::is_pending_password_record(&u.password_hash))
+                .map(|u| u.password_hash.clone())
+        } else {
+            None
+        };
         let mgr = Self {
             path: path.to_path_buf(),
             idle_timeout_sec: cfg.f64_or("auth.session.idle_timeout_sec", DEFAULT_IDLE_TIMEOUT_SEC),
