@@ -176,13 +176,13 @@ query strings; exact rules retain exact query identity. Encoded query data canno
 alter host/path, and encoded path escapes stay refused. Legacy rows authorize
 only their stored fetch target, never old host aliases or implicit descendants.
 
-The fetcher resolves once, rejects every mixed/special-use address answer, then
-pins a fresh Reqwest client to the validated addresses with a refusing fallback
-resolver. Public TLS verification stays enabled; proxies, redirects, retries,
-compression and connection reuse are disabled. Deadlines include queueing, DNS, and extraction; headers, bodies, and
-concurrency are bounded. HTML parse/extract runs off async workers, stops on
-cancel/deadline, and keeps its permit until exit. `web.html_parser_handles`
-bounds parser state; excess complexity returns no partial evidence.
+The fetcher resolves once, rejects mixed/special-use answers, then pins
+Reqwest to validated addresses with a refusing fallback. Public TLS stays on;
+proxies, redirects, retries, compression, and reuse stay off. Deadlines cover
+queueing, DNS, and extraction; headers, bodies, and concurrency are bounded.
+HTML parse/extract runs off async workers, stops on cancel/deadline, and keeps
+its permit until exit. `web.html_parser_handles` bounds parser state; excess
+complexity returns no partial evidence.
 
 Policy is reloaded before dispatch and before storage or delivery. Revoked or
 unproven saved evidence is inaccessible, including old shared plain-text context.
