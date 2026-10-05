@@ -166,22 +166,23 @@ See [migration and operation](docs/SECURE_RESEARCH.md).
 
 ## Public web evidence requires current content permission
 
-Fresh web settings are enabled with an empty URL allowlist, so no content can be
-fetched until an administrator grants URL permission. Existing true/false choices
-are preserved; absent or invalid legacy `web_enabled` values remain off.
-`tools/web_allowlist.json` is a bounded,
-versioned document; malformed, missing, unreadable or partially invalid policy
-refuses access. Exact HTTP(S) URLs retain scheme, port, path and query identity.
+Fresh web settings are enabled with an empty URL allowlist: content reads need
+an administrator's grant. Existing choices persist; absent/invalid legacy
+`web_enabled` stays off. `tools/web_allowlist.json` is bounded and versioned;
+malformed, missing, unreadable or partially invalid policy refuses access.
+Exact HTTP(S) rules retain scheme, port, path and query identity.
 Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
 query strings; exact rules retain exact query identity. Encoded query data cannot
-alter the parsed host/path, and encoded path escapes remain refused. Legacy rows authorize
+alter host/path, and encoded path escapes stay refused. Legacy rows authorize
 only their stored fetch target, never old host aliases or implicit descendants.
 
-The fetcher resolves once, rejects every mixed/special-use address answer, then
-pins a fresh Reqwest client to the validated addresses with a refusing fallback
-resolver. Public TLS verification stays enabled; proxies, redirects, retries,
-compression and connection reuse are disabled. Deadlines include queueing and
-DNS; response headers, bodies and concurrent fetches have finite limits.
+The fetcher resolves once, rejects mixed/special-use answers, then pins
+Reqwest to validated addresses with a refusing fallback. Public TLS stays on;
+proxies, redirects, retries, compression, and reuse stay off. Deadlines cover
+queueing, DNS, and extraction; headers, bodies, and concurrency are bounded.
+HTML parse/extract runs off async workers, stops on cancel/deadline, and keeps
+its permit until exit. `web.html_parser_handles` bounds parser state; excess
+complexity returns no partial evidence.
 
 Policy is reloaded before dispatch and before storage or delivery. Revoked or
 unproven saved evidence is inaccessible, including old shared plain-text context.

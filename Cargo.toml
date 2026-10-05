@@ -64,6 +64,8 @@ quick-xml = "0.42.0"
 dunce = "1"
 cap-std = "4"
 scraper = { version = "0.27", default-features = false }
+# Use the same parser as scraper, with incremental cancellation and state bounds.
+html5ever = "0.39"
 robotstxt = "0.3"
 tantivy = { version = "0.26.2", default-features = false, features = ["mmap", "lz4-compression", "stemmer"] }
 # Pinned to the 3.6 Entry API. Platform stores are explicit features: macOS Keychain,

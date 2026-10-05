@@ -197,20 +197,17 @@ certificate substitution.
 
 ## Web permissions
 
-Existing explicit web true/false settings are preserved; absent or invalid legacy
-`web_enabled` fields remain off. Use `/web on` (or terminal `web on`) to enable a
-previously disabled setting; `/web off` suppresses future reads and injection.
-URL permission remains required regardless of this switch. Web enablement and
-allowlist rules are **shared by this home, not per session**; only saved web
-selections are account-private. `/web status` shows groups and seeds; `/web check
-URL` diagnoses exact permission without DNS or network access.
+Explicit web settings persist; absent/invalid legacy `web_enabled` stays off.
+`/web on|off` (also terminal `web on|off`) controls future reads/injection;
+URL grants remain required. Enablement/allowlist are **shared-home** settings;
+saved selections are account-private. `/web status` shows groups/seeds;
+`/web check URL` checks exact permission without network access.
 
-`tools/web_allowlist.json` is the whole policy (v1, 64 KiB, 32 rules). `/web
-allow` and terminal `web allow` create stable IDs and validate groups and seeds.
-A batch writes atomically. Missing policy refuses reads, but a validated admin
-grant can initialize it with only that rule. Invalid or unreadable files never
-reset. For manual owner edits, stop the server. While it runs, use serialized
-atomic API or CLI mutations.
+`tools/web_allowlist.json` is the v1 policy (64 KiB, 32 rules). `/web allow`
+and terminal `web allow` validate groups/seeds and assign stable IDs. Batches
+write atomically. Missing policy refuses reads; a validated admin grant can
+initialize it with that rule only. Invalid/unreadable files never reset.
+Stop the server before manual edits; otherwise use serialized atomic API/CLI mutations.
 
 | Rule | Meaning |
 |---|---|
@@ -229,6 +226,11 @@ remain refused. Path wildcards include query strings, but never suffix impostors
 or alternate ports. `www.example.org` and `example.org` are distinct; neither is
 inferred from the other. Scheme-relative discovered links resolve against the
 source and still require current permission.
+
+HTML page/listing extraction shares the request deadline and stops cooperatively on cancellation.
+`web.html_parser_handles` (default 512, range 64–4096, restart-only) bounds live
+open-element and formatting state; excessive nesting returns `WEB_HTML_COMPLEXITY`
+without saving partial evidence. Byte and link limits still apply.
 
 Each rule belongs to one source group, `default` unless `--group NAME` names
 another. Repeatable `--seed URL` records concrete starting pages; each seed must

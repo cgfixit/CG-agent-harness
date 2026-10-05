@@ -9,7 +9,7 @@ CG-Agent brings conversations, files, memory, and selected tools into one local 
 
 Run it as a native macOS app or a local browser console. It is a Rust port of [CyClaw](https://github.com/cgfixit/CyClaw)'s console and coding pipeline, with independent configuration, security contracts, and [parity status](docs/parity/STATUS.md).
 
-![CG Agent Harness](docs/screenshots/image.png)
+![CG Agent Harness console, signed in, with a local model reply and the Console, Model and Web status chips](docs/screenshots/console-chat-signed-in-2026-10-05.png)
 
 [Quick start](#quick-start) · [Engineering choices](#engineering-choices) · [Security and defaults](#security-and-defaults) · [Documentation](#documentation)
 

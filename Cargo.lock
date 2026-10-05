@@ -566,6 +566,7 @@ dependencies = [
  "dunce",
  "futures-util",
  "hex",
+ "html5ever",
  "keyring",
  "libc",
  "proptest",

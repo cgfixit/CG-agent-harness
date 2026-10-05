@@ -267,7 +267,13 @@ async fn main() -> anyhow::Result<()> {
                 .iter()
                 .find(|d| format!("{}.invalid", d.site) == url.host_str().unwrap() && d.path == url.path())
                 .unwrap();
-            let (_, text, _) = extract(&doc.html, "text/html", &url);
+            let (_, text, _) = extract(
+                &doc.html,
+                "text/html",
+                &url,
+                state.web.limits.html_parser_handles,
+                || Ok(()),
+            )?;
             assert_eq!(
                 &text[passage["start"].as_u64().unwrap() as usize..passage["end"].as_u64().unwrap() as usize],
                 passage["text"].as_str().unwrap()
