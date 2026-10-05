@@ -495,8 +495,8 @@ fixed profiles are in [agent policy](../src/server/agent_policy.rs).
 
 ### Text-file attachments and prompt preview
 
-Use the paperclip **Attach files** button beside Send to choose up to three
-`.txt`, `.md`, `.json`, `.csv`, or `.log` files, each at most
+The paperclip beside Send chooses up to three `.txt`, `.md`, `.json`, `.csv`, or
+`.log` files, each at most
 15 MiB. `/prompt` uploads and previews their fenced, untrusted text; persona
 Preview uses the same pending files. Previews reuse uploads, and the next message
 sends their IDs once. Failed preview retains them; session or account change
