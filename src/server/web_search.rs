@@ -179,7 +179,7 @@ impl Tracer for ParserHandles {
     }
 }
 
-fn parse_html(body: &str, max_handles: usize, checkpoint: &impl Fn() -> Result<()>) -> Result<scraper::Html> {
+pub(super) fn parse_html(body: &str, max_handles: usize, checkpoint: &dyn Fn() -> Result<()>) -> Result<scraper::Html> {
     let mut parser = html5ever::parse_document(
         scraper::HtmlTreeSink::new(scraper::Html::new_document()),
         Default::default(),
@@ -340,11 +340,24 @@ async fn extract_in_worker(
     deadline: tokio::time::Instant,
     permit: OwnedSemaphorePermit,
 ) -> Result<(String, (String, String, Vec<String>))> {
+    run_web_cpu(deadline, permit, move |checkpoint| {
+        let extracted = extract(&body, &kind, &base, max_handles, checkpoint)?;
+        Ok((body, extracted))
+    })
+    .await
+}
+
+/// All HTML consumers share cancellation, the request deadline and fetch capacity.
+pub(super) async fn run_web_cpu<T: Send + 'static>(
+    deadline: tokio::time::Instant,
+    permit: OwnedSemaphorePermit,
+    work: impl FnOnce(&dyn Fn() -> Result<()>) -> Result<T> + Send + 'static,
+) -> Result<T> {
     let cancelled = CancellationToken::new();
     let _cancel_on_drop = cancelled.clone().drop_guard();
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let extracted = extract(&body, &kind, &base, max_handles, || {
+        work(&|| {
             if cancelled.is_cancelled() {
                 return Err(error("WEB_CANCELLED", "extraction cancelled"));
             }
@@ -352,8 +365,7 @@ async fn extract_in_worker(
                 return Err(error("WEB_TIMEOUT", "request deadline exceeded"));
             }
             Ok(())
-        })?;
-        Ok((body, extracted))
+        })
     })
     .await
     .map_err(|_| error("WEB_FETCH_FAILED", "extraction failed"))?

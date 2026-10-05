@@ -227,7 +227,7 @@ or alternate ports. `www.example.org` and `example.org` are distinct; neither is
 inferred from the other. Scheme-relative discovered links resolve against the
 source and still require current permission.
 
-HTML extraction shares the request deadline and stops cooperatively on cancellation.
+HTML page/listing extraction shares the request deadline and stops cooperatively on cancellation.
 `web.html_parser_handles` (default 512, range 64–4096, restart-only) bounds live
 open-element and formatting state; excessive nesting returns `WEB_HTML_COMPLEXITY`
 without saving partial evidence. Byte and link limits still apply.

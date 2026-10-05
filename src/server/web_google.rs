@@ -2,12 +2,12 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use scraper::{Html, Selector};
+use scraper::Selector;
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
-use super::web_search::WebTool;
+use super::web_search::{parse_html, run_web_cpu, WebTool};
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
 use crate::common::errors::Result;
@@ -74,7 +74,13 @@ fn api_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
     Ok(rows)
 }
 
-fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
+fn public_results(
+    body: &str,
+    limit: usize,
+    max_handles: usize,
+    checkpoint: &dyn Fn() -> Result<()>,
+) -> Result<Vec<SearchResult>> {
+    checkpoint()?;
     let lower = body.to_ascii_lowercase();
     if [
         "/httpservice/retry/enablejs",
@@ -91,13 +97,14 @@ fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
             "Google requires browser interaction; configure a SerpAPI key in API Keys",
         ));
     }
-    let html = Html::parse_document(body);
+    let html = parse_html(body, max_handles, checkpoint)?;
     let anchors = Selector::parse("a[href]").unwrap();
     let headings = Selector::parse("h3").unwrap();
     let base = url::Url::parse("https://www.google.com/").unwrap();
     let mut rows = Vec::new();
     let mut seen = BTreeSet::new();
     for anchor in html.select(&anchors) {
+        checkpoint()?;
         let Some(heading) = anchor.select(&headings).next() else {
             continue;
         };
@@ -129,6 +136,7 @@ fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
             "Google returned no recognizable listing; configure a SerpAPI key in API Keys",
         ));
     }
+    checkpoint()?;
     Ok(rows)
 }
 
@@ -237,17 +245,34 @@ impl WebTool {
             "google-serpapi"
         };
         let rows = if key.trim().is_empty() {
-            let (_, body) = self.get_raw(target.as_str(), None, None).await.map_err(|failure| {
-                if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
-                    error(
-                        "WEB_GOOGLE_BLOCKED",
-                        "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
-                    )
-                } else {
-                    failure
-                }
-            })?;
-            public_results(&body, count)?
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
+            tokio::time::timeout_at(deadline, async {
+                let (_, body) = self.get_raw(target.as_str(), None, None).await.map_err(|failure| {
+                    if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
+                        error(
+                            "WEB_GOOGLE_BLOCKED",
+                            "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
+                        )
+                    } else {
+                        failure
+                    }
+                })?;
+                // Listings reparse HTML too, including text/plain responses.
+                // Keep that work off async workers under the original deadline.
+                let permit = self
+                    .permits
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
+                let max_handles = self.limits.html_parser_handles;
+                run_web_cpu(deadline, permit, move |checkpoint| {
+                    public_results(&body, count, max_handles, checkpoint)
+                })
+                .await
+            })
+            .await
+            .map_err(|_| error("WEB_TIMEOUT", "request deadline exceeded"))??
         } else {
             self.api_search(endpoint, query, count, key.trim()).await?
         };
@@ -346,6 +371,29 @@ impl WebTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        super::public_results(body, limit, 512, &|| Ok(()))
+    }
+
+    #[test]
+    fn public_listing_parser_obeys_complexity_and_cancellation() {
+        let body = "<div/>".repeat(40_000);
+        assert_eq!(public_results(&body, 5).unwrap_err().code, "WEB_HTML_COMPLEXITY");
+        let calls = std::cell::Cell::new(0);
+        let err = super::public_results(&body, 5, 512, &|| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 3 {
+                Err(error("WEB_CANCELLED", "stopped"))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert_eq!(err.code, "WEB_CANCELLED");
+        assert_eq!(calls.get(), 3);
+    }
+
     #[tokio::test]
     async fn keyed_transport_bounds_results_and_never_echoes_provider_errors_or_credentials() {
         use axum::{extract::Query, routing::get, Json, Router};
