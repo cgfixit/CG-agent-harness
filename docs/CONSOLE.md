@@ -368,15 +368,17 @@ access. See the
 
 ### 7.8 Slash-command quick reference
 
-Angle brackets mean "replace with your value"; do not type them. Square brackets
-mark optional arguments, and `|` separates alternatives. The Commands
-pane and `/help all` share a searchable alphabetical catalog. `/help` opens a
-topic overview; `/help web`, `/help session`, or `/help <search words>` filters it.
-Clicking a command inserts the full fixed prefix (for example `/agent approve `)
-for editing, never execution. Examples and fuzzy suggestions also only insert.
+Angle brackets mean "replace with your value"; square brackets mark optional
+arguments; `|` separates alternatives. The Commands pane folds the alphabetical
+catalog by family under a search box, a topic filter and a short list of easily
+mistyped forms; `/help all` prints the same catalog, and `/help` opens a topic
+overview filtered by a topic key or search words. A row's `?` opens the command's
+manual: synopsis, arguments, examples, notes and related commands. Commands,
+examples, suggestions and **Insert into composer** only insert the fixed prefix
+(`/agent approve `), never execute.
 Unknown flags, `--dry-run` and `--confirm` cannot authorize an action. These are
-console commands, not a shell: no expansion, substitution or scripts are run.
-Every slash command must be one line without control characters. The parser
+console commands, not a shell: nothing is expanded, substituted or run as a
+script. Every command must be one line without control characters; the parser
 refuses embedded separators before tokenization can reinterpret them as spaces.
 
 Memory commands require an exact `/memory` root and subcommand (case-insensitive;
@@ -389,13 +391,13 @@ candidates. Use `/memory` for status and `/help` for syntax. Exact save/remember
 still require `:: <reason>`; exact clear/forget still delete pinned notes, so
 inspect the command before sending.
 
-Typed slash commands require the server parser. A parser failure or invalid reply
-leaves the command unexecuted; inspect the Commands pane or retry. Pending parser
-responses are discarded after a session/account change or clearing the transcript. Exact `/loop stop`
-remains available to cancel chat continuation, including while the parser is
-unavailable. Extra words after that cancellation command do not trigger its local
-shortcut. Inspect results after every state-changing command. The detailed sections
-above and [coding pipeline](CODING_PIPELINE.md) describe confirmation and persistence.
+Typed slash commands require the server parser; a parser failure or invalid reply
+leaves the command unexecuted, so retry or inspect the pane. Pending parser
+responses are discarded after a session/account change or clearing the transcript.
+Exact `/loop stop` still cancels chat continuation while the parser is unavailable;
+extra words disable that local shortcut. Inspect results after every
+state-changing command. The [coding pipeline](CODING_PIPELINE.md) describes
+confirmation and persistence.
 
 | Command family | Supported use |
 |---|---|
