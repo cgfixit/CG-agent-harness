@@ -3918,9 +3918,12 @@ async function refreshHarnessAuth() {
     document.documentElement.classList.remove('auth-pending');
   }
 }
-if (hAuthLoginBox) {
-  hAuthLoginBox.addEventListener('submit', async function (event) {
-    event.preventDefault();
+/* The Sign in and Set password buttons are the forms' submit buttons, so Enter
+   in a field reaches these click handlers through implicit submission;
+   preventDefault keeps the form from navigating. */
+if (hAuthLogin) {
+  hAuthLogin.addEventListener('click', async function (event) {
+    if (event) event.preventDefault();
     const user = document.getElementById('hAuthUser');
     const pass = document.getElementById('hAuthPass');
     const who = document.getElementById('hAuthWho');
@@ -4006,9 +4009,10 @@ if (hAuthLogout) {
     sendBtn.disabled = false;
   });
 }
-if (hAuthSetup) {
-  hAuthSetup.addEventListener('submit', async function (event) {
-    event.preventDefault();
+const hAuthSetupBtn = document.getElementById('hAuthSetupBtn');
+if (hAuthSetupBtn) {
+  hAuthSetupBtn.addEventListener('click', async function (event) {
+    if (event) event.preventDefault();
     const p1 = document.getElementById('hAuthSetupPass');
     const p2 = document.getElementById('hAuthSetupPass2');
     const who = document.getElementById('hAuthWho');

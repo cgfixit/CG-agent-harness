@@ -16,7 +16,7 @@ assert.ok(!html.includes('id="openSpend"'), 'Spend is folded into Analytics');
 const nodes = new Map();
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {id, hidden:buttons.includes(id), textContent:'', value:'', disabled:false, listeners:{},
-    addEventListener(event, handler) { this.listeners[event] = handler; }});
+    addEventListener(event, handler) { this.listeners[event] = handler; }, focus() {}, contains() { return false; }});
   return nodes.get(id);
 };
 const shown = () => buttons.filter(id => !node(id).hidden);
@@ -24,13 +24,16 @@ const reply = (status, body = {}) => ({status, ok:status >= 200 && status < 300,
 const refused = status => Object.assign(new Error('HTTP ' + status), {status});
 const shipped = {'/api/notifications':{enabled:false,destinations:[],deliveries:[]}, '/api/tools':{tools:[{path:'/api/agent/checks',enabled:null},{path:'/api/agent/schedules',enabled:false}]}};
 const enabled = {'/api/notifications':{enabled:true,destinations:[],deliveries:[]}, '/api/tools':{tools:[{path:'/api/agent/checks',enabled:null},{path:'/api/agent/schedules',enabled:true}]}};
-let replies = shipped, auth = {whoami:reply(503)}, probes = [];
+let replies = shipped, auth = {whoami:reply(503), setup:reply(200, {needs_password:false})}, probes = [];
+const classes = () => { const set = new Set(); return {add:n => set.add(n), remove:n => set.delete(n), contains:n => set.has(n),
+  toggle:(n, on) => { if (on) set.add(n); else set.delete(n); return on; }}; };
+const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null};
 const passwordPrompts = [];
 const context = vm.createContext({
-  $:node, document:{getElementById:node}, window:{}, CSRF_TOKEN:'fixture', sessionRevision:1, sendBtn:{disabled:false}, inflightChat:null,
+  $:node, document:page, window:{}, CSRF_TOKEN:'fixture', sessionRevision:1, sendBtn:{disabled:false}, inflightChat:null,
   api:async path => { probes.push(path); const value = replies[path]; if (value instanceof Error) throw value; return typeof value === 'function' ? value() : value; },
   fetchWithTimeout:async url => {
-    const value = {'/api/auth/whoami':auth.whoami, '/api/auth/setup-status':reply(200, {needs_password:false}), '/api/auth/login':auth.login,
+    const value = {'/api/auth/whoami':auth.whoami, '/api/auth/setup-status':auth.setup, '/api/auth/login':auth.login,
       '/api/auth/logout':auth.logout, '/api/auth/bootstrap-password':auth.bootstrap}[url];
     assert.ok(value, 'unexpected request ' + url);
     return typeof value === 'function' ? value() : value;
@@ -85,6 +88,17 @@ probes = []; auth.whoami = reply(401);
 await context.refreshHarnessAuth(); await settle();
 assert.deepEqual(shown(), []);
 assert.deepEqual(probes, [], 'signed-out consoles send no feature probes');
+// Signed out, the sign-in card replaces the console; the default-password note needs the server's word.
+assert.ok(page.body.classList.contains('signed-out'));
+assert.equal(node('hAuthLoginBox').hidden, false);
+assert.equal(node('hAuthHint').hidden, true, 'no note unless setup-status reports default_password');
+auth.setup = reply(200, {needs_password:false, default_password:true});
+await context.refreshHarnessAuth(); await settle();
+assert.equal(node('hAuthHint').hidden, false, 'note shown while the shipped password is active');
+auth.setup = reply(200, {needs_password:false, default_password:false});
+await context.refreshHarnessAuth(); await settle();
+assert.equal(node('hAuthHint').hidden, true, 'note hidden once it changed');
+assert.ok(!page.documentElement.classList.contains('auth-pending'));
 
 // Signed in: the account's features are probed; a pending password change shows nothing yet.
 replies = enabled; auth.whoami = reply(200, {username:'admin', role:'admin', must_change_password:true});
@@ -95,15 +109,22 @@ assert.deepEqual(passwordPrompts, [true]);
 auth.whoami = reply(200, {username:'operator', role:'operator', must_change_password:false});
 await context.refreshHarnessAuth(); await settle();
 assert.deepEqual(shown(), buttons);
+assert.ok(!page.body.classList.contains('signed-out'), 'a session removes the sign-in card');
 
-// Login re-evaluates; so does bootstrap-password setup.
+// Login re-evaluates; so does bootstrap-password setup. Blank fields never reach the server.
 context.refreshHeaderFeatures(false); await settle();
+auth.login = () => assert.fail('a blank sign-in must not send a request');
+await node('hAuthLogin').listeners.click(); await settle();
+assert.equal(node('hAuthError').textContent, 'Enter your username and password.');
 auth.login = reply(200, {username:'admin', role:'admin', must_change_password:false});
+node('hAuthUser').value = 'admin'; node('hAuthPass').value = 'fixture-password';
 await node('hAuthLogin').listeners.click(); await settle();
 assert.deepEqual(shown(), buttons);
 context.refreshHeaderFeatures(false); await settle();
 auth.login = reply(401);
+node('hAuthPass').value = 'wrong-password';
 await node('hAuthLogin').listeners.click(); await settle();
+assert.equal(node('hAuthError').textContent, "That username and password don't match. Check both and try again.");
 assert.deepEqual(shown(), [], 'a failed login shows nothing');
 auth.bootstrap = reply(200, {username:'admin', role:'admin'});
 await node('hAuthSetupBtn').listeners.click(); await settle();
@@ -117,4 +138,4 @@ assert.equal(node('hAuthWho').textContent, 'logout rejected (500)');
 auth.logout = reply(401); auth.whoami = reply(401);
 await node('hAuthLogout').listeners.click(); await settle();
 assert.deepEqual(shown(), [], 'a 401 logout rechecks whoami and stays hidden when signed out');
-console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded passed');
+console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card and default-password note passed');
