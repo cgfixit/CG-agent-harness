@@ -170,10 +170,11 @@ Fresh web settings are enabled with an empty URL allowlist: content reads need
 an administrator's grant. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is bounded and versioned;
 malformed, missing, unreadable or partially invalid policy refuses access.
-Exact HTTP(S) rules retain scheme, port, path and query identity. Explicit
-`*.host` and `/path/*` rules broaden scope. Path wildcards include query strings;
-encoded query data cannot alter host/path, and encoded path escapes stay refused.
-Legacy rows authorize their target only.
+Exact HTTP(S) rules retain scheme, port, path and query identity.
+Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
+query strings; exact rules retain exact query identity. Encoded query data cannot
+alter host/path, and encoded path escapes stay refused. Legacy rows authorize
+only their stored fetch target, never old host aliases or implicit descendants.
 
 The fetcher resolves once, rejects every mixed/special-use address answer, then
 pins a fresh Reqwest client to the validated addresses with a refusing fallback
