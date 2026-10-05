@@ -114,7 +114,7 @@ Full instructions: [macOS app installation](docs/INSTALL.md#52-macos-app).
 
 1. Sign in with `admin` / `admin` and **replace the bootstrap password immediately**.
 2. Select an exact installed model with `/model use <exact-installed-tag>`.
-3. Run `/status`, send a message, and inspect the assembled context with `/prompt`.
+3. Read the header chips: **Console** (API reachable), **Model** (selected tag installed at the loopback Ollama endpoint; other providers read *not checked*), and **Web** (*off*, *search only*, or URL rules). Then run `/status`, send a message, and inspect the assembled context with `/prompt`.
 4. Run `/help` for topics, `/help web` for research, or `/help all` for the command catalog.
 
 Start coding only after the separate [coding setup](docs/CODING_PIPELINE.md).
