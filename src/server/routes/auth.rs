@@ -479,6 +479,14 @@ use axum::extract::FromRequest;
 mod tests {
     use super::*;
 
+    #[test]
+    fn lockout_reply_keeps_the_wait_but_not_the_account() {
+        let mapped = map_auth_error(&crate::common::errors::HarnessError::auth_locked(29.5, "admin"));
+        assert_eq!(mapped.status, StatusCode::LOCKED);
+        assert_eq!(mapped.details["retry_after_sec"], 29.5);
+        assert!(mapped.details.get("username").is_none());
+    }
+
     fn with_cookie(raw: &str) -> Option<String> {
         let req = Request::builder()
             .header(header::COOKIE, raw)
@@ -565,13 +573,5 @@ mod tests {
     fn only_the_first_equals_splits_the_value() {
         // Session tokens are opaque; an `=` inside one must survive.
         assert_eq!(with_cookie("cgagentharness_session=a=b=c"), Some("a=b=c".into()));
-    }
-
-    #[test]
-    fn lockout_reply_keeps_the_wait_but_not_the_account() {
-        let mapped = map_auth_error(&crate::common::errors::HarnessError::auth_locked(29.5, "admin"));
-        assert_eq!(mapped.status, StatusCode::LOCKED);
-        assert_eq!(mapped.details["retry_after_sec"], 29.5);
-        assert!(mapped.details.get("username").is_none());
     }
 }
