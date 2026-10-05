@@ -1,5 +1,6 @@
 //! Direct W1 acceptance: `cargo run --example web_extraction_probe`.
 //! `--serve` opens a disposable authenticated console for manual Computer Use.
+//! Supply its login via `CGAGENTHARNESS_W1_PROBE_PASSWORD`; it is never printed.
 //! Fixture DNS pins are programmatic only; this never reads an operator home.
 use axum::{
     extract::{Request, State},
@@ -77,13 +78,13 @@ async fn main() -> anyhow::Result<()> {
         options.config = Some(cfg);
         options.web_test_resolve = Some(("fixture.invalid".into(), address));
         let (router, state) = build_app(options).await?;
-        let password = uuid::Uuid::new_v4().to_string();
+        let password = std::env::var("CGAGENTHARNESS_W1_PROBE_PASSWORD")?;
         state.auth.as_ref().unwrap().set_password("admin", &password)?;
         state.web.allow(&format!("{root}*"), true)?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?; // DevSkim: ignore DS162092 - standalone acceptance fixture; loopback-only ephemeral listener, never a production entrypoint.
         println!("CONSOLE http://{}", listener.local_addr()?); // DevSkim: ignore DS137138 - disposable loopback-only console with synthetic login; production TLS defaults remain true.
         println!("FIXTURE {root} (normal, hostile, maximum, slow)");
-        println!("Disposable login: admin / {password}");
+        println!("Disposable login: admin (password supplied by CGAGENTHARNESS_W1_PROBE_PASSWORD)");
         axum::serve(
             listener,
             router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
