@@ -38,7 +38,10 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("another process holds this home"), "{text}");
         assert!(text.contains("the server or a certificate renew"), "{text}");
-        assert!(text.contains("stop that process before renewing the certificate"), "{text}");
+        assert!(
+            text.contains("stop that process before renewing the certificate"),
+            "{text}"
+        );
         assert!(!text.contains("os error"), "{text}");
         drop(held);
         if let Err(err) = HomeLock::acquire(dir.path()) {
