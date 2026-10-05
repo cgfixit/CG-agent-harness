@@ -157,13 +157,7 @@ and literal-substring `memory_search` to the key owner and `memory:read` scope.
 | GET | `/api/mcp` | Declared MCP servers, namespaced tools and versioned stdio capability policies; does not auto-discover |
 | POST | `/api/mcp/call` | Call one declared MCP tool; `confirm` is never defaulted |
 
-SSE URLs are DNS-pinned; loopback needs `mcp.sse_allow_loopback: true`. `/loop`
-has no MCP tools. Stdio uses newline-delimited JSON-RPC with a
-`mcp.max_result_bytes` line cap, including unterminated lines. Piped stderr
-retains 2 KiB in memory and 512 Unicode diagnostic characters, without a log file.
-The call timeout applies. Declared [capability policy](MCP_CLIENT.md) forbids
-unconfined or weaker-network fallback. Responses and `/tools mcp` report policy,
-not successful sandbox probes.
+Bounds and capability policy: [MCP_CLIENT.md](MCP_CLIENT.md). `/loop` has no MCP tools.
 
 ## Coding agent
 
@@ -181,15 +175,16 @@ not successful sandbox probes.
 | GET, POST | `/api/agent/schedules` | List owned schedules or activate the exact previewed, owned reviewed-goal request |
 | GET | `/api/agent/schedules/{schedule_id}` | One schedule |
 | POST | `/api/agent/schedules/{schedule_id}/cancel` | Cancel a schedule |
-| GET | `/api/agent/runs` | Retained run records |
+| GET | `/api/agent/runs` | Retained run metadata while the coding layer is on; HTTP 409 `AGENTIC_DISABLED` while it is off |
 | GET | `/api/agent/runs/{run_id}` | One run and its diff |
 | POST | `/api/agent/runs/{run_id}/decision` | Approve locally (`--reason` + confirm) |
 | POST | `/api/agent/runs/{run_id}/push` | Push the approved commit |
 | POST | `/api/agent/runs/{run_id}/publish` | Open a draft PR |
 | POST | `/api/agent/runs/{run_id}/discard` | Discard a run |
 
-Run/job routes share `agent::prepare_run`, then spawn through the shim; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
+Run and job creation share `agent::prepare_run`, then spawn through the shim; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
 [CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
+`GET /api/agent/runs` lists metadata only while `agentic.enabled` is literal true. Otherwise it is HTTP 409 `AGENTIC_DISABLED` and does not read or reconcile records; detail, decision, push, and discard do the same. `GET /api/github/status` stays HTTP 200.
 
 ## Completion webhooks
 
