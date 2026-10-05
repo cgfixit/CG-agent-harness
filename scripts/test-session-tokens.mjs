@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const html = readFileSync(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 const nodes = new Map();
-const $ = id => { if (!nodes.has(id)) nodes.set(id, {textContent:'',style:{}}); return nodes.get(id); };
+const $ = id => { if (!nodes.has(id)) nodes.set(id, {textContent:'',style:{},dataset:{}}); return nodes.get(id); };
 let session = {tokens:{total:0}}, fail = false;
 const ctx = vm.createContext({$, Number, currentSession:'new', sessionRevision:0,
   statusTimer:null, statusBackoffMs:15000, STATUS_BASE_INTERVAL:15000, STATUS_MAX_INTERVAL:120000,
@@ -23,6 +23,8 @@ if (helperStart !== -1) vm.runInContext(html.slice(helperStart, html.indexOf('as
 vm.runInContext(html.slice(html.indexOf('async function refreshStatus()'), html.indexOf('function scheduleStatusRefresh()')), ctx);
 await ctx.refreshStatus();
 assert.equal($('hTokens').textContent, '0', 'new session must not display the all-session aggregate');
+assert.equal($('hConsole').dataset.state, 'ok', 'a status reply marks the console chip reachable');
+assert.equal($('hConsoleV').textContent, 'reachable');
 session = {tokens:{total:1234}};
 await ctx.refreshStatus();
 assert.equal($('hTokens').textContent, (1234).toLocaleString());

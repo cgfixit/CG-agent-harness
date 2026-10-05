@@ -18,8 +18,13 @@
     --border: #2a2f38;
     --border-focus: #d4920b;
     --text-primary: #c8cdd5;
-    --text-secondary: #6b7280;
-    --text-muted: #454d59;
+    /* WCAG 2.x contrast on --bg-secondary (sidebar) / --bg-tertiary (cards),
+       the lightest surfaces each token sits on. Was #6b7280 (3.75:1 / 3.46:1)
+       and #454d59 (2.12:1 / 1.96:1). CyClaw's #767e8b reaches 4.69:1 only on
+       --bg-primary and 4.43:1 on the sidebar, so muted lifts one step further.
+       Secondary stays a clear step above muted. */
+    --text-secondary: #969eaa; /* 6.71:1 / 6.19:1 */
+    --text-muted: #808894;     /* 5.07:1 / 4.67:1 */
     --accent-amber: #d4920b;
     --accent-green: #2dd4a0;
     --accent-red: #ef5350;
@@ -27,16 +32,32 @@
     --accent-purple: #b48cff;
     --mono: 'Cascadia Code', 'Fira Code', ui-monospace, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    /* TYPE SCALE, ported from CyClaw's terminal.html. Hardcoded px ignored the
+       reader's browser font size; rem follows it, and the small vw term keeps
+       the smallest rows legible on a large display. Each old size maps to one
+       step, so nothing is re-ranked. --fs-lg is the harness's own step for
+       its 18-20px headings. */
+    --fs-micro:   clamp(0.75rem,   0.72rem + 0.12vw, 0.8125rem);  /* was 9.5-10.5px */
+    --fs-small:   clamp(0.8125rem, 0.78rem + 0.14vw, 0.875rem);   /* was 11-12px */
+    --fs-body:    clamp(0.875rem,  0.84rem + 0.16vw, 0.9375rem);  /* was 12.5-13px */
+    --fs-md:      clamp(0.9375rem, 0.90rem + 0.18vw, 1rem);       /* was 14-16px */
+    --fs-lg:      clamp(1.125rem,  1.05rem + 0.3vw, 1.25rem);     /* was 18-20px */
+    --fs-display: clamp(1.5rem,    1.15rem + 1.7vw, 2rem);        /* was 24px */
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   /* Rules below set `display` at ID specificity, which outranks the UA sheet's
      `[hidden]`. Keep the attribute authoritative so every toggled node stays
      collapsed. */
   [hidden] { display: none !important; }
+  /* Read by assistive technology, not drawn. */
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
   button, input, select { font: inherit; }
   body {
     background: var(--bg-primary); color: var(--text-primary);
-    font-family: var(--sans); font-size: 13px; line-height: 1.5;
+    font-family: var(--sans); font-size: var(--fs-body); line-height: 1.5;
     height: 100vh; height: 100dvh;
     display: flex; flex-direction: column; overflow: hidden;
   }
@@ -47,19 +68,38 @@
     padding: 8px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; flex-shrink: 0;
   }
   .logo {
-    font-family: var(--mono); font-weight: 700; font-size: 14px;
+    font-family: var(--mono); font-weight: 700; font-size: var(--fs-md);
     color: var(--accent-amber); letter-spacing: 1.5px; text-transform: uppercase;
   }
   .logo span { color: var(--text-muted); font-weight: 400; }
   .header-right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   .pill {
-    font-family: var(--mono); font-size: 10.5px; padding: 3px 10px;
+    font-family: var(--mono); font-size: var(--fs-micro); padding: 3px 10px;
     border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary);
     background: var(--bg-tertiary); white-space: nowrap;
   }
   .pill b { color: var(--accent-green); font-weight: 600; }
-  .pill.model b { color: var(--accent-amber); }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-green); }
+  /* ── READINESS CHIPS ── one per dependency, each stating its state in
+     words; the colored mark only repeats what the text says. ── */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+    font-family: var(--mono); font-size: var(--fs-micro, 10.5px); padding: 3px 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text-secondary); background: var(--bg-tertiary); white-space: nowrap;
+  }
+  .chip::before { content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-secondary); }
+  .chip b { color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+  .chip[data-state="ok"]::before { background: var(--accent-green); }
+  .chip[data-state="warn"] { border-color: rgba(212, 146, 11, .55); }
+  .chip[data-state="warn"]::before { background: var(--accent-amber); }
+  .chip[data-state="bad"] { border-color: rgba(239, 83, 80, .6); }
+  .chip[data-state="bad"]::before { background: var(--accent-red); }
+  .chip[data-state="bad"] b { color: var(--accent-red); }
+  /* The model chip names the tag first; its state word carries the color. */
+  #hModelChip[data-state="bad"] b { color: var(--text-primary); }
+  #hModelChip[data-state="bad"] #hModelV { color: var(--accent-red); font-weight: 600; }
+  #hModelChip[data-state="warn"] #hModelV { color: var(--accent-amber); font-weight: 600; }
 
   /* ── HEADER AUTH ── */
   #harnessAuth { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -69,7 +109,7 @@
   #harnessAuth .toggle {
     padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
     background: var(--bg-tertiary); color: var(--text-secondary);
-    font-family: var(--mono); font-size: 10.5px; letter-spacing: .5px;
+    font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: .5px;
     text-transform: uppercase; line-height: 1.45; white-space: nowrap;
     transition: background-color .15s ease, border-color .15s ease, color .15s ease;
   }
@@ -121,7 +161,7 @@
   .side-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
   .side-tab {
     flex: 1 0 30%; padding: 8px 0; text-align: center; font-family: var(--mono);
-    font-size: 10.5px; letter-spacing: .5px; text-transform: uppercase;
+    font-size: var(--fs-micro); letter-spacing: .5px; text-transform: uppercase;
     color: var(--text-muted); background: none; border: none; cursor: pointer;
     border-bottom: 2px solid transparent;
   }
@@ -132,7 +172,7 @@
   #pane-memory { overflow-wrap: anywhere; }
   #pane-memory form { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
   #pane-memory p, #pane-memory pre { white-space: pre-wrap; margin: 6px 0; }
-  #pane-memory pre { font-size: 11px; }
+  #pane-memory pre { font-size: var(--fs-small); }
   #pane-memory summary { cursor: pointer; color: var(--accent-blue); }
   #pane-memory input { display: block; width: 100%; padding: 6px; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; }
   #pane-memory button { cursor: pointer; margin: 6px 6px 0 0; padding: 6px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px; }
@@ -141,21 +181,95 @@
   .cmd-item {
     display: block; width: 100%; text-align: left; background: none; border: none;
     padding: 6px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px;
-    font-family: var(--mono); font-size: 11.5px; color: var(--text-primary);
+    font-family: var(--mono); font-size: var(--fs-small); color: var(--text-primary);
   }
   .cmd-item:hover { background: var(--bg-tertiary); }
   .cmd-item .c { color: var(--accent-blue); }
-  .cmd-item .d { display: block; color: var(--text-muted); font-size: 10px; font-family: var(--sans); }
+  .cmd-item .d { display: block; color: var(--text-muted); font-size: var(--fs-micro); font-family: var(--sans); }
   .command-guide { min-width: 0; line-height: 1.5; white-space: normal; }
   .command-guide h3 { margin: 0 0 8px; }
   .command-guide p { margin: 8px 0; }
   .command-guide input[type=search] { box-sizing: border-box; width: 100%; padding: 9px; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; }
   .help-topics { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
   .help-topics button { color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
-  .command-guide .cmd-item { overflow-wrap: anywhere; font-size: 12px; padding: 8px; border: 1px solid var(--border); }
-  .command-guide .d { font-size: 12px; }
+  .command-guide .cmd-item { overflow-wrap: anywhere; font-size: var(--fs-small); padding: 8px; border: 1px solid var(--border); }
+  .command-guide .d { font-size: var(--fs-small); }
   .command-guide summary { cursor: pointer; margin: 8px 0; }
   .command-guide :focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+  /* ── COMMANDS pane ── the catalog folds by family; each row's ? opens the
+     command's manual in #commandHelpDialog. ── */
+  .cmd-row { display: flex; align-items: flex-start; gap: 2px; margin-bottom: 1px; }
+  .cmd-row > .cmd-item, .cmd-row > .cmd-tip { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+  .cmd-tip {
+    display: block; text-align: left; background: none; border: none; padding: 4px 8px;
+    border-radius: 6px; cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--text-primary);
+  }
+  .cmd-tip:hover { background: var(--bg-tertiary); }
+  .cmd-tip .s { color: var(--accent-amber); overflow-wrap: anywhere; }
+  .cmd-tip .d { display: block; color: var(--text-muted); font-size: 10px; font-family: var(--sans); }
+  .cmd-help {
+    flex: none; width: 24px; margin-top: 4px; padding: 2px 0; cursor: pointer; text-align: center;
+    font-family: var(--mono); font-size: 11px; font-weight: 700; line-height: 1.4;
+    color: var(--text-secondary); background: none; border: 1px solid var(--border); border-radius: 6px;
+  }
+  .cmd-help:hover { color: var(--accent-amber); border-color: var(--accent-amber); }
+  .cmd-family > summary {
+    cursor: pointer; padding: 6px 8px; border-radius: 6px; margin-bottom: 2px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--accent-blue);
+  }
+  .cmd-family > summary:hover { background: var(--bg-tertiary); }
+  .cmd-family[open] > summary { color: var(--accent-amber); }
+  .cmd-family > summary .n { margin-left: 6px; font-family: var(--sans); font-size: 10px; color: var(--text-muted); }
+  .cmd-family .cmd-row { margin-left: 8px; padding-left: 4px; border-left: 1px solid var(--border); }
+  .cmd-tips > summary { color: var(--accent-amber); }
+  .command-guide select {
+    display: block; width: 100%; margin: 8px 0; padding: 7px 8px; cursor: pointer;
+    color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+  }
+  .command-guide .guide-head {
+    margin: 12px 4px 4px; font-family: var(--mono); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted);
+  }
+  .command-guide .cmd-help:focus-visible, .cmd-tip:focus-visible, .cmd-family > summary:focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
+  /* The manual: one command's man page, sized as a small modal. */
+  #commandHelpDialog {
+    margin: auto; width: min(560px, calc(100% - 32px)); max-height: 85dvh; overflow: auto; padding: 0;
+    background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 24px 80px #0008;
+  }
+  #commandHelpDialog::backdrop { background: #0009; }
+  #commandHelpDialog .man-head {
+    position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 18px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+  }
+  #commandHelpDialog h2 { margin: 0; font-family: var(--mono); font-size: 14px; color: var(--accent-blue); overflow-wrap: anywhere; }
+  #commandHelpDialog .man-head button { flex: none; white-space: nowrap; }
+  #commandHelpDialog .man-body { padding: 4px 18px 16px; line-height: 1.5; font-size: 12.5px; }
+  #commandHelpDialog .man-body p { margin: 4px 0; }
+  #commandHelpDialog h3 { margin: 14px 0 4px; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
+  #commandHelpDialog pre {
+    margin: 0; padding: 8px 10px; font-family: var(--mono); font-size: 12px; color: var(--accent-blue);
+    white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px;
+  }
+  #commandHelpDialog .legend { font-size: 10.5px; color: var(--text-muted); }
+  #commandHelpDialog dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+  #commandHelpDialog dt { font-family: var(--mono); font-size: 11.5px; color: var(--accent-green); overflow-wrap: anywhere; }
+  #commandHelpDialog dd { margin: 0; }
+  #commandHelpDialog ul { margin: 0; padding-left: 18px; color: var(--text-secondary); }
+  #commandHelpDialog .man-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+  #commandHelpDialog button {
+    padding: 6px 10px; cursor: pointer; text-align: left; font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere;
+    color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px;
+  }
+  #commandHelpDialog button:hover { background: var(--border); }
+  #commandHelpDialog .man-foot {
+    position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px;
+    padding: 12px 18px; background: var(--bg-secondary); border-top: 1px solid var(--border);
+  }
+  #commandHelpDialog .man-foot .primary { background: var(--accent-amber); border-color: var(--accent-amber); color: #000; font-weight: 700; }
+  #commandHelpDialog .man-foot .primary:hover { background: #e8a31c; border-color: #e8a31c; }
+  #commandHelpDialog :focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
+  @media (max-width: 560px) { #commandHelpDialog dl { grid-template-columns: minmax(0, 1fr); } #commandHelpDialog dt { margin-top: 6px; } }
 
   .sess-item {
     padding: 7px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 3px;
@@ -163,30 +277,30 @@
   }
   .sess-item:hover { background: var(--bg-tertiary); }
   .sess-item.current { border-color: var(--accent-amber); background: rgba(212,146,11,.07); }
-  .sess-item .t { font-size: 12px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sess-item .m { font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); }
+  .sess-item .t { font-size: var(--fs-small); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sess-item .m { font-family: var(--mono); font-size: var(--fs-micro); color: var(--text-muted); }
 
   .reg-entry { padding: 6px 8px; border-bottom: 1px solid var(--border); }
   .legacy-session { display: grid; gap: 10px; padding: 12px 8px; }
-  .legacy-session label { display: block; font-size: 12px; }
+  .legacy-session label { display: block; font-size: var(--fs-small); }
   .legacy-session input:not([type=checkbox]) { display: block; width: 100%; margin-top: 5px; padding: 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); }
   .legacy-session input[type=checkbox] { margin-right: 6px; }
   .legacy-session button { padding: 8px; border: 1px solid var(--accent-amber); border-radius: 4px; background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; }
   .legacy-session button:disabled { opacity: .6; cursor: wait; }
-  .reg-entry .n { font-family: var(--mono); font-size: 11px; color: var(--accent-green); }
+  .reg-entry .n { font-family: var(--mono); font-size: var(--fs-small); color: var(--accent-green); }
   .reg-entry .n.catalog { color: var(--accent-purple); }
-  .reg-entry .d { font-size: 10.5px; color: var(--text-secondary); }
-  .reg-entry .a { font-size: 9.5px; color: var(--text-muted); font-family: var(--mono); }
+  .reg-entry .d { font-size: var(--fs-micro); color: var(--text-secondary); }
+  .reg-entry .a { font-size: var(--fs-micro); color: var(--text-muted); font-family: var(--mono); }
   .reg-head {
-    font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+    font-family: var(--mono); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 1px;
     color: var(--text-muted); margin: 10px 4px 4px;
   }
 
   /* ── API KEYS pane ── styling only; refreshKeys() owns the markup ── */
-  #pane-api-keys > p { font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; }
+  #pane-api-keys > p { font-size: var(--fs-small); color: var(--text-secondary); margin-bottom: 10px; }
   #pane-api-keys > button {
     width: 100%; margin-bottom: 12px; padding: 7px 10px; cursor: pointer;
-    font-family: var(--mono); font-size: 10.5px; letter-spacing: .5px; text-transform: uppercase;
+    font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: .5px; text-transform: uppercase;
     color: var(--text-primary); background: var(--bg-tertiary);
     border: 1px solid var(--border); border-radius: 6px;
   }
@@ -201,11 +315,11 @@
   }
   #pane-api-keys form > * { grid-column: 1 / -1; min-width: 0; }
   #pane-api-keys form > label {
-    font-family: var(--mono); font-size: 11.5px; color: var(--accent-green);
+    font-family: var(--mono); font-size: var(--fs-small); color: var(--accent-green);
     overflow-wrap: anywhere;
   }
   #pane-api-keys form > p {
-    font-family: var(--mono); font-size: 10px; color: var(--text-secondary);
+    font-family: var(--mono); font-size: var(--fs-micro); color: var(--text-secondary);
     overflow-wrap: anywhere;
   }
   /* The feedback paragraph is empty until a request fails. */
@@ -222,7 +336,7 @@
   }
   #pane-api-keys form > button {
     grid-column: auto; padding: 7px 10px; cursor: pointer;
-    font-family: var(--mono); font-size: 10.5px; letter-spacing: .4px; text-transform: uppercase;
+    font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: .4px; text-transform: uppercase;
     font-weight: 700; color: #000;
     background: var(--accent-amber); border: 1px solid var(--accent-amber); border-radius: 6px;
   }
@@ -239,19 +353,24 @@
 
   /* console */
   .console { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .stream { flex: 1; overflow-y: auto; padding: 16px 20px; font-family: var(--mono); font-size: 12.5px; }
+  .stream { flex: 1; overflow-y: auto; padding: 16px 20px; font-family: var(--mono); font-size: var(--fs-body); }
   .msg { margin-bottom: 14px; max-width: 860px; }
-  .msg .who { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px; }
+  .msg .who { font-size: var(--fs-micro); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px; }
   .msg.user .who { color: var(--accent-blue); }
   .msg.agent .who { color: var(--accent-amber); }
   .msg.sys .who { color: var(--accent-purple); }
   .msg .body { white-space: pre-wrap; word-break: break-word; color: var(--text-primary); }
-  .msg.sys .body { color: var(--text-secondary); font-size: 12px; }
+  .msg.sys .body { color: var(--text-secondary); font-size: var(--fs-small); }
   .msg a { color: var(--accent-blue); overflow-wrap: anywhere; }
-  .msg .meta { font-size: 9.5px; color: var(--text-muted); margin-top: 3px; }
-  .msg table { border-collapse: collapse; margin-top: 4px; font-size: 11.5px; }
+  .msg .meta { font-size: var(--fs-micro); color: var(--text-muted); margin-top: 3px; }
+  .msg table { border-collapse: collapse; margin-top: 4px; font-size: var(--fs-small); }
   .msg td, .msg th { border: 1px solid var(--border); padding: 3px 9px; text-align: left; }
   .msg th { color: var(--accent-amber); }
+  .msg.err { border-left: 3px solid var(--accent-red); padding-left: 10px; }
+  .msg.err .who { color: var(--accent-red); }
+  .msg.err .body { font-family: var(--sans); font-size: var(--fs-body, 13px); }
+  .msg.err .err-title { font-weight: 650; color: var(--text-primary); }
+  .msg.err .err-code { margin-top: 4px; font-family: var(--mono); font-size: var(--fs-small, 11px); color: var(--text-secondary); white-space: pre-wrap; }
 
   .inputbar {
     border-top: 1px solid var(--border); background: var(--bg-secondary);
@@ -261,31 +380,39 @@
   #input {
     flex: 1; background: var(--bg-input); border: 1px solid var(--border);
     border-radius: 8px; color: var(--text-primary); padding: 9px 12px;
-    font-family: var(--mono); font-size: 12.5px; outline: none;
+    font-family: var(--mono); font-size: var(--fs-body); outline: none;
   }
   #input:focus { border-color: var(--border-focus); }
   #send {
     background: var(--accent-amber); color: #000; border: none; border-radius: 8px;
-    padding: 9px 18px; font-family: var(--mono); font-size: 12px; font-weight: 700;
+    padding: 9px 18px; font-family: var(--mono); font-size: var(--fs-small); font-weight: 700;
     cursor: pointer;
   }
   #send:disabled { opacity: .4; cursor: default; }
-  #attach {
-    color: var(--text-secondary); font-family: var(--mono); font-size: 11px;
-    max-width: 180px;
+  /* The native file input is hidden: its "No file chosen" text pushed the
+     page 91px past a 390px viewport. This button opens it. */
+  #attachBtn {
+    flex: none; display: inline-flex; align-items: center; gap: 4px;
+    padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer;
+    font-family: var(--mono); font-size: var(--fs-small);
   }
+  #attachBtn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+  #attachBtn svg { width: 16px; height: 16px; }
+  #attachBtn[data-count] { color: var(--accent-amber); border-color: var(--accent-amber); }
+  #attachCount:empty { display: none; }
 
   /* status bar */
   .statusbar {
     border-top: 1px solid var(--border); background: var(--bg-secondary);
     padding: 5px 16px; display: flex; gap: 16px; align-items: center;
-    font-family: var(--mono); font-size: 10px; color: var(--text-secondary); flex-shrink: 0;
+    font-family: var(--mono); font-size: var(--fs-micro); color: var(--text-secondary); flex-shrink: 0;
   }
   .statusbar .k { color: var(--text-muted); }
   .statusbar .v { color: var(--text-primary); }
   .statusbar .spacer { flex: 1; }
   .panel-status {
-    font-family: var(--mono); font-size: 12px; color: var(--accent-red);
+    font-family: var(--mono); font-size: var(--fs-small); color: var(--accent-red);
     padding: 8px 12px; min-height: 16px;
   }
   #sGoal {
@@ -310,12 +437,35 @@
   /* The status bar row stays dense; the header fields get room for their labels. */
   .statusbar .apikey { padding: 3px 8px; }
   #harnessAuth .apikey { width: 160px; }
-#soulEditor, #sessionClearDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
+/* ── DIALOGS ── the reset above zeroes the UA `margin:auto` that centers a
+   modal <dialog>, which left the password, persona and clear-history dialogs
+   pinned top-left with no surface. One shared rule restores it; the ID rules
+   for Analytics, Schedules and Webhooks still win where they differ. */
+dialog { margin:auto; width:min(560px,calc(100% - 32px)); max-height:88dvh; overflow:auto; padding:24px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); border-radius:10px; box-shadow:0 24px 80px #0008; }
+dialog::backdrop { background:#0009; }
+dialog h2 { font-size:var(--fs-lg, 18px); margin-bottom:12px; }
+dialog p { margin-bottom:12px; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) label { display:block; }
+:is(#passwordDialog, #soulEditor) input:not([type=checkbox]), #soulContent { display:block; width:100%; margin-top:6px; padding:8px 10px; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; }
+:is(#passwordDialog, #soulEditor) input:not([type=checkbox]):focus, #soulContent:focus { outline:none; border-color:var(--border-focus); box-shadow:0 0 0 2px rgba(212,146,11,.18); }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) input[type=checkbox] { margin-right:6px; accent-color:var(--accent-amber); }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button { padding:8px 14px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button:hover { background:var(--border); }
+/* One primary action per dialog; a destructive one is red, not amber. */
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.primary:hover { background:#e8a31c; border-color:#e8a31c; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.danger { background:transparent; border-color:var(--accent-red); color:var(--accent-red); font-weight:700; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.danger:hover { background:var(--accent-red); color:#000; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button:disabled { opacity:.45; cursor:default; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
+#passwordFeedback:empty, #sessionClearFeedback:empty { display:none; }
+#passwordFeedback, #sessionClearFeedback { color:var(--accent-red); }
+#soulEditor { width:min(950px,calc(100% - 32px)); }
 #analyticsDialog { width:calc(100% - 32px);max-width:1100px;max-height:92dvh;margin:auto;padding:0;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:12px;overflow:auto;box-shadow:0 24px 80px #0008; }
 #analyticsDialog::backdrop { background:#0009; }
 #analyticsDialog .analytics-header { position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 24px;background:var(--bg-secondary);border-bottom:1px solid var(--border); }
-#analyticsDialog h2 { font-size:20px; }
-#analyticsDialog h3 { font-size:16px;margin-bottom:8px; }
+#analyticsDialog h2 { font-size:var(--fs-lg); }
+#analyticsDialog h3 { font-size:var(--fs-md);margin-bottom:8px; }
 #analyticsDialog p { margin:8px 0;color:#a4adba; }
 #analyticsDialog .analytics-body { padding:16px 24px 24px; }
 #analyticsDialog button, #analyticsDialog input, #analyticsDialog select { padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-primary); }
@@ -325,7 +475,7 @@
 #analyticsDialog .analytics-overview { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0; }
 #analyticsDialog .analytics-overview div { padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px; }
 #analyticsDialog dt { color:#a4adba; }
-#analyticsDialog dd { font-size:24px;font-weight:650;font-variant-numeric:tabular-nums;color:var(--accent-green);overflow-wrap:anywhere; }
+#analyticsDialog dd { font-size:var(--fs-display);font-weight:650;font-variant-numeric:tabular-nums;color:var(--accent-green);overflow-wrap:anywhere; }
 #analyticsDialog .analytics-tabs, #analyticsDialog .analytics-controls, #analyticsDialog .analytics-pager { display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:16px 0; }
 #analyticsDialog .analytics-pager { position:sticky;bottom:0;z-index:1;padding:12px 0;margin-bottom:0;background:var(--bg-primary);border-top:1px solid var(--border); }
 #analyticsDialog .analytics-tabs { border-bottom:1px solid var(--border);padding-bottom:12px; }
@@ -338,7 +488,7 @@
 #analyticsDialog .analytics-table:empty { border:0; }
 #analyticsDialog table { width:100%;border-collapse:collapse;text-align:left;font-variant-numeric:tabular-nums; }
 #analyticsDialog th, #analyticsDialog td { padding:10px 12px;border-bottom:1px solid var(--border);overflow-wrap:anywhere;min-width:88px; }
-#analyticsDialog th { position:sticky;top:0;background:var(--bg-secondary);font-size:11px;color:#a4adba; }
+#analyticsDialog th { position:sticky;top:0;background:var(--bg-secondary);font-size:var(--fs-small);color:#a4adba; }
 #analyticsDialog tr:hover td { background:var(--bg-secondary); }
 #analyticsDialog .analytics-bars { display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px 24px;margin:12px 0; }
 #analyticsDialog .analytics-bars label { display:flex;justify-content:space-between;align-items:center;gap:12px; }
@@ -349,7 +499,7 @@
   #analyticsDialog .analytics-body { padding:12px; }
   #analyticsDialog .analytics-overview { gap:6px; }
   #analyticsDialog .analytics-overview div { padding:8px; }
-  #analyticsDialog dd { font-size:18px; }
+  #analyticsDialog dd { font-size:var(--fs-lg); }
   #analyticsDialog .analytics-controls label { width:100%;justify-content:space-between; }
   #analyticsDialog input { width:70%; }
 }
@@ -364,15 +514,12 @@
 :is(#scheduleDialog, #notificationDialog) pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; padding:12px; border:1px solid var(--border); }
 :is(#scheduleDialog, #notificationDialog) ol { padding-left:24px; margin:12px 0; }
 .schedule-row { border-top:1px solid var(--border); padding:12px 0; overflow-wrap:anywhere; }
-#sessionClearDialog { max-width:520px; }
-#sessionClearDialog button { padding:8px 12px; margin-right:8px; }
-#sessionClearConfirm { color:var(--accent-red); }
-#soulContent { width:100%;height:200px; }
-#soulFeedback { white-space:pre-wrap;max-height:250px;overflow:auto; }
+#soulContent { height:200px; margin-bottom:12px; resize:vertical; font-family:var(--mono); }
+#soulFeedback { white-space:pre-wrap;max-height:250px;overflow:auto;font-size:var(--fs-small, 12px);color:var(--text-secondary); }
 
   /* ── KEYBOARD FOCUS ── several controls set `outline: none`, which left
      keyboard navigation with no visible focus at all. ── */
-  #harnessAuth .toggle:focus-visible, .apikey:focus-visible, #send:focus-visible,
+  #harnessAuth .toggle:focus-visible, .apikey:focus-visible, #send:focus-visible, #attachBtn:focus-visible,
   .side-tab:focus-visible, .cmd-item:focus-visible, #pane-api-keys :focus-visible,
   #pane-memory :focus-visible {
     outline: 2px solid var(--accent-amber); outline-offset: 2px;
@@ -406,7 +553,7 @@
     .signin form { padding: 20px; }
     #send { padding: 9px 14px; }
     #sGoal { max-width: 90px; }
-    #soulEditor, #sessionClearDialog { width: 94%; padding: 16px; }
+    dialog { padding: 16px; }
     #pane-api-keys form { grid-template-columns: 1fr; }
   }
 
@@ -416,7 +563,7 @@
 </style>
 </head>
 <body>
-  <div class="header">
+  <header class="header">
     <div class="logo">CG Agent <span>/ harness</span></div>
     <div class="header-right">
       <span id="harnessAuth">
@@ -428,11 +575,14 @@
       <button class="toggle" id="openDeliveries" type="button" hidden title="Outgoing, metadata-only notices sent to your configured URL when a coding job finishes">Job webhooks</button>
       <button class="toggle" id="openSchedules" type="button" hidden>Schedules</button>
       <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
-      <div class="pill model">model <b id="hModel">…</b></div>
+      <div class="chips" role="group" aria-label="Readiness">
+        <span class="chip" id="hConsole" data-state="unknown" title="Whether this page can reach the harness API">Console <b id="hConsoleV">checking</b></span>
+        <span class="chip" id="hModelChip" data-state="unknown" title="Chat model">Model <b id="hModel">…</b> <span id="hModelV"></span></span>
+        <span class="chip" id="hWeb" data-state="unknown" title="Web tools for chat">Web <b id="hWebV">…</b></span>
+      </div>
       <div class="pill" title="Recorded prompt and completion tokens for the selected session; separate from the cost ledger in Analytics">session · tokens <b id="hTokens">0</b></div>
-      <div class="dot" id="hDot" title="server status"></div>
     </div>
-  </div>
+  </header>
 
   <section class="signin" id="signInScreen" hidden>
     <form id="hAuthLoginBox" aria-labelledby="signInTitle" hidden>
@@ -459,37 +609,41 @@
   </section>
 
   <div class="main">
-    <div class="sidebar">
-      <div class="side-tabs">
-        <button class="side-tab active" data-pane="commands">Commands</button>
-        <button class="side-tab" data-pane="sessions">Sessions</button>
-        <button class="side-tab" data-pane="api-keys">API Keys</button>
-        <button class="side-tab" data-pane="memory">Memory</button>
-        <button class="side-tab" data-pane="users">Users</button>
-        <button class="side-tab" data-pane="netconnect">LAN</button>
+    <nav class="sidebar" aria-label="Commands and settings">
+      <div class="side-tabs" role="tablist" aria-label="Sidebar sections">
+        <button class="side-tab active" id="tab-commands" data-pane="commands" role="tab" aria-selected="true" aria-controls="pane-commands" type="button">Commands</button>
+        <button class="side-tab" id="tab-sessions" data-pane="sessions" role="tab" aria-selected="false" aria-controls="pane-sessions" tabindex="-1" type="button">Sessions</button>
+        <button class="side-tab" id="tab-api-keys" data-pane="api-keys" role="tab" aria-selected="false" aria-controls="pane-api-keys" tabindex="-1" type="button">API Keys</button>
+        <button class="side-tab" id="tab-memory" data-pane="memory" role="tab" aria-selected="false" aria-controls="pane-memory" tabindex="-1" type="button">Memory</button>
+        <button class="side-tab" id="tab-users" data-pane="users" role="tab" aria-selected="false" aria-controls="pane-users" tabindex="-1" type="button">Users</button>
+        <button class="side-tab" id="tab-netconnect" data-pane="netconnect" role="tab" aria-selected="false" aria-controls="pane-netconnect" tabindex="-1" type="button">LAN</button>
       </div>
       <div class="side-body">
-        <div class="side-pane active" id="pane-commands"></div>
-        <div class="side-pane" id="pane-sessions"></div>
-        <div class="side-pane" id="pane-api-keys"><p>Sign in as an administrator to manage credentials.</p></div>
-        <div class="side-pane" id="pane-memory"><p>Open Memory to review this account's pending proposals.</p></div>
-        <div class="side-pane" id="pane-users">
+        <div class="side-pane active" id="pane-commands" role="tabpanel" aria-labelledby="tab-commands"></div>
+        <div class="side-pane" id="pane-sessions" role="tabpanel" aria-labelledby="tab-sessions"></div>
+        <div class="side-pane" id="pane-api-keys" role="tabpanel" aria-labelledby="tab-api-keys"><p>Sign in as an administrator to manage credentials.</p></div>
+        <div class="side-pane" id="pane-memory" role="tabpanel" aria-labelledby="tab-memory"><p>Open Memory to review this account's pending proposals.</p></div>
+        <div class="side-pane" id="pane-users" role="tabpanel" aria-labelledby="tab-users">
           <div id="usersPanelStatus" class="panel-status" hidden></div>
           <div id="usersPanelBody"></div>
         </div>
-        <div class="side-pane" id="pane-netconnect"><p>Open LAN to view scope, passive devices, and tier state.</p></div>
+        <div class="side-pane" id="pane-netconnect" role="tabpanel" aria-labelledby="tab-netconnect"><p>Open LAN to view scope, passive devices, and tier state.</p></div>
       </div>
-    </div>
+    </nav>
 
-    <div class="console">
-      <div class="stream" id="stream"></div>
+    <main class="console">
+      <div class="stream" id="stream" role="log" aria-live="polite" aria-label="Conversation"></div>
       <div class="inputbar">
-        <span class="prompt-sym">❯</span>
+        <span class="prompt-sym" aria-hidden="true">❯</span>
+        <label class="visually-hidden" for="input">Message the agent, or type a slash command</label>
         <input id="input" autocomplete="off" spellcheck="false"
                title="Up/Down: recall the last 50 saved prompts in this session; Down restores your draft"
                placeholder="message the agent, or /help for commands (↑/↓ history)" />
-        <input id="attach" type="file" multiple accept=".txt,.md,.json,.csv,.log,.docx"
+        <input id="attach" type="file" multiple accept=".txt,.md,.json,.csv,.log,.docx" hidden
                title="attach up to 3 text or DOCX files (15 MB each) for local chat only" />
+        <button id="attachBtn" type="button" aria-label="Attach files" title="Attach up to 3 text or DOCX files (15 MB each) for local chat only">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span id="attachCount"></span>
+        </button>
         <button id="send">SEND</button>
       </div>
       <div class="statusbar">
@@ -514,7 +668,7 @@
           spellcheck="false" placeholder="optional API key" title="optional operator API key; held in memory only"></span>
         <span class="k" id="sHome" title="harness home"></span>
       </div>
-    </div>
+    </main>
   </div>
   <input id="agentPRBodyFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
   <input id="agentPlanFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
@@ -579,6 +733,11 @@
   <p id="notificationStatus" role="status" aria-live="polite"></p>
   <div id="notificationDestinations"></div><div id="notificationRows"></div>
 </dialog>
+<dialog id="commandHelpDialog" aria-labelledby="commandHelpTitle">
+  <div class="man-head"><h2 id="commandHelpTitle"></h2><button id="commandHelpClose" type="button" autofocus>Close</button></div>
+  <div class="man-body" id="commandHelpBody"></div>
+  <div class="man-foot"><button id="commandHelpInsert" type="button" class="primary" title="Insert the command prefix into the composer; does not execute">Insert into composer</button></div>
+</dialog>
 <dialog id="passwordDialog" aria-labelledby="passwordTitle">
   <h2 id="passwordTitle">Change your password</h2>
   <p id="passwordHelp">Enter your current password and a new password of at least 12 characters.</p>
@@ -586,7 +745,7 @@
     <p><label>Current password <input id="passwordCurrent" type="password" autocomplete="current-password" required maxlength="1024"></label></p>
     <p><label>New password <input id="passwordNew" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
     <p><label>Confirm new password <input id="passwordConfirm" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
-    <button type="submit">Save password</button><button type="button" id="passwordClose">Close</button>
+    <button type="submit" class="primary">Save password</button><button type="button" id="passwordClose">Close</button>
     <p id="passwordFeedback" role="status"></p>
   </form>
 </dialog>
@@ -596,17 +755,17 @@
   <p>Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless you also confirm the cascade below. Facts and proposals are never cleared here. Your active chat will stop.</p>
   <p><label><input type="checkbox" id="sessionClearDerivedEpisodes"> Also delete this account's derived episodes that are not referenced by a pending proposal</label></p>
   <button id="sessionClearCancel" autofocus>Cancel</button>
-  <button id="sessionClearConfirm">Delete my session history</button>
+  <button id="sessionClearConfirm" class="danger">Delete my session history</button>
   <p id="sessionClearFeedback" role="status"></p>
 </dialog>
 
-<dialog id="soulEditor">
-  <h2>Chat persona</h2>
+<dialog id="soulEditor" aria-labelledby="soulTitle">
+  <h2 id="soulTitle">Chat persona</h2>
   <p>Changes affect chat only. Fixed execution contracts and the coding planner remain separate.</p>
   <textarea id="soulContent" aria-label="Persona content"></textarea>
   <p><label>Reason <input id="soulReason" aria-label="Reason for persona change" maxlength="1000"></label></p>
   <p><label><input type="checkbox" id="soulConfirm"> I reviewed this content and authorize saving it.</label></p>
-  <button id="soulPreview">Preview prompt</button> <button id="soulSave">Save persona</button>
+  <button id="soulPreview">Preview prompt</button> <button id="soulSave" class="primary">Save persona</button>
   <button id="soulPropose">Create proposal only</button> <button id="soulClose">Close</button>
   <pre id="soulFeedback"></pre>
 </dialog>
@@ -776,6 +935,9 @@ function paintGoalLoop() {
 }
 
 /* ── stream rendering ── */
+/* Restored history is built in a detached aria-live="off" wrapper (see
+   /session use), so the polite log announces only messages added after it. */
+let msgTarget = null;
 function addMsg(kind, who, body, meta) {
   const div = document.createElement('div');
   div.className = 'msg ' + kind;
@@ -784,11 +946,51 @@ function addMsg(kind, who, body, meta) {
   if (body instanceof Node) { b.appendChild(body); } else { b.textContent = body; }
   div.appendChild(w); div.appendChild(b);
   if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; div.appendChild(m); }
-  stream.appendChild(div);
+  (msgTarget || stream).appendChild(div);
   stream.scrollTop = stream.scrollHeight;
   return div;
 }
 const sys   = (t, m) => addMsg('sys',   'harness', t, m);
+/* Failures read as a plain sentence and one next step; the raw code and
+   server message stay underneath as a muted detail row. */
+function showError(e) {
+  const raw = (e && e.message) || String(e);
+  const copy = errorCopy(e, raw);
+  const body = document.createElement('div');
+  const title = document.createElement('div'); title.className = 'err-title'; title.textContent = copy.title;
+  body.appendChild(title);
+  if (copy.action) { const action = document.createElement('div'); action.textContent = copy.action; body.appendChild(action); }
+  const code = document.createElement('div'); code.className = 'err-code'; code.textContent = raw;
+  body.appendChild(code);
+  return addMsg('err', 'error', body);
+}
+function modelEndpoint() {
+  const base = lastStatus && typeof lastStatus.base_url === 'string' ? lastStatus.base_url : '';
+  return base ? base.replace(/\/v1\/?$/, '') : 'the configured local address';
+}
+function errorCopy(e, raw) {
+  const code = (e && e.code) || (raw.match(/^([A-Z][A-Z0-9_]+):/) || [])[1] || '';
+  const wait = e && e.retryAfter ? e.retryAfter : 0;
+  if (code === 'NETWORK') return { title: "Can't reach the harness", action: 'Check that it is still running, then retry.' };
+  if (code === 'HARNESS_LLM_ERROR') {
+    if (/unreachable/i.test(raw)) return { title: "Can't reach the model", action: 'Nothing is answering at ' + modelEndpoint() + '. Start the model service (Ollama: OLLAMA_CONTEXT_LENGTH=32768 ollama serve), then send again.' };
+    if (/deadline/i.test(raw)) return { title: 'The model took too long to answer', action: 'It may still be loading. Wait a moment and send again, or choose a smaller model with /model use <tag>.' };
+    if (/no model selected/i.test(raw)) return { title: 'No chat model is selected', action: 'Choose an installed model with /model use <exact-installed-tag>.' };
+    if (/HTTP 404/.test(raw)) return { title: 'The model server answered 404', action: lastStatus && lastStatus.provider === 'ollama'
+      ? 'The tag may not be installed. Check the exact tag (ollama list), then /model use <tag>.'
+      : 'Check the configured endpoint and model name, then /model use <name>.' };
+    return { title: 'The model server returned an error', action: 'Check the model service, then send again.' };
+  }
+  if (code === 'CHAT_BUSY') return { title: 'A reply is still being generated', action: 'Wait for it to finish, or type /loop stop to abort it.' };
+  if (code === 'RATE_LIMIT' || code === 'LOOP_RATE_LIMIT') return { title: 'Too many requests', action: wait > 0 ? 'Wait ' + wait + ' seconds, then retry.' : 'Wait a moment, then retry.' };
+  if (code === 'AUTH_REQUIRED') return { title: 'Your session has ended', action: 'Sign in again.' };
+  if (code === 'AUTH_PASSWORD_CHANGE_REQUIRED') return { title: 'Set a new password first', action: 'Use Change password, then retry.' };
+  if (code === 'AUTH_PERMISSION_DENIED') return { title: "Your account can't do this", action: 'Ask an administrator, or sign in with an account that has this permission.' };
+  if (code === 'CSRF_TOKEN_INVALID' || code === 'CROSS_ORIGIN_BLOCKED' || code === 'CROSS_SITE_BLOCKED') return { title: 'This page is out of date for the harness', action: 'Reload the page from the harness address, then retry.' };
+  if (code === 'WEB_DISABLED') return { title: 'Web tools are off', action: 'An administrator can turn them on with /web on.' };
+  if (code === 'CLOUD_CHAT_BUDGET') return { title: 'The cloud chat budget is used up', action: 'Switch to a local model with /model use <tag>, or raise the budget in config.yaml.' };
+  return { title: "That didn't work", action: '' };
+}
 const user  = t      => addMsg('user',  'you', t);
 const agent = (t, m) => addMsg('agent', 'CG Agent Harness', t, m);
 
@@ -1246,11 +1448,66 @@ async function refreshSessionTokens() {
   }
 }
 
+let lastStatus = null;
+function paintChip(id, state, value, detail) {
+  const chip = $(id);
+  chip.dataset.state = state;
+  const v = $(id === 'hModelChip' ? 'hModelV' : id + 'V');
+  v.textContent = id === 'hModelChip' ? (value ? '· ' + value : '') : value;
+  if (detail) chip.title = detail;
+}
+/* Model: the cached GET /api/ollama/inventory, the same loopback endpoint chat
+   uses. Web: GET /api/web. A refused or failed probe says "not checked"
+   instead of guessing. */
+let readinessRevision = 0;
+async function refreshReadiness(s) {
+  const revision = ++readinessRevision;
+  if (!s.model && !s.provider) {
+    // The public status reply omits operational detail until a full session exists.
+    const label = window.__cyclawRole ? 'not checked' : 'sign in';
+    paintChip('hModelChip', 'unknown', label, window.__cyclawRole ? 'This account cannot read model status.' : 'Sign in to check the chat model.');
+    paintChip('hWeb', 'unknown', label, window.__cyclawRole ? 'This account cannot read web status.' : 'Sign in to see web tool status.');
+    return;
+  }
+  const [inventory, web] = await Promise.all([
+    s.base_url === null ? Promise.resolve(null) : api('/api/ollama/inventory').catch(() => undefined),
+    api('/api/web').catch(() => undefined),
+  ]);
+  if (revision !== readinessRevision) return;
+  if (s.base_url === null) {
+    paintChip('hModelChip', 'unknown', 'cloud', 'Cloud chat model; the console does not probe cloud providers.');
+  } else if (!inventory || inventory.configured_state === 'not_probed') {
+    paintChip('hModelChip', 'unknown', 'not checked', 'The console checks reachability only for a loopback Ollama endpoint. Send a message to test.');
+  } else if (inventory.configured_state === 'unavailable') {
+    paintChip('hModelChip', 'bad', 'unreachable', 'Nothing is answering at ' + (inventory.endpoint || modelEndpoint()) + '. Start the model service, then retry.');
+  } else {
+    const installed = Array.isArray(inventory.models) && inventory.models.some(m => m && m.name === s.model);
+    if (installed || (inventory.configured_model === s.model && inventory.configured_state === 'installed')) {
+      paintChip('hModelChip', 'ok', 'ready', 'Installed at ' + (inventory.endpoint || modelEndpoint()) + '.');
+    } else {
+      paintChip('hModelChip', 'warn', 'not installed', 'The model service is running but has no ' + s.model + '. Pull it, or choose another with /model use <tag>.');
+    }
+  }
+  if (!web) {
+    paintChip('hWeb', 'unknown', 'not checked', 'Web status is unavailable for this account.');
+  } else if (web.enabled !== true) {
+    paintChip('hWeb', 'unknown', 'off', 'Chat has no web tools. An administrator can turn them on with /web on.');
+  } else if (s.chat_tools_available === false) {
+    // Cloud chat never receives web tools or web context (/api/status says so).
+    paintChip('hWeb', 'unknown', 'not used by this model', 'Web is on, but the selected cloud model gets no web tools. /web commands still work.');
+  } else {
+    const rules = Array.isArray(web.allowlist) ? web.allowlist.length : 0;
+    if (rules) paintChip('hWeb', 'ok', rules + (rules === 1 ? ' URL rule' : ' URL rules'), 'Search is on; pages matching the permitted URL rules can be read.');
+    else paintChip('hWeb', 'warn', 'search only', 'Search is on, but no page URLs are permitted yet. Grant one with /web allow <url>.');
+  }
+}
+
 async function refreshStatus() {
   if (statusTimer) { window.clearTimeout(statusTimer); statusTimer = null; }
   try {
     const [s] = await Promise.all([api('/api/status'), refreshSessionTokens()]);
-    $('hModel').textContent = s.model || '(unset)';
+    lastStatus = s;
+    $('hModel').textContent = s.model || (s.provider ? '(unset)' : '—');
     $('sProvider').textContent = s.provider || (window.__cyclawRole === 'audit' ? 'read-only' : 'sign in');
     if (apiKeyInput) {
       apiKeyInput.placeholder = 'optional metadata key';
@@ -1264,10 +1521,21 @@ async function refreshStatus() {
     paintMemory();
     await refreshStyle();
     paintStyle();
-    $('hDot').style.background = 'var(--accent-green)';
+    paintChip('hConsole', 'ok', 'reachable', 'This page reaches the harness API.');
+    refreshReadiness(s);
     statusBackoffMs = STATUS_BASE_INTERVAL;
   } catch (e) {
-    $('hDot').style.background = 'var(--accent-red)';
+    /* Only a failed fetch means the harness is unreachable. A typed reply such
+       as RATE_LIMIT came from a running harness; the other chips keep their
+       last known state. */
+    if (e && (e.code === 'NETWORK' || e.name === 'NetworkError')) {
+      readinessRevision++;
+      paintChip('hConsole', 'bad', 'unreachable', 'This page cannot reach the harness API. Check that it is still running.');
+      paintChip('hModelChip', 'unknown', 'not checked', 'The console is unreachable.');
+      paintChip('hWeb', 'unknown', 'not checked', 'The console is unreachable.');
+    } else {
+      paintChip('hConsole', 'warn', 'answering with errors', 'The harness is running but the status check failed: ' + ((e && e.message) || String(e)));
+    }
     statusBackoffMs = Math.min(statusBackoffMs * 2, STATUS_MAX_INTERVAL);
   }
   scheduleStatusRefresh();
@@ -1619,38 +1887,299 @@ function helpMatches(filter) {
   const topic = HELP_TOPICS[q];
   return COMMANDS.filter(([c,d]) => topic ? topic.roots.includes(c.slice(1).split(' ')[0]) : q.split(/\s+/).every(word => (c+' '+d).toLowerCase().includes(word)));
 }
+/* ── command manual ── one help page per catalog row. The syntax and the
+   one-line summary come from COMMANDS; the longer description, argument
+   meanings, extra examples and caveats live here. Placeholder meanings are
+   shared by name so every row can explain its arguments. Everything is
+   rendered as text nodes, never HTML. */
+const ARG_MEANINGS = {
+  'run-id': 'the run id shown by /agent runs, /agent status or a job watch',
+  'job-id': 'a job id from /agent confirm or /agent jobs; omitted, the job this page last watched',
+  'reason': 'why you are doing this, in your words; recorded with the write and never optional',
+  'profile': 'a fixed check profile name from /agent checks',
+  'n': 'a positive whole number',
+  'branch': 'the branch the coding run works on',
+  'instruction': 'the task in plain words; the rest of the line',
+  'repo-relative-path[#Lx-Ly]': 'a path inside the repository: no leading slash, no .., no drive letter, nothing starting with a dash',
+  'query': 'the search words; the rest of the line after any flags',
+  'question': 'the research question; the rest of the line after any flags',
+  'URL': 'an exact http(s) URL',
+  'pattern': 'an exact URL, or a wildcard such as https://www.example.org/* or https://*.example.org/*',
+  'id-or-pattern': 'a rule id from /web status, or the exact pattern it was granted with',
+  'id': 'the identifier shown by the matching list command',
+  'episode-id': 'an episode id from the Memory pane or a /memory remember reply',
+  'text': 'the fact to store, everything before the :: separator',
+  'sentence': 'the summary to attach, everything before the :: separator',
+  'note': 'the note text; the rest of the line',
+  'name': 'an exact name from the matching list',
+  'title': 'a title; the rest of the line',
+  'topic': 'a topic key: chat, session, web, memory, agent, tools or settings',
+  'search words': 'words matched against every command and summary, flags included',
+  'KEY': 'a credential name such as SERPAPI_API_KEY; upper-cased for you',
+  'value': 'the secret: everything after the key name, spaces included',
+  'id...': 'one or more skill ids separated by spaces',
+};
+const FLAG_MEANINGS = {
+  '--group': 'a named URL group; the operation is scoped to that group',
+  '--seed': 'a starting URL for the group; repeat the flag for each one',
+  '--url': 'a starting URL for research; repeat the flag for each one',
+  '--count': 'how many Google results to return, 1 to 10',
+  '--engine': 'google for web listings, pages for search inside permitted pages',
+};
+/* Keyed by the exact COMMANDS syntax. detail: what the command does when it
+   runs. notes: caveats worth a line. args: per-command placeholder meanings
+   that override ARG_MEANINGS. examples: inserted, never executed. */
+const COMMAND_MAN = {
+  '/agent [help]': {detail:'Lists every /agent command. The coding workflow is: stage a request, refine it, confirm it with a reason, review the result, approve the commit, then push and publish, each a separate step.', notes:['Nothing runs until /agent confirm. A command printed by the model is never approval.']},
+  '/agent approve <run-id> <reason>': {detail:'Commits a pending run’s diff locally, but only after this transcript has shown that run’s complete diff: through /agent status, the job watch, or a first approve call, which then asks you to repeat it. If the diff was already shown, the first call commits. Approval is withheld unless the run is pending and its diff loaded completely.', notes:['Approve does not push; that is /agent push.'], examples:['/agent status ']},
+  '/agent cancel': {detail:'Discards the staged request: branch, instruction, plan, declared reads and checks. Jobs already submitted keep running; /agent stop is for those.'},
+  '/agent checks [profile ...]': {detail:'Alone, lists the fixed check profiles and what each runs. With names, selects those profiles for the staged request; separate several with spaces or commas. Unknown names are refused and nothing changes.', examples:['/agent checks']},
+  '/agent confirm <reason>': {detail:'Submits the staged request as a detached job, with your reason. If the server refuses it, the request stays staged for correction. The console then watches the job in the transcript.', notes:['confirm is explicit here and never defaulted.']},
+  '/agent discard <run-id>': {detail:'Releases the clone a finished run owns. A run whose owner is unknown and still running cannot be discarded.'},
+  '/agent issue <n>|clear': {detail:'Attaches issue context to the staged request and clears any PR context; clear removes it. Needs a staged request.', args:{n:'the issue number'}},
+  '/agent iterations <n>|clear': {detail:'Caps how many planner iterations the staged run may take, 1 to ' + MAX_AGENT_ITERATIONS + '; clear restores the configured default.', args:{n:'1 to ' + MAX_AGENT_ITERATIONS}},
+  '/agent job [job-id]': {detail:'Watches a job’s progress in the transcript. Without an id, it uses the job this page last watched.'},
+  '/agent jobs': {detail:'Lists retained coding jobs with their status.'},
+  '/agent plan [clear]': {detail:'Opens a file chooser for a reviewed plan (.md or .txt) to attach to the staged request; clear detaches it. Needs a staged request.'},
+  '/agent pr <n>|clear': {detail:'Attaches pull-request context to the staged request and clears any issue context; clear removes it. Needs a staged request.', args:{n:'the pull request number'}},
+  '/agent pr-body <run-id>': {detail:'Opens a file chooser for the completed PR template and shows it for review. /agent publish refuses a run until this review happened.', args:{'run-id':'exactly 32 hexadecimal characters'}},
+  '/agent publish <run-id> <reason>': {detail:'Opens a draft pull request for the run with the PR body you reviewed through /agent pr-body. Refused until that review happened.'},
+  '/agent push <run-id> <reason>': {detail:'Pushes the approved commit. The server ships with pushing disabled, so the request is refused until an operator enables it in the configuration.'},
+  '/agent read <repo-relative-path[#Lx-Ly]>|clear': {detail:'Declares a file the planner may read, up to ' + MAX_AGENT_READ_FILES + ' paths per request. A path already declared is reported, not duplicated. clear drops every declared path. Needs a staged request.'},
+  '/agent reject <run-id>': {detail:'Rejects a pending run. Nothing is committed.'},
+  '/agent run <branch> <instruction>': {detail:'Stages a coding request and shows the server’s default check and planner model. Nothing executes: refine it with plan, read, checks, iterations, pr or issue, then authorize it with /agent confirm <reason>.', examples:['/agent run fix/login-timeout Return 408 instead of hanging when the upstream times out']},
+  '/agent runs': {detail:'Lists retained runs with status and recovery notes, reconciling interrupted ownership. The list is bounded; older records stay on disk.'},
+  '/agent status <run-id>': {detail:'Shows one run and its complete diff.'},
+  '/agent stop [job-id]': {detail:'Asks the server to cancel a job. Without an id, it uses the job this page last watched. Work the job already spawned may survive; inspect the run before further writes.'},
+  '/analytics': {detail:'Opens the Analytics dialog: tokens and cost, sessions and coding runs, filterable and paged.'},
+  '/api [set <KEY> <value>|clear <KEY>]': {detail:'Alone, shows the credential store and every key masked. set saves a value and clear removes it. Saved values load after a restart, except SERPAPI_API_KEY, which applies at once; an explicit environment variable always wins.', notes:['A secret typed here lands in chat history. The API Keys pane’s password fields do not.']},
+  '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
+  '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
+  '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
+  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
+  '/goal stage <branch>': {detail:'Turns the session goal into a staged coding request on that branch. It still needs /agent confirm <reason>.'},
+  '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
+  '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
+  '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
+  '/loop [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Chat only: it never starts a coding run and has no tools.'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
+  '/memory [on|off]': {detail:'Alone, shows memory status and the pinned notes. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
+  '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
+  '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
+  '/memory capture|recall|retrieval on|off': {detail:'Administrator switches for episode capture, explicit recall and fact retrieval. The reply shows every gate’s state. /memory on is unaffected; it covers pinned notes only.'},
+  '/memory clear': {detail:'Deletes every pinned note at once. There is no confirmation prompt.'},
+  '/memory consolidate <episode-id> [episode-id ...]': {detail:'Consolidates the named episodes into pending proposals. No fact is written; decide in the Memory pane or with /memory proposals.'},
+  '/memory consolidation on|off': {detail:'Administrator switch for manual consolidation.'},
+  '/memory forget <id>': {detail:'Removes one pinned note. Ids are listed by /memory.'},
+  '/memory proposals': {detail:'Opens the Memory pane with the pending proposals. Apply and Reject each require a reason.'},
+  '/memory remember <sentence> :: <reason>': {detail:'Attaches your summary to the latest completed episode of this account. The two colons separate the summary from the required reason. Needs capture on and a completed chat turn; no fact is written.'},
+  '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
+  '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
+  '/memory search <query>': {detail:'Lists matching fact candidates with scores. Nothing is injected into chat.'},
+  '/model [use <name>]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ']},
+  '/net status|devices': {detail:'status shows scope and gate state and loads no collector; devices lists passively seen neighbors. Both open the LAN pane. Anything else is refused: this console runs no scans or device control.'},
+  '/prompt': {detail:'Previews the next chat system prompt: persona, style, pinned notes, selected facts and web context. Shown only to you; nothing is sent to the model.'},
+  '/registry': {detail:'Lists skills, tools and connectors together.'},
+  '/session [list]': {detail:'Lists saved sessions with ids, titles, message and token counts.'},
+  '/session info': {detail:'Shows the current session’s id, title, model, message count and tokens.'},
+  '/session new [title]': {detail:'Starts a fresh conversation. Shared persona, enabled notes and web context carry over; /prompt shows what is included.'},
+  '/session rename <title>': {detail:'Renames the current session.'},
+  '/session use <id>': {detail:'Restores a saved session and replays its messages. Ids come from /session list or the Sessions pane.'},
+  '/skill [status]|use <id...>|clear': {detail:'Shows, replaces or clears the prompt skills selected for this session. Selected skills are prompt context, not tools. Creates a session if none is open.'},
+  '/skill check:<profile>': {insert:'/skill check:', detail:'Selects one fixed check profile for an already staged coding request. Written as one word with a colon. Nothing executes; /agent confirm <reason> still authorizes the run.'},
+  '/skills [all|help|<name>]': {detail:'Draws the registered runtime skills. all includes the unwired catalog; a name draws one skill; help lists these forms. Registration is not readiness.'},
+  '/soul [on|off|status]': {detail:'Shows persona status, or turns soul.md on or off in the system prompt. soul.md itself is never changed by this.'},
+  '/soul apply <id> <reason>': {detail:'Applies the persona proposal you reviewed with /soul review <id>. The id must match the reviewed proposal and a reason is required.'},
+  '/soul edit|history|propose': {detail:'edit opens the persona editor; propose opens it in proposal-only mode; history lists backup revisions.'},
+  '/soul reject <id> <reason>': {detail:'Rejects the persona proposal you reviewed with /soul review <id>. The id must match and a reason is required.'},
+  '/soul review <id>': {detail:'Shows a retained persona proposal. apply and reject require this review first.'},
+  '/status': {detail:'Shows version, model, provider, soul, style, memory, sessions, tokens, home, goal and loop state. Signed-out and audit accounts see a reduced view.'},
+  '/style [<name>|off]': {detail:'Shows or sets this session’s output style. The whole remainder is the name, so extra words are refused rather than ignored. soul.md is unchanged.', args:{name:'a style name from the status-bar menu'}},
+  '/tokens': {detail:'Shows this session’s prompt, completion and total tokens, and the exchange count.'},
+  '/tools [all|help|<name>]': {detail:'Draws the registered runtime tools. all includes unwired rows; mcp shows external MCP grants; a name draws one tool; help lists these forms.', examples:['/tools mcp']},
+  '/users': {detail:'Opens the Users pane for local accounts. Administrator only.'},
+  '/web [status|help]': {detail:'Shows web state: on or off, URL rules, groups and your selected context. help opens the web topic of this guide.'},
+  '/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]': {detail:'Grants URL patterns in one step, optionally into a named group with seed URLs. An exact URL covers only that page; https://host/* covers that host’s paths; *.example.org excludes the apex. Search listings never grant access.'},
+  '/web cancel': {detail:'Cancels your running research request.'},
+  '/web check <URL> [URL ...] [--group name]': {detail:'Reports whether each exact URL is permitted and by which rule. Nothing is fetched, resolved or granted.'},
+  '/web deny <id-or-pattern>': {detail:'Removes one URL permission rule. Administrator only.'},
+  '/web fetch <URL> [URL ...] [--group name]': {detail:'Fetches exact permitted URLs and shows a 2,000-character preview of each with coverage. Patterns and prose are refused.'},
+  '/web forget': {detail:'Clears the web extract you selected for chat.'},
+  '/web inject': {detail:'Selects your last fetch or page-search extract for later chat; /prompt previews it. It does not summarize, and it does not select a research answer.'},
+  '/web off': {detail:'Disables web for this home; rules and stored context are kept. Administrator only.'},
+  '/web on': {detail:'Enables web for this home; URLs still need permission rules. Administrator only.'},
+  '/web pages [--group name] <query>': {detail:'Finds permitted links and searches passages inside permitted pages. This is not Google; /web search gives listings.'},
+  '/web research [--group name] [--url URL ...] <question>': {detail:'Bounded multi-page research over permitted pages with checked citations, starting from the group or the --url seeds. Shows supported claims, conflicts, inferences, gaps and the sources. Not an exhaustive crawl; /web cancel stops it.'},
+  '/web search [--count 1..10] [--engine google|pages] [--group name] <query>': {detail:'Google result listings by default; --engine pages or a group searches permitted pages instead. Listings grant no permission to read a page.'},
+};
+/* Exact forms that are easy to get wrong. insert is what the composer gets;
+   key names the catalog row whose manual the ? opens. */
+const WORTH_KNOWING = [
+  {label:'/agent approve <run-id> <reason>', insert:'/agent approve ', hint:'Commits once this transcript has shown the diff; otherwise the first call shows it and asks for a repeat', key:'/agent approve <run-id> <reason>'},
+  {label:'/agent pr-body <run-id>', insert:'/agent pr-body ', hint:'Review the PR template here before /agent publish will accept', key:'/agent pr-body <run-id>'},
+  {label:'/memory save <text> :: <reason>', insert:'/memory save ', hint:'Two colons separate the fact from the required reason', key:'/memory save <text> :: <reason>'},
+  {label:'/skill check:<profile>', insert:'/skill check:', hint:'One word with a colon; needs a staged /agent run', key:'/skill check:<profile>'},
+  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [use <name>]'},
+  {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [n]|auto|stop'},
+  {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
+];
+function commandRoot(syntax) { return '/' + syntax.slice(1).split(' ')[0]; }
+/* What a click inserts: the fixed prefix, unless the manual names a form the
+   prefix rule cannot keep (check:<profile> is one word with a colon). */
+function commandInsert(syntax) { return (COMMAND_MAN[syntax] && COMMAND_MAN[syntax].insert) || commandPrefix(syntax); }
+function commandManual(syntax) {
+  const row = COMMANDS.find(([c]) => c === syntax) || [syntax, ''];
+  const man = COMMAND_MAN[syntax] || {};
+  const root = commandRoot(syntax);
+  const topicKey = Object.keys(HELP_TOPICS).find(k => HELP_TOPICS[k].roots.includes(root.slice(1))) || '';
+  const topic = topicKey ? HELP_TOPICS[topicKey] : null;
+  const prefix = commandPrefix(syntax).trim();
+  const unique = (v, i, all) => all.indexOf(v) === i;
+  const args = [...syntax.matchAll(/<([^>]+)>/g)].map(m => m[1]).filter(unique)
+    .map(name => ['<' + name + '>', (man.args && man.args[name]) || ARG_MEANINGS[name] || '']).filter(([, meaning]) => meaning);
+  const flags = [...syntax.matchAll(/--[a-z]+/g)].map(m => m[0]).filter(unique)
+    .map(flag => [flag, FLAG_MEANINGS[flag] || '']).filter(([, meaning]) => meaning);
+  const examples = (man.examples || []).concat(topic ? topic.examples.filter(e => e === prefix || e.startsWith(prefix + ' ')) : []).filter(unique);
+  const related = COMMANDS.filter(([c]) => c !== syntax && commandRoot(c) === root).map(([c]) => c);
+  return {syntax, summary: row[1], detail: man.detail || '', args, flags, examples, notes: (man.notes || []).concat(topic ? [topic.note] : []), related, topicKey, topic};
+}
+/* The manual dialog: a man page for one command. Buttons insert into the
+   composer or open a related page; none of them sends anything. */
+function openCommandHelp(syntax) {
+  const m = commandManual(syntax);
+  const dialog = $('commandHelpDialog'), body = $('commandHelpBody');
+  $('commandHelpTitle').textContent = m.syntax;
+  body.replaceChildren();
+  const heading = text => { const h = document.createElement('h3'); h.textContent = text; body.appendChild(h); };
+  const para = (text, className) => { const p = document.createElement('p'); if (className) p.className = className; p.textContent = text; body.appendChild(p); return p; };
+  const insertAndClose = line => { input.value = line; dialog.close(); input.focus(); };
+  heading('Synopsis');
+  const pre = document.createElement('pre'); pre.textContent = m.syntax; body.appendChild(pre);
+  para('<…> required · […] optional · a|b one of · one line, no control characters', 'legend');
+  heading('Description');
+  para(m.summary ? m.summary.charAt(0).toUpperCase() + m.summary.slice(1) + '.' : '');
+  if (m.detail) para(m.detail);
+  if (m.args.length || m.flags.length) {
+    heading('Arguments');
+    const dl = document.createElement('dl');
+    m.args.concat(m.flags).forEach(([name, meaning]) => {
+      const dt = document.createElement('dt'); dt.textContent = name;
+      const dd = document.createElement('dd'); dd.textContent = meaning;
+      dl.append(dt, dd);
+    });
+    body.appendChild(dl);
+  }
+  if (m.examples.length) {
+    heading('Examples — insert, review, then send');
+    const list = document.createElement('div'); list.className = 'man-buttons';
+    m.examples.forEach(e => { const b = document.createElement('button'); b.type = 'button'; b.textContent = e; b.title = 'Insert into the composer; does not execute'; b.addEventListener('click', () => insertAndClose(e)); list.appendChild(b); });
+    body.appendChild(list);
+  }
+  if (m.notes.length) {
+    heading('Notes');
+    const ul = document.createElement('ul');
+    m.notes.forEach(n => { const li = document.createElement('li'); li.textContent = n; ul.appendChild(li); });
+    body.appendChild(ul);
+  }
+  if (m.related.length || m.topic) {
+    heading('See also');
+    const list = document.createElement('div'); list.className = 'man-buttons';
+    m.related.forEach(c => { const b = document.createElement('button'); b.type = 'button'; b.textContent = c; b.title = 'Open the help page for ' + c; b.addEventListener('click', () => openCommandHelp(c)); list.appendChild(b); });
+    if (m.topic) { const b = document.createElement('button'); b.type = 'button'; b.textContent = '/help ' + m.topicKey + ' — ' + m.topic.title; b.title = 'Insert into the composer; does not execute'; b.addEventListener('click', () => insertAndClose('/help ' + m.topicKey)); list.appendChild(b); }
+    body.appendChild(list);
+  }
+  $('commandHelpInsert').onclick = () => insertAndClose(commandInsert(m.syntax));
+  if (!dialog.open) dialog.showModal();
+  body.scrollTop = 0; dialog.scrollTop = 0;
+}
+$('commandHelpClose').addEventListener('click', () => $('commandHelpDialog').close());
+/* One catalog row: the command inserts its fixed prefix, the ? opens its manual. */
+function commandRow(c, d) {
+  const row = document.createElement('div'); row.className = 'cmd-row';
+  const b = commandButton(commandInsert(c)); b.replaceChildren();
+  const syntax = document.createElement('span'); syntax.className = 'c'; syntax.textContent = c;
+  const desc = document.createElement('span'); desc.className = 'd'; desc.textContent = d; b.append(syntax, desc);
+  row.append(b, helpButton(c));
+  return row;
+}
+function helpButton(syntax) {
+  const help = document.createElement('button'); help.type = 'button'; help.className = 'cmd-help'; help.textContent = '?';
+  help.setAttribute('aria-label', 'Help for ' + syntax); help.title = 'Open the full help page for ' + syntax;
+  help.addEventListener('click', () => openCommandHelp(syntax));
+  return help;
+}
+/* The pane's resting view: the easy-to-miss forms, then every family folded.
+   Rows keep the catalog's alphabetical order across the folds, so the pane
+   and /help all expose the same list. */
+function renderFamilies(content) {
+  const tips = document.createElement('details'); tips.className = 'cmd-family cmd-tips'; tips.open = true;
+  const tipHead = document.createElement('summary'); tipHead.textContent = 'Worth knowing';
+  const tipCount = document.createElement('span'); tipCount.className = 'n'; tipCount.textContent = WORTH_KNOWING.length + ' exact forms'; tipHead.appendChild(tipCount);
+  tips.appendChild(tipHead);
+  WORTH_KNOWING.forEach(tip => {
+    const row = document.createElement('div'); row.className = 'cmd-row';
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'cmd-tip'; b.title = 'Insert into the composer; does not execute';
+    const label = document.createElement('span'); label.className = 's'; label.textContent = tip.label;
+    const hint = document.createElement('span'); hint.className = 'd'; hint.textContent = tip.hint; b.append(label, hint);
+    b.addEventListener('click', () => { input.value = tip.insert; input.focus(); });
+    row.append(b, helpButton(tip.key)); tips.appendChild(row);
+  });
+  content.appendChild(tips);
+  const head = document.createElement('div'); head.className = 'guide-head'; head.textContent = 'All commands by family'; content.appendChild(head);
+  const groups = new Map();
+  COMMANDS.forEach(([c, d]) => { const root = commandRoot(c); if (!groups.has(root)) groups.set(root, []); groups.get(root).push([c, d]); });
+  for (const [root, rows] of groups) {
+    if (rows.length === 1) { content.appendChild(commandRow(rows[0][0], rows[0][1])); continue; }
+    const family = document.createElement('details'); family.className = 'cmd-family';
+    const summary = document.createElement('summary'); summary.textContent = root;
+    const n = document.createElement('span'); n.className = 'n'; n.textContent = rows.length + ' commands'; summary.appendChild(n);
+    family.appendChild(summary);
+    rows.forEach(([c, d]) => family.appendChild(commandRow(c, d)));
+    content.appendChild(family);
+  }
+}
 function renderHelp(topic = '', compact = false) {
   const box = document.createElement('section'); box.className = 'command-guide'; box.setAttribute('aria-label','Command guide');
-  const title = document.createElement('h3'); title.textContent = 'Command guide'; box.appendChild(title);
-  const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click to insert a command, then review and send. <…> is required; […] is optional. Commands must be one line without control characters. Suggestions never execute.'; box.appendChild(note);
-  const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Search commands, e.g. web, session, --group'; search.setAttribute('aria-label','Search commands'); search.value = topic; box.appendChild(search);
-  const topics = document.createElement('div'); topics.className = 'help-topics'; box.appendChild(topics);
-  for (const [key,t] of Object.entries(HELP_TOPICS)) {
-    const b = document.createElement('button'); b.type='button'; b.textContent=t.title;
-    b.addEventListener('click', () => { search.value=key; paint(); }); topics.appendChild(b);
+  if (!compact) {
+    const title = document.createElement('h3'); title.textContent = 'Command guide'; box.appendChild(title);
+    const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click a command to insert it, then review and send; ? opens its full help page. <…> is required; […] is optional. Commands must be one line without control characters. Suggestions never execute.'; box.appendChild(note);
   }
-  const all = document.createElement('button'); all.type='button'; all.textContent='All commands'; all.addEventListener('click',()=>{search.value='all';paint();}); topics.appendChild(all);
+  const search = document.createElement('input'); search.type = 'search'; search.placeholder = compact ? 'Search commands or flags, e.g. --group' : 'Search commands, e.g. web, session, --group'; search.setAttribute('aria-label','Search commands'); search.value = topic; box.appendChild(search);
+  let topicSelect = null;
+  if (compact) {
+    /* The sidebar is narrow: one select instead of a wrapped row of chips. */
+    topicSelect = document.createElement('select'); topicSelect.setAttribute('aria-label', 'Filter by topic');
+    const all = document.createElement('option'); all.value = ''; all.textContent = 'All topics'; topicSelect.appendChild(all);
+    for (const [key,t] of Object.entries(HELP_TOPICS)) { const o = document.createElement('option'); o.value = key; o.textContent = t.title; topicSelect.appendChild(o); }
+    const flat = document.createElement('option'); flat.value = 'all'; flat.textContent = 'Every command, unfolded'; topicSelect.appendChild(flat);
+    topicSelect.addEventListener('change', () => { search.value = topicSelect.value; paint(); });
+    box.appendChild(topicSelect);
+  } else {
+    const topics = document.createElement('div'); topics.className = 'help-topics'; box.appendChild(topics);
+    for (const [key,t] of Object.entries(HELP_TOPICS)) {
+      const b = document.createElement('button'); b.type='button'; b.textContent=t.title;
+      b.addEventListener('click', () => { search.value=key; paint(); }); topics.appendChild(b);
+    }
+    const all = document.createElement('button'); all.type='button'; all.textContent='All commands'; all.addEventListener('click',()=>{search.value='all';paint();}); topics.appendChild(all);
+  }
   const content = document.createElement('div'); box.appendChild(content);
   function paint() {
     content.replaceChildren();
     const q = search.value.trim().toLowerCase().replace(/^\//,'');
+    if (topicSelect) topicSelect.value = (q in HELP_TOPICS || q === 'all') ? q : '';
     const selected = HELP_TOPICS[q] || Object.values(HELP_TOPICS).find(t=>t.roots.includes(q));
     if (selected) {
       const guidance = document.createElement('p'); guidance.textContent=selected.note; content.appendChild(guidance);
       const examples = document.createElement('details'); const summary=document.createElement('summary'); summary.textContent='Examples — insert, review, then send'; examples.appendChild(summary);
       examples.open=!compact; selected.examples.forEach(e=>examples.appendChild(commandButton(e))); content.appendChild(examples);
     }
-    if (!q && !compact) {
+    if (!q && compact) { renderFamilies(content); return; }
+    if (!q) {
       const start=document.createElement('p'); start.textContent='Choose a topic above, or start here:'; content.appendChild(start);
       ['/status','/session new','/web status','/help web','/memory proposals','/agent help'].forEach(c=>content.appendChild(commandButton(c)));
       return;
     }
     const rows=helpMatches(q); const count=document.createElement('p'); count.setAttribute('role','status'); count.textContent=rows.length ? rows.length+' matching commands' : 'No commands match. Try a topic or a shorter phrase.'; content.appendChild(count);
-    rows.forEach(([c,d])=>{
-      const b=commandButton(commandPrefix(c)); b.replaceChildren();
-      const syntax=document.createElement('span'); syntax.className='c'; syntax.textContent=c;
-      const desc=document.createElement('span'); desc.className='d'; desc.textContent=d; b.append(syntax,desc); content.appendChild(b);
-    });
+    rows.forEach(([c,d])=>content.appendChild(commandRow(c,d)));
   }
   search.addEventListener('input',paint); paint(); return box;
 }
@@ -1955,9 +2484,16 @@ async function runSlash(line, webCommand) {
             if (revision !== sessionRevision) break;
             paintStyle();
             if (sub === 'new') sys('Fresh conversation. Shared persona, enabled memory notes and web context remain; /prompt shows what is included.');
-            (s.messages || []).forEach(m => {
-              if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
-            });
+            const history = document.createElement('div');
+            history.setAttribute('aria-live', 'off');
+            msgTarget = history;
+            try {
+              (s.messages || []).forEach(m => {
+                if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
+              });
+            } finally { msgTarget = null; }
+            stream.appendChild(history);
+            stream.scrollTop = stream.scrollHeight;
           } catch (e) {
             if (revision === sessionRevision) throw e;
           } finally {
@@ -2734,8 +3270,7 @@ async function runSlash(line, webCommand) {
           sys('netconnect refusal: this console does not run active tiers or device control');
           break;
         }
-        document.querySelectorAll('.side-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === 'netconnect'));
-        document.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-netconnect'));
+        selectSideTab('netconnect');
         await showNetconnect();
         break;
       }
@@ -2763,8 +3298,7 @@ async function runSlash(line, webCommand) {
       }
 
       case 'users': {
-        document.querySelectorAll('.side-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === 'users'));
-        document.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-users'));
+        selectSideTab('users');
         if (window.CyClawAuthAdmin) {
           window.CyClawAuthAdmin.render(document.getElementById('usersPanelBody'), {
             base: '/api/auth',
@@ -2810,7 +3344,7 @@ async function runSlash(line, webCommand) {
         sys('unknown command: /' + cmd + ' — try /help');
     }
   } catch (e) {
-    sys('error: ' + e.message);
+    showError(e);
   }
 }
 
@@ -2964,7 +3498,9 @@ async function sendChat(text, asLoop, extra) {
   let preview = null;
   const onDelta = delta => {
     if (revision !== sessionRevision || controller.signal.aborted) return;
-    if (!preview) preview = agent('', 'Generating · partial reply not saved');
+    /* The stream is a polite live log; hold announcements while tokens arrive
+       so a screen reader reads the finished reply once, not every delta. */
+    if (!preview) { stream.setAttribute('aria-busy', 'true'); preview = agent('', 'Generating · partial reply not saved'); }
     preview.querySelector('.body').appendChild(document.createTextNode(delta));
     stream.scrollTop = stream.scrollHeight;
   };
@@ -2999,20 +3535,21 @@ async function sendChat(text, asLoop, extra) {
       } catch (e2) {
         if (revision !== sessionRevision) return null;
         if (e2 && e2.name === 'AbortError') return null;
-        sys('error: ' + e2.message);
+        showError(e2);
         stopLoop('loop stopped — ' + ((e2 && e2.code) || code));
         return null;
       }
     }
     if (asLoop && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT' || code === 'LOOP_IN_FLIGHT' || code === 'CHAT_BUSY')) {
-      sys('error: ' + e.message);
+      showError(e);
       stopLoop('loop stopped — ' + code);
       return null;
     }
-    sys('error: ' + e.message);
+    showError(e);
     return null;
   } finally {
     if (preview) preview.remove();
+    stream.removeAttribute('aria-busy');
     if (inflightChat === controller) inflightChat = null;
     if (revision === sessionRevision) releaseSendGate();
   }
@@ -3033,7 +3570,17 @@ let retryAttachmentIds = null;
 function clearPendingAttachments() {
   retryAttachmentIds = null;
   if (attachInput) { try { attachInput.value = ''; } catch (e) { /* inert input */ } }
+  paintAttach();
 }
+/* Clearing .value fires no change event, so every reset repaints. */
+function paintAttach() {
+  const count = attachInput && attachInput.files ? attachInput.files.length : 0;
+  $('attachCount').textContent = count ? String(count) : '';
+  $('attachBtn').toggleAttribute('data-count', count > 0);
+  $('attachBtn').setAttribute('aria-label', count ? 'Attach files, ' + count + ' selected' : 'Attach files');
+}
+$('attachBtn').addEventListener('click', () => attachInput.click());
+attachInput.addEventListener('change', paintAttach);
 async function uploadChatAttachments(files) {
   if (!files.length) return [];
   if (files.length > 3) {
@@ -3065,7 +3612,7 @@ async function previewChatPrompt(extra) {
       const ids = await uploadChatAttachments(files);
       if (stale()) throw new Error('prompt preview abandoned: the session changed; uploaded files remain until cleanup');
       retryAttachmentIds = { session: session, ids: ids };
-      if (attachInput.files === selection) attachInput.value = '';
+      if (attachInput.files === selection) { attachInput.value = ''; paintAttach(); }
       sys(ids.length + ' uploaded attachment(s) are pending for your next message in this session');
     }
     const ids = retryAttachmentIds && retryAttachmentIds.session === session ? retryAttachmentIds.ids : [];
@@ -3129,13 +3676,13 @@ async function onSend() {
     let extra;
     try {
       extra = { attachment_ids: await uploadChatAttachments(files) };
-      if (attachInput) attachInput.value = '';
+      if (attachInput) { attachInput.value = ''; paintAttach(); }
     } catch (e) {
       if (uploadRevision === sessionRevision) sendBtn.disabled = false;
       /* Nothing was sent, so give the typed prompt back instead of leaving
          only the notice. */
       restoreUnsentPrompt(text);
-      sys('error: ' + ((e && e.message) || e));
+      showError(e);
       return;
     }
     if (uploadRevision !== sessionRevision || uploadSession !== currentSession) {
@@ -3770,12 +4317,29 @@ $('analyticsPrevious').addEventListener('click', () => { if (analyticsPages[anal
 $('analyticsNext').addEventListener('click', () => { if (!$('analyticsNext').disabled) { ++analyticsPages[analyticsSection]; paintAnalytics(); } });
 /* End analytics. */
 
-document.querySelectorAll('.side-tab').forEach(tab => {
+/* Sidebar tablist, the Analytics pattern with manual activation: arrow keys,
+   Home and End move focus; Enter or Space opens the section. Opening Users,
+   API Keys, Memory or LAN loads data, so focus alone never does. */
+function selectSideTab(pane) {
+  document.querySelectorAll('.side-tab').forEach(t => {
+    const on = t.dataset.pane === pane;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
+  });
+  document.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + pane));
+}
+const sideTabs = Array.from(document.querySelectorAll('.side-tab'));
+sideTabs.forEach((tab, index) => {
+  tab.addEventListener('keydown', e => {
+    const next = {ArrowRight:(index + 1) % sideTabs.length, ArrowLeft:(index + sideTabs.length - 1) % sideTabs.length, Home:0, End:sideTabs.length - 1}[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    sideTabs.forEach((t, i) => { t.tabIndex = i === next ? 0 : -1; });
+    sideTabs[next].focus();
+  });
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.side-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.side-pane').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    $('pane-' + tab.dataset.pane).classList.add('active');
+    selectSideTab(tab.dataset.pane);
     if (tab.dataset.pane === 'users') runSlash('/users');
     if (tab.dataset.pane === 'api-keys') refreshKeys();
     if (tab.dataset.pane === 'memory') refreshMemoryProposals();
@@ -4074,6 +4638,7 @@ $('passwordForm').addEventListener('submit', async event => {
     await api('/api/auth/password', 'POST', body);
     $('passwordDialog').close();
     await refreshHarnessAuth(); await refreshStatus(); await refreshSessions();
+    sys('Password changed. Your other sessions were signed out.');
   } catch (error) { $('passwordFeedback').textContent = error.message; }
 });
 refreshHarnessAuth();
@@ -4155,6 +4720,7 @@ async function openSoulEditor(proposalOnly) {
   $('soulContent').maxLength = soulDocument.max_chars;
   $('soulReason').value = ''; $('soulConfirm').checked = false;
   $('soulSave').hidden = proposalOnly;
+  $('soulPropose').classList.toggle('primary', proposalOnly);
   $('soulFeedback').textContent = 'revision: ' + soulDocument.revision + '\nMaximum ' + soulDocument.max_chars + ' characters. Preview before saving.';
   $('soulEditor').showModal(); $('soulContent').focus();
 }

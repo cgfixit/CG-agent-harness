@@ -305,6 +305,28 @@ try {
  assert.equal(await evaluate('document.getElementById("input").value'),'/agent approve ','menu clicks retain the subcommand for editing');
  assert.equal(await evaluate('pendingAgentRun'),null);
  assert.equal(requests.filter(r=>r[0]==='POST').length,beforeMenuWrites,'menu clicks must not dispatch commands');
+ // The pane folds the catalog by family; every row's ? opens that command's manual, which only inserts.
+ assert.ok(await evaluate('document.querySelectorAll("#pane-commands .cmd-family:not(.cmd-tips)").length')>1,'the sidebar folds commands by family');
+ assert.ok(await evaluate('document.querySelectorAll("#pane-commands .cmd-help").length')>=menu.length,'every catalog row has a help button');
+ await evaluate('[...document.querySelectorAll("#pane-commands .cmd-help")].find(b=>b.getAttribute("aria-label")==="Help for /agent approve <run-id> <reason>").click()');
+ assert.equal(await evaluate('document.getElementById("commandHelpDialog").open'),true,'? opens the command manual');
+ assert.equal(await evaluate('document.getElementById("commandHelpTitle").textContent'),'/agent approve <run-id> <reason>');
+ const manual=await evaluate('document.getElementById("commandHelpBody").innerText');
+ for(const part of ['SYNOPSIS','DESCRIPTION','ARGUMENTS','<run-id>','<reason>','asks you to repeat it','SEE ALSO','/agent status <run-id>'])assert.ok(manual.includes(part),'manual missing: '+part);
+ await evaluate('[...document.querySelectorAll("#commandHelpBody button")].find(b=>b.textContent==="/agent status <run-id>").click()');
+ assert.equal(await evaluate('document.getElementById("commandHelpTitle").textContent'),'/agent status <run-id>','See also opens the related manual in place');
+ assert.equal(requests.filter(r=>r[0]==='POST').length,beforeMenuWrites,'reading a manual sends nothing');
+ await evaluate('document.getElementById("commandHelpInsert").click()');
+ assert.equal(await evaluate('document.getElementById("commandHelpDialog").open'),false,'Insert closes the manual');
+ assert.equal(await evaluate('document.getElementById("input").value'),'/agent status ','Insert fills the composer with the fixed prefix, never sends');
+ assert.equal(await evaluate('document.activeElement.id'),'input','focus moves to the composer');
+ await evaluate('[...document.querySelectorAll("#pane-commands .cmd-help")].find(b=>b.getAttribute("aria-label")==="Help for /skill check:<profile>").click()');
+ await evaluate('document.getElementById("commandHelpInsert").click()');
+ assert.equal(await evaluate('document.getElementById("input").value'),'/skill check:','a one-word form keeps its colon on insert');
+ await evaluate('[...document.querySelectorAll("#pane-commands .cmd-item")].find(node=>node.querySelector(".c").textContent==="/skill check:<profile>").click()');
+ assert.equal(await evaluate('document.getElementById("input").value'),'/skill check:','the catalog row inserts the same form');
+ assert.equal(requests.filter(r=>r[0]==='POST').length,beforeMenuWrites,'the manual never dispatches');
+ await evaluate('document.getElementById("input").value=""');
  await send('/help');
  assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("Choose a topic")'),'default help must be an overview, not the complete table');
  await send('/help all');
@@ -482,6 +504,8 @@ try {
  assert.equal(await evaluate('document.getElementById("hTokens").textContent'),'3');
  await send('/session use '+firstSession.session_id);
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'switch renders the selected session, including its older messages');
+ assert.equal(await evaluate('document.querySelectorAll("#stream [aria-live=off] .msg.user, #stream [aria-live=off] .msg.agent").length'),12,'restored history sits outside the polite live log');
+ assert.equal(await evaluate('document.getElementById("stream").getAttribute("aria-live")'),'polite');
  await send('/session use '+firstSession.session_id);
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'reselecting a session must not duplicate its transcript');
  // Keyboard recall loads saved prompts, restores drafts, and never crosses session boundaries.
@@ -649,7 +673,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }
