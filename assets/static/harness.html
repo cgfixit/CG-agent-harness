@@ -1706,7 +1706,7 @@ const FLAG_MEANINGS = {
    that override ARG_MEANINGS. examples: inserted, never executed. */
 const COMMAND_MAN = {
   '/agent [help]': {detail:'Lists every /agent command. The coding workflow is: stage a request, refine it, confirm it with a reason, review the result, approve the commit, then push and publish, each a separate step.', notes:['Nothing runs until /agent confirm. A command printed by the model is never approval.']},
-  '/agent approve <run-id> <reason>': {detail:'Commits a pending run’s diff locally. The first call loads and shows the complete diff; send the same command again, reason included, to commit it. Approval is withheld unless the run is pending and its diff loaded completely.', notes:['Approve does not push; that is /agent push.'], examples:['/agent status ']},
+  '/agent approve <run-id> <reason>': {detail:'Commits a pending run’s diff locally, but only after this transcript has shown that run’s complete diff: through /agent status, the job watch, or a first approve call, which then asks you to repeat it. If the diff was already shown, the first call commits. Approval is withheld unless the run is pending and its diff loaded completely.', notes:['Approve does not push; that is /agent push.'], examples:['/agent status ']},
   '/agent cancel': {detail:'Discards the staged request: branch, instruction, plan, declared reads and checks. Jobs already submitted keep running; /agent stop is for those.'},
   '/agent checks [profile ...]': {detail:'Alone, lists the fixed check profiles and what each runs. With names, selects those profiles for the staged request; separate several with spaces or commas. Unknown names are refused and nothing changes.', examples:['/agent checks']},
   '/agent confirm <reason>': {detail:'Submits the staged request as a detached job, with your reason. If the server refuses it, the request stays staged for correction. The console then watches the job in the transcript.', notes:['confirm is explicit here and never defaulted.']},
@@ -1727,7 +1727,7 @@ const COMMAND_MAN = {
   '/agent status <run-id>': {detail:'Shows one run and its complete diff.'},
   '/agent stop [job-id]': {detail:'Asks the server to cancel a job. Without an id, it uses the job this page last watched. Work the job already spawned may survive; inspect the run before further writes.'},
   '/analytics': {detail:'Opens the Analytics dialog: tokens and cost, sessions and coding runs, filterable and paged.'},
-  '/api [set <KEY> <value>|clear <KEY>]': {detail:'Alone, shows the credential store and every key masked. set saves a value and clear removes it; saved values load after a restart, and an explicit environment variable always wins.', notes:['A secret typed here lands in chat history. The API Keys pane’s password fields do not.']},
+  '/api [set <KEY> <value>|clear <KEY>]': {detail:'Alone, shows the credential store and every key masked. set saves a value and clear removes it. Saved values load after a restart, except SERPAPI_API_KEY, which applies at once; an explicit environment variable always wins.', notes:['A secret typed here lands in chat history. The API Keys pane’s password fields do not.']},
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
   '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
@@ -1750,7 +1750,7 @@ const COMMAND_MAN = {
   '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
   '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
   '/memory search <query>': {detail:'Lists matching fact candidates with scores. Nothing is injected into chat.'},
-  '/model [use <name>]': {detail:'Alone, shows the chat model, provider and endpoint. use selects a chat model by its exact installed tag and reports the planner model, which is configured separately and unchanged.', args:{name:'a model tag exactly as the model service lists it'}, examples:['/model use ']},
+  '/model [use <name>]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ']},
   '/net status|devices': {detail:'status shows scope and gate state and loads no collector; devices lists passively seen neighbors. Both open the LAN pane. Anything else is refused: this console runs no scans or device control.'},
   '/prompt': {detail:'Previews the next chat system prompt: persona, style, pinned notes, selected facts and web context. Shown only to you; nothing is sent to the model.'},
   '/registry': {detail:'Lists skills, tools and connectors together.'},
@@ -1760,7 +1760,7 @@ const COMMAND_MAN = {
   '/session rename <title>': {detail:'Renames the current session.'},
   '/session use <id>': {detail:'Restores a saved session and replays its messages. Ids come from /session list or the Sessions pane.'},
   '/skill [status]|use <id...>|clear': {detail:'Shows, replaces or clears the prompt skills selected for this session. Selected skills are prompt context, not tools. Creates a session if none is open.'},
-  '/skill check:<profile>': {detail:'Selects one fixed check profile for an already staged coding request. Written as one word with a colon. Nothing executes; /agent confirm <reason> still authorizes the run.'},
+  '/skill check:<profile>': {insert:'/skill check:', detail:'Selects one fixed check profile for an already staged coding request. Written as one word with a colon. Nothing executes; /agent confirm <reason> still authorizes the run.'},
   '/skills [all|help|<name>]': {detail:'Draws the registered runtime skills. all includes the unwired catalog; a name draws one skill; help lists these forms. Registration is not readiness.'},
   '/soul [on|off|status]': {detail:'Shows persona status, or turns soul.md on or off in the system prompt. soul.md itself is never changed by this.'},
   '/soul apply <id> <reason>': {detail:'Applies the persona proposal you reviewed with /soul review <id>. The id must match the reviewed proposal and a reason is required.'},
@@ -1789,15 +1789,18 @@ const COMMAND_MAN = {
 /* Exact forms that are easy to get wrong. insert is what the composer gets;
    key names the catalog row whose manual the ? opens. */
 const WORTH_KNOWING = [
-  {label:'/agent approve <run-id> <reason>', insert:'/agent approve ', hint:'Send it twice: the first shows the diff, the repeat commits', key:'/agent approve <run-id> <reason>'},
+  {label:'/agent approve <run-id> <reason>', insert:'/agent approve ', hint:'Commits once this transcript has shown the diff; otherwise the first call shows it and asks for a repeat', key:'/agent approve <run-id> <reason>'},
   {label:'/agent pr-body <run-id>', insert:'/agent pr-body ', hint:'Review the PR template here before /agent publish will accept', key:'/agent pr-body <run-id>'},
   {label:'/memory save <text> :: <reason>', insert:'/memory save ', hint:'Two colons separate the fact from the required reason', key:'/memory save <text> :: <reason>'},
   {label:'/skill check:<profile>', insert:'/skill check:', hint:'One word with a colon; needs a staged /agent run', key:'/skill check:<profile>'},
-  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'The exact tag the model service lists; the coding planner is separate', key:'/model [use <name>]'},
+  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [use <name>]'},
   {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [n]|auto|stop'},
   {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
 ];
 function commandRoot(syntax) { return '/' + syntax.slice(1).split(' ')[0]; }
+/* What a click inserts: the fixed prefix, unless the manual names a form the
+   prefix rule cannot keep (check:<profile> is one word with a colon). */
+function commandInsert(syntax) { return (COMMAND_MAN[syntax] && COMMAND_MAN[syntax].insert) || commandPrefix(syntax); }
 function commandManual(syntax) {
   const row = COMMANDS.find(([c]) => c === syntax) || [syntax, ''];
   const man = COMMAND_MAN[syntax] || {};
@@ -1859,7 +1862,7 @@ function openCommandHelp(syntax) {
     if (m.topic) { const b = document.createElement('button'); b.type = 'button'; b.textContent = '/help ' + m.topicKey + ' — ' + m.topic.title; b.title = 'Insert into the composer; does not execute'; b.addEventListener('click', () => insertAndClose('/help ' + m.topicKey)); list.appendChild(b); }
     body.appendChild(list);
   }
-  $('commandHelpInsert').onclick = () => insertAndClose(commandPrefix(m.syntax));
+  $('commandHelpInsert').onclick = () => insertAndClose(commandInsert(m.syntax));
   if (!dialog.open) dialog.showModal();
   body.scrollTop = 0; dialog.scrollTop = 0;
 }
@@ -1867,7 +1870,7 @@ $('commandHelpClose').addEventListener('click', () => $('commandHelpDialog').clo
 /* One catalog row: the command inserts its fixed prefix, the ? opens its manual. */
 function commandRow(c, d) {
   const row = document.createElement('div'); row.className = 'cmd-row';
-  const b = commandButton(commandPrefix(c)); b.replaceChildren();
+  const b = commandButton(commandInsert(c)); b.replaceChildren();
   const syntax = document.createElement('span'); syntax.className = 'c'; syntax.textContent = c;
   const desc = document.createElement('span'); desc.className = 'd'; desc.textContent = d; b.append(syntax, desc);
   row.append(b, helpButton(c));

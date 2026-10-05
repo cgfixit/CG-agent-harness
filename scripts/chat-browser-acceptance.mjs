@@ -312,7 +312,7 @@ try {
  assert.equal(await evaluate('document.getElementById("commandHelpDialog").open'),true,'? opens the command manual');
  assert.equal(await evaluate('document.getElementById("commandHelpTitle").textContent'),'/agent approve <run-id> <reason>');
  const manual=await evaluate('document.getElementById("commandHelpBody").innerText');
- for(const part of ['SYNOPSIS','DESCRIPTION','ARGUMENTS','<run-id>','<reason>','send the same command again','SEE ALSO','/agent status <run-id>'])assert.ok(manual.includes(part),'manual missing: '+part);
+ for(const part of ['SYNOPSIS','DESCRIPTION','ARGUMENTS','<run-id>','<reason>','asks you to repeat it','SEE ALSO','/agent status <run-id>'])assert.ok(manual.includes(part),'manual missing: '+part);
  await evaluate('[...document.querySelectorAll("#commandHelpBody button")].find(b=>b.textContent==="/agent status <run-id>").click()');
  assert.equal(await evaluate('document.getElementById("commandHelpTitle").textContent'),'/agent status <run-id>','See also opens the related manual in place');
  assert.equal(requests.filter(r=>r[0]==='POST').length,beforeMenuWrites,'reading a manual sends nothing');
@@ -320,6 +320,11 @@ try {
  assert.equal(await evaluate('document.getElementById("commandHelpDialog").open'),false,'Insert closes the manual');
  assert.equal(await evaluate('document.getElementById("input").value'),'/agent status ','Insert fills the composer with the fixed prefix, never sends');
  assert.equal(await evaluate('document.activeElement.id'),'input','focus moves to the composer');
+ await evaluate('[...document.querySelectorAll("#pane-commands .cmd-help")].find(b=>b.getAttribute("aria-label")==="Help for /skill check:<profile>").click()');
+ await evaluate('document.getElementById("commandHelpInsert").click()');
+ assert.equal(await evaluate('document.getElementById("input").value'),'/skill check:','a one-word form keeps its colon on insert');
+ await evaluate('[...document.querySelectorAll("#pane-commands .cmd-item")].find(node=>node.querySelector(".c").textContent==="/skill check:<profile>").click()');
+ assert.equal(await evaluate('document.getElementById("input").value'),'/skill check:','the catalog row inserts the same form');
  assert.equal(requests.filter(r=>r[0]==='POST').length,beforeMenuWrites,'the manual never dispatches');
  await evaluate('document.getElementById("input").value=""');
  await send('/help');
