@@ -157,6 +157,7 @@ pub async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<
     Ok(Json(json!({
         "enabled": true,
         "needs_password": pending,
+        "default_password": mgr.default_password_active(),
         "username": if pending { Some(BOOTSTRAP_USERNAME) } else { None },
     })))
 }

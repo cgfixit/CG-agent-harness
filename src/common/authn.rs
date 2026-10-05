@@ -107,8 +107,12 @@ fn random_salt() -> [u8; SALT_BYTES] {
 }
 
 /// The sole short-password exception: fresh restricted bootstrap credentials.
+/// The password a fresh home's `admin` account ships with. Login forces a
+/// change before anything else runs.
+pub(super) const BOOTSTRAP_PASSWORD: &str = "admin";
+
 pub(super) fn hash_bootstrap_password() -> Result<String> {
-    hash_unchecked("admin", &random_salt())
+    hash_unchecked(BOOTSTRAP_PASSWORD, &random_salt())
 }
 
 pub(super) fn valid_password_record(record: &str) -> bool {

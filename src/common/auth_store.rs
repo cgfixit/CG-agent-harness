@@ -110,6 +110,10 @@ pub struct AuthManager {
     absolute_timeout_sec: f64,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
     fresh_bootstrap: std::sync::atomic::AtomicBool,
+    /// The `admin` hash record known to verify the shipped `admin` password,
+    /// captured once at open. Any password write mints a new salt, so a stored
+    /// record that still equals this one is still the default password.
+    default_password_record: Option<String>,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
 
@@ -122,12 +126,21 @@ impl std::fmt::Debug for AuthManager {
 impl AuthManager {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
         let (connection, db, fresh) = sqlite::open(path)?;
+        let default_password_record = db
+            .users
+            .get(BOOTSTRAP_USERNAME)
+            .filter(|u| u.must_change_password && !authn::is_pending_password_record(&u.password_hash))
+            // A fresh row was just hashed from the shipped password; an existing
+            // row pays one scrypt check here instead of on a public route.
+            .filter(|u| fresh || authn::verify_password(authn::BOOTSTRAP_PASSWORD, &u.password_hash).0)
+            .map(|u| u.password_hash.clone());
         let mgr = Self {
             path: path.to_path_buf(),
             idle_timeout_sec: cfg.f64_or("auth.session.idle_timeout_sec", DEFAULT_IDLE_TIMEOUT_SEC),
             absolute_timeout_sec: cfg.f64_or("auth.session.absolute_timeout_sec", DEFAULT_ABSOLUTE_TIMEOUT_SEC),
             state: Mutex::new((connection, db)),
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
+            default_password_record,
             clock: Box::new(super::now_ts),
         };
         // Warm the timing-equalization dummy before any login can arrive.
@@ -187,6 +200,22 @@ impl AuthManager {
             .get(BOOTSTRAP_USERNAME)
             .map(|u| authn::is_pending_password_record(&u.password_hash))
             .unwrap_or(false)
+    }
+
+    /// True while the enabled `admin` account still has the shipped password
+    /// and must replace it. The sign-in screen shows the default-credentials
+    /// note only then. It answers from memory and never hashes, so the public
+    /// setup-status route stays cheap.
+    pub fn default_password_active(&self) -> bool {
+        let Some(record) = self.default_password_record.as_deref() else {
+            return false;
+        };
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        stored
+            .1
+            .users
+            .get(BOOTSTRAP_USERNAME)
+            .is_some_and(|u| !u.disabled && u.must_change_password && u.password_hash == record)
     }
 
     pub fn bootstrap_set_password(&self, password: &str) -> Result<LoginResult> {

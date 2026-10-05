@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="auth-pending">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -51,8 +51,6 @@
     color: var(--accent-amber); letter-spacing: 1.5px; text-transform: uppercase;
   }
   .logo span { color: var(--text-muted); font-weight: 400; }
-  .login-hint { max-width: 320px; font-size: 11px; color: var(--text-secondary); }
-  .login-hint strong { color: var(--text-primary); }
   .header-right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   .pill {
     font-family: var(--mono); font-size: 10.5px; padding: 3px 10px;
@@ -65,8 +63,7 @@
 
   /* ── HEADER AUTH ── */
   #harnessAuth { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  #hAuthSetup, #hAuthLoginBox { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  #hAuthWho { font-family: var(--mono); font-size: 10.5px; color: var(--text-secondary); }
+  #hAuthWho { font-family: var(--mono); font-size: var(--fs-micro, 10.5px); color: var(--text-secondary); }
   /* An empty status span would still draw a flex gap. */
   #hAuthWho:empty { display: none; }
   #harnessAuth .toggle {
@@ -77,12 +74,40 @@
     transition: background-color .15s ease, border-color .15s ease, color .15s ease;
   }
   #harnessAuth .toggle:hover { background: var(--border); color: var(--text-primary); }
-  #harnessAuth #hAuthLogin, #harnessAuth #hAuthSetupBtn {
-    background: var(--accent-amber); border-color: var(--accent-amber);
-    color: #000; font-weight: 700;
+
+  /* ── SIGN-IN SCREEN ── signed out, the console has no authority, so it is
+     not drawn: the card replaces the sidebar, stream, input and status bar
+     until a session exists. ── */
+  body.signed-out .main,
+  body.signed-out .header-right > :not(#harnessAuth) { display: none; }
+  /* Until the first account probe settles, nothing is shown as usable. */
+  .auth-pending .main, .auth-pending .header-right { visibility: hidden; }
+  .signin { flex: 1; min-height: 0; overflow-y: auto; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+  .signin form {
+    width: min(380px, 100%); display: flex; flex-direction: column; gap: 6px;
+    padding: 28px; background: var(--bg-secondary);
+    border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 24px 80px #0006;
   }
-  #harnessAuth #hAuthLogin:hover, #harnessAuth #hAuthSetupBtn:hover {
-    background: #e8a31c; border-color: #e8a31c; color: #000;
+  .signin h1 { font-size: var(--fs-lg, 20px); font-weight: 650; margin-bottom: 4px; }
+  .signin .signin-lede { color: var(--text-secondary); margin-bottom: 10px; }
+  .signin label { font-size: var(--fs-small, 12px); color: var(--text-primary); margin-top: 8px; }
+  .signin input {
+    width: 100%; padding: 9px 11px; color: var(--text-primary); background: var(--bg-input);
+    border: 1px solid var(--border); border-radius: 6px; outline: none;
+  }
+  .signin input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(212, 146, 11, .18); }
+  .signin button {
+    margin-top: 14px; padding: 10px 14px; cursor: pointer; font-weight: 700; color: #000;
+    background: var(--accent-amber); border: 1px solid var(--accent-amber); border-radius: 6px;
+  }
+  .signin button:hover { background: #e8a31c; border-color: #e8a31c; }
+  .signin button:disabled { opacity: .5; cursor: wait; }
+  .signin :focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
+  .signin-error { color: var(--accent-red); font-size: var(--fs-body, 12.5px); margin-top: 8px; }
+  .signin-error:empty { display: none; }
+  .signin-hint {
+    margin-top: 14px; padding: 10px 12px; font-size: var(--fs-small, 12px); color: var(--text-primary);
+    background: rgba(212, 146, 11, .08); border: 1px solid rgba(212, 146, 11, .35); border-radius: 6px;
   }
 
   /* ── LAYOUT ── */
@@ -358,7 +383,6 @@
   @media (max-width: 860px) {
     .header { gap: 8px; padding: 8px 12px; }
     .header-right { width: 100%; margin-left: 0; gap: 8px; }
-    .login-hint { order: 3; width: 100%; max-width: none; }
     .main { flex-direction: column; }
     .sidebar {
       width: auto; max-height: 38vh;
@@ -379,8 +403,7 @@
     .side-tab { padding: 7px 4px; }
     .header-right { gap: 6px; }
     #harnessAuth { width: 100%; }
-    #hAuthSetup, #hAuthLoginBox { width: 100%; }
-    #harnessAuth .apikey { flex: 1 1 120px; width: auto; }
+    .signin form { padding: 20px; }
     #send { padding: 9px 14px; }
     #sGoal { max-width: 90px; }
     #soulEditor, #sessionClearDialog { width: 94%; padding: 16px; }
@@ -395,19 +418,8 @@
 <body>
   <div class="header">
     <div class="logo">CG Agent <span>/ harness</span></div>
-    <p id="hAuthHint" class="login-hint" hidden>Default login is <strong>User: admin / Password: admin</strong><br>Fresh installs only. You will be prompted to replace it.</p>
     <div class="header-right">
       <span id="harnessAuth">
-        <span id="hAuthSetup" hidden>
-          <input class="apikey" id="hAuthSetupPass" type="password" placeholder="set admin password" autocomplete="new-password">
-          <input class="apikey" id="hAuthSetupPass2" type="password" placeholder="confirm" autocomplete="new-password">
-          <button class="toggle" id="hAuthSetupBtn" type="button">set password</button>
-        </span>
-        <span id="hAuthLoginBox" hidden>
-          <input class="apikey" id="hAuthUser" placeholder="user" autocomplete="username">
-          <input class="apikey" id="hAuthPass" type="password" placeholder="pass" autocomplete="current-password">
-          <button class="toggle" id="hAuthLogin" type="button" title="Sign in to use the harness">login</button>
-        </span>
         <span id="hAuthWho" role="status"></span>
         <button class="toggle" id="hAuthPassword" type="button" hidden>change password</button>
         <button class="toggle" id="hAuthLogout" type="button" hidden>logout</button>
@@ -421,6 +433,30 @@
       <div class="dot" id="hDot" title="server status"></div>
     </div>
   </div>
+
+  <section class="signin" id="signInScreen" hidden>
+    <form id="hAuthLoginBox" aria-labelledby="signInTitle" hidden>
+      <h1 id="signInTitle">Sign in</h1>
+      <p class="signin-lede">Sign in to use the harness on this machine.</p>
+      <label for="hAuthUser">Username</label>
+      <input id="hAuthUser" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="128">
+      <label for="hAuthPass">Password</label>
+      <input id="hAuthPass" name="password" type="password" autocomplete="current-password" maxlength="1024">
+      <p id="hAuthError" class="signin-error" role="alert"></p>
+      <button id="hAuthLogin" type="submit">Sign in</button>
+      <p id="hAuthHint" class="signin-hint" hidden>First run: the username and password are both <strong>admin</strong>. You'll set a new password next.</p>
+    </form>
+    <form id="hAuthSetup" aria-labelledby="setupTitle" hidden>
+      <h1 id="setupTitle">Set the administrator password</h1>
+      <p class="signin-lede">This home has no admin password yet. Choose one with at least 12 characters.</p>
+      <label for="hAuthSetupPass">New password</label>
+      <input id="hAuthSetupPass" type="password" autocomplete="new-password" minlength="12" maxlength="1024">
+      <label for="hAuthSetupPass2">Confirm password</label>
+      <input id="hAuthSetupPass2" type="password" autocomplete="new-password" minlength="12" maxlength="1024">
+      <p id="hAuthSetupError" class="signin-error" role="alert"></p>
+      <button id="hAuthSetupBtn" type="submit">Set password</button>
+    </form>
+  </section>
 
   <div class="main">
     <div class="sidebar">
@@ -3794,7 +3830,34 @@ function setHarnessLogoutVisible(on) {
   if (hAuthLogout) hAuthLogout.hidden = !on;
   document.getElementById('hAuthPassword').hidden = !on;
   $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin';
-  $('hAuthHint').hidden = on || !hAuthLoginBox || hAuthLoginBox.hidden;
+}
+/* mode is 'login', 'setup' or null (signed in, or authentication disabled).
+   The default-credentials note shows only while the server reports that the
+   shipped admin password is still in effect. */
+function showSignIn(mode, defaultPassword) {
+  const out = mode === 'login' || mode === 'setup';
+  const wasOut = document.body.classList.contains('signed-out');
+  document.body.classList.toggle('signed-out', out);
+  $('signInScreen').hidden = !out;
+  hAuthLoginBox.hidden = mode !== 'login';
+  hAuthSetup.hidden = mode !== 'setup';
+  $('hAuthHint').hidden = !(mode === 'login' && defaultPassword === true);
+  if (!out) { $('hAuthError').textContent = ''; $('hAuthSetupError').textContent = ''; return; }
+  if (!wasOut || !$('signInScreen').contains(document.activeElement)) {
+    (mode === 'login' ? $('hAuthUser') : $('hAuthSetupPass')).focus();
+  }
+}
+/* Plain sentences for a refused sign-in; the code stays out of the way. */
+function signInFailure(status, data) {
+  const detail = data && data.detail && typeof data.detail === 'object' ? data.detail : {};
+  if (detail.code === 'AUTH_ACCOUNT_LOCKED' || status === 423) {
+    const wait = detail.details && Number(detail.details.retry_after_sec);
+    return 'This account is locked after too many failed attempts. ' +
+      (wait > 0 ? 'Try again in ' + Math.ceil(wait) + ' seconds.' : 'Wait, then try again.');
+  }
+  if (status === 429) return 'Too many sign-in attempts. Wait a moment, then try again.';
+  if (status === 401) return "That username and password don't match. Check both and try again.";
+  return 'Sign-in failed (HTTP ' + status + '). Try again.';
 }
 /* Header automation buttons: hidden until the account state is known. Analytics
    needs a usable account (signed in, or authentication disabled); Job webhooks
@@ -3826,8 +3889,7 @@ async function refreshHarnessAuth() {
   try {
     const me = await fetchWithTimeout('/api/auth/whoami', {}, 5000);
     if (me.status === 503) {
-      if (hAuthSetup) hAuthSetup.hidden = true;
-      if (hAuthLoginBox) hAuthLoginBox.hidden = true;
+      showSignIn(null);
       setHarnessLogoutVisible(false);
       refreshHeaderFeatures(true);
       if (who) who.textContent = 'authentication disabled by local configuration';
@@ -3836,8 +3898,7 @@ async function refreshHarnessAuth() {
     if (me.ok) {
       const data = await me.json();
       window.__cyclawRole = data.role;
-      if (hAuthSetup) hAuthSetup.hidden = true;
-      if (hAuthLoginBox) hAuthLoginBox.hidden = true;
+      showSignIn(null);
       setHarnessLogoutVisible(true);
       refreshHeaderFeatures(!data.must_change_password);
       $('reloadLimits').hidden = data.role !== 'admin' || data.must_change_password;
@@ -3848,28 +3909,26 @@ async function refreshHarnessAuth() {
     clearAnalytics();
     refreshHeaderFeatures(false);
     const setup = await fetchWithTimeout('/api/auth/setup-status', {}, 5000);
-    if (setup.ok) {
-      const status = await setup.json();
-      if (status.needs_password) {
-        if (hAuthSetup) hAuthSetup.hidden = false;
-        if (hAuthLoginBox) hAuthLoginBox.hidden = true;
-        setHarnessLogoutVisible(false);
-        return;
-      }
-    }
-    if (hAuthSetup) hAuthSetup.hidden = true;
-    if (hAuthLoginBox) hAuthLoginBox.hidden = false;
+    const status = setup.ok ? await setup.json() : {};
     window.__cyclawRole = null;
-    if (who) who.textContent = 'Sign in to use the harness.';
+    if (who) who.textContent = '';
     setHarnessLogoutVisible(false);
-  } catch (e) { /* keep last UI */ }
+    showSignIn(status.needs_password ? 'setup' : 'login', status.default_password);
+  } catch (e) { /* keep last UI */ } finally {
+    document.documentElement.classList.remove('auth-pending');
+  }
 }
-if (hAuthLogin) {
-  hAuthLogin.addEventListener('click', async function () {
+if (hAuthLoginBox) {
+  hAuthLoginBox.addEventListener('submit', async function (event) {
+    event.preventDefault();
     const user = document.getElementById('hAuthUser');
     const pass = document.getElementById('hAuthPass');
     const who = document.getElementById('hAuthWho');
+    const error = $('hAuthError');
+    error.textContent = '';
+    if (!user.value.trim() || !pass.value) { error.textContent = 'Enter your username and password.'; return; }
     clearAnalytics();
+    hAuthLogin.disabled = true;
     try {
       const r = await fetchWithTimeout('/api/auth/login', {
         method: 'POST',
@@ -3877,7 +3936,7 @@ if (hAuthLogin) {
         body: JSON.stringify({ username: user.value.trim(), password: pass.value }),
       }, 15000);
       pass.value = '';
-      if (!r.ok) { if (who) who.textContent = 'login failed'; return; }
+      if (!r.ok) { error.textContent = signInFailure(r.status, await r.json().catch(() => null)); pass.focus(); return; }
       const data = await r.json();
       clearPendingAttachments();
       window.__cyclawRole = data.role;
@@ -3885,12 +3944,15 @@ if (hAuthLogin) {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
+      showSignIn(null);
       refreshHeaderFeatures(!data.must_change_password);
       if (data.must_change_password) openPasswordChange(true);
       else { await refreshStatus(); await refreshSessions(); }
     } catch (e) {
       pass.value = '';
-      if (who) who.textContent = 'network error: login failed';
+      error.textContent = "Can't reach the harness. Check that it is still running, then try again.";
+    } finally {
+      hAuthLogin.disabled = false;
     }
   });
 }
@@ -3944,24 +4006,31 @@ if (hAuthLogout) {
     sendBtn.disabled = false;
   });
 }
-const hAuthSetupBtn = document.getElementById('hAuthSetupBtn');
-if (hAuthSetupBtn) {
-  hAuthSetupBtn.addEventListener('click', async function () {
+if (hAuthSetup) {
+  hAuthSetup.addEventListener('submit', async function (event) {
+    event.preventDefault();
     const p1 = document.getElementById('hAuthSetupPass');
     const p2 = document.getElementById('hAuthSetupPass2');
     const who = document.getElementById('hAuthWho');
+    const error = $('hAuthSetupError');
     const password = p1 ? p1.value : '';
     const confirm = p2 ? p2.value : '';
     if (p1) p1.value = '';
     if (p2) p2.value = '';
-    if (password !== confirm) { if (who) who.textContent = 'passwords do not match'; return; }
+    error.textContent = '';
+    if (password !== confirm) { error.textContent = "The passwords don't match. Enter the same password twice."; return; }
     try {
       const r = await fetchWithTimeout('/api/auth/bootstrap-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       }, 15000);
-      if (!r.ok) { if (who) who.textContent = 'could not set password'; return; }
+      if (!r.ok) {
+        const data = await r.json().catch(() => null);
+        const detail = data && data.detail && typeof data.detail === 'object' ? data.detail : {};
+        error.textContent = detail.code === 'AUTH_POLICY' ? detail.message : 'The password was not set (HTTP ' + r.status + '). Try again.';
+        return;
+      }
       const data = await r.json();
       clearPendingAttachments();
       window.__cyclawRole = data.role;
@@ -3969,9 +4038,10 @@ if (hAuthSetupBtn) {
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setHarnessLogoutVisible(true);
+      showSignIn(null);
       refreshHeaderFeatures(!data.must_change_password);
     } catch (e) {
-      if (who) who.textContent = 'network error: could not set password';
+      error.textContent = "Can't reach the harness. Check that it is still running, then try again.";
     }
   });
 }

@@ -112,7 +112,7 @@ Full instructions: [macOS app installation](docs/INSTALL.md#52-macos-app).
 
 ### 3. Sign in and try a conversation
 
-1. Sign in with `admin` / `admin` and **replace the bootstrap password immediately**.
+1. On the sign-in screen, use `admin` / `admin`; the console then **requires a new password** before anything else.
 2. Select an exact installed model with `/model use <exact-installed-tag>`.
 3. Run `/status`, send a message, and inspect the assembled context with `/prompt`.
 4. Run `/help` for topics, `/help web` for research, or `/help all` for the command catalog.
