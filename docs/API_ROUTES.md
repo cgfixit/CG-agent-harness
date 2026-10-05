@@ -35,9 +35,9 @@ Spend and outbound completion webhooks: [operator guide](SPEND_AND_NOTIFICATIONS
 | POST | `/api/auth/bootstrap-password` | Replace the fresh `admin` password (12+ characters) |
 | POST | `/api/auth/login` | Login; public with early guards |
 | POST | `/api/auth/logout` | Revoke the current session |
-| GET | `/api/auth/whoami` | Current account and role |
+| GET | `/api/auth/whoami` | Current account, role, and `user_id` |
 | POST | `/api/auth/password` | Change own password; revokes other sessions |
-| GET, POST | `/api/auth/users` | List/create accounts (administrator; `/users`) |
+| GET, POST | `/api/auth/users` | List/create accounts, including each `user_id` (administrator; `/users`) |
 | DELETE | `/api/auth/users/{username}` | Delete an account (administrator) |
 | POST | `/api/auth/users/{username}/disabled` | Enable/disable an account (administrator) |
 | POST | `/api/auth/users/{username}/password` | Administrative password reset |

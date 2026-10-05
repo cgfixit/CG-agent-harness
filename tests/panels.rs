@@ -734,7 +734,13 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
-    assert_eq!(resp.json::<serde_json::Value>().await.unwrap()["username"], "admin");
+    let who = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(who["username"], "admin");
+    let admin_id = who["user_id"].as_str().expect("whoami publishes user_id").to_string();
+    assert!(
+        admin_id.len() == 32 && admin_id.chars().all(|c| c.is_ascii_hexdigit()),
+        "{admin_id}"
+    );
     // Session routes need CSRF.
     let resp = s
         .client
@@ -803,7 +809,55 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         .next()
         .unwrap()
         .to_string();
-    assert_eq!(resp.json::<serde_json::Value>().await.unwrap()["role"], "operator");
+    let op_login = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(op_login["role"], "operator");
+    let op_id = op_login["user_id"]
+        .as_str()
+        .expect("login publishes the caller's user_id")
+        .to_string();
+    assert_ne!(op_id, admin_id);
+    let op_who = s
+        .client
+        .get(s.url("/api/auth/whoami"))
+        .header("cookie", &op_session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(op_who.status().as_u16(), 200);
+    let op_who = op_who.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(op_who["user_id"], op_id);
+    assert_eq!(op_who["role"], "operator");
+    let op_users = s
+        .client
+        .get(s.url("/api/auth/users"))
+        .header("cookie", &op_session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(op_users.status().as_u16(), 403);
+    assert_eq!(
+        code(&op_users.json::<serde_json::Value>().await.unwrap()),
+        "AUTH_PERMISSION_DENIED"
+    );
+    let listed = s
+        .client
+        .get(s.url("/api/auth/users"))
+        .header("cookie", &session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(listed.status().as_u16(), 200);
+    let listed = listed.json::<serde_json::Value>().await.unwrap();
+    let ids: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["user_id"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids.contains(&admin_id.as_str()) && ids.contains(&op_id.as_str()),
+        "{listed}"
+    );
     for role in ["admin", "Admin", " ADMIN "] {
         let resp = s
             .client
