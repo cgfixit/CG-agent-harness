@@ -773,6 +773,9 @@ function paintGoalLoop() {
 }
 
 /* ── stream rendering ── */
+/* Restored history is built in a detached aria-live="off" wrapper (see
+   /session use), so the polite log announces only messages added after it. */
+let msgTarget = null;
 function addMsg(kind, who, body, meta) {
   const div = document.createElement('div');
   div.className = 'msg ' + kind;
@@ -781,7 +784,7 @@ function addMsg(kind, who, body, meta) {
   if (body instanceof Node) { b.appendChild(body); } else { b.textContent = body; }
   div.appendChild(w); div.appendChild(b);
   if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; div.appendChild(m); }
-  stream.appendChild(div);
+  (msgTarget || stream).appendChild(div);
   stream.scrollTop = stream.scrollHeight;
   return div;
 }
@@ -1952,9 +1955,16 @@ async function runSlash(line, webCommand) {
             if (revision !== sessionRevision) break;
             paintStyle();
             if (sub === 'new') sys('Fresh conversation. Shared persona, enabled memory notes and web context remain; /prompt shows what is included.');
-            (s.messages || []).forEach(m => {
-              if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
-            });
+            const history = document.createElement('div');
+            history.setAttribute('aria-live', 'off');
+            msgTarget = history;
+            try {
+              (s.messages || []).forEach(m => {
+                if (m.role === 'user') user(m.content); else if (m.role === 'assistant') agent(m.content);
+              });
+            } finally { msgTarget = null; }
+            stream.appendChild(history);
+            stream.scrollTop = stream.scrollHeight;
           } catch (e) {
             if (revision === sessionRevision) throw e;
           } finally {

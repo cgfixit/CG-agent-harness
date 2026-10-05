@@ -482,6 +482,8 @@ try {
  assert.equal(await evaluate('document.getElementById("hTokens").textContent'),'3');
  await send('/session use '+firstSession.session_id);
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'switch renders the selected session, including its older messages');
+ assert.equal(await evaluate('document.querySelectorAll("#stream [aria-live=off] .msg.user, #stream [aria-live=off] .msg.agent").length'),12,'restored history sits outside the polite live log');
+ assert.equal(await evaluate('document.getElementById("stream").getAttribute("aria-live")'),'polite');
  await send('/session use '+firstSession.session_id);
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'reselecting a session must not duplicate its transcript');
  // Keyboard recall loads saved prompts, restores drafts, and never crosses session boundaries.
