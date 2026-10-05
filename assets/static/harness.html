@@ -3914,7 +3914,14 @@ async function refreshHarnessAuth() {
     if (who) who.textContent = '';
     setHarnessLogoutVisible(false);
     showSignIn(status.needs_password ? 'setup' : 'login', status.default_password);
-  } catch (e) { /* keep last UI */ } finally {
+  } catch (e) {
+    /* Keep the last UI, except on the first probe: there is no last UI yet,
+       and revealing the console would show it as usable. */
+    if (document.documentElement.classList.contains('auth-pending')) {
+      showSignIn('login');
+      $('hAuthError').textContent = "Can't reach the harness. Check that it is still running, then reload this page.";
+    }
+  } finally {
     document.documentElement.classList.remove('auth-pending');
   }
 }

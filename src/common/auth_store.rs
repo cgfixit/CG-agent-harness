@@ -210,15 +210,19 @@ impl AuthManager {
     /// note only then. It answers from memory and never hashes, so the public
     /// setup-status route stays cheap.
     pub fn default_password_active(&self) -> bool {
-        let Some(record) = self.default_password_record.as_deref() else {
-            return false;
-        };
         let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        stored
-            .1
-            .users
-            .get(BOOTSTRAP_USERNAME)
-            .is_some_and(|u| !u.disabled && u.must_change_password && u.password_hash == record)
+        stored.1.users.get(BOOTSTRAP_USERNAME).is_some_and(|u| {
+            // An `admin` that must change its password and has never signed in
+            // still holds the shipped one: every other password write either
+            // clears `must_change_password` or follows a successful sign-in.
+            // That survives restarts. Within this process, the hash recorded
+            // at fresh creation also covers a sign-in that skipped the change.
+            !u.disabled
+                && u.must_change_password
+                && !authn::is_pending_password_record(&u.password_hash)
+                && (u.last_login_ts.is_none()
+                    || self.default_password_record.as_deref() == Some(u.password_hash.as_str()))
+        })
     }
 
     pub fn bootstrap_set_password(&self, password: &str) -> Result<LoginResult> {
