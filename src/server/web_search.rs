@@ -1,4 +1,5 @@
 //! Permission-checked content reads. Every network/evidence path reloads URL policy.
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::net::SocketAddr;
@@ -6,9 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use html5ever::tendril::TendrilSink;
+use html5ever::tree_builder::{Tracer, TreeSink};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 use super::web_policy::{canonical_url, error, is_public_ip, Policy, Rule, MAX_RULES};
 use crate::common::audit::Audit;
@@ -28,6 +32,7 @@ pub const MIN_EVIDENCE_TOKENS: u64 = 256;
 pub struct Limits {
     pub response_bytes: usize,
     pub request_seconds: u64,
+    pub html_parser_handles: usize,
     pub concurrency: usize,
     pub pages: usize,
     pub run_bytes: usize,
@@ -64,6 +69,7 @@ impl Limits {
         Ok(Self {
             response_bytes: bound("response_bytes", MAX_BYTES as u64, 1024, 1_048_576)? as usize,
             request_seconds: bound("request_seconds", 8, 1, 30)?,
+            html_parser_handles: bound("html_parser_handles", 512, 64, 4096)? as usize,
             concurrency: bound("concurrency", 2, 1, 4)? as usize,
             pages: bound("pages", 20, 1, 40)? as usize,
             run_bytes: bound("run_bytes", 2_097_152, 1024, 8_388_608)? as usize,
@@ -161,12 +167,62 @@ impl<Id> Default for Inherited<Id> {
     }
 }
 
-/// HTML5 parsing decodes entities and repairs malformed markup. Never execute it.
-pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, String, Vec<String>) {
-    if !content_type.contains("html") {
-        return (String::new(), body.to_string(), Vec::new());
+/// Count the actual HTML5 parser state, including active formatting elements.
+/// Source-tag counting is unsafe: repair, ignored end tags and self-closing
+/// HTML tags can leave more elements open than a lexical depth counter sees.
+#[derive(Default)]
+struct ParserHandles(Cell<usize>);
+impl Tracer for ParserHandles {
+    type Handle = <scraper::HtmlTreeSink as TreeSink>::Handle;
+    fn trace_handle(&self, _: &Self::Handle) {
+        self.0.set(self.0.get() + 1);
     }
-    let html = scraper::Html::parse_document(body);
+}
+
+fn parse_html(body: &str, max_handles: usize, checkpoint: &impl Fn() -> Result<()>) -> Result<scraper::Html> {
+    let mut parser = html5ever::parse_document(
+        scraper::HtmlTreeSink::new(scraper::Html::new_document()),
+        Default::default(),
+    );
+    let mut remaining = body;
+    while !remaining.is_empty() {
+        checkpoint()?;
+        // A scheduling quantum, not a content truncation. Keep UTF-8 intact.
+        // Inspect repaired parser state between small batches, not source tags.
+        let mut end = remaining.len().min(1024);
+        while !remaining.is_char_boundary(end) {
+            end -= 1;
+        }
+        parser.process(remaining[..end].into());
+        let count = ParserHandles::default();
+        parser.tokenizer.sink.trace_handles(&count);
+        if count.0.get() > max_handles {
+            return Err(error("WEB_HTML_COMPLEXITY", "HTML parser state exceeds limit"));
+        }
+        remaining = &remaining[end..];
+    }
+    checkpoint()?;
+    // EOF repair is bounded by the same parser-state ceiling.
+    let html = parser.finish();
+    checkpoint()?;
+    Ok(html)
+}
+
+/// HTML5 parsing decodes entities and repairs malformed markup. Never execute it.
+/// The caller supplies its existing deadline/cancellation check; failure never
+/// returns a partial extract. CPU-bound callers must run this off async workers.
+pub fn extract(
+    body: &str,
+    content_type: &str,
+    base: &url::Url,
+    max_handles: usize,
+    checkpoint: impl Fn() -> Result<()>,
+) -> Result<(String, String, Vec<String>)> {
+    checkpoint()?;
+    if !content_type.contains("html") {
+        return Ok((String::new(), body.to_string(), Vec::new()));
+    }
+    let html = parse_html(body, max_handles, &checkpoint)?;
     let mut title = String::new();
     let mut text = String::new();
     let mut links = BTreeSet::new();
@@ -200,6 +256,7 @@ pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, Stri
     // minutes. A hidden element's subtree is never pushed.
     let mut pending = vec![(html.tree.root(), Inherited::default())];
     while let Some((node, inherited)) = pending.pop() {
+        checkpoint()?;
         let Inherited {
             in_title,
             in_head,
@@ -265,11 +322,41 @@ pub fn extract(body: &str, content_type: &str, base: &url::Url) -> (String, Stri
             }
         }
     }
-    (
+    checkpoint()?;
+    Ok((
         title.trim().to_string(),
         text.trim().to_string(),
         links.into_iter().collect(),
-    )
+    ))
+}
+
+// Dropping this future (timeout, /web cancel or caller abort) also signals
+// queued/running blocking work. The worker, never the caller, owns the permit.
+async fn extract_in_worker(
+    body: String,
+    kind: String,
+    base: url::Url,
+    max_handles: usize,
+    deadline: tokio::time::Instant,
+    permit: OwnedSemaphorePermit,
+) -> Result<(String, (String, String, Vec<String>))> {
+    let cancelled = CancellationToken::new();
+    let _cancel_on_drop = cancelled.clone().drop_guard();
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let extracted = extract(&body, &kind, &base, max_handles, || {
+            if cancelled.is_cancelled() {
+                return Err(error("WEB_CANCELLED", "extraction cancelled"));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(error("WEB_TIMEOUT", "request deadline exceeded"));
+            }
+            Ok(())
+        })?;
+        Ok((body, extracted))
+    })
+    .await
+    .map_err(|_| error("WEB_FETCH_FAILED", "extraction failed"))?
 }
 
 #[derive(Debug, Clone)]
@@ -564,10 +651,10 @@ impl WebTool {
         group: Option<&str>,
         cached: Option<&Page>,
     ) -> Result<(Page, String)> {
-        tokio::time::timeout(Duration::from_secs(self.limits.request_seconds), async {
-            // Owned so extraction can carry it onto the blocking pool: a
-            // request timeout abandons the task, not the thread, and the
-            // permit keeps `web.concurrency` bounding that CPU work too.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
+        tokio::time::timeout_at(deadline, async {
+            // Keep the permit until the worker actually exits, including its
+            // bounded cleanup after cancellation or the original request deadline.
             let permit = self
                 .permits
                 .clone()
@@ -665,20 +752,13 @@ impl WebTool {
                     }
                     bytes.extend_from_slice(&chunk);
                 }
-                // Parsing is CPU-bound and html5ever is itself superlinear on
-                // some deep nestings: keep it off the async workers.
                 let (body, kind, base) = (
                     String::from_utf8_lossy(&bytes).into_owned(),
                     content_type.clone(),
                     target.clone(),
                 );
-                let (body, (title, text, links)) = tokio::task::spawn_blocking(move || {
-                    let _permit = permit;
-                    let extracted = extract(&body, &kind, &base);
-                    (body, extracted)
-                })
-                .await
-                .map_err(|_| error("WEB_FETCH_FAILED", "extraction failed"))?;
+                let (body, (title, text, links)) =
+                    extract_in_worker(body, kind, base, self.limits.html_parser_handles, deadline, permit).await?;
                 raw_body = body;
                 Page {
                     url: target.to_string(),
@@ -741,6 +821,10 @@ mod tests {
     use axum::{extract::State, routing::get, Router};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Notify;
+
+    fn extract(body: &str, kind: &str, base: &url::Url) -> (String, String, Vec<String>) {
+        super::extract(body, kind, base, 512, || Ok(())).unwrap()
+    }
 
     #[derive(Clone, Default)]
     struct Fixture {
@@ -1027,22 +1111,138 @@ mod tests {
     }
 
     #[test]
-    fn deeply_nested_markup_extracts_in_linear_time() {
+    fn hostile_parser_shapes_are_refused_at_both_response_byte_limits() {
         let base = canonical_url("https://example.com/").unwrap();
-        // 256 KiB is the default `response_bytes`; the ancestor walk spent
-        // minutes of CPU on each of these shapes. Nested `<div>` is left out:
-        // html5ever's own scope checks are quadratic there, which `get_raw`
-        // bounds by holding the fetch permit through extraction.
-        for unit in ["<span>", "<b>", "<i>x"] {
-            let body = unit.repeat(256 * 1024 / unit.len());
-            let started = std::time::Instant::now();
-            let (_, text, _) = extract(&body, "text/html", &base);
-            let elapsed = started.elapsed();
-            assert!(elapsed < Duration::from_secs(20), "{unit}: {elapsed:?}");
-            if unit == "<i>x" {
-                assert!(text.starts_with("x x"));
+        for cap in [262_144, 1_048_576] {
+            for unit in [
+                "<div>",
+                "<span>",
+                "<b>",
+                "<i>x",
+                "<div/>",
+                "<div></ignored>",
+                "<template>",
+            ] {
+                let body = unit.repeat(cap / unit.len());
+                let started = std::time::Instant::now();
+                let err = super::extract(&body, "text/html", &base, 512, || Ok(())).unwrap_err();
+                assert_eq!(err.code, "WEB_HTML_COMPLEXITY", "{unit}");
+                assert!(started.elapsed() < Duration::from_secs(2), "{unit}");
             }
         }
+    }
+
+    #[test]
+    fn batched_parser_preserves_unicode_raw_text_and_wide_documents() {
+        let base = canonical_url("https://example.com/").unwrap();
+        let doc =
+            format!(
+            "<title>é 🦀 &amp; title</title><style>{}</style><script>{}</script><p data-x='{}'>{}</p><pre>{}</pre>{}",
+            "<div>".repeat(1200), "<div>".repeat(1200), "é🦀".repeat(700),
+            "é 🦀 &amp; &#x1f980; ".repeat(700), " x\n  y 🦀".repeat(300),
+            "<p><a href='/next'>wide sibling</a></p>".repeat(6000),
+        );
+        assert_eq!(extract(&doc, "text/html", &base), extract_by_ancestor_walk(&doc, &base));
+        let links = (0..200).map(|i| format!("<a href='/{i}'>link</a>")).collect::<String>();
+        assert_eq!(extract(&links, "text/html", &base).2.len(), 128);
+    }
+
+    #[test]
+    fn extraction_checkpoints_stop_parsing_and_tree_walk_without_partial_results() {
+        let base = canonical_url("https://example.com/").unwrap();
+        for (body, stop) in [("<p>normal</p>".repeat(1000), 4), ("<p>normal</p>".into(), 7)] {
+            for code in ["WEB_CANCELLED", "WEB_TIMEOUT"] {
+                let calls = Cell::new(0);
+                let err = super::extract(&body, "text/html", &base, 512, || {
+                    calls.set(calls.get() + 1);
+                    if calls.get() == stop {
+                        Err(error(code, "stopped"))
+                    } else {
+                        Ok(())
+                    }
+                })
+                .unwrap_err();
+                assert_eq!(err.code, code);
+                assert_eq!(calls.get(), stop);
+            }
+        }
+    }
+
+    #[test]
+    fn parser_limit_is_bounded_and_fail_closed() {
+        for value in ["64", "512", "4096", "63", "4097", "-1", "1.5", "\"512\"", "null"] {
+            let cfg = AppConfig::from_str(
+                &format!("web: {{html_parser_handles: {value}}}"),
+                Path::new("config.yaml"),
+            )
+            .unwrap();
+            let parsed = Limits::load(&cfg);
+            if let Ok(n @ 64..=4096) = value.parse::<usize>() {
+                assert_eq!(parsed.unwrap().html_parser_handles, n);
+            } else {
+                assert!(parsed.is_err(), "{value}");
+            }
+        }
+        for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
+            assert_eq!(
+                Limits::load(&AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap())
+                    .unwrap()
+                    .html_parser_handles,
+                512
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_or_expired_queued_extraction_releases_the_worker_permit() {
+        use std::future::Future;
+        use std::task::Poll;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            for cancel in [true, false] {
+                let (release, hold) = std::sync::mpsc::channel();
+                let (started, ready) = tokio::sync::oneshot::channel();
+                let blocker = tokio::task::spawn_blocking(move || {
+                    started.send(()).unwrap();
+                    hold.recv().unwrap();
+                });
+                ready.await.unwrap();
+                let permits = Arc::new(Semaphore::new(1));
+                let mut work = Box::pin(extract_in_worker(
+                    "<div>".repeat(50_000),
+                    "text/html".into(),
+                    canonical_url("https://example.com/").unwrap(),
+                    512,
+                    tokio::time::Instant::now(),
+                    permits.clone().acquire_owned().await.unwrap(),
+                ));
+                std::future::poll_fn(|cx| {
+                    assert!(work.as_mut().poll(cx).is_pending());
+                    Poll::Ready(())
+                })
+                .await;
+                if cancel {
+                    drop(work);
+                    assert_eq!(permits.available_permits(), 0);
+                    release.send(()).unwrap();
+                } else {
+                    release.send(()).unwrap();
+                    let err = work.await.unwrap_err();
+                    assert_eq!(err.code, "WEB_TIMEOUT");
+                }
+                blocker.await.unwrap();
+                let permit = tokio::time::timeout(Duration::from_secs(1), permits.acquire())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                drop(permit);
+                assert_eq!(permits.available_permits(), 1);
+            }
+        });
     }
 
     #[test]
