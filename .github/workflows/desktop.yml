@@ -6,6 +6,10 @@ on:
       artifact-name:
         type: string
         default: cg-agent-harness-macos-universal
+      release-tag:
+        description: "Release tag (vMAJOR.MINOR.PATCH) to stamp into this build only; empty for non-release runs"
+        type: string
+        default: ""
   workflow_dispatch:
 
 permissions: {}
@@ -50,6 +54,8 @@ jobs:
           cargo fmt --all -- --check
           (cd desktop && cargo fmt -- --check)
       - name: Build and verify the complete bundle
+        env:
+          CGAH_RELEASE_TAG: ${{ inputs.release-tag }}
         run: scripts/package-desktop.sh --universal
       - name: Desktop Clippy and policy tests
         run: |
