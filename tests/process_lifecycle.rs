@@ -225,3 +225,232 @@ async fn job_cancel_stops_observed_nested_sandbox_groups_and_preserves_a_sibling
     assert!(sibling_survived, "cleanup must not target a sibling process");
     assert_eq!(store.get("local", "fixture").unwrap()["status"], "cancelled");
 }
+
+// #304 E1 contract: every unix runner child leads its own session (setsid), so
+// a controlling terminal is never inherited and pgid == sid == pid keeps
+// whole-group timeout and cancel cleanup working.
+
+const SESSION_PROBE: &str = "import os; print(os.getpid(), os.getpgid(0), os.getsid(0))";
+
+fn session_triple(stdout: &str) -> (i32, i32, i32) {
+    let v: Vec<i32> = stdout.split_whitespace().map(|n| n.parse().unwrap()).collect();
+    assert_eq!(v.len(), 3, "probe output: {stdout:?}");
+    (v[0], v[1], v[2])
+}
+
+fn own_sid() -> i32 {
+    // SAFETY: session query for the calling process only.
+    unsafe { libc::getsid(0) }
+}
+
+/// Poll until `pid` is gone or a zombie; SIGKILL it ourselves if it survives.
+fn gone_or_reap(pid: i32) -> (bool, String) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut state = String::new();
+    while Instant::now() < deadline {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if state.is_empty() || state.starts_with('Z') {
+            return (true, state);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // SAFETY: test-owned fixture pid; cleanup only when the regression fails.
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+    }
+    (false, state)
+}
+
+#[test]
+fn run_child_leads_its_own_session() {
+    let argv = vec!["python3".into(), "-c".into(), SESSION_PROBE.into()];
+    let out = process::run(process::RunSpec {
+        argv: &argv,
+        cwd: None,
+        env: None,
+        timeout: Duration::from_secs(10),
+        stdin: None,
+    })
+    .expect("session probe runs");
+    assert_eq!(out.status, Some(0), "{out:?}");
+    let (pid, pgid, sid) = session_triple(&out.stdout);
+    assert_eq!(
+        sid, pid,
+        "child must be a session leader (setsid), not a group in our session"
+    );
+    assert_eq!(pgid, pid, "group cleanup relies on pgid == pid");
+    assert_ne!(sid, own_sid(), "child must not share the harness session");
+}
+
+#[tokio::test]
+async fn shim_child_leads_its_own_session() {
+    let argv = vec!["python3".into(), "-c".into(), SESSION_PROBE.into()];
+    let (code, stdout, stderr) = shim::run_argv(&argv, std::path::Path::new("/tmp"), Duration::from_secs(10))
+        .await
+        .expect("session probe runs");
+    assert_eq!(code, 0, "{stderr}");
+    let (pid, pgid, sid) = session_triple(&stdout);
+    assert_eq!(
+        (sid, pgid),
+        (pid, pid),
+        "shim child must lead its own session and group"
+    );
+    assert_ne!(sid, own_sid());
+}
+
+const GRANDCHILD: &str = "import os, sys, time\n\
+with open(sys.argv[1] + '.tmp', 'w') as f:\n    f.write(f'{os.getpid()} {os.getsid(0)}')\n\
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])\n\
+time.sleep(30)\n";
+
+fn grandchild_argv(marker: &std::path::Path, leader: &std::path::Path) -> Vec<String> {
+    vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        "echo $$ > \"$2\"; python3 -c \"$3\" \"$1\" & wait".into(),
+        "fixture".into(),
+        marker.display().to_string(),
+        leader.display().to_string(),
+        GRANDCHILD.into(),
+    ]
+}
+
+fn read_pair(path: &std::path::Path) -> (i32, i32) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let (a, b) = text.trim().split_once(' ').expect("pid sid");
+    (a.parse().unwrap(), b.parse().unwrap())
+}
+
+#[test]
+fn setsid_child_timeout_still_kills_a_grandchild_in_its_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("grandchild");
+    let leader = tmp.path().join("leader");
+    let argv = grandchild_argv(&marker, &leader);
+    let result = process::run(process::RunSpec {
+        argv: &argv,
+        cwd: None,
+        env: None,
+        timeout: Duration::from_millis(1500),
+        stdin: None,
+    });
+    assert!(
+        matches!(result, Err(process::ProcessError::Timeout { .. })),
+        "{result:?}"
+    );
+    let leader_pid: i32 = std::fs::read_to_string(&leader).unwrap().trim().parse().unwrap();
+    let (grandchild, grandchild_sid) = read_pair(&marker);
+    let (stopped, state) = gone_or_reap(grandchild);
+    assert_eq!(
+        grandchild_sid, leader_pid,
+        "grandchild must inherit the child's own session"
+    );
+    assert!(stopped, "grandchild survived timeout: {state}");
+}
+
+#[test]
+fn setsid_child_cancel_still_kills_a_grandchild_in_its_session() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("grandchild");
+    let leader = tmp.path().join("leader");
+    let argv = grandchild_argv(&marker, &leader);
+    let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = cancelled.clone();
+    let watched = marker.clone();
+    let canceller = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !watched.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        flag.store(true, Ordering::Release);
+    });
+    let start = Instant::now();
+    let result = process::run_cancellable(
+        process::RunSpec {
+            argv: &argv,
+            cwd: None,
+            env: None,
+            timeout: Duration::from_secs(20),
+            stdin: None,
+        },
+        &cancelled,
+    );
+    canceller.join().unwrap();
+    assert!(result.is_err(), "cancelled run cannot be success: {result:?}");
+    assert!(
+        start.elapsed() < Duration::from_secs(15),
+        "cancel must not wait for the deadline"
+    );
+    let leader_pid: i32 = std::fs::read_to_string(&leader).unwrap().trim().parse().unwrap();
+    let (grandchild, grandchild_sid) = read_pair(&marker);
+    let (stopped, state) = gone_or_reap(grandchild);
+    assert_eq!(
+        grandchild_sid, leader_pid,
+        "grandchild must inherit the child's own session"
+    );
+    assert!(stopped, "grandchild survived cancel: {state}");
+}
+
+#[tokio::test]
+async fn mcp_stdio_child_leads_its_own_session() {
+    use cgagentharness::common::mcp_policy::{Containment, NetworkPolicy, StdioCapabilities};
+    let python = std::process::Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .expect("python3");
+    let python = dunce::canonicalize(String::from_utf8(python.stdout).unwrap().trim()).unwrap();
+    let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/mcp-fixture.py");
+    let mut roots = vec![script.clone()];
+    for prefix in ["/opt/homebrew", "/usr/local", "/Library/Frameworks/Python.framework"] {
+        if python.starts_with(prefix) {
+            roots.push(prefix.into());
+        }
+    }
+    let capabilities = StdioCapabilities {
+        version: 1,
+        filesystem: Default::default(),
+        read_roots: roots,
+        write_roots: vec![],
+        network: NetworkPolicy::Deny,
+        containment: Containment::ProcessGroup,
+        limits: None,
+    };
+    let argv = vec![
+        python.display().to_string(),
+        script.display().to_string(),
+        "--stdio".into(),
+    ];
+    let spawned = cgagentharness::common::mcp::StdioClient::spawn(
+        &argv,
+        None,
+        &std::collections::BTreeMap::new(),
+        65536,
+        None,
+        &capabilities,
+        std::path::Path::new(env!("CARGO_BIN_EXE_cgagentharness")),
+        Duration::from_secs(15),
+    )
+    .await;
+    let client = match spawned {
+        Ok(client) => client,
+        // Runners without namespace permission must refuse, never run unconfined;
+        // the required bwrap job executes this path.
+        Err(e) if e.code == "HARD_SANDBOX_UNAVAILABLE" && std::env::var_os("CGAH_REQUIRE_LINUX_BWRAP").is_none() => {
+            eprintln!("SKIP mcp stdio session: {}", e.code);
+            return;
+        }
+        Err(e) => panic!("stdio spawn failed: {}", e.code),
+    };
+    let pid = client.child_pid().expect("child pid") as i32;
+    // SAFETY: session and group queries for our own direct child.
+    let (sid, pgid) = unsafe { (libc::getsid(pid), libc::getpgid(pid)) };
+    drop(client);
+    assert_eq!(sid, pid, "MCP stdio child must lead its own session (setsid)");
+    assert_eq!(pgid, pid, "drop cleanup relies on pgid == pid");
+    assert_ne!(sid, own_sid());
+}
