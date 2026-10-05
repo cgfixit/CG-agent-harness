@@ -115,7 +115,8 @@ api:
 web:
   chat_tool_calls: 10 # 1–10 read-only calls per chat turn; no tools in /loop
   response_bytes: 262144 # 1024–1048576; compressed bodies refused
-  request_seconds: 8 # 1–30, includes queue, DNS, headers and body
+  request_seconds: 8 # 1–30, includes queue, DNS, headers, body and extraction
+  html_parser_handles: 512 # 64–4096; bound open-element/formatting state, restart-only
   concurrency: 2 # 1–4 total fetches; restart-only (shared permits)
   pages: 20 # 1–40 per run
   run_bytes: 2097152 # 1024–8388608 per run
