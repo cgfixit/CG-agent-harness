@@ -285,7 +285,30 @@
   /* The status bar row stays dense; the header fields get room for their labels. */
   .statusbar .apikey { padding: 3px 8px; }
   #harnessAuth .apikey { width: 160px; }
-#soulEditor, #sessionClearDialog { width:80%;max-width:950px;background:#181b24;color:#eee;border:1px solid #667;padding:24px; }
+/* ── DIALOGS ── the reset above zeroes the UA `margin:auto` that centers a
+   modal <dialog>, which left the password, persona and clear-history dialogs
+   pinned top-left with no surface. One shared rule restores it; the ID rules
+   for Analytics, Schedules and Webhooks still win where they differ. */
+dialog { margin:auto; width:min(560px,calc(100% - 32px)); max-height:88dvh; overflow:auto; padding:24px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); border-radius:10px; box-shadow:0 24px 80px #0008; }
+dialog::backdrop { background:#0009; }
+dialog h2 { font-size:var(--fs-lg, 18px); margin-bottom:12px; }
+dialog p { margin-bottom:12px; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) label { display:block; }
+:is(#passwordDialog, #soulEditor) input:not([type=checkbox]), #soulContent { display:block; width:100%; margin-top:6px; padding:8px 10px; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; }
+:is(#passwordDialog, #soulEditor) input:not([type=checkbox]):focus, #soulContent:focus { outline:none; border-color:var(--border-focus); box-shadow:0 0 0 2px rgba(212,146,11,.18); }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) input[type=checkbox] { margin-right:6px; accent-color:var(--accent-amber); }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button { padding:8px 14px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button:hover { background:var(--border); }
+/* One primary action per dialog; a destructive one is red, not amber. */
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.primary:hover { background:#e8a31c; border-color:#e8a31c; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.danger { background:transparent; border-color:var(--accent-red); color:var(--accent-red); font-weight:700; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.danger:hover { background:var(--accent-red); color:#000; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) button:disabled { opacity:.45; cursor:default; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
+#passwordFeedback:empty, #sessionClearFeedback:empty { display:none; }
+#passwordFeedback, #sessionClearFeedback { color:var(--accent-red); }
+#soulEditor { width:min(950px,calc(100% - 32px)); }
 #analyticsDialog { width:calc(100% - 32px);max-width:1100px;max-height:92dvh;margin:auto;padding:0;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:12px;overflow:auto;box-shadow:0 24px 80px #0008; }
 #analyticsDialog::backdrop { background:#0009; }
 #analyticsDialog .analytics-header { position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 24px;background:var(--bg-secondary);border-bottom:1px solid var(--border); }
@@ -339,11 +362,8 @@
 :is(#scheduleDialog, #notificationDialog) pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; padding:12px; border:1px solid var(--border); }
 :is(#scheduleDialog, #notificationDialog) ol { padding-left:24px; margin:12px 0; }
 .schedule-row { border-top:1px solid var(--border); padding:12px 0; overflow-wrap:anywhere; }
-#sessionClearDialog { max-width:520px; }
-#sessionClearDialog button { padding:8px 12px; margin-right:8px; }
-#sessionClearConfirm { color:var(--accent-red); }
-#soulContent { width:100%;height:200px; }
-#soulFeedback { white-space:pre-wrap;max-height:250px;overflow:auto; }
+#soulContent { height:200px; margin-bottom:12px; resize:vertical; font-family:var(--mono); }
+#soulFeedback { white-space:pre-wrap;max-height:250px;overflow:auto;font-size:var(--fs-small, 12px);color:var(--text-secondary); }
 
   /* ── KEYBOARD FOCUS ── several controls set `outline: none`, which left
      keyboard navigation with no visible focus at all. ── */
@@ -383,7 +403,7 @@
     #harnessAuth .apikey { flex: 1 1 120px; width: auto; }
     #send { padding: 9px 14px; }
     #sGoal { max-width: 90px; }
-    #soulEditor, #sessionClearDialog { width: 94%; padding: 16px; }
+    dialog { padding: 16px; }
     #pane-api-keys form { grid-template-columns: 1fr; }
   }
 
@@ -550,7 +570,7 @@
     <p><label>Current password <input id="passwordCurrent" type="password" autocomplete="current-password" required maxlength="1024"></label></p>
     <p><label>New password <input id="passwordNew" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
     <p><label>Confirm new password <input id="passwordConfirm" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
-    <button type="submit">Save password</button><button type="button" id="passwordClose">Close</button>
+    <button type="submit" class="primary">Save password</button><button type="button" id="passwordClose">Close</button>
     <p id="passwordFeedback" role="status"></p>
   </form>
 </dialog>
@@ -560,17 +580,17 @@
   <p>Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless you also confirm the cascade below. Facts and proposals are never cleared here. Your active chat will stop.</p>
   <p><label><input type="checkbox" id="sessionClearDerivedEpisodes"> Also delete this account's derived episodes that are not referenced by a pending proposal</label></p>
   <button id="sessionClearCancel" autofocus>Cancel</button>
-  <button id="sessionClearConfirm">Delete my session history</button>
+  <button id="sessionClearConfirm" class="danger">Delete my session history</button>
   <p id="sessionClearFeedback" role="status"></p>
 </dialog>
 
-<dialog id="soulEditor">
-  <h2>Chat persona</h2>
+<dialog id="soulEditor" aria-labelledby="soulTitle">
+  <h2 id="soulTitle">Chat persona</h2>
   <p>Changes affect chat only. Fixed execution contracts and the coding planner remain separate.</p>
   <textarea id="soulContent" aria-label="Persona content"></textarea>
   <p><label>Reason <input id="soulReason" aria-label="Reason for persona change" maxlength="1000"></label></p>
   <p><label><input type="checkbox" id="soulConfirm"> I reviewed this content and authorize saving it.</label></p>
-  <button id="soulPreview">Preview prompt</button> <button id="soulSave">Save persona</button>
+  <button id="soulPreview">Preview prompt</button> <button id="soulSave" class="primary">Save persona</button>
   <button id="soulPropose">Create proposal only</button> <button id="soulClose">Close</button>
   <pre id="soulFeedback"></pre>
 </dialog>
@@ -3993,6 +4013,7 @@ $('passwordForm').addEventListener('submit', async event => {
     await api('/api/auth/password', 'POST', body);
     $('passwordDialog').close();
     await refreshHarnessAuth(); await refreshStatus(); await refreshSessions();
+    sys('Password changed. Your other sessions were signed out.');
   } catch (error) { $('passwordFeedback').textContent = error.message; }
 });
 refreshHarnessAuth();
@@ -4074,6 +4095,7 @@ async function openSoulEditor(proposalOnly) {
   $('soulContent').maxLength = soulDocument.max_chars;
   $('soulReason').value = ''; $('soulConfirm').checked = false;
   $('soulSave').hidden = proposalOnly;
+  $('soulPropose').classList.toggle('primary', proposalOnly);
   $('soulFeedback').textContent = 'revision: ' + soulDocument.revision + '\nMaximum ' + soulDocument.max_chars + ' characters. Preview before saving.';
   $('soulEditor').showModal(); $('soulContent').focus();
 }
