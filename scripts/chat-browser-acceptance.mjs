@@ -59,7 +59,7 @@ const server=createServer(async(req,res)=>{
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
  if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
- if(path==='/api/auth/setup-status'){reply({needs_password:false});return;}
+ if(path==='/api/auth/setup-status'){reply({needs_password:false,default_password:authFixture&&mustChange});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
   signedIn=auditor||(body.username==='admin'&&body.password==='admin');
@@ -579,10 +579,11 @@ try {
  await until('!document.getElementById("hAuthLoginBox").hidden');
  assert.equal(await evaluate(headerState),'','signed-out consoles show no header automation buttons');
  assert.equal(requests.slice(signedOutMark).some(r=>['/api/notifications','/api/tools'].includes(r[1])),false,'signed-out consoles send no feature probes');
- assert.equal(await evaluate('document.getElementById("hAuthHint")?.hidden'),false,'show the fresh-install login hint before authentication');
- assert.match(await evaluate('document.getElementById("hAuthHint").innerText'),/Default login is User: admin \/ Password: admin/);
- assert.ok(await evaluate('document.querySelector(".logo").compareDocumentPosition(document.getElementById("hAuthHint")) & Node.DOCUMENT_POSITION_FOLLOWING'));
- assert.ok(await evaluate('document.getElementById("hAuthHint").compareDocumentPosition(document.getElementById("harnessAuth")) & Node.DOCUMENT_POSITION_FOLLOWING'));
+ assert.equal(await evaluate('document.getElementById("hAuthHint")?.hidden'),false,'show the fresh-install note while the shipped password is active');
+ assert.match(await evaluate('document.getElementById("hAuthHint").innerText'),/username and password are both admin/);
+ assert.ok(await evaluate('document.getElementById("signInScreen").contains(document.getElementById("hAuthHint"))'),'the note lives on the sign-in card');
+ assert.equal(await evaluate('document.querySelector(".main").offsetParent'),null,'signed out, the console is not drawn');
+ assert.equal(await evaluate('document.querySelector("label[for=hAuthUser]").textContent'),'Username');
  await until('document.getElementById("sProvider").textContent === "sign in"');
  assert.equal(await evaluate('document.querySelector("[data-pane=registry]")'),null);
  await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
@@ -629,7 +630,8 @@ try {
  assert.equal(await evaluate('pendingAgentRun'),null);assert.equal(await evaluate('shownAgentDiffs.size'),0);
  assert.equal(await evaluate('reviewedSoulProposal'),null);assert.equal(await evaluate('reviewedPRBodies.size'),0);
  assert.equal(await evaluate('prBodyTarget'),'');
- assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false,'restore login guidance after logout');
+ assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'no admin/admin note after the password changed');
+ assert.equal(await evaluate('document.getElementById("signInScreen").hidden'),false,'logout returns to the sign-in card');
  // Authentication succeeds for an auditor even though the server denies operational sessions.
  await evaluate('document.getElementById("hAuthUser").value="audit-fixture";document.getElementById("hAuthPass").value="browser-auditor-password";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("pane-sessions").textContent.includes("Your role does not permit access to sessions.")');
@@ -644,7 +646,7 @@ try {
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
  assert.equal(await evaluate(headerState),'');
- assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),false);
+ assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
  console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
