@@ -60,8 +60,27 @@
     background: var(--bg-tertiary); white-space: nowrap;
   }
   .pill b { color: var(--accent-green); font-weight: 600; }
-  .pill.model b { color: var(--accent-amber); }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-green); }
+  /* ── READINESS CHIPS ── one per dependency, each stating its state in
+     words; the colored mark only repeats what the text says. ── */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+    font-family: var(--mono); font-size: var(--fs-micro, 10.5px); padding: 3px 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text-secondary); background: var(--bg-tertiary); white-space: nowrap;
+  }
+  .chip::before { content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-secondary); }
+  .chip b { color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+  .chip[data-state="ok"]::before { background: var(--accent-green); }
+  .chip[data-state="warn"] { border-color: rgba(212, 146, 11, .55); }
+  .chip[data-state="warn"]::before { background: var(--accent-amber); }
+  .chip[data-state="bad"] { border-color: rgba(239, 83, 80, .6); }
+  .chip[data-state="bad"]::before { background: var(--accent-red); }
+  .chip[data-state="bad"] b { color: var(--accent-red); }
+  /* The model chip names the tag first; its state word carries the color. */
+  #hModelChip[data-state="bad"] b { color: var(--text-primary); }
+  #hModelChip[data-state="bad"] #hModelV { color: var(--accent-red); font-weight: 600; }
+  #hModelChip[data-state="warn"] #hModelV { color: var(--accent-amber); font-weight: 600; }
 
   /* ── HEADER AUTH ── */
   #harnessAuth { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -227,6 +246,11 @@
   .msg table { border-collapse: collapse; margin-top: 4px; font-size: 11.5px; }
   .msg td, .msg th { border: 1px solid var(--border); padding: 3px 9px; text-align: left; }
   .msg th { color: var(--accent-amber); }
+  .msg.err { border-left: 3px solid var(--accent-red); padding-left: 10px; }
+  .msg.err .who { color: var(--accent-red); }
+  .msg.err .body { font-family: var(--sans); font-size: var(--fs-body, 13px); }
+  .msg.err .err-title { font-weight: 650; color: var(--text-primary); }
+  .msg.err .err-code { margin-top: 4px; font-family: var(--mono); font-size: var(--fs-small, 11px); color: var(--text-secondary); white-space: pre-wrap; }
 
   .inputbar {
     border-top: 1px solid var(--border); background: var(--bg-secondary);
@@ -416,9 +440,12 @@
       <button class="toggle" id="openDeliveries" type="button" hidden title="Outgoing, metadata-only notices sent to your configured URL when a coding job finishes">Job webhooks</button>
       <button class="toggle" id="openSchedules" type="button" hidden>Schedules</button>
       <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
-      <div class="pill model">model <b id="hModel">…</b></div>
+      <div class="chips" role="group" aria-label="Readiness">
+        <span class="chip" id="hConsole" data-state="unknown" title="Whether this page can reach the harness API">Console <b id="hConsoleV">checking</b></span>
+        <span class="chip" id="hModelChip" data-state="unknown" title="Chat model">Model <b id="hModel">…</b> <span id="hModelV"></span></span>
+        <span class="chip" id="hWeb" data-state="unknown" title="Web tools for chat">Web <b id="hWebV">…</b></span>
+      </div>
       <div class="pill" title="Recorded prompt and completion tokens for the selected session; separate from the cost ledger in Analytics">session · tokens <b id="hTokens">0</b></div>
-      <div class="dot" id="hDot" title="server status"></div>
     </div>
   </div>
 
@@ -753,6 +780,44 @@ function addMsg(kind, who, body, meta) {
   return div;
 }
 const sys   = (t, m) => addMsg('sys',   'harness', t, m);
+/* Failures read as a plain sentence and one next step; the raw code and
+   server message stay underneath as a muted detail row. */
+function showError(e) {
+  const raw = (e && e.message) || String(e);
+  const copy = errorCopy(e, raw);
+  const body = document.createElement('div');
+  const title = document.createElement('div'); title.className = 'err-title'; title.textContent = copy.title;
+  body.appendChild(title);
+  if (copy.action) { const action = document.createElement('div'); action.textContent = copy.action; body.appendChild(action); }
+  const code = document.createElement('div'); code.className = 'err-code'; code.textContent = raw;
+  body.appendChild(code);
+  return addMsg('err', 'error', body);
+}
+function modelEndpoint() {
+  const base = lastStatus && typeof lastStatus.base_url === 'string' ? lastStatus.base_url : '';
+  return base ? base.replace(/\/v1\/?$/, '') : 'the configured local address';
+}
+function errorCopy(e, raw) {
+  const code = (e && e.code) || (raw.match(/^([A-Z][A-Z0-9_]+):/) || [])[1] || '';
+  const wait = e && e.retryAfter ? e.retryAfter : 0;
+  if (code === 'NETWORK') return { title: "Can't reach the harness", action: 'Check that it is still running, then retry.' };
+  if (code === 'HARNESS_LLM_ERROR') {
+    if (/unreachable/i.test(raw)) return { title: "Can't reach the model", action: 'Nothing is answering at ' + modelEndpoint() + '. Start the model service (Ollama: OLLAMA_CONTEXT_LENGTH=32768 ollama serve), then send again.' };
+    if (/deadline/i.test(raw)) return { title: 'The model took too long to answer', action: 'It may still be loading. Wait a moment and send again, or choose a smaller model with /model use <tag>.' };
+    if (/no model selected/i.test(raw)) return { title: 'No chat model is selected', action: 'Choose an installed model with /model use <exact-installed-tag>.' };
+    if (/HTTP 404/.test(raw)) return { title: "The model server doesn't have this model", action: 'Check the exact tag (ollama list), then /model use <tag>.' };
+    return { title: 'The model server returned an error', action: 'Check the model service, then send again.' };
+  }
+  if (code === 'CHAT_BUSY') return { title: 'A reply is still being generated', action: 'Wait for it to finish, or type /loop stop to abort it.' };
+  if (code === 'RATE_LIMIT' || code === 'LOOP_RATE_LIMIT') return { title: 'Too many requests', action: wait > 0 ? 'Wait ' + wait + ' seconds, then retry.' : 'Wait a moment, then retry.' };
+  if (code === 'AUTH_REQUIRED') return { title: 'Your session has ended', action: 'Sign in again.' };
+  if (code === 'AUTH_PASSWORD_CHANGE_REQUIRED') return { title: 'Set a new password first', action: 'Use Change password, then retry.' };
+  if (code === 'AUTH_PERMISSION_DENIED') return { title: "Your account can't do this", action: 'Ask an administrator, or sign in with an account that has this permission.' };
+  if (code === 'CSRF_TOKEN_INVALID' || code === 'CROSS_ORIGIN_BLOCKED' || code === 'CROSS_SITE_BLOCKED') return { title: 'This page is out of date for the harness', action: 'Reload the page from the harness address, then retry.' };
+  if (code === 'WEB_DISABLED') return { title: 'Web tools are off', action: 'An administrator can turn them on with /web on.' };
+  if (code === 'CLOUD_CHAT_BUDGET') return { title: 'The cloud chat budget is used up', action: 'Switch to a local model with /model use <tag>, or raise the budget in config.yaml.' };
+  return { title: "That didn't work", action: '' };
+}
 const user  = t      => addMsg('user',  'you', t);
 const agent = (t, m) => addMsg('agent', 'CG Agent Harness', t, m);
 
@@ -1210,11 +1275,63 @@ async function refreshSessionTokens() {
   }
 }
 
+let lastStatus = null;
+function paintChip(id, state, value, detail) {
+  const chip = $(id);
+  chip.dataset.state = state;
+  const v = $(id === 'hModelChip' ? 'hModelV' : id + 'V');
+  v.textContent = id === 'hModelChip' ? (value ? '· ' + value : '') : value;
+  if (detail) chip.title = detail;
+}
+/* Model: the cached GET /api/ollama/inventory, the same loopback endpoint chat
+   uses. Web: GET /api/web. A refused or failed probe says "not checked"
+   instead of guessing. */
+let readinessRevision = 0;
+async function refreshReadiness(s) {
+  const revision = ++readinessRevision;
+  if (!s.model && !s.provider) {
+    // The public status reply omits operational detail until a full session exists.
+    const label = window.__cyclawRole ? 'not checked' : 'sign in';
+    paintChip('hModelChip', 'unknown', label, window.__cyclawRole ? 'This account cannot read model status.' : 'Sign in to check the chat model.');
+    paintChip('hWeb', 'unknown', label, window.__cyclawRole ? 'This account cannot read web status.' : 'Sign in to see web tool status.');
+    return;
+  }
+  const [inventory, web] = await Promise.all([
+    s.base_url === null ? Promise.resolve(null) : api('/api/ollama/inventory').catch(() => undefined),
+    api('/api/web').catch(() => undefined),
+  ]);
+  if (revision !== readinessRevision) return;
+  if (s.base_url === null) {
+    paintChip('hModelChip', 'unknown', 'cloud', 'Cloud chat model; the console does not probe cloud providers.');
+  } else if (!inventory || inventory.configured_state === 'not_probed') {
+    paintChip('hModelChip', 'unknown', 'not checked', 'The console checks reachability only for a loopback Ollama endpoint. Send a message to test.');
+  } else if (inventory.configured_state === 'unavailable') {
+    paintChip('hModelChip', 'bad', 'unreachable', 'Nothing is answering at ' + (inventory.endpoint || modelEndpoint()) + '. Start the model service, then retry.');
+  } else {
+    const installed = Array.isArray(inventory.models) && inventory.models.some(m => m && m.name === s.model);
+    if (installed || (inventory.configured_model === s.model && inventory.configured_state === 'installed')) {
+      paintChip('hModelChip', 'ok', 'ready', 'Installed at ' + (inventory.endpoint || modelEndpoint()) + '.');
+    } else {
+      paintChip('hModelChip', 'warn', 'not installed', 'The model service is running but has no ' + s.model + '. Pull it, or choose another with /model use <tag>.');
+    }
+  }
+  if (!web) {
+    paintChip('hWeb', 'unknown', 'not checked', 'Web status is unavailable for this account.');
+  } else if (web.enabled !== true) {
+    paintChip('hWeb', 'unknown', 'off', 'Chat has no web tools. An administrator can turn them on with /web on.');
+  } else {
+    const rules = Array.isArray(web.allowlist) ? web.allowlist.length : 0;
+    if (rules) paintChip('hWeb', 'ok', rules + (rules === 1 ? ' URL rule' : ' URL rules'), 'Search is on; pages matching the permitted URL rules can be read.');
+    else paintChip('hWeb', 'warn', 'search only', 'Search is on, but no page URLs are permitted yet. Grant one with /web allow <url>.');
+  }
+}
+
 async function refreshStatus() {
   if (statusTimer) { window.clearTimeout(statusTimer); statusTimer = null; }
   try {
     const [s] = await Promise.all([api('/api/status'), refreshSessionTokens()]);
-    $('hModel').textContent = s.model || '(unset)';
+    lastStatus = s;
+    $('hModel').textContent = s.model || (s.provider ? '(unset)' : '—');
     $('sProvider').textContent = s.provider || (window.__cyclawRole === 'audit' ? 'read-only' : 'sign in');
     if (apiKeyInput) {
       apiKeyInput.placeholder = 'optional metadata key';
@@ -1228,10 +1345,14 @@ async function refreshStatus() {
     paintMemory();
     await refreshStyle();
     paintStyle();
-    $('hDot').style.background = 'var(--accent-green)';
+    paintChip('hConsole', 'ok', 'reachable', 'This page reaches the harness API.');
+    refreshReadiness(s);
     statusBackoffMs = STATUS_BASE_INTERVAL;
   } catch (e) {
-    $('hDot').style.background = 'var(--accent-red)';
+    readinessRevision++;
+    paintChip('hConsole', 'bad', 'unreachable', 'This page cannot reach the harness API. Check that it is still running.');
+    paintChip('hModelChip', 'unknown', 'not checked', 'The console is unreachable.');
+    paintChip('hWeb', 'unknown', 'not checked', 'The console is unreachable.');
     statusBackoffMs = Math.min(statusBackoffMs * 2, STATUS_MAX_INTERVAL);
   }
   scheduleStatusRefresh();
@@ -2774,7 +2895,7 @@ async function runSlash(line, webCommand) {
         sys('unknown command: /' + cmd + ' — try /help');
     }
   } catch (e) {
-    sys('error: ' + e.message);
+    showError(e);
   }
 }
 
@@ -2963,17 +3084,17 @@ async function sendChat(text, asLoop, extra) {
       } catch (e2) {
         if (revision !== sessionRevision) return null;
         if (e2 && e2.name === 'AbortError') return null;
-        sys('error: ' + e2.message);
+        showError(e2);
         stopLoop('loop stopped — ' + ((e2 && e2.code) || code));
         return null;
       }
     }
     if (asLoop && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT' || code === 'LOOP_IN_FLIGHT' || code === 'CHAT_BUSY')) {
-      sys('error: ' + e.message);
+      showError(e);
       stopLoop('loop stopped — ' + code);
       return null;
     }
-    sys('error: ' + e.message);
+    showError(e);
     return null;
   } finally {
     if (preview) preview.remove();
@@ -3099,7 +3220,7 @@ async function onSend() {
       /* Nothing was sent, so give the typed prompt back instead of leaving
          only the notice. */
       restoreUnsentPrompt(text);
-      sys('error: ' + ((e && e.message) || e));
+      showError(e);
       return;
     }
     if (uploadRevision !== sessionRevision || uploadSession !== currentSession) {

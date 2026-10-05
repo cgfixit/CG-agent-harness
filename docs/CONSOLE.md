@@ -44,6 +44,13 @@ Enter slash commands in chat. `/help` lists installed commands. Begin with
 `/status`, `/model`, `/skills all`, and `/tools`; registration is not
 [readiness](#77-tools-and-connectors-available-versus-catalog-only).
 
+The header chips state readiness in words. **Console** reports whether the page
+reaches the API. **Model** reports whether the selected tag is installed at the
+configured loopback Ollama endpoint, from the cached `GET /api/ollama/inventory`;
+other providers and cloud models read *not checked*. **Web** reads *off*,
+*search only* (no permitted page URLs), or the URL-rule count. Failed requests
+print a plain sentence and one next step, with the code underneath.
+
 ### 7.1 Sessions and bounded chat continuation
 
 ```text
