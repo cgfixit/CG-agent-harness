@@ -33,6 +33,9 @@ class StampVersionTests(unittest.TestCase):
         self.assertEqual(module.stamp(self.tmp, "v12.3.45"), "12.3.45")
         manifest = self.read("Cargo.toml")
         self.assertIn('\nversion = "12.3.45"\n', manifest)
+        # The self dev-dependency's exact pin must follow, or resolution fails.
+        self.assertIn('cgagentharness = { path = ".", version = "=12.3.45",', manifest)
+        self.assertNotIn('version = "=0.1.0"', manifest)
         lock_after = self.read("Cargo.lock").splitlines()
         diff = [(a, b) for a, b in zip(lock_before, lock_after) if a != b]
         self.assertEqual(len(lock_before), len(lock_after))
@@ -59,6 +62,14 @@ class StampVersionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.stamp(self.tmp, "v1.2.3")
         self.assertEqual(self.read("Cargo.toml"), manifest_before)
+
+    def test_refuses_a_manifest_without_the_self_pin(self):
+        manifest = self.tmp / "Cargo.toml"
+        manifest.write_text(manifest.read_text().replace('path = ".", version = "=', 'path = ".", version = "^'))
+        lock_before = self.read("Cargo.lock")
+        with self.assertRaises(ValueError):
+            module.stamp(self.tmp, "v1.2.3")
+        self.assertEqual(self.read("Cargo.lock"), lock_before)
 
     def test_refuses_duplicate_targets(self):
         plist = self.tmp / "desktop/Info.plist"

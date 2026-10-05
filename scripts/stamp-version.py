@@ -2,8 +2,10 @@
 """Stamp a release tag's version into the build workspace; fail closed.
 
 Release-only and never committed: rewrites the root package version in
-Cargo.toml, that package's own Cargo.lock entry, and the two bundle version
-keys in desktop/Info.plist. Every edit must hit exactly one target, and
+Cargo.toml, the exact `=X.Y.Z` pin on its self dev-dependency (cargo-deny
+bans wildcard path deps, and an unstamped pin fails resolution), that
+package's own Cargo.lock entry, and the two bundle version keys in
+desktop/Info.plist. Every edit must hit exactly one target, and
 nothing else in Cargo.lock may change, so `cargo build --locked` still holds.
 
 Usage: stamp-version.py --tag vMAJOR.MINOR.PATCH [--root DIR]
@@ -21,7 +23,8 @@ PACKAGE = "cgagentharness"
 # Same stable-tag grammar as scripts/release-plan.py: no leading zeros,
 # no pre-release or build metadata.
 TAG = re.compile(r"v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))")
-OLD = r'"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"'
+SEMVER = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+OLD = rf'"{SEMVER}"'
 
 
 def version_of(tag):
@@ -44,6 +47,12 @@ def stamp_manifest(text, version):
     if not head.startswith("[package]\n") or f'\nname = "{PACKAGE}"\n' not in head + "\n":
         raise ValueError(f"Cargo.toml must start with the [package] table for {PACKAGE}")
     head = replace_once(head, rf"^version = {OLD}$", f'version = "{version}"', "[package] version")
+    rest = replace_once(
+        rest,
+        rf'^({PACKAGE} = \{{ path = "\.", version = "=){SEMVER}(")',
+        rf"\g<1>{version}\g<2>",
+        f"{PACKAGE} self dev-dependency pin",
+    )
     return head + sep + rest
 
 
