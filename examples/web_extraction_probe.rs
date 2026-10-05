@@ -61,11 +61,11 @@ async fn main() -> anyhow::Result<()> {
         attributes: Arc::new(attributes),
         started: Arc::new(Notify::new()),
     };
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?; // DevSkim: ignore DS162092 - standalone acceptance fixture; loopback-only ephemeral listener, never a production entrypoint.
     let address = listener.local_addr()?;
     let app = Router::new().fallback(get(page)).with_state(fixture.clone());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let root = format!("http://fixture.invalid:{}/", address.port());
+    let root = format!("http://fixture.invalid:{}/", address.port()); // DevSkim: ignore DS137138 - synthetic fixture hostname is pinned to the owned loopback listener; no internet traffic or real credentials.
     if serve {
         let home = Home::at(dir.path().join("home"));
         home.ensure_layout()?;
@@ -83,8 +83,8 @@ async fn main() -> anyhow::Result<()> {
             .unwrap()
             .set_password("admin", "W1-fixture-only-2026!")?;
         state.web.allow(&format!("{root}*"), true)?;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        println!("CONSOLE http://{}", listener.local_addr()?);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?; // DevSkim: ignore DS162092 - standalone acceptance fixture; loopback-only ephemeral listener, never a production entrypoint.
+        println!("CONSOLE http://{}", listener.local_addr()?); // DevSkim: ignore DS137138 - disposable loopback-only console with synthetic login; production TLS defaults remain true.
         println!("FIXTURE {root} (normal, hostile, maximum, slow)");
         println!("Synthetic login: admin / W1-fixture-only-2026!");
         axum::serve(
