@@ -605,7 +605,7 @@ const BEARER_FIXTURE_SECRET: &str = "bearer-private-fixture-secret";
 
 #[cfg(unix)]
 fn bearer_cfg(home: &Home) -> cgagentharness::common::config::AppConfig {
-    let url = "http://127.0.0.1:9/hook"; // DevSkim: ignore DS137138 because this is a loopback fixture URL.
+    let url = "http://127.0.0.1:9/hook"; // DevSkim: ignore DS137138,DS162092 because this is a loopback fixture URL.
     config_with(
         &home.root,
         &[
