@@ -10,8 +10,9 @@ squash merge. A changed tree still skips unless that exact source SHA already
 has a successful **Bundle** workflow run (`bundle.yml`, `conclusion=success`).
 A green Bundle unblocks the next scheduled or manual release. A changed tree
 then selects the next patch version, such as `v0.1.0` to `v0.1.1`. Documentation
-and workflow changes count. The application/Cargo version is not automatically
-edited; the release tag and bundled `Resources/COMMIT` identify the build.
+and workflow changes count. Releases stamp the tag's version into
+uncommitted `Cargo.toml`, `Cargo.lock` and `desktop/Info.plist`, and fail before
+publish unless `--version` and the bundled `Info.plist` match the tag.
 
 Both Bundle and release stage CLI artifacts through `scripts/package-release.sh`
 (release build, named artifact, sha256, extract-verify). Backend CI must pass before clean CLI packaging and the reusable universal
