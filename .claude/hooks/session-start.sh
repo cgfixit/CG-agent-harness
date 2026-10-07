@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Cloud-only SessionStart hook: get a fresh Claude Code cloud container ready
-# for `cargo clippy` / `cargo test` without the agent paying for it mid-task.
+# SessionStart hook. Step 0 runs everywhere; steps 1-4 are cloud-only and get a
+# fresh Claude Code cloud container ready for `cargo clippy` / `cargo test`
+# without the agent paying for it mid-task.
 #
 # What it does (all idempotent; a warm container finishes in about a second):
+#   0. Points core.hooksPath at the tracked .githooks/ via
+#      scripts/ensure-githooks.sh, the same agent-neutral line Copilot, Codex
+#      and people run. Leaves a deliberate hooksPath alone; never blocks.
 #   1. Installs pkg-config + libdbus-1-dev (the keyring crate's libdbus-sys build
 #      script fails without them; CI installs the same packages).
 #   2. Runs `cargo fetch --locked`, which also makes rustup install the
@@ -16,6 +20,11 @@
 #
 # Exit code is always 0: this hook prepares, it must never block a session.
 set -uo pipefail
+
+if [ "${1:-}" != "prebuild" ]; then
+  project="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+  [ -f "$project/scripts/ensure-githooks.sh" ] && (cd "$project" && bash scripts/ensure-githooks.sh)
+fi
 
 [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}" 2>/dev/null || exit 0

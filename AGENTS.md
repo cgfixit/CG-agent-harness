@@ -109,6 +109,8 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 
 ## Quality bar
 
+- Once per clone, before committing: `bash scripts/ensure-githooks.sh` (points
+  `core.hooksPath` at `.githooks/`; idempotent).
 - `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
   `cargo test --all-targets` green; `cargo deny check` clean. Rust 1.88 is
   pinned. `scripts/verify-local.sh` skips deny when cargo-deny is missing, so
