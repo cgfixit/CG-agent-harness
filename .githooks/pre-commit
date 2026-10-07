@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Security gate on every commit: secrets by content and filename, protected
+# control files, core-path reminder, cargo fmt. Logic: .githooks/_security.sh;
+# repo values: .githooks/security.conf. Install: scripts/install-githooks.sh
+set -euo pipefail
+# shellcheck source=SCRIPTDIR/_security.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_security.sh"
+sec_pre_commit || exit 1

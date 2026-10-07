@@ -61,3 +61,9 @@ cli-session.json
 # ── Agent artifacts under the tracked data/ prefix ────────────
 # Keep data/styles/ tracked.
 /data/agentic/
+
+# Operator-private hook values (PII patterns); never tracked
+.githooks/security.local.conf
+# Key material anywhere in the tree, not only under tls/
+*.pem
+*.key
