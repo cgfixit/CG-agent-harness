@@ -407,19 +407,19 @@ Conditional refresh repeats network checks. Validators reduce bytes, not request
 
 Research asks the local model for at most 3 subqueries in 2 rounds, runs at most
 one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults are
-28,000 total model tokens and 300 seconds. Without a verified 32768 context,
-configure `web.total_tokens: 16000` and `web.evidence_tokens: 3000`; see
+28,000 total model tokens and 300 seconds; smaller windows: see
 [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
 usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete
-output conservatively; synthesis drops unfitting low-ranked passages (`WEB_EVIDENCE_TRIMMED`). Bounded JSON output has no commands or privileged tools.
+output conservatively. Synthesis drops unfitting low-ranked passages
+(`WEB_EVIDENCE_TRIMMED`). Bounded JSON output has no commands or privileged tools.
 Retrieval interleaves the question and subqueries without embeddings or reranking.
 `/web cancel` cancels dedicated research.
 
 Answers label support, conflicts, inference, and missing or stale evidence.
 Citation IDs and quotes are checked against passages, but semantic support still
-needs judgment. Models cite short ids (`S1`); a failed claim drops alone
-(`WEB_CITATION_DROPPED`); no valid claim refuses the answer. Rank is not truth, and fetch age is not publication date. Bounded
-runs never claim completeness; no-answer results abstain and failures stay visible.
+needs judgment; failed claims drop alone (`WEB_CITATION_DROPPED`). Rank is not
+truth, and fetch age is not publication date. Bounded runs never claim
+completeness; no-answer results abstain and failures stay visible.
 
 ### Saved web selection
 
