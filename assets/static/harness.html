@@ -1971,9 +1971,9 @@ const COMMAND_MAN = {
   '/memory clear': {detail:'Deletes every pinned note at once. There is no confirmation prompt.'},
   '/memory consolidate <episode-id> [episode-id ...]': {detail:'Consolidates the named episodes into pending proposals. No fact is written; decide in the Memory pane or with /memory proposals.'},
   '/memory consolidation on|off': {detail:'Administrator switch for manual consolidation.'},
-  '/memory facts': {detail:'Lists your active structured facts, newest first: saved with /memory save or applied from a proposal. These are not pinned notes. Listing injects nothing; whether a fact reaches chat depends on the recall and retrieval gates.'},
+  '/memory facts': {detail:'Lists your active structured facts, most recently changed first: saved with /memory save or applied from a proposal. These are not pinned notes. Listing injects nothing; a fact reaches chat only through an explicit selection or a retrieval match while the recall or retrieval gate is on.'},
   '/memory forget <id>': {detail:'Removes one pinned note. Ids are listed by /memory.'},
-  '/memory proposals': {detail:'Opens the Memory pane with the pending proposals and your saved facts. Apply and Reject each require a reason. Apply saves a structured fact, not a pinned note.'},
+  '/memory proposals': {detail:'Opens the Memory pane with the pending proposals and your saved facts. Apply and Reject each require a reason. Apply changes structured facts, not pinned notes.'},
   '/memory remember <sentence> :: <reason>': {detail:'Attaches your summary to the latest completed episode of this account. The two colons separate the summary from the required reason. Needs capture on and a completed chat turn; no fact is written.'},
   '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
   '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
@@ -2651,14 +2651,18 @@ async function runSlash(line, webCommand) {
         } else if (sub === 'facts') {
           /* No query: q, category or limit would switch the route to a
              search capped below the per-owner fact limit. */
+          /* Private content: a reply that lands after logout or a session
+             switch must not print into the next transcript. */
           const status = await api('/api/structured-memory');
+          if (staleReview()) break;
           if (!status || !status.enabled) { sys('Structured memory store is closed; no facts to list. /memory on includes pinned notes only.'); break; }
           const r = await api('/api/structured-memory/facts');
+          if (staleReview()) break;
           const facts = r && Array.isArray(r.facts) ? r.facts : [];
           if (!facts.length) { sys('No saved structured facts. /memory save or Apply in /memory proposals creates one.'); break; }
           const clip = text => { const chars = Array.from(String(text || '')); return chars.length > 240 ? chars.slice(0, 240).join('') + '…' : chars.join(''); };
           sys(table(facts.map(f => [String(f.id || ''), String(f.revision != null ? f.revision : ''), String(f.category || ''), clip(f.content)]), ['id', 'rev', 'category', 'fact']));
-          sys(String(facts.length) + ' active structured fact(s), newest first. These are not pinned notes, and listing injects nothing; recall and retrieval gates decide what reaches chat.');
+          sys(String(facts.length) + ' active structured fact(s), most recently changed first. These are not pinned notes, and listing injects nothing; a fact reaches chat only through an explicit selection or a retrieval match while its gates are on.');
         } else if (sub === 'consolidate') {
           const ids = rest.slice(1).filter(Boolean);
           if (!ids.length) { sys('usage: /memory consolidate <episode-id> [episode-id...]'); break; }
@@ -2704,6 +2708,7 @@ async function runSlash(line, webCommand) {
              read degrades to 'unavailable' instead of hiding the readout. */
           let store = null;
           try { store = await api('/api/structured-memory'); } catch (e) { store = null; }
+          if (staleReview()) break;
           const count = n => Number.isInteger(n) ? String(n) : 'unknown';
           const factRow = !store ? 'unavailable' : !store.enabled ? 'store off'
             : count(store.fact_count) + ' / ' + count(store.limits && store.limits.max_facts_per_owner) + ' — list with /memory facts';
@@ -4816,7 +4821,7 @@ async function refreshMemoryProposals() {
     const result = await api('/api/structured-memory/proposals?status=pending');
     if (!feedback.isConnected) return;
     const pending = (result.proposals || []).filter(p => p.status === 'pending');
-    feedback.textContent = pending.length ? 'Review each proposal. Apply saves a structured fact (listed under Saved facts and by /memory facts), not a pinned note; Reject dismisses the suggestion. Both require your reason.' : 'No pending proposals.';
+    feedback.textContent = pending.length ? 'Review each proposal. Apply changes your structured facts (listed under Saved facts and by /memory facts), not pinned notes; Reject dismisses the suggestion. Both require your reason.' : 'No pending proposals.';
     if (!pending.length) {
       if ((automatic && (automatic.queued || automatic.running)) || (status.consolidation_health && status.consolidation_health.running)) {
         feedback.textContent = 'No pending proposals yet. Memory generation is queued or running. Refresh after it finishes.';
@@ -4864,10 +4869,12 @@ async function refreshMemoryProposals() {
             : result.action === 'deactivate' ? ' Fact ' + String(result.target_fact_id || '') + ' is no longer active.'
             : ' Saved as a structured fact, not a pinned note; /memory facts lists it.';
           reason.disabled = true; resultText.textContent = 'Proposal ' + result.status + '.' + where;
+          if (result.status === 'applied' && form.isConnected) await appendSavedFacts(panel);
         } catch (error) { resultText.textContent = error.message; apply.disabled = reject.disabled = false; }
       });
       panel.appendChild(form);
     }
+    if (!feedback.isConnected) return;
     await appendSavedFacts(panel);
   } catch (error) { feedback.textContent = error.message; }
 }
@@ -4876,18 +4883,21 @@ async function refreshMemoryProposals() {
    load and fail on their own, so a listing error never replaces the
    proposals feedback. No query: filters switch the route to a capped search. */
 async function appendSavedFacts(panel) {
-  const section = document.createElement('section');
+  const section = document.createElement('section'); section.className = 'saved-facts';
   const heading = document.createElement('h3'); heading.textContent = 'Saved facts';
   const note = document.createElement('p'); note.setAttribute('role', 'status');
   section.append(heading, note);
-  panel.appendChild(section);
+  /* Re-listing after Apply replaces the section; the replaced one's pending
+     load then sees itself disconnected and stops. */
+  const previous = panel.querySelector(':scope > section.saved-facts');
+  if (previous) previous.replaceWith(section); else panel.appendChild(section);
   try {
     const result = await api('/api/structured-memory/facts');
     if (!section.isConnected) return;
     const facts = result && Array.isArray(result.facts) ? result.facts : [];
     heading.textContent = 'Saved facts (' + facts.length + ')';
     note.textContent = facts.length
-      ? 'Newest first. These are structured facts, not pinned notes; recall and retrieval gates decide what reaches chat.'
+      ? 'Most recently changed first. These are structured facts, not pinned notes; a fact reaches chat only through an explicit selection or a retrieval match while its gates are on.'
       : 'No saved facts yet. Apply a proposal or use /memory save.';
     for (const fact of facts) {
       const detail = document.createElement('details'), title = document.createElement('summary'), body = document.createElement('pre');

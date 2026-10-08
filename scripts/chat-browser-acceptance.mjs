@@ -150,7 +150,9 @@ const server=createServer(async(req,res)=>{
   const proposal=memoryProposals.find(p=>p.id===path.split('/').at(-1));
   assert.equal(req.method,'POST');assert.equal(req.headers['x-cyclaw-csrf'],'fixture');
   assert.equal(body.confirm,true);assert.ok(body.reason.trim());assert.equal(body.revision,proposal.revision);
-  proposal.status=body.apply?'applied':'rejected';reply(proposal);return;
+  proposal.status=body.apply?'applied':'rejected';
+  if(body.apply&&proposal.action==='add')savedFacts.unshift({id:'fact_from_'+proposal.id,owner_id:'user_fixture_owner',revision:1,category:proposal.category,content:proposal.content,active:true});
+  reply(proposal);return;
  }
  if(path==='/api/structured-memory/gates'){
   if(req.method==='POST'){
@@ -468,6 +470,9 @@ try {
  await evaluate('document.querySelector("#pane-memory form input").value="Reviewed preference";document.querySelector("#pane-memory form button").click()');
  await until('document.getElementById("pane-memory").textContent.includes("Proposal applied.")');
  assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("/memory facts lists it")'),'Apply names where the fact went');
+ await until('document.getElementById("pane-memory").textContent.includes("Saved facts (2)")');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts").length'),1,'Apply re-lists saved facts in place');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0,'an applied fact stays inert text');
  assert.equal(decisions().at(-1)[2].apply,true);
  await evaluate('document.querySelectorAll("#pane-memory form")[1].querySelector("input").value="Not durable";document.querySelectorAll("#pane-memory form")[1].querySelectorAll("button")[1].click()');
  await until('document.getElementById("pane-memory").textContent.includes("Proposal rejected.")');
@@ -479,6 +484,8 @@ try {
  suggestionRun={...suggestionRun,state:'failed',error_class:'STRUCTURED_MEMORY_SCHEMA'};
  await evaluate('refreshMemoryProposals()');
  assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("STRUCTURED_MEMORY_SCHEMA")'));
+ await evaluate('Promise.all([refreshMemoryProposals(),refreshMemoryProposals()])');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts").length'),1,'overlapping refreshes leave one saved-facts section');
  await evaluate('finishChat({reply:"synthetic reply",model:"mock",memory_suggestion:{queued:true}})');
  assert.ok(await evaluate('document.getElementById("stream").textContent.includes("queued, not yet a proposal")'));
  await evaluate(`document.querySelector('[data-pane="commands"]').click()`);
