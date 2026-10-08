@@ -19,7 +19,8 @@ class ReleasePlanTests(unittest.TestCase):
     def plan(self, **overrides):
         args = dict(event="schedule", ref="refs/heads/main", publish="false", sha="a" * 40,
                     tree="new", latest={"tag_name": "v0.1.0", "draft": False, "prerelease": False},
-                    latest_tree="old", tags={"v0.1.0"}, releases={"v0.1.0"})
+                    latest_tree="old", tags={"v0.1.0"}, releases={"v0.1.0"},
+                    reachable_from_main=True)
         args.update(overrides)
         return module.plan(**args)
 
@@ -65,6 +66,42 @@ class ReleasePlanTests(unittest.TestCase):
 
     def test_explicit_new_stable_tag(self):
         self.assertEqual(self.plan(event="push", ref="refs/tags/v1.0.0")["tag"], "v1.0.0")
+
+    def test_tag_off_main_refused(self):
+        for reachable in (False, None, "true"):
+            with self.subTest(reachable=reachable), self.assertRaisesRegex(ValueError, "reachable from main"):
+                self.plan(event="push", ref="refs/tags/v1.0.0", reachable_from_main=reachable)
+
+    def test_compare_status_decides_ancestry(self):
+        self.assertTrue(module.on_main({"status": "identical"}))
+        self.assertTrue(module.on_main({"status": "behind"}))
+        for bad in ({"status": "ahead"}, {"status": "diverged"}, {}, [], {"status": None}):
+            with self.subTest(compare=bad):
+                if isinstance(bad, dict) and isinstance(bad.get("status"), str):
+                    self.assertFalse(module.on_main(bad))
+                else:
+                    with self.assertRaises(ValueError):
+                        module.on_main(bad)
+
+    def test_tag_push_from_unmerged_branch_refused_before_outputs(self):
+        replies = [
+            {"tag_name": "v0.1.0", "draft": False, "prerelease": False},
+            {"commit": {"tree": {"sha": "old"}}},
+            {"commit": {"tree": {"sha": "new"}}},
+            {"sha": "a" * 40},
+            {"status": "ahead"},
+            [{"name": "v0.1.0"}], [{"tag_name": "v0.1.0"}],
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output"
+            env = {"GITHUB_REPOSITORY": "example/repo", "GITHUB_SHA": "a" * 40,
+                   "GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/v0.2.0",
+                   "GITHUB_OUTPUT": str(output)}
+            with patch.dict(os.environ, env, clear=True), patch.object(module, "api", side_effect=replies) as api:
+                with self.assertRaisesRegex(ValueError, "reachable from main"):
+                    module.main()
+            self.assertIn("repos/example/repo/compare/main..." + "a" * 40, [c.args[0] for c in api.call_args_list])
+            self.assertFalse(output.exists())
 
     def test_published_tag_cannot_be_reuploaded(self):
         with self.assertRaises(ValueError):

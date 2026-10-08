@@ -23,7 +23,15 @@ def bundle_succeeded(runs, sha):
     )
 
 
-def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bundle_ok=True):
+def on_main(compare):
+    """True when the compared commit is main or an ancestor of it."""
+    if not isinstance(compare, dict) or not isinstance(compare.get("status"), str):
+        raise ValueError("Expected a commit comparison")
+    return compare["status"] in ("identical", "behind")
+
+
+def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bundle_ok=True,
+         reachable_from_main=False):
     stable = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("Expected an exact source commit")
@@ -32,6 +40,9 @@ def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bu
         tag = ref.removeprefix("refs/tags/")
         if not ref.startswith("refs/tags/") or not re.fullmatch(stable, tag):
             raise ValueError("Tag releases require vMAJOR.MINOR.PATCH")
+        # Whoever can push a tag must not publish --latest from an unmerged branch.
+        if reachable_from_main is not True:
+            raise ValueError("Tag releases require a commit reachable from main")
         changed = True
         enabled = True
     elif event in ("schedule", "workflow_dispatch"):
@@ -68,6 +79,9 @@ def main():
         tag_commit = api(f"{prefix}/commits/{quote(os.environ['GITHUB_REF'], safe='')}")
         if tag_commit["sha"] != sha:
             raise ValueError("Tag moved away from the verified source commit")
+        reachable = on_main(api(f"{prefix}/compare/main...{sha}"))
+    else:
+        reachable = False
     def pages(endpoint):
         values = []
         page = 1
@@ -88,7 +102,7 @@ def main():
                   os.environ.get("PUBLISH", "false"), sha, tree, latest, latest_tree,
                   {t["name"] for t in pages("tags")},
                   {r["tag_name"] for r in pages("releases")},
-                  bundle_ok)
+                  bundle_ok, reachable)
     print(json.dumps(result, indent=2))
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:

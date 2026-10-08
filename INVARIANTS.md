@@ -18,25 +18,27 @@ the server or the shim.
   corrupt the server's memory or bypass its guard chain; the exit-code contract
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
 
-Process map. These are the only edges; a new one changes this list and its code together.
+Process map. These are the only edges; a new one changes this list and the code together.
 
-- **Renderer:** the console page (`assets/static/harness.html`, `/static/auth_admin.js`)
-  in a browser or the desktop webview, and the desktop setup window (`desktop/ui/`). It
-  holds no authority: it calls same-origin `/api/*` through the guard chain, and
-  `desktop/ui/setup.js` invokes only the Tauri commands `desktop_status`,
-  `retry_backend`, `prepare_cargo` and `check_models`.
+- **Renderer:** the console (`assets/static/harness.html`, `/static/auth_admin.js`)
+  in a browser or desktop webview, and the setup window (`desktop/ui/`). It never
+  supplies a command: it calls same-origin `/api/*` through the guard chain, and
+  `setup.js` invokes only the Tauri commands `desktop_status`, `retry_backend`,
+  `prepare_cargo` and `check_models`.
 - **Main:** `cgagentharness serve` (`src/server`) owns every guard, gate and store. The
-  desktop shell (`desktop/src/`) checks the bundled backend's SHA-256 and runs it as the
-  hidden, Unix-only `cgagentharness desktop` sidecar, whose pipe protocol carries
-  readiness and ownership, never API authority (`src/server/desktop.rs`).
+  desktop shell (`desktop/src/`) hash-checks the bundled backend and runs it as the
+  hidden, Unix-only `cgagentharness desktop` sidecar, whose pipe carries readiness and
+  ownership, never API authority (`src/server/desktop.rs`). It also runs
+  `python3 prepare-cargo.py` for `prepare_cargo` and, once natively confirmed,
+  `/usr/bin/open -- <url>`.
 - **Pipeline child:** hidden `cgagentharness agentic <action>`, spawned only by
-  `src/shim` with one of the 12 `shim::ACTIONS`.
-- **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` inside the
-  sandbox wrapper. Strict Linux mode runs the hidden `cgagentharness mcp-stdio-worker`
-  byte pump between the harness and the server, inside a transient `systemd-run` service.
-- **Operator CLI:** `account` and `web` call the running portal, `tls` inspects or renews
-  the local certificate, and `mcp-key` manages machine keys with local file authority.
-  The server never spawns them.
+  `src/shim` with a `shim::ACTIONS` entry.
+- **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` in the
+  sandbox wrapper. Strict Linux mode puts the hidden `cgagentharness mcp-stdio-worker`
+  byte pump between them, in a transient `systemd-run` service.
+- **Operator CLI:** `account` and `web` call the portal, `tls` inspects or renews the
+  certificate, `mcp-key` manages machine keys by file authority. The server never
+  spawns them.
 
 MCP stdio children are spawned from `src/common/mcp.rs` with a constructed
 environment (secret and linker-hijack names stripped). Required per-server
