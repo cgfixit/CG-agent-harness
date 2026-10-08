@@ -1102,7 +1102,7 @@ async fn small_model_tool_call_shapes_complete_one_bounded_round() {
         axum::serve(listener, fixture).await.unwrap();
     });
     let s = common::spawn_server(
-        &format!("http://{address}/v1"),
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
             ..common::ServerOptions::default()

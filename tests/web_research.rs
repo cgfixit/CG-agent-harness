@@ -231,7 +231,7 @@ async fn synthesis_trims_evidence_to_the_remaining_token_budget() {
         }
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let model_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let model_url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
     let model_task = tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
     let long: String = (0..60)
         .map(|i| format!("Connection retry rule {i} retries failed connections with backoff step {i}. "))

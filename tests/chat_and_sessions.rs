@@ -1255,7 +1255,7 @@ async fn chat_warns_when_the_turn_exceeds_the_loaded_ollama_window() {
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let s = common::spawn_server(
-        &format!("http://{address}/v1"),
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
         common::ServerOptions::default()
             .with("models.local_llm.model", "mock-model")
             .with("models.local_llm.inventory.refresh_sec", "1"),
