@@ -570,6 +570,7 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         | ("web", Some("on" | "off" | "inject" | "forget" | "cancel"))
         | ("agent", Some("cancel"))
         | ("loop", Some("auto" | "stop"))
+        | ("model", Some("list" | "profile"))
         | ("clear", None) => Some(0),
         (
             "memory",

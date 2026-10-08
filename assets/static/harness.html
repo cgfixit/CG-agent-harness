@@ -2752,15 +2752,14 @@ async function runSlash(line, webCommand) {
           // inventory), exactly as /model use expects them. Never pulls or loads.
           const [inv, s] = await Promise.all([api('/api/ollama/inventory'), api('/api/status')]);
           if (inv.configured_state === 'not_probed') { sys(inv.detail); break; }
+          if (inv.configured_state === 'unavailable') { sys('The model service at ' + inv.endpoint + ' did not answer. Start Ollama, then /model list again.'); break; }
+          // A failed tag query is not an empty install.
+          if (inv.tags_state !== 'listed') { sys('The model service did not return its tag list (failed, timed out or too large). Try /model list again, or run ollama list.'); break; }
           const models = Array.isArray(inv.models) ? inv.models : [];
-          if (!models.length) {
-            sys(inv.configured_state === 'unavailable'
-              ? 'The model service at ' + inv.endpoint + ' did not answer. Start Ollama, then /model list again.'
-              : 'No local models are installed. ollama pull <tag> downloads one.');
-            break;
-          }
-          const selected = s.model || '';
-          const isSelected = n => n === selected || n === selected + ':latest';
+          if (!models.length) { sys('No local models are installed. ollama pull <tag> downloads one.'); break; }
+          // A cloud selection never marks a local tag, even one with the same name.
+          const selected = s.provider === 'ollama' ? s.model || '' : '';
+          const isSelected = n => selected !== '' && (n === selected || n === selected + ':latest');
           const gb = n => typeof n === 'number' && n > 0 ? (n / 1e9).toFixed(1) + ' GB' : '—';
           sys(table(models.map(m => [m.name, gb(m.size), isSelected(m.name) ? 'selected' : '']), ['tag', 'size', 'chat']));
           sys('/model use <tag> selects one, or grok or claude for cloud chat. The list is cached for models.local_llm.inventory.refresh_sec (30 s by default).');

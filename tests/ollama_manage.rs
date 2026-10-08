@@ -204,6 +204,7 @@ async fn inventory_is_csrf_guarded_and_lists_tags() {
         .collect();
     assert!(names.contains(&"tinyllama:latest"), "{body}");
     assert_eq!(body["configured_state"], "installed");
+    assert_eq!(body["tags_state"], "listed", "{body}");
 }
 
 #[tokio::test]
@@ -237,6 +238,11 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
     let (_, parsed) = s.post_json("/api/slash/parse", json!({"line": "/model list"})).await;
     assert_eq!(parsed["dispatch"], true, "{parsed}");
     assert_eq!(parsed["canonical"], "/model list", "{parsed}");
+    // A fixed-argument subcommand refuses extra text instead of ignoring it.
+    for line in ["/model list extra", "/model list --dry-run", "/model profile extra"] {
+        let (_, parsed) = s.post_json("/api/slash/parse", json!({"line": line})).await;
+        assert_eq!(parsed["dispatch"], false, "{line}: {parsed}");
+    }
     // `/model list` renders these rows: the exact tags `/model use` takes.
     let (_, inventory) = s.get_json("/api/ollama/inventory").await;
     assert!(
