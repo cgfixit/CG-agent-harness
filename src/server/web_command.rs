@@ -61,12 +61,17 @@ fn words(input: &str) -> Result<Vec<Word>, String> {
     Ok(out)
 }
 
-/// Whether an apostrophe in `rest` ends a word: followed by whitespace or the end.
+/// Whether an apostrophe in `rest` ends a word (followed by whitespace or the
+/// end) before another word opens with one: in `'til death 'Rust Book'` the
+/// first apostrophe is text and `'Rust Book'` is the phrase.
 fn closes_later(mut rest: impl Iterator<Item = char>) -> bool {
     let mut prev = None;
     for c in rest.by_ref() {
         if prev == Some('\'') && c.is_whitespace() {
             return true;
+        }
+        if c == '\'' && prev.is_some_and(char::is_whitespace) {
+            return false;
         }
         prev = Some(c);
     }
@@ -79,7 +84,12 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
     if args
         .iter()
         .take_while(|a| a.quote.is_some() || a.text != "--")
-        .any(|a| a.quote.is_none() && matches!(a.text.as_str(), "--help" | "-h"))
+        // In a query `-h` is search text (`C compiler -h option`), like any
+        // single-dash word; `--help` still asks for help there.
+        .any(|a| {
+            a.quote.is_none()
+                && (a.text == "--help" || a.text == "-h" && !matches!(action, "search" | "pages" | "research"))
+        })
         || action == "help"
     {
         return Ok(WebCommand {
@@ -360,6 +370,13 @@ mod tests {
         assert_eq!(query("'tokio select' timeout"), "\"tokio select\" timeout");
         assert_eq!(query("'women's health' study"), "\"women's health\" study");
         assert_eq!(query("'til death do us part"), "'til death do us part");
+        assert_eq!(
+            query("'til death 'Rust Book' reviews"),
+            "'til death \"Rust Book\" reviews"
+        );
+        assert_eq!(query("C compiler -h option"), "C compiler -h option");
+        assert_eq!(parse(Some("search"), "rust --help").unwrap().action, "help");
+        assert_eq!(parse(Some("allow"), "-h").unwrap().action, "help");
         // A whole single-quoted word is argument grouping, as before.
         assert_eq!(query("rock 'n' roll"), "rock n roll");
         assert!(parse(Some("search"), "\"unclosed").is_err());

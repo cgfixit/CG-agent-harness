@@ -39,9 +39,14 @@ impl PreparedQuery {
         // Only the identifier-shaped words (`widget_open`, `Vec::new`) must match
         // exactly. A whole-query pattern made `How does widget_open fail?` require
         // that literal sentence, so a question about an identifier found nothing.
-        let identifiers = query
-            .split_whitespace()
-            .map(|word| word.trim_matches(|c: char| !(c.is_alphanumeric() || c == '_')))
+        // Tokens are cut on identifier syntax, so `foo_bar/baz_qux` and
+        // `` `foo_bar`,`baz_qux` `` are two identifiers, not one literal.
+        static IDENTIFIER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"[\p{L}\p{N}_]+(?:::[\p{L}\p{N}_]+)*").expect("static identifier pattern")
+        });
+        let identifiers = IDENTIFIER
+            .find_iter(query)
+            .map(|m| m.as_str())
             .filter(|word| word.contains('_') || word.contains("::"))
             .take(MAX_TERMS)
             .map(|word| {
@@ -268,6 +273,14 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(both.identifier_matches(["Vec::new allocates nothing.", "Vec::with_capacity reserves."]));
+        // Punctuation between identifiers separates them.
+        for joined in ["compare `foo_bar`,`baz_qux`", "foo_bar/baz_qux"] {
+            let q = PreparedQuery::new(joined).unwrap().unwrap();
+            assert!(
+                q.identifier_matches(["foo_bar is set.", "baz_qux is read."]),
+                "{joined}"
+            );
+        }
         assert!(!both.identifier_matches(["Vec::new allocates nothing."]));
         // A query without an identifier filters nothing.
         assert!(PreparedQuery::new("retry count")

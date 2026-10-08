@@ -3428,6 +3428,15 @@ async function runLoopTurns() {
   try {
     while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
+      /* Restate the stored goal, not this page's copy: another tab may have
+         changed or cleared it since the last turn. */
+      try {
+        const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
+        sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
+        paintGoalLoop();
+      } catch (_) { /* keep the last known goal; the turn reports its own failure */ }
+      if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
+      if (!sessionGoal) { stopLoop('loop stopped — the session goal was cleared'); return; }
       const framed = loopTurnPrompt(turn, loopState.total, sessionGoal);
       /* A routed search started during the cooldown owns the gate, and so
          does the chat turn it may fall back to on a router failure; let both
