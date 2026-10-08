@@ -230,7 +230,7 @@ async fn synthesis_trims_evidence_to_the_remaining_token_budget() {
             Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":answer.to_string()}}],"usage":{"prompt_tokens":20,"completion_tokens":10}}))
         }
     }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
     let model_url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
     let model_task = tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
     let long: String = (0..60)
@@ -243,7 +243,7 @@ async fn synthesis_trims_evidence_to_the_remaining_token_budget() {
             async move { ([("content-type", "text/plain")], long) }
         }),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
     let address = listener.local_addr().unwrap();
     let page_task = tokio::spawn(async move { axum::serve(listener, pages).await.unwrap() });
     // With model_tokens = total_tokens not even one passage fits: nothing is

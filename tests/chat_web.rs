@@ -1096,7 +1096,7 @@ async fn small_model_tool_call_shapes_complete_one_bounded_round() {
             reply["choices"][0]["finish_reason"] = json!("stop");
             Json(reply)
         }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
         axum::serve(listener, fixture).await.unwrap();
@@ -1173,7 +1173,7 @@ async fn window_warning_counts_the_tool_results_a_web_turn_sends() {
                 }
             }),
         );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
     let s = common::spawn_server(
