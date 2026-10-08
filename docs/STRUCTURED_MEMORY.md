@@ -215,7 +215,7 @@ Reuse persona review rules, not `soul-history/*.json`:
 
 The console **Memory** tab (also `/memory proposals`) lists pending proposals
 from the existing list API with `?status=pending`, filtered in SQL before its
-128-row cap so decided history cannot hide pending work. Its **Apply** and
+128-row cap so decided history cannot hide pending work, then saved facts. Its **Apply** and
 **Reject** buttons send the displayed proposal revision to the existing
 `POST /api/structured-memory/proposals/{id}` route; there is no separate decide
 endpoint or extra mutation rule.

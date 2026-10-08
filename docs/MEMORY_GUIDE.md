@@ -26,7 +26,7 @@ default `~/.CGagentHarness`).
 | Chat history | Successful exchanges are written to `sessions/*.json`; account-owned, with unassigned legacy data quarantined | Bounded recent messages from the selected session accompany subsequent chat. This is not a durable-fact extractor. |
 | Pinned notes | `/memory add <literal text>` writes `memory/notes.json`; shared home | Included in the prompt while `/memory on`; see [Pinned notes](#pinned-notes). |
 | Persona / soul | `soul.md`; shared home; edit/save or reviewed `/soul apply <id> <reason>` | `/soul on\|off` controls prompt inclusion. Persona guidance is distinct from account-private facts. |
-| Canonical structured facts | Private `memory/structured.sqlite3`; `/memory save`, governed fact HTTP writes, or approved proposals | List through the facts API; select for explicit recall or use separately gated facts-only retrieval. Saving does not itself enable prompt inclusion. |
+| Canonical structured facts | Private `memory/structured.sqlite3`; `/memory save`, governed fact HTTP writes, or approved proposals | List with `/memory facts`; select for explicit recall or use separately gated facts-only retrieval. Saving does not itself enable prompt inclusion. |
 | Pending proposals | Same private SQLite store; a model or operator may propose | Memory panel shows content, action, category, sources and revision. Pending text is never recalled into chat. Apply/Reject requires a reason. |
 | Episodes | Private bounded metadata from successful captured chat; coding metadata when coding suggestions are enabled; optional human `semantic_summary` | Provenance and consolidation input. Never injected into chat or indexed by FTS. Metadata is not a durable fact. |
 | Facts search index | Derived, contentless FTS5 index in the structured store | Lexical search over facts only. No embeddings, vector database, episode search or RAG fusion. |
@@ -48,7 +48,7 @@ account-private memory.
 /prompt
 ```
 
-- `/memory` shows the inclusion state, note IDs and structured-memory gate state.
+- `/memory` shows inclusion state, note IDs, structured-memory gates and fact/proposal counts.
 - `/memory add <note>` stores those exact words. For example,
   `/memory add save all session history` stores the sentence. It does not load
   or summarize other sessions.
@@ -64,8 +64,7 @@ characters of assembled prompt context. The prompt may omit notes from a full
 store. The code rejects empty, oversized, and blocked instruction-override
 content; these limits are constants, not YAML settings. If enabled notes are
 absent from `/prompt`, inspect `/memory` for a store error and back up before
-manual repair. Pinned-note capability flags (`rag.facts`, episodes, retrieval
-fusion) remain false.
+manual repair.
 
 Chat can list notes included in its prompt but cannot save or delete them.
 
@@ -182,7 +181,7 @@ automatic replay. Manual consolidation remains available.
 
 ## Retrieve and inspect
 
-- `GET /api/structured-memory/facts` lists your facts even with prompt recall off.
+- `/memory facts` lists your facts even with prompt recall off.
 - With `explicit_recall` on, select facts by stable `public_id` plus
   `expected_revision` for a session (`POST /api/sessions/{session_id}/structured-facts`)
   or one request (`selected_facts` on `/api/chat` or `/api/prompt/preview`).

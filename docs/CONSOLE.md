@@ -412,12 +412,12 @@ confirmation and persistence.
 | `/harness` | List retained optimizer runs; does not start optimization |
 | `/help [topic\|search words\|all]` | Searchable topic guide, full command catalog and insertable examples |
 | `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
-| `/memory`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_GUIDE.md#pinned-notes) |
+| `/memory`, `status`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_GUIDE.md#pinned-notes) |
 | `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
 | `/memory consolidate <episode-id> [episode-id ...]` | Selected-episode consolidation into pending proposals; does not apply facts |
 | `/memory proposals` | Open the Memory panel; Apply/Reject requires review and a reason |
 | `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on the latest completed episode; no fact write |
-| `/memory retrieve <query>`, `/memory search <query>` | Force fact retrieval for this chat prompt, or inspect candidates without injection |
+| `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List your active facts, force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
 | `/model`, `/model use <name>`, `/model use grok\|claude` | Inspect/select a local chat model or explicit cloud provider; does not select the coding planner |
 | `/net status`, `/net devices` | `status` is scope and gates and loads no collector. `devices` lists passive neighbors. Exact aliases: `/netconnect`, `/lan`, `/scan`, `/ports`, `/speed`. A near-miss only suggests. `ports`, `diag`, `watch`, and `device` do not scan or control a device |

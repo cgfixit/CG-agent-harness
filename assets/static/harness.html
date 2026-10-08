@@ -174,6 +174,7 @@
   #pane-memory p, #pane-memory pre { white-space: pre-wrap; margin: 6px 0; }
   #pane-memory pre { font-size: var(--fs-small); }
   #pane-memory summary { cursor: pointer; color: var(--accent-blue); }
+  #pane-memory h3 { margin: 16px 0 6px; font-size: var(--fs-md); }
   #pane-memory input { display: block; width: 100%; padding: 6px; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; }
   #pane-memory button { cursor: pointer; margin: 6px 6px 0 0; padding: 6px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px; }
   #pane-memory button:disabled { opacity: .5; cursor: default; }
@@ -1813,13 +1814,14 @@ const COMMANDS = [
   ['/harness', 'list retained harness optimizer runs; does not start one'],
   ['/help [topic|search words|all]', 'searchable guide, topics, safe command insertion and examples'],
   ['/loop [n]|auto|stop', 'bounded chat continuation; auto toggles; stop also cancels streaming chat'],
-  ['/memory [on|off]', 'show or toggle shared pinned notes in chat; separate from structured memory'],
+  ['/memory [on|off|status]', 'show pinned notes plus structured fact and proposal counts, or toggle notes in chat'],
   ['/memory add <note>', 'save a literal pinned note'],
   ['/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off', 'administrator overrides for automatic structured-memory features'],
   ['/memory capture|recall|retrieval on|off', 'administrator overrides for capture, explicit recall or fact retrieval'],
   ['/memory clear', 'clear all pinned notes'],
   ['/memory consolidate <episode-id> [episode-id ...]', 'selected-episode consolidation into pending proposals; no facts applied'],
   ['/memory consolidation on|off', 'administrator override for manual consolidation'],
+  ['/memory facts', 'list your saved structured facts, including applied proposals; read-only'],
   ['/memory forget <id>', 'remove one pinned note'],
   ['/memory proposals', 'open pending proposals; Apply or Reject requires a reason'],
   ['/memory remember <sentence> :: <reason>', 'confirm a semantic summary on the latest completed episode'],
@@ -1867,7 +1869,7 @@ const HELP_TOPICS = {
   chat: {title:'Chat & models', roots:['model','style','prompt','tokens','loop','clear'], note:'Type normally to chat. Slash commands are operator actions; printing one in a model response does not run it.', examples:['/model','/style concise','/prompt','/loop stop']},
   session: {title:'Sessions & goals', roots:['session','goal'], note:'Saved sessions belong to your account. /clear resets the visible conversation, not saved session files. Staging a goal does not authorize execution.', examples:['/session new Research notes','/session list','/session info','/goal Compare backup approaches']},
   web: {title:'Web research', roots:['web'], note:'Allowlist and on/off are shared-home settings; only an administrator changes them. Saved selections are account-private. Exact URLs do not include other pages. A path wildcard https://www.veeam.com/* includes that host’s paths; *.example.org excludes the apex. No www rewriting, private addresses or redirects. Search listings never grant permission. Research follows only permitted links within page, time and byte limits; coverage is not exhaustive.', examples:['/web status','/web check https://www.veeam.com/','/web allow https://www.veeam.com/* https://example.org/* --group vendors','/web allow https://*.example.org/* --group docs --seed https://docs.example.org/','/web research --group vendors Compare the backup approaches','/web research --url https://www.veeam.com/ Summarize products and permitted internal links','/web fetch https://www.veeam.com/ https://example.org/','/web search --count 3 backup security']},
-  memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory search backup preferences','/memory proposals','/soul status']},
+  memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory facts','/memory search backup preferences','/memory proposals','/soul status']},
   agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
   tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
   settings: {title:'Status & administration', roots:['status','analytics','api','users','help'], note:'Credentials belong in the API Keys password fields, not chat history. Administrator controls remain role- and CSRF-guarded.', examples:['/status','/analytics','/users','/help all']},
@@ -1962,19 +1964,20 @@ const COMMAND_MAN = {
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
   '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
   '/loop [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Chat only: it never starts a coding run and has no tools.'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
-  '/memory [on|off]': {detail:'Alone, shows memory status and the pinned notes. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
+  '/memory [on|off|status]': {detail:'Alone or with status, shows the pinned notes, your structured fact and pending proposal counts, and every gate. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
   '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
   '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
   '/memory capture|recall|retrieval on|off': {detail:'Administrator switches for episode capture, explicit recall and fact retrieval. The reply shows every gate’s state. /memory on is unaffected; it covers pinned notes only.'},
   '/memory clear': {detail:'Deletes every pinned note at once. There is no confirmation prompt.'},
   '/memory consolidate <episode-id> [episode-id ...]': {detail:'Consolidates the named episodes into pending proposals. No fact is written; decide in the Memory pane or with /memory proposals.'},
   '/memory consolidation on|off': {detail:'Administrator switch for manual consolidation.'},
+  '/memory facts': {detail:'Lists your active structured facts, newest first: saved with /memory save or applied from a proposal. These are not pinned notes. Listing injects nothing; whether a fact reaches chat depends on the recall and retrieval gates.'},
   '/memory forget <id>': {detail:'Removes one pinned note. Ids are listed by /memory.'},
-  '/memory proposals': {detail:'Opens the Memory pane with the pending proposals. Apply and Reject each require a reason.'},
+  '/memory proposals': {detail:'Opens the Memory pane with the pending proposals and your saved facts. Apply and Reject each require a reason. Apply saves a structured fact, not a pinned note.'},
   '/memory remember <sentence> :: <reason>': {detail:'Attaches your summary to the latest completed episode of this account. The two colons separate the summary from the required reason. Needs capture on and a completed chat turn; no fact is written.'},
   '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
   '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
-  '/memory search <query>': {detail:'Lists matching fact candidates with scores. Nothing is injected into chat.'},
+  '/memory search <query>': {detail:'Lists matching fact candidates with scores. Needs the retrieval gate; /memory facts lists facts without it. Nothing is injected into chat.'},
   '/model [use <name>|profile]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. With models.local_llm.auto_tune on, use also loads the model, times one short generate and applies per-model limits that only tighten. profile shows the selected local model as Ollama reports it, its loaded window, window-scaled limit proposals and any applied tuning; it changes nothing. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ', '/model profile']},
   '/net status|devices': {detail:'status shows scope and gate state and loads no collector; devices lists passively seen neighbors. Both open the LAN pane. Anything else is refused: this console runs no scans or device control.'},
   '/prompt': {detail:'Previews the next chat system prompt: persona, style, pinned notes, selected facts and web context. Shown only to you; nothing is sent to the model.'},
@@ -2610,9 +2613,7 @@ async function runSlash(line, webCommand) {
           const r = await api('/api/memory', 'POST', { enabled: sub === 'on' });
           memoryEnabled = !!r.enabled; paintMemory();
           sys('memory ' + (r.enabled ? 'ON' : 'OFF') +
-              ' — notes stay in <harness home>/memory; RAG memory/ is ' +
-              ((r.rag && r.rag.enabled) ? 'on' : 'off') +
-              ' (read-only; this command cannot flip capture/recall/retrieval)');
+              ' — pinned notes stay in <harness home>/memory; this command cannot flip capture/recall/retrieval');
         } else if (gateMap[sub]) {
           const flag = (rest[1] || '').toLowerCase();
           if (flag !== 'on' && flag !== 'off') { sys('usage: /memory ' + sub + ' on|off'); break; }
@@ -2647,6 +2648,17 @@ async function runSlash(line, webCommand) {
           sys('Summary saved on episode ' + saved.id + '; eligible for automatic consolidation when enabled, or run /memory consolidate ' + saved.id + '. Review results with /memory proposals. No facts written.');
         } else if (sub === 'proposals') {
           document.querySelector('[data-pane="memory"]').click();
+        } else if (sub === 'facts') {
+          /* No query: q, category or limit would switch the route to a
+             search capped below the per-owner fact limit. */
+          const status = await api('/api/structured-memory');
+          if (!status || !status.enabled) { sys('Structured memory store is closed; no facts to list. /memory on includes pinned notes only.'); break; }
+          const r = await api('/api/structured-memory/facts');
+          const facts = r && Array.isArray(r.facts) ? r.facts : [];
+          if (!facts.length) { sys('No saved structured facts. /memory save or Apply in /memory proposals creates one.'); break; }
+          const clip = text => { const chars = Array.from(String(text || '')); return chars.length > 240 ? chars.slice(0, 240).join('') + '…' : chars.join(''); };
+          sys(table(facts.map(f => [String(f.id || ''), String(f.revision != null ? f.revision : ''), String(f.category || ''), clip(f.content)]), ['id', 'rev', 'category', 'fact']));
+          sys(String(facts.length) + ' active structured fact(s), newest first. These are not pinned notes, and listing injects nothing; recall and retrieval gates decide what reaches chat.');
         } else if (sub === 'consolidate') {
           const ids = rest.slice(1).filter(Boolean);
           if (!ids.length) { sys('usage: /memory consolidate <episode-id> [episode-id...]'); break; }
@@ -2684,16 +2696,25 @@ async function runSlash(line, webCommand) {
         } else if (sub === 'clear') {
           const r = await api('/api/memory/clear', 'POST');
           sys('memory notes cleared (' + String(r.count) + ')');
-        } else {
+        } else if (!sub || sub === 'status') {
           const r = await api('/api/memory');
           memoryEnabled = !!r.enabled; paintMemory();
-          const rag = r.rag || {};
+          /* Owner-scoped counts live on the structured-memory status route;
+             /api/memory is the home-wide pinned-note payload. A failed count
+             read degrades to 'unavailable' instead of hiding the readout. */
+          let store = null;
+          try { store = await api('/api/structured-memory'); } catch (e) { store = null; }
+          const count = n => Number.isInteger(n) ? String(n) : 'unknown';
+          const factRow = !store ? 'unavailable' : !store.enabled ? 'store off'
+            : count(store.fact_count) + ' / ' + count(store.limits && store.limits.max_facts_per_owner) + ' — list with /memory facts';
+          const proposalRow = !store ? 'unavailable' : !store.enabled ? 'store off'
+            : count(store.pending_proposal_count) + ' — review with /memory proposals';
           sys(table([
             ['harness /memory', r.enabled ? 'ON (injected)' : 'OFF (stored, not injected)'],
             ['notes', String(r.count) + ' / ' + String(r.max_notes)],
-            ['RAG memory.enabled', rag.enabled ? 'on' : 'off'],
-            ['RAG writable here', rag.writable_from_harness ? 'yes' : 'no'],
             ['structured memory', (r.structured_memory && r.structured_memory.enabled) ? 'store on' : 'store off'],
+            ['structured facts', factRow],
+            ['pending proposals', proposalRow],
             ['episode capture', (r.structured_memory && r.structured_memory.episode_capture) ? 'on' : 'off'],
             ['explicit recall', (r.structured_memory && r.structured_memory.explicit_recall) ? 'on' : 'off'],
             ['retrieval', (r.structured_memory && r.structured_memory.retrieval) ? 'on' : 'off'],
@@ -2706,6 +2727,8 @@ async function runSlash(line, webCommand) {
           if (r.notes && r.notes.length) {
             sys(table(r.notes.map(n => [n.id, n.text]), ['id', 'note']));
           }
+        } else {
+          sys('unknown /memory subcommand; see /help memory');
         }
         break;
       }
@@ -4793,7 +4816,7 @@ async function refreshMemoryProposals() {
     const result = await api('/api/structured-memory/proposals?status=pending');
     if (!feedback.isConnected) return;
     const pending = (result.proposals || []).filter(p => p.status === 'pending');
-    feedback.textContent = pending.length ? 'Review each proposal. Apply saves a canonical fact; Reject dismisses the suggestion. Both require your reason.' : 'No pending proposals.';
+    feedback.textContent = pending.length ? 'Review each proposal. Apply saves a structured fact (listed under Saved facts and by /memory facts), not a pinned note; Reject dismisses the suggestion. Both require your reason.' : 'No pending proposals.';
     if (!pending.length) {
       if ((automatic && (automatic.queued || automatic.running)) || (status.consolidation_health && status.consolidation_health.running)) {
         feedback.textContent = 'No pending proposals yet. Memory generation is queued or running. Refresh after it finishes.';
@@ -4836,12 +4859,46 @@ async function refreshMemoryProposals() {
         apply.disabled = reject.disabled = true;
         try {
           const result = await api('/api/structured-memory/proposals/' + encodeURIComponent(proposal.id), 'POST', {revision:proposal.revision,reason:reason.value.trim(),confirm:true,apply:event.submitter === apply});
-          reason.disabled = true; resultText.textContent = 'Proposal ' + result.status + '.';
+          /* The decision reply is the proposal row; an add carries no new fact id. */
+          const where = result.status !== 'applied' ? ''
+            : result.action === 'deactivate' ? ' Fact ' + String(result.target_fact_id || '') + ' is no longer active.'
+            : ' Saved as a structured fact, not a pinned note; /memory facts lists it.';
+          reason.disabled = true; resultText.textContent = 'Proposal ' + result.status + '.' + where;
         } catch (error) { resultText.textContent = error.message; apply.disabled = reject.disabled = false; }
       });
       panel.appendChild(form);
     }
+    await appendSavedFacts(panel);
   } catch (error) { feedback.textContent = error.message; }
+}
+
+/* Saved facts render after the proposal forms and outside any form. They
+   load and fail on their own, so a listing error never replaces the
+   proposals feedback. No query: filters switch the route to a capped search. */
+async function appendSavedFacts(panel) {
+  const section = document.createElement('section');
+  const heading = document.createElement('h3'); heading.textContent = 'Saved facts';
+  const note = document.createElement('p'); note.setAttribute('role', 'status');
+  section.append(heading, note);
+  panel.appendChild(section);
+  try {
+    const result = await api('/api/structured-memory/facts');
+    if (!section.isConnected) return;
+    const facts = result && Array.isArray(result.facts) ? result.facts : [];
+    heading.textContent = 'Saved facts (' + facts.length + ')';
+    note.textContent = facts.length
+      ? 'Newest first. These are structured facts, not pinned notes; recall and retrieval gates decide what reaches chat.'
+      : 'No saved facts yet. Apply a proposal or use /memory save.';
+    for (const fact of facts) {
+      const detail = document.createElement('details'), title = document.createElement('summary'), body = document.createElement('pre');
+      title.textContent = String(fact.category || 'uncategorized') + ' · ' + Array.from(String(fact.content || '')).slice(0, 160).join('');
+      body.textContent = 'Fact ' + String(fact.id || '') + ' · revision ' + String(fact.revision != null ? fact.revision : '') + '\n' + String(fact.content || '');
+      detail.append(title, body);
+      section.appendChild(detail);
+    }
+  } catch (error) {
+    if (section.isConnected) note.textContent = 'Saved facts could not be loaded (' + error.message + ').';
+  }
 }
 
 let soulDocument = null, reviewedSoulProposal = null;
