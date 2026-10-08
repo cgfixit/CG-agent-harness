@@ -17,9 +17,9 @@ Keep a terminal-started daemon running; use another terminal for the harness.
 Never start a second daemon on an occupied port.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 require a
-**32768-token** window. Chat, console `POST /api/ollama/pull` and startup
-`keep_alive` warmup inherit the window Ollama started with. Changing it requires
-a full quit and relaunch.
+**32768-token** window. Chat, pulls and warmup inherit the window Ollama
+started with. Changing it needs
+a full relaunch.
 
 ```bash
 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
@@ -38,8 +38,8 @@ curl --fail --silent --show-error http://127.0.0.1:11434/api/generate \
 curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 ```
 
-`/api/ps` must report `context_length` **32768**; chat warns when a turn
-exceeds the loaded window. Otherwise keep `web.total_tokens: 16000` and
+`/api/ps` must report `context_length` ≥ **32768**; chat warns when
+a turn exceeds it. Otherwise keep `web.total_tokens: 16000` and
 `web.evidence_tokens: 3000` in the home `config.yaml`.
 
 Choose the **exact installed identifier**. The acceptance Mac had `qwen3.8:27b`
@@ -57,8 +57,7 @@ Configure both `models.local_llm.model` (chat) and
 `agentic.deepagent_github.model` (planner) with your chosen tag in [first run](INSTALL.md#6-first-run).
 `/model use <tag>` changes chat selection only; inspect `/status` after restart.
 
-The shipped `qwen3.8:27b-mlx` default does not verify installation. The app
-does not require a 27B model. Chat uses `models.local_llm.base_url`; the
+The shipped `qwen3.8:27b-mlx` default does not verify installation. Chat uses `models.local_llm.base_url`; the
 planner uses `agentic.deepagent_github.base_url`. Both local paths require a
 loopback OpenAI-compatible service — which is also how a fine-tuned MLX model is
 served; see [FINETUNE.md](FINETUNE.md) for the QLoRA workflow.
@@ -80,6 +79,8 @@ limits and any tuning; `/model use <tag>` persists it without downloading. With
 `models.local_llm.auto_tune: true` it also loads the model, times one short
 generate and applies per-model limits (budgets only tighten; the chat timeout and
 `web.synthesis_seconds` follow measured speed; a model without tools gets none).
+Above 32768, proposals scale up; set them in `config.yaml` (`auto_tune` only
+lowers); caps follow the measured window, up to 131072.
 This shared selection can override configuration, including fallback.
 Check it against the active local endpoint. For explicit cloud chat, use
 `/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only
@@ -123,5 +124,5 @@ Inventory and fallback probes are bounded by `models.local_llm.inventory` and
 `probe_timeout_sec`, without proxies or redirects. See the
 [resolver](../src/llm/backend.rs) and [inventory checks](../src/llm/inventory.rs).
 
-Verify the loaded window with `/model profile`. See
+See
 [desktop details](DESKTOP.md) and [the native matrix](DESKTOP_ACCEPTANCE.md).

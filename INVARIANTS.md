@@ -18,7 +18,7 @@ the server or the shim.
   corrupt the server's memory or bypass its guard chain; the exit-code contract
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
 
-Process map. These are the only edges; a new one changes this list and the code together.
+Process map. These are the only edges - a new one changes this list and the code together.
 
 - **Renderer:** the console (`assets/static/harness.html`, `/static/auth_admin.js`)
   in a browser or desktop webview, and the setup window (`desktop/ui/`). It never
@@ -477,8 +477,8 @@ window is stored prompt history (user and assistant turns, persist cap
 `MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
 overflow. The effective trigger is
 `max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
-calibrated_tool_definition_tokens)`, capped at 30000. Tool definitions count
-in the calibrated input estimate. Web-enabled chat tightens the trigger
+calibrated_tool_definition_tokens)`, capped at 30000 (scaled to an `auto_tune`-verified
+window). Web-enabled chat tightens the trigger
 toward `web.total_tokens - effective_reply_reservation` (the projection already
 carries one reservation, so a web prompt keeps room for two replies) and never
 below that floor; the web dispatcher independently offers tools only while the

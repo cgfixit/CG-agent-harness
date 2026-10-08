@@ -24,7 +24,7 @@ use crate::llm::openai_chat::DEFAULT_CHAT_TIMEOUT_SEC;
 use crate::llm::profile;
 
 /// The loaded window the shipped budgets were sized for.
-pub const TUNED_WINDOW: u64 = 32_768;
+pub const TUNED_WINDOW: u64 = compaction::BASE_WINDOW;
 
 /// Margin over the estimated worst-case turn.
 const TIMEOUT_SAFETY: f64 = 2.0;
@@ -165,13 +165,28 @@ pub fn propose(
         return json!({"state": "unknown_window", "tuned_window": TUNED_WINDOW, "values": [], "notes": notes,
             "detail": "The shipped defaults could not be read."});
     };
-    let effective = window.min(TUNED_WINDOW);
+    let effective = window.min(compaction::MAX_WINDOW);
     if window > TUNED_WINDOW {
         notes.push(format!(
-            "The loaded window ({window}) is larger than the {TUNED_WINDOW} the budgets were tuned for. The code caps web.total_tokens at 32000 and prompts at {} today, so the shipped values are the ceiling.",
-            compaction::MAX_PROMPT_TOKENS
+            "The loaded window ({window}) is larger than the {TUNED_WINDOW} the shipped budgets were sized for. auto_tune only lowers budgets, so set these larger values in config.yaml; with auto_tune on, the prompt cap ({}) and web.total_tokens cap ({}) follow this window.",
+            compaction::prompt_cap(Some(window)),
+            compaction::web_total_cap(Some(window)),
         ));
     }
+    if window > compaction::MAX_WINDOW {
+        notes.push(format!("Budgets stop growing at a {} window.", compaction::MAX_WINDOW));
+    }
+    // Each setting's own code ceiling, so a large window never proposes a value
+    // startup would refuse.
+    let ceiling = |key: &str| match key {
+        "models.local_llm.max_tokens" => compaction::MAX_REPLY_TOKENS / compaction::reply_reservation(backend, 1),
+        "chat.compact_prompt_tokens" => compaction::prompt_cap(Some(window)),
+        "web.total_tokens" => compaction::web_total_cap(Some(window)),
+        "web.evidence_tokens" => super::web_search::MAX_EVIDENCE_TOKENS,
+        "web.model_tokens" => super::web_search::MAX_MODEL_TOKENS,
+        "web.chat_tool_calls" => crate::llm::openai_stream::MAX_TOOL_CALLS,
+        _ => u64::MAX,
+    };
     let mut candidate = cfg.raw.clone();
     let mut values = Vec::new();
     let mut proposed_reply = compaction::DEFAULT_REPLY_TOKENS;
@@ -179,7 +194,7 @@ pub fn propose(
         let Some(base) = shipped.get(key).and_then(|v| v.as_u64()) else {
             continue;
         };
-        let mut value = scale(key, base, effective, step, min);
+        let mut value = scale(key, base, effective, step, min).min(ceiling(key));
         match key {
             "models.local_llm.max_tokens" => proposed_reply = value,
             // Compaction never triggers below one reply reservation plus headroom.
@@ -191,18 +206,21 @@ pub fn propose(
         set_path(&mut candidate, key, value);
         values.push(json!({"key": key, "current": current(key), "proposed": value}));
     }
+    // The timeout is installed as proposed, but budgets apply as
+    // min(configured, proposed): size it for the budgets that will be in force.
     if let Some(seconds) = speed.and_then(|speed| {
-        let proposed = |key: &str| {
+        let in_force = |key: &str| {
             values
                 .iter()
                 .find(|row| row["key"] == key)
                 .and_then(|row| row["proposed"].as_u64())
+                .map(|proposed| proposed.min(current(key)))
         };
         derived_timeout(
             speed,
-            proposed("chat.compact_prompt_tokens")?,
-            compaction::reply_reservation(backend, proposed_reply),
-            proposed("web.chat_tool_calls").unwrap_or(0),
+            in_force("chat.compact_prompt_tokens")?,
+            compaction::reply_reservation(backend, proposed_reply.min(current("models.local_llm.max_tokens"))),
+            in_force("web.chat_tool_calls").unwrap_or(0),
         )
     }) {
         let configured = cfg
@@ -230,7 +248,11 @@ pub fn propose(
     }
     // The same validators startup and reload run; a failure means this window is
     // too small for the shipped shape, not that the proposal should be forced.
-    let mut state = if window < TUNED_WINDOW { "scaled" } else { "shipped" };
+    let mut state = match window.cmp(&TUNED_WINDOW) {
+        std::cmp::Ordering::Less => "scaled",
+        std::cmp::Ordering::Equal => "shipped",
+        std::cmp::Ordering::Greater => "scaled_up",
+    };
     let candidate = AppConfig {
         raw: candidate,
         path: cfg.path.clone(),
@@ -246,7 +268,9 @@ pub fn propose(
             let tools =
                 compaction::estimate_tokens(&serde_json::to_string(&super::chat_web::tools()).unwrap_or_default());
             let reservation = compaction::reply_reservation(backend, proposed_reply);
-            if let Some(warning) = compaction::web_budget_warning(limits.total_tokens, reservation, tools) {
+            // At this window the proposal is the ceiling; only a larger window raises it.
+            let raise = compaction::WebRaise::for_budget(limits.total_tokens, limits.total_tokens, Some(window));
+            if let Some(warning) = compaction::web_budget_warning(limits.total_tokens, reservation, tools, raise) {
                 state = "not_viable";
                 notes.push(format!("Web chat would not fit at this window: {warning}"));
             }
@@ -494,13 +518,47 @@ mod tests {
     }
 
     #[test]
-    fn larger_windows_stop_at_the_shipped_ceiling_and_say_why() {
+    fn larger_windows_scale_up_to_each_code_ceiling_and_say_how_to_apply() {
         let proposal = run(loaded(65_536));
-        assert_eq!(proposal["state"], "shipped", "{proposal}");
-        assert_eq!(value(&proposal, "web.total_tokens"), 28_000);
-        assert!(
-            proposal["notes"].to_string().contains("larger than the 32768"),
-            "{proposal}"
+        assert_eq!(proposal["state"], "scaled_up", "{proposal}");
+        assert_eq!(value(&proposal, "models.local_llm.max_tokens"), 8_192);
+        assert_eq!(value(&proposal, "chat.compact_prompt_tokens"), 48_000);
+        assert_eq!(value(&proposal, "web.total_tokens"), 56_000);
+        // Already at their own ceilings at 32k.
+        assert_eq!(value(&proposal, "web.evidence_tokens"), 6_000);
+        assert_eq!(value(&proposal, "web.model_tokens"), 2_048);
+        let notes = proposal["notes"].to_string();
+        assert!(notes.contains("set these larger values in config.yaml"), "{notes}");
+        // Monotonic up to the window ceiling, then flat; never past a validator bound.
+        let mut previous = run(loaded(TUNED_WINDOW));
+        for window in [49_152, 65_536, 98_304, 131_072, 262_144] {
+            let proposal = run(loaded(window));
+            assert_eq!(proposal["state"], "scaled_up", "{window}: {proposal}");
+            for (key, _, _) in SCALED {
+                assert!(value(&previous, key) <= value(&proposal, key), "{key} at {window}");
+            }
+            previous = proposal;
+        }
+        assert_eq!(value(&previous, "web.total_tokens"), 112_000);
+        assert_eq!(value(&previous, "chat.compact_prompt_tokens"), 96_000);
+        assert!(previous["notes"].to_string().contains("stop growing"), "{previous}");
+    }
+
+    #[test]
+    fn the_timeout_follows_the_budgets_in_force_not_larger_proposals() {
+        let cfg = shipped().unwrap();
+        let web = Limits::load(&cfg).unwrap();
+        let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
+        let none = backend(Some("none"));
+        let shipped_size = propose(&loaded(TUNED_WINDOW), Some(&speed), &cfg, &web, &none);
+        let large = propose(&loaded(131_072), Some(&speed), &cfg, &web, &none);
+        // The larger proposals are not applied over the shipped config (budgets
+        // only tighten), so the timeout is sized for the same in-force budgets.
+        assert!(value(&large, "chat.compact_prompt_tokens") > value(&shipped_size, "chat.compact_prompt_tokens"));
+        assert_eq!(
+            value(&large, "models.local_llm.timeout_sec"),
+            value(&shipped_size, "models.local_llm.timeout_sec"),
+            "{large}"
         );
     }
 

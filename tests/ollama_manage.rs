@@ -20,6 +20,10 @@ struct NativeOllama {
     pull_delay_ms: Arc<Mutex<u64>>,
     /// Delay for the configured model's raw speed sample (the startup tune).
     sample_delay_ms: Arc<Mutex<u64>>,
+    /// The window `/api/ps` reports for `longctx:q8`; 0 means not loaded.
+    longctx_window: Arc<Mutex<u64>>,
+    /// The window a generate loads `longctx:q8` with while it is not loaded.
+    longctx_load_window: Arc<Mutex<u64>>,
 }
 
 impl NativeOllama {
@@ -35,6 +39,11 @@ async fn start_native_ollama() -> NativeOllama {
     let delay = Arc::new(Mutex::new(0u64));
     let sample_delay = Arc::new(Mutex::new(0u64));
     let s2 = sample_delay.clone();
+    let longctx_window = Arc::new(Mutex::new(65_536u64));
+    let w2 = longctx_window.clone();
+    let w3 = longctx_window.clone();
+    let longctx_load_window = Arc::new(Mutex::new(65_536u64));
+    let l2 = longctx_load_window.clone();
     let p2 = pulls.clone();
     let g2 = generates.clone();
     let c2 = chats.clone();
@@ -80,6 +89,17 @@ async fn start_native_ollama() -> NativeOllama {
                         })),
                     );
                 }
+                if body.get("num_ctx").is_none() && body["model"] == "longctx:q8" {
+                    // Loaded at 65536 tokens (OLLAMA_CONTEXT_LENGTH=65536).
+                    return (
+                        axum::http::StatusCode::OK,
+                        Json(json!({
+                            "details": {"family": "qwen35", "parameter_size": "9.0B", "quantization_level": "Q8_0"},
+                            "model_info": {"general.architecture": "qwen35", "qwen35.context_length": 262144},
+                            "capabilities": ["completion", "tools"],
+                        })),
+                    );
+                }
                 if body.get("num_ctx").is_some() || body["model"] != "qwen3.8:27b-mlx" {
                     return (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "fixture-private-missing"})));
                 }
@@ -97,11 +117,18 @@ async fn start_native_ollama() -> NativeOllama {
         )
         .route(
             "/api/ps",
-            get(|| async {
-                Json(json!({"models": [
-                    {"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20},
-                    {"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13},
-                ]}))
+            get(move || {
+                let window = *w2.lock().unwrap();
+                async move {
+                    let mut models = vec![
+                        json!({"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20}),
+                        json!({"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13}),
+                    ];
+                    if window > 0 {
+                        models.push(json!({"name": "longctx:q8", "context_length": window, "size": 11, "size_vram": 11}));
+                    }
+                    Json(json!({"models": models}))
+                }
             }),
         )
         .route(
@@ -109,7 +136,12 @@ async fn start_native_ollama() -> NativeOllama {
             post(move |Json(body): Json<Value>| {
                 let g = g2.clone();
                 let s = s2.clone();
+                let (w, l) = (w3.clone(), l2.clone());
                 async move {
+                    // Any generate loads longctx with Ollama's current default window.
+                    if body["model"] == "longctx:q8" && *w.lock().unwrap() == 0 {
+                        *w.lock().unwrap() = *l.lock().unwrap();
+                    }
                     let timed = body["raw"] == true;
                     let ms = *s.lock().unwrap();
                     if timed && ms > 0 && body["model"] == "qwen3.8:27b-mlx" {
@@ -151,6 +183,8 @@ async fn start_native_ollama() -> NativeOllama {
         chats,
         pull_delay_ms: delay,
         sample_delay_ms: sample_delay,
+        longctx_window,
+        longctx_load_window,
     }
 }
 
@@ -273,6 +307,182 @@ async fn auto_tune_measures_the_selection_and_tightens_its_chat_limits() {
     assert!(request.get("tools").is_none(), "{request}");
     let (_, status) = s.get_json("/api/status").await;
     assert_eq!(status["chat_tools_available"], false, "{status}");
+}
+
+async fn wait_for_tuning(s: &TestServer, window: u64) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let (status, body) = s.get_json("/api/ollama/profile").await;
+        assert_eq!(status, 200, "{body}");
+        if body["tuning"]["window"] == window {
+            return body;
+        }
+        assert!(std::time::Instant::now() < deadline, "no tuning at {window}: {body}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow_budgets() {
+    let ollama = start_native_ollama().await;
+    // Raised past the old 32000 / 30000 code caps; untuned, the caps still hold them.
+    let options = || {
+        ServerOptions::default()
+            .with("web.total_tokens", "60000")
+            .with("chat.compact_prompt_tokens", "50000")
+            .with("api.rate_limit.max_requests", "1000")
+    };
+    let plain = spawn_server(&ollama.openai_url(), options()).await;
+    // With web on, the web budget binds the prompt, exactly as chat computes it:
+    // 32000 held at the cap, less one 4096-token reply reservation.
+    let (_, body) = plain.get_json("/api/ollama/profile").await;
+    assert_eq!(body["in_force"]["limit_source"], "web.total_tokens", "{body}");
+    assert_eq!(body["in_force"]["prompt_limit"], 27904, "{body}");
+    plain.post_json("/api/web", json!({"enabled": false})).await;
+    let (_, body) = plain.get_json("/api/ollama/profile").await;
+    assert_eq!(
+        body["in_force"],
+        json!({"prompt_cap": 30000, "prompt_limit": 30000, "limit_source": "chat.compact_prompt_tokens",
+            "web_total_tokens": 32000, "web_total_ceiling": 32000}),
+        "{body}"
+    );
+    assert_eq!(body["proposed"]["state"], "shipped", "{body}");
+
+    let s = spawn_server(
+        &ollama.openai_url(),
+        options().with("models.local_llm.auto_tune", "true"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    // The startup tune measures the configured 32768-token model: shipped caps.
+    let body = wait_for_tuning(&s, 32768).await;
+    assert_eq!(body["in_force"]["prompt_cap"], 30000, "{body}");
+    assert_eq!(body["in_force"]["web_total_tokens"], 28000, "{body}");
+    let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    let body = wait_for_tuning(&s, 65536).await;
+    assert_eq!(body["proposed"]["state"], "scaled_up", "{body}");
+    // Caps double with the window; the budgets grow only to what config allows.
+    assert_eq!(
+        body["in_force"],
+        json!({"prompt_cap": 60000, "prompt_limit": 48000, "limit_source": "chat.compact_prompt_tokens",
+            "web_total_tokens": 56000, "web_total_ceiling": 56000}),
+        "{body}"
+    );
+    assert_eq!(body["tuning"]["max_tokens"], 8192, "{body}");
+    // Ollama restarted with a 32768 window: the next use re-reads /api/ps (no
+    // cache), and the caps fall back though the recorded tuning still says 65536.
+    *ollama.longctx_window.lock().unwrap() = 32768;
+    let (_, stale) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(stale["tuning"]["window"], 65536, "{stale}");
+    assert_eq!(stale["in_force"]["prompt_cap"], 30000, "{stale}");
+    assert_eq!(stale["in_force"]["web_total_ceiling"], 32000, "{stale}");
+    // Each model call sized above the defaults re-reads the window first: a
+    // shrink between the turn's start and its reply refuses the call.
+    *ollama.longctx_window.lock().unwrap() = 65536;
+    let state = &s.state;
+    state
+        .ensure_window_allows("longctx:q8", 48_000, 56_000)
+        .await
+        .expect("65536 still loaded");
+    *ollama.longctx_window.lock().unwrap() = 32768;
+    let refused = state.ensure_window_allows("longctx:q8", 48_000, 0).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    let refused = state.ensure_window_allows("longctx:q8", 0, 56_000).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    // Reloaded below the defaults: the caps shrink to the reported 16384, and a
+    // call sized for the 30000 default is refused rather than truncated.
+    *ollama.longctx_window.lock().unwrap() = 16384;
+    let (_, small) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(small["in_force"]["prompt_cap"], 15000, "{small}");
+    assert_eq!(small["in_force"]["web_total_ceiling"], 16000, "{small}");
+    let refused = state.ensure_window_allows("longctx:q8", 30_000, 0).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    // Ollama restarted with a 16384 default and has not reloaded the model.
+    // The profile only reads: no load, and the defaults while it is not resident.
+    *ollama.longctx_window.lock().unwrap() = 0;
+    *ollama.longctx_load_window.lock().unwrap() = 16384;
+    let before = ollama.generates.lock().unwrap().len();
+    let (_, absent) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(absent["in_force"]["prompt_cap"], 30000, "{absent}");
+    assert_eq!(
+        ollama.generates.lock().unwrap().len(),
+        before,
+        "a profile must not load the model"
+    );
+    // The check before a model call (under the caller's generation gate) loads it
+    // with the warmup request and reads the window it now serves.
+    state
+        .ensure_window_allows("longctx:q8", 15_000, 0)
+        .await
+        .expect("15000 fits the reloaded 16384 window");
+    let loads = ollama.generates.lock().unwrap()[before..].to_vec();
+    assert!(
+        loads
+            .iter()
+            .any(|g| g["model"] == "longctx:q8" && g["prompt"] == "" && g.get("num_ctx").is_none()),
+        "{loads:?}"
+    );
+    let (_, reloaded) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(reloaded["in_force"]["prompt_cap"], 15000, "{reloaded}");
+    // A load that leaves the window unreported is refused, not given the
+    // 32768 defaults: the model was measured, so an unknown window is a failure.
+    *ollama.longctx_window.lock().unwrap() = 0;
+    *ollama.longctx_load_window.lock().unwrap() = 0;
+    let refused = state.ensure_window_allows("longctx:q8", 1_000, 0).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    assert!(refused.message.contains("even after loading it"), "{refused:?}");
+    *ollama.longctx_window.lock().unwrap() = 32768;
+    // A window at the 32768 defaults allows calls sized for them.
+    state
+        .ensure_window_allows("longctx:q8", 30_000, 32_000)
+        .await
+        .expect("32768 allows the defaults");
+    *ollama.longctx_window.lock().unwrap() = 65536;
+    let (status, reply) = s.post_json("/api/chat", json!({"message": "hello"})).await;
+    assert_eq!(status, 200, "{reply}");
+    let request = ollama
+        .chats
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .expect("chat reached the model");
+    assert_eq!(request["model"], "longctx:q8");
+    // Reply budgets still only tighten: the configured 4096 wins over the proposed 8192.
+    assert_eq!(request["max_tokens"], 4096, "{request}");
+    // About 40000 tokens of history, inside the 48000 tuned threshold at 65536.
+    let mut session = Value::Null;
+    for turn in 0..5 {
+        let long = format!("turn {turn} {}", "x".repeat(32_000));
+        let (status, reply) = s
+            .post_json("/api/chat", json!({"session_id": session, "message": long}))
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        session = reply["session_id"].clone();
+    }
+    // keep_alive expired: the next turn wakes the model under its gate and is
+    // sized for 65536, so the history is sent whole, not refused or compacted
+    // against the 30000 default of an unknown window.
+    *ollama.longctx_window.lock().unwrap() = 0;
+    *ollama.longctx_load_window.lock().unwrap() = 65536;
+    let before = ollama.generates.lock().unwrap().len();
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"session_id": session, "message": "and now?"}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert!(
+        ollama.generates.lock().unwrap()[before..]
+            .iter()
+            .any(|g| g["model"] == "longctx:q8" && g["prompt"] == ""),
+        "the turn loads the absent model"
+    );
+    let request = ollama.chats.lock().unwrap().last().cloned().unwrap();
+    let sent = request["messages"].to_string();
+    assert!(
+        sent.contains("turn 0 ") && sent.contains("and now?"),
+        "history was compacted or cut"
+    );
 }
 
 #[tokio::test]

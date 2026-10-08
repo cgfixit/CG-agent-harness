@@ -590,7 +590,8 @@ fails without changing history.
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
 `reasoning_effort: "none"`, or twice that otherwise. The threshold floor adds
-4096 prompt tokens and calibrated tool definitions, capped at 30000. Web chat
+4096 prompt tokens and calibrated tool definitions, capped at 30000 (scaled to
+a verified window). Web chat
 also moves toward `web.total_tokens - reservation`, leaving two replies, while
 its dispatcher checks each call independently. Startup accepts at most 25904
 reply tokens on the first path or 12952 on the second for chat and `/loop`.

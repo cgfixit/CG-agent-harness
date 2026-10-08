@@ -42,7 +42,7 @@ code fallback.
 | `web.rounds` | 1–2 |
 | `web.evidence_tokens` | 256–6,000 |
 | `web.model_tokens` | 256–2,048 |
-| `web.total_tokens` | 2,048–32,000 |
+| `web.total_tokens` | 2,048–128,000 (32,000 unless measured larger) |
 | `web.research_seconds` | 10–1,800 |
 | `web.synthesis_seconds` | 10–1,800 |
 | `web.stale_seconds` | 60–31,536,000 |
