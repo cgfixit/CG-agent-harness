@@ -2743,9 +2743,10 @@ async function runSlash(line, webCommand) {
           const r = await api('/api/model', 'POST', { model: rest.slice(1).join(' ') });
           const planner = await api('/api/agent/checks');
           sys('chat model selected: ' + r.model + ' via ' + r.provider + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
+          if (r.tuning === 'pending') sys('auto_tune is measuring this model in the background (it loads the model); /model profile shows the applied limits.');
           await refreshStatus();
         } else if (rest[0] === 'profile') {
-          // Read-only facts; nothing here changes limits yet.
+          // Read-only: facts, proposals, and whatever auto_tune already applied.
           const p = await api('/api/ollama/profile');
           if (p.state !== 'profiled') { sys('model profile ' + p.state + ': ' + p.detail); break; }
           const d = p.declared || {}, l = p.loaded, i = p.installed || {};
@@ -2770,6 +2771,23 @@ async function runSlash(line, webCommand) {
             sys(table(q.values.map(v => [v.key, String(v.current), String(v.proposed)]), ['setting', 'current', 'proposed (' + q.state + ')']));
           }
           if (q) { (q.notes || []).forEach(n => sys(String(n))); sys(q.detail); }
+          const t = p.tuning;
+          if (t) {
+            const w = t.web || {}, sp = t.speed || {};
+            sys(table([
+              ['loaded window', String(t.window)],
+              ['decode / prefill tok/s', show(sp.decode_tps) + ' / ' + show(sp.prefill_tps)],
+              ['reply max_tokens', String(t.max_tokens)],
+              ['compact_prompt_tokens', String(t.compact_prompt_tokens)],
+              ['web total / evidence tokens', t.web ? w.total_tokens + ' / ' + w.evidence_tokens : 'as configured'],
+              ['web tool calls', t.web ? String(w.chat_tool_calls) : 'as configured'],
+              ['chat timeout (s)', t.timeout_sec ? String(t.timeout_sec) : 'as configured'],
+              ['web tools for this model', t.tools_off ? 'off' : 'on'],
+            ], ['applied by auto_tune', 'value']));
+            sys('Applied budgets are ceilings: a lower configured value still wins.');
+          } else if (p.auto_tune) {
+            sys('auto_tune is on but has not tuned this model yet; /model use ' + p.model + ' measures it.');
+          }
         } else {
           const s = await api('/api/status');
           sys(table([['model', s.model || '(unset)'], ['provider', s.provider], ['base_url', s.base_url]]));

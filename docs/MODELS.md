@@ -75,9 +75,12 @@ and planner models**. Both use bounded `/models` inventories:
 | `unavailable` | Inventory failed, timed out, was oversized or malformed. Check the service and endpoint. |
 | `not_probed` | The endpoint is not an eligible loopback URL, or the planner is a cloud provider. Setup does not probe cloud planners. |
 
-`/model` reports selection and `/model profile` its loaded window;
-`/model use <tag>` persists it without checking or downloading. This shared
-selection can override configuration, including fallback.
+`/model` reports selection and `/model profile` its loaded window, proposed
+limits and any tuning; `/model use <tag>` persists it without downloading. With
+`models.local_llm.auto_tune: true` it also loads the model, times one short
+generate and applies per-model limits (budgets only tighten; the timeout follows
+measured speed; a model without tools gets none).
+This shared selection can override configuration, including fallback.
 Check it against the active local endpoint. For explicit cloud chat, use
 `/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only
 after an administrator saves the matching key and restarts. Cloud selection sends
@@ -116,12 +119,9 @@ With fallback off, startup selects the primary without this probe. There is no
 per-message retry or automatic model download, and the coding planner retains its
 separate configuration. Restart to reevaluate fallback after changing services.
 
-Desktop inventory defaults to two seconds and 262,144 response bytes, configured
-under `models.local_llm.inventory`; fallback uses `probe_timeout_sec` with the same
-byte limit. Probes use no proxies or redirects. See the
+Inventory and fallback probes are bounded by `models.local_llm.inventory` and
+`probe_timeout_sec`, without proxies or redirects. See the
 [resolver](../src/llm/backend.rs) and [inventory checks](../src/llm/inventory.rs).
 
-Historical CLI acceptance recorded an 8192-token fixture; desktop acceptance
-recorded 32768. These dated measurements do not set current defaults or justify
-changing a working service. Verify the window for your configured budgets. See
+Verify the loaded window with `/model profile`. See
 [desktop details](DESKTOP.md) and [the native matrix](DESKTOP_ACCEPTANCE.md).

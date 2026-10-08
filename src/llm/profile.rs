@@ -1,6 +1,8 @@
-//! Read-only facts about one local Ollama model: what `/api/show` declares and
-//! what `/api/ps` measured after load. Nothing here loads, pulls or tunes a
-//! model, and no limit is derived yet; it only reports.
+//! Facts about one local Ollama model: what `/api/show` declares, what
+//! `/api/ps` measured after load, and (only when `models.local_llm.auto_tune`
+//! asks for it) its prefill and decode speed from one short raw generate.
+//! `probe` is read-only. `measure` loads the model like warmup does. Neither
+//! pulls a model or sends `num_ctx`.
 //!
 //! Memory is reported as measured (`size_vram`), never computed from layer
 //! counts: hybrid-attention and sliding-window models keep KV cache on only
@@ -178,9 +180,113 @@ pub async fn probe(endpoint: &str, model: &str, limits: InventoryLimits) -> Valu
     })
 }
 
+/// Fixed text for the speed sample: long enough (~300 tokens) that prefill is
+/// measured over a real batch, short enough to cost seconds, not minutes.
+const MEASURE_TEXT: &str = "The harness measures how fast this local model reads a prompt and writes a reply, \
+so that its limits can follow the hardware instead of one model's tuning. It reads this paragraph, \
+then continues it for a few dozen tokens. Nothing here is a question, an instruction or a secret. \
+A model that reads quickly and writes slowly gets a different deadline from one that does both slowly, \
+and a model that only partly fits in GPU memory shows it in both numbers. The sample is small on purpose: \
+it is taken once when a model is selected, while no chat turn holds the model, and its result is kept \
+in memory only. The paragraph repeats its idea in plain words so every tokenizer splits it into ordinary \
+pieces: reading speed, writing speed, loading time, and the deadline that follows from them. When the \
+measurement fails, nothing is guessed; the configured deadline stays in force. When it succeeds, the \
+deadline covers the longest prompt the limits allow, read at the measured reading speed, plus the \
+longest reply, written at the measured writing speed, plus a few tool rounds, with room to spare.";
+/// Tokens the sample asks the model to write.
+const MEASURE_TOKENS: u64 = 64;
+/// Fewer prompt tokens than this means a cache hit or a stub: prefill unknown.
+const MIN_SAMPLE_PROMPT_TOKENS: u64 = 64;
+
+/// One raw, bounded generate. The leading nonce defeats prefix caching so the
+/// whole prompt is evaluated. Never `num_ctx`: the server-side window stays.
+pub fn measure_payload(model: &str, keep_alive_sec: u64, nonce: &str) -> Value {
+    json!({
+        "model": model,
+        "prompt": format!("{nonce} {MEASURE_TEXT}"),
+        "raw": true,
+        "stream": false,
+        "keep_alive": keep_alive_sec,
+        "options": {"num_predict": MEASURE_TOKENS, "temperature": 0},
+    })
+}
+
+/// Prefill and decode tokens per second from a non-streamed `/api/generate`
+/// body (durations are nanoseconds). `None` when either rate is unmeasurable.
+pub fn parse_speed(body: &Value) -> Option<Value> {
+    let count = |key: &str| body.get(key).and_then(Value::as_u64);
+    let seconds = |key: &str| count(key).map(|ns| ns as f64 / 1e9);
+    let prompt_tokens = count("prompt_eval_count").filter(|n| *n >= MIN_SAMPLE_PROMPT_TOKENS)?;
+    let prompt_seconds = seconds("prompt_eval_duration").filter(|s| *s > 0.0)?;
+    let reply_tokens = count("eval_count").filter(|n| *n > 0)?;
+    let reply_seconds = seconds("eval_duration").filter(|s| *s > 0.0)?;
+    let tenth = |x: f64| (x * 10.0).round() / 10.0;
+    let rate = |tokens: u64, secs: f64| Some(tokens as f64 / secs).filter(|r| r.is_finite() && *r < 1e6);
+    Some(json!({
+        "prefill_tps": tenth(rate(prompt_tokens, prompt_seconds)?),
+        "decode_tps": tenth(rate(reply_tokens, reply_seconds)?),
+        "load_seconds": tenth(seconds("load_duration").unwrap_or(0.0).min(3600.0)),
+        "sample": {"prompt_tokens": prompt_tokens, "reply_tokens": reply_tokens},
+    }))
+}
+
+/// Times one short generate against the loopback native origin. This loads the
+/// model if it is not resident (like warmup), so callers hold the generation gate.
+pub async fn measure(
+    endpoint: &str,
+    model: &str,
+    keep_alive_sec: u64,
+    timeout: std::time::Duration,
+    max_bytes: usize,
+) -> Option<Value> {
+    let native = native_base_url(endpoint)?;
+    if !model_name_ok(model) {
+        return None;
+    }
+    let client = http_client(timeout).ok()?;
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let request = client
+        .post(format!("{native}/api/generate"))
+        .json(&measure_payload(model, keep_alive_sec, &nonce));
+    match bounded_json(request, max_bytes).await {
+        Bounded::Json(body) => parse_speed(&body),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measure_payload_is_raw_bounded_and_never_sets_num_ctx() {
+        let payload = measure_payload("hf.co/unsloth/Qwen3.5-9B-GGUF:Q8_0", 300, "n0nce");
+        assert_eq!(payload["raw"], true);
+        assert_eq!(payload["stream"], false);
+        assert_eq!(payload["options"]["num_predict"], MEASURE_TOKENS);
+        assert!(payload["prompt"].as_str().unwrap().starts_with("n0nce "));
+        assert!(!payload.to_string().contains("num_ctx"), "{payload}");
+    }
+
+    #[test]
+    fn speed_comes_from_ollama_durations_and_refuses_unmeasurable_samples() {
+        let body = json!({"prompt_eval_count": 300, "prompt_eval_duration": 200_000_000u64,
+            "eval_count": 64, "eval_duration": 1_280_000_000u64, "load_duration": 2_500_000_000u64});
+        let speed = parse_speed(&body).unwrap();
+        assert_eq!(speed["prefill_tps"], 1500.0);
+        assert_eq!(speed["decode_tps"], 50.0);
+        assert_eq!(speed["load_seconds"], 2.5);
+        // A cached prompt (few evaluated tokens) or a zero duration measures nothing.
+        assert!(parse_speed(
+            &json!({"prompt_eval_count": 3, "prompt_eval_duration": 1000, "eval_count": 64, "eval_duration": 1000})
+        )
+        .is_none());
+        assert!(parse_speed(
+            &json!({"prompt_eval_count": 300, "prompt_eval_duration": 0, "eval_count": 64, "eval_duration": 1000})
+        )
+        .is_none());
+        assert!(parse_speed(&json!({"done": true})).is_none());
+    }
 
     const DIGEST: &str = "6f7e1a3c9b2d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789ab"; // DevSkim: ignore DS173237 because this is a made-up 64-hex model digest fixture, not a credential.
 

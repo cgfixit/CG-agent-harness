@@ -324,6 +324,7 @@ pub async fn build_app_with_sources(
         auto_consolidation: crate::server::structured_memory_auto::AutoConsolidationControl::new(),
         memory_suggestions: crate::server::structured_memory_suggest::Suggestions::default(),
         ollama: state::OllamaControl::new(),
+        tuning: std::sync::Mutex::new(None),
         netconnect_sources,
     });
     routes::persona::recover_on_startup(&state)
@@ -333,6 +334,9 @@ pub async fn build_app_with_sources(
         let warmup = state.clone();
         tokio::spawn(async move {
             crate::llm::ollama::run_warmup(&warmup.backend, &warmup.cfg, &warmup.audit).await;
+            // models.local_llm.auto_tune: no-op unless the literal boolean true.
+            let model = warmup.current_model();
+            crate::server::model_limits::tune(warmup, model).await;
         });
     }
     {

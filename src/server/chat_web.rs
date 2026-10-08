@@ -205,7 +205,7 @@ pub async fn run_stream(
     tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
-        result = tokio::time::timeout(Duration::from_secs_f64(state.chat.timeout_sec.max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, output)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.chat_timeout_sec(model).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, output)) =>
             result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
     }
 }

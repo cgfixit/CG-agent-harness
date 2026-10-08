@@ -28,9 +28,10 @@ pub async fn inventory(State(state): State<Arc<AppState>>) -> ApiResult<Json<Val
     Ok(Json(value))
 }
 
-/// Declared and loaded facts for the selected chat model, plus limits scaled to
-/// its loaded window. Read-only: it never loads, pulls or retunes a model, no
-/// proposal is applied, and the planner model is not profiled here.
+/// Declared and loaded facts for the selected chat model, limits scaled to its
+/// loaded window, and the `auto_tune` result installed for it, if any. Read-only:
+/// it never loads, pulls or retunes a model, and the planner model is not
+/// profiled here.
 pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
     let model = state.current_model();
     if state.cloud_chat.is_cloud_selection(&model) || state.backend.provider != "ollama" {
@@ -42,10 +43,19 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
     let limits =
         InventoryLimits::from_config(&state.cfg).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let mut value = profile::probe(&state.backend.base_url, &model, limits).await;
+    let tuning = state.tuning_for(&model);
     if value["state"] == "profiled" {
-        value["proposed"] =
-            crate::server::model_limits::propose(&value, &state.cfg, &state.runtime_limits().web, &state.backend);
+        let speed = tuning.as_ref().and_then(|t| t.speed.as_ref());
+        value["proposed"] = crate::server::model_limits::propose(
+            &value,
+            speed,
+            &state.cfg,
+            &state.runtime_limits().web,
+            &state.backend,
+        );
     }
+    value["auto_tune"] = json!(state.cfg.flag_is_true("models.local_llm.auto_tune"));
+    value["tuning"] = json!(tuning.as_deref());
     Ok(Json(value))
 }
 

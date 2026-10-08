@@ -1,21 +1,43 @@
-//! Read-only per-model limit proposals for `/model profile`.
+//! Per-model limits: proposals for `/model profile`, and the opt-in
+//! `models.local_llm.auto_tune` that applies them on `/model use` and startup.
 //!
 //! The shipped budgets were sized for one verified 32,768-token Ollama window
 //! (the `web.total_tokens` comment in `assets/config.default.yaml`). A model
 //! loaded with a smaller window gets those shipped values scaled in proportion,
 //! then checked by the validators startup and reload use. Shipped values, not
 //! the home's current ones, are scaled, so a home already tuned for a small
-//! window is not halved twice. Nothing here applies a value.
+//! window is not halved twice. Applied budgets only ever tighten the configured
+//! ones; the chat timeout follows the measured speed instead.
+use std::sync::Arc;
+use std::time::Duration;
+
 use serde_json::{json, Value};
 use serde_yaml_ng::Value as Yaml;
 
 use super::compaction::{self, MIN_PROMPT_HEADROOM};
+use super::state::AppState;
 use super::web_search::Limits;
 use crate::common::config::AppConfig;
 use crate::llm::backend::ResolvedLocalBackend;
+use crate::llm::inventory::InventoryLimits;
+use crate::llm::openai_chat::DEFAULT_CHAT_TIMEOUT_SEC;
+use crate::llm::profile;
 
 /// The loaded window the shipped budgets were sized for.
 pub const TUNED_WINDOW: u64 = 32_768;
+
+/// Margin over the estimated worst-case turn.
+const TIMEOUT_SAFETY: f64 = 2.0;
+/// Tokens a tool-call round adds to the reply side of the estimate.
+const TOOL_ROUND_TOKENS: u64 = 128;
+const MIN_TIMEOUT_SEC: u64 = 120;
+const MAX_TIMEOUT_SEC: u64 = 3600;
+/// Generation-gate owner while the speed sample runs.
+pub const TUNE_OWNER: &str = "model_tune";
+/// A cold load of a large model can take minutes; the sample itself takes seconds.
+const MEASURE_TIMEOUT: Duration = Duration::from_secs(180);
+const GATE_ATTEMPTS: u32 = 24;
+const GATE_RETRY: Duration = Duration::from_secs(5);
 
 /// Settings scaled with the window: (key, rounding step, minimum).
 const SCALED: [(&str, u64, u64); 6] = [
@@ -64,9 +86,29 @@ fn shipped() -> Option<AppConfig> {
     .ok()
 }
 
+/// Seconds the longest turn the limits allow should take at the measured speed:
+/// load, the largest prompt at prefill speed, one reply reservation plus a tool
+/// call per round at decode speed; doubled, rounded up to 30 s, kept in 120–3600.
+fn derived_timeout(speed: &Value, prompt_tokens: u64, reply_tokens: u64, tool_rounds: u64) -> Option<u64> {
+    let prefill = speed["prefill_tps"].as_f64().filter(|v| *v > 0.0)?;
+    let decode = speed["decode_tps"].as_f64().filter(|v| *v > 0.0)?;
+    let load = speed["load_seconds"].as_f64().unwrap_or(0.0).max(0.0);
+    let written = reply_tokens.saturating_add(tool_rounds.saturating_mul(TOOL_ROUND_TOKENS));
+    let estimate = load + prompt_tokens as f64 / prefill + written as f64 / decode;
+    let seconds = (estimate * TIMEOUT_SAFETY).ceil().min(MAX_TIMEOUT_SEC as f64) as u64;
+    Some((seconds.div_ceil(30) * 30).clamp(MIN_TIMEOUT_SEC, MAX_TIMEOUT_SEC))
+}
+
 /// Proposed limits for the profiled model. `profile` is a `profiled` probe
-/// result; `web` is the live snapshot and `cfg` the running config.
-pub fn propose(profile: &Value, cfg: &AppConfig, web: &Limits, backend: &ResolvedLocalBackend) -> Value {
+/// result; `speed` an optional `profile::parse_speed` sample; `web` the live
+/// snapshot and `cfg` the running config.
+pub fn propose(
+    profile: &Value,
+    speed: Option<&Value>,
+    cfg: &AppConfig,
+    web: &Limits,
+    backend: &ResolvedLocalBackend,
+) -> Value {
     let current = |key: &str| -> u64 {
         match key {
             "web.total_tokens" => web.total_tokens,
@@ -91,7 +133,9 @@ pub fn propose(profile: &Value, cfg: &AppConfig, web: &Limits, backend: &Resolve
             fraction * 100.0
         ));
     }
-    notes.push("Timeouts stay as configured until decode speed is measured.".to_string());
+    if speed.is_none() {
+        notes.push("No speed sample yet, so the chat timeout stays as configured. With models.local_llm.auto_tune on, /model use measures it.".to_string());
+    }
     let Some(window) = profile["loaded"]["context_length"].as_u64() else {
         return json!({"state": "unknown_window", "tuned_window": TUNED_WINDOW, "values": [], "notes": notes,
             "detail": "The model is not resident, so its window is unknown. Send one chat, then run /model profile again."});
@@ -126,6 +170,25 @@ pub fn propose(profile: &Value, cfg: &AppConfig, web: &Limits, backend: &Resolve
         set_path(&mut candidate, key, value);
         values.push(json!({"key": key, "current": current(key), "proposed": value}));
     }
+    if let Some(seconds) = speed.and_then(|speed| {
+        let proposed = |key: &str| {
+            values
+                .iter()
+                .find(|row| row["key"] == key)
+                .and_then(|row| row["proposed"].as_u64())
+        };
+        derived_timeout(
+            speed,
+            proposed("chat.compact_prompt_tokens")?,
+            compaction::reply_reservation(backend, proposed_reply),
+            proposed("web.chat_tool_calls").unwrap_or(0),
+        )
+    }) {
+        let configured = cfg
+            .f64_or("models.local_llm.timeout_sec", DEFAULT_CHAT_TIMEOUT_SEC)
+            .round() as u64;
+        values.push(json!({"key": "models.local_llm.timeout_sec", "current": configured, "proposed": seconds}));
+    }
     // The same validators startup and reload run; a failure means this window is
     // too small for the shipped shape, not that the proposal should be forced.
     let mut state = if window < TUNED_WINDOW { "scaled" } else { "shipped" };
@@ -156,8 +219,144 @@ pub fn propose(profile: &Value, cfg: &AppConfig, web: &Limits, backend: &Resolve
         "tuned_window": TUNED_WINDOW,
         "values": values,
         "notes": notes,
-        "detail": "Advisory only: nothing was applied. Edit config.yaml (web keys reload; models and chat keys need a restart).",
+        "detail": "Proposals. With models.local_llm.auto_tune on, /model use applies them (budgets only tighten); otherwise edit config.yaml (web keys reload; models and chat keys need a restart).",
     })
+}
+
+/// Web budgets a tuning lowers; never raised past the live snapshot.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WebBudget {
+    pub total_tokens: u64,
+    pub evidence_tokens: u64,
+    pub model_tokens: u64,
+    pub chat_tool_calls: u64,
+}
+
+/// What `auto_tune` installed for one model. Budgets are ceilings combined with
+/// the configured values by `min` where they are read, so a reload that lowers
+/// a configured value still wins.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Tuning {
+    pub model: String,
+    pub window: u64,
+    pub state: String,
+    /// No tool support declared, or no web-chat prompt fits the window.
+    pub tools_off: bool,
+    pub max_tokens: u64,
+    pub compact_prompt_tokens: u64,
+    /// `None` when the window is too small for web chat: limits stay as configured.
+    pub web: Option<WebBudget>,
+    pub timeout_sec: Option<u64>,
+    pub speed: Option<Value>,
+    pub notes: Vec<String>,
+}
+
+impl Tuning {
+    pub fn apply_web(&self, limits: &mut Limits) {
+        if let Some(budget) = &self.web {
+            limits.total_tokens = limits.total_tokens.min(budget.total_tokens);
+            limits.evidence_tokens = limits.evidence_tokens.min(budget.evidence_tokens);
+            limits.model_tokens = limits.model_tokens.min(budget.model_tokens);
+            limits.chat_tool_calls = limits.chat_tool_calls.min(budget.chat_tool_calls as usize);
+        }
+    }
+}
+
+/// The tuning a proposal implies, or `None` when the window is unknown.
+pub fn tuning_from(model: &str, profile: &Value, proposal: &Value, speed: Option<Value>) -> Option<Tuning> {
+    let window = proposal["window"].as_u64()?;
+    let state = proposal["state"].as_str()?.to_string();
+    let value = |key: &str| proposal["values"].as_array()?.iter().find(|row| row["key"] == key)?["proposed"].as_u64();
+    let web = match state.as_str() {
+        "not_viable" => None,
+        _ => Some(WebBudget {
+            total_tokens: value("web.total_tokens")?,
+            evidence_tokens: value("web.evidence_tokens")?,
+            model_tokens: value("web.model_tokens")?,
+            chat_tool_calls: value("web.chat_tool_calls")?,
+        }),
+    };
+    Some(Tuning {
+        model: model.to_string(),
+        window,
+        tools_off: profile["declared"]["tools"] == false || state == "not_viable",
+        state,
+        max_tokens: value("models.local_llm.max_tokens")?,
+        compact_prompt_tokens: value("chat.compact_prompt_tokens")?,
+        web,
+        timeout_sec: value("models.local_llm.timeout_sec"),
+        speed,
+        notes: proposal["notes"]
+            .as_array()
+            .map(|notes| notes.iter().filter_map(|n| n.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
+    })
+}
+
+/// `models.local_llm.auto_tune`: sample the model's speed while holding the
+/// generation gate (this loads it, like warmup), read its loaded window, derive
+/// limits, and install them if `model` is still the selection. Every failure
+/// leaves the configured limits in force and is audited, never surfaced as an error.
+pub async fn tune(state: Arc<AppState>, model: String) {
+    if !state.cfg.flag_is_true("models.local_llm.auto_tune") {
+        return;
+    }
+    if state.cloud_chat.is_cloud_selection(&model) || state.backend.provider != "ollama" {
+        state.set_tuning(None);
+        return;
+    }
+    let skipped = |reason: &str| {
+        state
+            .audit
+            .log(json!({"event": "model_tune_skipped", "model": model, "reason": reason}));
+    };
+    let Ok(limits) = InventoryLimits::from_config(&state.cfg) else {
+        return skipped("inventory_limits");
+    };
+    let keep_alive = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
+    let mut speed = None;
+    for _ in 0..GATE_ATTEMPTS {
+        if let Some(_gate) = state.generation_gate.claim(TUNE_OWNER) {
+            speed = profile::measure(
+                &state.backend.base_url,
+                &model,
+                keep_alive,
+                MEASURE_TIMEOUT,
+                limits.max_bytes,
+            )
+            .await;
+            break;
+        }
+        tokio::time::sleep(GATE_RETRY).await;
+    }
+    let probed = profile::probe(&state.backend.base_url, &model, limits).await;
+    if probed["state"] != "profiled" {
+        return skipped(probed["state"].as_str().unwrap_or("unavailable"));
+    }
+    let proposal = propose(
+        &probed,
+        speed.as_ref(),
+        &state.cfg,
+        &state.runtime_limits().web,
+        &state.backend,
+    );
+    let Some(tuning) = tuning_from(&model, &probed, &proposal, speed) else {
+        return skipped("unknown_window");
+    };
+    if state.current_model() != model {
+        return skipped("selection_changed");
+    }
+    state.audit.log(json!({
+        "event": "model_tuned",
+        "model": model,
+        "window": tuning.window,
+        "state": tuning.state,
+        "tools_off": tuning.tools_off,
+        "max_tokens": tuning.max_tokens,
+        "timeout_sec": tuning.timeout_sec,
+        "decode_tps": tuning.speed.as_ref().map(|s| s["decode_tps"].clone()),
+    }));
+    state.set_tuning(Some(tuning));
 }
 
 #[cfg(test)]
@@ -179,7 +378,7 @@ mod tests {
     fn run(profile: Value) -> Value {
         let cfg = shipped().expect("embedded default parses");
         let web = Limits::load(&cfg).expect("shipped web limits are valid");
-        propose(&profile, &cfg, &web, &backend(Some("none")))
+        propose(&profile, None, &cfg, &web, &backend(Some("none")))
     }
 
     fn loaded(window: u64) -> Value {
@@ -262,11 +461,68 @@ mod tests {
     fn reasoning_backends_floor_compaction_at_a_doubled_reservation() {
         let cfg = shipped().unwrap();
         let web = Limits::load(&cfg).unwrap();
-        let proposal = propose(&loaded(8_192), &cfg, &web, &backend(Some("high")));
+        let proposal = propose(&loaded(8_192), None, &cfg, &web, &backend(Some("high")));
         let reply = value(&proposal, "models.local_llm.max_tokens");
         assert!(
             value(&proposal, "chat.compact_prompt_tokens") >= reply * 2 + MIN_PROMPT_HEADROOM,
             "{proposal}"
         );
+    }
+
+    #[test]
+    fn a_speed_sample_turns_into_a_bounded_timeout() {
+        let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
+        // 24000/1500 = 16 s, (4096 + 10 x 128)/50 = 107.5 s; x2 = 247 s, rounded up to 270.
+        assert_eq!(derived_timeout(&speed, 24_000, 4_096, 10), Some(270));
+        let instant = json!({"prefill_tps": 1e5, "decode_tps": 1e4});
+        assert_eq!(derived_timeout(&instant, 1_000, 256, 1), Some(MIN_TIMEOUT_SEC));
+        let crawl = json!({"prefill_tps": 1.0, "decode_tps": 1.0});
+        assert_eq!(derived_timeout(&crawl, 24_000, 4_096, 10), Some(MAX_TIMEOUT_SEC));
+        assert!(derived_timeout(&json!({"decode_tps": 50.0}), 24_000, 4_096, 10).is_none());
+    }
+
+    #[test]
+    fn a_measured_proposal_becomes_a_tuning_that_only_tightens() {
+        let cfg = shipped().unwrap();
+        let web = Limits::load(&cfg).unwrap();
+        let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
+        let profile = loaded(16_384);
+        let proposal = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
+        // 12000/1500 = 8 s, (2048 + 5 x 128)/50 = 53.8 s; x2 = 124 s, rounded up to 150.
+        assert_eq!(value(&proposal, "models.local_llm.timeout_sec"), 150);
+        let tuning = tuning_from("m", &profile, &proposal, Some(speed)).unwrap();
+        assert_eq!(
+            (tuning.max_tokens, tuning.timeout_sec, tuning.tools_off),
+            (2_048, Some(150), false)
+        );
+        let mut live = web.clone();
+        tuning.apply_web(&mut live);
+        assert_eq!((live.total_tokens, live.chat_tool_calls), (14_000, 5));
+        // A configured value already below the tuning is kept.
+        let mut low = web.clone();
+        low.total_tokens = 9_000;
+        tuning.apply_web(&mut low);
+        assert_eq!(low.total_tokens, 9_000);
+    }
+
+    #[test]
+    fn tool_less_and_too_small_models_get_no_tools_and_cold_ones_no_tuning() {
+        let cfg = shipped().unwrap();
+        let web = Limits::load(&cfg).unwrap();
+        let none = backend(Some("none"));
+        let rewriter = json!({"declared": {"tools": false}, "loaded": {"context_length": 32_768, "gpu_fraction": 1.0}});
+        let tuning = tuning_from(
+            "humanizer",
+            &rewriter,
+            &propose(&rewriter, None, &cfg, &web, &none),
+            None,
+        )
+        .unwrap();
+        assert!(tuning.tools_off && tuning.web.is_some() && tuning.timeout_sec.is_none());
+        let tiny = loaded(2_048);
+        let tuning = tuning_from("tiny", &tiny, &propose(&tiny, None, &cfg, &web, &none), None).unwrap();
+        assert!(tuning.tools_off && tuning.web.is_none());
+        let cold = json!({"declared": {}, "loaded": null});
+        assert!(tuning_from("cold", &cold, &propose(&cold, None, &cfg, &web, &none), None).is_none());
     }
 }

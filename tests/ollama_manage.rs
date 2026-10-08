@@ -16,6 +16,7 @@ struct NativeOllama {
     base: String,
     pulls: Arc<Mutex<Vec<Value>>>,
     generates: Arc<Mutex<Vec<Value>>>,
+    chats: Arc<Mutex<Vec<Value>>>,
     pull_delay_ms: Arc<Mutex<u64>>,
 }
 
@@ -28,9 +29,11 @@ impl NativeOllama {
 async fn start_native_ollama() -> NativeOllama {
     let pulls = Arc::new(Mutex::new(Vec::new()));
     let generates = Arc::new(Mutex::new(Vec::new()));
+    let chats = Arc::new(Mutex::new(Vec::new()));
     let delay = Arc::new(Mutex::new(0u64));
     let p2 = pulls.clone();
     let g2 = generates.clone();
+    let c2 = chats.clone();
     let d2 = delay.clone();
     let app = Router::new()
         .route(
@@ -62,6 +65,17 @@ async fn start_native_ollama() -> NativeOllama {
         .route(
             "/api/show",
             post(|Json(body): Json<Value>| async move {
+                if body.get("num_ctx").is_none() && body["model"] == "humanizer:q8" {
+                    // A rewriting fine-tune whose template has no tool block.
+                    return (
+                        axum::http::StatusCode::OK,
+                        Json(json!({
+                            "details": {"family": "gemma4", "parameter_size": "12.0B", "quantization_level": "Q8_0"},
+                            "model_info": {"general.architecture": "gemma4", "gemma4.context_length": 131072},
+                            "capabilities": ["completion"],
+                        })),
+                    );
+                }
                 if body.get("num_ctx").is_some() || body["model"] != "qwen3.8:27b-mlx" {
                     return (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "fixture-private-missing"})));
                 }
@@ -80,7 +94,10 @@ async fn start_native_ollama() -> NativeOllama {
         .route(
             "/api/ps",
             get(|| async {
-                Json(json!({"models": [{"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20}]}))
+                Json(json!({"models": [
+                    {"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20},
+                    {"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13},
+                ]}))
             }),
         )
         .route(
@@ -88,8 +105,28 @@ async fn start_native_ollama() -> NativeOllama {
             post(move |Json(body): Json<Value>| {
                 let g = g2.clone();
                 async move {
+                    let timed = body["raw"] == true;
                     g.lock().unwrap().push(body);
-                    Json(json!({"done": true}))
+                    // Warmup sends an empty prompt; the auto_tune sample is raw and
+                    // gets Ollama's nanosecond durations: 1500 tok/s in, 50 tok/s out.
+                    Json(if timed {
+                        json!({"done": true, "load_duration": 0, "prompt_eval_count": 300,
+                            "prompt_eval_duration": 200_000_000u64, "eval_count": 64, "eval_duration": 1_280_000_000u64})
+                    } else {
+                        json!({"done": true})
+                    })
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let c = c2.clone();
+                async move {
+                    c.lock().unwrap().push(body);
+                    Json(json!({"model": "humanizer:q8", "choices": [{"finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "Rewritten."}}],
+                        "usage": {"prompt_tokens": 12, "completion_tokens": 2}}))
                 }
             }),
         );
@@ -102,6 +139,7 @@ async fn start_native_ollama() -> NativeOllama {
         base: format!("http://127.0.0.1:{}", addr.port()), // DevSkim: ignore DS162092 because this fixture binds only to loopback.
         pulls,
         generates,
+        chats,
         pull_delay_ms: delay,
     }
 }
@@ -163,6 +201,57 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
     assert_eq!(status, 200);
     let (_, body) = s.get_json("/api/ollama/profile").await;
     assert_eq!(body["state"], "not_probed", "{body}");
+}
+
+#[tokio::test]
+async fn auto_tune_measures_the_selection_and_tightens_its_chat_limits() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default().with("models.local_llm.auto_tune", "true"),
+    )
+    .await;
+    let (status, body) = s.post_json("/api/model", json!({"model": "humanizer:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["tuning"], "pending");
+    // Tuning runs in the background; the read-only profile shows when it lands.
+    let mut profile = Value::Null;
+    for _ in 0..400 {
+        let (_, body) = s.get_json("/api/ollama/profile").await;
+        if !body["tuning"].is_null() {
+            profile = body;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let tuning = &profile["tuning"];
+    assert_eq!(tuning["window"], 16384, "{profile}");
+    assert_eq!(tuning["max_tokens"], 2048, "{profile}");
+    assert_eq!(tuning["tools_off"], true, "{profile}");
+    // 12000/1500 + (2048 + 5 x 128)/50 = 61.8 s; doubled and rounded up to 150.
+    assert_eq!(tuning["timeout_sec"], 150, "{profile}");
+    assert_eq!(tuning["speed"]["decode_tps"], 50.0, "{profile}");
+    // The sample was one raw generate for the selection, never with num_ctx.
+    let generates = ollama.generates.lock().unwrap().clone();
+    assert!(
+        generates
+            .iter()
+            .any(|g| g["raw"] == true && g["model"] == "humanizer:q8"),
+        "{generates:?}"
+    );
+    assert!(generates.iter().all(|g| !g.to_string().contains("num_ctx")));
+    // With web on, chat still offers this tool-less model no tools, and asks for
+    // the tuned reply budget instead of the configured 4096.
+    s.post_json("/api/web", json!({"enabled": true})).await;
+    let (status, reply) = s.post_json("/api/chat", json!({"message": "Rewrite: hello"})).await;
+    assert_eq!(status, 200, "{reply}");
+    let chats = ollama.chats.lock().unwrap().clone();
+    let request = chats.last().expect("chat reached the model");
+    assert_eq!(request["model"], "humanizer:q8");
+    assert_eq!(request["max_tokens"], 2048, "{request}");
+    assert!(request.get("tools").is_none(), "{request}");
+    let (_, status) = s.get_json("/api/status").await;
+    assert_eq!(status["chat_tools_available"], false, "{status}");
 }
 
 #[tokio::test]
