@@ -18,6 +18,8 @@ struct NativeOllama {
     generates: Arc<Mutex<Vec<Value>>>,
     chats: Arc<Mutex<Vec<Value>>>,
     pull_delay_ms: Arc<Mutex<u64>>,
+    /// Delay for the configured model's raw speed sample (the startup tune).
+    sample_delay_ms: Arc<Mutex<u64>>,
 }
 
 impl NativeOllama {
@@ -31,6 +33,8 @@ async fn start_native_ollama() -> NativeOllama {
     let generates = Arc::new(Mutex::new(Vec::new()));
     let chats = Arc::new(Mutex::new(Vec::new()));
     let delay = Arc::new(Mutex::new(0u64));
+    let sample_delay = Arc::new(Mutex::new(0u64));
+    let s2 = sample_delay.clone();
     let p2 = pulls.clone();
     let g2 = generates.clone();
     let c2 = chats.clone();
@@ -104,8 +108,13 @@ async fn start_native_ollama() -> NativeOllama {
             "/api/generate",
             post(move |Json(body): Json<Value>| {
                 let g = g2.clone();
+                let s = s2.clone();
                 async move {
                     let timed = body["raw"] == true;
+                    let ms = *s.lock().unwrap();
+                    if timed && ms > 0 && body["model"] == "qwen3.8:27b-mlx" {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                    }
                     g.lock().unwrap().push(body);
                     // Warmup sends an empty prompt; the auto_tune sample is raw and
                     // gets Ollama's nanosecond durations: 1500 tok/s in, 50 tok/s out.
@@ -141,6 +150,7 @@ async fn start_native_ollama() -> NativeOllama {
         generates,
         chats,
         pull_delay_ms: delay,
+        sample_delay_ms: sample_delay,
     }
 }
 
@@ -206,9 +216,15 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
 #[tokio::test]
 async fn auto_tune_measures_the_selection_and_tightens_its_chat_limits() {
     let ollama = start_native_ollama().await;
+    // The startup tune for the configured model holds the generation gate while
+    // its slow sample runs; the selection's tune must wait for it, then land.
+    *ollama.sample_delay_ms.lock().unwrap() = 1500;
     let s = spawn_server(
         &ollama.openai_url(),
-        ServerOptions::default().with("models.local_llm.auto_tune", "true"),
+        // Polling for the background result must not trip the 60/min API limit.
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("api.rate_limit.max_requests", "1000"),
     )
     .await;
     let (status, body) = s.post_json("/api/model", json!({"model": "humanizer:q8"})).await;
@@ -216,13 +232,15 @@ async fn auto_tune_measures_the_selection_and_tightens_its_chat_limits() {
     assert_eq!(body["tuning"], "pending");
     // Tuning runs in the background; the read-only profile shows when it lands.
     let mut profile = Value::Null;
-    for _ in 0..400 {
-        let (_, body) = s.get_json("/api/ollama/profile").await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        let (status, body) = s.get_json("/api/ollama/profile").await;
+        assert_eq!(status, 200, "{body}");
         if !body["tuning"].is_null() {
             profile = body;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let tuning = &profile["tuning"];
     assert_eq!(tuning["window"], 16384, "{profile}");

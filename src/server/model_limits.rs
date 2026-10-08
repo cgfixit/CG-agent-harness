@@ -36,8 +36,10 @@ const MAX_TIMEOUT_SEC: u64 = 3600;
 pub const TUNE_OWNER: &str = "model_tune";
 /// A cold load of a large model can take minutes; the sample itself takes seconds.
 const MEASURE_TIMEOUT: Duration = Duration::from_secs(180);
-const GATE_ATTEMPTS: u32 = 24;
-const GATE_RETRY: Duration = Duration::from_secs(5);
+/// A busy gate (a chat turn, or the sample for the previous selection) is
+/// retried every half second for up to two minutes.
+const GATE_ATTEMPTS: u32 = 240;
+const GATE_RETRY: Duration = Duration::from_millis(500);
 
 /// Settings scaled with the window: (key, rounding step, minimum).
 const SCALED: [(&str, u64, u64); 6] = [
@@ -316,6 +318,10 @@ pub async fn tune(state: Arc<AppState>, model: String) {
     let keep_alive = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
     let mut speed = None;
     for _ in 0..GATE_ATTEMPTS {
+        // A newer selection starts its own tune; this one stops competing for the gate.
+        if state.current_model() != model {
+            return skipped("selection_changed");
+        }
         if let Some(_gate) = state.generation_gate.claim(TUNE_OWNER) {
             speed = profile::measure(
                 &state.backend.base_url,
