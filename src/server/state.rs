@@ -338,6 +338,22 @@ impl AppState {
         ))
     }
 
+    /// Under the caller's generation gate, before it sizes a call: load a tuned
+    /// `model` that Ollama reports not loaded, then read the window it serves.
+    /// True when it loaded, so the caller recomputes limits it took before the
+    /// gate. Without this, an absent model keeps the 30000 default cap, and a
+    /// prompt that fits its tuned window is refused before anything wakes it.
+    pub async fn load_if_absent(&self, model: &str) -> bool {
+        if self.tuning_for(model).is_none() || self.verified_window(model).is_some() {
+            return false;
+        }
+        if self.probe_window_state(model).await != crate::llm::ollama::LoadedWindow::NotLoaded {
+            return false;
+        }
+        self.load_for_window(model).await;
+        true
+    }
+
     /// Load `model` with the bounded warmup request, then read its window.
     async fn load_for_window(&self, model: &str) {
         let Some(native) = crate::llm::ollama::native_base_url(&self.chat.base_url) else {

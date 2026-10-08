@@ -706,6 +706,11 @@ async fn chat_inner(
             return Err(busy(&busy_owner));
         }
     };
+    // With the gate held, wake a tuned model whose keep_alive expired, so this
+    // turn is sized for the window it will serve, not the 32768 defaults.
+    if !cloud_selected && state.load_if_absent(&model).await {
+        web.limits = state.model_web_limits(&model, live.web.clone());
+    }
 
     tokio::select! {
         biased;

@@ -451,6 +451,38 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     assert_eq!(request["model"], "longctx:q8");
     // Reply budgets still only tighten: the configured 4096 wins over the proposed 8192.
     assert_eq!(request["max_tokens"], 4096, "{request}");
+    // About 40000 tokens of history, inside the 48000 tuned threshold at 65536.
+    let mut session = Value::Null;
+    for turn in 0..5 {
+        let long = format!("turn {turn} {}", "x".repeat(32_000));
+        let (status, reply) = s
+            .post_json("/api/chat", json!({"session_id": session, "message": long}))
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        session = reply["session_id"].clone();
+    }
+    // keep_alive expired: the next turn wakes the model under its gate and is
+    // sized for 65536, so the history is sent whole, not refused or compacted
+    // against the 30000 default of an unknown window.
+    *ollama.longctx_window.lock().unwrap() = 0;
+    *ollama.longctx_load_window.lock().unwrap() = 65536;
+    let before = ollama.generates.lock().unwrap().len();
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"session_id": session, "message": "and now?"}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert!(
+        ollama.generates.lock().unwrap()[before..]
+            .iter()
+            .any(|g| g["model"] == "longctx:q8" && g["prompt"] == ""),
+        "the turn loads the absent model"
+    );
+    let request = ollama.chats.lock().unwrap().last().cloned().unwrap();
+    let sent = request["messages"].to_string();
+    assert!(
+        sent.contains("turn 0 ") && sent.contains("and now?"),
+        "history was compacted or cut"
+    );
 }
 
 #[tokio::test]
