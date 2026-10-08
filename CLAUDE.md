@@ -6,6 +6,12 @@ Where this summary and `AGENTS.md` disagree, `AGENTS.md` wins.
 **Truth order:** code > `assets/config.default.yaml` > `INVARIANTS.md` > `AGENTS.md` > `README.md`.
 Fix prose that contradicts code in the same PR.
 
+## Critical Rules for this project:
+- Ignore docs/learning/* completely unless explicitly requested by owner/operator.
+- generally avoid reading anything under docs/* unless a root project file links to something relevant to a task - 
+The idea is to avoid reading those .md files and .pdfs and .txt files under docs/ unless its for a defensible reason based on your task
+- Going forward add screenshots under the screenshots/ folder but only for significant changes/new features/something warranting a screenshot being stored.
+
 ## CI merge gate
 ```sh
 cargo fmt --all -- --check
