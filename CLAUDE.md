@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Loaded every session. Full manual (follow it literally): `AGENTS.md`;
-contracts: `INVARIANTS.md`. Where this summary and `AGENTS.md` disagree, `AGENTS.md` wins.
+Full manual (follow it literally): `AGENTS.md`; contracts: `INVARIANTS.md`.
+Where this summary and `AGENTS.md` disagree, `AGENTS.md` wins.
 
 **Truth order:** code > `assets/config.default.yaml` > `INVARIANTS.md` > `AGENTS.md` > `README.md`.
 Fix prose that contradicts code in the same PR.
@@ -13,30 +13,26 @@ cargo clippy --all-targets --all-features -- -D warnings
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
 cargo deny check
 ```
-Rust 1.88 is pinned. Blank those three keys; never assert on a real key.
-Locally: fmt and targeted tests, like `cargo test --test invariant_guard` after structural edits.
+Blank those three keys; never assert on a real key.
+Locally: fmt, clippy, then run the changed code; never the full suite (CI runs it).
 
 ## Rules CI catches late, or not at all
 - **I6:** `src/{server,shim,llm,common}` never import `crate::agentic`; `src/agentic` never
-  imports server or shim. A new action changes `shim::ACTIONS`, `agentic/commands.rs::dispatch`
-  and the guard's whitelist together.
+  imports server or shim.
 - **Core paths:** `src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`,
-  `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`. Read `INVARIANTS.md` first;
-  put an invariant statement in the PR body.
+  `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`. Read `INVARIANTS.md` first.
 - **Write gates:** `agentic.enabled`, `deepagent_github.enabled`, `deepagent_github.allow_git_write_tools`
   ship `false`. Quoted `"true"` is off. `confirm` is never defaulted; `reason` is never optional.
-- **The browser never supplies a command:** profile names map to fixed argv; free text crosses
-  as one `--opt=value` element or a temp file.
-- New route → `REGISTERED_PATHS`. `/api/agent/run` and `/api/agent/jobs` both go through `prepare_run`.
+- **The browser never supplies a command:** fixed argv only; free text is one `--opt=value`
+  element or a temp file.
 - Never rename `__CYCLAW_CSRF_TOKEN__`, `__CYCLAW_CSP_NONCE__` or `X-CyClaw-CSRF`. Never "dedupe"
   `RUN_ID_PATTERN`, the planner/check timeouts or the check-profile table across the boundary.
 - Write only inside `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`) or a pipeline clone
   under `data/agentic/workspaces`.
 
 ## Docs and PRs
-- Edit the section that owns a topic; never create `.md` files (`DOCS_BUDGET` in
-  `tests/invariant_guard.rs` fails on one). Evidence goes in the PR body.
-- Branch `claude/<kebab-topic>` off `main`; title `[prefix] - Sentence` (invariant, security, infra,
-  fix, docs, harness, agentic, test, feat); draft, one concern, body from
-  `.github/PULL_REQUEST_TEMPLATE.md` via `scripts/check-pr-template.sh`.
+- Edit the section that owns a topic; never create `.md` files. `DOCS_BUDGET` caps words
+  per file and group.
+- Draft PR off `main`, one concern; branch, title and body follow
+  `.github/PULL_REQUEST_TEMPLATE.md`, checked by `scripts/check-pr-template.sh`.
 - Loading a skill never authorizes push, merge or release.

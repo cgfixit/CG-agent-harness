@@ -229,6 +229,28 @@ pub async fn list_tags(native: &str, limits: InventoryLimits) -> Vec<Value> {
     }
 }
 
+/// The window Ollama loaded `model` with, read from `GET /api/ps` within the
+/// inventory bounds. Read-only and never sends `num_ctx`; failure is `None`.
+pub async fn loaded_context_window(native: &str, model: &str, limits: InventoryLimits) -> Option<u64> {
+    let client = http_client(limits.timeout).ok()?;
+    let mut response = client
+        .get(format!("{native}/api/ps"))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if chunk.len() > limits.max_bytes.saturating_sub(bytes.len()) {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    // One parser for `/api/ps` rows: the one `/model profile` uses.
+    crate::llm::profile::parse_ps(&serde_json::from_slice(&bytes).ok()?, model)?["context_length"].as_u64()
+}
+
 pub async fn snapshot(endpoint: &str, model: &str, key: &str, cfg: &AppConfig) -> Result<Value> {
     let Some(native) = native_base_url(endpoint) else {
         return Ok(json!({
