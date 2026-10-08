@@ -1212,20 +1212,26 @@ const WINDOW_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// refresh interval. `None` when unknown (not loaded, not reported, not a
 /// loopback Ollama endpoint); a check that cannot run never blocks a turn.
 /// A failed read is cached too, so an endpoint without `/api/ps` is not
-/// probed again (up to the inventory timeout) on every turn.
+/// probed again (up to the inventory timeout) on every turn. The live read
+/// wins over the window `auto_tune` recorded at selection, which goes stale
+/// once Ollama restarts with the larger window this warning asks for; that
+/// recorded window is used only when the live read fails.
 async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
     let refresh = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
-    if let Some(window) = state.ollama.cached_window(model, refresh) {
-        return window;
-    }
-    let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
-    let mut limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
-    // The turn still holds the generation gate here: a loopback /api/ps answers
-    // in milliseconds, so a slow one is skipped (and cached) rather than waited on.
-    limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
-    let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
-    state.ollama.store_window(model, window);
-    window
+    let live = match state.ollama.cached_window(model, refresh) {
+        Some(window) => window,
+        None => {
+            let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
+            let mut limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
+            // The turn still holds the generation gate here: a loopback /api/ps answers
+            // in milliseconds, so a slow one is skipped (and cached) rather than waited on.
+            limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
+            let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
+            state.ollama.store_window(model, window);
+            window
+        }
+    };
+    live.or_else(|| state.tuning_for(model).map(|tuning| tuning.window))
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.
