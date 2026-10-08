@@ -296,13 +296,13 @@ For customization, compare three disliked responses with your preferred rewrites
 and explain each difference. Use observable rules such as "answer before
 explanation" or "no repeated closing summary" instead of "sound human."
 
-**Style presets.** `/style <name>` selects a session preset in its JSON;
+**Style presets.** `/style <name>` selects a session preset;
 `/style off` is the default and `/style` prints
 the active preset. Shipped: `code-review`, `concise`, `design`,
 `research`, and `technical`
 ([`data/styles/`](../data/styles/)). An overlay at
-`$CGAGENTHARNESS_HOME/styles/<name>.md` wins. The status-bar selector is
-equivalent. Prompt order is soul, style, then fixed policy, so style cannot
+`$CGAGENTHARNESS_HOME/styles/<name>.md` wins. The selector creates a session if needed.
+Prompt order is soul, style, then fixed policy, so style cannot
 override the contract. `/prompt` reports load failures and omits an unreadable,
 empty, missing, or scanner-refused overlay.
 
