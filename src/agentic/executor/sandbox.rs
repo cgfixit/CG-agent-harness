@@ -585,6 +585,8 @@ mod tests {
         assert_eq!(crate::agentic::cli::exit_code_for(&both), crate::agentic::cli::EXIT_ENV);
     }
 
+    // Bubblewrap's host root is the Unix `/`; Windows uses the Job Object backend.
+    #[cfg(unix)]
     #[test]
     fn bwrap_argv_refuses_host_root_read_root() {
         let candidate = tempfile::tempdir().unwrap();
