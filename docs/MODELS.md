@@ -55,10 +55,10 @@ ollama show qwen3.8:27b
 
 Configure both `models.local_llm.model` (chat) and
 `agentic.deepagent_github.model` (planner) with your chosen tag in [first run](INSTALL.md#6-first-run).
-`/model use <tag>` changes chat selection only; inspect `/status` after restart.
+`/model use <tag>` changes chat selection only; check `/status`.
 
-The shipped `qwen3.8:27b-mlx` default does not verify installation. Chat uses `models.local_llm.base_url`; the
-planner uses `agentic.deepagent_github.base_url`. Both local paths require a
+The shipped `qwen3.8:27b-mlx` default does not verify installation. Chat uses
+`models.local_llm.base_url`; the planner uses `agentic.deepagent_github.base_url`. Both local paths require a
 loopback OpenAI-compatible service — which is also how a fine-tuned MLX model is
 served; see [FINETUNE.md](FINETUNE.md) for the QLoRA workflow.
 
@@ -77,10 +77,10 @@ and planner models**. Both use bounded `/models` inventories:
 `/model` reports selection and `/model profile` its loaded window, proposed
 limits and any tuning; `/model use <tag>` persists it without downloading. With
 `models.local_llm.auto_tune: true` it also loads the model, times one short
-generate and applies per-model limits (budgets only tighten; the chat timeout and
-`web.synthesis_seconds` follow measured speed; a model without tools gets none).
-Above 32768, proposals scale up; set them in `config.yaml` (`auto_tune` only
-lowers); caps follow the measured window, up to 131072.
+generate and applies per-model limits (budgets only tighten; chat and same-model
+planner timeouts and `web.synthesis_seconds` follow measured speed; a tool-less
+model gets none). Above 32768, proposals scale up; set them in `config.yaml`
+(`auto_tune` only lowers); caps follow the measured window, up to 131072.
 This shared selection can override configuration, including fallback.
 Check it against the active local endpoint. For explicit cloud chat, use
 `/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only

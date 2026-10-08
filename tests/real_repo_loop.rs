@@ -1143,6 +1143,45 @@ async fn real_repo_run_smoke_end_to_end() {
         &home,
     );
     assert_eq!(code, 3, "bad checks file: {err}");
+    // A planner timeout passed by the server replaces the configured 30 s:
+    // out-of-range values are refused, and a 1 s one cuts off a 3 s planner.
+    let slow_run = |timeout: &str| {
+        ra(
+            &config,
+            &[
+                "real-repo-run",
+                "--instruction=make target.txt say goodbye",
+                "--checks-file",
+                checks.to_str().unwrap(),
+                "--branch=claude/slow-planner",
+                "--commit-message=m",
+                "--reason=r",
+                "--confirm",
+                &format!("--planner-timeout-sec={timeout}"),
+            ],
+            &env,
+            &home,
+        )
+    };
+    for bad in ["0", "3601", "soon"] {
+        let (code, _, err) = slow_run(bad);
+        assert_eq!(code, 2, "--planner-timeout-sec={bad}: {err}");
+        assert!(err.contains("--planner-timeout-sec must be 1-3600"), "{err}");
+    }
+    model.set_delay_ms(3_000);
+    let (code, out, err) = slow_run("1");
+    model.set_delay_ms(0);
+    assert_ne!(code, 0, "stdout={out} stderr={err}");
+    assert!(
+        format!("{out}{err}").contains("ReadTimeout after 1s"),
+        "stdout={out} stderr={err}"
+    );
+    // The flag's value is the measured one: the remedy names auto_tune, not the
+    // configured setting this run ignored.
+    assert!(
+        format!("{out}{err}").contains("auto_tune derived"),
+        "stdout={out} stderr={err}"
+    );
     // The run.
     let (code, out, err) = ra(
         &config,

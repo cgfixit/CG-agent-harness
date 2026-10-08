@@ -31,7 +31,14 @@ const TIMEOUT_SAFETY: f64 = 2.0;
 /// Tokens a tool-call round adds to the reply side of the estimate.
 const TOOL_ROUND_TOKENS: u64 = 128;
 const MIN_TIMEOUT_SEC: u64 = 120;
-const MAX_TIMEOUT_SEC: u64 = 3600;
+/// Ceiling for derived chat and planner timeouts; the agentic child mirrors it
+/// (`agentic::commands::MAX_PLANNER_TIMEOUT_SEC`, checked by `invariant_guard`).
+pub const MAX_TIMEOUT_SEC: u64 = 3600;
+/// The longest derived planner timeout that leaves room for one iteration:
+/// itself, one check and the run overhead within the synchronous run cap.
+const MAX_PLANNER_TIMEOUT_SEC: u64 = crate::shim::REAL_REPO_RUN_MAX_TIMEOUT_SEC
+    - crate::shim::REAL_REPO_RUN_CHECK_SEC
+    - crate::shim::REAL_REPO_RUN_OVERHEAD_SEC;
 /// Synthesis prompt tokens beside the evidence: instructions, question, framing.
 const SYNTHESIS_PROMPT_OVERHEAD: u64 = 1_000;
 const MIN_SYNTHESIS_SEC: u64 = 60;
@@ -44,6 +51,7 @@ const MEASURE_TIMEOUT: Duration = Duration::from_secs(180);
 /// retried every half second for up to two minutes.
 const GATE_ATTEMPTS: u32 = 240;
 const GATE_RETRY: Duration = Duration::from_millis(500);
+const DEFAULT_PLANNER_MAX_TOKENS: u64 = 3_072;
 
 /// Settings scaled with the window: (key, rounding step, minimum).
 const SCALED: [(&str, u64, u64); 6] = [
@@ -246,6 +254,32 @@ pub fn propose(
         set_path(&mut candidate, "web.synthesis_seconds", seconds);
         values.push(json!({"key": "web.synthesis_seconds", "current": web.synthesis_seconds, "proposed": seconds}));
     }
+    // The coding planner, when it runs this model: its prompt at prefill speed
+    // and one planner_max_tokens reply at decode speed, padded like chat. A run
+    // can carry a PR diff, issue, plan and file contents, so the prompt is sized
+    // for the most the measured window admits, not the ~6000-token baseline.
+    let planner_model = cfg.str_or("agentic.deepagent_github.model", "");
+    if profile["model"]
+        .as_str()
+        .is_some_and(|model| crate::llm::profile::same_model(model, &planner_model))
+    {
+        let planner_reply = cfg.u64_or(
+            "agentic.deepagent_github.planner_max_tokens",
+            DEFAULT_PLANNER_MAX_TOKENS,
+        );
+        // Held where one iteration with one check still fits the run cap:
+        // a longer planner timeout would make every coding run unbudgetable.
+        if let Some(seconds) = speed
+            .and_then(|speed| derived_timeout(speed, compaction::prompt_cap(Some(window)), planner_reply, 0))
+            .map(|seconds| seconds.min(MAX_PLANNER_TIMEOUT_SEC))
+        {
+            let configured = cfg.u64_or(
+                "agentic.deepagent_github.planner_timeout_sec",
+                crate::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,
+            );
+            values.push(json!({"key": "agentic.deepagent_github.planner_timeout_sec", "current": configured, "proposed": seconds}));
+        }
+    }
     // The same validators startup and reload run; a failure means this window is
     // too small for the shipped shape, not that the proposal should be forced.
     let mut state = match window.cmp(&TUNED_WINDOW) {
@@ -312,6 +346,8 @@ pub struct Tuning {
     pub timeout_sec: Option<u64>,
     /// Measured `/web research` answer deadline; `None` without a speed sample.
     pub synthesis_seconds: Option<u64>,
+    /// Set when the coding planner runs this model; agent runs then use it.
+    pub planner_timeout_sec: Option<u64>,
     pub speed: Option<Value>,
     pub notes: Vec<String>,
 }
@@ -363,6 +399,7 @@ pub fn tuning_from(model: &str, profile: &Value, proposal: &Value, speed: Option
         web,
         timeout_sec: value("models.local_llm.timeout_sec"),
         synthesis_seconds: value("web.synthesis_seconds"),
+        planner_timeout_sec: value("agentic.deepagent_github.planner_timeout_sec"),
         speed,
         notes: proposal["notes"]
             .as_array()
@@ -560,6 +597,41 @@ mod tests {
             value(&shipped_size, "models.local_llm.timeout_sec"),
             "{large}"
         );
+    }
+
+    #[test]
+    fn the_planner_gets_a_timeout_only_when_it_runs_the_measured_model() {
+        let cfg = shipped().expect("embedded default parses");
+        let web = Limits::load(&cfg).expect("shipped web limits are valid");
+        let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
+        let mut profile = loaded(TUNED_WINDOW);
+        profile["model"] = json!("qwen3.8:27b-mlx");
+        let proposal = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
+        // The window's 30000-token prompt cap: 30000/1500 + 3072/50 = 81.4 s;
+        // doubled and rounded up to 180.
+        assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 180);
+        let tuning = tuning_from("qwen3.8:27b-mlx", &profile, &proposal, Some(speed.clone())).unwrap();
+        assert_eq!(tuning.planner_timeout_sec, Some(180));
+        // An untagged planner name is the same model as its :latest tag.
+        let mut aliased = cfg.clone();
+        aliased.raw["agentic"]["deepagent_github"]["model"] = "qwen3.8".into();
+        let mut latest = loaded(TUNED_WINDOW);
+        latest["model"] = json!("qwen3.8:latest");
+        let proposal = propose(&latest, Some(&speed), &aliased, &web, &backend(Some("none")));
+        assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 180);
+        // Another model, or no sample: the configured planner timeout stays.
+        profile["model"] = json!("humanizer:q8");
+        let other = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
+        assert!(!other.to_string().contains("planner_timeout_sec"), "{other}");
+        profile["model"] = json!("qwen3.8:27b-mlx");
+        // A crawling model is held where one iteration with one check fits.
+        let crawl = json!({"prefill_tps": 1.0, "decode_tps": 1.0});
+        let slow = propose(&profile, Some(&crawl), &cfg, &web, &backend(Some("none")));
+        let held = value(&slow, "agentic.deepagent_github.planner_timeout_sec");
+        assert_eq!(held, MAX_PLANNER_TIMEOUT_SEC);
+        assert!(crate::shim::real_repo_run_budget_sec(held, Some(1), 1) <= crate::shim::REAL_REPO_RUN_MAX_TIMEOUT_SEC);
+        let unsampled = propose(&profile, None, &cfg, &web, &backend(Some("none")));
+        assert!(!unsampled.to_string().contains("planner_timeout_sec"), "{unsampled}");
     }
 
     #[test]

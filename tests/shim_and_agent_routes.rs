@@ -64,6 +64,22 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
         !argv.contains(&"--confirm".to_string()),
         "confirm was not set, so no flag"
     );
+    assert!(
+        !argv.iter().any(|a| a.starts_with("--planner-timeout-sec")),
+        "untuned runs keep the configured planner timeout"
+    );
+    assert_eq!(
+        shim::timeout_for(&c, &req).as_secs(),
+        shim::real_repo_run_timeout_sec(720, Some(2), 1)
+    );
+    // A speed-derived planner timeout budgets the child and crosses as one element.
+    req.planner_timeout_sec = Some(150);
+    let (tuned, _) = shim::build_argv(&c, &req).unwrap();
+    assert!(tuned.contains(&"--planner-timeout-sec=150".to_string()), "{tuned:?}");
+    assert_eq!(
+        shim::timeout_for(&c, &req).as_secs(),
+        shim::real_repo_run_timeout_sec(150, Some(2), 1)
+    );
     assert_eq!(temps.len(), 2, "checks file + plan file");
     let checks_idx = argv.iter().position(|a| a == "--checks-file").unwrap();
     let manifest: serde_json::Value =

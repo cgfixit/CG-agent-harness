@@ -2783,6 +2783,7 @@ async function runSlash(line, webCommand) {
               ['web total / evidence tokens', t.web ? w.total_tokens + ' / ' + w.evidence_tokens : 'as configured'],
               ['web tool calls', t.web ? String(w.chat_tool_calls) : 'as configured'],
               ['chat timeout (s)', t.timeout_sec ? String(t.timeout_sec) : 'as configured'],
+              ['planner timeout (s)', p.planner_timeout_sec ? String(p.planner_timeout_sec) : 'as configured'],
               ['web tools for this model', t.tools_off ? 'off' : 'on'],
             ], ['applied by auto_tune', 'value']));
             sys('Applied budgets are ceilings: a lower configured value still wins.');

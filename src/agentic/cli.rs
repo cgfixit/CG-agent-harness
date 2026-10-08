@@ -107,7 +107,7 @@ const VALUE_OPTS: [&str; 15] = [
     "max-iterations",
     "run-id",
 ];
-const VALUE_OPTS_EXTRA: [&str; 3] = ["decision", "provider", "out"];
+const VALUE_OPTS_EXTRA: [&str; 4] = ["decision", "provider", "out", "planner-timeout-sec"];
 const FLAG_OPTS: [&str; 6] = ["repo", "no-diff", "confirm", "confirm-online", "push", "publish"];
 const FLAG_OPTS_EXTRA: [&str; 1] = ["confirm-publish"];
 
