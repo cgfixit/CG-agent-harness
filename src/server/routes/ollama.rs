@@ -57,6 +57,9 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
     }
     value["auto_tune"] = json!(state.cfg.flag_is_true("models.local_llm.auto_tune"));
     value["tuning"] = json!(tuning.as_deref());
+    // What a coding run will actually use, which can differ from the tuning's
+    // value when the planner runs on another endpoint or model.
+    value["planner_timeout_sec"] = json!(super::agent::planner_timeout_sec(&state));
     // What a chat turn on this model is held to now, computed the way chat does
     // (before a session calibrates its token ratio): configured values, lowered
     // by any tuning, under caps that grow only with a measured window above 32768.

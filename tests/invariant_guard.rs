@@ -176,6 +176,12 @@ fn duplicated_constants_still_agree() {
         cgagentharness::shim::REAL_REPO_RUN_CHECK_SEC,
         cgagentharness::agentic::executor::DEFAULT_CHECK_TIMEOUT_SEC
     );
+    // The server derives --planner-timeout-sec up to its ceiling; the child
+    // must accept every value the server can send.
+    assert_eq!(
+        cgagentharness::server::model_limits::MAX_TIMEOUT_SEC,
+        cgagentharness::agentic::commands::MAX_PLANNER_TIMEOUT_SEC
+    );
     for (name, _) in cgagentharness::server::agent_policy::available_profiles() {
         let resolved =
             cgagentharness::server::agent_policy::resolve_check_profiles(std::slice::from_ref(&name)).unwrap();

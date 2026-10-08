@@ -89,6 +89,10 @@ pub struct OpsRequest {
     pub max_iterations: Option<i64>,
     pub run_id: Option<String>,
     pub decision: Option<String>,
+    /// `real-repo-run` only: a planner timeout the server derived from the
+    /// planner model's measured speed. The same value budgets the child here and
+    /// crosses as `--planner-timeout-sec`; `None` keeps the configured one.
+    pub planner_timeout_sec: Option<u64>,
 }
 
 impl OpsRequest {
@@ -387,6 +391,9 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
                     argv.push(n.to_string());
                 }
             }
+            if let Some(seconds) = req.planner_timeout_sec {
+                argv.push(format!("--planner-timeout-sec={seconds}"));
+            }
             if req.confirm {
                 argv.push("--confirm".into());
             }
@@ -427,7 +434,7 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
 pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
     let secs = if req.action == "real-repo-run" {
         real_repo_run_timeout_sec(
-            ctx.planner_timeout_sec,
+            req.planner_timeout_sec.unwrap_or(ctx.planner_timeout_sec),
             req.max_iterations,
             req.checks.as_ref().map(|c| c.len()).unwrap_or(0),
         )

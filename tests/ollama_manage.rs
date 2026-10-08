@@ -486,6 +486,35 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
 }
 
 #[tokio::test]
+async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
+    let ollama = start_native_ollama().await;
+    let planner_url = format!("\"{}\"", ollama.openai_url());
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("api.rate_limit.max_requests", "1000")
+            .with("agentic.deepagent_github.base_url", &planner_url),
+    )
+    .await;
+    // The startup tune measures qwen3.8:27b-mlx, which is also the planner model.
+    let body = wait_for_tuning(&s, 32768).await;
+    assert_eq!(body["tuning"]["planner_timeout_sec"], 180, "{body}");
+    let run = json!({"instruction": "fix the parser", "branch": "claude/parser-fix",
+        "commit_message": "fix: parser", "reason": "triage", "max_iterations": 10,
+        "checks": ["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]});
+    let (status, resp) = s.post_json("/api/agent/run", run).await;
+    assert_eq!(status, 422, "{resp}");
+    let details = &resp["detail"]["details"];
+    // Budgeted with 180 s per planner call instead of the configured 720.
+    let budget = |planner, n| cgagentharness::shim::real_repo_run_budget_sec(planner, Some(n), 5);
+    let fit = |planner| (1..=10).filter(|n| budget(planner, *n) <= 3600).max().unwrap_or(0);
+    assert_eq!(details["estimated_sec"], budget(180, 10), "{resp}");
+    assert_eq!(details["max_iterations_that_fit"], fit(180), "{resp}");
+    assert!(fit(180) > fit(720), "{resp}");
+}
+
+#[tokio::test]
 async fn pull_posts_name_without_num_ctx_and_refreshes_inventory() {
     let ollama = start_native_ollama().await;
     let s = spawn_server(&ollama.openai_url(), ServerOptions::default()).await;
