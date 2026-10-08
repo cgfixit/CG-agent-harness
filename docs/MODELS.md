@@ -1,5 +1,7 @@
 # Select an installed model and check Ollama
 
+> https://github.com/cgfixit/CG-agent-harness/issues/391
+
 Index: [README.md](../README.md). Set `OLLAMA_CONTEXT_LENGTH=32768` before starting Ollama for seeded web budgets. The harness sends no `num_ctx`.
 
 ## 4. Select an installed model and check Ollama
