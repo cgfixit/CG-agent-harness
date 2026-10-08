@@ -183,7 +183,7 @@ Bounds and capability policy: [MCP_CLIENT.md](MCP_CLIENT.md). `/loop` has no MCP
 | POST | `/api/agent/runs/{run_id}/publish` | Open a draft PR |
 | POST | `/api/agent/runs/{run_id}/discard` | Discard a run |
 
-Run and job creation share `agent::prepare_run`, then spawn through the shim; see [CONSOLE_JOBS.md](CONSOLE_JOBS.md) and
+Run and job creation share `agent::prepare_run`, then spawn through the shim; see
 [CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
 `GET /api/agent/runs` lists metadata only while `agentic.enabled` is literal true. Otherwise it is HTTP 409 `AGENTIC_DISABLED` and does not read or reconcile records; detail, decision, push, and discard do the same. `GET /api/github/status` stays HTTP 200.
 

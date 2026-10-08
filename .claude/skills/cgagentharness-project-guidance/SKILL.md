@@ -66,7 +66,6 @@ Core paths always require an invariant statement in the PR body when touched:
 | `cgagentharness-gotchas` | Install/verify, desktop packaging, Chrome acceptance CI, clippy fights, write-gate debugging, "hangs" / false greens |
 | `cgagentharness-write-policy-redteam` | Hardening or changing writer, write gates, git approval, shim argv encoding, or clone jail |
 | `cgagentharness-config-guard` | Before merging `assets/config.default.yaml` changes; when asked to check config |
-| `cgagentharness-parity` | Updating CyClaw↔harness parity contracts; reading `docs/parity/*` or `scripts/parity-status.py`. Manual-only: `disable-model-invocation: true`, so ask the operator to run `/cgagentharness-parity` rather than self-loading it |
 | `verification-specialist` | Adversarial independent verify of a *supplied* change (try to break it; no project mutation) |
 | `cgagentharness-verify` | Running or extending the local/CI smoke/acceptance bar (distinct from verification-specialist) |
 | `cgagentharness-release` | Packaging, signing, checksum embed, release artifacts |
@@ -99,5 +98,5 @@ complete.
 
 Sources refreshed for this task. Proceed to the task-specific skill (verify,
 verification-specialist, release, optimize, invariant-guard, config-guard,
-write-policy-redteam, parity, gotchas, or fable-protocol) or to the requested
+write-policy-redteam, gotchas, or fable-protocol) or to the requested
 engineering work — without expanding scope.

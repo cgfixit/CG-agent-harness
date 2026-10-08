@@ -32,7 +32,7 @@ digest="$(shasum -a 256 "$sidecar" | awk '{print $1}')"
 # GUI or touch a harness home.
 [[ "$(env -i PATH=/usr/bin:/bin CGAGENTHARNESS_HOME=/nonexistent/never-opened "$shell" --bundled-backend-sha256)" == "$digest" ]] \
   || { echo "Staged sidecar SHA-256 is not the digest compiled into the shell (post-bundle codesign)." >&2; exit 1; }
-for resource in prepare-cargo.py icon.icns DESKTOP.md DESKTOP_ACCEPTANCE.md PROCESS_LIFECYCLE.md SECURE_RESEARCH.md DEPENDENCIES.md COMMIT; do
+for resource in prepare-cargo.py icon.icns DESKTOP.md PROCESS_LIFECYCLE.md SECURE_RESEARCH.md DEPENDENCIES.md COMMIT; do
   [[ -s "$app/Contents/Resources/$resource" ]]
 done
 "$app/Contents/MacOS/cgagentharness" --help | grep -q serve

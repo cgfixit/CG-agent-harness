@@ -61,8 +61,8 @@ Configure both `models.local_llm.model` (chat) and
 
 The shipped `qwen3.8:27b-mlx` default does not verify installation. Chat uses
 `models.local_llm.base_url`; the planner uses `agentic.deepagent_github.base_url`. Both local paths require a
-loopback OpenAI-compatible service — which is also how a fine-tuned MLX model is
-served; see [FINETUNE.md](FINETUNE.md) for the QLoRA workflow.
+loopback OpenAI-compatible service, which is also how a fine-tuned MLX model is
+served.
 
 ### Exact-model diagnostics and optional fallback
 
@@ -127,4 +127,4 @@ Inventory and fallback probes are bounded by `models.local_llm.inventory` and
 [resolver](../src/llm/backend.rs) and [inventory checks](../src/llm/inventory.rs).
 
 See
-[desktop details](DESKTOP.md) and [the native matrix](DESKTOP_ACCEPTANCE.md).
+[desktop details](DESKTOP.md).

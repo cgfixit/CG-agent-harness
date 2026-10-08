@@ -250,6 +250,6 @@ Load `cgagentharness-project-guidance` for read order;
 `cgagentharness-invariant-guard` / `cgagentharness-config-guard` before merging
 core-path or config diffs; `cgagentharness-write-policy-redteam` for write/git/
 argv/jail hardening loops; `verification-specialist` to adversarially verify a
-supplied patch; `cgagentharness-parity` for CyClaw↔harness ledger work;
+supplied patch;
 `cgagentharness-verify` / `cgagentharness-release` / `cgagentharness-optimize`
 for those jobs; `fable-protocol` for evidence-first discipline.

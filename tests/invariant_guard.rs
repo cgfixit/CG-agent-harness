@@ -631,7 +631,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1400),
     // why: port of CyClaw's otel-hardening skill (telemetry-kill contract for a Rust tree); 1241 words, rounded up to the next 100.
     (".claude/skills/cgagentharness-otel-hardening/SKILL.md", Agent, 1300),
-    (".claude/skills/cgagentharness-parity/SKILL.md", Agent, 500),
     (".claude/skills/cgagentharness-project-guidance/SKILL.md", Agent, 800),
     (
         ".claude/skills/cgagentharness-runtime-invariant-check/SKILL.md",
@@ -653,7 +652,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".codex/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".codex/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
     (".codex/skills/cgagentharness-optimize/SKILL.md", Agent, 500),
-    (".codex/skills/cgagentharness-parity/SKILL.md", Agent, 500),
     (".codex/skills/cgagentharness-project-guidance/SKILL.md", Agent, 800),
     (".codex/skills/cgagentharness-release/SKILL.md", Agent, 400),
     (".codex/skills/cgagentharness-verify/SKILL.md", Agent, 300),
@@ -688,13 +686,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     ("docs/CONSOLE.md", Guide, 6700),
-    ("docs/CONSOLE_JOBS.md", Guide, 1400),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2900),
-    ("docs/DESKTOP_ACCEPTANCE.md", Evidence, 3000),
-    // why: #241 folded the MLX QLoRA guide and finetune/README.md in here.
-    ("docs/FINETUNE.md", Guide, 1200),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     ("docs/GITHOOKS.md", Guide, 1400),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
@@ -718,9 +712,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/USER_MANUAL.md", Guide, 500),
     // why: operator netconnect user guide; 3392 words after the review corrections, rounded up to the next 100.
     ("docs/netconnect.md", Guide, 3400),
-    ("docs/parity/CONTRACTS.md", Guide, 700),
-    ("docs/parity/STATUS.md", Guide, 1300),
-    ("docs/parity/WORK.md", Guide, 500),
     ("docs/screenshots/README.md", Evidence, 200),
 ];
 
@@ -741,6 +732,20 @@ const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 46_700), (Evi
 /// instead of leaving room to regrow.
 const DOCS_GROUP_SLACK: usize = 1_000;
 
+/// Word cap for a folder `README.md` with no `DOCS_BUDGET` row: an index of
+/// what the folder holds and where the full doc lives, never a second copy.
+/// A row, when present, wins over this fallback.
+const FOLDER_README_WORDS: usize = 150;
+
+/// The budget row a folder `README.md` gets when `DOCS_BUDGET` has none.
+fn folder_readme_row(path: &str) -> Option<(Kind, usize)> {
+    if !path.ends_with("/README.md") {
+        return None;
+    }
+    let agent = [".claude/", ".codex/", ".github/"].iter().any(|p| path.starts_with(p));
+    Some((if agent { Agent } else { Guide }, FOLDER_README_WORDS))
+}
+
 /// All historical root captures were relocated to `docs/screenshots/`.
 /// Nothing may join this grandfather list.
 const ROOT_SCREENSHOTS: &[&str] = &[];
@@ -750,8 +755,6 @@ const DOCS_PDFS: &[&str] = &[
     "docs/learning/AI for code complexity optimization A hybrid perspective.pdf",
     "docs/learning/Guide_to_AI_Software_Design_From_Con.pdf",
     "docs/learning/Intro-to-Rust-from-Python-PowerShell.pdf",
-    "docs/learning/comprehensive-rust.pdf",
-    "docs/learning/rust_book.pdf",
     "docs/learning/rust_cheat_sheet_a4.pdf",
 ];
 
@@ -760,8 +763,6 @@ const DOCS_PDFS: &[&str] = &[
 const LARGE_FILES: &[&str] = &[
     "desktop/icons/icon.png",
     "docs/learning/AI for code complexity optimization A hybrid perspective.pdf",
-    "docs/learning/comprehensive-rust.pdf",
-    "docs/learning/rust_book.pdf",
     "docs/learning/rust_cheat_sheet_a4.pdf",
 ];
 
@@ -795,7 +796,12 @@ fn docs_budget_violations(
     }
     let mut totals: Vec<(Kind, usize)> = group_caps.iter().map(|&(kind, _)| (kind, 0)).collect();
     for (path, words) in markdown {
-        let Some(&(_, kind, cap)) = budget.iter().find(|row| row.0 == path) else {
+        let row = budget
+            .iter()
+            .find(|row| row.0 == path)
+            .map(|&(_, kind, cap)| (kind, cap))
+            .or_else(|| folder_readme_row(path));
+        let Some((kind, cap)) = row else {
             out.push(format!(
                 "{path} ({words} words) has no DOCS_BUDGET row. Edit the section that owns this topic \
                  instead of adding a file; a new doc needs the operator's approval, a row and a `// why:`."
@@ -990,6 +996,40 @@ fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
         ),
         "docs/NOTES.md (1 words) has no DOCS_BUDGET row",
     );
+    // A folder README needs no row but stays under FOLDER_README_WORDS and counts
+    // toward its group; an explicit row still wins.
+    assert!(docs_budget_violations(
+        &md(&[
+            ("docs/A.md", 50),
+            ("docs/B.md", 1),
+            ("src/README.md", FOLDER_README_WORDS)
+        ]),
+        budget,
+        caps
+    )
+    .is_empty());
+    expect(
+        docs_budget_violations(
+            &md(&[
+                ("docs/A.md", 1),
+                ("docs/B.md", 1),
+                ("src/README.md", FOLDER_README_WORDS + 1),
+            ]),
+            budget,
+            caps,
+        ),
+        "src/README.md has 151 words, over its cap of 150",
+    );
+    expect(
+        docs_budget_violations(
+            &md(&[("docs/A.md", 1), ("docs/B.md", 1), (".claude/README.md", 1)]),
+            budget,
+            caps,
+        ),
+        "Agent has no DOCS_GROUP_CAPS entry",
+    );
+    assert_eq!(folder_readme_row("README.md"), None);
+    assert_eq!(folder_readme_row("docs/x.md"), None);
     // So does growing past a file cap, a group cap, or deleting a file without its row.
     expect(
         docs_budget_violations(&md(&[("docs/A.md", 101), ("docs/B.md", 1)]), budget, caps),

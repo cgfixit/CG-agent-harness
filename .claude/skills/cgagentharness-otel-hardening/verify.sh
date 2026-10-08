@@ -45,12 +45,15 @@ fi
 # fail for the wrong reason and mask what a mutation actually proved.
 _mktree() {
   local d; d="$(mktemp -d)"
-  mkdir -p "$d/desktop" "$d/finetune"
+  mkdir -p "$d/desktop"
   cp "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$d/"
   cp "$repo_root/desktop/Cargo.toml" "$repo_root/desktop/Cargo.lock" "$d/desktop/"
   cp -r "$repo_root/src" "$d/src"
   cp -r "$repo_root/desktop/src" "$d/desktop/src"
-  cp "$repo_root/finetune/requirements.txt" "$d/finetune/"
+  # finetune/requirements.txt is optional: the MLX workflow left the tree.
+  if [ -f "$repo_root/finetune/requirements.txt" ]; then
+    mkdir -p "$d/finetune" && cp "$repo_root/finetune/requirements.txt" "$d/finetune/"
+  fi
   echo "$d"
 }
 

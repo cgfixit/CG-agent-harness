@@ -137,4 +137,4 @@ after that lease is demonstrably released. There is no PID-file kill authority,
 automatic resume or approval replay. Legacy running state stays unknown. A
 released worker lease proves the worker ended, not that every escaped descendant
 ended. Native window semantics and remaining acceptance are documented in
-[DESKTOP.md](DESKTOP.md) and [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
+[DESKTOP.md](DESKTOP.md).

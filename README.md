@@ -159,10 +159,10 @@ CI adds invariant guards, browser acceptance, sandbox and MCP lifecycle, and sec
 | Topic | Guide |
 |---|---|
 | Setup, upgrades, backups, recovery | [Install](docs/INSTALL.md), [Troubleshooting](docs/TROUBLESHOOTING.md) |
-| Models and optional MLX fine-tuning | [Models](docs/MODELS.md), [Fine-tuning](docs/FINETUNE.md) |
+| Models | [Models](docs/MODELS.md) |
 | Chat, attachments, skills, connectors, commands | [Console](docs/CONSOLE.md), [User manual](docs/USER_MANUAL.md) |
 | Memory behavior and ownership | [Memory](docs/MEMORY_GUIDE.md), [Structured memory](docs/STRUCTURED_MEMORY.md) |
-| Coding, jobs, schedules | [Coding pipeline](docs/CODING_PIPELINE.md), [Console jobs](docs/CONSOLE_JOBS.md) |
+| Coding, jobs, schedules | [Coding pipeline](docs/CODING_PIPELINE.md) |
 | External tools and private memory access | [MCP client](docs/MCP_CLIENT.md), [MCP server](docs/MCP_SERVER.md) |
 | Passive LAN observation | [Netconnect](docs/netconnect.md) |
 | Usage, costs, completion webhooks | [Analytics](docs/ANALYTICS.md), [Spend and notifications](docs/SPEND_AND_NOTIFICATIONS.md) |
