@@ -56,6 +56,13 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
     }
     value["auto_tune"] = json!(state.cfg.flag_is_true("models.local_llm.auto_tune"));
     value["tuning"] = json!(tuning.as_deref());
+    // What chat holds this model to now: configured values, lowered by any
+    // tuning, under caps that grow only with a measured window above 32768.
+    value["in_force"] = json!({
+        "prompt_cap": state.prompt_cap(&model),
+        "compact_prompt_tokens": state.compact_prompt_tokens(&model).min(state.prompt_cap(&model)),
+        "web_total_tokens": state.model_web_limits(&model, state.runtime_limits().web.clone()).total_tokens,
+    });
     Ok(Json(value))
 }
 

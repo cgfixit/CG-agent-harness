@@ -27,6 +27,8 @@ const MAX_CONTEXT: usize = 4000;
 /// Smallest `web.evidence_tokens`, and (calibrated) the least room web chat keeps
 /// for each tool result it may still receive.
 pub const MIN_EVIDENCE_TOKENS: u64 = 256;
+pub const MAX_EVIDENCE_TOKENS: u64 = 6000;
+pub const MAX_MODEL_TOKENS: u64 = 2048;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Limits {
@@ -80,9 +82,10 @@ impl Limits {
             cache_bytes: bound("cache_bytes", 16_777_216, 1_048_576, 33_554_432)? as usize,
             subqueries: bound("subqueries", 3, 1, 5)? as usize,
             rounds: bound("rounds", 2, 1, 2)? as usize,
-            evidence_tokens: bound("evidence_tokens", 3000, MIN_EVIDENCE_TOKENS, 6000)?,
-            model_tokens: bound("model_tokens", 1024, 256, 2048)?,
-            total_tokens: bound("total_tokens", 16000, 2048, 32000)?,
+            evidence_tokens: bound("evidence_tokens", 3000, MIN_EVIDENCE_TOKENS, MAX_EVIDENCE_TOKENS)?,
+            model_tokens: bound("model_tokens", 1024, 256, MAX_MODEL_TOKENS)?,
+            // Held at the model's window cap where it is read (`AppState::model_web_limits`).
+            total_tokens: bound("total_tokens", 16000, 2048, super::compaction::MAX_WEB_TOTAL_TOKENS)?,
             research_seconds: bound("research_seconds", 300, 10, 1800)?,
             chat_tool_calls: bound("chat_tool_calls", 10, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,

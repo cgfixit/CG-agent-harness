@@ -42,7 +42,7 @@ code fallback.
 | `web.rounds` | 1–2 |
 | `web.evidence_tokens` | 256–6,000 |
 | `web.model_tokens` | 256–2,048 |
-| `web.total_tokens` | 2,048–32,000 |
+| `web.total_tokens` | 2,048–128,000 (32,000 without a larger measured window) |
 | `web.research_seconds` | 10–1,800 |
 | `web.stale_seconds` | 60–31,536,000 |
 | `web.chat_tool_calls` | 1–10 |

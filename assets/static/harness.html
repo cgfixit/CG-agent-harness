@@ -2789,6 +2789,14 @@ async function runSlash(line, webCommand) {
           } else if (p.auto_tune) {
             sys('auto_tune is on but has not tuned this model yet; /model use ' + p.model + ' measures it.');
           }
+          const f = p.in_force;
+          if (f) {
+            sys(table([
+              ['prompt cap', String(f.prompt_cap)],
+              ['compact_prompt_tokens', String(f.compact_prompt_tokens)],
+              ['web.total_tokens', String(f.web_total_tokens)],
+            ], ['in force now', 'value']));
+          }
         } else {
           const s = await api('/api/status');
           sys(table([['model', s.model || '(unset)'], ['provider', s.provider], ['base_url', s.base_url]]));

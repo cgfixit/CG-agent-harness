@@ -249,12 +249,23 @@ impl AppState {
         self.chat.set_timeout_override(deadline);
     }
 
-    /// `web` (the live snapshot) lowered to `model`'s tuning, if it has one.
+    /// `web` (the live snapshot), lowered to `model`'s tuning, with
+    /// `web.total_tokens` held at the cap for its measured window (32000 when
+    /// none is measured).
     pub fn model_web_limits(&self, model: &str, mut web: super::web_search::Limits) -> super::web_search::Limits {
-        if let Some(tuning) = self.tuning_for(model) {
+        let tuning = self.tuning_for(model);
+        if let Some(tuning) = &tuning {
             tuning.apply_web(&mut web);
         }
+        web.total_tokens = web
+            .total_tokens
+            .min(super::compaction::web_total_cap(tuning.map(|tuning| tuning.window)));
         web
+    }
+
+    /// The prompt cap for `model`: 30000, or more for a larger window `auto_tune` measured.
+    pub fn prompt_cap(&self, model: &str) -> u64 {
+        super::compaction::prompt_cap(self.tuning_for(model).map(|tuning| tuning.window))
     }
 
     /// `models.local_llm.max_tokens`, lowered to `model`'s tuning.

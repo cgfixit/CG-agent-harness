@@ -80,6 +80,17 @@ async fn start_native_ollama() -> NativeOllama {
                         })),
                     );
                 }
+                if body.get("num_ctx").is_none() && body["model"] == "longctx:q8" {
+                    // Loaded at 65536 tokens (OLLAMA_CONTEXT_LENGTH=65536).
+                    return (
+                        axum::http::StatusCode::OK,
+                        Json(json!({
+                            "details": {"family": "qwen35", "parameter_size": "9.0B", "quantization_level": "Q8_0"},
+                            "model_info": {"general.architecture": "qwen35", "qwen35.context_length": 262144},
+                            "capabilities": ["completion", "tools"],
+                        })),
+                    );
+                }
                 if body.get("num_ctx").is_some() || body["model"] != "qwen3.8:27b-mlx" {
                     return (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "fixture-private-missing"})));
                 }
@@ -101,6 +112,7 @@ async fn start_native_ollama() -> NativeOllama {
                 Json(json!({"models": [
                     {"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20},
                     {"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13},
+                    {"name": "longctx:q8", "context_length": 65536, "size": 11, "size_vram": 11},
                 ]}))
             }),
         )
@@ -270,6 +282,73 @@ async fn auto_tune_measures_the_selection_and_tightens_its_chat_limits() {
     assert!(request.get("tools").is_none(), "{request}");
     let (_, status) = s.get_json("/api/status").await;
     assert_eq!(status["chat_tools_available"], false, "{status}");
+}
+
+async fn wait_for_tuning(s: &TestServer, window: u64) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let (status, body) = s.get_json("/api/ollama/profile").await;
+        assert_eq!(status, 200, "{body}");
+        if body["tuning"]["window"] == window {
+            return body;
+        }
+        assert!(std::time::Instant::now() < deadline, "no tuning at {window}: {body}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow_budgets() {
+    let ollama = start_native_ollama().await;
+    // Raised past the old 32000 / 30000 code caps; untuned, the caps still hold them.
+    let options = || {
+        ServerOptions::default()
+            .with("web.total_tokens", "60000")
+            .with("chat.compact_prompt_tokens", "50000")
+            .with("api.rate_limit.max_requests", "1000")
+    };
+    let plain = spawn_server(&ollama.openai_url(), options()).await;
+    let (_, body) = plain.get_json("/api/ollama/profile").await;
+    assert_eq!(
+        body["in_force"],
+        json!({"prompt_cap": 30000, "compact_prompt_tokens": 30000, "web_total_tokens": 32000}),
+        "{body}"
+    );
+    assert_eq!(body["proposed"]["state"], "shipped", "{body}");
+
+    let s = spawn_server(
+        &ollama.openai_url(),
+        options().with("models.local_llm.auto_tune", "true"),
+    )
+    .await;
+    // The startup tune measures the configured 32768-token model: shipped caps.
+    let body = wait_for_tuning(&s, 32768).await;
+    assert_eq!(body["in_force"]["prompt_cap"], 30000, "{body}");
+    assert_eq!(body["in_force"]["web_total_tokens"], 28000, "{body}");
+    let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    let body = wait_for_tuning(&s, 65536).await;
+    assert_eq!(body["proposed"]["state"], "scaled_up", "{body}");
+    // Caps double with the window; the budgets grow only to what config allows.
+    assert_eq!(
+        body["in_force"],
+        json!({"prompt_cap": 60000, "compact_prompt_tokens": 48000, "web_total_tokens": 56000}),
+        "{body}"
+    );
+    assert_eq!(body["tuning"]["max_tokens"], 8192, "{body}");
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    let (status, reply) = s.post_json("/api/chat", json!({"message": "hello"})).await;
+    assert_eq!(status, 200, "{reply}");
+    let request = ollama
+        .chats
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .expect("chat reached the model");
+    assert_eq!(request["model"], "longctx:q8");
+    // Reply budgets still only tighten: the configured 4096 wins over the proposed 8192.
+    assert_eq!(request["max_tokens"], 4096, "{request}");
 }
 
 #[tokio::test]
