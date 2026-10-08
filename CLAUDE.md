@@ -1,10 +1,11 @@
+@AGENTS.md
+
 # CLAUDE.md
 
-Full manual (follow it literally): `AGENTS.md`; contracts: `INVARIANTS.md`.
-Where this summary and `AGENTS.md` disagree, `AGENTS.md` wins.
-
-**Truth order:** code > `assets/config.default.yaml` > `INVARIANTS.md` > `AGENTS.md` > `README.md`.
-Fix prose that contradicts code in the same PR.
+The full manual is `AGENTS.md`, imported above and loaded every session; follow it
+literally. Contracts: `INVARIANTS.md`. Truth order: code > `assets/config.default.yaml`
+> `INVARIANTS.md` > `AGENTS.md` > `README.md`. This file holds only what is specific
+to Claude Code.
 
 ## Critical Rules for this project:
 - Ignore docs/learning/* completely unless explicitly requested by owner/operator.
@@ -12,35 +13,24 @@ Fix prose that contradicts code in the same PR.
 The idea is to avoid reading those .md files and .pdfs and .txt files under docs/ unless its for a defensible reason based on your task
 - Going forward add screenshots under the screenshots/ folder but only for significant changes/new features/something warranting a screenshot being stored.
 
-## CI merge gate
-```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
-cargo deny check
-```
-Blank those three keys; never assert on a real key.
-Locally: fmt, clippy, then run the changed code; never the full suite (CI runs it).
-
-## Rules CI catches late, or not at all
-- **I6:** `src/{server,shim,llm,common}` never import `crate::agentic`; `src/agentic` never
-  imports server or shim.
-- **Core paths:** `src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`,
-  `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`. Read `INVARIANTS.md` first.
-- **Write gates:** `agentic.enabled`, `deepagent_github.enabled`, `deepagent_github.allow_git_write_tools`
-  ship `false`. Quoted `"true"` is off. `confirm` is never defaulted; `reason` is never optional.
-- **The browser never supplies a command:** fixed argv only; free text is one `--opt=value`
-  element or a temp file.
-- Never rename `__CYCLAW_CSRF_TOKEN__`, `__CYCLAW_CSP_NONCE__` or `X-CyClaw-CSRF`. Never "dedupe"
-  `RUN_ID_PATTERN`, the planner/check timeouts or the check-profile table across the boundary.
-- Write only inside `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`) or a pipeline clone
-  under `data/agentic/workspaces`.
-
-## Docs and PRs
-- Ignore `docs/learning/*` during agent work unless explicitly requested.
-- Edit the section that owns a topic; never create `.md` files. `DOCS_BUDGET` caps words
-  per file and group.
-- Draft PR off `main`, one concern; branch, title and body follow
-  `.github/PULL_REQUEST_TEMPLATE.md`, checked by `scripts/check-pr-template.sh`.
-- Loading a skill never authorizes push, merge or release.
+## Claude Code specifics
+- `.claude/settings.json` pre-approves only `cargo` build/check/fmt/clippy/test/deny,
+  `cargo run -- serve`, `scripts/verify-local.sh`, `scripts/check-pr-template.sh` and
+  `python3 scripts/test-desktop-backend.py`. Anything else prompts; do not work
+  around a prompt.
+- A `SessionStart` hook runs `.claude/hooks/session-start.sh` (toolchain, libdbus,
+  build cache). If a build fails right after start, read its output before debugging.
+- `.claude/skills/<slug>/SKILL.md` runs as `/<slug>`. Five are operator-only
+  (`disable-model-invocation: true`): `cgagentharness-invariant-guard`,
+  `cgagentharness-parity`, `cgagentharness-otel-hardening`, `doc-sync`,
+  `run-cg-agent-harness`. Ask the operator to run them; never self-load them.
+- Branch prefix is `claude/`. Draft PR, one concern, based on `main`, body from
+  `.github/PULL_REQUEST_TEMPLATE.md`.
 - Never comment `@codex review` on a PR without the operator's approval.
+
+## Local verification
+Lint (fmt, clippy), then run the changed code. Never the full suite locally; CI
+runs it with `GROK_API_KEY`, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY` blanked.
+After any `.md` edit, `wc -w` it against its `DOCS_BUDGET` cap (`CLAUDE.md` 300,
+`AGENTS.md` 2000).
+
