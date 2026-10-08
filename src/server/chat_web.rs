@@ -21,18 +21,37 @@ pub fn tools() -> Vec<Value> {
     ]
 }
 
+// Small local models (Llama 3.x 8B, Qwen 7B) often write a number as a string
+// (`"count":"5"`), send `null` for an optional field, or add a key the schema
+// does not name. Only `query`/`url` and `count` are ever read, so an unnamed key
+// is ignored rather than failing the whole chat turn; it grants nothing. A
+// missing or non-string `query`/`url` still refuses the batch.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct SearchArgs {
     query: String,
-    #[serde(default = "five")]
+    #[serde(default = "five", deserialize_with = "lenient_count")]
     count: usize,
 }
 fn five() -> usize {
     5
 }
+/// A whole number, as a JSON number or a string holding one, clamped to the
+/// 1–10 results a listing allows; `null` is the default five.
+fn lenient_count<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<usize, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    let whole = match &value {
+        Value::Null => return Ok(five()),
+        Value::Number(n) => n
+            .as_u64()
+            .or_else(|| n.as_f64().filter(|f| f.fract() == 0.0 && *f >= 0.0).map(|f| f as u64)),
+        Value::String(s) => s.trim().parse::<u64>().ok(),
+        _ => None,
+    };
+    whole
+        .map(|n| n.clamp(1, 10) as usize)
+        .ok_or_else(|| serde::de::Error::custom("count must be a whole number"))
+}
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct FetchArgs {
     url: String,
 }
@@ -307,11 +326,13 @@ async fn run_inner(
         check_evidence(state, owner, &sources)?;
         let choice = &response["choices"][0];
         let message = &choice["message"];
-        if choice["finish_reason"] != "tool_calls"
-            && message
-                .get("tool_calls")
-                .is_none_or(|c| c.as_array().is_some_and(Vec::is_empty))
-        {
+        // `"tool_calls": null` (sent by some servers on a plain answer) is no calls.
+        let has_calls = match message.get("tool_calls") {
+            None | Some(Value::Null) => false,
+            Some(Value::Array(calls)) => !calls.is_empty(),
+            Some(_) => true,
+        };
+        if choice["finish_reason"] != "tool_calls" && !has_calls {
             let mut reply = parse_chat_response(&response, model)?;
             reply.prompt_tokens = prompt_tokens;
             reply.completion_tokens = completion_tokens;
@@ -330,7 +351,10 @@ async fn run_inner(
                     "model must return valid read-only tool calls or a complete answer",
                 )
             })?;
-        if choice["finish_reason"] != "tool_calls"
+        // Some OpenAI-compatible servers (older Ollama streaming among them) end a
+        // complete tool-call message with `stop` instead of `tool_calls`. Either
+        // is a finished message; `length` or anything else is not.
+        if !matches!(choice["finish_reason"].as_str(), Some("tool_calls" | "stop"))
             || available.is_empty()
             || calls.len() > web.limits.chat_tool_calls - used_calls
         {
@@ -427,12 +451,12 @@ async fn run_inner(
                 "web_search" => {
                     let args: SearchArgs = serde_json::from_str(args)
                         .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
-                    // The tool contract bounds the RAW arguments; enforce both before
+                    // The tool contract bounds the RAW query length; enforce it before
                     // whitespace normalisation and the intent rewrite so neither can
-                    // shrink a long instruction under the limit and a textual
-                    // `first N` cannot mask an out-of-range count. A refused argument
-                    // is an ordinary tool failure (bounded reply, usage recorded), not
-                    // a run error: the model already spent the turn that produced it.
+                    // shrink a long instruction under the limit. The count was already
+                    // clamped to 1–10 when parsed. A refused argument is an ordinary
+                    // tool failure (bounded reply, usage recorded), not a run error:
+                    // the model already spent the turn that produced it.
                     let raw_len = args.query.chars().count();
                     let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
                     let planned =
@@ -610,5 +634,35 @@ mod tests {
             (&json!([]), &json!(2))
         );
         assert!(fit_result(listing, |v| Ok(size(v) < room)).unwrap().is_none());
+    }
+
+    #[test]
+    fn small_model_tool_arguments_parse_without_widening_what_is_read() {
+        let search = |args: &str| serde_json::from_str::<SearchArgs>(args).map(|a| (a.query, a.count));
+        assert_eq!(search(r#"{"query":"q"}"#).unwrap(), ("q".into(), 5));
+        assert_eq!(search(r#"{"query":"q","count":"3"}"#).unwrap(), ("q".into(), 3));
+        assert_eq!(search(r#"{"query":"q","count":null}"#).unwrap(), ("q".into(), 5));
+        assert_eq!(search(r#"{"query":"q","count":4.0}"#).unwrap(), ("q".into(), 4));
+        assert_eq!(search(r#"{"query":"q","count":50}"#).unwrap(), ("q".into(), 10));
+        assert_eq!(search(r#"{"query":"q","count":0}"#).unwrap(), ("q".into(), 1));
+        assert_eq!(search(r#"{"query":"q","num_results":3}"#).unwrap(), ("q".into(), 5));
+        for refused in [
+            r#"{}"#,
+            r#"{"query":7}"#,
+            r#"{"query":"q","count":"many"}"#,
+            r#"{"query":"q","count":2.5}"#,
+            r#"{"query":"q","count":-1}"#,
+        ] {
+            assert!(search(refused).is_err(), "{refused}");
+        }
+        // An extra key is ignored, never followed: only `url` is read.
+        let fetch =
+            serde_json::from_str::<FetchArgs>(r#"{"url":"https://a.test/","follow":"https://b.test/"}"#).unwrap();
+        assert_eq!(fetch.url, "https://a.test/");
+        assert_eq!(
+            tool_argv("web_fetch", r#"{"url":"https://a.test/","method":"POST"}"#),
+            vec!["https://a.test/"]
+        );
+        assert!(serde_json::from_str::<FetchArgs>(r#"{"href":"https://a.test/"}"#).is_err());
     }
 }

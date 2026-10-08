@@ -400,7 +400,8 @@ no evidence. Sitemap discovery is absent. Page research needs no provider key
 and has no cloud fallback.
 
 Tantivy rebuilds a bounded in-memory BM25 index from permitted cached extracts.
-Phrases, identifiers, title and heading boosts improve ranking; diversity and
+Phrases, identifiers (each `a_b`/`a::b` word matches exactly), title and
+heading boosts improve ranking; diversity and
 deduplication reduce repetition. Derived cache corruption grants nothing.
 Conditional refresh repeats network checks. Validators reduce bytes, not requests.
 
@@ -416,7 +417,8 @@ Retrieval interleaves the question and subqueries without embeddings or rerankin
 
 Answers label support, conflicts, inference, and missing or stale evidence.
 Citation IDs and quotes are checked against passages, but semantic support still
-needs judgment. Rank is not truth, and fetch age is not publication date. Bounded
+needs judgment. The model cites short ids (`S1`); a failed claim is dropped alone
+(`WEB_CITATION_DROPPED`), and an answer with no valid claim is refused. Rank is not truth, and fetch age is not publication date. Bounded
 runs never claim completeness; no-answer results abstain and failures stay visible.
 
 ### Saved web selection

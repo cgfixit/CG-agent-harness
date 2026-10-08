@@ -1063,3 +1063,72 @@ fn assert_no_serpapi_secret(body: &Value, home: &std::path::Path) {
         );
     }
 }
+
+/// The shapes a 7B–27B local model or an older OpenAI-compatible server sends:
+/// a complete tool call ending in `stop`, an argument object with a key the
+/// schema does not name, a final answer led by an inline `<think>` block and
+/// carrying `"tool_calls": null`. Each is a normal round; nothing extra is read.
+#[tokio::test]
+async fn small_model_tool_call_shapes_complete_one_bounded_round() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let r = reads.clone();
+    let fixture = Router::new()
+        .route("/docs/a", get(move || {
+            let r = r.clone();
+            async move {
+                r.fetch_add(1, Ordering::SeqCst);
+                ([("content-type", "text/plain")], "SMALL_MODEL_EVIDENCE")
+            }
+        }))
+        .route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
+            let messages = body["messages"].as_array().unwrap();
+            if messages.last().unwrap()["role"] == "tool" {
+                assert!(messages.last().unwrap()["content"].as_str().unwrap().contains("SMALL_MODEL_EVIDENCE"));
+                return Json(json!({"model":"mock","choices":[{"finish_reason":"stop","message":{"role":"assistant",
+                    "content":"<think>\nThe page says SMALL_MODEL_EVIDENCE.\n</think>\n\nThe page was read.","tool_calls":null}}],
+                    "usage":{"prompt_tokens":10,"completion_tokens":3}}));
+            }
+            let mut reply = tool_call_reply(
+                "web_fetch",
+                &json!({"url":"http://docs.example/docs/a","reason":"the user asked"}).to_string(), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                "call_small",
+            );
+            reply["choices"][0]["finish_reason"] = json!("stop");
+            Json(reply)
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, fixture).await.unwrap();
+    });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"read the doc"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        reply["reply"], "The page was read.",
+        "the reasoning block is not the answer: {reply}"
+    );
+    assert_eq!(reply["web_tools"][0]["ok"], true, "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    let (_, session) = s
+        .get_json(&format!("/api/sessions/{}", reply["session_id"].as_str().unwrap()))
+        .await;
+    assert!(
+        !session.to_string().contains("<think>"),
+        "stored history must not re-send reasoning: {session}"
+    );
+    task.abort();
+}

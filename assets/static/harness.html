@@ -2009,7 +2009,7 @@ const COMMAND_MAN = {
   '/web on': {detail:'Enables web for this home; URLs still need permission rules. Administrator only.'},
   '/web pages [--group name] <query>': {detail:'Finds permitted links and searches passages inside permitted pages. This is not Google; /web search gives listings.'},
   '/web research [--group name] [--url URL ...] <question>': {detail:'Bounded multi-page research over permitted pages with checked citations, starting from the group or the --url seeds. Shows supported claims, conflicts, inferences, gaps and the sources. Not an exhaustive crawl; /web cancel stops it.'},
-  '/web search [--count 1..10] [--engine google|pages] [--group name] <query>': {detail:'Google result listings by default; --engine pages or a group searches permitted pages instead. Listings grant no permission to read a page.'},
+  '/web search [--count 1..10] [--engine google|pages] [--group name] <query>': {detail:'Google result listings by default; --engine pages or a group searches permitted pages instead. Listings grant no permission to read a page. Words starting with a single dash (-tokio) are query text; put -- before query words that start with --.'},
 };
 /* Exact forms that are easy to get wrong. insert is what the composer gets;
    key names the catalog row whose manual the ? opens. */
@@ -3155,6 +3155,7 @@ async function runSlash(line, webCommand) {
       case 'goal': {
         if (rest[0] === 'stage') {
           if (!currentSession || !sessionGoal) { sys('Set /goal <text> first.'); break; }
+          if (!rest[1]) { sys('usage: /goal stage <branch> — name the branch the coding run should use'); break; }
           const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage', 'POST', {branch:rest[1] || ''});
           if (staleReview()) break;
           pendingAgentRun = r.request; showPendingAgentRun(); sys(r.next); break;
@@ -3349,9 +3350,60 @@ async function runSlash(line, webCommand) {
 }
 
 /* ── chat ── */
+/* GOAL_DONE on a line of its own. Small local models decorate it
+   (**GOAL_DONE**, `GOAL_DONE`, ## GOAL_DONE, GOAL_DONE.), so Markdown
+   emphasis, code ticks, heading/quote/list marks and trailing punctuation
+   around it are ignored. A sentence that merely mentions it is not a match. */
 function replyHasGoalDone(text) {
   if (typeof text !== 'string' || !text) return false;
-  return text.split(/\r?\n/).some(function (line) { return line.trim() === 'GOAL_DONE'; });
+  return text.split(/\r?\n/).some(function (line) {
+    const bare = line.trim()
+      .replace(/^(?:[#>*_`~\-]+\s*)+/, '')
+      .replace(/(?:\s*[*_`~.!:]+)+$/, '')
+      .trim();
+    return bare === 'GOAL_DONE';
+  });
+}
+
+/* One loop turn's instruction. It is model-agnostic, restates a bounded
+   slice of the goal next to the reply (small models lose a system-prompt
+   goal behind long history) and asks for one new step, the usual cure for a
+   7B-27B model restating its previous answer. */
+const LOOP_GOAL_REMINDER_CHARS = 240;
+function loopTurnPrompt(turn, total, goal) {
+  const g = String(goal || '').replace(/\s+/g, ' ').trim();
+  const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1) + '…' : g;
+  return 'Loop turn ' + turn + ' of ' + total + '. Session goal: ' + reminder + '\n' +
+    'Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
+    'Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. ' +
+    'Stay in this chat; do not request a real-repo write.';
+}
+
+/* Words of a reply, lowercased, with punctuation and Markdown dropped. */
+function loopWords(text) {
+  return String(text || '').toLowerCase().replace(/[^\p{L}\p{N}_\s]+/gu, ' ').split(/\s+/).filter(Boolean);
+}
+/* A stall: the new reply is the previous one again, verbatim or nearly. The
+   measure is 2·LCS/(|a|+|b|) over words, at least LOOP_STALL_SIMILARITY: small
+   models often reword a sentence of an otherwise identical answer, while a new
+   step changes most of the word sequence. Short replies compare word for word,
+   since one changed word there is a real change. Bounded to the first
+   LOOP_STALL_MAX_WORDS words of each reply. */
+const LOOP_STALL_SIMILARITY = 0.9;
+const LOOP_STALL_MAX_WORDS = 2000;
+function repliesNearlyRepeat(previous, next) {
+  const a = loopWords(previous).slice(0, LOOP_STALL_MAX_WORDS), b = loopWords(next).slice(0, LOOP_STALL_MAX_WORDS);
+  if (!a.length || !b.length) return String(previous || '').trim() === String(next || '').trim();
+  if (a.join(' ') === b.join(' ')) return true;
+  if (a.length < 12 || b.length < 12) return false;
+  let row = new Uint16Array(b.length + 1), prev = new Uint16Array(b.length + 1);
+  for (let i = 1; i <= a.length; i++) {
+    [prev, row] = [row, prev];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], row[j - 1]);
+    }
+  }
+  return 2 * row[b.length] / (a.length + b.length) >= LOOP_STALL_SIMILARITY;
 }
 
 function sleepMs(ms) {
@@ -3373,7 +3425,7 @@ async function runLoopTurns() {
   try {
     while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
-      const framed = 'Continue toward the session goal. Be concise (local 27b). If the goal is fully satisfied, end with GOAL_DONE on its own line. Stay in this chat; do not request a real-repo write.';
+      const framed = loopTurnPrompt(turn, loopState.total, sessionGoal);
       /* A routed search started during the cooldown owns the gate, and so
          does the chat turn it may fall back to on a router failure; let both
          settle rather than starting a model turn that overlaps them. */
@@ -3396,7 +3448,7 @@ async function runLoopTurns() {
       }
       loopState.failures = 0;
       loopState.remaining -= 1;
-      if (loopState.lastReply && reply.trim() === loopState.lastReply) {
+      if (loopState.lastReply && repliesNearlyRepeat(loopState.lastReply, reply)) {
         stopLoop('loop stopped — model repeated the previous reply (stall)');
         return;
       }

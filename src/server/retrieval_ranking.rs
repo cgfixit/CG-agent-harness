@@ -8,7 +8,8 @@ const HIT_CAP: usize = 16;
 
 pub(super) struct PreparedQuery {
     pub expression: String,
-    identifier: Option<regex::Regex>,
+    /// One exact, word-bounded pattern per identifier-shaped word.
+    identifiers: Vec<regex::Regex>,
     lowercase: String,
 }
 
@@ -35,29 +36,36 @@ impl PreparedQuery {
         let Some(expression) = tantivy_expression(query) else {
             return Ok(None);
         };
-        let identifier = if query.contains('_') || query.contains("::") {
-            Some(
+        // Only the identifier-shaped words (`widget_open`, `Vec::new`) must match
+        // exactly. A whole-query pattern made `How does widget_open fail?` require
+        // that literal sentence, so a question about an identifier found nothing.
+        let identifiers = query
+            .split_whitespace()
+            .map(|word| word.trim_matches(|c: char| !(c.is_alphanumeric() || c == '_')))
+            .filter(|word| word.contains('_') || word.contains("::"))
+            .take(MAX_TERMS)
+            .map(|word| {
                 regex::RegexBuilder::new(&format!(
                     r"(?:^|[^\p{{L}}\p{{N}}_]){}(?:$|[^\p{{L}}\p{{N}}_])",
-                    regex::escape(query)
+                    regex::escape(word)
                 ))
                 .case_insensitive(true)
-                .build()?,
-            )
-        } else {
-            None
-        };
+                .build()
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(Some(Self {
             expression,
-            identifier,
+            identifiers,
             lowercase: query.to_lowercase(),
         }))
     }
 
+    /// Every identifier in the query appears in at least one field.
     pub fn identifier_matches<'a>(&self, fields: impl IntoIterator<Item = &'a str>) -> bool {
-        self.identifier
-            .as_ref()
-            .is_none_or(|identifier| fields.into_iter().any(|field| identifier.is_match(field)))
+        let fields: Vec<&str> = fields.into_iter().collect();
+        self.identifiers
+            .iter()
+            .all(|identifier| fields.iter().any(|field| identifier.is_match(field)))
     }
 
     pub fn exact_bonus(&self, text: &str) -> f32 {
@@ -248,5 +256,23 @@ mod tests {
         }
         let selected = select_diverse(candidates, 100, |item| &item.text);
         assert_eq!(selected.len(), 16);
+    }
+
+    #[test]
+    fn identifier_words_in_a_question_match_exactly_without_requiring_the_question() {
+        let q = PreparedQuery::new("How does `widget_open` fail?").unwrap().unwrap();
+        assert!(q.identifier_matches(["widget_open returns EBUSY on a second open."]));
+        assert!(!q.identifier_matches(["widget_opener is unrelated."]));
+        assert!(!q.identifier_matches(["How does it fail?"]));
+        let both = PreparedQuery::new("compare Vec::new and Vec::with_capacity")
+            .unwrap()
+            .unwrap();
+        assert!(both.identifier_matches(["Vec::new allocates nothing.", "Vec::with_capacity reserves."]));
+        assert!(!both.identifier_matches(["Vec::new allocates nothing."]));
+        // A query without an identifier filters nothing.
+        assert!(PreparedQuery::new("retry count")
+            .unwrap()
+            .unwrap()
+            .identifier_matches(["x"]));
     }
 }

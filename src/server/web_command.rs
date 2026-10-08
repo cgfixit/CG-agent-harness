@@ -86,7 +86,15 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
             literal = true;
             continue;
         }
-        if !literal && word.quote.is_none() && (arg.starts_with('-') || arg.starts_with("group=")) {
+        // In a query, a single-dash word is search text (`rust async -tokio`,
+        // `i32 -1`, `->`), not a flag: every query flag is spelled `--name`.
+        let query_word = matches!(action, "search" | "pages" | "research") && !arg.starts_with("--");
+        let flag_shaped = if query_word {
+            arg.starts_with("group=")
+        } else {
+            arg.starts_with('-') || arg.starts_with("group=")
+        };
+        if !literal && word.quote.is_none() && flag_shaped {
             let (flag, inline) = if let Some(value) = arg.strip_prefix("group=") {
                 ("--group", Some(value))
             } else {
@@ -100,7 +108,9 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                 _ => false,
             };
             if !allowed {
-                return Err(format!("Unsupported flag {flag} for /web {action}. Use /help web."));
+                return Err(format!(
+                    "Unsupported flag {flag} for /web {action}. Put -- before query words that start with --, or use /help web."
+                ));
             }
             let value = if let Some(value) = inline {
                 value.to_string()
@@ -295,5 +305,24 @@ mod tests {
             parse(Some("fetch"), "\"https://example.com/\"").unwrap().body["urls"][0],
             "https://example.com/"
         );
+    }
+
+    #[test]
+    fn single_dash_words_are_query_text_and_double_dash_words_stay_flags() {
+        for (arg, query) in [
+            ("rust async -tokio", "rust async -tokio"),
+            ("what does -> mean in rust", "what does -> mean in rust"),
+            ("i32 -1 overflow", "i32 -1 overflow"),
+            ("\"serde\" -yaml", "\"serde\" -yaml"),
+        ] {
+            assert_eq!(parse(Some("search"), arg).unwrap().body["query"], query, "{arg}");
+        }
+        assert_eq!(
+            parse(Some("pages"), "--group docs retry -legacy").unwrap().body["group"],
+            "docs"
+        );
+        assert!(parse(Some("search"), "--dry-run x").is_err());
+        // Outside a query the old flag grammar is unchanged.
+        assert!(parse(Some("allow"), "https://example.com/* -x").is_err());
     }
 }
