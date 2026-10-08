@@ -1205,6 +1205,9 @@ async fn chat_inner(
     }
 }
 
+/// Longest the post-turn `/api/ps` window read may hold the generation gate.
+const WINDOW_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// The context window Ollama loaded `model` with, cached for the inventory
 /// refresh interval. `None` when unknown (not loaded, not reported, not a
 /// loopback Ollama endpoint); a check that cannot run never blocks a turn.
@@ -1219,7 +1222,10 @@ async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
         Some(window) => window,
         None => {
             let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
-            let limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
+            let mut limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
+            // The turn still holds the generation gate here: a loopback /api/ps answers
+            // in milliseconds, so a slow one is skipped (and cached) rather than waited on.
+            limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
             let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
             state.ollama.store_window(model, window);
             window
