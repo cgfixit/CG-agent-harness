@@ -90,6 +90,19 @@ pub async fn agent_checks(State(state): State<Arc<AppState>>) -> Json<Value> {
 }
 
 /// True when the run's planner and /api/chat target the same backend.
+/// The planner timeout an agent run budgets and passes to its child: the one
+/// `auto_tune` derived when the planner runs the tuned chat model on the same
+/// backend, else the configured value.
+fn planner_timeout_sec(state: &AppState) -> Option<u64> {
+    let planner_model = state.cfg.str_or("agentic.deepagent_github.model", "");
+    if !agent_run_shares_chat_backend(state) {
+        return None;
+    }
+    state
+        .tuning_for(planner_model.trim())
+        .and_then(|tuning| tuning.planner_timeout_sec)
+}
+
 fn agent_run_shares_chat_backend(state: &AppState) -> bool {
     let deep = state
         .cfg
@@ -150,7 +163,8 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
     let checks = resolve_check_profiles(&requested).map_err(|e| {
         ApiError::bad_request("UNKNOWN_CHECK_PROFILE", e.message).details(json!({"requested": requested}))
     })?;
-    let planner = state.shim.planner_timeout_sec;
+    let tuned_planner = planner_timeout_sec(state);
+    let planner = tuned_planner.unwrap_or(state.shim.planner_timeout_sec);
     let estimated = shim::real_repo_run_budget_sec(planner, req.max_iterations, checks.len());
     if estimated > REAL_REPO_RUN_MAX_TIMEOUT_SEC {
         let max_fitting = (1..=MAX_ITERATIONS_CEILING as i64)
@@ -226,6 +240,7 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
         read_files: req.canonical_read_files(),
         pr: req.pr,
         issue: req.issue,
+        planner_timeout_sec: tuned_planner,
         ..Default::default()
     };
     Ok(PreparedRun {

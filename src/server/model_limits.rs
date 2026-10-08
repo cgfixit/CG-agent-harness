@@ -44,6 +44,10 @@ const MEASURE_TIMEOUT: Duration = Duration::from_secs(180);
 /// retried every half second for up to two minutes.
 const GATE_ATTEMPTS: u32 = 240;
 const GATE_RETRY: Duration = Duration::from_millis(500);
+/// The coding planner's prompt: about 24k characters (see the shipped
+/// `agentic.deepagent_github.planner_max_tokens` comment) at 4 bytes a token.
+const PLANNER_PROMPT_TOKENS: u64 = 6_000;
+const DEFAULT_PLANNER_MAX_TOKENS: u64 = 3_072;
 
 /// Settings scaled with the window: (key, rounding step, minimum).
 const SCALED: [(&str, u64, u64); 6] = [
@@ -246,6 +250,22 @@ pub fn propose(
         set_path(&mut candidate, "web.synthesis_seconds", seconds);
         values.push(json!({"key": "web.synthesis_seconds", "current": web.synthesis_seconds, "proposed": seconds}));
     }
+    // The coding planner, when it runs this model: its prompt at prefill speed
+    // and one planner_max_tokens reply at decode speed, padded like chat.
+    let planner_model = cfg.str_or("agentic.deepagent_github.model", "");
+    if profile["model"].as_str() == Some(planner_model.trim()) {
+        let planner_reply = cfg.u64_or(
+            "agentic.deepagent_github.planner_max_tokens",
+            DEFAULT_PLANNER_MAX_TOKENS,
+        );
+        if let Some(seconds) = speed.and_then(|speed| derived_timeout(speed, PLANNER_PROMPT_TOKENS, planner_reply, 0)) {
+            let configured = cfg.u64_or(
+                "agentic.deepagent_github.planner_timeout_sec",
+                crate::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,
+            );
+            values.push(json!({"key": "agentic.deepagent_github.planner_timeout_sec", "current": configured, "proposed": seconds}));
+        }
+    }
     // The same validators startup and reload run; a failure means this window is
     // too small for the shipped shape, not that the proposal should be forced.
     let mut state = match window.cmp(&TUNED_WINDOW) {
@@ -312,6 +332,8 @@ pub struct Tuning {
     pub timeout_sec: Option<u64>,
     /// Measured `/web research` answer deadline; `None` without a speed sample.
     pub synthesis_seconds: Option<u64>,
+    /// Set when the coding planner runs this model; agent runs then use it.
+    pub planner_timeout_sec: Option<u64>,
     pub speed: Option<Value>,
     pub notes: Vec<String>,
 }
@@ -363,6 +385,7 @@ pub fn tuning_from(model: &str, profile: &Value, proposal: &Value, speed: Option
         web,
         timeout_sec: value("models.local_llm.timeout_sec"),
         synthesis_seconds: value("web.synthesis_seconds"),
+        planner_timeout_sec: value("agentic.deepagent_github.planner_timeout_sec"),
         speed,
         notes: proposal["notes"]
             .as_array()
@@ -560,6 +583,27 @@ mod tests {
             value(&shipped_size, "models.local_llm.timeout_sec"),
             "{large}"
         );
+    }
+
+    #[test]
+    fn the_planner_gets_a_timeout_only_when_it_runs_the_measured_model() {
+        let cfg = shipped().expect("embedded default parses");
+        let web = Limits::load(&cfg).expect("shipped web limits are valid");
+        let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
+        let mut profile = loaded(TUNED_WINDOW);
+        profile["model"] = json!("qwen3.8:27b-mlx");
+        let proposal = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
+        // 6000/1500 + 3072/50 = 65.4 s; doubled and rounded up to 150.
+        assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 150);
+        let tuning = tuning_from("qwen3.8:27b-mlx", &profile, &proposal, Some(speed.clone())).unwrap();
+        assert_eq!(tuning.planner_timeout_sec, Some(150));
+        // Another model, or no sample: the configured planner timeout stays.
+        profile["model"] = json!("humanizer:q8");
+        let other = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
+        assert!(!other.to_string().contains("planner_timeout_sec"), "{other}");
+        profile["model"] = json!("qwen3.8:27b-mlx");
+        let unsampled = propose(&profile, None, &cfg, &web, &backend(Some("none")));
+        assert!(!unsampled.to_string().contains("planner_timeout_sec"), "{unsampled}");
     }
 
     #[test]

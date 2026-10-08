@@ -34,6 +34,8 @@ use super::writer::{execute_write, plan_write, DEFAULT_WRITE_TIMEOUT_SEC};
 
 const MAX_LOOP_CONTEXT_CHARS: usize = 8_000;
 const MAX_STATUS_DIFF_CHARS: usize = 20_000;
+/// Mirrors the server's ceiling for a speed-derived planner timeout.
+const MAX_PLANNER_TIMEOUT_SEC: u64 = 3_600;
 
 fn err(msg: &str) {
     eprintln!("  [error] {msg}");
@@ -377,6 +379,18 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
             .parse()
             .map_err(|_| HarnessError::agentic("--max-iterations must be an integer"))?,
     };
+    // The server passes a timeout derived from the planner model's measured
+    // speed and budgets this child with the same value.
+    let planner_timeout_sec = match opts.get("planner-timeout-sec") {
+        None => ctx.acfg.deepagent.planner_timeout_sec,
+        Some(v) => v
+            .parse::<u64>()
+            .ok()
+            .filter(|n| (1..=MAX_PLANNER_TIMEOUT_SEC).contains(n))
+            .ok_or_else(|| {
+                HarnessError::agentic(format!("--planner-timeout-sec must be 1-{MAX_PLANNER_TIMEOUT_SEC}"))
+            })?,
+    };
     let provider = opts.get("provider").map(|s| s.to_string());
     if let Some(p) = &provider {
         if let Some(code) = cloud_gates(ctx, p, opts.flag("confirm-online")) {
@@ -468,7 +482,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
                 &ctx.audit,
                 &ctx.acfg.deepagent.base_url,
                 &ctx.acfg.deepagent.model,
-                ctx.acfg.deepagent.planner_timeout_sec,
+                planner_timeout_sec,
                 &std::env::var("DEEPAGENT_API_KEY").unwrap_or_default(),
                 local_reasoning_effort(ctx),
             )?;
