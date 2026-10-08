@@ -76,7 +76,7 @@ fn run_script_files(path: &Path, files: &str) -> Output {
 }
 
 fn run_script_at(path: &Path, files: &str, base: Option<&str>) -> Output {
-    let mut cmd = Command::new("bash");
+    let mut cmd = Command::new(std::env::var_os("CGAH_TEST_BASH").unwrap_or_else(|| "bash".into()));
     cmd.arg(script())
         .arg(path)
         .env("CGAGENTHARNESS_PR_FILES", files)
@@ -408,7 +408,7 @@ fn head_base_rejects_body_satisfied_only_by_loosened_worktree() {
     let body = format!("{body}{STAMP}\n");
     let body_path = dir.join("body.md");
     std::fs::write(&body_path, body).unwrap();
-    let output = Command::new("bash")
+    let output = Command::new(std::env::var_os("CGAH_TEST_BASH").unwrap_or_else(|| "bash".into()))
         .arg(dir.join("scripts/check-pr-template.sh"))
         .arg(&body_path)
         .env("CGAGENTHARNESS_PR_FILES", "src/server/headers.rs")

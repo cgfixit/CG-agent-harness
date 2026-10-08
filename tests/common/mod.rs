@@ -42,6 +42,11 @@ pub fn config_with(dir: &Path, overrides: &[(&str, &str)]) -> AppConfig {
     {
         text = override_yaml(&text, "agentic.repo", "\"fixture/repository\"");
     }
+    // auto_tune ships on, and its startup sample claims the generation gate
+    // against the fixture model. Tests about tuning opt in explicitly.
+    if !overrides.iter().any(|(k, _)| *k == "models.local_llm.auto_tune") {
+        text = override_yaml(&text, "models.local_llm.auto_tune", "false");
+    }
     for (dotted, value) in overrides {
         text = override_yaml(&text, dotted, value);
     }
