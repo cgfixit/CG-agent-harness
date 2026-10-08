@@ -712,8 +712,15 @@ async fn chat_inner(
     let loaded = tokio::select! {
         biased;
         _ = chat_owner.token.cancelled() => return Err(cancelled()),
-        loaded = async { !cloud_selected && state.load_if_absent(&model).await } => loaded,
+        loaded = async {
+            if cloud_selected {
+                Ok(false)
+            } else {
+                state.load_if_absent(&model).await
+            }
+        } => loaded,
     };
+    let loaded = loaded.map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
     if loaded {
         web.limits = state.model_web_limits(&model, live.web.clone());
     }

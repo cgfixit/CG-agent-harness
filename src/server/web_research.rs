@@ -451,11 +451,13 @@ pub async fn run_from(
     // the run for the window it now serves, not the snapshot's 32768 defaults.
     // The lease is already registered, so /api/web/research/cancel ends a cold
     // load, and the run's deadlines count the time it took.
+    // A cold load is model work: recheck the account first, as gather does.
+    authorize_owner(&state, owner)?;
     let model = state.current_model();
     let loaded = tokio::select! {
         biased;
         _ = lease.token.cancelled() => return Err(error("WEB_CANCELLED", "research cancelled")),
-        loaded = state.load_if_absent(&model) => loaded,
+        loaded = state.load_if_absent(&model) => loaded?,
     };
     if loaded {
         web.limits = state.web_snapshot().limits;
@@ -548,7 +550,8 @@ pub async fn run_from(
         Ok::<(), crate::common::errors::HarnessError>(())
     };
     let gathered = tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(web.limits.research_seconds), gather) => result,
+        // From the run's start, so a cold load counts against discovery's deadline.
+        result = tokio::time::timeout_at(start + Duration::from_secs(web.limits.research_seconds), gather) => result,
         _ = lease.token.cancelled() => Ok(Err(error("WEB_CANCELLED", "research cancelled"))),
     };
     let synthesized = match gathered {
