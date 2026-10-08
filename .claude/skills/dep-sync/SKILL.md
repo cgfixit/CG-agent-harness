@@ -100,7 +100,8 @@ cargo build --all-targets --locked
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo deny check
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
+# Targeted only; CI runs the suite:
+GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --test <target>
 cd desktop && cargo build --all-targets --locked && cd ..
 ```
 
