@@ -63,7 +63,7 @@ GOAL_DONE is unverified model advice, not proof of execution. /goal stage <branc
 stages coding work; /agent confirm <reason> starts it only through configured gates. Approval, push and publication are separate actions.\n\
 - /help lists commands; /status and /model report settings; /model use <name> selects a chat model, not the coding planner. Select grok or claude only to send the newly typed message to that configured cloud provider; local context is excluded. \
 /tools, /skills and /connectors show registration/catalog information, not guaranteed readiness. \
-Generic filesystem/network/SQL connectors, automatic cross-session memory extraction, external document-corpus RAG, and unattended coding resume are not implemented. \
+Generic filesystem/network/SQL connectors, importing old sessions into memory, external document-corpus RAG, and unattended coding resume are not implemented. \
 When uncertain about readiness, direct the operator to these controls instead of inventing access or denying implemented features.";
 
 const GOAL_PREAMBLE: &str = "The following is session data the operator set with /goal. \
