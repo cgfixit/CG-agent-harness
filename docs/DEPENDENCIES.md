@@ -43,7 +43,12 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
 - Backend `deny.toml` temporarily ignores `RUSTSEC-2026-0253` for Tantivy 0.26.2's
   `lru` 0.16 dependency (locked at 0.16.4). The policy records its
   `StoreReader` call-pattern justification and removal condition, Tantivy 0.27
-  or a fixed dependency path.
+  or a fixed dependency path. Owner: `cgfixit`, reviewed during the weekly
+  maintenance pass and Cargo Dependabot PR review. Daily advisories check the
+  locked graph; they do not detect an available replacement for an ignored
+  advisory. When compatible Tantivy uses fixed `lru` (at least 0.18.2), update
+  the backend lockfile, remove this exception, and run both dependency policies
+  plus affected retrieval checks. Desktop currently has no advisory exception.
 - Major-version updates to existing libraries are separate API migrations.
   Newer available versions alone do not make a valid lockfile stale or justify
   expanding this security feature into a framework/toolchain migration.
@@ -87,8 +92,7 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 
 The chat web tools and Google result parsers reuse Reqwest, Scraper, Serde and
 Tokio already in the lockfiles. No crate, feature, lockfile, toolchain or advisory
-exception was added. Both MSRV-aware dry-run updates again found zero compatible
-updates; backend and desktop cargo-deny policies passed. Google/SerpAPI are
+exception was added. Google/SerpAPI are
 optional runtime search services, distinct from Cargo dependencies and local
 model inference. A public-Google challenge is not a dependency or test pass.
 
@@ -120,15 +124,6 @@ At that audit, CodeQL moved to v4.38.0, zizmor-action to v0.6.4 with zizmor
 all-target/all-feature Clippy, all-target tests, cargo-deny policies, compatible
 update previews, release packaging, and isolated native/backend acceptance.
 Those dated results describe that audit; they do not replace current checks.
-
-## Optimization sweep (2026-09-13)
-
-The September 13 sweep is historical: it retained `ordered-float`
-5.4.0 under the MSRV-aware resolver, found only semver-incompatible newer lines,
-and ran backend and desktop policy checks. It did not run a native desktop build.
-Use the current lockfiles and commands above for any present-tense dependency
-claim rather than carrying those point-in-time results forward.
-The current manifest versions are listed above.
 
 ## DOCX attachment reader (issue #148)
 

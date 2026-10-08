@@ -441,7 +441,7 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
             "status",
         ],
         "api" => &["set", "clear"],
-        "model" => &["use", "profile"],
+        "model" => &["list", "use", "profile"],
         "skill" => &["use", "clear", "status"],
         "web" => &[
             "help", "status", "check", "on", "off", "allow", "deny", "fetch", "search", "pages", "research", "cancel",
@@ -572,6 +572,7 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         | ("web", Some("on" | "off" | "inject" | "forget" | "cancel"))
         | ("agent", Some("cancel"))
         | ("loop", Some("auto" | "stop"))
+        | ("model", Some("list" | "profile"))
         | ("clear", None) => Some(0),
         (
             "memory",

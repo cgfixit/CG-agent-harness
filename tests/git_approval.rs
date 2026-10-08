@@ -101,15 +101,16 @@ fn unrelated_staged_changes_cannot_enter_an_approved_commit() {
 fn approved_glob_filename_does_not_stage_its_neighbors() {
     let temp = tempfile::tempdir().unwrap();
     let (ctx, dest) = fixture(temp.path());
-    std::fs::write(dest.join("literal*.txt"), "approved\n").unwrap();
-    std::fs::write(dest.join("literal-extra.txt"), "not approved\n").unwrap();
+    // Brackets exercise Git glob expansion and are valid Win32 filenames.
+    std::fs::write(dest.join("literal[ab].txt"), "approved\n").unwrap();
+    std::fs::write(dest.join("literala.txt"), "not approved\n").unwrap();
     let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
-    approve(&ctx, &ws, &["literal*.txt".into()]).unwrap();
+    approve(&ctx, &ws, &["literal[ab].txt".into()]).unwrap();
     assert_eq!(
         git(&["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], &dest),
-        "literal*.txt"
+        "literal[ab].txt"
     );
-    assert_eq!(git(&["show", "HEAD:literal*.txt"], &dest), "approved");
+    assert_eq!(git(&["show", "HEAD:literal[ab].txt"], &dest), "approved");
 }
 
 #[cfg(unix)]

@@ -132,7 +132,9 @@ session snippets. Its request-local Tantivy RAM index covers at most 200 session
 and 2,000,000 bytes. Queries allow 200 characters; indexing uses up to 32 terms.
 Results contain at most 16 hits, two per session, with 160-character snippets.
 Overlap finds case-insensitive literal phrases across 1,200-character chunks. Search runs on
-the blocking pool, writes no web cache, and sends nothing off-machine.
+the blocking pool, writes no web cache, and sends nothing off-machine. Rebuilding per
+query is accepted within these bounds; measure representative latency before
+introducing a cache (#258).
 
 `GET /api/sessions/{session_id}/export` returns Markdown and writes it to
 `<home>/exports/{id}.md`. Both APIs enforce owner and CSRF. Export includes
@@ -419,7 +421,7 @@ confirmation and persistence.
 | `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on the latest completed episode; no fact write |
 | `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List your active facts, force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
-| `/model`, `/model use <name>`, `/model use grok\|claude` | Inspect/select a local chat model or explicit cloud provider; does not select the coding planner |
+| `/model`, `/model list`, `/model use <name>\|grok\|claude` | Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner |
 | `/net status`, `/net devices` | `status` is scope and gates and loads no collector. `devices` lists passive neighbors. Exact aliases: `/netconnect`, `/lan`, `/scan`, `/ports`, `/speed`. A near-miss only suggests. `ports`, `diag`, `watch`, and `device` do not scan or control a device |
 | `/prompt` | Private preview of the next chat system prompt |
 | `/registry` | Combined skill, tool and connector catalog |

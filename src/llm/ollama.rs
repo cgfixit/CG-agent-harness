@@ -202,17 +202,17 @@ pub(crate) async fn bounded_json(request: reqwest::RequestBuilder, max_bytes: us
     }
 }
 
-/// Installed tags from `GET /api/tags`. Empty on failure; never echoes provider text.
-pub async fn list_tags(native: &str, limits: InventoryLimits) -> Vec<Value> {
-    let Ok(client) = http_client(limits.timeout) else {
-        return Vec::new();
+/// Installed tags from `GET /api/tags`; never echoes provider text. `None`
+/// when the query fails, times out, or returns an oversized or malformed body,
+/// so an outage is not reported as an empty install.
+pub async fn list_tags(native: &str, limits: InventoryLimits) -> Option<Vec<Value>> {
+    let client = http_client(limits.timeout).ok()?;
+    let Bounded::Json(value) = bounded_json(client.get(format!("{native}/api/tags")), limits.max_bytes).await else {
+        return None;
     };
-    match bounded_json(client.get(format!("{native}/api/tags")), limits.max_bytes).await {
-        Bounded::Json(value) => value
-            .get("models")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
+    let rows = value.get("models")?.as_array()?;
+    Some(
+        rows.iter()
             .filter_map(|row| {
                 let name = row.get("name").and_then(Value::as_str)?.to_string();
                 if !model_name_ok(&name) {
@@ -225,8 +225,7 @@ pub async fn list_tags(native: &str, limits: InventoryLimits) -> Vec<Value> {
             })
             .take(MAX_TAG_ROWS)
             .collect(),
-        _ => Vec::new(),
-    }
+    )
 }
 
 /// The window Ollama loaded `model` with, read from `GET /api/ps` within the
@@ -316,7 +315,8 @@ pub async fn snapshot(endpoint: &str, model: &str, key: &str, cfg: &AppConfig) -
         "endpoint": native,
         "configured_model": model,
         "configured_state": readiness.get("state").cloned().unwrap_or(json!("unavailable")),
-        "models": models,
+        "tags_state": if models.is_some() { "listed" } else { "unavailable" },
+        "models": models.unwrap_or_default(),
         "detail": "Inventory only; use POST /api/ollama/pull to download. No num_ctx.",
     }))
 }
@@ -456,6 +456,20 @@ fn sanitize_pull_line(line: &[u8]) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_failed_tag_query_is_none_not_an_empty_install() {
+        // Bind then drop a listener so the port refuses connections.
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap(); // DevSkim: ignore DS162092 because this unit test needs a refused loopback port.
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let limits = InventoryLimits {
+            timeout: Duration::from_secs(2),
+            max_bytes: 1 << 16,
+        };
+        let native = format!("http://127.0.0.1:{port}"); // DevSkim: ignore DS162092 because this unit test needs a refused loopback origin.
+        assert!(list_tags(&native, limits).await.is_none());
+    }
 
     #[test]
     fn native_url_strips_v1_and_refuses_unsafe_endpoints() {
