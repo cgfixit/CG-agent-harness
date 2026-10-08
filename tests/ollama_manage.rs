@@ -314,7 +314,6 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
             .with("web.total_tokens", "60000")
             .with("chat.compact_prompt_tokens", "50000")
             .with("api.rate_limit.max_requests", "1000")
-            .with("models.local_llm.inventory.refresh_sec", "1")
     };
     let plain = spawn_server(&ollama.openai_url(), options()).await;
     // With web on, the web budget binds the prompt, exactly as chat computes it:
@@ -354,16 +353,14 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
         "{body}"
     );
     assert_eq!(body["tuning"]["max_tokens"], 8192, "{body}");
-    // Ollama restarted with a 32768 window: once the cached read expires, the
-    // caps fall back even though the recorded tuning still says 65536.
+    // Ollama restarted with a 32768 window: the next use re-reads /api/ps (no
+    // cache), and the caps fall back though the recorded tuning still says 65536.
     *ollama.longctx_window.lock().unwrap() = 32768;
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     let (_, stale) = s.get_json("/api/ollama/profile").await;
     assert_eq!(stale["tuning"]["window"], 65536, "{stale}");
     assert_eq!(stale["in_force"]["prompt_cap"], 30000, "{stale}");
     assert_eq!(stale["in_force"]["web_total_ceiling"], 32000, "{stale}");
     *ollama.longctx_window.lock().unwrap() = 65536;
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     let (status, reply) = s.post_json("/api/chat", json!({"message": "hello"})).await;
     assert_eq!(status, 200, "{reply}");
     let request = ollama

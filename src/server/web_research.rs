@@ -411,6 +411,8 @@ pub async fn run_from(
     if question.trim().is_empty() || question.chars().count() > 200 || group.is_some_and(|g| !valid_group(g)) {
         return Err(error("WEB_BAD_QUERY", "invalid research question or group"));
     }
+    // A web budget above 32000 needs a fresh read of the selected model's window.
+    state.verify_window(&state.current_model()).await;
     let web = state.web_snapshot();
     let enabled = state
         .settings

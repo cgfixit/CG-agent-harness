@@ -606,14 +606,10 @@ async fn chat_inner(
         super::skills::resolve(&state, &session.selected_skills)?
     };
 
-    // Caps above the 32768 defaults need Ollama to still report the window
-    // auto_tune measured, so refresh the live read first. Only a larger tuned
-    // window can lift a cap; every other turn skips the read.
-    let larger_tuning = state
-        .tuning_for(&model)
-        .is_some_and(|tuning| tuning.window > crate::server::compaction::BASE_WINDOW);
-    if !cloud_selected && larger_tuning {
-        state.live_window(&model).await;
+    // Caps above the 32768 defaults need Ollama to report, right now, the
+    // window auto_tune measured (a no-op without a larger tuning).
+    if !cloud_selected {
+        state.verify_window(&model).await;
     }
     let live = state.runtime_limits();
     let mut web = state.web.clone();

@@ -60,7 +60,7 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
     // What a chat turn on this model is held to now, computed the way chat does
     // (before a session calibrates its token ratio): configured values, lowered
     // by any tuning, under caps that grow only with a measured window above 32768.
-    state.live_window(&model).await;
+    state.verify_window(&model).await;
     let web_total = state
         .model_web_limits(&model, state.runtime_limits().web.clone())
         .total_tokens;

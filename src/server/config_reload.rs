@@ -194,6 +194,8 @@ fn candidate(state: &AppState) -> Result<RuntimeLimits> {
 }
 
 pub async fn reload(state: Arc<AppState>, source: &'static str) -> Result<serde_json::Value> {
+    // The reload's web-budget check uses the verified window, so read it now.
+    state.verify_window(&state.current_model()).await;
     tokio::task::spawn_blocking(move || {
         // Serializes validation and publication, including concurrent SIGHUP/HTTP.
         let mut current = state

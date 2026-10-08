@@ -72,6 +72,9 @@ pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
 
 /// Longest a `/api/ps` window read may take (a turn may hold the generation gate).
 const WINDOW_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How old a `/api/ps` read may be and still lift caps above the 32768 defaults.
+/// [`AppState::verify_window`] takes a fresh one just before each use.
+const VERIFIED_WINDOW_MAX_AGE_SEC: u64 = 10;
 
 pub struct AppState {
     pub home: Home,
@@ -277,6 +280,23 @@ impl AppState {
         if let Some(window) = self.ollama.cached_window(model, refresh) {
             return window;
         }
+        self.probe_window(model).await
+    }
+
+    /// Before a turn, research run or reload uses raised caps: re-read
+    /// `/api/ps` now, ignoring the cache, when `model` has a tuning above 32768.
+    /// Without one the caps are the defaults and nothing is read.
+    pub async fn verify_window(&self, model: &str) {
+        let larger = self
+            .tuning_for(model)
+            .is_some_and(|tuning| tuning.window > super::compaction::BASE_WINDOW);
+        if larger {
+            self.probe_window(model).await;
+        }
+    }
+
+    /// One bounded `/api/ps` read for `model`, cached (failures too).
+    async fn probe_window(&self, model: &str) -> Option<u64> {
         let native = crate::llm::ollama::native_base_url(&self.chat.base_url)?;
         let mut limits = crate::llm::inventory::InventoryLimits::from_config(&self.cfg).ok()?;
         // A turn may hold the generation gate here: a loopback /api/ps answers in
@@ -288,13 +308,16 @@ impl AppState {
     }
 
     /// The window caps may grow with: the one `auto_tune` measured, only while a
-    /// fresh `/api/ps` read still reports `model` loaded at least that large
-    /// (the smaller of the two). A restart with a smaller window, an unloaded
-    /// model or an unanswered read all fall back to the 32768-window caps.
+    /// `/api/ps` read from the last few seconds ([`Self::verify_window`]) still
+    /// reports `model` loaded at least that large (the smaller of the two). A
+    /// restart with a smaller window, an unloaded model, an unanswered or old
+    /// read all fall back to the 32768-window caps.
     pub fn verified_window(&self, model: &str) -> Option<u64> {
         let tuned = self.tuning_for(model)?.window;
-        let refresh = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
-        let live = self.ollama.cached_window(model, refresh).flatten()?;
+        let live = self
+            .ollama
+            .cached_window(model, VERIFIED_WINDOW_MAX_AGE_SEC)
+            .flatten()?;
         Some(tuned.min(live))
     }
 
