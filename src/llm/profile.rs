@@ -85,6 +85,20 @@ pub fn parse_show(body: &Value) -> Value {
     })
 }
 
+/// True when two Ollama model names are the same model: an untagged name is
+/// its implicit `:latest` tag, as in [`row_is`].
+pub fn same_model(a: &str, b: &str) -> bool {
+    let tagged = |m: &str| {
+        let m = m.trim();
+        if m.contains(':') {
+            m.to_string()
+        } else {
+            format!("{m}:latest")
+        }
+    };
+    !a.trim().is_empty() && tagged(a) == tagged(b)
+}
+
 /// Ollama lists an untagged selection under its implicit `:latest` tag.
 fn row_is(row: &Value, model: &str) -> bool {
     let latest = (!model.contains(':')).then(|| format!("{model}:latest"));
@@ -378,6 +392,8 @@ mod tests {
         assert_eq!(loaded["gpu_fraction"], 0.9);
         assert!(parse_ps(&body, "qwen3.8:27b-mlx").is_none());
         // An untagged selection matches its implicit :latest row, and only that.
+        assert!(same_model("qwen3.8", "qwen3.8:latest") && same_model(" a:b ", "a:b"));
+        assert!(!same_model("qwen3.8", "qwen3.8:q8") && !same_model("", ":latest"));
         assert!(parse_ps(&body, "other").is_some());
         assert!(parse_ps(&body, "other:q8").is_none());
         // Older Ollama without context_length still reports memory.

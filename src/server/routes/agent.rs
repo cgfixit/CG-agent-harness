@@ -91,15 +91,20 @@ pub async fn agent_checks(State(state): State<Arc<AppState>>) -> Json<Value> {
 
 /// True when the run's planner and /api/chat target the same backend.
 /// The planner timeout an agent run budgets and passes to its child: the one
-/// `auto_tune` derived when the planner runs the tuned chat model on the same
-/// backend, else the configured value.
-fn planner_timeout_sec(state: &AppState) -> Option<u64> {
+/// `auto_tune` derived when the planner runs the tuned chat model on the very
+/// endpoint chat measured, else the configured value. Stricter than the shared
+/// generation-gate check: IPv4 and IPv6 loopback can be different listeners,
+/// and a timeout measured on one must not cut off a slower planner on the other.
+pub(crate) fn planner_timeout_sec(state: &AppState) -> Option<u64> {
     let planner_model = state.cfg.str_or("agentic.deepagent_github.model", "");
-    if !agent_run_shares_chat_backend(state) {
+    let planner_url = state.cfg.str_or("agentic.deepagent_github.base_url", "");
+    let endpoint = |url: &str| url.trim().trim_end_matches('/').to_ascii_lowercase();
+    if !planner_url.trim().is_empty() && endpoint(&planner_url) != endpoint(&state.backend.base_url) {
         return None;
     }
     state
-        .tuning_for(planner_model.trim())
+        .tuning_for(&state.current_model())
+        .filter(|tuning| crate::llm::profile::same_model(&tuning.model, &planner_model))
         .and_then(|tuning| tuning.planner_timeout_sec)
 }
 

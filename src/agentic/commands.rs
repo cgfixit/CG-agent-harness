@@ -35,7 +35,7 @@ use super::writer::{execute_write, plan_write, DEFAULT_WRITE_TIMEOUT_SEC};
 const MAX_LOOP_CONTEXT_CHARS: usize = 8_000;
 const MAX_STATUS_DIFF_CHARS: usize = 20_000;
 /// Mirrors the server's ceiling for a speed-derived planner timeout.
-const MAX_PLANNER_TIMEOUT_SEC: u64 = 3_600;
+pub const MAX_PLANNER_TIMEOUT_SEC: u64 = 3_600;
 
 fn err(msg: &str) {
     eprintln!("  [error] {msg}");
@@ -468,7 +468,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     record.plan_sha256 = plan_sha.clone();
     save_run(&runs_dir, &mut record)?;
 
-    let local_client;
+    let mut local_client;
     let cloud_client;
     let client: &dyn ProposerClient = match &provider {
         Some(p) => {
@@ -486,6 +486,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
                 &std::env::var("DEEPAGENT_API_KEY").unwrap_or_default(),
                 local_reasoning_effort(ctx),
             )?;
+            local_client.timeout_measured = opts.get("planner-timeout-sec").is_some();
             &local_client
         }
     };

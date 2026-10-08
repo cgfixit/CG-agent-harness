@@ -31,7 +31,9 @@ const TIMEOUT_SAFETY: f64 = 2.0;
 /// Tokens a tool-call round adds to the reply side of the estimate.
 const TOOL_ROUND_TOKENS: u64 = 128;
 const MIN_TIMEOUT_SEC: u64 = 120;
-const MAX_TIMEOUT_SEC: u64 = 3600;
+/// Ceiling for derived chat and planner timeouts; the agentic child mirrors it
+/// (`agentic::commands::MAX_PLANNER_TIMEOUT_SEC`, checked by `invariant_guard`).
+pub const MAX_TIMEOUT_SEC: u64 = 3600;
 /// Synthesis prompt tokens beside the evidence: instructions, question, framing.
 const SYNTHESIS_PROMPT_OVERHEAD: u64 = 1_000;
 const MIN_SYNTHESIS_SEC: u64 = 60;
@@ -253,7 +255,10 @@ pub fn propose(
     // The coding planner, when it runs this model: its prompt at prefill speed
     // and one planner_max_tokens reply at decode speed, padded like chat.
     let planner_model = cfg.str_or("agentic.deepagent_github.model", "");
-    if profile["model"].as_str() == Some(planner_model.trim()) {
+    if profile["model"]
+        .as_str()
+        .is_some_and(|model| crate::llm::profile::same_model(model, &planner_model))
+    {
         let planner_reply = cfg.u64_or(
             "agentic.deepagent_github.planner_max_tokens",
             DEFAULT_PLANNER_MAX_TOKENS,
@@ -597,6 +602,13 @@ mod tests {
         assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 150);
         let tuning = tuning_from("qwen3.8:27b-mlx", &profile, &proposal, Some(speed.clone())).unwrap();
         assert_eq!(tuning.planner_timeout_sec, Some(150));
+        // An untagged planner name is the same model as its :latest tag.
+        let mut aliased = cfg.clone();
+        aliased.raw["agentic"]["deepagent_github"]["model"] = "qwen3.8".into();
+        let mut latest = loaded(TUNED_WINDOW);
+        latest["model"] = json!("qwen3.8:latest");
+        let proposal = propose(&latest, Some(&speed), &aliased, &web, &backend(Some("none")));
+        assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 150);
         // Another model, or no sample: the configured planner timeout stays.
         profile["model"] = json!("humanizer:q8");
         let other = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));

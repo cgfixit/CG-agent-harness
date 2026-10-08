@@ -37,6 +37,9 @@ pub struct LocalProposerClient<'a> {
     pub api_key: String,
     pub reasoning_effort: Option<String>,
     pub timeout_sec: u64,
+    /// The timeout came from `--planner-timeout-sec` (the server's measured
+    /// value), so the configured setting does not apply to this run.
+    pub timeout_measured: bool,
     audit: &'a Audit,
     http: reqwest::blocking::Client,
 }
@@ -62,13 +65,20 @@ impl<'a> LocalProposerClient<'a> {
             api_key: api_key.trim().to_string(),
             reasoning_effort,
             timeout_sec,
+            timeout_measured: false,
             audit,
             http,
         })
     }
 
     fn failure_detail(&self, e: &reqwest::Error) -> String {
-        if e.is_timeout() {
+        if e.is_timeout() && self.timeout_measured {
+            format!(
+                "ReadTimeout after {}s, a timeout models.local_llm.auto_tune derived from this model's measured speed; \
+                 run /model use again to re-measure, or turn auto_tune off to use agentic.deepagent_github.planner_timeout_sec",
+                self.timeout_sec
+            )
+        } else if e.is_timeout() {
             format!(
                 "ReadTimeout after {}s; raise agentic.deepagent_github.planner_timeout_sec if the model needs longer",
                 self.timeout_sec

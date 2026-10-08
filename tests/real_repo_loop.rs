@@ -1176,6 +1176,12 @@ async fn real_repo_run_smoke_end_to_end() {
         format!("{out}{err}").contains("ReadTimeout after 1s"),
         "stdout={out} stderr={err}"
     );
+    // The flag's value is the measured one: the remedy names auto_tune, not the
+    // configured setting this run ignored.
+    assert!(
+        format!("{out}{err}").contains("auto_tune derived"),
+        "stdout={out} stderr={err}"
+    );
     // The run.
     let (code, out, err) = ra(
         &config,
