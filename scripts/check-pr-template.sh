@@ -182,9 +182,9 @@ template_missing=""
 if git -C "$repo_root" rev-parse --verify -q "$base^{commit}" >/dev/null; then
   # Resolve the blob through ls-tree, not `git show base:path`: Git for
   # Windows' bash rewrites a colon-joined argument like that one before git.exe
-  # sees it. MSYS_NO_PATHCONV covers the remaining path arguments. git's own
-  # error is kept in the message, so a failure names its cause.
-  export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+  # sees it. Do not set MSYS_NO_PATHCONV: `git -C "$repo_root"` needs the
+  # /tmp-style path translated. git's own error is kept in the message, so a
+  # failure names its cause.
   tree_line=""
   if tree_line="$(git -C "$repo_root" ls-tree "$base" -- "$template_path" 2>&1)" \
     && blob="$(awk 'NR == 1 && $2 == "blob" { print $3 }' <<<"$tree_line")" \
