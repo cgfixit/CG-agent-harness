@@ -319,13 +319,24 @@ impl AppState {
     /// verified window: re-read `/api/ps` and refuse the call if the window
     /// Ollama reports no longer allows `prompt_limit` and `web_total`, so a
     /// restart with a different window mid-turn cannot truncate the prompt.
+    /// A tuned model's window was measured, so one Ollama no longer reports
+    /// even after a load is refused too, not treated as the 32768 defaults.
     /// An untuned model has the default caps and returns at once without a read.
     pub async fn ensure_window_allows(&self, model: &str, prompt_limit: u64, web_total: u64) -> Result<()> {
         if self.tuning_for(model).is_none() {
             return Ok(());
         }
         self.verify_window(model).await;
-        let window = self.verified_window(model);
+        let Some(window) = self.verified_window(model) else {
+            return Err(HarnessError::new(
+                WINDOW_CHANGED,
+                format!(
+                    "Ollama did not report the window {model} is loaded with, even after loading it; nothing was sent. \
+                     Check that Ollama is running, then send it again."
+                ),
+            ));
+        };
+        let window = Some(window);
         if prompt_limit <= super::compaction::prompt_cap(window)
             && web_total <= super::compaction::web_total_cap(window)
         {

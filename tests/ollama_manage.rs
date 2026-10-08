@@ -409,6 +409,13 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
             .any(|g| g["model"] == "longctx:q8" && g["prompt"] == "" && g.get("num_ctx").is_none()),
         "{loads:?}"
     );
+    // A load that leaves the window unreported is refused, not given the
+    // 32768 defaults: the model was measured, so an unknown window is a failure.
+    *ollama.longctx_window.lock().unwrap() = 0;
+    *ollama.longctx_load_window.lock().unwrap() = 0;
+    let refused = state.ensure_window_allows("longctx:q8", 1_000, 0).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    assert!(refused.message.contains("even after loading it"), "{refused:?}");
     *ollama.longctx_window.lock().unwrap() = 32768;
     // A window at the 32768 defaults allows calls sized for them.
     state
