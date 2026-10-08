@@ -318,7 +318,7 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     assert_eq!(
         body["in_force"],
         json!({"prompt_cap": 30000, "prompt_limit": 30000, "limit_source": "chat.compact_prompt_tokens",
-            "web_total_tokens": 32000}),
+            "web_total_tokens": 32000, "web_total_ceiling": 32000}),
         "{body}"
     );
     assert_eq!(body["proposed"]["state"], "shipped", "{body}");
@@ -341,7 +341,7 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     assert_eq!(
         body["in_force"],
         json!({"prompt_cap": 60000, "prompt_limit": 48000, "limit_source": "chat.compact_prompt_tokens",
-            "web_total_tokens": 56000}),
+            "web_total_tokens": 56000, "web_total_ceiling": 56000}),
         "{body}"
     );
     assert_eq!(body["tuning"]["max_tokens"], 8192, "{body}");

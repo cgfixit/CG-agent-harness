@@ -88,7 +88,9 @@ impl RuntimeLimits {
         );
         let tool_tokens =
             super::compaction::estimate_tokens(&serde_json::to_string(&super::chat_web::tools()).unwrap_or_default());
-        if let Some(warning) = super::compaction::web_budget_warning(web.total_tokens, reservation, tool_tokens) {
+        if let Some(warning) =
+            super::compaction::configured_web_budget_warning(web.total_tokens, reservation, tool_tokens)
+        {
             tracing::warn!("{warning}");
         }
         Ok(Self {

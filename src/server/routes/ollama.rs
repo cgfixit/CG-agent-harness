@@ -83,6 +83,7 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
         "prompt_limit": prompt_limit,
         "limit_source": limit_source,
         "web_total_tokens": web_total,
+        "web_total_ceiling": state.web_total_ceiling(&model),
     });
     Ok(Json(value))
 }

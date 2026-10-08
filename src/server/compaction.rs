@@ -95,6 +95,20 @@ pub fn web_budget_warning(web_total_tokens: u64, reservation: u64, tool_tokens: 
     })
 }
 
+/// [`web_budget_warning`] for a configured `web.total_tokens`, checked at the
+/// budget chat will use until `auto_tune` measures a larger window.
+pub fn configured_web_budget_warning(configured: u64, reservation: u64, tool_tokens: u64) -> Option<String> {
+    let held = configured.min(web_total_cap(None));
+    let warning = web_budget_warning(held, reservation, tool_tokens)?;
+    Some(if held < configured {
+        format!(
+            "{warning} (web.total_tokens {configured} is held at {held} until models.local_llm.auto_tune measures a window above {BASE_WINDOW})"
+        )
+    } else {
+        warning
+    })
+}
+
 /// The prompt limit a chat turn is held to and the setting that binds it:
 /// `chat.compact_prompt_tokens` (held at `cap`, from [`prompt_cap`]), tightened to
 /// `web_room` for web chat, but never below `floor` (reply reservation, headroom
@@ -476,6 +490,16 @@ mod tests {
             prompt_limit_remedy("chat.compact_prompt_tokens", MAX_PROMPT_TOKENS, cap, false, chat, false),
             "shorten the message or raise chat.compact_prompt_tokens"
         );
+    }
+
+    #[test]
+    fn the_startup_warning_checks_the_budget_chat_will_hold() {
+        // A doubled 12952-token reservation: 128000 would fit, but 32000 is what applies.
+        let warning = configured_web_budget_warning(128_000, 25_904, 272).expect("32000 cannot fit two replies");
+        assert!(warning.contains("held at 32000"), "{warning}");
+        assert!(configured_web_budget_warning(28_000, 8_192, 272).is_none());
+        let plain = configured_web_budget_warning(16_000, 8_192, 272).unwrap();
+        assert!(!plain.contains("held at"), "{plain}");
     }
 
     #[test]

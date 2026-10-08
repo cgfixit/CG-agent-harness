@@ -268,9 +268,14 @@ impl AppState {
         super::compaction::prompt_cap(self.tuning_for(model).map(|tuning| tuning.window))
     }
 
-    /// The `web.total_tokens` cap for `model`, like [`Self::prompt_cap`].
-    pub fn web_total_cap(&self, model: &str) -> u64 {
-        super::compaction::web_total_cap(self.tuning_for(model).map(|tuning| tuning.window))
+    /// The most `web.total_tokens` can be for `model`, whatever is configured:
+    /// its window cap (like [`Self::prompt_cap`]), lowered to any tuned budget.
+    pub fn web_total_ceiling(&self, model: &str) -> u64 {
+        let tuning = self.tuning_for(model);
+        let cap = super::compaction::web_total_cap(tuning.as_ref().map(|tuning| tuning.window));
+        tuning
+            .and_then(|tuning| tuning.web.as_ref().map(|web| web.total_tokens))
+            .map_or(cap, |budget| cap.min(budget))
     }
 
     /// `models.local_llm.max_tokens`, lowered to `model`'s tuning.

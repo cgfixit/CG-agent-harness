@@ -827,7 +827,8 @@ async fn chat_inner(
             crate::server::compaction::calibrated_tokens(tool_tokens, ratio),
             reply_setting,
         );
-        let web_at_cap = web.limits.total_tokens >= state.web_total_cap(&model);
+        // Raising web.total_tokens helps only below every ceiling it is held to.
+        let web_at_cap = web.limits.total_tokens >= state.web_total_ceiling(&model);
         // Name the setting that actually bounds this prompt: "start a new session"
         // cannot help when the system prompt and reply reservation fill the limit.
         let too_large = |what: &str, projected: u64, compacted: u64| {
