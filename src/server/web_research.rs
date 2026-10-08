@@ -491,10 +491,18 @@ pub async fn run_from(
                             }
                         }
                         Err(e) => {
-                            // Evidence and queries are unchanged, so the next round
-                            // would resend this exact prompt at temperature 0.
+                            // A refused plan or an exhausted budget would repeat
+                            // exactly next round (same evidence and queries at
+                            // temperature 0), so planning stops. A transport or
+                            // provider failure keeps its retry next round.
+                            let repeats = matches!(
+                                e.code.as_str(),
+                                "WEB_PLAN_INVALID" | "WEB_TOKEN_BUDGET" | "CLOUD_CHAT_CONTEXT"
+                            );
                             warnings.push(e.code);
-                            break;
+                            if repeats {
+                                break;
+                            }
                         }
                     }
                 }
