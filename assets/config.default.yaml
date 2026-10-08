@@ -137,7 +137,8 @@ web:
   model_tokens: 1024 # 256–2048 maximum synthesis completion
   total_tokens: 28000 # 2048–128000, held at 32000 unless auto_tune measured a larger window; sized for a verified 32768-token window
   # If /api/ps context_length is smaller or unverified, keep 16000 here and evidence_tokens 3000.
-  research_seconds: 300 # 10–1800 overall research deadline
+  research_seconds: 300 # 10–1800 discovery and planning deadline
+  synthesis_seconds: 300 # 10–1800 answer deadline, started after discovery; missing keys use 300
   stale_seconds: 604800 # 60–31536000; fetch age, not publication-date verification
 
 # Completion webhooks are explicit operator configuration and restart-only.

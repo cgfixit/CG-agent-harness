@@ -207,6 +207,78 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
     page_task.abort();
 }
 
+/// Discovery and synthesis have separate deadlines: a slow local answer is not
+/// cut off by `research_seconds`, and an answer that overruns its own
+/// `synthesis_seconds` keeps the passages and says so.
+#[tokio::test]
+async fn synthesis_has_its_own_deadline_after_discovery() {
+    let model = Router::new().route("/v1/chat/completions", post(|Json(request): Json<Value>| async move {
+        let user: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+        let planning = request["messages"][0]["content"].as_str().unwrap().starts_with("Return only JSON");
+        let answer = match user["evidence"].as_array().and_then(|e| e.first()).filter(|_| !planning) {
+            Some(p) => {
+                // Slower than `research_seconds`, the whole budget before the split.
+                tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+                let quote: String = p["text"].as_str().unwrap().chars().take(30).collect();
+                json!({"supported":[{"text":"Retries are documented.","citations":[{"id":p["id"],"quote":quote}]}],"conflicts":[],"inferences":[],"missing":[]})
+            }
+            None => json!({"queries":["retry"],"gaps":[]}),
+        };
+        Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":answer.to_string()}}],"usage":{"prompt_tokens":20,"completion_tokens":10}}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let model_url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+    let model_task = tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
+    let pages = Router::new().route(
+        "/slow",
+        get(|| async {
+            (
+                [("content-type", "text/plain")],
+                "Connection retries use exponential backoff with a cap of five attempts.",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let page_task = tokio::spawn(async move { axum::serve(listener, pages).await.unwrap() });
+    for (synthesis_seconds, answered) in [("30", true), ("10", false)] {
+        let mut options = ServerOptions::default()
+            .with("web.pace_ms", "100")
+            .with("web.research_seconds", "10")
+            .with("web.synthesis_seconds", synthesis_seconds);
+        options.web_resolve = Some(("research.invalid".into(), address));
+        let s = spawn_server(&model_url, options).await;
+        let url = format!("http://research.invalid:{}/slow", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+        let (status, result) = s
+            .post_json(
+                "/api/web/research",
+                json!({"query":"connection retries backoff","urls":[url]}),
+            )
+            .await;
+        assert_eq!(status, 200, "{result}");
+        let warnings = result["warnings"].as_array().unwrap();
+        assert!(!warnings.contains(&json!("WEB_RESEARCH_TIMEOUT")), "{result}");
+        assert_eq!(
+            !result["answer"]["supported"].as_array().unwrap().is_empty(),
+            answered,
+            "{result}"
+        );
+        assert_eq!(
+            warnings.contains(&json!("WEB_SYNTHESIS_TIMEOUT")),
+            !answered,
+            "{result}"
+        );
+        assert!(
+            !result["passages"].as_array().unwrap().is_empty(),
+            "passages survive: {result}"
+        );
+        assert!(!s.state.generation_gate.is_held());
+    }
+    model_task.abort();
+    page_task.abort();
+}
+
 /// A home sized for a small window (`total_tokens` close to `model_tokens`)
 /// gets an answer from fewer passages, never a lost answer: the lowest-ranked
 /// passages are dropped so the synthesis prompt and reply fit, and the run warns.

@@ -86,7 +86,7 @@ handle was accepted. Other values are `skipped_late`, `skipped_refused`,
 
 The `scheduling` section in `config.default.yaml` documents finite poll, grace,
 preview-expiry and inventory settings. They require restart and are outside the
-22-key limit-reload allowlist. Existing execution defaults remain closed.
+23-key limit-reload allowlist. Existing execution defaults remain closed.
 
 In a [webhook-capable build](SPEND_AND_NOTIFICATIONS.md), optional notifications
 cover terminal detached jobs started manually or by schedules: `finished`,

@@ -6,7 +6,7 @@ Netconnect is fail-closed LAN observation. It ships passive. Every gate in `asse
 
 A tier can run only when `netconnect.enabled` and that tier's flag are both the unquoted boolean `true`, and `allowed_cidrs` is a non-empty list the validator accepted. Scope comes from that list. It is never copied from local interface addresses. `passive_listen` is a flag only: this mode does not join a multicast group.
 
-These keys are outside the 22-key reload allowlist. Edit `config.yaml` under `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`), then restart `cgagentharness serve`. The CLI reads the file on each invocation. `POST /api/config/reload` and SIGHUP leave this section unchanged.
+These keys are outside the 23-key reload allowlist. Edit `config.yaml` under `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`), then restart `cgagentharness serve`. The CLI reads the file on each invocation. `POST /api/config/reload` and SIGHUP leave this section unchanged.
 
 ## Gates
 
