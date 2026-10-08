@@ -49,7 +49,23 @@ pub fn native_base_url(endpoint: &str) -> Option<String> {
         return None;
     }
     let url = url::Url::parse(endpoint).ok()?;
-    let mut origin = format!("{}://{}", url.scheme(), url.host_str()?);
+    // Rebuilt from literals (the scheme and the loopback allowlist's own host
+    // string) plus the port number, so no configured text reaches a request URL.
+    let scheme = match url.scheme() {
+        "http" => "http",
+        "https" => "https",
+        _ => return None,
+    };
+    let configured = url.host_str()?.trim_matches(['[', ']']);
+    let host = crate::llm::backend::LOOPBACK_HOSTS
+        .iter()
+        .copied()
+        .find(|allowed| *allowed == configured)?;
+    let mut origin = if host.contains(':') {
+        format!("{scheme}://[{host}]")
+    } else {
+        format!("{scheme}://{host}")
+    };
     if let Some(port) = url.port() {
         origin.push(':');
         origin.push_str(&port.to_string());

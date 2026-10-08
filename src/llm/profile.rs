@@ -121,6 +121,18 @@ pub fn parse_tags(body: &Value, model: &str) -> Option<Value> {
     }))
 }
 
+/// The loaded facts and residency from an `/api/ps` read: "not_resident" only
+/// for a valid model list without this model; a failed read is "unknown".
+fn residency(ps: Bounded, model: &str) -> (Option<Value>, &'static str) {
+    match ps {
+        Bounded::Json(body) if body.get("models").is_some_and(Value::is_array) => match parse_ps(&body, model) {
+            Some(loaded) => (Some(loaded), "resident"),
+            None => (None, "not_resident"),
+        },
+        _ => (None, "unknown"),
+    }
+}
+
 pub fn not_probed(model: &str, detail: &str) -> Value {
     json!({"model": model, "state": "not_probed", "detail": detail})
 }
@@ -157,10 +169,7 @@ pub async fn probe(endpoint: &str, model: &str, limits: InventoryLimits) -> Valu
         }
         _ => return unavailable(model, &native),
     };
-    let loaded = match ps {
-        Bounded::Json(body) => parse_ps(&body, model),
-        _ => None,
-    };
+    let (loaded, residency) = residency(ps, model);
     let installed = match tags {
         Bounded::Json(body) => parse_tags(&body, model),
         _ => None,
@@ -172,10 +181,11 @@ pub async fn probe(endpoint: &str, model: &str, limits: InventoryLimits) -> Valu
         "declared": declared,
         "installed": installed,
         "loaded": loaded,
-        "detail": if loaded.is_some() {
-            "Read-only. loaded.context_length is the window chat actually gets."
-        } else {
-            "Read-only. Not resident, so the actual window is unknown; send one chat, then check again."
+        "residency": residency,
+        "detail": match residency {
+            "resident" => "Read-only. loaded.context_length is the window chat actually gets.",
+            "not_resident" => "Read-only. Not resident, so the actual window is unknown; send one chat, then check again.",
+            _ => "Read-only. /api/ps did not answer usably, so residency and the loaded window are unknown.",
         },
     })
 }
@@ -374,6 +384,16 @@ mod tests {
         let old = parse_ps(&json!({"models": [{"name": "m", "size": 4, "size_vram": 4}]}), "m").unwrap();
         assert!(old["context_length"].is_null());
         assert_eq!(old["gpu_fraction"], 1.0);
+    }
+
+    #[test]
+    fn a_failed_ps_read_is_unknown_not_absent() {
+        let listed = json!({"models": [{"name": "m:latest", "context_length": 8192}]});
+        assert_eq!(residency(Bounded::Json(listed.clone()), "m").1, "resident");
+        assert_eq!(residency(Bounded::Json(listed), "other").1, "not_resident");
+        assert_eq!(residency(Bounded::Failed, "m"), (None, "unknown"));
+        assert_eq!(residency(Bounded::Status(500), "m").1, "unknown");
+        assert_eq!(residency(Bounded::Json(json!({"error": "x"})), "m").1, "unknown");
     }
 
     #[test]

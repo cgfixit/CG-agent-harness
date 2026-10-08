@@ -138,7 +138,7 @@ pub fn propose(
     }
     let Some(window) = profile["loaded"]["context_length"].as_u64() else {
         return json!({"state": "unknown_window", "tuned_window": TUNED_WINDOW, "values": [], "notes": notes,
-            "detail": "The model is not resident, so its window is unknown. Send one chat, then run /model profile again."});
+            "detail": "The loaded window is unknown: the model is not resident or /api/ps did not answer. Send one chat, then run /model profile again."});
     };
     let Some(shipped) = shipped() else {
         return json!({"state": "unknown_window", "tuned_window": TUNED_WINDOW, "values": [], "notes": notes,
