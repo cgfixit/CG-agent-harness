@@ -814,6 +814,8 @@ async fn chat_inner(
     let mut compaction = None;
     let mut summary_prompt_tokens = 0u64;
     let mut summary_completion_tokens = 0u64;
+    // The prompt limit this turn was sized for, checked again before the reply.
+    let mut turn_prompt_limit = 0u64;
     if !cloud_selected {
         let configured_threshold = state.compact_prompt_tokens(&model);
         let prompt_cap = state.prompt_cap(&model);
@@ -832,6 +834,7 @@ async fn chat_inner(
             crate::server::compaction::calibrated_tokens(tool_tokens, ratio),
             reply_setting,
         );
+        turn_prompt_limit = threshold;
         // What can raise the web budget, so the remedy never suggests a change that cannot help.
         let web_raise = crate::server::compaction::WebRaise::for_budget(
             web.limits.total_tokens,
@@ -978,6 +981,15 @@ async fn chat_inner(
     });
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
     let spend_source = if req.loop_turn { "loop" } else { "chat" };
+    // Compaction can take a while: the window must still allow what this turn
+    // was sized for before the reply is requested (a no-op within the defaults).
+    if !cloud_selected {
+        let web_total = if chat_tools && !req.loop_turn { web.limits.total_tokens } else { 0 };
+        state
+            .ensure_window_allows(&model, turn_prompt_limit, web_total)
+            .await
+            .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
+    }
     let (mut reply, web_tools) = if cloud_selected {
         (
             state
@@ -1010,7 +1022,7 @@ async fn chat_inner(
             output,
         )
         .await
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?
+        .map_err(|e| ApiError::from_err(llm_status(&e), &e))?
     } else {
         (
             state
@@ -1218,6 +1230,16 @@ async fn chat_inner(
         },
     })))
         } => result,
+    }
+}
+
+/// 409 when the loaded window shrank below what a request was sized for (send
+/// it again); any other model failure is the upstream's, 502.
+fn llm_status(error: &crate::common::errors::HarnessError) -> StatusCode {
+    if error.code == crate::server::state::WINDOW_CHANGED {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::BAD_GATEWAY
     }
 }
 

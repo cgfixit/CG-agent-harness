@@ -319,6 +319,8 @@ async fn run_inner(
             appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { definition_tokens };
         peak_extra = peak_extra.max(extra);
         let validate = || check_evidence(state, owner, &sources);
+        // A tool round may run long: the window must still allow this budget.
+        state.ensure_window_allows(model, 0, web.limits.total_tokens).await?;
         let response = state
             .chat
             .chat_with_tools_stream(

@@ -360,6 +360,24 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     assert_eq!(stale["tuning"]["window"], 65536, "{stale}");
     assert_eq!(stale["in_force"]["prompt_cap"], 30000, "{stale}");
     assert_eq!(stale["in_force"]["web_total_ceiling"], 32000, "{stale}");
+    // Each model call sized above the defaults re-reads the window first: a
+    // shrink between the turn's start and its reply refuses the call.
+    *ollama.longctx_window.lock().unwrap() = 65536;
+    let state = &s.state;
+    state
+        .ensure_window_allows("longctx:q8", 48_000, 56_000)
+        .await
+        .expect("65536 still loaded");
+    *ollama.longctx_window.lock().unwrap() = 32768;
+    let refused = state.ensure_window_allows("longctx:q8", 48_000, 0).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    let refused = state.ensure_window_allows("longctx:q8", 0, 56_000).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    // Calls within the 32768 defaults are never refused.
+    state
+        .ensure_window_allows("longctx:q8", 30_000, 32_000)
+        .await
+        .expect("defaults need no read");
     *ollama.longctx_window.lock().unwrap() = 65536;
     let (status, reply) = s.post_json("/api/chat", json!({"message": "hello"})).await;
     assert_eq!(status, 200, "{reply}");

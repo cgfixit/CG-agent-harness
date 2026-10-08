@@ -72,6 +72,8 @@ pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
 
 /// Longest a `/api/ps` window read may take (a turn may hold the generation gate).
 const WINDOW_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Error code when the loaded window shrank below what a request was sized for.
+pub const WINDOW_CHANGED: &str = "OLLAMA_WINDOW_CHANGED";
 /// How old a `/api/ps` read may be and still lift caps above the 32768 defaults.
 /// [`AppState::verify_window`] takes a fresh one just before each use.
 const VERIFIED_WINDOW_MAX_AGE_SEC: u64 = 10;
@@ -293,6 +295,33 @@ impl AppState {
         if larger {
             self.probe_window(model).await;
         }
+    }
+
+    /// Just before a model call sized by limits above the 32768-window defaults
+    /// (a prompt limit over 30000 or a web budget over 32000): re-read `/api/ps`
+    /// and refuse the call if the window Ollama reports no longer allows them,
+    /// so a restart with a smaller window mid-turn cannot truncate the prompt.
+    /// Calls within the defaults return at once without a read.
+    pub async fn ensure_window_allows(&self, model: &str, prompt_limit: u64, web_total: u64) -> Result<()> {
+        let raised =
+            prompt_limit > super::compaction::MAX_PROMPT_TOKENS || web_total > super::compaction::BASE_WEB_TOTAL_TOKENS;
+        if !raised {
+            return Ok(());
+        }
+        self.verify_window(model).await;
+        let window = self.verified_window(model);
+        if prompt_limit <= super::compaction::prompt_cap(window)
+            && web_total <= super::compaction::web_total_cap(window)
+        {
+            return Ok(());
+        }
+        Err(HarnessError::new(
+            WINDOW_CHANGED,
+            format!(
+                "Ollama no longer reports {model} loaded with the window this request was sized for; nothing was sent. \
+                 Send it again: limits now follow the window Ollama reports."
+            ),
+        ))
     }
 
     /// One bounded `/api/ps` read for `model`, cached (failures too).

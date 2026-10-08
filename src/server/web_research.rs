@@ -281,6 +281,10 @@ async fn model_call(
         outcome: "incomplete".into(),
     });
     let row = usage.last_mut().unwrap();
+    // Gathering sources can take minutes: the window must still allow this budget.
+    state
+        .ensure_window_allows(&state.current_model(), 0, total_budget)
+        .await?;
     let reply = state
         .chat
         .chat(
