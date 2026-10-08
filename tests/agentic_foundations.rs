@@ -387,13 +387,15 @@ fn attach_requires_a_clone_output_under_workspace_root() {
 fn seatbelt_profile_is_byte_exact() {
     let cwd = tempfile::tempdir().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let c = dunce::canonicalize(cwd.path()).unwrap().display().to_string();
-    let t = dunce::canonicalize(tmp.path()).unwrap().display().to_string();
+    // JSON string quoting matches Seatbelt's backslash/quote literals, including
+    // native Windows paths when this pure profile-format check runs there.
+    let c = serde_json::to_string(&dunce::canonicalize(cwd.path()).unwrap()).unwrap();
+    let t = serde_json::to_string(&dunce::canonicalize(tmp.path()).unwrap()).unwrap();
     let profile = seatbelt_profile(cwd.path(), Some(tmp.path()));
-    let expected = format!("(deny file-write* (require-not (subpath \"{t}\")))");
+    let expected = format!("(deny file-write* (require-not (subpath {t})))");
     assert_eq!(profile.lines().last().unwrap(), expected);
     assert!(profile.contains("(deny file-read-data"));
-    assert!(profile.contains(&format!("(subpath \"{c}\")")));
+    assert!(profile.contains(&format!("(subpath {c})")));
     assert!(profile.contains("(deny network*)"));
 }
 
