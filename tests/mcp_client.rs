@@ -68,10 +68,10 @@ fn stdio_executed(status: u16, body: &Value) -> bool {
 
 fn stdio_yaml() -> String {
     format!(
-        "\n    - name: fixture\n      transport: stdio\n      capabilities: {}\n      command:\n        - \"{}\"\n        - \"{}\"\n        - --stdio\n      env:\n        HOME: /tmp/not-scratch\n        PATH: /tmp/evil\n        GROK_API_KEY: should-never-reach-child\n        LD_PRELOAD: /tmp/evil.so\n        DO_NOT_TRACK: \"0\"\n      tools:\n        - echo\n        - env_probe\n        - crash\n        - read_path\n        - fs_probe\n        - network_probe\n",
+        "\n    - name: fixture\n      transport: stdio\n      capabilities: {}\n      command:\n        - {}\n        - {}\n        - --stdio\n      env:\n        HOME: /tmp/not-scratch\n        PATH: /tmp/evil\n        GROK_API_KEY: should-never-reach-child\n        LD_PRELOAD: /tmp/evil.so\n        DO_NOT_TRACK: \"0\"\n      tools:\n        - echo\n        - env_probe\n        - crash\n        - read_path\n        - fs_probe\n        - network_probe\n",
         serde_json::to_string(&fixture_capabilities()).unwrap(),
-        python3(),
-        fixture_script().display()
+        serde_json::to_string(&python3()).unwrap(),
+        serde_json::to_string(&fixture_script()).unwrap()
     )
 }
 
@@ -118,8 +118,11 @@ impl McpServer {
         let mut yaml = std::fs::read_to_string(home.config_path()).unwrap();
         let mut servers_yaml = servers.to_string();
         if cwd_is_home {
-            servers_yaml =
-                servers_yaml.replacen("tools:", &format!("cwd: \"{}\"\n      tools:", home.root.display()), 1);
+            servers_yaml = servers_yaml.replacen(
+                "tools:",
+                &format!("cwd: {}\n      tools:", serde_json::to_string(&home.root).unwrap()),
+                1,
+            );
         }
         yaml = yaml.replacen("servers: []", &format!("servers:{servers_yaml}"), 1);
         std::fs::write(home.config_path(), &yaml).unwrap();
