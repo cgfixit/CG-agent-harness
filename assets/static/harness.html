@@ -3353,14 +3353,15 @@ async function runSlash(line, webCommand) {
 
 /* ── chat ── */
 /* GOAL_DONE on a line of its own. Small local models decorate it
-   (**GOAL_DONE**, `GOAL_DONE`, ## GOAL_DONE, GOAL_DONE.), so Markdown
-   emphasis, code ticks, heading/quote/list marks and trailing punctuation
-   around it are ignored. A sentence that merely mentions it is not a match. */
+   (**GOAL_DONE**, `GOAL_DONE`, ## GOAL_DONE, 1. GOAL_DONE, GOAL_DONE.), so
+   Markdown emphasis, code ticks, heading/quote/list marks (numbered too) and
+   trailing punctuation around it are ignored. A sentence that merely
+   mentions it is not a match. */
 function replyHasGoalDone(text) {
   if (typeof text !== 'string' || !text) return false;
   return text.split(/\r?\n/).some(function (line) {
     const bare = line.trim()
-      .replace(/^(?:[#>*_`~\-]+\s*)+/, '')
+      .replace(/^(?:(?:[#>*_`~\-]+|\d+[.)])\s*)+/, '')
       .replace(/(?:\s*[*_`~.!:]+)+$/, '')
       .trim();
     return bare === 'GOAL_DONE';

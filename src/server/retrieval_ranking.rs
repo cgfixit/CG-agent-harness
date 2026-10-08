@@ -65,12 +65,16 @@ impl PreparedQuery {
         }))
     }
 
-    /// Every identifier in the query appears in at least one field.
+    /// At least one identifier in the query appears exactly in some field. Each
+    /// passage is checked alone, and docs describe `Vec::new` and
+    /// `Vec::with_capacity` in separate chunks, so one is enough per passage.
     pub fn identifier_matches<'a>(&self, fields: impl IntoIterator<Item = &'a str>) -> bool {
         let fields: Vec<&str> = fields.into_iter().collect();
-        self.identifiers
-            .iter()
-            .all(|identifier| fields.iter().any(|field| identifier.is_match(field)))
+        self.identifiers.is_empty()
+            || self
+                .identifiers
+                .iter()
+                .any(|identifier| fields.iter().any(|field| identifier.is_match(field)))
     }
 
     pub fn exact_bonus(&self, text: &str) -> f32 {
@@ -281,7 +285,9 @@ mod tests {
                 "{joined}"
             );
         }
-        assert!(!both.identifier_matches(["Vec::new allocates nothing."]));
+        // A chunk that documents one of the queried identifiers is kept.
+        assert!(both.identifier_matches(["Vec::new allocates nothing."]));
+        assert!(!both.identifier_matches(["Vec::newer is unrelated."]));
         // A query without an identifier filters nothing.
         assert!(PreparedQuery::new("retry count")
             .unwrap()

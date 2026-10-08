@@ -11,10 +11,10 @@ vm.runInContext(html.slice(start, end) + ';this.api={replyHasGoalDone,loopTurnPr
 const {replyHasGoalDone, loopTurnPrompt, repliesNearlyRepeat} = ctx.api;
 
 for (const done of ['GOAL_DONE', '**GOAL_DONE**', '`GOAL_DONE`', '## GOAL_DONE', 'GOAL_DONE.', '> GOAL_DONE',
-  '- GOAL_DONE', '__GOAL_DONE__', 'Summary.\n\n**GOAL_DONE**\n']) {
+  '- GOAL_DONE', '__GOAL_DONE__', 'Summary.\n\n**GOAL_DONE**\n', '1. GOAL_DONE', '3) **GOAL_DONE**']) {
   assert.equal(replyHasGoalDone(done), true, JSON.stringify(done));
 }
-for (const notDone of ['', 'I will write GOAL_DONE when finished.', 'GOAL_DONE_LATER', 'NOT GOAL_DONE', 'goal_done', null]) {
+for (const notDone of ['', 'I will write GOAL_DONE when finished.', '1. Write GOAL_DONE at the end.', '2024 GOAL_DONE', 'GOAL_DONE_LATER', 'NOT GOAL_DONE', 'goal_done', null]) {
   assert.equal(replyHasGoalDone(notDone), false, JSON.stringify(notDone));
 }
 
