@@ -2793,7 +2793,7 @@ async function runSlash(line, webCommand) {
           if (f) {
             sys(table([
               ['prompt cap', String(f.prompt_cap)],
-              ['compact_prompt_tokens', String(f.compact_prompt_tokens)],
+              ['prompt limit (' + f.limit_source + ')', String(f.prompt_limit)],
               ['web.total_tokens', String(f.web_total_tokens)],
             ], ['in force now', 'value']));
           }

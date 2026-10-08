@@ -308,10 +308,17 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
             .with("api.rate_limit.max_requests", "1000")
     };
     let plain = spawn_server(&ollama.openai_url(), options()).await;
+    // With web on, the web budget binds the prompt, exactly as chat computes it:
+    // 32000 held at the cap, less one 4096-token reply reservation.
+    let (_, body) = plain.get_json("/api/ollama/profile").await;
+    assert_eq!(body["in_force"]["limit_source"], "web.total_tokens", "{body}");
+    assert_eq!(body["in_force"]["prompt_limit"], 27904, "{body}");
+    plain.post_json("/api/web", json!({"enabled": false})).await;
     let (_, body) = plain.get_json("/api/ollama/profile").await;
     assert_eq!(
         body["in_force"],
-        json!({"prompt_cap": 30000, "compact_prompt_tokens": 30000, "web_total_tokens": 32000}),
+        json!({"prompt_cap": 30000, "prompt_limit": 30000, "limit_source": "chat.compact_prompt_tokens",
+            "web_total_tokens": 32000}),
         "{body}"
     );
     assert_eq!(body["proposed"]["state"], "shipped", "{body}");
@@ -321,6 +328,7 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
         options().with("models.local_llm.auto_tune", "true"),
     )
     .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
     // The startup tune measures the configured 32768-token model: shipped caps.
     let body = wait_for_tuning(&s, 32768).await;
     assert_eq!(body["in_force"]["prompt_cap"], 30000, "{body}");
@@ -332,11 +340,11 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     // Caps double with the window; the budgets grow only to what config allows.
     assert_eq!(
         body["in_force"],
-        json!({"prompt_cap": 60000, "compact_prompt_tokens": 48000, "web_total_tokens": 56000}),
+        json!({"prompt_cap": 60000, "prompt_limit": 48000, "limit_source": "chat.compact_prompt_tokens",
+            "web_total_tokens": 56000}),
         "{body}"
     );
     assert_eq!(body["tuning"]["max_tokens"], 8192, "{body}");
-    s.post_json("/api/web", json!({"enabled": false})).await;
     let (status, reply) = s.post_json("/api/chat", json!({"message": "hello"})).await;
     assert_eq!(status, 200, "{reply}");
     let request = ollama

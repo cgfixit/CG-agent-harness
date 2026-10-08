@@ -15,7 +15,6 @@ use std::net::SocketAddr;
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::ChatMessage;
 use crate::server::attachments;
-use crate::server::compaction::MIN_PROMPT_HEADROOM;
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::guards::retry_after_error;
 use crate::server::prompts::{compose_system_prompt, PromptInputs};
@@ -813,10 +812,6 @@ async fn chat_inner(
     if !cloud_selected {
         let configured_threshold = state.compact_prompt_tokens(&model);
         let prompt_cap = state.prompt_cap(&model);
-        let minimum_threshold = reservation
-            .saturating_add(MIN_PROMPT_HEADROOM)
-            .saturating_add(crate::server::compaction::calibrated_tokens(tool_tokens, ratio))
-            .min(prompt_cap);
         // The reply budget of this turn: /loop turns reserve their own.
         let reply_setting = if req.loop_turn {
             "api.harness_loop_rate_limit.max_tokens"
@@ -824,13 +819,15 @@ async fn chat_inner(
             "models.local_llm.max_tokens"
         };
         let web_chat = chat_tools && !req.loop_turn;
-        let (threshold, limit_source) = crate::server::compaction::prompt_limit(
+        let (threshold, limit_source) = crate::server::compaction::turn_prompt_limit(
             configured_threshold,
             prompt_cap,
-            web_chat.then(|| crate::server::compaction::web_prompt_limit(web.limits.total_tokens, reservation)),
-            minimum_threshold,
+            web_chat.then_some(web.limits.total_tokens),
+            reservation,
+            crate::server::compaction::calibrated_tokens(tool_tokens, ratio),
             reply_setting,
         );
+        let web_at_cap = web.limits.total_tokens >= state.web_total_cap(&model);
         // Name the setting that actually bounds this prompt: "start a new session"
         // cannot help when the system prompt and reply reservation fill the limit.
         let too_large = |what: &str, projected: u64, compacted: u64| {
@@ -843,7 +840,14 @@ async fn chat_inner(
                 "limit_source": limit_source,
             }));
             let remedy =
-                crate::server::compaction::prompt_limit_remedy(limit_source, threshold, prompt_cap, reply_setting, web_chat);
+                crate::server::compaction::prompt_limit_remedy(
+                limit_source,
+                threshold,
+                prompt_cap,
+                web_at_cap,
+                reply_setting,
+                web_chat,
+            );
             ApiError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "CHAT_PROMPT_TOO_LARGE",

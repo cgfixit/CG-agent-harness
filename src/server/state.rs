@@ -268,6 +268,11 @@ impl AppState {
         super::compaction::prompt_cap(self.tuning_for(model).map(|tuning| tuning.window))
     }
 
+    /// The `web.total_tokens` cap for `model`, like [`Self::prompt_cap`].
+    pub fn web_total_cap(&self, model: &str) -> u64 {
+        super::compaction::web_total_cap(self.tuning_for(model).map(|tuning| tuning.window))
+    }
+
     /// `models.local_llm.max_tokens`, lowered to `model`'s tuning.
     pub fn chat_max_tokens(&self, model: &str) -> u64 {
         let configured = self

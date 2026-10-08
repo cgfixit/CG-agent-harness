@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::llm::inventory::InventoryLimits;
 use crate::llm::ollama::{self, PullLimits};
 use crate::llm::profile;
+use crate::server::compaction;
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::{OllamaPullRequest, ValidJson};
 use crate::server::state::AppState;
@@ -56,12 +57,32 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
     }
     value["auto_tune"] = json!(state.cfg.flag_is_true("models.local_llm.auto_tune"));
     value["tuning"] = json!(tuning.as_deref());
-    // What chat holds this model to now: configured values, lowered by any
-    // tuning, under caps that grow only with a measured window above 32768.
+    // What a chat turn on this model is held to now, computed the way chat does
+    // (before a session calibrates its token ratio): configured values, lowered
+    // by any tuning, under caps that grow only with a measured window above 32768.
+    let web_total = state
+        .model_web_limits(&model, state.runtime_limits().web.clone())
+        .total_tokens;
+    let web_chat =
+        state.settings.lock().unwrap_or_else(|p| p.into_inner()).web_enabled && !state.chat_tools_unsupported(&model);
+    let tool_tokens = if web_chat {
+        compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_web::tools()).unwrap_or_default())
+    } else {
+        0
+    };
+    let (prompt_limit, limit_source) = compaction::turn_prompt_limit(
+        state.compact_prompt_tokens(&model),
+        state.prompt_cap(&model),
+        web_chat.then_some(web_total),
+        compaction::reply_reservation(&state.backend, state.chat_max_tokens(&model)),
+        tool_tokens,
+        "models.local_llm.max_tokens",
+    );
     value["in_force"] = json!({
         "prompt_cap": state.prompt_cap(&model),
-        "compact_prompt_tokens": state.compact_prompt_tokens(&model).min(state.prompt_cap(&model)),
-        "web_total_tokens": state.model_web_limits(&model, state.runtime_limits().web.clone()).total_tokens,
+        "prompt_limit": prompt_limit,
+        "limit_source": limit_source,
+        "web_total_tokens": web_total,
     });
     Ok(Json(value))
 }

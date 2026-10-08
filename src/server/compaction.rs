@@ -116,11 +116,42 @@ pub fn prompt_limit(
     limit
 }
 
+/// One chat turn's prompt limit and the setting that binds it: [`prompt_limit`]
+/// over a floor of the reply reservation, [`MIN_PROMPT_HEADROOM`] and the
+/// (calibrated) tool definitions, held at `cap`. `web_total` is the in-force
+/// `web.total_tokens` when the turn offers web tools.
+pub fn turn_prompt_limit(
+    configured: u64,
+    cap: u64,
+    web_total: Option<u64>,
+    reservation: u64,
+    tool_tokens: u64,
+    reply_setting: &'static str,
+) -> (u64, &'static str) {
+    let floor = reservation
+        .saturating_add(MIN_PROMPT_HEADROOM)
+        .saturating_add(tool_tokens)
+        .min(cap);
+    let web_room = web_total.map(|total| web_prompt_limit(total, reservation));
+    prompt_limit(configured, cap, web_room, floor, reply_setting)
+}
+
 /// What to change when a prompt exceeds `limit`, bound by `source`. Raising
-/// `chat.compact_prompt_tokens` is suggested only while the limit is under `cap`.
-pub fn prompt_limit_remedy(source: &str, limit: u64, cap: u64, reply_setting: &str, web_chat: bool) -> String {
+/// `chat.compact_prompt_tokens` is suggested only while the limit is under `cap`,
+/// and raising `web.total_tokens` only while it is under its window cap.
+pub fn prompt_limit_remedy(
+    source: &str,
+    limit: u64,
+    cap: u64,
+    web_at_cap: bool,
+    reply_setting: &str,
+    web_chat: bool,
+) -> String {
     let below_cap = limit < cap;
     match source {
+        "web.total_tokens" if web_at_cap => format!(
+            "shorten the message, lower {reply_setting}, turn web off, or let models.local_llm.auto_tune measure a larger window"
+        ),
         "web.total_tokens" => {
             format!("shorten the message, lower {reply_setting}, raise web.total_tokens, or turn web off")
         }
@@ -383,7 +414,7 @@ mod tests {
         let room = web_prompt_limit(32_000, 25_904);
         let (limit, source) = prompt_limit(24_000, MAX_PROMPT_TOKENS, Some(room), MAX_PROMPT_TOKENS, chat);
         assert_eq!((limit, source), (MAX_PROMPT_TOKENS, chat));
-        let remedy = prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, chat, true);
+        let remedy = prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, false, chat, true);
         assert_eq!(
             remedy,
             "shorten the message, lower models.local_llm.max_tokens, or turn web off"
@@ -392,7 +423,7 @@ mod tests {
         let (limit, source) = prompt_limit(40_000, MAX_PROMPT_TOKENS, None, 8_288, chat);
         assert_eq!((limit, source), (MAX_PROMPT_TOKENS, "chat.compact_prompt_tokens"));
         assert_eq!(
-            prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, chat, false),
+            prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, false, chat, false),
             "shorten the message or lower models.local_llm.max_tokens"
         );
         // Under the cap, raising the configured limit lifts a floor-bound limit too.
@@ -400,20 +431,40 @@ mod tests {
         let (limit, source) = prompt_limit(8_000, MAX_PROMPT_TOKENS, None, 12_288, loop_setting);
         assert_eq!((limit, source), (12_288, loop_setting));
         assert_eq!(
-            prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, loop_setting, false),
+            prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, false, loop_setting, false),
             "shorten the message, lower api.harness_loop_rate_limit.max_tokens, or raise chat.compact_prompt_tokens"
         );
         assert_eq!(
-            prompt_limit_remedy(source, MAX_PROMPT_TOKENS, MAX_PROMPT_TOKENS, loop_setting, false),
+            prompt_limit_remedy(source, MAX_PROMPT_TOKENS, MAX_PROMPT_TOKENS, false, loop_setting, false),
             "shorten the message or lower api.harness_loop_rate_limit.max_tokens"
         );
         assert!(
-            prompt_limit_remedy("web.total_tokens", 15_096, MAX_PROMPT_TOKENS, chat, true)
+            prompt_limit_remedy("web.total_tokens", 15_096, MAX_PROMPT_TOKENS, false, chat, true)
                 .contains("raise web.total_tokens")
         );
         assert_eq!(
-            prompt_limit_remedy("chat.compact_prompt_tokens", 24_000, MAX_PROMPT_TOKENS, chat, true),
+            prompt_limit_remedy(
+                "chat.compact_prompt_tokens",
+                24_000,
+                MAX_PROMPT_TOKENS,
+                false,
+                chat,
+                true
+            ),
             "shorten the message or raise chat.compact_prompt_tokens"
+        );
+        // web.total_tokens already at its window cap: raising it cannot help.
+        let at_cap = prompt_limit_remedy("web.total_tokens", 15_096, MAX_PROMPT_TOKENS, true, chat, true);
+        assert!(!at_cap.contains("raise web.total_tokens"), "{at_cap}");
+        assert!(at_cap.contains("measure a larger window"), "{at_cap}");
+        // The turn limit is prompt_limit over the reservation + headroom + tools floor.
+        assert_eq!(
+            turn_prompt_limit(24_000, MAX_PROMPT_TOKENS, Some(28_000), 4_096, 272, chat),
+            (23_904, "web.total_tokens")
+        );
+        assert_eq!(
+            turn_prompt_limit(24_000, MAX_PROMPT_TOKENS, None, 4_096, 0, chat),
+            (24_000, "chat.compact_prompt_tokens")
         );
         // A measured 64k window lifts the cap, so 40000 is held only at its own value.
         let cap = prompt_cap(Some(65_536));
@@ -422,7 +473,7 @@ mod tests {
             (40_000, "chat.compact_prompt_tokens")
         );
         assert_eq!(
-            prompt_limit_remedy("chat.compact_prompt_tokens", MAX_PROMPT_TOKENS, cap, chat, false),
+            prompt_limit_remedy("chat.compact_prompt_tokens", MAX_PROMPT_TOKENS, cap, false, chat, false),
             "shorten the message or raise chat.compact_prompt_tokens"
         );
     }
