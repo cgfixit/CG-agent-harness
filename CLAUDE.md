@@ -31,6 +31,7 @@ Locally: fmt, clippy, then run the changed code; never the full suite (CI runs i
   under `data/agentic/workspaces`.
 
 ## Docs and PRs
+- Ignore `docs/learning/*` during agent work unless explicitly requested.
 - Edit the section that owns a topic; never create `.md` files. `DOCS_BUDGET` caps words
   per file and group.
 - Draft PR off `main`, one concern; branch, title and body follow

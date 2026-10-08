@@ -182,14 +182,16 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 
 ## Docs policy
 
-Do not create Markdown files. Edit the section that owns the topic, and link to
-it instead of restating it. Evidence (acceptance runs, closeouts, verification
-notes) goes in the PR body or an issue comment; screenshots go in
-`docs/screenshots/`. `DOCS_BUDGET` in `tests/invariant_guard.rs` fails on any
-`.md` without a row (tracked or not), on a file or group over its word cap, on
-anything new under a root `screenshots/` or a PDF under `docs/`, and on a new
-file over 1 MiB. A new row or a raised cap needs the operator's approval and a
-`// why:` comment in the same PR.
+Edit existing topic owners; create no Markdown files. Link instead of duplicating.
+Evidence belongs in PRs/issues; screenshots in `docs/screenshots/`.
+Ignore `docs/learning/*` during agent work unless explicitly requested.
+`tests/invariant_guard.rs` enforces `DOCS_BUDGET`: listed Markdown (including
+untracked), file/group word caps, no new root screenshots/docs PDFs or files
+over 1 MiB. New rows/raised caps require operator approval and `// why:`.
+
+Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md'`, checks changed
+behavior against its owning docs, lowers caps after folds, and reviews
+[dependency watches](docs/DEPENDENCIES.md#retained-constraints). CI remains the daily tripwire.
 
 ## Project Codex skills
 

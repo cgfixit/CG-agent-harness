@@ -722,7 +722,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/parity/STATUS.md", Guide, 1300),
     ("docs/parity/WORK.md", Guide, 500),
     ("docs/screenshots/README.md", Evidence, 200),
-    ("screenshots/slash-single-line/README.md", Evidence, 300),
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
@@ -736,22 +735,15 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: console accessibility port (keyboard, zoom and live-log note; Attach files wording); Guide is 45340 words with the other open PRs (#353, #354, #359) and before the sign-in docs cut.
 // why: the cgagentharness-otel-hardening skill brought Agent to 23,860 words; rounded up to the next 500.
 // why: docs/GITHOOKS.md (.githooks security gate explainer, 1364 words) raised Guide from 45,311 to 46,675; set to 46,700.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 46_700), (Evidence, 3_500), (Agent, 24_000)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 46_700), (Evidence, 3_200), (Agent, 24_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
 const DOCS_GROUP_SLACK: usize = 1_000;
 
-/// Already under a root `screenshots/`; captures belong in `docs/screenshots/`.
-/// Nothing may join these, and the list only shrinks.
-const ROOT_SCREENSHOTS: &[&str] = &[
-    "screenshots/slash-single-line/....txt",
-    "screenshots/slash-single-line/01-native-command-guide.png",
-    "screenshots/slash-single-line/02-native-staged-request.png",
-    "screenshots/slash-single-line/03-native-multiline-agent-refused.png",
-    "screenshots/slash-single-line/04-native-exact-agent-cancel.png",
-    "screenshots/slash-single-line/README.md",
-];
+/// All historical root captures were relocated to `docs/screenshots/`.
+/// Nothing may join this grandfather list.
+const ROOT_SCREENSHOTS: &[&str] = &[];
 
 /// PDFs already under `docs/`. Nothing may join these, and the list only shrinks.
 const DOCS_PDFS: &[&str] = &[
