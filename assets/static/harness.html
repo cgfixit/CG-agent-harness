@@ -851,6 +851,7 @@ let currentStyle = 'off';
    kept (the server keeps it too) so the operator can see it and clear it
    with `off`; `null` means the style is active as selected. */
 let currentStyleIssue = null;
+let styleSessionStarting = false;
 /* Style writes run one at a time: a later POST must not persist before an
    earlier one whose overlay takes longer to load, or the earlier handler
    would overwrite it server-side after the UI already shows the later choice. */
@@ -1633,7 +1634,7 @@ function styleIssueText(issue) {
 function paintStyle() {
   const sel = $('sStyle');
   if (!sel) return;
-  sel.disabled = !currentSession;
+  sel.disabled = sessionClearing || styleSessionStarting || window.__cyclawRole === 'audit';
   const value = currentStyle || 'off';
   let opt = [...sel.options].find(o => o.value === value);
   if (!opt) {
@@ -2436,6 +2437,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     sendBtn.disabled = false;
     $('sessionClearConfirm').disabled = false;
     $('sessionClearCancel').disabled = false;
+    paintStyle();
     await refreshSessions().catch(e => sys(e.message || String(e)));
   }
 });
@@ -4980,10 +4982,16 @@ $('soulPropose').addEventListener('click', () => submitSoul(true));
 
 $('sSoul').addEventListener('click', () => runSlash('/soul ' + (soulEnabled ? 'off' : 'on')));
 $('sMemory').addEventListener('click', () => runSlash('/memory ' + (memoryEnabled ? 'off' : 'on')));
-$('sStyle').addEventListener('change', () => {
+$('sStyle').addEventListener('change', async () => {
   const name = $('sStyle').value || 'off';
-  if (!currentSession) { paintStyle(); sys('no active session'); return; }
-  runSlash('/style ' + name);
+  if (!currentSession) {
+    const expectedRevision = sessionRevision + 1;
+    styleSessionStarting = true; paintStyle();
+    try { await runSlash('/session new'); }
+    finally { styleSessionStarting = false; paintStyle(); }
+    if (!currentSession || sessionRevision !== expectedRevision) return;
+  }
+  await runSlash('/style ' + name);
 });
 
 buildCommands();

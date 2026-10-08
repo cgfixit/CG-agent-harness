@@ -84,6 +84,13 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/prompt/preview'){reply({scope:'Chat preview',prompt:'Discipline contract\n'+(body.soul_content??persona)});return;}
  if(path==='/api/registry'){reply({skills:[],tools:[],connectors:[]});return;}
  if(authFixture&&signedIn&&authRole==='audit'&&(path==='/api/sessions'||path.startsWith('/api/sessions/'))){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'Your role does not permit access to sessions.'}},403);return;}
+ if(path.startsWith('/api/style')){
+  const sessionId=req.method==='POST'?body.session_id:new URL(path,'http://fixture').searchParams.get('session_id');
+  const session=sessionId?sessions.get(sessionId):null;
+  if(sessionId&&!session){reply({detail:{code:'SESSION_NOT_FOUND',message:'No such session'}},404);return;}
+  if(req.method==='POST')session.style=body.name==='off'?null:body.name;
+  reply({styles:['concise','technical'].map(id=>({id})),session_id:sessionId,style:session?.style||null,loaded:!!session?.style});return;
+ }
  if(path==='/api/sessions/clear'){
   if(clearFails){reply({detail:{code:'HARNESS_SESSION_PERSIST_ERROR',message:'fixture storage failure'}},502);return;}
   if(!body.confirm || !body.reason?.trim()){reply({},422);return;}
@@ -302,6 +309,22 @@ try {
  await evaluate('agent("Branding fixture")');
  assert.ok(await evaluate('document.body.innerText.includes("CG Agent Harness")'));
  assert.equal(await evaluate('document.body.innerText.toLowerCase().includes("cyclaw")'),false);
+ // A fresh console has no session, but choosing a style starts one and saves the choice.
+ await until('[...document.getElementById("sStyle").options].some(option=>option.value==="concise")');
+ assert.equal(await evaluate('currentSession'),null);
+ assert.equal(await evaluate('document.getElementById("sStyle").disabled'),false,'style menu opens before the first session');
+ await evaluate('document.getElementById("sStyle").value="concise";document.getElementById("sStyle").dispatchEvent(new Event("change",{bubbles:true}))');
+ await until('currentSession && document.getElementById("sStyle").value==="concise"');
+ assert.equal(sessions.size,1,'choosing a style creates one session');
+ assert.equal([...sessions.values()][0].style,'concise','the new session persists the selected style');
+ assert.equal(requests.filter(r=>r[0]==='POST'&&r[1]==='/api/style').length,1,'the chosen style is posted once');
+ await evaluate('document.getElementById("sStyle").value="technical";document.getElementById("sStyle").dispatchEvent(new Event("change",{bubbles:true}))');
+ await until('currentStyle==="technical" && document.getElementById("sStyle").disabled===false');
+ assert.equal(sessions.size,1,'later style changes reuse the session');
+ assert.equal([...sessions.values()][0].style,'technical');
+ sessions.clear();sequence=0;
+ await afterLoad(()=>call('Page.reload',{ignoreCache:true}));
+ await until('typeof onSend === "function" && currentSession===null');
 
  const menu = await evaluate('[...document.querySelectorAll("#pane-commands .c")].map(node=>node.textContent)');
  assert.deepEqual([...new Set(menu.map(command=>command.split(' ')[0]))].sort(),canonicalCommands,'every canonical slash root must be discoverable');
@@ -727,6 +750,7 @@ try {
  await evaluate('document.getElementById("hAuthUser").value="audit-fixture";document.getElementById("hAuthPass").value="browser-auditor-password";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("pane-sessions").textContent.includes("Your role does not permit access to sessions.")');
  assert.equal(await evaluate('document.getElementById("hAuthWho").textContent'),'audit-fixture · audit','a session permission denial must not turn successful login into a network error');
+ assert.equal(await evaluate('document.getElementById("sStyle").disabled'),true,'auditors cannot select a session style');
  assert.equal(await evaluate('document.querySelectorAll("#pane-sessions button").length'),0,'auditors must not see New Session or Clear History controls');
  assert.equal(await evaluate('refreshHeaderFeatures(true).then(()=>["openDeliveries","openSchedules"].every(id=>document.getElementById(id).hidden))'),true,'refused (403) probes keep automation hidden');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
