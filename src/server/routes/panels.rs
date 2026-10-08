@@ -83,7 +83,7 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_GROUP_UNKNOWN" => "Unknown source group. /web status lists groups; add rules with /web allow PATTERN --group NAME.",
         "WEB_POLICY_INVALID" => "Invalid URL rule, group or seed. Each seed must be inside a requested rule; the entire grant was refused.",
         "WEB_DISABLED" => "Web access is disabled for this home. An administrator can enable it with /web on; URL permission is still required.",
-        "WEB_GOOGLE_PERMISSION" => "Allow https://www.google.com/* before Google search. Exact homepage grants do not permit search URLs.",
+        "WEB_GOOGLE_PERMISSION" => "Configure a Google results (SerpAPI) key in API Keys; it needs no URL grant. Otherwise an administrator can allow https://www.google.com/* for public Google, which may answer with a challenge. Exact homepage grants do not permit search URLs.",
         "WEB_GOOGLE_BLOCKED" => "Public Google refused or redirected the request. Configure a SerpAPI key in API Keys, then retry.",
         "WEB_GOOGLE_CHALLENGE" => "Public Google requires JavaScript or CAPTCHA. Configure a Google results (SerpAPI) key in API Keys, then retry.",
         "WEB_GOOGLE_UNREADABLE" => "Google returned no recognizable result listing. Configure a SerpAPI key in API Keys, then retry.",

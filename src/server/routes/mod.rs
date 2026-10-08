@@ -26,7 +26,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 101] = [
+pub const REGISTERED_PATHS: [&str; 102] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -94,6 +94,7 @@ pub const REGISTERED_PATHS: [&str; 101] = [
     "/api/style",
     "/api/model",
     "/api/ollama/inventory",
+    "/api/ollama/profile",
     "/api/ollama/pull",
     "/api/ollama/pull/cancel",
     "/api/keys",
@@ -274,6 +275,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/style", post(style::select))
         .route("/api/model", post(core::model_select))
         .route("/api/ollama/inventory", get(ollama::inventory))
+        .route("/api/ollama/profile", get(ollama::profile))
         .route("/api/ollama/pull", post(ollama::pull))
         .route("/api/ollama/pull/cancel", post(ollama::cancel_pull))
         .route("/api/keys", get(panels::api_keys_status).post(panels::api_keys_set))
@@ -389,7 +391,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 101);
+        assert_eq!(REGISTERED_PATHS.len(), 102);
 
         let all = registered_paths();
         assert!(

@@ -171,7 +171,15 @@ fn is_command_shaped(lower: &str) -> bool {
     if raw.get(i).is_some_and(|t| is_plain_word(t, VERBS)) {
         return true;
     }
-    raw.get(i..).is_some_and(|rest| find_count_clause(rest) == Some(0))
+    // `the first 2 links for x` (an article before the clause) is the same shape.
+    raw.get(i..).is_some_and(|rest| {
+        let rest = if rest.first().is_some_and(|t| is_plain_word(t, &["the"])) {
+            &rest[1..]
+        } else {
+            rest
+        };
+        find_count_clause(rest) == Some(0)
+    })
 }
 
 /// `tok` is one of `words` and carries no operator prefix: `-search "x"`
@@ -203,18 +211,30 @@ fn word_of(tok: &str) -> &str {
 fn is_count_pair(a: &str, b: &str) -> bool {
     let n = word_of(b);
     // `+first 2 results` is an operator-prefixed query word (`+first`), not
-    // a count clause: only an unprefixed `first` opens one.
+    // a count clause: only an unprefixed `first` (or `top`) opens one.
     a.starts_with(|c: char| c.is_alphanumeric())
-        && word_of(a).eq_ignore_ascii_case("first")
+        && COUNT_WORDS.iter().any(|w| word_of(a).eq_ignore_ascii_case(w))
         && !n.is_empty()
         && n.chars().all(|c| c.is_ascii_digit())
 }
 
+/// Words that open a result-count clause: `first 3 results`, `top 3 results`.
+const COUNT_WORDS: &[&str] = &["first", "top"];
+
 /// Index of a `first N <noun>` result-count clause in `toks`, if any.
 /// The noun is required so `first 2 amendments` stays part of the subject.
+/// `first 2 pages of <book>` names pages of a document, not search results,
+/// so `first` with a `page`/`pages` noun followed by `of` is not a count
+/// clause. `top 3 pages of <topic>` still is: `top` ranks results.
 fn find_count_clause(toks: &[&str]) -> Option<usize> {
-    toks.windows(3)
-        .position(|w| is_count_pair(w[0], w[1]) && COUNT_NOUNS.contains(&word_of(w[2]).to_ascii_lowercase().as_str()))
+    (0..toks.len().saturating_sub(2)).find(|&k| {
+        let noun = word_of(toks[k + 2]).to_ascii_lowercase();
+        let document_pages = word_of(toks[k]).eq_ignore_ascii_case("first")
+            && noun.starts_with("page")
+            // A plain `of`; `-of` is an exclusion operator, not a connector.
+            && toks.get(k + 3).is_some_and(|t| t.starts_with(|c: char| c.is_alphanumeric()) && word_of(t).eq_ignore_ascii_case("of"));
+        is_count_pair(toks[k], toks[k + 1]) && COUNT_NOUNS.contains(&noun.as_str()) && !document_pages
+    })
 }
 
 /// `first N <noun>` when present. `Some(Ok(n))` for 1..=MAX_COUNT,
@@ -230,7 +250,7 @@ fn extract_count(lower: &str) -> Option<Result<usize, String>> {
     // Rust first 99 links` is refused rather than searched with the second
     // clause left in the query. Two clauses are ambiguous and refused too.
     let clauses: Vec<usize> = (0..toks.len().saturating_sub(2))
-        .filter(|&k| find_count_clause(&toks[k..k + 3]) == Some(0))
+        .filter(|&k| find_count_clause(&toks[k..]) == Some(0))
         .collect();
     let mut counts = Vec::new();
     for &k in &clauses {
@@ -390,7 +410,7 @@ fn skip_engine_phrases(lower: &[String], mut i: usize) -> usize {
                     || ENGINES.contains(&next)
                     || ENGINE_LINKS.contains(&next)
                     || next == "the"
-                    || next == "first"
+                    || COUNT_WORDS.contains(&next)
                     || is_placeholder_word(next)
             })
         };
@@ -474,7 +494,7 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
             && INTRODUCERS.contains(&lower[i].as_str())
             && lower
                 .get(i + 1)
-                .is_none_or(|next| next == "the" || next == "first" || is_placeholder_word(next))
+                .is_none_or(|next| next == "the" || COUNT_WORDS.contains(&next.as_str()) || is_placeholder_word(next))
         {
             i += 1;
         }
@@ -512,9 +532,11 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         // provider a stop word, whereas `For Whom the Bell Tolls`, `On the
         // Road`, `About Time` or `Of Mice and Men` would lose their first
         // word, and losing content is the costlier mistake.
-        if end + 1 < rest.len()
+        // A connector that ends the request (`top 3 results for`) introduces
+        // nothing and is scaffolding too, so the request has no subject.
+        if end < rest.len()
             && matches!(lower_rest[end].as_str(), "for" | "of" | "about" | "on")
-            && placeholder_index(rest[end + 1]).is_some()
+            && rest.get(end + 1).is_none_or(|next| placeholder_index(next).is_some())
         {
             end += 1;
         }
@@ -1245,5 +1267,46 @@ mod tests {
                 "*harness*".into()
             ]
         );
+    }
+
+    #[test]
+    fn top_and_article_led_count_clauses_route_and_pages_of_stay_subject() {
+        let top = rewrite("search top 3 results for tokio select", 5);
+        assert_eq!((top.count, top.query()), (3, "for tokio select".to_string()));
+        let the = rewrite("search the first 3 results for tokio select", 5);
+        assert_eq!((the.count, the.query()), (3, "for tokio select".to_string()));
+        // The `/web search` remainder has no verb; an article may lead the clause.
+        let remainder = rewrite("the first 3 results for tokio select", 5);
+        assert_eq!(
+            (remainder.count, remainder.query()),
+            (3, "for tokio select".to_string())
+        );
+        assert!(matches!(
+            parse_with_count("search top 99 results for rust", 5),
+            WebIntentParse::Invalid(_)
+        ));
+        // `first 2 pages of <book>` names pages of a document, not results.
+        assert!(matches!(
+            parse_with_count("search the first 2 pages of the rust book for lifetimes", 5),
+            WebIntentParse::PassThrough
+        ));
+        assert_eq!(rewrite("search first 2 pages for \"rust\"", 5).count, 2);
+        assert_eq!(rewrite("search top 3 pages of rust docs", 5).count, 3);
+        assert_eq!(rewrite("search first 2 pages -of rust docs", 5).count, 2);
+        for bare in ["search top 3 results for", "search the first 3 results for"] {
+            assert!(
+                matches!(parse_with_count(bare, 5), WebIntentParse::Invalid(_)),
+                "{bare}"
+            );
+        }
+        // `top` without a count noun is subject text.
+        assert!(matches!(
+            parse_with_count("search top 10 movies", 5),
+            WebIntentParse::PassThrough
+        ));
+        assert!(matches!(
+            parse_with_count("+top 3 results for x", 5),
+            WebIntentParse::PassThrough
+        ));
     }
 }

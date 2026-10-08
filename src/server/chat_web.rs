@@ -21,18 +21,37 @@ pub fn tools() -> Vec<Value> {
     ]
 }
 
+// Small local models (Llama 3.x 8B, Qwen 7B) often write a number as a string
+// (`"count":"5"`), send `null` for an optional field, or add a key the schema
+// does not name. Only `query`/`url` and `count` are ever read, so an unnamed key
+// is ignored rather than failing the whole chat turn; it grants nothing. A
+// missing or non-string `query`/`url` still refuses the batch.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct SearchArgs {
     query: String,
-    #[serde(default = "five")]
+    #[serde(default = "five", deserialize_with = "lenient_count")]
     count: usize,
 }
 fn five() -> usize {
     5
 }
+/// A whole number, as a JSON number or a string holding one, clamped to the
+/// 1–10 results a listing allows; `null` is the default five.
+fn lenient_count<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<usize, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    let whole = match &value {
+        Value::Null => return Ok(five()),
+        Value::Number(n) => n
+            .as_u64()
+            .or_else(|| n.as_f64().filter(|f| f.fract() == 0.0 && *f >= 0.0).map(|f| f as u64)),
+        Value::String(s) => s.trim().parse::<u64>().ok(),
+        _ => None,
+    };
+    whole
+        .map(|n| n.clamp(1, 10) as usize)
+        .ok_or_else(|| serde::de::Error::custom("count must be a whole number"))
+}
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct FetchArgs {
     url: String,
 }
@@ -54,6 +73,21 @@ fn tool_argv(name: &str, args: &str) -> Vec<String> {
 /// Estimated tokens of a model call: UTF-8 bytes / 4 of what is sent, calibrated.
 fn prompt_estimate(bytes: usize, token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens((bytes as u64).div_ceil(4), token_ratio)
+}
+
+/// Tokens of the messages a web turn appended to the history, counted the way
+/// the chat route projects history: each content plus a batch's calls.
+fn appended_tokens(messages: &[Value]) -> u64 {
+    let estimate = super::compaction::estimate_tokens;
+    messages
+        .iter()
+        .map(|m| {
+            m["content"].as_str().map_or(0, estimate)
+                + m.get("tool_calls")
+                    .filter(|c| !c.is_null())
+                    .map_or(0, |c| estimate(&c.to_string()))
+        })
+        .sum()
 }
 
 /// Room kept for one minimal tool result, calibrated like the estimate that
@@ -205,7 +239,7 @@ pub async fn run_stream(
     tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
-        result = tokio::time::timeout(Duration::from_secs_f64(state.chat.timeout_sec.max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, output)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.chat_timeout_sec(model).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, output)) =>
             result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
     }
 }
@@ -238,6 +272,8 @@ async fn run_inner(
     let mut budget_used = 0u64;
     let definitions = tools();
     let definition_bytes = serde_json::to_vec(&definitions)?.len();
+    let definition_tokens = super::compaction::estimate_tokens(&serde_json::to_string(&definitions)?);
+    let mut peak_extra = 0u64;
     let mut tools_withheld = false;
     let mut initial_prompt_tools = false;
     for turn in 0..=web.limits.chat_tool_calls {
@@ -277,6 +313,11 @@ async fn run_inner(
         if turn == 0 {
             initial_prompt_tools = round_fits;
         }
+        // A middle round can be the largest request: earlier results plus the
+        // definitions, which the final round may no longer carry.
+        let extra =
+            appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { definition_tokens };
+        peak_extra = peak_extra.max(extra);
         let validate = || check_evidence(state, owner, &sources);
         let response = state
             .chat
@@ -307,11 +348,13 @@ async fn run_inner(
         check_evidence(state, owner, &sources)?;
         let choice = &response["choices"][0];
         let message = &choice["message"];
-        if choice["finish_reason"] != "tool_calls"
-            && message
-                .get("tool_calls")
-                .is_none_or(|c| c.as_array().is_some_and(Vec::is_empty))
-        {
+        // `"tool_calls": null` (sent by some servers on a plain answer) is no calls.
+        let has_calls = match message.get("tool_calls") {
+            None | Some(Value::Null) => false,
+            Some(Value::Array(calls)) => !calls.is_empty(),
+            Some(_) => true,
+        };
+        if choice["finish_reason"] != "tool_calls" && !has_calls {
             let mut reply = parse_chat_response(&response, model)?;
             reply.prompt_tokens = prompt_tokens;
             reply.completion_tokens = completion_tokens;
@@ -319,6 +362,7 @@ async fn run_inner(
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
             reply.final_prompt_tools = !available.is_empty();
+            reply.peak_prompt_extra_tokens = peak_extra;
             return Ok((reply, events));
         }
         let calls = message["tool_calls"]
@@ -330,7 +374,10 @@ async fn run_inner(
                     "model must return valid read-only tool calls or a complete answer",
                 )
             })?;
-        if choice["finish_reason"] != "tool_calls"
+        // Some OpenAI-compatible servers (older Ollama streaming among them) end a
+        // complete tool-call message with `stop` instead of `tool_calls`. Either
+        // is a finished message; `length` or anything else is not.
+        if !matches!(choice["finish_reason"].as_str(), Some("tool_calls" | "stop"))
             || available.is_empty()
             || calls.len() > web.limits.chat_tool_calls - used_calls
         {
@@ -427,12 +474,12 @@ async fn run_inner(
                 "web_search" => {
                     let args: SearchArgs = serde_json::from_str(args)
                         .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
-                    // The tool contract bounds the RAW arguments; enforce both before
+                    // The tool contract bounds the RAW query length; enforce it before
                     // whitespace normalisation and the intent rewrite so neither can
-                    // shrink a long instruction under the limit and a textual
-                    // `first N` cannot mask an out-of-range count. A refused argument
-                    // is an ordinary tool failure (bounded reply, usage recorded), not
-                    // a run error: the model already spent the turn that produced it.
+                    // shrink a long instruction under the limit. The count was already
+                    // clamped to 1–10 when parsed. A refused argument is an ordinary
+                    // tool failure (bounded reply, usage recorded), not a run error:
+                    // the model already spent the turn that produced it.
                     let raw_len = args.query.chars().count();
                     let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
                     let planned =
@@ -521,6 +568,7 @@ async fn run_inner(
                             initial_prompt_tools,
                             // The last model call offered tools: it returned this batch.
                             final_prompt_tools: true,
+                            peak_prompt_extra_tokens: peak_extra,
                         },
                         events,
                     ));
@@ -610,5 +658,35 @@ mod tests {
             (&json!([]), &json!(2))
         );
         assert!(fit_result(listing, |v| Ok(size(v) < room)).unwrap().is_none());
+    }
+
+    #[test]
+    fn small_model_tool_arguments_parse_without_widening_what_is_read() {
+        let search = |args: &str| serde_json::from_str::<SearchArgs>(args).map(|a| (a.query, a.count));
+        assert_eq!(search(r#"{"query":"q"}"#).unwrap(), ("q".into(), 5));
+        assert_eq!(search(r#"{"query":"q","count":"3"}"#).unwrap(), ("q".into(), 3));
+        assert_eq!(search(r#"{"query":"q","count":null}"#).unwrap(), ("q".into(), 5));
+        assert_eq!(search(r#"{"query":"q","count":4.0}"#).unwrap(), ("q".into(), 4));
+        assert_eq!(search(r#"{"query":"q","count":50}"#).unwrap(), ("q".into(), 10));
+        assert_eq!(search(r#"{"query":"q","count":0}"#).unwrap(), ("q".into(), 1));
+        assert_eq!(search(r#"{"query":"q","num_results":3}"#).unwrap(), ("q".into(), 5));
+        for refused in [
+            r#"{}"#,
+            r#"{"query":7}"#,
+            r#"{"query":"q","count":"many"}"#,
+            r#"{"query":"q","count":2.5}"#,
+            r#"{"query":"q","count":-1}"#,
+        ] {
+            assert!(search(refused).is_err(), "{refused}");
+        }
+        // An extra key is ignored, never followed: only `url` is read.
+        let fetch =
+            serde_json::from_str::<FetchArgs>(r#"{"url":"https://a.test/","follow":"https://b.test/"}"#).unwrap();
+        assert_eq!(fetch.url, "https://a.test/");
+        assert_eq!(
+            tool_argv("web_fetch", r#"{"url":"https://a.test/","method":"POST"}"#),
+            vec!["https://a.test/"]
+        );
+        assert!(serde_json::from_str::<FetchArgs>(r#"{"href":"https://a.test/"}"#).is_err());
     }
 }
