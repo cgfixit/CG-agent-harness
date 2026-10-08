@@ -28,8 +28,9 @@ pub async fn inventory(State(state): State<Arc<AppState>>) -> ApiResult<Json<Val
     Ok(Json(value))
 }
 
-/// Declared and loaded facts for the selected chat model. Read-only: it never
-/// loads, pulls or retunes a model, and the planner model is not profiled here.
+/// Declared and loaded facts for the selected chat model, plus limits scaled to
+/// its loaded window. Read-only: it never loads, pulls or retunes a model, no
+/// proposal is applied, and the planner model is not profiled here.
 pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
     let model = state.current_model();
     if state.cloud_chat.is_cloud_selection(&model) || state.backend.provider != "ollama" {
@@ -40,7 +41,12 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
     }
     let limits =
         InventoryLimits::from_config(&state.cfg).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    Ok(Json(profile::probe(&state.backend.base_url, &model, limits).await))
+    let mut value = profile::probe(&state.backend.base_url, &model, limits).await;
+    if value["state"] == "profiled" {
+        value["proposed"] =
+            crate::server::model_limits::propose(&value, &state.cfg, &state.runtime_limits().web, &state.backend);
+    }
+    Ok(Json(value))
 }
 
 async fn refresh_inventory(state: &AppState) -> ApiResult<Value> {

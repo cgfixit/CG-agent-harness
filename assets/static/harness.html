@@ -2765,6 +2765,11 @@ async function runSlash(line, webCommand) {
             ['digest', i.digest ? i.digest.slice(0, 12) : '—'],
           ], ['fact', 'value']));
           sys(p.detail);
+          const q = p.proposed;
+          if (q && Array.isArray(q.values) && q.values.length) {
+            sys(table(q.values.map(v => [v.key, String(v.current), String(v.proposed)]), ['setting', 'current', 'proposed (' + q.state + ')']));
+          }
+          if (q) { (q.notes || []).forEach(n => sys(String(n))); sys(q.detail); }
         } else {
           const s = await api('/api/status');
           sys(table([['model', s.model || '(unset)'], ['provider', s.provider], ['base_url', s.base_url]]));

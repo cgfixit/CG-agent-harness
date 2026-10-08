@@ -211,7 +211,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 70] = [
         "/model profile",
         "GET",
         "/api/ollama/profile",
-        "read-only /api/show and /api/ps facts for the selected local model; loads, pulls and tunes nothing",
+        "read-only /api/show and /api/ps facts plus window-scaled limit proposals for the selected local model; applies nothing",
     ),
     (
         "ollama-pull",

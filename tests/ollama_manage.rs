@@ -137,6 +137,9 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
     assert_eq!(body["declared"]["modelfile_num_ctx"], 32768);
     assert_eq!(body["loaded"]["context_length"], 32768);
     assert_eq!(body["loaded"]["gpu_fraction"], 1.0);
+    // The fixture loads the tuned 32768 window, so the proposal is the shipped shape.
+    assert_eq!(body["proposed"]["state"], "shipped", "{body}");
+    assert!(!body["proposed"]["values"].as_array().unwrap().is_empty(), "{body}");
     assert!(!body.to_string().contains("fixture-private"), "{body}");
     // Profiling never loads, pulls or warms a model (test warmup is off).
     assert!(ollama.generates.lock().unwrap().is_empty());

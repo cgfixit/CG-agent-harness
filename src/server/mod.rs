@@ -29,6 +29,7 @@ pub mod mcp_keys;
 pub mod mcp_server;
 pub mod mcp_server_config;
 pub mod memory_notes;
+pub mod model_limits;
 pub mod notes_corpus;
 mod notification_outbox;
 pub mod notifications;
