@@ -460,11 +460,9 @@ mod tests {
     #[tokio::test]
     async fn a_failed_tag_query_is_none_not_an_empty_install() {
         // Bind then drop a listener so the port refuses connections.
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap(); // DevSkim: ignore DS162092 because this unit test needs a refused loopback port.
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
         let limits = InventoryLimits {
             timeout: Duration::from_secs(2),
             max_bytes: 1 << 16,
