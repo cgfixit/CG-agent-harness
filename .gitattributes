@@ -1,0 +1,8 @@
+# Never diff or merge these as text: git's NUL heuristic misses some PDFs.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
