@@ -445,13 +445,21 @@ pub async fn run_from(
         .generation_gate
         .claim("web_research")
         .ok_or_else(|| error("WEB_BUSY", "local model already busy"))?;
-    // With the gate held, wake a tuned model whose keep_alive expired and size
-    // the run for the window it now serves, not the snapshot's 32768 defaults.
-    if state.load_if_absent(&state.current_model()).await {
-        web.limits = state.web_snapshot().limits;
-    }
     let lease = web.research.start(owner)?;
     let start = tokio::time::Instant::now();
+    // With the gate held, wake a tuned model whose keep_alive expired and size
+    // the run for the window it now serves, not the snapshot's 32768 defaults.
+    // The lease is already registered, so /api/web/research/cancel ends a cold
+    // load, and the run's deadlines count the time it took.
+    let model = state.current_model();
+    let loaded = tokio::select! {
+        biased;
+        _ = lease.token.cancelled() => return Err(error("WEB_CANCELLED", "research cancelled")),
+        loaded = state.load_if_absent(&model) => loaded,
+    };
+    if loaded {
+        web.limits = state.web_snapshot().limits;
+    }
     let mut usage = Vec::new();
     let mut warnings = Vec::new();
     let mut queries = vec![question.to_string()];
