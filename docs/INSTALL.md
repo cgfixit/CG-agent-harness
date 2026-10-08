@@ -396,7 +396,7 @@ on first run. Common operator settings follow:
 | `structured_memory.*` | see file | Per-owner caps (facts, proposals, episodes, bytes), search/retrieval limits, suggestion queue and consolidation thresholds |
 | `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, clamped 256–6000. Keep 3000 if the Ollama window is smaller than 32768 or unverified |
 | `web.model_tokens` | 1024 | Maximum synthesis completion, clamped 256–2048 |
-| `web.total_tokens` | 28000 | Planning and synthesis budget, clamped 2048–32000, sized for a **verified** 32768-token Ollama window ([model setup](MODELS.md)). Stay under 32000 so an over-budget estimate does not hard-fail. Keep 16000 if `/api/ps` shows a smaller `context_length` |
+| `web.total_tokens` | 28000 | Planning and synthesis budget, 2048–128000 (32000 without a larger measured window); sized for a **verified** 32768-token Ollama window ([model setup](MODELS.md)). Keep 16000 if `/api/ps` shows a smaller `context_length` |
 
 `assets/config.default.yaml` is seed-only. Existing homes keep their seeded
 `config.yaml` until you edit it. Missing settings use their documented runtime

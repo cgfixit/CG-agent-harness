@@ -15,7 +15,6 @@ use std::net::SocketAddr;
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::ChatMessage;
 use crate::server::attachments;
-use crate::server::compaction::{MAX_PROMPT_TOKENS, MIN_PROMPT_HEADROOM};
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::guards::retry_after_error;
 use crate::server::prompts::{compose_system_prompt, PromptInputs};
@@ -607,6 +606,11 @@ async fn chat_inner(
         super::skills::resolve(&state, &session.selected_skills)?
     };
 
+    // A tuned model's caps follow the window Ollama reports right now, read
+    // fresh before they are computed (a no-op for an untuned model).
+    if !cloud_selected {
+        state.verify_window(&model).await;
+    }
     let live = state.runtime_limits();
     let mut web = state.web.clone();
     web.limits = state.model_web_limits(&model, live.web.clone());
@@ -702,6 +706,11 @@ async fn chat_inner(
             return Err(busy(&busy_owner));
         }
     };
+    // With the gate held, wake a tuned model whose keep_alive expired, so this
+    // turn is sized for the window it will serve, not the 32768 defaults.
+    if !cloud_selected && state.load_if_absent(&model).await {
+        web.limits = state.model_web_limits(&model, live.web.clone());
+    }
 
     tokio::select! {
         biased;
@@ -810,12 +819,11 @@ async fn chat_inner(
     let mut compaction = None;
     let mut summary_prompt_tokens = 0u64;
     let mut summary_completion_tokens = 0u64;
+    // The prompt limit this turn was sized for, checked again before the reply.
+    let mut turn_prompt_limit = 0u64;
     if !cloud_selected {
         let configured_threshold = state.compact_prompt_tokens(&model);
-        let minimum_threshold = reservation
-            .saturating_add(MIN_PROMPT_HEADROOM)
-            .saturating_add(crate::server::compaction::calibrated_tokens(tool_tokens, ratio))
-            .min(MAX_PROMPT_TOKENS);
+        let prompt_cap = state.prompt_cap(&model);
         // The reply budget of this turn: /loop turns reserve their own.
         let reply_setting = if req.loop_turn {
             "api.harness_loop_rate_limit.max_tokens"
@@ -823,11 +831,20 @@ async fn chat_inner(
             "models.local_llm.max_tokens"
         };
         let web_chat = chat_tools && !req.loop_turn;
-        let (threshold, limit_source) = crate::server::compaction::prompt_limit(
+        let (threshold, limit_source) = crate::server::compaction::turn_prompt_limit(
             configured_threshold,
-            web_chat.then(|| crate::server::compaction::web_prompt_limit(web.limits.total_tokens, reservation)),
-            minimum_threshold,
+            prompt_cap,
+            web_chat.then_some(web.limits.total_tokens),
+            reservation,
+            crate::server::compaction::calibrated_tokens(tool_tokens, ratio),
             reply_setting,
+        );
+        turn_prompt_limit = threshold;
+        // What can raise the web budget, so the remedy never suggests a change that cannot help.
+        let web_raise = crate::server::compaction::WebRaise::for_budget(
+            web.limits.total_tokens,
+            state.web_total_ceiling(&model),
+            state.verified_window(&model),
         );
         // Name the setting that actually bounds this prompt: "start a new session"
         // cannot help when the system prompt and reply reservation fill the limit.
@@ -841,7 +858,15 @@ async fn chat_inner(
                 "limit_source": limit_source,
             }));
             let remedy =
-                crate::server::compaction::prompt_limit_remedy(limit_source, threshold, reply_setting, web_chat);
+                crate::server::compaction::prompt_limit_remedy(
+                limit_source,
+                threshold,
+                // Raising the setting helps only below every ceiling it is held to.
+                state.compact_ceiling(&model),
+                web_raise,
+                reply_setting,
+                web_chat,
+            );
             ApiError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "CHAT_PROMPT_TOO_LARGE",
@@ -919,6 +944,12 @@ async fn chat_inner(
                 crate::server::compaction::COMPACT_PREFIX.to_string()
             } else {
                 let summary_tokens = crate::server::compaction::summary_max_tokens(&state.cfg);
+                // The summary is a model call too: check the window first and
+                // size its input to the model's cap, not the 32768 default.
+                state
+                    .ensure_window_allows(&model, turn_prompt_limit, 0)
+                    .await
+                    .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
                 let (text, p, c) = crate::server::compaction::summarize_turns(
                     &state.chat,
                     &model,
@@ -926,6 +957,7 @@ async fn chat_inner(
                     summary_tokens,
                     crate::server::compaction::reply_reservation(&state.backend, summary_tokens),
                     ratio,
+                    state.prompt_cap(&model),
                 )
                 .await
                 .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
@@ -962,6 +994,15 @@ async fn chat_inner(
     });
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
     let spend_source = if req.loop_turn { "loop" } else { "chat" };
+    // Compaction can take a while: the window must still allow what this turn
+    // was sized for before the reply is requested (a no-op within the defaults).
+    if !cloud_selected {
+        let web_total = if chat_tools && !req.loop_turn { web.limits.total_tokens } else { 0 };
+        state
+            .ensure_window_allows(&model, turn_prompt_limit, web_total)
+            .await
+            .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
+    }
     let (mut reply, web_tools) = if cloud_selected {
         (
             state
@@ -994,7 +1035,7 @@ async fn chat_inner(
             output,
         )
         .await
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?
+        .map_err(|e| ApiError::from_err(llm_status(&e), &e))?
     } else {
         (
             state
@@ -1205,33 +1246,25 @@ async fn chat_inner(
     }
 }
 
-/// Longest the post-turn `/api/ps` window read may hold the generation gate.
-const WINDOW_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// 409 when the loaded window shrank below what a request was sized for (send
+/// it again); any other model failure is the upstream's, 502.
+fn llm_status(error: &crate::common::errors::HarnessError) -> StatusCode {
+    if error.code == crate::server::state::WINDOW_CHANGED {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::BAD_GATEWAY
+    }
+}
 
-/// The context window Ollama loaded `model` with, cached for the inventory
-/// refresh interval. `None` when unknown (not loaded, not reported, not a
-/// loopback Ollama endpoint); a check that cannot run never blocks a turn.
-/// A failed read is cached too, so an endpoint without `/api/ps` is not
-/// probed again (up to the inventory timeout) on every turn. The live read
-/// wins over the window `auto_tune` recorded at selection, which goes stale
-/// once Ollama restarts with the larger window this warning asks for; that
-/// recorded window is used only when the live read fails.
+/// The window to check a finished turn against: the live `/api/ps` read
+/// ([`AppState::live_window`]), else the window `auto_tune` recorded at
+/// selection. The live read wins because the recorded one goes stale once
+/// Ollama restarts with the larger window this warning asks for.
 async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
-    let refresh = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
-    let live = match state.ollama.cached_window(model, refresh) {
-        Some(window) => window,
-        None => {
-            let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
-            let mut limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
-            // The turn still holds the generation gate here: a loopback /api/ps answers
-            // in milliseconds, so a slow one is skipped (and cached) rather than waited on.
-            limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
-            let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
-            state.ollama.store_window(model, window);
-            window
-        }
-    };
-    live.or_else(|| state.tuning_for(model).map(|tuning| tuning.window))
+    state
+        .live_window(model)
+        .await
+        .or_else(|| state.tuning_for(model).map(|tuning| tuning.window))
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.
