@@ -380,7 +380,10 @@ pub async fn run_from(
     let mut evidence = Vec::new();
     let mut coverage = Coverage::default();
     let mut answer = Answer::default();
-    let workflow = async {
+    // Two deadlines: `research_seconds` bounds discovery and planning, and
+    // `synthesis_seconds` starts only when they finish, so a slow local model's
+    // answer is not cut off by time the crawl already spent.
+    let gather = async {
         // An explicit research request refreshes discovery even if two cached
         // passages happen to match. Cached snippets do not prove site coverage.
         authorize_owner(&state, owner)?;
@@ -443,51 +446,67 @@ pub async fn run_from(
                 }
             }
         }
-        authorize_evidence(&state, &evidence, group, owner)?;
-        if evidence.is_empty() {
-            answer
-                .missing
-                .push("No supporting passage was found within the permitted sources and run budget.".into());
-        } else {
-            let input = json!({"question":question,"evidence":evidence,"bounded_coverage":{
-                "searched":coverage.searched.len(),"failed":coverage.failed.len(),"refused":coverage.refused.len(),"unvisited":coverage.unvisited.len(),"budget_exhausted":coverage.budget_exhausted},
-                "freshness":"fetched_at is retrieval time, not proof of publication freshness"});
-            match model_call(
-                &state,
-                owner,
-                "synthesis",
-                ANSWER_SYSTEM,
-                &input,
-                web.limits.model_tokens,
-                web.limits.total_tokens,
-                &mut usage,
-            )
-            .await
-            .and_then(|s| Answer::parse(&s, &evidence))
-            {
-                Ok(a) => answer = a,
-                Err(e) => {
-                    warnings.push(e.code);
-                    answer.missing.push(
-                        "The model did not return a valid, attributable answer. Inspect the source passages.".into(),
-                    );
-                }
-            }
-        }
         Ok::<(), crate::common::errors::HarnessError>(())
     };
-    let outcome = tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(web.limits.research_seconds), workflow) => result,
+    let gathered = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(web.limits.research_seconds), gather) => result,
         _ = lease.token.cancelled() => Ok(Err(error("WEB_CANCELLED", "research cancelled"))),
     };
-    match outcome {
+    let synthesized = match gathered {
+        Ok(Ok(())) => {
+            let synthesize = async {
+                authorize_evidence(&state, &evidence, group, owner)?;
+                if evidence.is_empty() {
+                    answer
+                        .missing
+                        .push("No supporting passage was found within the permitted sources and run budget.".into());
+                } else {
+                    let input = json!({"question":question,"evidence":evidence,"bounded_coverage":{
+                "searched":coverage.searched.len(),"failed":coverage.failed.len(),"refused":coverage.refused.len(),"unvisited":coverage.unvisited.len(),"budget_exhausted":coverage.budget_exhausted},
+                "freshness":"fetched_at is retrieval time, not proof of publication freshness"});
+                    match model_call(
+                        &state,
+                        owner,
+                        "synthesis",
+                        ANSWER_SYSTEM,
+                        &input,
+                        web.limits.model_tokens,
+                        web.limits.total_tokens,
+                        &mut usage,
+                    )
+                    .await
+                    .and_then(|s| Answer::parse(&s, &evidence))
+                    {
+                        Ok(a) => answer = a,
+                        Err(e) => {
+                            warnings.push(e.code);
+                            answer.missing.push(
+                                "The model did not return a valid, attributable answer. Inspect the source passages."
+                                    .into(),
+                            );
+                        }
+                    }
+                }
+                Ok::<(), crate::common::errors::HarnessError>(())
+            };
+            tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(web.limits.synthesis_seconds), synthesize) => {
+                    result.map_err(|_| "WEB_SYNTHESIS_TIMEOUT")
+                }
+                _ = lease.token.cancelled() => Ok(Err(error("WEB_CANCELLED", "research cancelled"))),
+            }
+        }
+        Ok(Err(e)) => Ok(Err(e)),
+        Err(_) => Err("WEB_RESEARCH_TIMEOUT"),
+    };
+    match synthesized {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
             warnings.push(e.code);
             answer = Answer::default();
         }
-        Err(_) => {
-            warnings.push("WEB_RESEARCH_TIMEOUT".into());
+        Err(code) => {
+            warnings.push(code.into());
             answer = Answer::default();
         }
     }

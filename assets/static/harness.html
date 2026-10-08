@@ -2884,7 +2884,7 @@ async function runSlash(line, webCommand) {
           const q = body.query;
           if (sub === 'research') {
             sys('research started; /web cancel stops your request');
-            const result = await api('/api/web/research', 'POST', body, 1810000);
+            const result = await api('/api/web/research', 'POST', body, 3610000); /* research_seconds + synthesis_seconds maxima + 10s */
             const answer = result.answer || {};
             for (const kind of ['supported', 'conflicts', 'inferences']) {
               const claims = answer[kind] || [];

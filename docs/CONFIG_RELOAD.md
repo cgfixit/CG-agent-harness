@@ -17,7 +17,7 @@ window. Reload allocates no fresh quota.
 
 ## Supported settings
 
-Only these 22 keys reload. Values are integers except finite `window_seconds`
+Only these 23 keys reload. Values are integers except finite `window_seconds`
 numbers. Bounds also apply at startup. Defaults live in
 `assets/config.default.yaml`; removing a key selects its potentially different
 code fallback.
@@ -44,6 +44,7 @@ code fallback.
 | `web.model_tokens` | 256–2,048 |
 | `web.total_tokens` | 2,048–32,000 |
 | `web.research_seconds` | 10–1,800 |
+| `web.synthesis_seconds` | 10–1,800 |
 | `web.stale_seconds` | 60–31,536,000 |
 | `web.chat_tool_calls` | 1–10 |
 
