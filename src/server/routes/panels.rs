@@ -70,7 +70,9 @@ pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
 
 fn web_err(e: &HarnessError) -> ApiError {
     let status = match e.code.as_str() {
-        "WEB_DISABLED" | "WEB_ALLOWLIST_EMPTY" | "WEB_BUSY" => StatusCode::CONFLICT,
+        "WEB_DISABLED" | "WEB_ALLOWLIST_EMPTY" | "WEB_BUSY" | crate::server::state::WINDOW_CHANGED => {
+            StatusCode::CONFLICT
+        }
         "WEB_PERMISSION_DENIED" => StatusCode::FORBIDDEN,
         "WEB_FETCH_FAILED" | "WEB_DNS" | "WEB_CLEAR_FAILED" => StatusCode::BAD_GATEWAY,
         _ => StatusCode::BAD_REQUEST,
@@ -90,6 +92,7 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_SEARCH_KEY_REJECTED" => "The configured SerpAPI key was rejected. Check API Keys; no public fallback was attempted.",
         "WEB_SEARCH_QUOTA" => "SerpAPI quota or rate limit reached. No public fallback was attempted.",
         "WEB_SEARCH_PROVIDER" => "The configured search provider failed. No public fallback was attempted.",
+        crate::server::state::WINDOW_CHANGED => "The local model's loaded window changed or could not be read; nothing was sent. Check that Ollama is running, then run the research again.",
         _ => &e.code,
     };
     ApiError::new(status, &e.code, message)

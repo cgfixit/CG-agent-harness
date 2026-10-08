@@ -416,9 +416,14 @@ pub async fn run_from(
     if question.trim().is_empty() || question.chars().count() > 200 || group.is_some_and(|g| !valid_group(g)) {
         return Err(error("WEB_BAD_QUERY", "invalid research question or group"));
     }
+    // The run keeps one model and one runtime-limit snapshot: a selection change
+    // or config reload during a cold load below does not reach it.
+    let model = state.current_model();
     // A web budget above 32000 needs a fresh read of the selected model's window.
-    state.verify_window(&state.current_model()).await;
-    let mut web = state.web_snapshot();
+    state.verify_window(&model).await;
+    let runtime_web = state.runtime_limits().web.clone();
+    let mut web = state.web.clone();
+    web.limits = state.model_web_limits(&model, runtime_web.clone());
     let enabled = state
         .settings
         .lock()
@@ -453,14 +458,14 @@ pub async fn run_from(
     // load, and the run's deadlines count the time it took.
     // A cold load is model work: recheck the account first, as gather does.
     authorize_owner(&state, owner)?;
-    let model = state.current_model();
     let loaded = tokio::select! {
         biased;
         _ = lease.token.cancelled() => return Err(error("WEB_CANCELLED", "research cancelled")),
         loaded = state.load_if_absent(&model) => loaded?,
     };
     if loaded {
-        web.limits = state.web_snapshot().limits;
+        // Only the window-dependent caps change; the run's other limits stay.
+        web.limits = state.model_web_limits(&model, runtime_web);
     }
     let mut usage = Vec::new();
     let mut warnings = Vec::new();
