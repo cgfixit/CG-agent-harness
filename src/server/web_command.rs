@@ -162,7 +162,11 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
             // Exact phrases are search semantics, not merely argument grouping.
             // A double-quoted query word, or a single-quoted multi-word span (as
             // chat treats `'tokio select'`), becomes a double-quoted phrase;
-            // URL/flag values stay literal.
+            // URL/flag values stay literal. A double quote inside single quotes
+            // would collide with that phrase, so it is refused, as chat refuses it.
+            if matches!(action, "search" | "pages" | "research") && word.quote == Some('\'') && arg.contains('"') {
+                return Err("A quoted search term contains an embedded double quote.".into());
+            }
             positional.push(
                 if matches!(action, "search" | "pages" | "research")
                     && (word.quote == Some('"') || word.quote == Some('\'') && arg.contains(char::is_whitespace))
@@ -359,6 +363,9 @@ mod tests {
         // A whole single-quoted word is argument grouping, as before.
         assert_eq!(query("rock 'n' roll"), "rock n roll");
         assert!(parse(Some("search"), "\"unclosed").is_err());
+        assert!(parse(Some("search"), "'The \"Rust\" Book'")
+            .unwrap_err()
+            .contains("embedded double quote"));
         assert_eq!(
             parse(Some("search"), "--engine=Google tokio").unwrap().body["engine"],
             "google"

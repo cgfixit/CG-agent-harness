@@ -1080,6 +1080,10 @@ async fn chat_inner(
     let context_window = if cloud_selected || state.backend.provider != "ollama" {
         None
     } else {
+        // This turn's own usage may already show denser text than `ratio`.
+        let ratio = calibration.as_ref().map_or(ratio, |c| {
+            crate::server::compaction::token_ratio(Some(c), &state.chat.base_url, &model)
+        });
         let project = |extra| {
             crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", reservation, ratio, extra)
         };

@@ -1290,6 +1290,53 @@ async fn chat_warns_when_the_turn_exceeds_the_loaded_ollama_window() {
     task.abort();
 }
 
+/// The window check uses the calibration this turn's own usage produced: a first
+/// turn that tokenizes denser than bytes/4 warns on that turn, not the next one.
+#[tokio::test]
+async fn window_warning_uses_this_turns_calibration() {
+    let window = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+    let reported = window.clone();
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let app = axum::Router::new()
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(move || {
+                // The first reply reports few prompt tokens (ratio 1); later ones
+                // report far more than the estimate (ratio clamped to 3).
+                let dense = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0;
+                async move { axum::Json(common::ok_reply("pong", if dense { 1_000_000 } else { 10 }, 2)) }
+            }),
+        )
+        .route(
+            "/api/ps",
+            axum::routing::get(move || {
+                let n = reported.load(std::sync::atomic::Ordering::SeqCst);
+                async move { axum::Json(serde_json::json!({"models":[{"name":"mock-model","context_length":n}]})) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        common::ServerOptions::default()
+            .with("models.local_llm.model", "mock-model")
+            .with("models.local_llm.inventory.refresh_sec", "1"),
+    )
+    .await;
+    let body = serde_json::json!({"message":"hello","model":"mock-model"});
+    let (status, plain) = s.post_json("/api/chat", body.clone()).await;
+    assert_eq!(status, 200, "{plain}");
+    let base = plain["context_window"]["projected_tokens"].as_u64().unwrap();
+    window.store(base + 64, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    // A new session, so the only calibration is the one this turn produces.
+    let (status, dense) = s.post_json("/api/chat", body).await;
+    assert_eq!(status, 200, "{dense}");
+    assert_eq!(dense["context_window"]["window_tokens"], base + 64, "{dense}");
+    task.abort();
+}
+
 /// A failed `/api/ps` read is cached like a good one: an endpoint without it is
 /// not probed again, up to the inventory timeout, on every turn.
 #[tokio::test]
