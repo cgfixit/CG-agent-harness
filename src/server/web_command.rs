@@ -29,7 +29,9 @@ fn words(input: &str) -> Result<Vec<Word>, String> {
         let mut word = String::new();
         // An apostrophe opens a quoted argument only when a closing one ends a
         // later word (`'tokio select'`); otherwise it is text (`'til death`).
-        let quoted = c == '"' || c == '\'' && closes_later(chars.clone());
+        // `'90s` is an elision, not an opener.
+        let quoted =
+            c == '"' || c == '\'' && !chars.peek().is_some_and(char::is_ascii_digit) && closes_later(chars.clone());
         if quoted {
             let mut closed = false;
             while let Some(next) = chars.next() {
@@ -375,6 +377,10 @@ mod tests {
             "'til death \"Rust Book\" reviews"
         );
         assert_eq!(query("C compiler -h option"), "C compiler -h option");
+        assert_eq!(
+            query("'90s bands musicians' influences"),
+            "'90s bands musicians' influences"
+        );
         assert_eq!(parse(Some("search"), "rust --help").unwrap().action, "help");
         assert_eq!(parse(Some("allow"), "-h").unwrap().action, "help");
         // A whole single-quoted word is argument grouping, as before.

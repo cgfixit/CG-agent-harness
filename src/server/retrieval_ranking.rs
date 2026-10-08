@@ -50,8 +50,10 @@ impl PreparedQuery {
             .filter(|word| word.contains('_') || word.contains("::"))
             .take(MAX_TERMS)
             .map(|word| {
+                // `::` continues a path, so `foo::bar` does not match inside
+                // `foo::bar::baz` or `outer::foo::bar`; a lone `:` still ends it.
                 regex::RegexBuilder::new(&format!(
-                    r"(?:^|[^\p{{L}}\p{{N}}_]){}(?:$|[^\p{{L}}\p{{N}}_])",
+                    r"(?:^|[^\p{{L}}\p{{N}}_:]|(?:^|[^:]):){}(?:$|[^\p{{L}}\p{{N}}_:]|:(?:$|[^:]))",
                     regex::escape(word)
                 ))
                 .case_insensitive(true)
@@ -288,6 +290,9 @@ mod tests {
         // A chunk that documents one of the queried identifiers is kept.
         assert!(both.identifier_matches(["Vec::new allocates nothing."]));
         assert!(!both.identifier_matches(["Vec::newer is unrelated."]));
+        let path = PreparedQuery::new("foo::bar").unwrap().unwrap();
+        assert!(path.identifier_matches(["Call foo::bar: it returns."]));
+        assert!(!path.identifier_matches(["foo::bar::baz and outer::foo::bar"]));
         // A query without an identifier filters nothing.
         assert!(PreparedQuery::new("retry count")
             .unwrap()

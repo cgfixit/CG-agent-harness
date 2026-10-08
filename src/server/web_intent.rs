@@ -231,7 +231,8 @@ fn find_count_clause(toks: &[&str]) -> Option<usize> {
         let noun = word_of(toks[k + 2]).to_ascii_lowercase();
         let document_pages = word_of(toks[k]).eq_ignore_ascii_case("first")
             && noun.starts_with("page")
-            && toks.get(k + 3).is_some_and(|t| word_of(t).eq_ignore_ascii_case("of"));
+            // A plain `of`; `-of` is an exclusion operator, not a connector.
+            && toks.get(k + 3).is_some_and(|t| t.starts_with(|c: char| c.is_alphanumeric()) && word_of(t).eq_ignore_ascii_case("of"));
         is_count_pair(toks[k], toks[k + 1]) && COUNT_NOUNS.contains(&noun.as_str()) && !document_pages
     })
 }
@@ -1289,6 +1290,7 @@ mod tests {
         ));
         assert_eq!(rewrite("search first 2 pages for \"rust\"", 5).count, 2);
         assert_eq!(rewrite("search top 3 pages of rust docs", 5).count, 3);
+        assert_eq!(rewrite("search first 2 pages -of rust docs", 5).count, 2);
         // `top` without a count noun is subject text.
         assert!(matches!(
             parse_with_count("search top 10 movies", 5),
