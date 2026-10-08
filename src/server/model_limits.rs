@@ -300,9 +300,17 @@ impl Tuning {
             limits.model_tokens = limits.model_tokens.min(budget.model_tokens);
             limits.chat_tool_calls = limits.chat_tool_calls.min(budget.chat_tool_calls as usize);
         }
-        // A deadline, not a budget: the measured value replaces the configured one.
-        if let Some(seconds) = self.synthesis_seconds {
-            limits.synthesis_seconds = seconds;
+        // A deadline, not a budget: the measured value replaces the configured
+        // one. It is derived again from the budgets just applied, so a reload
+        // that raises them also lengthens the deadline.
+        if self.synthesis_seconds.is_some() {
+            if let Some(seconds) = self
+                .speed
+                .as_ref()
+                .and_then(|speed| derived_synthesis(speed, limits.evidence_tokens, limits.model_tokens))
+            {
+                limits.synthesis_seconds = seconds;
+            }
         }
     }
 }
@@ -563,6 +571,29 @@ mod tests {
         low.total_tokens = 9_000;
         tuning.apply_web(&mut low);
         assert_eq!(low.total_tokens, 9_000);
+    }
+
+    #[test]
+    fn a_reload_that_raises_the_budgets_lengthens_the_tuned_deadline() {
+        let cfg = shipped().unwrap();
+        let mut web = Limits::load(&cfg).unwrap();
+        web.evidence_tokens = 250;
+        web.model_tokens = 256;
+        let cpu = json!({"prefill_tps": 50.0, "decode_tps": 3.0, "load_seconds": 0.0});
+        let profile = loaded(16_384);
+        let proposal = propose(&profile, Some(&cpu), &cfg, &web, &backend(Some("none")));
+        let tuning = tuning_from("m", &profile, &proposal, Some(cpu)).unwrap();
+        // (250 + 1000)/50 = 25 s read, 256/3 = 85.3 s written; x2 rounded up is 240.
+        assert_eq!(tuning.synthesis_seconds, Some(240));
+        let mut live = web.clone();
+        tuning.apply_web(&mut live);
+        assert_eq!(live.synthesis_seconds, 240);
+        // A reload raises both budgets; the tuned ceilings (3000/512) now bound them.
+        let mut reloaded = Limits::load(&cfg).unwrap();
+        tuning.apply_web(&mut reloaded);
+        assert_eq!((reloaded.evidence_tokens, reloaded.model_tokens), (3_000, 512));
+        // (3000 + 1000)/50 = 80 s read, 512/3 = 170.7 s written; x2 rounded up is 510.
+        assert_eq!(reloaded.synthesis_seconds, 510);
     }
 
     #[test]
