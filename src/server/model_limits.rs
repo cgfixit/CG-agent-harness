@@ -34,6 +34,11 @@ const MIN_TIMEOUT_SEC: u64 = 120;
 /// Ceiling for derived chat and planner timeouts; the agentic child mirrors it
 /// (`agentic::commands::MAX_PLANNER_TIMEOUT_SEC`, checked by `invariant_guard`).
 pub const MAX_TIMEOUT_SEC: u64 = 3600;
+/// The longest derived planner timeout that leaves room for one iteration:
+/// itself, one check and the run overhead within the synchronous run cap.
+const MAX_PLANNER_TIMEOUT_SEC: u64 = crate::shim::REAL_REPO_RUN_MAX_TIMEOUT_SEC
+    - crate::shim::REAL_REPO_RUN_CHECK_SEC
+    - crate::shim::REAL_REPO_RUN_OVERHEAD_SEC;
 /// Synthesis prompt tokens beside the evidence: instructions, question, framing.
 const SYNTHESIS_PROMPT_OVERHEAD: u64 = 1_000;
 const MIN_SYNTHESIS_SEC: u64 = 60;
@@ -263,7 +268,12 @@ pub fn propose(
             "agentic.deepagent_github.planner_max_tokens",
             DEFAULT_PLANNER_MAX_TOKENS,
         );
-        if let Some(seconds) = speed.and_then(|speed| derived_timeout(speed, PLANNER_PROMPT_TOKENS, planner_reply, 0)) {
+        // Held where one iteration with one check still fits the run cap:
+        // a longer planner timeout would make every coding run unbudgetable.
+        if let Some(seconds) = speed
+            .and_then(|speed| derived_timeout(speed, PLANNER_PROMPT_TOKENS, planner_reply, 0))
+            .map(|seconds| seconds.min(MAX_PLANNER_TIMEOUT_SEC))
+        {
             let configured = cfg.u64_or(
                 "agentic.deepagent_github.planner_timeout_sec",
                 crate::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,
@@ -614,6 +624,12 @@ mod tests {
         let other = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
         assert!(!other.to_string().contains("planner_timeout_sec"), "{other}");
         profile["model"] = json!("qwen3.8:27b-mlx");
+        // A crawling model is held where one iteration with one check fits.
+        let crawl = json!({"prefill_tps": 1.0, "decode_tps": 1.0});
+        let slow = propose(&profile, Some(&crawl), &cfg, &web, &backend(Some("none")));
+        let held = value(&slow, "agentic.deepagent_github.planner_timeout_sec");
+        assert_eq!(held, MAX_PLANNER_TIMEOUT_SEC);
+        assert!(crate::shim::real_repo_run_budget_sec(held, Some(1), 1) <= crate::shim::REAL_REPO_RUN_MAX_TIMEOUT_SEC);
         let unsampled = propose(&profile, None, &cfg, &web, &backend(Some("none")));
         assert!(!unsampled.to_string().contains("planner_timeout_sec"), "{unsampled}");
     }

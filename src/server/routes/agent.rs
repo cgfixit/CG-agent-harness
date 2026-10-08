@@ -98,14 +98,21 @@ pub async fn agent_checks(State(state): State<Arc<AppState>>) -> Json<Value> {
 pub(crate) fn planner_timeout_sec(state: &AppState) -> Option<u64> {
     let planner_model = state.cfg.str_or("agentic.deepagent_github.model", "");
     let planner_url = state.cfg.str_or("agentic.deepagent_github.base_url", "");
-    let endpoint = |url: &str| url.trim().trim_end_matches('/').to_ascii_lowercase();
-    if !planner_url.trim().is_empty() && endpoint(&planner_url) != endpoint(&state.backend.base_url) {
+    if !planner_url.trim().is_empty() && !same_endpoint(&planner_url, &state.backend.base_url) {
         return None;
     }
     state
         .tuning_for(&state.current_model())
         .filter(|tuning| crate::llm::profile::same_model(&tuning.model, &planner_model))
         .and_then(|tuning| tuning.planner_timeout_sec)
+}
+
+/// Two base URLs name one endpoint: parsed, so only the scheme and host are
+/// case-folded and a path keeps its case (two reverse-proxy routes that differ
+/// in case stay different). Unparseable URLs never match.
+fn same_endpoint(a: &str, b: &str) -> bool {
+    let parse = |raw: &str| url::Url::parse(raw.trim().trim_end_matches('/')).ok();
+    matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
 }
 
 fn agent_run_shares_chat_backend(state: &AppState) -> bool {
@@ -671,3 +678,16 @@ pub async fn agent_run_discard(
 
 // Identity comes only from the guarded account extension.
 type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;
+
+#[cfg(test)]
+mod tests {
+    use super::same_endpoint;
+
+    #[test]
+    fn endpoints_match_only_on_the_same_listener_and_path() {
+        assert!(same_endpoint("HTTP://LocalHost:11434/v1/", "http://localhost:11434/v1"));
+        assert!(!same_endpoint("http://h:1/Route", "http://h:1/route"));
+        assert!(!same_endpoint("http://[::1]:11434/v1", "http://127.0.0.1:11434/v1"));
+        assert!(!same_endpoint("not a url", "not a url"));
+    }
+}
