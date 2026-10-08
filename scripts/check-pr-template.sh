@@ -180,10 +180,20 @@ template_text=""
 template_source=""
 template_missing=""
 if git -C "$repo_root" rev-parse --verify -q "$base^{commit}" >/dev/null; then
-  if template_text="$(git -C "$repo_root" show "$base:$template_path" 2>/dev/null)"; then
+  # Resolve the blob through ls-tree, not `git show base:path`: Git for
+  # Windows' bash rewrites a colon-joined argument like that one before git.exe
+  # sees it. Do not set MSYS_NO_PATHCONV: `git -C "$repo_root"` needs the
+  # /tmp-style path translated. git's own error is kept in the message, so a
+  # failure names its cause.
+  tree_line=""
+  if tree_line="$(git -C "$repo_root" ls-tree "$base" -- "$template_path" 2>&1)" \
+    && blob="$(awk 'NR == 1 && $2 == "blob" { print $3 }' <<<"$tree_line")" \
+    && [[ -n "$blob" ]] \
+    && template_text="$(git -C "$repo_root" cat-file blob "$blob" 2>&1)"; then
     template_source="template at $base"
   else
     template_missing="$template_path is absent at $base; refusing to pass (CI fails the same way)"
+    [[ -n "$tree_line" ]] && template_missing+=" [git: ${tree_line%%$'\n'*}]"
   fi
 elif [[ -f "$repo_root/$template_path" ]]; then
   template_text="$(cat "$repo_root/$template_path")"
