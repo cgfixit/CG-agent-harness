@@ -11,7 +11,7 @@ const html = await readFile(new URL('../assets/static/harness.html', import.meta
 const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
 let persona=''; let clearFails=false, slashMode='dispatch';
-let authFixture=false, signedIn=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
+let authFixture=false, signedIn=false, logoutStatus=200, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 let automationFixture=null; // null keeps the unknown-path {} reply for the header feature probes
 const headerState='["openAnalytics","openDeliveries","openSchedules"].filter(id=>!document.getElementById(id).hidden).join()';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
@@ -69,7 +69,7 @@ const server=createServer(async(req,res)=>{
   reply({username:authUsername,role:authRole,must_change_password:mustChange},signedIn?200:401);return;
  }
  if(path==='/api/auth/password'){assert.equal(body.current_password,'admin');assert.ok(body.password.length>=12);mustChange=false;reply({changed:true});return;}
- if(path==='/api/auth/logout'){signedIn=false;reply({logged_out:true});return;}
+ if(path==='/api/auth/logout'){if(logoutStatus!==200){reply({detail:{code:'AUTH_REQUIRED',message:'session expired'}},logoutStatus);return;}signedIn=false;reply({logged_out:true});return;}
  if(path==='/api/keys'){
   if(!signedIn || mustChange || authRole!=='admin'){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
   if(req.method==='POST'){if(body.clear?.includes('DEEPAGENT_API_KEY'))savedKey='';if(body.clear?.includes('SERPAPI_API_KEY'))savedSearchKey='';if(body.keys?.DEEPAGENT_API_KEY)savedKey=body.keys.DEEPAGENT_API_KEY;if(body.keys?.SERPAPI_API_KEY)savedSearchKey=body.keys.SERPAPI_API_KEY;}
@@ -684,6 +684,17 @@ try {
  await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
  // The cleared SerpAPI row already reads "Saved: unset", so wait on this row's status (the <p> before its input).
  await until('document.getElementById("saved-DEEPAGENT_API_KEY")?.previousElementSibling?.textContent.startsWith("Saved: unset")');assert.equal(savedKey,'');
+ // An expired session rejects logout (401); the Memory pane must still be cleared before anyone signs in again.
+ await send('/memory proposals');
+ await until('document.getElementById("pane-memory").textContent.includes("Saved facts (2)")');
+ signedIn=false;logoutStatus=401;
+ await evaluate('document.getElementById("hAuthLogout").click()');
+ await until('!document.getElementById("hAuthLoginBox").hidden');
+ assert.equal(await evaluate('document.getElementById("pane-memory").childElementCount'),0,'a rejected logout still clears account-private facts');
+ logoutStatus=200;
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ await until('document.getElementById("hAuthLoginBox").hidden');
+ assert.equal(await evaluate('document.getElementById("pane-memory").textContent.includes("Saved facts")'),false,'the next sign-in starts with an empty Memory pane');
  await send('/agent run codex/logout Reviewed before logout');
  await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}; reviewedPRBodies.set("old", "body"); prBodyTarget="old"');
  await evaluate('document.getElementById("hAuthLogout").click()');
@@ -711,7 +722,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout clears the Memory pane before the next sign-in','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }
