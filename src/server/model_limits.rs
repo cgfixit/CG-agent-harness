@@ -51,9 +51,6 @@ const MEASURE_TIMEOUT: Duration = Duration::from_secs(180);
 /// retried every half second for up to two minutes.
 const GATE_ATTEMPTS: u32 = 240;
 const GATE_RETRY: Duration = Duration::from_millis(500);
-/// The coding planner's prompt: about 24k characters (see the shipped
-/// `agentic.deepagent_github.planner_max_tokens` comment) at 4 bytes a token.
-const PLANNER_PROMPT_TOKENS: u64 = 6_000;
 const DEFAULT_PLANNER_MAX_TOKENS: u64 = 3_072;
 
 /// Settings scaled with the window: (key, rounding step, minimum).
@@ -258,7 +255,9 @@ pub fn propose(
         values.push(json!({"key": "web.synthesis_seconds", "current": web.synthesis_seconds, "proposed": seconds}));
     }
     // The coding planner, when it runs this model: its prompt at prefill speed
-    // and one planner_max_tokens reply at decode speed, padded like chat.
+    // and one planner_max_tokens reply at decode speed, padded like chat. A run
+    // can carry a PR diff, issue, plan and file contents, so the prompt is sized
+    // for the most the measured window admits, not the ~6000-token baseline.
     let planner_model = cfg.str_or("agentic.deepagent_github.model", "");
     if profile["model"]
         .as_str()
@@ -271,7 +270,7 @@ pub fn propose(
         // Held where one iteration with one check still fits the run cap:
         // a longer planner timeout would make every coding run unbudgetable.
         if let Some(seconds) = speed
-            .and_then(|speed| derived_timeout(speed, PLANNER_PROMPT_TOKENS, planner_reply, 0))
+            .and_then(|speed| derived_timeout(speed, compaction::prompt_cap(Some(window)), planner_reply, 0))
             .map(|seconds| seconds.min(MAX_PLANNER_TIMEOUT_SEC))
         {
             let configured = cfg.u64_or(
@@ -608,17 +607,18 @@ mod tests {
         let mut profile = loaded(TUNED_WINDOW);
         profile["model"] = json!("qwen3.8:27b-mlx");
         let proposal = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
-        // 6000/1500 + 3072/50 = 65.4 s; doubled and rounded up to 150.
-        assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 150);
+        // The window's 30000-token prompt cap: 30000/1500 + 3072/50 = 81.4 s;
+        // doubled and rounded up to 180.
+        assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 180);
         let tuning = tuning_from("qwen3.8:27b-mlx", &profile, &proposal, Some(speed.clone())).unwrap();
-        assert_eq!(tuning.planner_timeout_sec, Some(150));
+        assert_eq!(tuning.planner_timeout_sec, Some(180));
         // An untagged planner name is the same model as its :latest tag.
         let mut aliased = cfg.clone();
         aliased.raw["agentic"]["deepagent_github"]["model"] = "qwen3.8".into();
         let mut latest = loaded(TUNED_WINDOW);
         latest["model"] = json!("qwen3.8:latest");
         let proposal = propose(&latest, Some(&speed), &aliased, &web, &backend(Some("none")));
-        assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 150);
+        assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 180);
         // Another model, or no sample: the configured planner timeout stays.
         profile["model"] = json!("humanizer:q8");
         let other = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));

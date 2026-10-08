@@ -499,19 +499,19 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
     .await;
     // The startup tune measures qwen3.8:27b-mlx, which is also the planner model.
     let body = wait_for_tuning(&s, 32768).await;
-    assert_eq!(body["tuning"]["planner_timeout_sec"], 150, "{body}");
+    assert_eq!(body["tuning"]["planner_timeout_sec"], 180, "{body}");
     let run = json!({"instruction": "fix the parser", "branch": "claude/parser-fix",
         "commit_message": "fix: parser", "reason": "triage", "max_iterations": 10,
         "checks": ["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]});
     let (status, resp) = s.post_json("/api/agent/run", run).await;
     assert_eq!(status, 422, "{resp}");
     let details = &resp["detail"]["details"];
-    // Budgeted with 150 s per planner call instead of the configured 720.
+    // Budgeted with 180 s per planner call instead of the configured 720.
     let budget = |planner, n| cgagentharness::shim::real_repo_run_budget_sec(planner, Some(n), 5);
     let fit = |planner| (1..=10).filter(|n| budget(planner, *n) <= 3600).max().unwrap_or(0);
-    assert_eq!(details["estimated_sec"], budget(150, 10), "{resp}");
-    assert_eq!(details["max_iterations_that_fit"], fit(150), "{resp}");
-    assert!(fit(150) > fit(720), "{resp}");
+    assert_eq!(details["estimated_sec"], budget(180, 10), "{resp}");
+    assert_eq!(details["max_iterations_that_fit"], fit(180), "{resp}");
+    assert!(fit(180) > fit(720), "{resp}");
 }
 
 #[tokio::test]
