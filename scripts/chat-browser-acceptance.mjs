@@ -11,7 +11,7 @@ const html = await readFile(new URL('../assets/static/harness.html', import.meta
 const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
 let persona=''; let clearFails=false, slashMode='dispatch';
-let authFixture=false, signedIn=false, logoutStatus=200, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
+let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 let automationFixture=null; // null keeps the unknown-path {} reply for the header feature probes
 const headerState='["openAnalytics","openDeliveries","openSchedules"].filter(id=>!document.getElementById(id).hidden).join()';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
@@ -59,7 +59,7 @@ const server=createServer(async(req,res)=>{
   if(apiSet){reply({kind:'dispatch',dispatch:true,canonical:'/api set '+apiSet[1],command:'api',sub:'set',rest:apiSet[1]});return;}
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
- if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
+ if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
  if(path==='/api/auth/setup-status'){reply({needs_password:false,default_password:authFixture&&mustChange});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
@@ -690,8 +690,15 @@ try {
  await send('/memory proposals');
  await until('document.getElementById("pane-memory").textContent.includes("Saved facts (2)")');
  await evaluate('currentSession="session_fixture_prior";sessionGoal="Prior goal";document.getElementById("input").value="unsent draft"');
- signedIn=false;logoutStatus=401;
+ // The follow-up whoami probe also fails here, so the reset must not depend on it.
+ signedIn=false;logoutStatus=401;whoamiDrop=true;
  await evaluate('document.getElementById("hAuthLogout").click()');
+ await until('document.getElementById("hAuthWho").textContent==="logout rejected (401)"');
+ assert.equal(await evaluate('document.getElementById("pane-memory").childElementCount'),0,'a 401 logout clears facts even when the follow-up probe fails');
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("fact_labeled_saved")'),false);
+ assert.equal(await evaluate('currentSession'),null,'a 401 logout drops the session even when the follow-up probe fails');
+ whoamiDrop=false;
+ await evaluate('refreshHarnessAuth()');
  await until('!document.getElementById("hAuthLoginBox").hidden');
  assert.equal(await evaluate('document.getElementById("pane-memory").childElementCount'),0,'a rejected logout still clears account-private facts');
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("fact_labeled_saved")'),false,'a rejected logout still clears listed facts from the transcript');
@@ -729,7 +736,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

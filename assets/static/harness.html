@@ -4754,6 +4754,9 @@ if (hAuthLogout) {
         // would overwrite it with username · role.
         const rejected = 'logout rejected (' + response.status + ')';
         if (response.status === 401 || response.status === 403) {
+          /* 401 is definitive: the session is gone, so reset now rather than
+             only if the probe below succeeds (its catch keeps the old view). */
+          if (response.status === 401) resetAccountView();
           await refreshHarnessAuth();
         } else refreshHeaderFeatures(true); // The session was not ended; probes recheck it.
         const who = document.getElementById('hAuthWho');

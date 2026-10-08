@@ -16,7 +16,8 @@ assert.ok(!html.includes('id="openSpend"'), 'Spend is folded into Analytics');
 const nodes = new Map();
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {id, hidden:buttons.includes(id), textContent:'', value:'', disabled:false, listeners:{},
-    addEventListener(event, handler) { this.listeners[event] = handler; }, focus() {}, contains() { return false; }});
+    addEventListener(event, handler) { this.listeners[event] = handler; }, focus() {}, contains() { return false; },
+    replaceChildren() { this.textContent = ''; }});
   return nodes.get(id);
 };
 const shown = () => buttons.filter(id => !node(id).hidden);
@@ -28,7 +29,7 @@ let replies = shipped, auth = {whoami:reply(503), setup:reply(200, {needs_passwo
 const classes = () => { const set = new Set(); return {add:n => set.add(n), remove:n => set.delete(n), contains:n => set.has(n),
   toggle:(n, on) => { if (on) set.add(n); else set.delete(n); return on; }}; };
 const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null};
-const passwordPrompts = [];
+const passwordPrompts = []; let transcriptClears = 0;
 const context = vm.createContext({
   $:node, document:page, window:{}, CSRF_TOKEN:'fixture', sessionRevision:1, sendBtn:{disabled:false}, inflightChat:null,
   api:async path => { probes.push(path); const value = replies[path]; if (value instanceof Error) throw value; return typeof value === 'function' ? value() : value; },
@@ -40,6 +41,10 @@ const context = vm.createContext({
   },
   clearAnalytics() {}, clearPendingAttachments() {}, abortInflightSearch() {}, openPasswordChange(required) { passwordPrompts.push(required); },
   refreshStatus:async () => {}, refreshSessions:async () => {},
+  // resetAccountView() state, so logout paths run the real reset.
+  clearTranscript() { transcriptClears++; }, stopLoop() {}, paintSessionTokens() {}, paintStyle() {}, input:node('input'),
+  netconnectRevision:0, currentSession:'fixture-session', sessionGoal:'fixture goal', loopAuto:false, retryAttachmentIds:null,
+  promptHistory:{}, currentStyle:'off', currentStyleIssue:null,
 });
 vm.runInContext([
   between('const hAuthLogin = document.getElementById(', 'if (hAuthLogin) {'),
@@ -131,11 +136,20 @@ await node('hAuthSetupBtn').listeners.click(); await settle();
 assert.deepEqual(shown(), buttons);
 
 // Logout hides first; a rejected logout that kept the session restores and rechecks.
+vm.runInContext("currentSession = 'fixture-session'", context);
 auth.logout = reply(500);
 await node('hAuthLogout').listeners.click(); await settle();
 assert.deepEqual(shown(), buttons);
 assert.equal(node('hAuthWho').textContent, 'logout rejected (500)');
+assert.equal(context.currentSession, 'fixture-session', 'a 500 logout keeps the session and its view');
 auth.logout = reply(401); auth.whoami = reply(401);
 await node('hAuthLogout').listeners.click(); await settle();
 assert.deepEqual(shown(), [], 'a 401 logout rechecks whoami and stays hidden when signed out');
+assert.equal(context.currentSession, null, 'a 401 logout resets the account view');
+assert.ok(transcriptClears >= 1, 'a 401 logout clears the transcript');
+// The reset does not depend on the follow-up probe: a failed whoami still leaves it reset.
+vm.runInContext("currentSession = 'second-session'", context);
+auth.logout = reply(401); auth.whoami = () => { throw new TypeError('Failed to fetch'); };
+await node('hAuthLogout').listeners.click(); await settle();
+assert.equal(context.currentSession, null, 'a 401 logout resets even when the probe fails');
 console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card and default-password note passed');
