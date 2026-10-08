@@ -1289,3 +1289,40 @@ async fn chat_warns_when_the_turn_exceeds_the_loaded_ollama_window() {
     assert!(large["context_window"].is_null(), "{large}");
     task.abort();
 }
+
+/// A failed `/api/ps` read is cached like a good one: an endpoint without it is
+/// not probed again, up to the inventory timeout, on every turn.
+#[tokio::test]
+async fn chat_caches_a_failed_loaded_window_read() {
+    let probes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = probes.clone();
+    let app = axum::Router::new()
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(|| async { axum::Json(common::ok_reply("pong", 10, 2)) }),
+        )
+        .route(
+            "/api/ps",
+            axum::routing::get(move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { axum::http::StatusCode::NOT_FOUND }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        common::ServerOptions::default().with("models.local_llm.model", "mock-model"),
+    )
+    .await;
+    for _ in 0..2 {
+        let (status, reply) = s
+            .post_json("/api/chat", serde_json::json!({"message":"hello","model":"mock-model"}))
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        assert!(reply["context_window"].is_null(), "{reply}");
+    }
+    assert_eq!(probes.load(std::sync::atomic::Ordering::SeqCst), 1);
+    task.abort();
+}

@@ -75,6 +75,21 @@ fn prompt_estimate(bytes: usize, token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens((bytes as u64).div_ceil(4), token_ratio)
 }
 
+/// Tokens of the messages a web turn appended to the history, counted the way
+/// the chat route projects history: each content plus a batch's calls.
+fn appended_tokens(messages: &[Value]) -> u64 {
+    let estimate = super::compaction::estimate_tokens;
+    messages
+        .iter()
+        .map(|m| {
+            m["content"].as_str().map_or(0, estimate)
+                + m.get("tool_calls")
+                    .filter(|c| !c.is_null())
+                    .map_or(0, |c| estimate(&c.to_string()))
+        })
+        .sum()
+}
+
 /// Room kept for one minimal tool result, calibrated like the estimate that
 /// later charges it.
 fn min_result_tokens(token_ratio: f64) -> u64 {
@@ -296,6 +311,7 @@ async fn run_inner(
         if turn == 0 {
             initial_prompt_tools = round_fits;
         }
+        let appended = appended_tokens(&messages[history.len()..]);
         let validate = || check_evidence(state, owner, &sources);
         let response = state
             .chat
@@ -340,6 +356,7 @@ async fn run_inner(
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
             reply.final_prompt_tools = !available.is_empty();
+            reply.appended_prompt_tokens = appended;
             return Ok((reply, events));
         }
         let calls = message["tool_calls"]
@@ -545,6 +562,7 @@ async fn run_inner(
                             initial_prompt_tools,
                             // The last model call offered tools: it returned this batch.
                             final_prompt_tools: true,
+                            appended_prompt_tokens: appended,
                         },
                         events,
                     ));

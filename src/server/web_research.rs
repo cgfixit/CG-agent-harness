@@ -508,6 +508,8 @@ pub async fn run_from(
             // `model_call` estimates it: drop the lowest-ranked passages rather
             // than lose the whole answer to WEB_TOKEN_BUDGET when a smaller
             // window's total_tokens sits close to evidence_tokens + model_tokens.
+            // When not even one passage fits, keep them all: `model_call` refuses
+            // without sending, and the operator still gets every passage.
             let room = web
                 .limits
                 .total_tokens
@@ -515,12 +517,12 @@ pub async fn run_from(
                 .saturating_sub(web.limits.model_tokens);
             let synthesis_prompt =
                 |evidence: &[Passage]| estimate(ANSWER_SYSTEM) + estimate(&synthesis_input(evidence).to_string()) + 16;
-            let mut trimmed = false;
-            while evidence.len() > 1 && synthesis_prompt(&evidence) > room {
-                evidence.pop();
-                trimmed = true;
+            let mut keep = evidence.len();
+            while keep > 1 && synthesis_prompt(&evidence[..keep]) > room {
+                keep -= 1;
             }
-            if trimmed {
+            if keep < evidence.len() && synthesis_prompt(&evidence[..keep]) <= room {
+                evidence.truncate(keep);
                 warnings.push("WEB_EVIDENCE_TRIMMED".into());
             }
             let input = synthesis_input(&evidence);

@@ -1080,15 +1080,13 @@ async fn chat_inner(
     let context_window = if cloud_selected || state.backend.provider != "ollama" {
         None
     } else {
-        let sent_tools = if reply.initial_prompt_tools { tool_tokens } else { 0 };
-        let projected = crate::server::compaction::projected_prompt_tokens(
-            &system_prompt,
-            &history,
-            "",
-            reservation,
-            ratio,
-            sent_tools,
-        );
+        let project = |extra| {
+            crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", reservation, ratio, extra)
+        };
+        // A web turn's last request also carries its tool calls and results.
+        let first = project(if reply.initial_prompt_tools { tool_tokens } else { 0 });
+        let last = project(if reply.final_prompt_tools { tool_tokens } else { 0 } + reply.appended_prompt_tokens);
+        let projected = first.max(last);
         loaded_window(&state, &model)
             .await
             .filter(|window| projected > *window)
@@ -1196,16 +1194,18 @@ async fn chat_inner(
 /// The context window Ollama loaded `model` with, cached for the inventory
 /// refresh interval. `None` when unknown (not loaded, not reported, not a
 /// loopback Ollama endpoint); a check that cannot run never blocks a turn.
+/// A failed read is cached too, so an endpoint without `/api/ps` is not
+/// probed again (up to the inventory timeout) on every turn.
 async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
     let refresh = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
     if let Some(window) = state.ollama.cached_window(model, refresh) {
-        return Some(window);
+        return window;
     }
     let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
     let limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
-    let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await?;
+    let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
     state.ollama.store_window(model, window);
-    Some(window)
+    window
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.

@@ -463,6 +463,7 @@ impl CloudChat {
             initial_prompt_tokens: None,
             initial_prompt_tools: false,
             final_prompt_tools: false,
+            appended_prompt_tokens: 0,
         })
     }
 

@@ -3371,8 +3371,9 @@ function replyHasGoalDone(text) {
    7B-27B model restating its previous answer. */
 const LOOP_GOAL_REMINDER_CHARS = 240;
 function loopTurnPrompt(turn, total, goal) {
-  const g = String(goal || '').replace(/\s+/g, ' ').trim();
-  const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1) + '…' : g;
+  // Code points, not UTF-16 units: a cut surrogate pair is JSON the server rejects.
+  const g = Array.from(String(goal || '').replace(/\s+/g, ' ').trim());
+  const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1).join('') + '…' : g.join('');
   return 'Loop turn ' + turn + ' of ' + total + '. Session goal: ' + reminder + '\n' +
     'Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
     'Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. ' +

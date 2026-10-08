@@ -23,6 +23,9 @@ assert.ok(prompt.startsWith('Loop turn 2 of 3. Session goal: Write a parser\n'),
 assert.ok(prompt.includes('GOAL_DONE on its own line') && !/27b/i.test(prompt), 'model-agnostic marker instruction');
 const long = loopTurnPrompt(1, 1, 'x'.repeat(2000));
 assert.ok(long.includes('x'.repeat(239) + '…') && !long.includes('x'.repeat(240)), 'goal reminder is bounded');
+const astral = loopTurnPrompt(1, 1, 'x'.repeat(238) + '😀😀 tail');
+assert.ok(astral.includes('x'.repeat(238) + '😀…'), astral);
+assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(astral), 'no lone surrogate reaches JSON');
 
 const answer = 'The parser reads tokens from the lexer, builds an AST for each statement, and reports the first syntax error with its line number and column.';
 assert.equal(repliesNearlyRepeat(answer, answer), true);

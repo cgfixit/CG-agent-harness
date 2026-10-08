@@ -246,33 +246,42 @@ async fn synthesis_trims_evidence_to_the_remaining_token_budget() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let page_task = tokio::spawn(async move { axum::serve(listener, pages).await.unwrap() });
-    let mut options = ServerOptions::default()
-        .with("web.pace_ms", "100")
-        .with("web.evidence_tokens", "6000")
-        .with("web.model_tokens", "1200")
-        .with("web.total_tokens", "2048");
-    options.web_resolve = Some(("research.invalid".into(), address));
-    let s = spawn_server(&model_url, options).await;
-    let url = format!("http://research.invalid:{}/long", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
-    assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
-    let (status, result) = s
-        .post_json(
-            "/api/web/research",
-            json!({"query":"connection retry backoff","urls":[url]}),
-        )
-        .await;
-    assert_eq!(status, 200, "{result}");
-    let warnings = result["warnings"].as_array().unwrap();
-    assert!(warnings.contains(&json!("WEB_EVIDENCE_TRIMMED")), "{result}");
-    assert!(!warnings.contains(&json!("WEB_TOKEN_BUDGET")), "{result}");
-    assert_eq!(result["answer"]["supported"].as_array().unwrap().len(), 1, "{result}");
-    let kept = sent.load(Ordering::SeqCst);
-    assert!(kept >= 1, "{result}");
-    assert_eq!(
-        result["passages"].as_array().unwrap().len(),
-        kept,
-        "only passages the model saw are returned"
-    );
+    // With model_tokens = total_tokens not even one passage fits: nothing is
+    // sent, and every passage is kept for the operator.
+    for model_tokens in ["1200", "2048"] {
+        let mut options = ServerOptions::default()
+            .with("web.pace_ms", "100")
+            .with("web.evidence_tokens", "6000")
+            .with("web.model_tokens", model_tokens)
+            .with("web.total_tokens", "2048");
+        options.web_resolve = Some(("research.invalid".into(), address));
+        let s = spawn_server(&model_url, options).await;
+        let url = format!("http://research.invalid:{}/long", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+        sent.store(usize::MAX, Ordering::SeqCst);
+        let (status, result) = s
+            .post_json(
+                "/api/web/research",
+                json!({"query":"connection retry backoff","urls":[url]}),
+            )
+            .await;
+        assert_eq!(status, 200, "{result}");
+        let warnings = result["warnings"].as_array().unwrap();
+        let passages = result["passages"].as_array().unwrap().len();
+        let kept = sent.load(Ordering::SeqCst);
+        if model_tokens == "2048" {
+            assert_eq!(kept, usize::MAX, "no synthesis call was sent: {result}");
+            assert!(warnings.contains(&json!("WEB_TOKEN_BUDGET")), "{result}");
+            assert!(!warnings.contains(&json!("WEB_EVIDENCE_TRIMMED")), "{result}");
+            assert!(passages > 1, "untrimmed passages survive a refusal: {result}");
+            continue;
+        }
+        assert!(warnings.contains(&json!("WEB_EVIDENCE_TRIMMED")), "{result}");
+        assert!(!warnings.contains(&json!("WEB_TOKEN_BUDGET")), "{result}");
+        assert_eq!(result["answer"]["supported"].as_array().unwrap().len(), 1, "{result}");
+        assert!(kept >= 1, "{result}");
+        assert_eq!(passages, kept, "only passages the model saw are returned");
+    }
     model_task.abort();
     page_task.abort();
 }

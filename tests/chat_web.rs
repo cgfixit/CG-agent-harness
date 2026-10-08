@@ -1132,3 +1132,80 @@ async fn small_model_tool_call_shapes_complete_one_bounded_round() {
     );
     task.abort();
 }
+
+/// The loaded-window warning counts what a web turn adds: a prompt whose
+/// history fits Ollama's window can outgrow it once a fetched page is sent back.
+#[tokio::test]
+async fn window_warning_counts_the_tool_results_a_web_turn_sends() {
+    let window = Arc::new(AtomicU64::new(1));
+    let reported = window.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let fixture = Router::new()
+        .route(
+            "/docs/big",
+            get(|| async {
+                (
+                    [("content-type", "text/plain")],
+                    "Backoff doubles each retry. ".repeat(280),
+                )
+            }),
+        )
+        .route(
+            "/api/ps",
+            get(move || {
+                let n = reported.load(Ordering::SeqCst);
+                async move { Json(json!({"models":[{"name":"mock-model","context_length":n}]})) }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let call = calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if call == 0 || body["messages"].as_array().unwrap().last().unwrap()["role"] == "tool" {
+                        return Json(common::ok_reply("done", 10, 2));
+                    }
+                    Json(tool_call_reply(
+                        "web_fetch",
+                        &json!({"url":"http://docs.example/docs/big","reason":"the user asked"}).to_string(), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                        "call_big",
+                    ))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default()
+                .with("models.local_llm.model", "mock-model")
+                .with("models.local_llm.inventory.refresh_sec", "1")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    // A tool-free turn against a 1-token window reports the base projection.
+    let (status, plain) = s.post_json("/api/chat", json!({"message":"read the doc"})).await;
+    assert_eq!(status, 200, "{plain}");
+    let base = plain["context_window"]["projected_tokens"].as_u64().unwrap();
+    // A window with room for that prompt warns only because of the fetched page.
+    window.store(base + 64, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let (status, fetched) = s.post_json("/api/chat", json!({"message":"read the doc"})).await;
+    assert_eq!(status, 200, "{fetched}");
+    assert_eq!(fetched["web_tools"][0]["ok"], true, "{fetched}");
+    assert_eq!(fetched["context_window"]["window_tokens"], base + 64, "{fetched}");
+    assert!(
+        fetched["context_window"]["projected_tokens"].as_u64().unwrap() > base + 1000,
+        "{fetched}"
+    );
+    task.abort();
+}
