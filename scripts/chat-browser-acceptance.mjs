@@ -488,6 +488,9 @@ try {
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts").length'),1,'overlapping refreshes leave one saved-facts section');
  await evaluate('finishChat({reply:"synthetic reply",model:"mock",memory_suggestion:{queued:true}})');
  assert.ok(await evaluate('document.getElementById("stream").textContent.includes("queued, not yet a proposal")'));
+ await evaluate('document.getElementById("stream").replaceChildren()');
+ await evaluate('finishChat({reply:"second reply",model:"mock",memory_suggestion:{queued:true}})');
+ assert.equal(await evaluate('document.getElementById("stream").textContent.includes("queued, not yet a proposal")'),false,'the queued note shows once per session, not after every turn');
  await evaluate(`document.querySelector('[data-pane="commands"]').click()`);
  const beforeDisabledSearch=chatCount();
  await send('/memory search metric');
