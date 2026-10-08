@@ -173,10 +173,26 @@ mod windows {
         let cwd = dir.path().to_path_buf();
         let run = std::thread::spawn(move || WindowsJobObjectSandbox.run(&argv, &cwd, &env, 60));
         let pid_file = dir.path().join("grandchild.pid");
-        until("descendant pid", || {
-            std::fs::read_to_string(&pid_file).is_ok_and(|s| s.trim().parse::<u32>().is_ok())
-        });
-        let pid: u32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        // A cold Python start can outlast `until`'s 15 s, so wait as long as
+        // the check's own 60 s budget, and report the check's outcome if it
+        // ends before writing the pid instead of a bare timeout.
+        let read_pid = || {
+            std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+        };
+        let start = Instant::now();
+        let pid = loop {
+            if let Some(pid) = read_pid() {
+                break pid;
+            }
+            if run.is_finished() {
+                let outcome = run.join().unwrap();
+                panic!("check ended before its descendant started: {outcome:?}");
+            }
+            assert!(start.elapsed() < Duration::from_secs(65), "timed out: descendant pid");
+            std::thread::sleep(Duration::from_millis(30));
+        };
         let descendant = process(pid);
         assert_eq!(
             state(&descendant),
