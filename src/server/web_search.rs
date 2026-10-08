@@ -47,6 +47,8 @@ pub struct Limits {
     pub model_tokens: u64,
     pub total_tokens: u64,
     pub research_seconds: u64,
+    /// The synthesis call's own deadline, started after discovery and planning.
+    pub synthesis_seconds: u64,
     pub stale_seconds: u64,
     pub chat_tool_calls: usize,
 }
@@ -84,6 +86,7 @@ impl Limits {
             model_tokens: bound("model_tokens", 1024, 256, 2048)?,
             total_tokens: bound("total_tokens", 16000, 2048, 32000)?,
             research_seconds: bound("research_seconds", 300, 10, 1800)?,
+            synthesis_seconds: bound("synthesis_seconds", 300, 10, 1800)?,
             chat_tool_calls: bound("chat_tool_calls", 10, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
         })

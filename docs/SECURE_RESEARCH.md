@@ -405,9 +405,8 @@ deduplication reduce repetition. Derived cache corruption grants nothing.
 Conditional refresh repeats network checks. Validators reduce bytes, not requests.
 
 Research asks the local model for at most 3 subqueries in 2 rounds, runs at most
-one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults are
-28,000 total model tokens and 300 seconds. Without a verified 32768 context,
-configure `web.total_tokens: 16000` and `web.evidence_tokens: 3000`; see
+one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults:
+28,000 model tokens, 300s discovery, 300s answering; smaller windows: see
 [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
 usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete
 output conservatively. Bounded JSON output has no commands or privileged tools.
