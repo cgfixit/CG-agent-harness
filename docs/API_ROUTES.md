@@ -58,7 +58,7 @@ session timeouts.
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
-| GET | `/api/ollama/inventory` | Live loopback tags plus configured-model readiness |
+| GET | `/api/ollama/inventory` | Live loopback tags (`/model list`) plus configured-model readiness |
 | GET | `/api/ollama/profile` | Selected-model facts (`/model profile`) |
 | POST | `/api/ollama/pull` | Operator/admin abortable pull; SSE when `Accept: text/event-stream` |
 | POST | `/api/ollama/pull/cancel` | Abort the in-flight pull |

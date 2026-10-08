@@ -234,6 +234,15 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
     let (_, parsed) = s.post_json("/api/slash/parse", json!({"line": "/model profil"})).await;
     assert_eq!(parsed["dispatch"], false, "{parsed}");
     assert_eq!(parsed["suggestions"][0]["line"], "/model profile", "{parsed}");
+    let (_, parsed) = s.post_json("/api/slash/parse", json!({"line": "/model list"})).await;
+    assert_eq!(parsed["dispatch"], true, "{parsed}");
+    assert_eq!(parsed["canonical"], "/model list", "{parsed}");
+    // `/model list` renders these rows: the exact tags `/model use` takes.
+    let (_, inventory) = s.get_json("/api/ollama/inventory").await;
+    assert!(
+        inventory["models"].as_array().is_some_and(|m| !m.is_empty()),
+        "{inventory}"
+    );
 
     let (status, _) = s.post_json("/api/model", json!({"model": "missing:latest"})).await;
     assert_eq!(status, 200);
