@@ -77,10 +77,10 @@ and planner models**. Both use bounded `/models` inventories:
 `/model` reports selection and `/model profile` its loaded window, proposed
 limits and any tuning; `/model use <tag>` persists it without downloading. With
 `models.local_llm.auto_tune: true` it also loads the model, times one short
-generate and applies per-model limits (budgets only tighten; the timeout follows
-measured speed; a model without tools gets none). Above 32768, proposals
-scale up; set them in `config.yaml` (`auto_tune` only lowers); caps follow the
-measured window, up to 131072.
+generate and applies per-model limits (budgets only tighten; the chat timeout and
+`web.synthesis_seconds` follow measured speed; a model without tools gets none).
+Above 32768, proposals scale up; set them in `config.yaml` (`auto_tune` only
+lowers); caps follow the measured window, up to 131072.
 This shared selection can override configuration, including fallback.
 Check it against the active local endpoint. For explicit cloud chat, use
 `/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only

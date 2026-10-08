@@ -282,6 +282,9 @@ async fn auto_tune_measures_the_selection_and_tightens_its_chat_limits() {
     assert_eq!(tuning["tools_off"], true, "{profile}");
     // 12000/1500 + (2048 + 5 x 128)/50 = 61.8 s; doubled and rounded up to 150.
     assert_eq!(tuning["timeout_sec"], 150, "{profile}");
+    // Research's answer deadline follows the same sample: (1500 + 1000)/1500 +
+    // 512/50 = 11.9 s, doubled and rounded up, floored at 60.
+    assert_eq!(tuning["synthesis_seconds"], 60, "{profile}");
     assert_eq!(tuning["speed"]["decode_tps"], 50.0, "{profile}");
     // The sample was one raw generate for the selection, never with num_ctx.
     let generates = ollama.generates.lock().unwrap().clone();
