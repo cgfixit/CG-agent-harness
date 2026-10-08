@@ -221,7 +221,7 @@ by `tests/invariant_guard.rs`, `tests/shim_and_agent_routes.rs`,
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test --all-targets` (blank planner keys)
+- `cargo test --all-targets` (keys blank): CI only; locally, targeted tests
 - `cargo deny check`
 - New routes → `REGISTERED_PATHS` (+ `views.rs` if listed in console)
 - New shim actions → `shim::ACTIONS` + CLI dispatch + invariant whitelist together
