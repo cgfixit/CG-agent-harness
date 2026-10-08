@@ -373,6 +373,15 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
     let refused = state.ensure_window_allows("longctx:q8", 0, 56_000).await.unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    // Reloaded below the defaults: the caps shrink to the reported 16384, and a
+    // call sized for the 30000 default is refused rather than truncated.
+    *ollama.longctx_window.lock().unwrap() = 16384;
+    let (_, small) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(small["in_force"]["prompt_cap"], 15000, "{small}");
+    assert_eq!(small["in_force"]["web_total_ceiling"], 16000, "{small}");
+    let refused = state.ensure_window_allows("longctx:q8", 30_000, 0).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    *ollama.longctx_window.lock().unwrap() = 32768;
     // Calls within the 32768 defaults are never refused.
     state
         .ensure_window_allows("longctx:q8", 30_000, 32_000)

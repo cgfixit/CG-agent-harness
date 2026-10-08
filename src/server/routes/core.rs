@@ -606,8 +606,8 @@ async fn chat_inner(
         super::skills::resolve(&state, &session.selected_skills)?
     };
 
-    // Caps above the 32768 defaults need Ollama to report, right now, the
-    // window auto_tune measured (a no-op without a larger tuning).
+    // A tuned model's caps follow the window Ollama reports right now, read
+    // fresh before they are computed (a no-op for an untuned model).
     if !cloud_selected {
         state.verify_window(&model).await;
     }

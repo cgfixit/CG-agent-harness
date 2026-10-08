@@ -74,7 +74,7 @@ pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
 const WINDOW_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Error code when the loaded window shrank below what a request was sized for.
 pub const WINDOW_CHANGED: &str = "OLLAMA_WINDOW_CHANGED";
-/// How old a `/api/ps` read may be and still lift caps above the 32768 defaults.
+/// How old a `/api/ps` read may be and still set a tuned model's caps.
 /// [`AppState::verify_window`] takes a fresh one just before each use.
 const VERIFIED_WINDOW_MAX_AGE_SEC: u64 = 10;
 
@@ -285,27 +285,23 @@ impl AppState {
         self.probe_window(model).await
     }
 
-    /// Before a turn, research run or reload uses raised caps: re-read
-    /// `/api/ps` now, ignoring the cache, when `model` has a tuning above 32768.
-    /// Without one the caps are the defaults and nothing is read.
+    /// Before a turn, research run or reload sizes its limits: re-read
+    /// `/api/ps` now, ignoring the cache, when `model` has a tuning (its caps
+    /// follow the verified window). Untuned, the caps are the defaults and
+    /// nothing is read.
     pub async fn verify_window(&self, model: &str) {
-        let larger = self
-            .tuning_for(model)
-            .is_some_and(|tuning| tuning.window > super::compaction::BASE_WINDOW);
-        if larger {
+        if self.tuning_for(model).is_some() {
             self.probe_window(model).await;
         }
     }
 
-    /// Just before a model call sized by limits above the 32768-window defaults
-    /// (a prompt limit over 30000 or a web budget over 32000): re-read `/api/ps`
-    /// and refuse the call if the window Ollama reports no longer allows them,
-    /// so a restart with a smaller window mid-turn cannot truncate the prompt.
-    /// Calls within the defaults return at once without a read.
+    /// Just before a model call on a tuned `model`, whose limits follow the
+    /// verified window: re-read `/api/ps` and refuse the call if the window
+    /// Ollama reports no longer allows `prompt_limit` and `web_total`, so a
+    /// restart with a different window mid-turn cannot truncate the prompt.
+    /// An untuned model has the default caps and returns at once without a read.
     pub async fn ensure_window_allows(&self, model: &str, prompt_limit: u64, web_total: u64) -> Result<()> {
-        let raised =
-            prompt_limit > super::compaction::MAX_PROMPT_TOKENS || web_total > super::compaction::BASE_WEB_TOTAL_TOKENS;
-        if !raised {
+        if self.tuning_for(model).is_none() {
             return Ok(());
         }
         self.verify_window(model).await;
@@ -336,11 +332,11 @@ impl AppState {
         window
     }
 
-    /// The window caps may grow with: the one `auto_tune` measured, only while a
-    /// `/api/ps` read from the last few seconds ([`Self::verify_window`]) still
-    /// reports `model` loaded at least that large (the smaller of the two). A
-    /// restart with a smaller window, an unloaded model, an unanswered or old
-    /// read all fall back to the 32768-window caps.
+    /// The window a tuned model's caps follow: the smaller of the one `auto_tune`
+    /// measured and a `/api/ps` read from the last few seconds
+    /// ([`Self::verify_window`]), so a restart with a smaller window shrinks
+    /// them. An unloaded model, an unanswered or old read give `None`: the
+    /// 32768-window defaults.
     pub fn verified_window(&self, model: &str) -> Option<u64> {
         let tuned = self.tuning_for(model)?.window;
         let live = self

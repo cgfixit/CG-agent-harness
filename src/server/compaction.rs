@@ -33,18 +33,17 @@ const SUMMARY_INPUT_CHARS: usize = 24_000;
 const SUMMARY_TURN_CHARS: usize = 800;
 const SUMMARY_SYSTEM: &str = "Summarize this chat history for a later local-model turn. Cover goals, decisions, files touched, leftover work, and key facts. Dense prose. No preamble.";
 
-/// `base` at [`BASE_WINDOW`], scaled to a measured `window` above it (capped at
-/// [`MAX_WINDOW`]). An unknown or smaller window keeps `base`: the caps only grow
-/// for a window `auto_tune` has measured.
+/// `base` at [`BASE_WINDOW`], scaled to a measured `window` (up to
+/// [`MAX_WINDOW`]), larger or smaller. Only an unknown window keeps `base`.
 fn window_cap(base: u64, window: Option<u64>) -> u64 {
-    match window.filter(|window| *window > BASE_WINDOW) {
+    match window {
         Some(window) => base * window.min(MAX_WINDOW) / BASE_WINDOW,
         None => base,
     }
 }
 
-/// The prompt cap for a model loaded at `window`: [`MAX_PROMPT_TOKENS`] unless
-/// a measured window is larger.
+/// The prompt cap for a model loaded at `window`: [`MAX_PROMPT_TOKENS`] scaled
+/// to a measured window, or unchanged when it is unknown.
 pub fn prompt_cap(window: Option<u64>) -> u64 {
     window_cap(MAX_PROMPT_TOKENS, window)
 }
@@ -609,9 +608,11 @@ mod tests {
     }
 
     #[test]
-    fn caps_grow_only_with_a_measured_larger_window() {
+    fn caps_follow_a_measured_window_and_keep_defaults_when_unknown() {
         assert_eq!(prompt_cap(None), MAX_PROMPT_TOKENS);
-        assert_eq!(prompt_cap(Some(16_384)), MAX_PROMPT_TOKENS);
+        // A known smaller window scales the caps down; only an unknown one keeps them.
+        assert_eq!(prompt_cap(Some(16_384)), 15_000);
+        assert_eq!(web_total_cap(Some(16_384)), 16_000);
         assert_eq!(prompt_cap(Some(BASE_WINDOW)), MAX_PROMPT_TOKENS);
         assert_eq!(prompt_cap(Some(65_536)), 60_000);
         assert_eq!(web_total_cap(None), 32_000);

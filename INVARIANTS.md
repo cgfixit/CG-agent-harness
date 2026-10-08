@@ -477,8 +477,8 @@ window is stored prompt history (user and assistant turns, persist cap
 `MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
 overflow. The effective trigger is
 `max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
-calibrated_tool_definition_tokens)`, capped at 30000 (more for an `auto_tune`-measured
-window above 32768). Web-enabled chat tightens the trigger
+calibrated_tool_definition_tokens)`, capped at 30000 (scaled to an `auto_tune`-verified
+window). Web-enabled chat tightens the trigger
 toward `web.total_tokens - effective_reply_reservation` (the projection already
 carries one reservation, so a web prompt keeps room for two replies) and never
 below that floor; the web dispatcher independently offers tools only while the
