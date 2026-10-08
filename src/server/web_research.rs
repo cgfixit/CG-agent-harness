@@ -499,9 +499,31 @@ pub async fn run_from(
                 .missing
                 .push("No supporting passage was found within the permitted sources and run budget.".into());
         } else {
-            let input = json!({"question":question,"evidence":prompt_passages(&evidence),"bounded_coverage":{
+            let synthesis_input = |evidence: &[Passage]| {
+                json!({"question":question,"evidence":prompt_passages(evidence),"bounded_coverage":{
                 "searched":coverage.searched.len(),"failed":coverage.failed.len(),"refused":coverage.refused.len(),"unvisited":coverage.unvisited.len(),"budget_exhausted":coverage.budget_exhausted},
-                "freshness":"fetched_at is retrieval time, not proof of publication freshness"});
+                "freshness":"fetched_at is retrieval time, not proof of publication freshness"})
+            };
+            // Fit synthesis into what web.total_tokens has left after planning, as
+            // `model_call` estimates it: drop the lowest-ranked passages rather
+            // than lose the whole answer to WEB_TOKEN_BUDGET when a smaller
+            // window's total_tokens sits close to evidence_tokens + model_tokens.
+            let room = web
+                .limits
+                .total_tokens
+                .saturating_sub(spent(&usage))
+                .saturating_sub(web.limits.model_tokens);
+            let synthesis_prompt =
+                |evidence: &[Passage]| estimate(ANSWER_SYSTEM) + estimate(&synthesis_input(evidence).to_string()) + 16;
+            let mut trimmed = false;
+            while evidence.len() > 1 && synthesis_prompt(&evidence) > room {
+                evidence.pop();
+                trimmed = true;
+            }
+            if trimmed {
+                warnings.push("WEB_EVIDENCE_TRIMMED".into());
+            }
+            let input = synthesis_input(&evidence);
             match model_call(
                 &state,
                 owner,

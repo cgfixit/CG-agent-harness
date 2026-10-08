@@ -27,10 +27,15 @@ fn words(input: &str) -> Result<Vec<Word>, String> {
             continue;
         }
         let mut word = String::new();
-        if matches!(c, '\'' | '"') {
+        // An apostrophe opens a quoted argument only when a closing one ends a
+        // later word (`'tokio select'`); otherwise it is text (`'til death`).
+        let quoted = c == '"' || c == '\'' && closes_later(chars.clone());
+        if quoted {
             let mut closed = false;
-            for next in chars.by_ref() {
-                if next == c {
+            while let Some(next) = chars.next() {
+                // A single-quoted span closes only at an apostrophe that ends a
+                // word, so `'women's health'` keeps its inner apostrophe.
+                if next == c && (c == '"' || chars.peek().is_none_or(|n| n.is_whitespace())) {
                     closed = true;
                     break;
                 }
@@ -50,10 +55,22 @@ fn words(input: &str) -> Result<Vec<Word>, String> {
         }
         out.push(Word {
             text: word,
-            quote: matches!(c, '\'' | '"').then_some(c),
+            quote: quoted.then_some(c),
         });
     }
     Ok(out)
+}
+
+/// Whether an apostrophe in `rest` ends a word: followed by whitespace or the end.
+fn closes_later(mut rest: impl Iterator<Item = char>) -> bool {
+    let mut prev = None;
+    for c in rest.by_ref() {
+        if prev == Some('\'') && c.is_whitespace() {
+            return true;
+        }
+        prev = Some(c);
+    }
+    prev == Some('\'')
 }
 
 pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
@@ -135,14 +152,21 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                             .ok_or("--count must be 1–10.")?,
                     )
                 }
-                "--engine" if engine.is_none() && matches!(value.as_str(), "google" | "pages") => engine = Some(value),
+                "--engine" if engine.is_none() && matches!(value.to_ascii_lowercase().as_str(), "google" | "pages") => {
+                    engine = Some(value.to_ascii_lowercase())
+                }
+                "--engine" => return Err("Invalid or duplicate --engine; use google or pages.".into()),
                 _ => return Err(format!("Invalid or duplicate {flag}.")),
             }
         } else {
             // Exact phrases are search semantics, not merely argument grouping.
-            // Preserve double quotes for queries while URL/flag values stay literal.
+            // A double-quoted query word, or a single-quoted multi-word span (as
+            // chat treats `'tokio select'`), becomes a double-quoted phrase;
+            // URL/flag values stay literal.
             positional.push(
-                if word.quote == Some('"') && matches!(action, "search" | "pages" | "research") {
+                if matches!(action, "search" | "pages" | "research")
+                    && (word.quote == Some('"') || word.quote == Some('\'') && arg.contains(char::is_whitespace))
+                {
                     format!("\"{arg}\"")
                 } else {
                     arg.clone()
@@ -324,5 +348,23 @@ mod tests {
         assert!(parse(Some("search"), "--dry-run x").is_err());
         // Outside a query the old flag grammar is unchanged.
         assert!(parse(Some("allow"), "https://example.com/* -x").is_err());
+    }
+
+    #[test]
+    fn single_quoted_phrases_stay_phrases_and_lone_apostrophes_are_text() {
+        let query = |arg: &str| parse(Some("search"), arg).unwrap().body["query"].clone();
+        assert_eq!(query("'tokio select' timeout"), "\"tokio select\" timeout");
+        assert_eq!(query("'women's health' study"), "\"women's health\" study");
+        assert_eq!(query("'til death do us part"), "'til death do us part");
+        // A whole single-quoted word is argument grouping, as before.
+        assert_eq!(query("rock 'n' roll"), "rock n roll");
+        assert!(parse(Some("search"), "\"unclosed").is_err());
+        assert_eq!(
+            parse(Some("search"), "--engine=Google tokio").unwrap().body["engine"],
+            "google"
+        );
+        assert!(parse(Some("search"), "--engine bing tokio")
+            .unwrap_err()
+            .contains("google or pages"));
     }
 }

@@ -206,3 +206,73 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
     model_task.abort();
     page_task.abort();
 }
+
+/// A home sized for a small window (`total_tokens` close to `model_tokens`)
+/// gets an answer from fewer passages, never a lost answer: the lowest-ranked
+/// passages are dropped so the synthesis prompt and reply fit, and the run warns.
+#[tokio::test]
+async fn synthesis_trims_evidence_to_the_remaining_token_budget() {
+    let sent = Arc::new(AtomicUsize::new(0));
+    let seen = sent.clone();
+    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+        let seen = seen.clone();
+        async move {
+            let user: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let evidence = user["evidence"].as_array().cloned().unwrap_or_default();
+            seen.store(evidence.len(), Ordering::SeqCst);
+            let answer = match evidence.first() {
+                Some(p) => {
+                    let quote: String = p["text"].as_str().unwrap().chars().take(40).collect();
+                    json!({"supported":[{"text":"Retries are documented.","citations":[{"id":p["id"],"quote":quote}]}]})
+                }
+                None => json!({"queries":["retry"],"gaps":[]}),
+            };
+            Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":answer.to_string()}}],"usage":{"prompt_tokens":20,"completion_tokens":10}}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let model_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let model_task = tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
+    let long: String = (0..60)
+        .map(|i| format!("Connection retry rule {i} retries failed connections with backoff step {i}. "))
+        .collect();
+    let pages = Router::new().route(
+        "/long",
+        get(move || {
+            let long = long.clone();
+            async move { ([("content-type", "text/plain")], long) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let page_task = tokio::spawn(async move { axum::serve(listener, pages).await.unwrap() });
+    let mut options = ServerOptions::default()
+        .with("web.pace_ms", "100")
+        .with("web.evidence_tokens", "6000")
+        .with("web.model_tokens", "1200")
+        .with("web.total_tokens", "2048");
+    options.web_resolve = Some(("research.invalid".into(), address));
+    let s = spawn_server(&model_url, options).await;
+    let url = format!("http://research.invalid:{}/long", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+    let (status, result) = s
+        .post_json(
+            "/api/web/research",
+            json!({"query":"connection retry backoff","urls":[url]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{result}");
+    let warnings = result["warnings"].as_array().unwrap();
+    assert!(warnings.contains(&json!("WEB_EVIDENCE_TRIMMED")), "{result}");
+    assert!(!warnings.contains(&json!("WEB_TOKEN_BUDGET")), "{result}");
+    assert_eq!(result["answer"]["supported"].as_array().unwrap().len(), 1, "{result}");
+    let kept = sent.load(Ordering::SeqCst);
+    assert!(kept >= 1, "{result}");
+    assert_eq!(
+        result["passages"].as_array().unwrap().len(),
+        kept,
+        "only passages the model saw are returned"
+    );
+    model_task.abort();
+    page_task.abort();
+}

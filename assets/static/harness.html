@@ -3519,6 +3519,9 @@ async function finishChat(r) {
   renderChatWebTools(r && r.web_tools);
   agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
         ' tok · session total ' + (tally.total || 0));
+  /* The server compared this turn with the window Ollama loaded (/api/ps);
+     an oversized prompt loses its oldest text silently, system prompt first. */
+  if (r && r.context_window && r.context_window.message) sys(r.context_window.message);
   if (r && r.memory_suggestion && r.memory_suggestion.queued) {
     sys('Memory suggestion queued, not yet a proposal. Open /memory proposals and Refresh proposals to see the result. The model may return no candidates; nothing is applied without your approval and reason.');
   }
@@ -3767,7 +3770,7 @@ async function onSend() {
 function looksLikeNlSearch(text) {
   /* Mirrors src/server/web_intent.rs: command-shaped (optional politeness
      words, then a whole `search` token; `google` is an entity, not a verb)
-     plus a balanced quoted term or a `first N links|results|hits|pages`
+     plus a balanced quoted term or a `first|top N links|results|hits|pages`
      clause. A quote opens at a word start and closes at a word end, so the
      apostrophe inside 'women's health' does not end the term. Lead-in words
      and the verb need whitespace (or end) after any trailing punctuation so
@@ -3809,7 +3812,9 @@ function looksLikeNlSearch(text) {
   /* A signed or bracketed count (`first -2 results`, `first (2) links`) is
      still a count clause: it routes so the server's own range check refuses
      it (WEB_BAD_QUERY) rather than starting a model turn. */
-  var countRe = /\bfirst\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?)\b/ig;
+  /* `top N` is the same clause as `first N`; `first N pages of <book>` names
+     pages of a document, not results (find_count_clause on the server). */
+  var countRe = /\b(?:first|top)\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?(?!\s+of\b))\b/ig;
   var quoted = 0, counts = 0;
   var Q = '\u0000';
   var masked = body

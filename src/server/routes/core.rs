@@ -1074,6 +1074,34 @@ async fn chat_inner(
             reply.initial_prompt_tokens,
         )
     };
+    // Ollama keeps the newest tokens of an oversized prompt and drops the rest,
+    // system prompt first, without an error. The harness sends no num_ctx, so
+    // compare this turn with the window Ollama actually loaded and say so.
+    let context_window = if cloud_selected || state.backend.provider != "ollama" {
+        None
+    } else {
+        let sent_tools = if reply.initial_prompt_tools { tool_tokens } else { 0 };
+        let projected = crate::server::compaction::projected_prompt_tokens(
+            &system_prompt,
+            &history,
+            "",
+            reservation,
+            ratio,
+            sent_tools,
+        );
+        loaded_window(&state, &model)
+            .await
+            .filter(|window| projected > *window)
+            .map(|window| {
+                state.audit.log(json!({"event":"chat_context_window_exceeded","session_id":session.session_id,
+                    "model":model,"window":window,"projected":projected}));
+                json!({"model":model,"window_tokens":window,"projected_tokens":projected,
+                    "message":format!("Ollama loaded {model} with a {window}-token context window, but this turn needed about \
+                        {projected} tokens (prompt plus reply reserve). Ollama silently drops the oldest prompt text, starting \
+                        with the system prompt. Restart Ollama with a larger OLLAMA_CONTEXT_LENGTH (32768 is recommended; see \
+                        docs/MODELS.md), or start a new session.")})
+            })
+    };
     let recorded = state.store.for_owner(&owner).record_exchange_inner(
         &session.session_id,
         &req.message,
@@ -1137,6 +1165,7 @@ async fn chat_inner(
         "tally": updated.tally.to_json(),
         "episode": episode,
         "memory_suggestion": memory_suggestion,
+        "context_window": context_window,
         "structured_facts": {
             "explicit_recall": crate::server::structured_memory::recall_available(
                 &state.cfg,
@@ -1162,6 +1191,21 @@ async fn chat_inner(
     })))
         } => result,
     }
+}
+
+/// The context window Ollama loaded `model` with, cached for the inventory
+/// refresh interval. `None` when unknown (not loaded, not reported, not a
+/// loopback Ollama endpoint); a check that cannot run never blocks a turn.
+async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
+    let refresh = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
+    if let Some(window) = state.ollama.cached_window(model, refresh) {
+        return Some(window);
+    }
+    let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
+    let limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
+    let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await?;
+    state.ollama.store_window(model, window);
+    Some(window)
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.

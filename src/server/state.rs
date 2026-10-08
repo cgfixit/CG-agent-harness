@@ -150,6 +150,8 @@ pub struct OllamaControl {
     pub pull_gate: GenerationGate,
     pull_abort: Mutex<Option<CancellationToken>>,
     cache: Mutex<Option<(Instant, Value)>>,
+    /// Last loaded window read from `/api/ps`: when, for which model, and size.
+    window: Mutex<Option<(Instant, String, u64)>>,
 }
 
 impl Default for OllamaControl {
@@ -164,7 +166,18 @@ impl OllamaControl {
             pull_gate: GenerationGate::new(),
             pull_abort: Mutex::new(None),
             cache: Mutex::new(None),
+            window: Mutex::new(None),
         }
+    }
+
+    pub fn cached_window(&self, model: &str, max_age_sec: u64) -> Option<u64> {
+        let window = self.window.lock().unwrap_or_else(|p| p.into_inner());
+        let (at, cached, size) = window.as_ref()?;
+        (cached == model && at.elapsed().as_secs() < max_age_sec).then_some(*size)
+    }
+
+    pub fn store_window(&self, model: &str, size: u64) {
+        *self.window.lock().unwrap_or_else(|p| p.into_inner()) = Some((Instant::now(), model.to_string(), size));
     }
 
     pub fn register_pull(&self, token: CancellationToken) {

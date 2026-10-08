@@ -411,14 +411,14 @@ one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults are
 configure `web.total_tokens: 16000` and `web.evidence_tokens: 3000`; see
 [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
 usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete
-output conservatively. Bounded JSON output has no commands or privileged tools.
+output conservatively; synthesis drops unfitting low-ranked passages (`WEB_EVIDENCE_TRIMMED`). Bounded JSON output has no commands or privileged tools.
 Retrieval interleaves the question and subqueries without embeddings or reranking.
 `/web cancel` cancels dedicated research.
 
 Answers label support, conflicts, inference, and missing or stale evidence.
 Citation IDs and quotes are checked against passages, but semantic support still
-needs judgment. The model cites short ids (`S1`); a failed claim is dropped alone
-(`WEB_CITATION_DROPPED`), and an answer with no valid claim is refused. Rank is not truth, and fetch age is not publication date. Bounded
+needs judgment. Models cite short ids (`S1`); a failed claim drops alone
+(`WEB_CITATION_DROPPED`); no valid claim refuses the answer. Rank is not truth, and fetch age is not publication date. Bounded
 runs never claim completeness; no-answer results abstain and failures stay visible.
 
 ### Saved web selection
