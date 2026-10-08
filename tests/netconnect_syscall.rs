@@ -13,7 +13,7 @@ fn script() -> PathBuf {
 
 #[test]
 fn self_check_rejects_packet_sockets_and_multicast_membership() {
-    let output = Command::new("bash")
+    let output = Command::new(std::env::var_os("CGAH_TEST_BASH").unwrap_or_else(|| "bash".into()))
         .arg(script())
         .arg("--self-check")
         .env("GROK_API_KEY", "")

@@ -12,6 +12,7 @@ use std::path::Path;
 
 use cgagentharness::agentic::config::{load_agentic_config, resolve_data_path};
 use cgagentharness::agentic::ctx::AgenticCtx;
+#[cfg(unix)]
 use cgagentharness::agentic::edits::Proposal;
 use cgagentharness::agentic::executor::manifest::{build_manifest, git_head, verify_manifest};
 #[cfg(unix)]
@@ -19,12 +20,13 @@ use cgagentharness::agentic::executor::sandbox::production_sandbox;
 use cgagentharness::agentic::executor::sandbox::seatbelt_profile;
 #[cfg(unix)]
 use cgagentharness::agentic::executor::{run_verification, ArgvListSandbox, Check};
-use cgagentharness::agentic::gh_client::{
-    build_read_argv, check_gh_version, is_transient_gh_error, run_read, ReadRequest,
-};
+use cgagentharness::agentic::gh_client::{build_read_argv, is_transient_gh_error};
+#[cfg(unix)]
+use cgagentharness::agentic::gh_client::{check_gh_version, run_read, ReadRequest};
 use cgagentharness::agentic::registry::{acquire_registry_lock, release_registry_lock, SkillRegistry, SkillSpec};
 use cgagentharness::agentic::run_store::*;
 use cgagentharness::agentic::workspace::{canonical_repo_path, fs_equiv_path, is_dotgit_name, RepoWorkspace};
+#[cfg(unix)]
 use cgagentharness::common::audit::Audit;
 use common::*;
 use serde_json::json;
@@ -387,13 +389,15 @@ fn attach_requires_a_clone_output_under_workspace_root() {
 fn seatbelt_profile_is_byte_exact() {
     let cwd = tempfile::tempdir().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let c = dunce::canonicalize(cwd.path()).unwrap().display().to_string();
-    let t = dunce::canonicalize(tmp.path()).unwrap().display().to_string();
+    // JSON string quoting matches Seatbelt's backslash/quote literals, including
+    // native Windows paths when this pure profile-format check runs there.
+    let c = serde_json::to_string(&dunce::canonicalize(cwd.path()).unwrap()).unwrap();
+    let t = serde_json::to_string(&dunce::canonicalize(tmp.path()).unwrap()).unwrap();
     let profile = seatbelt_profile(cwd.path(), Some(tmp.path()));
-    let expected = format!("(deny file-write* (require-not (subpath \"{t}\")))");
+    let expected = format!("(deny file-write* (require-not (subpath {t})))");
     assert_eq!(profile.lines().last().unwrap(), expected);
     assert!(profile.contains("(deny file-read-data"));
-    assert!(profile.contains(&format!("(subpath \"{c}\")")));
+    assert!(profile.contains(&format!("(subpath {c})")));
     assert!(profile.contains("(deny network*)"));
 }
 
@@ -650,7 +654,17 @@ fn registry_propose_apply_gates_and_lock() {
     )
     .unwrap();
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
-    let _ = std::fs::File::open(&lock_dir).and_then(|f| f.set_modified(old));
+    let mut lock_options = std::fs::OpenOptions::new();
+    lock_options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_WRITE_ATTRIBUTES};
+        lock_options
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    lock_options.open(&lock_dir).unwrap().set_modified(old).unwrap();
     acquire_registry_lock(&lock_dir).unwrap();
     release_registry_lock(&lock_dir);
 }

@@ -768,7 +768,10 @@ impl<'a> RepoWorkspace<'a> {
     }
 
     /// Delete the clone (its parent temp directory) from disk.
-    pub fn close(&self) {
+    pub fn close(self) {
+        // Windows capability handles deny deletion to protect jailed lookups.
+        // Release the capability only after consuming the workspace, before cleanup.
+        drop(self.dir);
         if let Some(parent) = self.dest.parent() {
             rmtree_best_effort(parent);
         }
@@ -776,7 +779,7 @@ impl<'a> RepoWorkspace<'a> {
 
     /// Production dispose after `run_real_repo_loop`. A failed rollback keeps
     /// the clone and `.cgah-backup-*` preimages for later discard.
-    pub fn close_after_loop(&self, error: Option<&HarnessError>) {
+    pub fn close_after_loop(self, error: Option<&HarnessError>) {
         if !error.is_some_and(is_proposal_rollback_quarantine) {
             self.close();
         }

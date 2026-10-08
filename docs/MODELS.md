@@ -75,8 +75,8 @@ and planner models**. Both use bounded `/models` inventories:
 | `not_probed` | The endpoint is not an eligible loopback URL, or the planner is a cloud provider. Setup does not probe cloud planners. |
 
 `/model` reports selection and `/model profile` its loaded window, proposed
-limits and any tuning; `/model use <tag>` persists it without downloading. With
-`models.local_llm.auto_tune: true` it also loads the model, times one short
+limits and any tuning; `/model use <tag>` persists it without downloading. Unless
+`models.local_llm.auto_tune: false`, it also loads the model, times one short
 generate and applies per-model limits (budgets only tighten; chat and same-model
 planner timeouts and `web.synthesis_seconds` follow measured speed; a tool-less
 model gets none). Above 32768, proposals scale up; set them in `config.yaml`

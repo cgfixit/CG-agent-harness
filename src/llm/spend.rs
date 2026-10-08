@@ -929,7 +929,7 @@ mod tests {
         } else {
             "/etc/passwd"
         };
-        let abs_yaml = format!("logging:\n  spend_file: \"{abs_value}\"");
+        let abs_yaml = format!("logging:\n  spend_file: {}", serde_json::to_string(abs_value).unwrap());
         let absolute = AppConfig::from_str(&abs_yaml, Path::new("config.yaml")).unwrap();
         assert_eq!(spend_path(home, &absolute), default);
     }

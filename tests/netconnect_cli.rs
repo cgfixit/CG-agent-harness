@@ -108,8 +108,14 @@ fn cli_exit_codes_for_disabled_and_bad_scope() {
     assert_eq!(discovery["runnable"], true);
 
     let (code, stdout, stderr) = invoke(&path, "devices");
-    assert_eq!(code, 0, "{stderr}");
     let body: Value = serde_json::from_str(&stdout).expect("json");
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert_eq!(code, 2, "{stderr}");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["code"], "NETCONNECT_UNSUPPORTED");
+        return;
+    }
+    assert_eq!(code, 0, "{stderr}");
     assert_eq!(body["packets_sent"], 0);
     let scope = Scope::parse(&[
         "192.168.0.0/16".to_string(),

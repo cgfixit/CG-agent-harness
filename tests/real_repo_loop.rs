@@ -19,7 +19,6 @@ use cgagentharness::agentic::ctx::AgenticCtx;
 #[cfg(unix)]
 use cgagentharness::agentic::executor::{ArgvListSandbox, Check};
 use cgagentharness::agentic::governance::{inspect_candidate_text, inspect_code_shape};
-#[cfg(unix)]
 use cgagentharness::agentic::proposer::ProposerClient;
 use cgagentharness::agentic::real_repo_loop::*;
 #[cfg(unix)]
