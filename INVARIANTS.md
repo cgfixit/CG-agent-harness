@@ -540,12 +540,13 @@ cleanup, not containment. See `docs/PROCESS_LIFECYCLE.md` for limits and tests.
 
 ## Native Ollama pull stays on loopback and never sends num_ctx
 
-`GET /api/ollama/inventory` reuses the existing `/v1/models` readiness probe and
-adds `GET /api/tags` for installed names. Both routes sit on the CSRF-guarded
-router (operator/admin). `POST /api/ollama/pull` streams NDJSON progress (SSE
-when `Accept: text/event-stream`) to a derived loopback origin (OpenAI `/v1`
-stripped). The pull is single-flighted on its own gate, abortable
-(`POST /api/ollama/pull/cancel` or disconnect), and never includes `num_ctx`.
+`GET /api/ollama/inventory` reuses the `/v1/models` readiness probe plus
+`GET /api/tags`. Both routes are CSRF-guarded (operator/admin).
+`POST /api/ollama/pull` streams NDJSON progress (SSE on
+`Accept: text/event-stream`) to a derived loopback origin (OpenAI `/v1`
+stripped). The pull is single-flighted, abortable
+(`POST /api/ollama/pull/cancel` or disconnect), and never sends `num_ctx`.
+It takes only `name` or `ns/name`; Ollama dials `host` in `host/ns/name`.
 Startup `keep_alive` warmup is `models.local_llm.warmup.enabled` (`flag_is_true`;
 missing keys in old homes are off) and must not fail `serve`. Provider error
 bodies are not echoed.

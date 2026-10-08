@@ -102,6 +102,20 @@ pub fn model_name_ok(name: &str) -> bool {
     parts.all(tag_token)
 }
 
+/// A name `/api/pull` may fetch: [`model_name_ok`] with at most `ns/name`.
+/// Ollama reads a third segment as `host/ns/name` and dials that host, so a
+/// pull of such a name reaches any registry, loopback or LAN address
+/// included. Inventory and warmup keep host-qualified names an operator
+/// pulled outside the harness; neither contacts a registry.
+pub fn pull_name_ok(name: &str) -> bool {
+    model_name_ok(name)
+        && name
+            .trim()
+            .split(':')
+            .next()
+            .is_some_and(|body| body.split('/').count() <= 2)
+}
+
 fn tag_token(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
@@ -302,7 +316,7 @@ pub async fn pull_model(
     cancel: CancellationToken,
     mut on_event: impl FnMut(Value),
 ) -> Result<()> {
-    if !model_name_ok(model) {
+    if !pull_name_ok(model) {
         return Err(static_err("model name rejected"));
     }
     let payload = pull_payload(model);
@@ -413,6 +427,17 @@ mod tests {
         assert!(!model_name_ok("http://evil.example/model")); // DevSkim: ignore DS137138 because this unit test rejects URL-shaped model names.
         assert!(!model_name_ok("name with space"));
         assert!(!model_name_ok("a:"));
+    }
+
+    #[test]
+    fn pull_names_never_select_a_registry_host() {
+        assert!(pull_name_ok("tinyllama"));
+        assert!(pull_name_ok("library/tinyllama:latest"));
+        assert!(model_name_ok("hf.co/user/repo:Q4_K_M"));
+        assert!(!pull_name_ok("hf.co/user/repo:Q4_K_M"));
+        assert!(!pull_name_ok("registry.example.invalid/ns/model"));
+        assert!(!pull_name_ok("127.0.0.1/ns/model:tag")); // DevSkim: ignore DS162092 because this unit test must refuse a loopback registry host in a pull name.
+        assert!(!pull_name_ok("a/b/c/d"));
     }
 
     #[test]
