@@ -6,6 +6,9 @@ explicit approval. Read `INVARIANTS.md` before touching `src/shim`,
 `src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`, or
 `assets/config.default.yaml`. `CLAUDE.md` (repository root) is the per-session
 summary of this file; when they disagree, this file wins and the summary is fixed.
+Ignore docs/learning/* completely unless explicitly requested by owner/operator, **and**
+generally avoid reading anything under docs/* unless a root project file links to something relevant to a task - 
+The idea is to avoid reading those .md files and .pdfs and .txt files under docs/ unless its for a defensible reason based on your task
 
 ## Where truth lives
 
