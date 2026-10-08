@@ -152,7 +152,12 @@ impl Portal {
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(
                 cfg.u64_or("web.research_seconds", 300).clamp(10, 1800)
-                    + cfg.u64_or("web.synthesis_seconds", 300).clamp(10, 1800)
+                    // auto_tune may measure a longer answer deadline than configured.
+                    + if cfg.flag_is_true("models.local_llm.auto_tune") {
+                        1800
+                    } else {
+                        cfg.u64_or("web.synthesis_seconds", 300).clamp(10, 1800)
+                    }
                     + 10,
             ));
         let certificate_sha256 = if tls {

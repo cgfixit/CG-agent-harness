@@ -32,6 +32,10 @@ const TIMEOUT_SAFETY: f64 = 2.0;
 const TOOL_ROUND_TOKENS: u64 = 128;
 const MIN_TIMEOUT_SEC: u64 = 120;
 const MAX_TIMEOUT_SEC: u64 = 3600;
+/// Synthesis prompt tokens beside the evidence: instructions, question, framing.
+const SYNTHESIS_PROMPT_OVERHEAD: u64 = 1_000;
+const MIN_SYNTHESIS_SEC: u64 = 60;
+const MAX_SYNTHESIS_SEC: u64 = 1_800;
 /// Generation-gate owner while the speed sample runs.
 pub const TUNE_OWNER: &str = "model_tune";
 /// A cold load of a large model can take minutes; the sample itself takes seconds.
@@ -92,13 +96,28 @@ fn shipped() -> Option<AppConfig> {
 /// load, the largest prompt at prefill speed, one reply reservation plus a tool
 /// call per round at decode speed; doubled, rounded up to 30 s, kept in 120–3600.
 fn derived_timeout(speed: &Value, prompt_tokens: u64, reply_tokens: u64, tool_rounds: u64) -> Option<u64> {
+    let written = reply_tokens.saturating_add(tool_rounds.saturating_mul(TOOL_ROUND_TOKENS));
+    padded_seconds(speed, prompt_tokens, written, MIN_TIMEOUT_SEC, MAX_TIMEOUT_SEC)
+}
+
+/// `/web research`'s answer call at the measured speed: the evidence plus the
+/// answer instructions read, one `web.model_tokens` reply written; doubled,
+/// rounded up to 30 s, kept in 60–1800 (`web.synthesis_seconds` allows 10–1800).
+/// A 27B model on CPU needs far more than the shipped 300 s; a GPU 7B far less.
+fn derived_synthesis(speed: &Value, evidence_tokens: u64, model_tokens: u64) -> Option<u64> {
+    let prompt = evidence_tokens.saturating_add(SYNTHESIS_PROMPT_OVERHEAD);
+    padded_seconds(speed, prompt, model_tokens, MIN_SYNTHESIS_SEC, MAX_SYNTHESIS_SEC)
+}
+
+/// Load, then `prompt` tokens at prefill speed and `written` at decode speed;
+/// doubled, rounded up to 30 s and kept in `min..=max`.
+fn padded_seconds(speed: &Value, prompt: u64, written: u64, min: u64, max: u64) -> Option<u64> {
     let prefill = speed["prefill_tps"].as_f64().filter(|v| *v > 0.0)?;
     let decode = speed["decode_tps"].as_f64().filter(|v| *v > 0.0)?;
     let load = speed["load_seconds"].as_f64().unwrap_or(0.0).max(0.0);
-    let written = reply_tokens.saturating_add(tool_rounds.saturating_mul(TOOL_ROUND_TOKENS));
-    let estimate = load + prompt_tokens as f64 / prefill + written as f64 / decode;
-    let seconds = (estimate * TIMEOUT_SAFETY).ceil().min(MAX_TIMEOUT_SEC as f64) as u64;
-    Some((seconds.div_ceil(30) * 30).clamp(MIN_TIMEOUT_SEC, MAX_TIMEOUT_SEC))
+    let estimate = load + prompt as f64 / prefill + written as f64 / decode;
+    let seconds = (estimate * TIMEOUT_SAFETY).ceil().min(max as f64) as u64;
+    Some((seconds.div_ceil(30) * 30).clamp(min, max))
 }
 
 /// Proposed limits for the profiled model. `profile` is a `profiled` probe
@@ -191,6 +210,24 @@ pub fn propose(
             .round() as u64;
         values.push(json!({"key": "models.local_llm.timeout_sec", "current": configured, "proposed": seconds}));
     }
+    // Research's answer deadline follows the same sample. It replaces the
+    // configured value, like the chat timeout, so a slow model gets longer.
+    if let Some(seconds) = speed.and_then(|speed| {
+        let proposed = |key: &str| {
+            values
+                .iter()
+                .find(|row| row["key"] == key)
+                .and_then(|row| row["proposed"].as_u64())
+        };
+        derived_synthesis(
+            speed,
+            proposed("web.evidence_tokens")?.min(web.evidence_tokens),
+            proposed("web.model_tokens")?.min(web.model_tokens),
+        )
+    }) {
+        set_path(&mut candidate, "web.synthesis_seconds", seconds);
+        values.push(json!({"key": "web.synthesis_seconds", "current": web.synthesis_seconds, "proposed": seconds}));
+    }
     // The same validators startup and reload run; a failure means this window is
     // too small for the shipped shape, not that the proposal should be forced.
     let mut state = if window < TUNED_WINDOW { "scaled" } else { "shipped" };
@@ -249,6 +286,8 @@ pub struct Tuning {
     /// `None` when the window is too small for web chat: limits stay as configured.
     pub web: Option<WebBudget>,
     pub timeout_sec: Option<u64>,
+    /// Measured `/web research` answer deadline; `None` without a speed sample.
+    pub synthesis_seconds: Option<u64>,
     pub speed: Option<Value>,
     pub notes: Vec<String>,
 }
@@ -260,6 +299,10 @@ impl Tuning {
             limits.evidence_tokens = limits.evidence_tokens.min(budget.evidence_tokens);
             limits.model_tokens = limits.model_tokens.min(budget.model_tokens);
             limits.chat_tool_calls = limits.chat_tool_calls.min(budget.chat_tool_calls as usize);
+        }
+        // A deadline, not a budget: the measured value replaces the configured one.
+        if let Some(seconds) = self.synthesis_seconds {
+            limits.synthesis_seconds = seconds;
         }
     }
 }
@@ -287,6 +330,7 @@ pub fn tuning_from(model: &str, profile: &Value, proposal: &Value, speed: Option
         compact_prompt_tokens: value("chat.compact_prompt_tokens")?,
         web,
         timeout_sec: value("models.local_llm.timeout_sec"),
+        synthesis_seconds: value("web.synthesis_seconds"),
         speed,
         notes: proposal["notes"]
             .as_array()
@@ -360,6 +404,7 @@ pub async fn tune(state: Arc<AppState>, model: String) {
         "tools_off": tuning.tools_off,
         "max_tokens": tuning.max_tokens,
         "timeout_sec": tuning.timeout_sec,
+        "synthesis_seconds": tuning.synthesis_seconds,
         "decode_tps": tuning.speed.as_ref().map(|s| s["decode_tps"].clone()),
     }));
     state.set_tuning(Some(tuning));
@@ -485,6 +530,13 @@ mod tests {
         let crawl = json!({"prefill_tps": 1.0, "decode_tps": 1.0});
         assert_eq!(derived_timeout(&crawl, 24_000, 4_096, 10), Some(MAX_TIMEOUT_SEC));
         assert!(derived_timeout(&json!({"decode_tps": 50.0}), 24_000, 4_096, 10).is_none());
+        // (3000 + 1000)/50 = 80 s read and 1024/3 = 341 s written by a 27B on
+        // CPU; x2 = 843 s, rounded up to 870, far past the shipped 300 s.
+        let cpu = json!({"prefill_tps": 50.0, "decode_tps": 3.0, "load_seconds": 0.0});
+        assert_eq!(derived_synthesis(&cpu, 3_000, 1_024), Some(870));
+        let gpu = json!({"prefill_tps": 3000.0, "decode_tps": 120.0});
+        assert_eq!(derived_synthesis(&gpu, 3_000, 1_024), Some(MIN_SYNTHESIS_SEC));
+        assert!(derived_synthesis(&json!({"decode_tps": 50.0}), 3_000, 1_024).is_none());
     }
 
     #[test]
@@ -504,6 +556,8 @@ mod tests {
         let mut live = web.clone();
         tuning.apply_web(&mut live);
         assert_eq!((live.total_tokens, live.chat_tool_calls), (14_000, 5));
+        // (1500 + 1000)/1500 + 512/50 = 11.9 s; x2 rounded up is 30, floored at 60.
+        assert_eq!((tuning.synthesis_seconds, live.synthesis_seconds), (Some(60), 60));
         // A configured value already below the tuning is kept.
         let mut low = web.clone();
         low.total_tokens = 9_000;
@@ -525,6 +579,8 @@ mod tests {
         )
         .unwrap();
         assert!(tuning.tools_off && tuning.web.is_some() && tuning.timeout_sec.is_none());
+        // Without a speed sample the research deadline stays as configured.
+        assert!(tuning.synthesis_seconds.is_none());
         let tiny = loaded(2_048);
         let tuning = tuning_from("tiny", &tiny, &propose(&tiny, None, &cfg, &web, &none), None).unwrap();
         assert!(tuning.tools_off && tuning.web.is_none());
