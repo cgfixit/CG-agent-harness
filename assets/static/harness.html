@@ -4568,6 +4568,20 @@ function setHarnessLogoutVisible(on) {
   document.getElementById('hAuthPassword').hidden = !on;
   $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin';
 }
+/* Local reset for leaving an account: transcript, account panes and the
+   active session, style and prompt history. A successful logout runs it, and
+   so does every later transition into signed-out (a rejected logout or an
+   expired session), so neither the next account nor the same user's next
+   message inherits the previous view. */
+function resetAccountView() {
+  clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
+  netconnectRevision++; $('pane-netconnect').replaceChildren();
+  currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
+  paintSessionTokens({total:0});
+  $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;
+  promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
+  currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;
+}
 /* mode is 'login', 'setup' or null (signed in, or authentication disabled).
    The default-credentials note shows only while the server reports that the
    shipped admin password is still in effect. */
@@ -4579,14 +4593,9 @@ function showSignIn(mode, defaultPassword) {
   hAuthLoginBox.hidden = mode !== 'login';
   hAuthSetup.hidden = mode !== 'setup';
   $('hAuthHint').hidden = !(mode === 'login' && defaultPassword === true);
-  /* Every path into signed-out (logout, a rejected logout, an expired
-     session) drops the account-private transcript and Memory pane, so the
-     next account never sees them; clearing also stops any listing still in
-     flight. The first probe has shown nothing yet, so it clears nothing. */
-  if (out && !wasOut) {
-    if (!document.documentElement.classList.contains('auth-pending')) clearTranscript();
-    $('pane-memory').replaceChildren();
-  }
+  /* Clearing also disconnects any Memory listing still in flight, so it
+     stops. The first probe has shown nothing yet, so it resets nothing. */
+  if (out && !wasOut && !document.documentElement.classList.contains('auth-pending')) resetAccountView();
   if (!out) { $('hAuthError').textContent = ''; $('hAuthSetupError').textContent = ''; return; }
   if (!wasOut || !$('signInScreen').contains(document.activeElement)) {
     (mode === 'login' ? $('hAuthUser') : $('hAuthSetupPass')).focus();
@@ -4752,13 +4761,7 @@ if (hAuthLogout) {
         return;
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
-    clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
-    netconnectRevision++; $('pane-netconnect').replaceChildren();
-    currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
-    paintSessionTokens({total:0});
-    $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;
-    promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
-    currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;
+    resetAccountView();
     window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
     sendBtn.disabled = false;
