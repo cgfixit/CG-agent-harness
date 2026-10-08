@@ -1,4 +1,4 @@
-//! Live Ollama inventory, abortable pull, and keep_alive warmup status.
+//! Live Ollama inventory, read-only model profile, abortable pull, and keep_alive warmup status.
 
 use std::sync::Arc;
 
@@ -12,7 +12,9 @@ use axum::Json;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::llm::inventory::InventoryLimits;
 use crate::llm::ollama::{self, PullLimits};
+use crate::llm::profile;
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::{OllamaPullRequest, ValidJson};
 use crate::server::state::AppState;
@@ -23,6 +25,37 @@ pub async fn inventory(State(state): State<Arc<AppState>>) -> ApiResult<Json<Val
         return Ok(Json(cached));
     }
     let value = refresh_inventory(&state).await?;
+    Ok(Json(value))
+}
+
+/// Declared and loaded facts for the selected chat model, limits scaled to its
+/// loaded window, and the `auto_tune` result installed for it, if any. Read-only:
+/// it never loads, pulls or retunes a model, and the planner model is not
+/// profiled here.
+pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    let model = state.current_model();
+    if state.cloud_chat.is_cloud_selection(&model) || state.backend.provider != "ollama" {
+        return Ok(Json(profile::not_probed(
+            &model,
+            "Profiles are available only for a local Ollama chat model.",
+        )));
+    }
+    let limits =
+        InventoryLimits::from_config(&state.cfg).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let mut value = profile::probe(&state.backend.base_url, &model, limits).await;
+    let tuning = state.tuning_for(&model);
+    if value["state"] == "profiled" {
+        let speed = tuning.as_ref().and_then(|t| t.speed.as_ref());
+        value["proposed"] = crate::server::model_limits::propose(
+            &value,
+            speed,
+            &state.cfg,
+            &state.runtime_limits().web,
+            &state.backend,
+        );
+    }
+    value["auto_tune"] = json!(state.cfg.flag_is_true("models.local_llm.auto_tune"));
+    value["tuning"] = json!(tuning.as_deref());
     Ok(Json(value))
 }
 

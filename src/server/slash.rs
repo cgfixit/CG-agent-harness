@@ -439,7 +439,7 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
             "proposals",
         ],
         "api" => &["set", "clear"],
-        "model" => &["use"],
+        "model" => &["use", "profile"],
         "skill" => &["use", "clear", "status"],
         "web" => &[
             "help", "status", "check", "on", "off", "allow", "deny", "fetch", "search", "pages", "research", "cancel",

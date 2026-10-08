@@ -50,6 +50,9 @@ pub struct ChatClient {
     pub timeout_sec: f64,
     http: reqwest::Client,
     inflight: Mutex<BTreeMap<String, CancellationToken>>,
+    /// A measured per-model deadline (`models.local_llm.auto_tune`) that
+    /// replaces `timeout_sec` only for requests naming that exact model.
+    timeout_override: Mutex<Option<(String, f64)>>,
 }
 
 impl std::fmt::Debug for ChatClient {
@@ -188,7 +191,22 @@ impl ChatClient {
             timeout_sec,
             http,
             inflight: Mutex::new(BTreeMap::new()),
+            timeout_override: Mutex::new(None),
         })
+    }
+
+    /// Install (or clear) the measured deadline for one model.
+    pub fn set_timeout_override(&self, model_seconds: Option<(String, f64)>) {
+        *self.timeout_override.lock().unwrap_or_else(|p| p.into_inner()) = model_seconds;
+    }
+
+    /// The deadline a request for `model` gets: its measured override, else `timeout_sec`.
+    pub fn timeout_for(&self, model: &str) -> f64 {
+        match &*self.timeout_override.lock().unwrap_or_else(|p| p.into_inner()) {
+            Some((tuned, seconds)) if tuned == model => *seconds,
+            _ => self.timeout_sec,
+        }
+        .max(1.0)
     }
 
     /// Abort every registered POST. Production single-flights via GenerationGate;
@@ -306,17 +324,22 @@ impl ChatClient {
             }
         }
         let _call = Call { client: self, id };
+        let deadline = self.timeout_for(payload["model"].as_str().unwrap_or(&self.model));
         tokio::select! {
             _ = token.cancelled() => Err(llm_err("cancelled").detail("cancelled", true)),
-            result = tokio::time::timeout(Duration::from_secs_f64(self.timeout_sec.max(1.0)), self.send_request(payload, output)) =>
+            result = tokio::time::timeout(Duration::from_secs_f64(deadline), self.send_request(payload, output)) =>
                 result.map_err(|_| llm_err("model request deadline exceeded"))?,
         }
     }
 
     async fn send_request(&self, payload: Value, output: Option<super::openai_stream::Output<'_>>) -> Result<Value> {
+        // A per-request timeout replaces the client-wide one, so a measured
+        // deadline can be longer or shorter than the configured timeout_sec.
+        let deadline = self.timeout_for(payload["model"].as_str().unwrap_or(&self.model));
         let mut req = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
+            .timeout(Duration::from_secs_f64(deadline))
             .json(&payload);
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);

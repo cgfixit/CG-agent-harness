@@ -136,6 +136,9 @@ pub struct AppState {
     pub memory_suggestions: crate::server::structured_memory_suggest::Suggestions,
     /// Native Ollama pull/inventory (loopback only; independent of chat generation).
     pub ollama: OllamaControl,
+    /// `models.local_llm.auto_tune` result for one model; read through the
+    /// accessors below, which ignore it for any other model.
+    pub tuning: Mutex<Option<Arc<crate::server::model_limits::Tuning>>>,
     /// Passive collectors for `GET /api/netconnect`. Fixed at startup.
     ///
     /// [`crate::server::build_app`] stores [`crate::netconnect::tools::PassiveSources::live`].
@@ -224,8 +227,58 @@ impl AppState {
     /// permits and cache/policy mutation locks with every other snapshot.
     pub fn web_snapshot(&self) -> WebTool {
         let mut web = self.web.clone();
-        web.limits = self.runtime_limits().web.clone();
+        web.limits = self.model_web_limits(&self.current_model(), self.runtime_limits().web.clone());
         web
+    }
+
+    pub fn tuning_for(&self, model: &str) -> Option<Arc<crate::server::model_limits::Tuning>> {
+        self.tuning
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|tuning| tuning.model == model)
+            .cloned()
+    }
+
+    /// Install (or clear) the auto-tuned limits and the matching chat deadline.
+    pub fn set_tuning(&self, tuning: Option<crate::server::model_limits::Tuning>) {
+        let deadline = tuning
+            .as_ref()
+            .and_then(|t| t.timeout_sec.map(|seconds| (t.model.clone(), seconds as f64)));
+        *self.tuning.lock().unwrap_or_else(|p| p.into_inner()) = tuning.map(Arc::new);
+        self.chat.set_timeout_override(deadline);
+    }
+
+    /// `web` (the live snapshot) lowered to `model`'s tuning, if it has one.
+    pub fn model_web_limits(&self, model: &str, mut web: super::web_search::Limits) -> super::web_search::Limits {
+        if let Some(tuning) = self.tuning_for(model) {
+            tuning.apply_web(&mut web);
+        }
+        web
+    }
+
+    /// `models.local_llm.max_tokens`, lowered to `model`'s tuning.
+    pub fn chat_max_tokens(&self, model: &str) -> u64 {
+        let configured = self
+            .cfg
+            .u64_or("models.local_llm.max_tokens", super::compaction::DEFAULT_REPLY_TOKENS);
+        self.tuning_for(model)
+            .map_or(configured, |tuning| configured.min(tuning.max_tokens))
+    }
+
+    /// `chat.compact_prompt_tokens`, lowered to `model`'s tuning.
+    pub fn compact_prompt_tokens(&self, model: &str) -> u64 {
+        let configured = self
+            .cfg
+            .u64_or("chat.compact_prompt_tokens", super::compaction::DEFAULT_PROMPT_TOKENS);
+        self.tuning_for(model)
+            .map_or(configured, |tuning| configured.min(tuning.compact_prompt_tokens))
+    }
+
+    /// True when tuning found `model` cannot take web tools (none declared, or
+    /// no web-chat prompt fits its window): chat then sends it no tools.
+    pub fn chat_tools_unsupported(&self, model: &str) -> bool {
+        self.tuning_for(model).is_some_and(|tuning| tuning.tools_off)
     }
 
     pub fn current_model(&self) -> String {
@@ -257,7 +310,7 @@ impl AppState {
         if self.cloud_chat.is_cloud_selection(model) {
             self.cloud_chat.timeout_sec()
         } else {
-            self.chat.timeout_sec
+            self.chat.timeout_for(model)
         }
     }
 

@@ -1826,7 +1826,7 @@ const COMMANDS = [
   ['/memory retrieve <query>', 'force fact retrieval for this chat prompt only'],
   ['/memory save <text> :: <reason>', 'confirm an immediate private fact write'],
   ['/memory search <query>', 'search fact candidates without injecting them'],
-  ['/model [use <name>]', 'show or select a chat model; planner selection is separate'],
+  ['/model [use <name>|profile]', 'show or select a chat model, or profile the selected local model; planner selection is separate'],
   ['/net status|devices', 'status is scope and gates and loads no collector; devices lists passive neighbors; aliases /netconnect /lan /scan /ports /speed only suggest on a near-miss'],
   ['/prompt', 'preview the next chat system prompt (private)'],
   ['/registry', 'combined skill, tool and connector catalog'],
@@ -1975,7 +1975,7 @@ const COMMAND_MAN = {
   '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
   '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
   '/memory search <query>': {detail:'Lists matching fact candidates with scores. Nothing is injected into chat.'},
-  '/model [use <name>]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ']},
+  '/model [use <name>|profile]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. With models.local_llm.auto_tune on, use also loads the model, times one short generate and applies per-model limits that only tighten. profile shows the selected local model as Ollama reports it, its loaded window, window-scaled limit proposals and any applied tuning; it changes nothing. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ', '/model profile']},
   '/net status|devices': {detail:'status shows scope and gate state and loads no collector; devices lists passively seen neighbors. Both open the LAN pane. Anything else is refused: this console runs no scans or device control.'},
   '/prompt': {detail:'Previews the next chat system prompt: persona, style, pinned notes, selected facts and web context. Shown only to you; nothing is sent to the model.'},
   '/registry': {detail:'Lists skills, tools and connectors together.'},
@@ -2018,7 +2018,8 @@ const WORTH_KNOWING = [
   {label:'/agent pr-body <run-id>', insert:'/agent pr-body ', hint:'Review the PR template here before /agent publish will accept', key:'/agent pr-body <run-id>'},
   {label:'/memory save <text> :: <reason>', insert:'/memory save ', hint:'Two colons separate the fact from the required reason', key:'/memory save <text> :: <reason>'},
   {label:'/skill check:<profile>', insert:'/skill check:', hint:'One word with a colon; needs a staged /agent run', key:'/skill check:<profile>'},
-  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [use <name>]'},
+  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [use <name>|profile]'},
+  {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [use <name>|profile]'},
   {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [n]|auto|stop'},
   {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
 ];
@@ -2743,7 +2744,51 @@ async function runSlash(line, webCommand) {
           const r = await api('/api/model', 'POST', { model: rest.slice(1).join(' ') });
           const planner = await api('/api/agent/checks');
           sys('chat model selected: ' + r.model + ' via ' + r.provider + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
+          if (r.tuning === 'pending') sys('auto_tune is measuring this model in the background (it loads the model); /model profile shows the applied limits.');
           await refreshStatus();
+        } else if (rest[0] === 'profile') {
+          // Read-only: facts, proposals, and whatever auto_tune already applied.
+          const p = await api('/api/ollama/profile');
+          if (p.state !== 'profiled') { sys('model profile ' + p.state + ': ' + p.detail); break; }
+          const d = p.declared || {}, l = p.loaded, i = p.installed || {};
+          const show = v => v === null || v === undefined ? '—' : String(v);
+          const gb = n => typeof n === 'number' ? (n / 1e9).toFixed(1) + ' GB' : '—';
+          sys(table([
+            ['model', p.model],
+            ['architecture', show(d.architecture)],
+            ['parameters', show(d.parameter_size)],
+            ['quantization', show(d.quantization)],
+            ['tools', show(d.tools)],
+            ['thinking', show(d.thinking)],
+            ['native context', show(d.native_context)],
+            ['Modelfile num_ctx', show(d.modelfile_num_ctx)],
+            ['loaded context', l ? show(l.context_length) : (p.residency === 'unknown' ? 'unknown (/api/ps failed)' : 'not resident')],
+            ['memory GPU / total', l ? gb(l.size_vram) + ' / ' + gb(l.size_bytes) : '—'],
+            ['digest', i.digest ? i.digest.slice(0, 12) : '—'],
+          ], ['fact', 'value']));
+          sys(p.detail);
+          const q = p.proposed;
+          if (q && Array.isArray(q.values) && q.values.length) {
+            sys(table(q.values.map(v => [v.key, String(v.current), String(v.proposed)]), ['setting', 'current', 'proposed (' + q.state + ')']));
+          }
+          if (q) { (q.notes || []).forEach(n => sys(String(n))); sys(q.detail); }
+          const t = p.tuning;
+          if (t) {
+            const w = t.web || {}, sp = t.speed || {};
+            sys(table([
+              ['loaded window', String(t.window)],
+              ['decode / prefill tok/s', show(sp.decode_tps) + ' / ' + show(sp.prefill_tps)],
+              ['reply max_tokens', String(t.max_tokens)],
+              ['compact_prompt_tokens', String(t.compact_prompt_tokens)],
+              ['web total / evidence tokens', t.web ? w.total_tokens + ' / ' + w.evidence_tokens : 'as configured'],
+              ['web tool calls', t.web ? String(w.chat_tool_calls) : 'as configured'],
+              ['chat timeout (s)', t.timeout_sec ? String(t.timeout_sec) : 'as configured'],
+              ['web tools for this model', t.tools_off ? 'off' : 'on'],
+            ], ['applied by auto_tune', 'value']));
+            sys('Applied budgets are ceilings: a lower configured value still wins.');
+          } else if (p.auto_tune) {
+            sys('auto_tune is on but has not tuned this model yet; /model use ' + p.model + ' measures it.');
+          }
         } else {
           const s = await api('/api/status');
           sys(table([['model', s.model || '(unset)'], ['provider', s.provider], ['base_url', s.base_url]]));
