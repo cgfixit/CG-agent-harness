@@ -10,13 +10,10 @@ debug/
 /desktop/gen/
 /dist/
 /upstream/
-# ── Fine-tune artifacts from docs/FINETUNE.md (repo-root only) ─
-/adapters/
-/cgagent-fused/
+# ── Local Python virtualenv (scripts/ is stdlib-only) ─────────
 /.venv/
 # ── In-tree Python scripts ────────────────────────────────────
 __pycache__/
-**pycache**/
 *.pyc
 # ── OS / editor ───────────────────────────────────────────────
 .DS_Store

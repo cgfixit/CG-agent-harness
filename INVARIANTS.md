@@ -416,6 +416,18 @@ callers append inline.
   `tests/shim_and_agent_routes.rs::an_agentic_child_starts_after_the_audit_line_that_authorized_it`,
   `tests/secure_portal.rs::ctrl_c_and_sigterm_stop_serve_after_its_queued_audit_lines_land`.
 
+## Telemetry and unreviewed dependencies stay out
+
+`deny.toml` and `desktop/deny.toml` ban push-telemetry and crash-reporting crates
+(OpenTelemetry, Sentry and similar) by exact name, and the two lists stay
+identical. CI runs `cargo deny check` on both lockfiles with `unsound = "all"` and
+wildcard requirements denied; the one advisory ignore carries a removal
+condition. Workflow actions are SHA-pinned and linted by zizmor. The backend pins
+Rust 1.88 and the desktop crate 1.90, independently.
+
+- Locked by: `tests/invariant_guard.rs::deny_lists_ban_the_same_telemetry_crates`,
+  `.github/workflows/{ci,advisories,desktop,zizmor}.yml`.
+
 ## Provider keys live in the OS credential store
 
 Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
