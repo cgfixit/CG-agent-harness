@@ -3814,8 +3814,9 @@ function looksLikeNlSearch(text) {
      still a count clause: it routes so the server's own range check refuses
      it (WEB_BAD_QUERY) rather than starting a model turn. */
   /* `top N` is the same clause as `first N`; `first N pages of <book>` names
-     pages of a document, not results (find_count_clause on the server). */
-  var countRe = /\b(?:first|top)\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?(?!\s+of\b))\b/ig;
+     pages of a document, not results, while `top N pages of` still ranks
+     results (find_count_clause on the server). */
+  var countRe = /\b(?:first\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?(?!\s+of\b))|top\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?))\b/ig;
   var quoted = 0, counts = 0;
   var Q = '\u0000';
   var masked = body

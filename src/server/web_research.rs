@@ -119,12 +119,21 @@ pub struct Answer {
 /// The synthesis prompt's view of a passage: a short id (`S1`, `S2`, …) in
 /// place of the 20-character hash id, and no hashes or offsets. A small model
 /// copies `S3` reliably where it truncates or swaps hex ids, and the hashes
-/// only spend its context window.
-fn prompt_passages(evidence: &[Passage]) -> Vec<Value> {
+/// only spend its context window. A passage fetched more than `stale_seconds`
+/// ago carries `"stale": true` in place of a raw timestamp.
+fn prompt_passages(evidence: &[Passage], stale_seconds: u64) -> Vec<Value> {
+    let now = crate::common::now_ts();
     evidence
         .iter()
         .enumerate()
-        .map(|(i, p)| json!({"id":format!("S{}", i + 1),"url":p.url,"title":p.title,"heading":p.heading,"text":p.text}))
+        .map(|(i, p)| {
+            let mut v =
+                json!({"id":format!("S{}", i + 1),"url":p.url,"title":p.title,"heading":p.heading,"text":p.text});
+            if now - p.fetched_at > stale_seconds as f64 {
+                v["stale"] = json!(true);
+            }
+            v
+        })
         .collect()
 }
 
@@ -165,11 +174,14 @@ impl Answer {
             dropped += before - claims.len();
             kept_any |= !claims.is_empty();
         }
-        if dropped > 0 && !kept_any {
-            return Err(error(
+        let refused = || {
+            error(
                 "WEB_CITATION_INVALID",
                 "unsupported citation or excessive answer refused",
-            ));
+            )
+        };
+        if dropped > 0 && !kept_any {
+            return Err(refused());
         }
         let before = answer.missing.len();
         answer
@@ -177,6 +189,10 @@ impl Answer {
             .retain(|s| !s.trim().is_empty() && s.chars().count() <= 240);
         answer.missing.truncate(8);
         dropped += before - answer.missing.len();
+        // Filtering that leaves nothing at all is a refused answer, not an empty one.
+        if dropped > 0 && !kept_any && answer.missing.is_empty() {
+            return Err(refused());
+        }
         Ok((answer, dropped))
     }
 
@@ -500,9 +516,9 @@ pub async fn run_from(
                 .push("No supporting passage was found within the permitted sources and run budget.".into());
         } else {
             let synthesis_input = |evidence: &[Passage]| {
-                json!({"question":question,"evidence":prompt_passages(evidence),"bounded_coverage":{
+                json!({"question":question,"evidence":prompt_passages(evidence, web.limits.stale_seconds),"bounded_coverage":{
                 "searched":coverage.searched.len(),"failed":coverage.failed.len(),"refused":coverage.refused.len(),"unvisited":coverage.unvisited.len(),"budget_exhausted":coverage.budget_exhausted},
-                "freshness":"fetched_at is retrieval time, not proof of publication freshness"})
+                "freshness":"stale:true marks a passage fetched long ago; retrieval time is not publication time. Note it in missing if a claim relies on one."})
             };
             // Fit synthesis into what web.total_tokens has left after planning, as
             // `model_call` estimates it: drop the lowest-ranked passages rather
@@ -671,6 +687,16 @@ mod tests {
         let (parsed, dropped) = Answer::parse(&mixed.to_string(), std::slice::from_ref(&p)).unwrap();
         assert_eq!((parsed.supported.len(), dropped), (1, 1));
         assert_eq!(parsed.supported[0].text, "Three retries.");
+        // Filtering that leaves no claim and no limitation refuses the answer.
+        let emptied = json!({"missing":["", "x".repeat(241)]});
+        assert!(Answer::parse(&emptied.to_string(), std::slice::from_ref(&p)).is_err());
+        // Only a passage older than stale_seconds is marked stale.
+        let fresh = Passage {
+            fetched_at: crate::common::now_ts(),
+            ..p.clone()
+        };
+        let shown = prompt_passages(&[p.clone(), fresh], 3600);
+        assert_eq!((shown[0]["stale"].clone(), shown[1].get("stale")), (json!(true), None));
         // A privileged top-level field still refuses the whole answer.
         let hostile = json!({"supported":[],"execute":"write policy"});
         assert!(Answer::parse(&hostile.to_string(), &[p]).is_err());

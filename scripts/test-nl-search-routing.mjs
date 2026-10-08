@@ -9,7 +9,8 @@ assert.ok(start !== -1 && end > start, 'predicate is present in the console');
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(start, end) + ';this.f=looksLikeNlSearch;', ctx);
 for (const routed of ['search first 3 results for rust lifetimes', 'search top 3 results for rust lifetimes',
-  'search the first 3 results for rust lifetimes', 'search first 2 pages for "rust"', 'search "tokio select"']) {
+  'search the first 3 results for rust lifetimes', 'search first 2 pages for "rust"', 'search "tokio select"',
+  'search top 3 pages of rust docs']) {
   assert.equal(ctx.f(routed), true, routed);
 }
 for (const chat of ['search the first 2 pages of the rust book for lifetimes', 'search top 10 movies',
