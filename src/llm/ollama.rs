@@ -232,23 +232,71 @@ pub async fn list_tags(native: &str, limits: InventoryLimits) -> Vec<Value> {
 /// The window Ollama loaded `model` with, read from `GET /api/ps` within the
 /// inventory bounds. Read-only and never sends `num_ctx`; failure is `None`.
 pub async fn loaded_context_window(native: &str, model: &str, limits: InventoryLimits) -> Option<u64> {
-    let client = http_client(limits.timeout).ok()?;
-    let mut response = client
-        .get(format!("{native}/api/ps"))
-        .send()
-        .await
-        .ok()?
-        .error_for_status()
-        .ok()?;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.ok()? {
-        if chunk.len() > limits.max_bytes.saturating_sub(bytes.len()) {
-            return None;
+    match loaded_window_state(native, model, limits).await {
+        LoadedWindow::Loaded(window) => Some(window),
+        LoadedWindow::NotLoaded | LoadedWindow::Unknown => None,
+    }
+}
+
+/// What `/api/ps` says about `model`'s loaded window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadedWindow {
+    Loaded(u64),
+    /// Ollama answered with a valid list that has no row for `model`.
+    NotLoaded,
+    /// The read failed, timed out, was oversized or malformed, or the row has no window.
+    Unknown,
+}
+
+pub async fn loaded_window_state(native: &str, model: &str, limits: InventoryLimits) -> LoadedWindow {
+    let read = async {
+        let client = http_client(limits.timeout).ok()?;
+        let mut response = client
+            .get(format!("{native}/api/ps"))
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.ok()? {
+            if chunk.len() > limits.max_bytes.saturating_sub(bytes.len()) {
+                return None;
+            }
+            bytes.extend_from_slice(&chunk);
         }
-        bytes.extend_from_slice(&chunk);
+        serde_json::from_slice::<Value>(&bytes).ok()
+    };
+    let Some(body) = read.await else {
+        return LoadedWindow::Unknown;
+    };
+    if !body["models"].is_array() {
+        return LoadedWindow::Unknown;
     }
     // One parser for `/api/ps` rows: the one `/model profile` uses.
-    crate::llm::profile::parse_ps(&serde_json::from_slice(&bytes).ok()?, model)?["context_length"].as_u64()
+    match crate::llm::profile::parse_ps(&body, model) {
+        None => LoadedWindow::NotLoaded,
+        Some(row) => row["context_length"]
+            .as_u64()
+            .map_or(LoadedWindow::Unknown, LoadedWindow::Loaded),
+    }
+}
+
+/// Load `model` with an empty generate (the `keep_alive` warmup request; never
+/// `num_ctx`), so Ollama picks the window it will serve it with. True on a 2xx.
+pub async fn load_model(native: &str, model: &str, keep_alive_sec: u64, timeout: Duration) -> bool {
+    if !model_name_ok(model) {
+        return false;
+    }
+    let Ok(client) = http_client(timeout) else {
+        return false;
+    };
+    client
+        .post(format!("{native}/api/generate"))
+        .json(&warmup_payload(model, keep_alive_sec))
+        .send()
+        .await
+        .is_ok_and(|response| response.status().is_success())
 }
 
 pub async fn snapshot(endpoint: &str, model: &str, key: &str, cfg: &AppConfig) -> Result<Value> {

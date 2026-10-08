@@ -20,8 +20,10 @@ struct NativeOllama {
     pull_delay_ms: Arc<Mutex<u64>>,
     /// Delay for the configured model's raw speed sample (the startup tune).
     sample_delay_ms: Arc<Mutex<u64>>,
-    /// The window `/api/ps` reports for `longctx:q8`.
+    /// The window `/api/ps` reports for `longctx:q8`; 0 means not loaded.
     longctx_window: Arc<Mutex<u64>>,
+    /// The window a generate loads `longctx:q8` with while it is not loaded.
+    longctx_load_window: Arc<Mutex<u64>>,
 }
 
 impl NativeOllama {
@@ -39,6 +41,9 @@ async fn start_native_ollama() -> NativeOllama {
     let s2 = sample_delay.clone();
     let longctx_window = Arc::new(Mutex::new(65_536u64));
     let w2 = longctx_window.clone();
+    let w3 = longctx_window.clone();
+    let longctx_load_window = Arc::new(Mutex::new(65_536u64));
+    let l2 = longctx_load_window.clone();
     let p2 = pulls.clone();
     let g2 = generates.clone();
     let c2 = chats.clone();
@@ -115,11 +120,14 @@ async fn start_native_ollama() -> NativeOllama {
             get(move || {
                 let window = *w2.lock().unwrap();
                 async move {
-                    Json(json!({"models": [
-                        {"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20},
-                        {"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13},
-                        {"name": "longctx:q8", "context_length": window, "size": 11, "size_vram": 11},
-                    ]}))
+                    let mut models = vec![
+                        json!({"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20}),
+                        json!({"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13}),
+                    ];
+                    if window > 0 {
+                        models.push(json!({"name": "longctx:q8", "context_length": window, "size": 11, "size_vram": 11}));
+                    }
+                    Json(json!({"models": models}))
                 }
             }),
         )
@@ -128,7 +136,12 @@ async fn start_native_ollama() -> NativeOllama {
             post(move |Json(body): Json<Value>| {
                 let g = g2.clone();
                 let s = s2.clone();
+                let (w, l) = (w3.clone(), l2.clone());
                 async move {
+                    // Any generate loads longctx with Ollama's current default window.
+                    if body["model"] == "longctx:q8" && *w.lock().unwrap() == 0 {
+                        *w.lock().unwrap() = *l.lock().unwrap();
+                    }
                     let timed = body["raw"] == true;
                     let ms = *s.lock().unwrap();
                     if timed && ms > 0 && body["model"] == "qwen3.8:27b-mlx" {
@@ -171,6 +184,7 @@ async fn start_native_ollama() -> NativeOllama {
         pull_delay_ms: delay,
         sample_delay_ms: sample_delay,
         longctx_window,
+        longctx_load_window,
     }
 }
 
@@ -381,12 +395,26 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     assert_eq!(small["in_force"]["web_total_ceiling"], 16000, "{small}");
     let refused = state.ensure_window_allows("longctx:q8", 30_000, 0).await.unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    // Ollama restarted with a 16384 default and has not reloaded the model: the
+    // check loads it (the warmup request) and reads the window it now serves.
+    *ollama.longctx_window.lock().unwrap() = 0;
+    *ollama.longctx_load_window.lock().unwrap() = 16384;
+    let before = ollama.generates.lock().unwrap().len();
+    let (_, reloaded) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(reloaded["in_force"]["prompt_cap"], 15000, "{reloaded}");
+    let loads = ollama.generates.lock().unwrap()[before..].to_vec();
+    assert!(
+        loads
+            .iter()
+            .any(|g| g["model"] == "longctx:q8" && g["prompt"] == "" && g.get("num_ctx").is_none()),
+        "{loads:?}"
+    );
     *ollama.longctx_window.lock().unwrap() = 32768;
-    // Calls within the 32768 defaults are never refused.
+    // A window at the 32768 defaults allows calls sized for them.
     state
         .ensure_window_allows("longctx:q8", 30_000, 32_000)
         .await
-        .expect("defaults need no read");
+        .expect("32768 allows the defaults");
     *ollama.longctx_window.lock().unwrap() = 65536;
     let (status, reply) = s.post_json("/api/chat", json!({"message": "hello"})).await;
     assert_eq!(status, 200, "{reply}");

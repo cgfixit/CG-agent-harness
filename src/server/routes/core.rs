@@ -856,7 +856,8 @@ async fn chat_inner(
                 crate::server::compaction::prompt_limit_remedy(
                 limit_source,
                 threshold,
-                prompt_cap,
+                // Raising the setting helps only below every ceiling it is held to.
+                state.compact_ceiling(&model),
                 web_raise,
                 reply_setting,
                 web_chat,

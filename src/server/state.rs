@@ -289,9 +289,29 @@ impl AppState {
     /// `/api/ps` now, ignoring the cache, when `model` has a tuning (its caps
     /// follow the verified window). Untuned, the caps are the defaults and
     /// nothing is read.
+    /// If Ollama answers that the model is not loaded (after a restart or a
+    /// keep_alive expiry), it is loaded first with the bounded warmup request,
+    /// then read again, so its caps follow the window it will actually serve.
     pub async fn verify_window(&self, model: &str) {
-        if self.tuning_for(model).is_some() {
-            self.probe_window(model).await;
+        if self.tuning_for(model).is_none() {
+            return;
+        }
+        if self.probe_window_state(model).await == crate::llm::ollama::LoadedWindow::NotLoaded {
+            let Some(native) = crate::llm::ollama::native_base_url(&self.chat.base_url) else {
+                return;
+            };
+            let keep_alive =
+                crate::llm::ollama::clamped(&self.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
+            let timeout = Duration::from_secs(crate::llm::ollama::clamped(
+                &self.cfg,
+                "models.local_llm.warmup.timeout_sec",
+                30,
+                1,
+                120,
+            ));
+            if crate::llm::ollama::load_model(&native, model, keep_alive, timeout).await {
+                self.probe_window_state(model).await;
+            }
         }
     }
 
@@ -322,14 +342,30 @@ impl AppState {
 
     /// One bounded `/api/ps` read for `model`, cached (failures too).
     async fn probe_window(&self, model: &str) -> Option<u64> {
-        let native = crate::llm::ollama::native_base_url(&self.chat.base_url)?;
-        let mut limits = crate::llm::inventory::InventoryLimits::from_config(&self.cfg).ok()?;
+        match self.probe_window_state(model).await {
+            crate::llm::ollama::LoadedWindow::Loaded(window) => Some(window),
+            _ => None,
+        }
+    }
+
+    async fn probe_window_state(&self, model: &str) -> crate::llm::ollama::LoadedWindow {
+        use crate::llm::ollama::LoadedWindow;
+        let Some(native) = crate::llm::ollama::native_base_url(&self.chat.base_url) else {
+            return LoadedWindow::Unknown;
+        };
+        let Ok(mut limits) = crate::llm::inventory::InventoryLimits::from_config(&self.cfg) else {
+            return LoadedWindow::Unknown;
+        };
         // A turn may hold the generation gate here: a loopback /api/ps answers in
         // milliseconds, so a slow one is skipped (and cached) rather than waited on.
         limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
-        let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
+        let state = crate::llm::ollama::loaded_window_state(&native, model, limits).await;
+        let window = match state {
+            LoadedWindow::Loaded(window) => Some(window),
+            _ => None,
+        };
         self.ollama.store_window(model, window);
-        window
+        state
     }
 
     /// The window a tuned model's caps follow: the smaller of the one `auto_tune`
@@ -346,9 +382,17 @@ impl AppState {
         Some(tuned.min(live))
     }
 
-    /// The prompt cap for `model`: 30000, or more for a larger verified window.
+    /// The prompt cap for `model`: 30000 scaled to its verified window.
     pub fn prompt_cap(&self, model: &str) -> u64 {
         super::compaction::prompt_cap(self.verified_window(model))
+    }
+
+    /// The most `chat.compact_prompt_tokens` can be for `model`, whatever is
+    /// configured: its prompt cap, lowered to any tuned compaction budget.
+    pub fn compact_ceiling(&self, model: &str) -> u64 {
+        let cap = self.prompt_cap(model);
+        self.tuning_for(model)
+            .map_or(cap, |tuning| cap.min(tuning.compact_prompt_tokens))
     }
 
     /// The most `web.total_tokens` can be for `model`, whatever is configured:
