@@ -14,6 +14,7 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
         (Method::POST, "/api/soul", json!({"enabled": true})),
         (Method::POST, "/api/model", json!({"model": "m"})),
         (Method::GET, "/api/ollama/inventory", json!(null)),
+        (Method::GET, "/api/ollama/profile", json!(null)),
         (Method::POST, "/api/ollama/pull", json!({"model": "tinyllama"})),
         (Method::POST, "/api/ollama/pull/cancel", json!({})),
         (Method::POST, "/api/chat", json!({"message": "hi"})),
