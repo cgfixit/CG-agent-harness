@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::common::audit::Audit;
 use crate::common::auth_store::AuthManager;
@@ -69,6 +69,9 @@ pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
             .ok_or_else(|| HarnessError::config("attachments.body_timeout_sec must be an integer from 5 to 600")),
     }
 }
+
+/// Longest a `/api/ps` window read may take (a turn may hold the generation gate).
+const WINDOW_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct AppState {
     pub home: Home,
@@ -259,21 +262,52 @@ impl AppState {
         }
         web.total_tokens = web
             .total_tokens
-            .min(super::compaction::web_total_cap(tuning.map(|tuning| tuning.window)));
+            .min(super::compaction::web_total_cap(self.verified_window(model)));
         web
     }
 
-    /// The prompt cap for `model`: 30000, or more for a larger window `auto_tune` measured.
+    /// The context window Ollama has `model` loaded with, read from `/api/ps`
+    /// and cached for the inventory refresh interval. `None` when unknown (not
+    /// loaded, not reported, not a loopback Ollama endpoint); a read that
+    /// cannot run never blocks a turn. A failed read is cached too, so an
+    /// endpoint without `/api/ps` is not probed (up to the inventory timeout)
+    /// on every turn.
+    pub async fn live_window(&self, model: &str) -> Option<u64> {
+        let refresh = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
+        if let Some(window) = self.ollama.cached_window(model, refresh) {
+            return window;
+        }
+        let native = crate::llm::ollama::native_base_url(&self.chat.base_url)?;
+        let mut limits = crate::llm::inventory::InventoryLimits::from_config(&self.cfg).ok()?;
+        // A turn may hold the generation gate here: a loopback /api/ps answers in
+        // milliseconds, so a slow one is skipped (and cached) rather than waited on.
+        limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
+        let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
+        self.ollama.store_window(model, window);
+        window
+    }
+
+    /// The window caps may grow with: the one `auto_tune` measured, only while a
+    /// fresh `/api/ps` read still reports `model` loaded at least that large
+    /// (the smaller of the two). A restart with a smaller window, an unloaded
+    /// model or an unanswered read all fall back to the 32768-window caps.
+    pub fn verified_window(&self, model: &str) -> Option<u64> {
+        let tuned = self.tuning_for(model)?.window;
+        let refresh = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
+        let live = self.ollama.cached_window(model, refresh).flatten()?;
+        Some(tuned.min(live))
+    }
+
+    /// The prompt cap for `model`: 30000, or more for a larger verified window.
     pub fn prompt_cap(&self, model: &str) -> u64 {
-        super::compaction::prompt_cap(self.tuning_for(model).map(|tuning| tuning.window))
+        super::compaction::prompt_cap(self.verified_window(model))
     }
 
     /// The most `web.total_tokens` can be for `model`, whatever is configured:
     /// its window cap (like [`Self::prompt_cap`]), lowered to any tuned budget.
     pub fn web_total_ceiling(&self, model: &str) -> u64 {
-        let tuning = self.tuning_for(model);
-        let cap = super::compaction::web_total_cap(tuning.as_ref().map(|tuning| tuning.window));
-        tuning
+        let cap = super::compaction::web_total_cap(self.verified_window(model));
+        self.tuning_for(model)
             .and_then(|tuning| tuning.web.as_ref().map(|web| web.total_tokens))
             .map_or(cap, |budget| cap.min(budget))
     }

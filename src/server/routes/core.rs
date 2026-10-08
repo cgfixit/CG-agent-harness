@@ -606,6 +606,15 @@ async fn chat_inner(
         super::skills::resolve(&state, &session.selected_skills)?
     };
 
+    // Caps above the 32768 defaults need Ollama to still report the window
+    // auto_tune measured, so refresh the live read first. Only a larger tuned
+    // window can lift a cap; every other turn skips the read.
+    let larger_tuning = state
+        .tuning_for(&model)
+        .is_some_and(|tuning| tuning.window > crate::server::compaction::BASE_WINDOW);
+    if !cloud_selected && larger_tuning {
+        state.live_window(&model).await;
+    }
     let live = state.runtime_limits();
     let mut web = state.web.clone();
     web.limits = state.model_web_limits(&model, live.web.clone());
@@ -1216,33 +1225,15 @@ async fn chat_inner(
     }
 }
 
-/// Longest the post-turn `/api/ps` window read may hold the generation gate.
-const WINDOW_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// The context window Ollama loaded `model` with, cached for the inventory
-/// refresh interval. `None` when unknown (not loaded, not reported, not a
-/// loopback Ollama endpoint); a check that cannot run never blocks a turn.
-/// A failed read is cached too, so an endpoint without `/api/ps` is not
-/// probed again (up to the inventory timeout) on every turn. The live read
-/// wins over the window `auto_tune` recorded at selection, which goes stale
-/// once Ollama restarts with the larger window this warning asks for; that
-/// recorded window is used only when the live read fails.
+/// The window to check a finished turn against: the live `/api/ps` read
+/// ([`AppState::live_window`]), else the window `auto_tune` recorded at
+/// selection. The live read wins because the recorded one goes stale once
+/// Ollama restarts with the larger window this warning asks for.
 async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
-    let refresh = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
-    let live = match state.ollama.cached_window(model, refresh) {
-        Some(window) => window,
-        None => {
-            let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
-            let mut limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
-            // The turn still holds the generation gate here: a loopback /api/ps answers
-            // in milliseconds, so a slow one is skipped (and cached) rather than waited on.
-            limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
-            let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
-            state.ollama.store_window(model, window);
-            window
-        }
-    };
-    live.or_else(|| state.tuning_for(model).map(|tuning| tuning.window))
+    state
+        .live_window(model)
+        .await
+        .or_else(|| state.tuning_for(model).map(|tuning| tuning.window))
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.

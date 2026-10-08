@@ -200,7 +200,7 @@ pub async fn build_app_with_sources(
     let spend_file = crate::llm::spend::spend_path(&home.root, &cfg);
     let mut cloud_chat = CloudChat::from_config(&cfg)?;
     cloud_chat.attach_spend(spend_file.clone());
-    let runtime = config_reload::RuntimeLimits::load(&cfg, &backend)?;
+    let runtime = config_reload::RuntimeLimits::load(&cfg, &backend, None)?;
     let rate_limiter = RateLimiter::new(runtime.api.max_requests, runtime.api.window_seconds);
     let loop_rate_limiter = RateLimiter::new(runtime.loop_rate.max_requests, runtime.loop_rate.window_seconds);
     let csrf_token = crate::common::random_urlsafe(32);

@@ -72,8 +72,19 @@ pub struct RuntimeLimits {
     pub web: Limits,
 }
 
+/// What the selected model holds the web budget and reply to while a tuning
+/// is active, so a reload checks the budget chat will actually use.
+#[derive(Debug, Clone, Copy)]
+pub struct TunedBudget {
+    pub web_ceiling: u64,
+    pub window: Option<u64>,
+    pub max_tokens: u64,
+}
+
 impl RuntimeLimits {
-    pub fn load(cfg: &AppConfig, backend: &ResolvedLocalBackend) -> Result<Self> {
+    /// `tuned` is `None` at startup (no tuning yet): the budget is checked at
+    /// the 32768-window cap and the configured reply.
+    pub fn load(cfg: &AppConfig, backend: &ResolvedLocalBackend, tuned: Option<TunedBudget>) -> Result<Self> {
         let key = "api.harness_loop_rate_limit.max_tokens";
         let cap = match integer(cfg, key, 2048, 0, u64::MAX)? {
             0 => 2048,
@@ -82,15 +93,21 @@ impl RuntimeLimits {
         let web = Limits::load(cfg)?;
         // Startup and every reload pass through here, so a web budget that cannot
         // hold a usable chat prompt is reported where the operator changed it.
-        let reservation = super::compaction::reply_reservation(
-            backend,
-            cfg.u64_or("models.local_llm.max_tokens", super::compaction::DEFAULT_REPLY_TOKENS),
-        );
+        let configured_reply = cfg.u64_or("models.local_llm.max_tokens", super::compaction::DEFAULT_REPLY_TOKENS);
+        let (ceiling, window, reply) = match tuned {
+            Some(tuned) => (tuned.web_ceiling, tuned.window, tuned.max_tokens),
+            None => (super::compaction::web_total_cap(None), None, configured_reply),
+        };
+        let reservation = super::compaction::reply_reservation(backend, reply);
         let tool_tokens =
             super::compaction::estimate_tokens(&serde_json::to_string(&super::chat_web::tools()).unwrap_or_default());
-        if let Some(warning) =
-            super::compaction::configured_web_budget_warning(web.total_tokens, reservation, tool_tokens)
-        {
+        if let Some(warning) = super::compaction::configured_web_budget_warning(
+            web.total_tokens,
+            ceiling,
+            window,
+            reservation,
+            tool_tokens,
+        ) {
             tracing::warn!("{warning}");
         }
         Ok(Self {
@@ -165,7 +182,15 @@ fn candidate(state: &AppState) -> Result<RuntimeLimits> {
             "restart-only settings changed; no limits were reloaded",
         ));
     }
-    RuntimeLimits::load(&cfg, &state.backend)
+    // A reload checks the budget the selected model will use: a tuning lowers
+    // the reply and may raise the web ceiling for a verified larger window.
+    let model = state.current_model();
+    let tuned = state.tuning_for(&model).map(|_| TunedBudget {
+        web_ceiling: state.web_total_ceiling(&model),
+        window: state.verified_window(&model),
+        max_tokens: state.chat_max_tokens(&model),
+    });
+    RuntimeLimits::load(&cfg, &state.backend, tuned)
 }
 
 pub async fn reload(state: Arc<AppState>, source: &'static str) -> Result<serde_json::Value> {

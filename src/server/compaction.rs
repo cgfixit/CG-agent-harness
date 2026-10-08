@@ -137,17 +137,26 @@ pub fn web_budget_warning(
 }
 
 /// [`web_budget_warning`] for a configured `web.total_tokens`, checked at the
-/// budget chat will use until `auto_tune` measures a larger window.
-pub fn configured_web_budget_warning(configured: u64, reservation: u64, tool_tokens: u64) -> Option<String> {
-    let cap = web_total_cap(None);
-    let held = configured.min(cap);
-    let warning = web_budget_warning(held, reservation, tool_tokens, WebRaise::for_budget(held, cap, None))?;
-    Some(if held < configured {
-        format!(
+/// budget chat will use: held at `ceiling` (the 32768-window cap until
+/// `auto_tune` verifies a larger `window`, lowered to any tuned budget).
+pub fn configured_web_budget_warning(
+    configured: u64,
+    ceiling: u64,
+    window: Option<u64>,
+    reservation: u64,
+    tool_tokens: u64,
+) -> Option<String> {
+    let held = configured.min(ceiling);
+    let raise = WebRaise::for_budget(held, ceiling, window);
+    let warning = web_budget_warning(held, reservation, tool_tokens, raise)?;
+    Some(match (held < configured, window) {
+        (false, _) => warning,
+        (true, None) => format!(
             "{warning} (web.total_tokens {configured} is held at {held} until models.local_llm.auto_tune measures a window above {BASE_WINDOW})"
-        )
-    } else {
-        warning
+        ),
+        (true, Some(window)) => format!(
+            "{warning} (web.total_tokens {configured} is held at {held} for the selected model's {window}-token window and tuning)"
+        ),
     })
 }
 
@@ -584,14 +593,19 @@ mod tests {
     #[test]
     fn the_startup_warning_checks_the_budget_chat_will_hold() {
         // A doubled 12952-token reservation: 128000 would fit, but 32000 is what applies.
-        let warning = configured_web_budget_warning(128_000, 25_904, 272).expect("32000 cannot fit two replies");
+        let warning =
+            configured_web_budget_warning(128_000, 32_000, None, 25_904, 272).expect("32000 cannot fit two replies");
         assert!(warning.contains("held at 32000"), "{warning}");
         // Raising the setting cannot help; a larger measured window can.
         assert!(!warning.contains("raise web.total_tokens"), "{warning}");
         assert!(warning.contains("measure a larger window"), "{warning}");
-        assert!(configured_web_budget_warning(28_000, 8_192, 272).is_none());
-        let plain = configured_web_budget_warning(16_000, 8_192, 272).unwrap();
+        assert!(configured_web_budget_warning(28_000, 32_000, None, 8_192, 272).is_none());
+        let plain = configured_web_budget_warning(16_000, 32_000, None, 8_192, 272).unwrap();
         assert!(!plain.contains("held at"), "{plain}");
+        // A reload under a 65536 tuning checks its 56000 budget and tuned 8192 reply,
+        // which fit; the raw reply and the untuned 32000 would not.
+        assert!(configured_web_budget_warning(60_000, 56_000, Some(65_536), 8_192, 272).is_none());
+        assert!(configured_web_budget_warning(60_000, 32_000, None, 25_904, 272).is_some());
     }
 
     #[test]

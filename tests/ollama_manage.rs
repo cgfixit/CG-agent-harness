@@ -20,6 +20,8 @@ struct NativeOllama {
     pull_delay_ms: Arc<Mutex<u64>>,
     /// Delay for the configured model's raw speed sample (the startup tune).
     sample_delay_ms: Arc<Mutex<u64>>,
+    /// The window `/api/ps` reports for `longctx:q8`.
+    longctx_window: Arc<Mutex<u64>>,
 }
 
 impl NativeOllama {
@@ -35,6 +37,8 @@ async fn start_native_ollama() -> NativeOllama {
     let delay = Arc::new(Mutex::new(0u64));
     let sample_delay = Arc::new(Mutex::new(0u64));
     let s2 = sample_delay.clone();
+    let longctx_window = Arc::new(Mutex::new(65_536u64));
+    let w2 = longctx_window.clone();
     let p2 = pulls.clone();
     let g2 = generates.clone();
     let c2 = chats.clone();
@@ -108,12 +112,15 @@ async fn start_native_ollama() -> NativeOllama {
         )
         .route(
             "/api/ps",
-            get(|| async {
-                Json(json!({"models": [
-                    {"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20},
-                    {"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13},
-                    {"name": "longctx:q8", "context_length": 65536, "size": 11, "size_vram": 11},
-                ]}))
+            get(move || {
+                let window = *w2.lock().unwrap();
+                async move {
+                    Json(json!({"models": [
+                        {"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20},
+                        {"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13},
+                        {"name": "longctx:q8", "context_length": window, "size": 11, "size_vram": 11},
+                    ]}))
+                }
             }),
         )
         .route(
@@ -163,6 +170,7 @@ async fn start_native_ollama() -> NativeOllama {
         chats,
         pull_delay_ms: delay,
         sample_delay_ms: sample_delay,
+        longctx_window,
     }
 }
 
@@ -306,6 +314,7 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
             .with("web.total_tokens", "60000")
             .with("chat.compact_prompt_tokens", "50000")
             .with("api.rate_limit.max_requests", "1000")
+            .with("models.local_llm.inventory.refresh_sec", "1")
     };
     let plain = spawn_server(&ollama.openai_url(), options()).await;
     // With web on, the web budget binds the prompt, exactly as chat computes it:
@@ -345,6 +354,16 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
         "{body}"
     );
     assert_eq!(body["tuning"]["max_tokens"], 8192, "{body}");
+    // Ollama restarted with a 32768 window: once the cached read expires, the
+    // caps fall back even though the recorded tuning still says 65536.
+    *ollama.longctx_window.lock().unwrap() = 32768;
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let (_, stale) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(stale["tuning"]["window"], 65536, "{stale}");
+    assert_eq!(stale["in_force"]["prompt_cap"], 30000, "{stale}");
+    assert_eq!(stale["in_force"]["web_total_ceiling"], 32000, "{stale}");
+    *ollama.longctx_window.lock().unwrap() = 65536;
+    tokio::time::sleep(Duration::from_millis(1100)).await;
     let (status, reply) = s.post_json("/api/chat", json!({"message": "hello"})).await;
     assert_eq!(status, 200, "{reply}");
     let request = ollama
