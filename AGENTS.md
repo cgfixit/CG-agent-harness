@@ -1,247 +1,170 @@
 # AGENTS.md — CGagentHarness operating manual
 
-Follow literally. Where a rule says "never", there is no exception without
-explicit approval. Read `INVARIANTS.md` before touching `src/shim`,
-`src/server/guards.rs`, `src/server/headers.rs`, `src/agentic/writer.rs`,
-`src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`, or
-`assets/config.default.yaml`. `CLAUDE.md` (repository root) is the per-session
-summary of this file; when they disagree, this file wins and the summary is fixed.
-Ignore docs/learning/* completely unless explicitly requested by owner/operator, **and**
-generally avoid reading anything under docs/* unless a root project file links to something relevant to a task - 
+Every coding agent (Claude Code, Codex, Grok, Kimi, Copilot, others) follows this
+file literally. Where a rule says "never", there is no exception without explicit
+operator approval. Read `INVARIANTS.md` before touching a core path:
+`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`,
+`src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`.
+
+## Critical Rules for this project:
+- Ignore docs/learning/* completely unless explicitly requested by owner/operator.
+- generally avoid reading anything under docs/* unless a root project file links to something relevant to a task - 
 The idea is to avoid reading those .md files and .pdfs and .txt files under docs/ unless its for a defensible reason based on your task
+- Going forward add screenshots under the screenshots/ folder but only for significant changes/new features/something warranting a screenshot being stored.
+
+Reading scope: never open `docs/learning/*` unless the operator asks. Open other
+`docs/*` files only when a root file links the page and the task needs it.
 
 ## Where truth lives
 
 1. Code. 2. `assets/config.default.yaml` (every tunable; no hardcoded tunables
 elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
+When prose contradicts code, fix the prose in the same PR.
 
 ## The map
 
-- `cgagentharness serve` -> shared HTTP/HTTPS transport in `src/server`, loopback only.
-  Public `account` and `web` CLI operations call the same protected service; `tls`
-  exports/renews local certificate material. See `docs/SECURE_RESEARCH.md`.
-- Fresh auth/TLS switches are true; existing explicit choices survive upgrades.
-  SQLite accounts protect operational reads and writes. Harness API keys are
-  optional metadata, never login authority. Managed provider keys live in the OS
-  credential store; inherited environment values win.
-  `security.allow_plaintext_key_file` ships false and is the only legacy `.env` opt-in.
-- Fresh web settings start enabled with an empty URL allowlist; existing choices
-  and absent/invalid legacy fields stay unchanged/off. Exact/wildcard content
-  permission is distinct from account and provider authority. Chat exposes only
-  bounded `web_search` (Google listings) and `web_fetch` (permitted URL content)
-  when web is enabled; `/loop` stays tool-free. `SERPAPI_API_KEY` selects the
-  fixed Google-results API and needs no page URL grant; without a key, public
-  Google is used and its challenges are explicit failures. Listings never grant
-  destination permissions. Saved key changes apply immediately; process
-  environment values win.
-- Ownership: research/web selection and structured memory (facts, proposals,
-  episodes) are account scoped (`user_id`, documented `local` via `context_owner`,
-  or labeled `user_*` fixture owners). Sessions, detached jobs and schedules
-  require the initiating owner; unassigned legacy sessions need explicit admin
-  adoption (clearing prior coding approval). Pinned notes/persona, model
-  selection, spend and agentic run records are shared portal resources.
-- Memory is a set of default-true gates behind the store, each fail-closed:
-  episode capture, `explicit_recall` (selected facts enter `/prompt` only after
-  operator selection and assembly-time revalidation), `retrieval` (FTS over
-  facts only; search is not inject), manual `consolidation` (selected episodes
-  become pending proposals, never applied facts). Dependent gates AND their
-  prerequisite: `auto_retrieval` needs `retrieval`; automatic consolidation
-  needs `consolidation`; `auto_suggest_chat` / `auto_suggest_coding` need
-  capture (bounded completion evidence into pending summaries for the
-  initiating owner; never scans shared archives). Feature-off starts no
-  worker; chat wins the generation gate and preempts a running suggestion (its
-  run stores `state=cancelled`, `error_class=preempted`, then requeues) instead
-  of answering `CHAT_BUSY`. Contract:
-  `docs/STRUCTURED_MEMORY.md`; operator view: `docs/MEMORY_GUIDE.md`.
+- `cgagentharness serve` -> loopback HTTP/HTTPS console in `src/server`. Public
+  `account`, `web` and `tls` CLI commands call the same protected service.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
-  `src/shim`, never called in-process from the server).
-- `cgagentharness netconnect status|devices` is passive and read-only.
-  `status` loads no collector; `devices` reads the passive tables.
-  `netconnect` gates ship false; empty `allowed_cidrs` refuses armed tiers.
-  Scope is operator IPv4 CIDRs inside RFC1918 or 127/8 at prefix /16 or
-  longer, never local interfaces. Invalid scope exits 3; a closed master
-  gate exits 4. `/net` (exact aliases `/netconnect`, `/lan`, `/scan`,
-  `/ports`, `/speed`) runs only exact `status` and `devices`. Tier tools
-  register only when `tier_may_run` is true. The console LAN panel is
-  `GET /api/netconnect`. See the netconnect section of `INVARIANTS.md`.
-- Exit codes are an API: `0` ok, `2` failed, `3` env/config, `4` write refused.
-  A non-zero child exit is HTTP 200 with `ok=false`; only shim failures map to
-  400/502/504 and the disabled-layer banner to 409.
+  `src/shim` as a child process, never called in-process).
+- `cgagentharness netconnect status|devices` -> `src/netconnect`, passive and
+  read-only. Every netconnect gate ships false; empty `allowed_cidrs` refuses
+  armed tiers. `/net` (aliases `/netconnect`, `/lan`, `/scan`, `/ports`,
+  `/speed`, each dropped if it collides with an existing slash name) dispatches
+  `status`, `devices`, `ports`, `diag`, `watch`; the tier commands refuse unless
+  `tier_may_run` is true and never connect. `device` always refuses.
+- Exit codes are an API for the `agentic` and `netconnect` children: `0` ok,
+  `2` failed, `3` env/config, `4` write refused. A non-zero child exit is HTTP
+  200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
+  banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`) exit `1`
+  on error.
 - Home: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`). Never write outside it
   except into a clone the pipeline itself made under `data/agentic/workspaces`.
-- Local planner `=== READ ===` and operator `--read-file` refuse the default
-  basename deny-list (`agentic.deepagent_github.denied_read_basenames`) after
-  clone-jail canonicalization. Deny-list ≠ secret scanner; jail ≠ secrets.
-- Repository retrieval (`agentic.deepagent_github.retrieval`, literal true only)
-  runs inside the agentic child for local proposers: a bounded per-step Tantivy
-  RAM index over the clone capability, minus denied basenames, binary/oversized
-  files and scanner hits. Re-verify the full hash before injection; persist only
-  retrieval metadata. No new read authority for cloud proposers and no change to
-  confirm/reason or write gates.
-- Non-secret runtime limits reload through one validated snapshot:
-  `POST /api/config/reload` (non-bootstrap admin + CSRF) and SIGHUP on Unix
-  `serve` and native sidecars. The allowlist is
-  `src/server/config_reload.rs::RELOADABLE` (23 keys); everything else is
-  restart-only, including `web.concurrency`. Invalid or mixed candidates keep the
-  whole old snapshot and audit a refusal. See `docs/CONFIG_RELOAD.md`.
+- Feature contracts live in `INVARIANTS.md`; read the owning section before
+  changing a feature:
+
+| Area | `INVARIANTS.md` section |
+|------|-------------------------|
+| Accounts, TLS, ownership, structured memory gates | Account, transport and request boundaries |
+| Chat `web_search` / `web_fetch`, SerpAPI | Public web evidence requires current content permission |
+| Provider keys (OS credential store; env wins) | Provider keys live in the OS credential store |
+| Outbound MCP client (`mcp.enabled`, `mcp.servers`, stdio sandbox) | I6 — process isolation…; `docs/MCP_CLIENT.md` |
+| Clone jail, read deny-list, repo retrieval | The clone jail |
+| Detached jobs, schedules | A detached run cannot outlive its gates; Scheduled agentic runs… |
+| Ollama inventory, pull, warmup | Native Ollama pull stays on loopback… |
+| Session export and search | Session export and transcript search stay on the machine |
+| Spend ledger and prediction | Inference spend keeps recorded usage separate… |
+| Completion webhooks | Completion notifications do not grant… |
+| Config reload | Reload changes limits, not authority |
+| Inbound MCP memory server | Private MCP memory server is a separate authority boundary |
+| netconnect | Netconnect is fail-closed and LAN-scoped |
 
 ## Traps
 
-- **Never** make the server reference `crate::agentic`; `tests/invariant_guard.rs`
-  fails the build-of-truth if you do. Add server-side behavior in `src/server`,
-  cross the boundary only through `src/shim` and the CLI whitelist.
+- **Never** make `src/{server,shim,llm,common,netconnect}` reference
+  `crate::agentic`, and never make `src/agentic` reference server or shim (I6).
+  `tests/invariant_guard.rs` fails if you do, including aliased `use` forms.
+  Cross the boundary only through `src/shim` and the CLI whitelist.
 - Duplicated on purpose, kept in sync by tests: `RUN_ID_PATTERN` (server
   `agent_policy` vs agentic `run_store`), the planner/check timeout constants
-  (shim vs agentic), the check-profile table. Do not "deduplicate" them across
-  the boundary.
-- Quoted YAML `"true"` is OFF for every gate (`flag_is_true`). Keep it that way.
-- `confirm` is never defaulted on; `reason` is never optional on a write.
-- The console asset stays verbatim: placeholders `__CYCLAW_CSRF_TOKEN__` /
+  (shim vs agentic), the check-profile table. Do not "deduplicate" them.
+- Gates read through `flag_is_true`: only literal YAML `true` is on; quoted
+  `"true"` and a missing key are off. Note a missing key is not the shipped
+  value: several gates ship `true` (structured memory, Ollama warmup, auth, TLS).
+- Write gates `agentic.enabled`, `deepagent_github.enabled` and
+  `deepagent_github.allow_git_write_tools` ship false. `confirm` is never
+  defaulted on; `reason` is never optional on a write.
+- Repository retrieval is gated by `agentic.deepagent_github.retrieval.enabled`
+  (ships false), not the parent key.
+- The browser never supplies a command: fixed argv only; free text is one
+  `--opt=value` element or a temp file.
+- The console asset stays verbatim: `__CYCLAW_CSRF_TOKEN__`,
   `__CYCLAW_CSP_NONCE__` and the `X-CyClaw-CSRF` header name are contractual.
-- `GROK_API_KEY` on a developer machine is real: tests must not assert on its
-  presence and CI blanks it (with `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY`).
+- `GROK_API_KEY` on a developer machine is real: tests never assert on its
+  presence, and CI blanks it with `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY`.
 - `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` on an operator machine is real:
-  `cargo test` isolates it so later write gates are what fail. Do not flip
+  `cargo test` isolates it so later write gates are what fail. Never flip
   `EXECUTION_ENABLED` to false (or OR the kill switch) to make tests green.
 - Server audit appends go to one writer thread (`logging.audit_queue_lines`,
-  default 4096; 0 appends inline), flushed before each agentic child and at
-  shutdown; a full queue drops lines with a warning. SQLite store work stays off
-  async workers. Keep new I/O that way: requests never wait on the file.
+  default 4096; 0 appends inline). SQLite work stays off async workers.
+  Requests never wait on a file.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
+- `RELOADABLE` in `src/server/config_reload.rs` (23 keys) is the only
+  hot-reload allowlist; everything else, including `web.concurrency`, is
+  restart-only.
 
 ## Quality bar
 
-- Once per clone, before committing: `bash scripts/ensure-githooks.sh` (points
-  `core.hooksPath` at `.githooks/`; idempotent).
-- `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
-  `cargo test --all-targets` green; `cargo deny check` clean. Rust 1.88 is
-  pinned. `scripts/verify-local.sh` skips deny when cargo-deny is missing, so
-  its green run is not deny evidence.
-- Verifying a code change: lint (fmt, clippy), then run the changed code
-  (route, binary or function). If nothing can run directly, run a targeted
-  test, like `cargo test --test invariant_guard` after structural edits; never
-  the whole suite. Lint workflow edits (actionlint, zizmor) instead of running
-  them. CI runs the full gate above and must be green before merge.
-- New routes: add to `routes/mod.rs::REGISTERED_PATHS` (and `views.rs` if the
-  console lists them) or `/api/tools` reports them unwired.
-- New shim actions: extend `shim::ACTIONS`, `agentic/commands.rs::dispatch`, and
-  the invariant guard's whitelist assertion together.
-- `/api/agent/run` (sync) and `/api/agent/jobs` (detached) must stay in lockstep:
-  both go through `agent::prepare_run` so validation, budget check, tool broker
-  and both gates never drift. Persisted schedules (`POST /api/agent/schedules`)
-  fire that same jobs path; unbound or unreviewed goals fail closed; occurrences
-  are at-most-once across restart.
-- MCP is opt-in (`mcp.enabled` literal true, declared `mcp.servers` only). Calls
-  go through `POST /api/mcp/call` with `confirm: true`, the tool-broker allowlist
-  and DNS-pinned SSE. Stdio children use the same Seatbelt/bubblewrap helpers as
-  agentic verification and require explicit versioned capabilities; no unconfined
-  or network-weaker fallback. Linux strict containment needs an externally owned
-  systemd/cgroup service; other platforms refuse strict mode. Windows
-  `job_object` is a trusted-server exception (process ownership, not data
-  isolation). Never attach MCP tools to `/loop`. See `docs/MCP_CLIENT.md`.
-- Inbound MCP memory is a separate default-off loopback listener (`mcp.server`)
-  with explicit tool grants and dedicated `mcp_keys.sqlite3` machine credentials
-  over the store's owner-filtered read methods. Never accept console cookies
-  there or machine keys as console authority; no writes or agent tools; outside
-  config reload. See `docs/MCP_SERVER.md`.
-- Native Ollama management is loopback-only (`GET /api/ollama/inventory`,
-  abortable `POST /api/ollama/pull`). Pull/warmup never send `num_ctx`. Warmup
-  (`models.local_llm.warmup.enabled`, `flag_is_true`; missing is off) is a
-  bounded background `keep_alive` generate whose failure is a logged degrade.
-  Audit roles cannot pull; admin and operator can.
-- Session Markdown export and transcript search stay on the machine:
-  `GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at
-  `0o600`; `POST /api/sessions/search` uses a request-local Tantivy RAM index
-  never mixed with the web cache; `GET /api/sessions` omits goal and bodies.
-  All three require the initiating owner.
-- Inference spend is append-only JSONL (`logs/spend.jsonl`; home-relative
-  `logging.spend_file`, absolute/`..` falls back). Dollars are read-time only;
-  never persist `usd`, prompts or keys. Local rows are unpriced; pull/warmup/MCP
-  dispatch are not ledger events. `GET /api/spend/summary` is the read-only
-  rollup (Analytics → Tokens and cost). Empty or truncated cloud 2xx records
-  `failed_after_billing` and is never shown or saved. `POST /api/spend/predict`
-  counts only the supplied cloud draft (Claude vendor count with bounded
-  fallback, Grok bytes/4), creates no ledger row, reserves full output without
-  cache credit; heuristic gating needs literal `budget_on_heuristic: true`.
-  Unknown rates stay unpriced. See `docs/SPEND_AND_NOTIFICATIONS.md`.
-- Completion webhooks are default-off, restart-only and metadata-only: at most
-  three retries per bounded replay cycle, exact owned destination grants, DNS
-  pinning, no redirects, stable deduplication IDs, owner-scoped status/replay
-  that rechecks authority. Delivery failure never changes a job outcome; the
-  console's Job webhooks button shows only while notifications are enabled.
+- Once per clone, before committing: `bash scripts/ensure-githooks.sh`.
+- CI merge gate: `cargo fmt --all -- --check`,
+  `cargo clippy --all-targets --all-features -- -D warnings`,
+  `cargo test --all-targets`, `cargo deny check`. Rust 1.88 is pinned for the
+  backend; `desktop/` pins 1.90. `scripts/verify-local.sh` skips deny when
+  cargo-deny is missing, so its green run is not deny evidence.
+- Verifying a change locally: lint (fmt, clippy), then run the changed code
+  (route, binary or function). If nothing can run directly, run one targeted
+  test, such as `cargo test --test invariant_guard` after structural or doc
+  edits; never the whole suite. Lint workflow edits with actionlint and zizmor.
+- New routes: add to `src/server/routes/mod.rs::REGISTERED_PATHS` (and
+  `views.rs` if the console lists them) or `/api/tools` reports them unwired.
+- New shim actions: extend `shim::ACTIONS` (and `shim::JSON_ACTIONS` if it
+  returns JSON), `agentic/commands.rs::dispatch`, and the invariant guard's
+  whitelist assertion together.
+- `/api/agent/run`, `/api/agent/jobs` and persisted schedules all go through
+  `prepare_run`; never give one a path the others skip.
+- MCP tools never attach to `/loop`; `/loop` stays tool-free.
 - Prefer a `#[cfg(test)] mod tests` unit test beside a pure parser or matcher
-  (`repo_paths`, `real_repo_loop`'s file-block parser, `guards`' same-origin
-  check) over another integration test.
+  over another integration test.
 - PRs are draft, one concern, on a driver-prefixed branch (`claude/`, `codex/`,
-  `grok/`, `kimi/`, `agent/`), **based on `main`** (the `base branch is main`
-  check fails stacked PRs), title `[prefix] - Sentence`, body from
-  `.github/PULL_REQUEST_TEMPLATE.md` (run `scripts/check-pr-template.sh` first).
-  Touching a core path requires an explicit invariant statement in the body.
-- The advisory `review gate` check (`.github/workflows/review-gate.yml`) reports
-  unresolved threads and running Codex reviews; it never fails CI. Read it before
-  merging. Resolving a thread fires no webhook: re-run it after resolving the
-  last one without a push. Never comment `@codex review` without the operator's
-  approval.
+  `grok/`, `kimi/`, `agent/` when unknown), **based on `main`**, title
+  `[prefix] - Sentence`, body from `.github/PULL_REQUEST_TEMPLATE.md` (run
+  `scripts/check-pr-template.sh` first). Touching a core path requires an
+  explicit invariant statement in the body.
+- The advisory `review gate` check reports unresolved threads and running Codex
+  reviews; it never fails CI. Read it before merging and re-run it after
+  resolving the last thread. Never comment `@codex review` without the
+  operator's approval.
+- Loading a skill never authorizes push, merge or release.
 
 ## Docs policy
 
-Edit existing topic owners; create no Markdown files. Link instead of duplicating.
-Evidence belongs in PRs/issues; screenshots in `docs/screenshots/`.
-Ignore `docs/learning/*` during agent work unless explicitly requested.
-`tests/invariant_guard.rs` enforces `DOCS_BUDGET`: listed Markdown (including
-untracked), file/group word caps, no new root screenshots/docs PDFs or files
-over 1 MiB. New rows/raised caps require operator approval and `// why:`.
+Edit the section that owns a topic; create no Markdown files. Link instead of
+duplicating. Evidence belongs in PRs/issues; screenshots go in
+`docs/screenshots/` (a root `screenshots/` fails the guard), and only for
+significant changes. `tests/invariant_guard.rs` enforces `DOCS_BUDGET`: every
+listed Markdown file has a word cap (this file 2000, `CLAUDE.md` 300), plus
+group caps, no new root screenshots or docs PDFs, no files over 1 MiB. Check
+`wc -w` before committing any `.md` edit, including web-UI edits. New rows or
+raised caps need operator approval and a `// why:`.
 
 Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md'`, checks changed
 behavior against its owning docs, lowers caps after folds, and reviews
-[dependency watches](docs/DEPENDENCIES.md#retained-constraints). CI remains the daily tripwire.
+[dependency watches](docs/DEPENDENCIES.md#retained-constraints).
 
-## Project Codex skills
+## Project skills
 
-Read the relevant entrypoint under `.codex/skills` when its task applies:
+Three skill trees are repository guidance, not application `/api/skills` plugins:
+`.codex/skills/` (Codex), `.claude/skills/` (Claude Code, run as `/<slug>`) and
+`.github/skills/` (Copilot). Read the relevant `SKILL.md` when its task applies:
 
-- `cgagentharness-optimize/SKILL.md`: evidence-backed Rust/runtime/CI improvements
-  under this repository's contracts; never transplant CyClaw topology or defaults.
-- `cgagentharness-release/SKILL.md`: universal macOS packaging, native acceptance,
-  workflow provenance and release preparation.
-- `cgagentharness-verify/SKILL.md`: isolated backend, desktop and local-model checks.
-- `fable-protocol/SKILL.md`: evidence-first reasoning and verification discipline;
-  load before costly code/security/CI/GitHub claims.
-- `cgagentharness-invariant-guard/SKILL.md`: "do the invariants still hold?" gate;
-  load before merging core-path security diffs.
-- `cgagentharness-gotchas/SKILL.md`: session-tested traps (Chrome CI flake, YAML
-  `"true"`, CSRF names, Seatbelt noise, clippy toolchain fights).
-- `cgagentharness-project-guidance/SKILL.md`: read order + skill routing; load at
-  the start of substantive repository work.
-- `cgagentharness-write-policy-redteam/SKILL.md`: adversarially exercise write
-  gates, confirm+reason, clone jail, and shim argv boundaries.
-- `verification-specialist/SKILL.md`: independently verify a *supplied* change by
-  trying to break it, without modifying the tree.
-- `cgagentharness-config-guard/SKILL.md`: statically assert `assets/config.default.yaml`
-  still honors fail-closed contracts.
-- `cgagentharness-parity/SKILL.md`: maintain CyClaw↔harness parity docs without
-  weakening harness invariants.
-
-## Project Claude skills
-
-Claude Code loads the root `CLAUDE.md` every session and runs each
-`.claude/skills/<slug>/SKILL.md` as `/<slug>`. `.claude/settings.json`
-pre-approves only `cargo` build/check/fmt/clippy/test/deny, `cargo run -- serve`,
-`scripts/verify-local.sh`, `scripts/check-pr-template.sh` and
-`scripts/test-desktop-backend.py`. All skills but three are
-`disable-model-invocation: true` and run only when the operator types them;
-`cgagentharness-verify-deps`, `cgagentharness-runtime-invariant-check` (both
-report only) and `verification-specialist` may be model-loaded. The Codex skills
-above, except release and verify, are mirrored there; `fable-protocol` and
-`cgagentharness-optimize` are long playbooks behind the short Codex versions.
-Claude-only: the two report-only skills, `dep-sync` (fixes Cargo, toolchain,
-`deny.toml` and CI/release drift against `origin/main`), `doc-sync` (rewrites
-existing docs to match the code), `run-cg-agent-harness` (fake-model console
-smoke; its `driver.mjs` is historical, not acceptance evidence) and
-`cgagentharness-otel-hardening` (telemetry-kill contract: per-spawn-site child
-envs, telemetry-free lock graphs, egress classification; its `check_otel.py`
-and `verify.sh` run outside the pre-approved list).
-
-Both skill trees are repository guidance, not application `/api/skills` runtime
-plugins. Existing user authorization governs publication; selecting a skill adds none.
+- `cgagentharness-project-guidance`: read order and skill routing; start here.
+- `fable-protocol`: evidence-first reasoning before costly code/security/CI claims.
+- `cgagentharness-invariant-guard`: "do the invariants still hold?" gate before
+  merging core-path diffs.
+- `cgagentharness-config-guard`: static fail-closed check of `config.default.yaml`.
+- `cgagentharness-write-policy-redteam`: attack write gates, confirm+reason,
+  clone jail and shim argv.
+- `verification-specialist`: break a *supplied* change without modifying the tree.
+- `cgagentharness-gotchas`: session-tested traps (Chrome CI flake, YAML `"true"`,
+  CSRF names, Seatbelt noise, clippy toolchain fights).
+- `cgagentharness-optimize`: evidence-backed Rust/runtime/CI improvements; never
+  transplant CyClaw topology or defaults.
+- `cgagentharness-parity`: CyClaw↔harness parity docs without weakening invariants.
+- Codex only: `cgagentharness-release` (macOS packaging, release prep),
+  `cgagentharness-verify` (isolated backend, desktop and local-model checks).
+- Claude only: `cgagentharness-verify-deps` and
+  `cgagentharness-runtime-invariant-check` (report only), `dep-sync` (fixes
+  dependency and CI drift against `origin/main`), `doc-sync` (rewrites stale
+  docs), `run-cg-agent-harness` (fake-model console smoke),
+  `cgagentharness-otel-hardening` (telemetry-kill contract).
