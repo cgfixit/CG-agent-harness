@@ -70,7 +70,9 @@ fn elision(rest: impl Iterator<Item = char>) -> bool {
         .take_while(|c| !c.is_whitespace())
         .collect::<String>()
         .to_lowercase();
-    word.starts_with(|c: char| c.is_ascii_digit()) || WORDS.contains(&word.as_str())
+    // `'cause,` and `'til.` are the same elisions.
+    let bare = word.trim_end_matches(|c: char| c.is_ascii_punctuation() && c != '\'');
+    word.starts_with(|c: char| c.is_ascii_digit()) || WORDS.contains(&bare)
 }
 
 /// Whether an apostrophe in `rest` ends a word (followed by whitespace or the
@@ -395,6 +397,7 @@ mod tests {
             query("'til death musicians' influences"),
             "'til death musicians' influences"
         );
+        assert_eq!(query("'cause, musicians' influences"), "'cause, musicians' influences");
         assert_eq!(parse(Some("search"), "rust --help").unwrap().action, "help");
         assert_eq!(parse(Some("allow"), "-h").unwrap().action, "help");
         // A whole single-quoted word is argument grouping, as before.
