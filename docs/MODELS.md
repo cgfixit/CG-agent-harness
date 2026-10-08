@@ -18,8 +18,8 @@ Never start a second daemon on an occupied port.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 require a
 **32768-token** window. Chat, pulls and warmup inherit the window Ollama
-started with. Changing it requires
-a full quit and relaunch.
+started with. Changing it needs
+a full relaunch.
 
 ```bash
 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
@@ -79,7 +79,7 @@ limits and any tuning; `/model use <tag>` persists it without downloading. With
 `models.local_llm.auto_tune: true` it also loads the model, times one short
 generate and applies per-model limits (budgets only tighten; the timeout follows
 measured speed; a model without tools gets none). Above 32768, proposals
-scale up; set them in `config.yaml` (`auto_tune` only lowers). Caps follow the
+scale up; set them in `config.yaml` (`auto_tune` only lowers); caps follow the
 measured window, up to 131072.
 This shared selection can override configuration, including fallback.
 Check it against the active local endpoint. For explicit cloud chat, use
