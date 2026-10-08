@@ -532,9 +532,11 @@ fn tokenize_unquoted(text: &str) -> Vec<String> {
         // provider a stop word, whereas `For Whom the Bell Tolls`, `On the
         // Road`, `About Time` or `Of Mice and Men` would lose their first
         // word, and losing content is the costlier mistake.
-        if end + 1 < rest.len()
+        // A connector that ends the request (`top 3 results for`) introduces
+        // nothing and is scaffolding too, so the request has no subject.
+        if end < rest.len()
             && matches!(lower_rest[end].as_str(), "for" | "of" | "about" | "on")
-            && placeholder_index(rest[end + 1]).is_some()
+            && rest.get(end + 1).is_none_or(|next| placeholder_index(next).is_some())
         {
             end += 1;
         }
@@ -1291,6 +1293,12 @@ mod tests {
         assert_eq!(rewrite("search first 2 pages for \"rust\"", 5).count, 2);
         assert_eq!(rewrite("search top 3 pages of rust docs", 5).count, 3);
         assert_eq!(rewrite("search first 2 pages -of rust docs", 5).count, 2);
+        for bare in ["search top 3 results for", "search the first 3 results for"] {
+            assert!(
+                matches!(parse_with_count(bare, 5), WebIntentParse::Invalid(_)),
+                "{bare}"
+            );
+        }
         // `top` without a count noun is subject text.
         assert!(matches!(
             parse_with_count("search top 10 movies", 5),
