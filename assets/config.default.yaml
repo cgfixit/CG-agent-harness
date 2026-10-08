@@ -53,12 +53,13 @@ models:
       enabled: true # flag_is_true; missing in old homes is off. Failure is a logged degrade, never a crash.
       keep_alive_sec: 300 # 1–3600 seconds sent as keep_alive; never num_ctx
       timeout_sec: 30 # 1–120; bounded background POST /api/generate with an empty prompt
-    # Per-model tuning (flag_is_true; quoted "true" is off). On /model use and at
-    # startup: one short raw /api/generate times this loopback Ollama (no num_ctx;
-    # it loads the model like warmup) and /api/ps gives the loaded window. Token
-    # budgets only tighten to fit it; the chat timeout follows the measured speed
-    # (120–3600 s); a model declaring no tools gets none. See /model profile.
-    auto_tune: false
+    # Per-model tuning (flag_is_true; quoted "true" is off; false restores the
+    # fixed limits). On /model use and at startup: one short raw /api/generate
+    # times this loopback Ollama (no num_ctx; it loads the model like warmup) and
+    # /api/ps gives the loaded window. Token budgets only tighten to fit it; the
+    # chat timeout follows the measured speed (120–3600 s); a model declaring no
+    # tools gets none. Other providers are never tuned. See /model profile.
+    auto_tune: true
     # Optional loopback failover (LM Studio or any OpenAI-compatible server).
     fallback:
       enabled: false
