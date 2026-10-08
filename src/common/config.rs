@@ -120,8 +120,81 @@ impl AppConfig {
             .unwrap_or(serde_json::Value::Null)
     }
 
+    /// Dotted paths the shipped default turns on that this config omits.
+    /// `flag_is_true` reads a missing key as off, so a home seeded before a
+    /// flag existed silently loses it. A key set to anything, including
+    /// `false`, is the operator's choice and is never listed.
+    pub fn missing_shipped_true_flags(&self) -> Vec<String> {
+        static SHIPPED: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+        let shipped = SHIPPED.get_or_init(|| {
+            let mut out = Vec::new();
+            if let Ok(root) = serde_yaml_ng::from_str::<Value>(Self::embedded_default()) {
+                collect_true_flags(&root, String::new(), &mut out);
+            }
+            out
+        });
+        shipped
+            .iter()
+            .filter(|path| self.get(path).is_none())
+            .cloned()
+            .collect()
+    }
+
     /// The embedded shipped default, used to seed a fresh home.
     pub fn embedded_default() -> &'static str {
         include_str!("../../assets/config.default.yaml")
+    }
+}
+
+fn collect_true_flags(node: &Value, prefix: String, out: &mut Vec<String>) {
+    let Value::Mapping(map) = node else { return };
+    for (key, value) in map {
+        let Some(key) = key.as_str() else { continue };
+        let path = if prefix.is_empty() {
+            key.to_string()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match value {
+            Value::Bool(true) => out.push(path),
+            Value::Mapping(_) => collect_true_flags(value, path, out),
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(yaml: &str) -> AppConfig {
+        AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap()
+    }
+
+    #[test]
+    fn shipped_default_has_no_drift_against_itself() {
+        assert!(cfg(AppConfig::embedded_default())
+            .missing_shipped_true_flags()
+            .is_empty());
+    }
+
+    #[test]
+    fn omitted_shipped_true_flags_are_listed_but_explicit_choices_are_not() {
+        let drift = cfg("structured_memory:\n  enabled: true\n  retrieval: false\n  explicit_recall: \"true\"\n")
+            .missing_shipped_true_flags();
+        assert!(drift.contains(&"structured_memory.auto_retrieval".to_string()));
+        assert!(!drift.contains(&"structured_memory.enabled".to_string()));
+        assert!(
+            !drift.contains(&"structured_memory.retrieval".to_string()),
+            "explicit false is a choice"
+        );
+        assert!(
+            !drift.contains(&"structured_memory.explicit_recall".to_string()),
+            "a quoted value is set, not missing"
+        );
+        assert!(
+            !drift.iter().any(|p| p == "agentic.enabled"),
+            "write gates ship false and never appear"
+        );
     }
 }

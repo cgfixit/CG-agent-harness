@@ -126,7 +126,7 @@ const server=createServer(async(req,res)=>{
   reply(memoryPayload());return;
  }
  if(path==='/api/memory/add'||path==='/api/memory/forget'||path==='/api/memory/clear'){reply(memoryPayload());return;}
- if(path==='/api/structured-memory'){reply({enabled:structuredOpen,fact_count:structuredOpen?savedFacts.length:0,pending_proposal_count:structuredOpen?memoryProposals.filter(p=>p.status==='pending').length:0,limits:{max_reason_chars:1000,max_facts_per_owner:64}});return;}
+ if(path==='/api/structured-memory'){reply({enabled:structuredOpen,fact_count:structuredOpen?savedFacts.length:0,pending_proposal_count:structuredOpen?memoryProposals.filter(p=>p.status==='pending').length:0,limits:{max_reason_chars:1000,max_facts_per_owner:64},config_drift:['structured_memory.retrieval','structured_memory.auto_retrieval']});return;}
  if(path==='/api/structured-memory/facts'&&req.method==='GET'){
   if(!structuredOpen){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured memory is disabled'}},409);return;}
   reply({owner_id:'user_fixture_owner',facts:savedFacts,count:savedFacts.length,search:false,retrieval:false,fts:false});return;
@@ -409,6 +409,7 @@ try {
   assert.equal(readout.includes('RAG'),false,line+' must not show the always-false RAG rows');
   assert.equal(readout.includes('undefined'),false,line+' must not render missing fields');
   assert.ok(readout.includes('1 / 64'),line+' shows the owner fact count against the cap');
+  assert.ok(readout.includes('omits 2 setting(s) that ship on')&&readout.includes('structured_memory.auto_retrieval'),line+' warns about config drift');
  }
  const factReads=()=>requests.filter(r=>r[0]==='GET'&&r[1]==='/api/structured-memory/facts').length;
  const nonParsePosts=()=>requests.filter(r=>r[0]==='POST'&&r[1]!=='/api/slash/parse').length;
