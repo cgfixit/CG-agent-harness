@@ -939,6 +939,12 @@ async fn chat_inner(
                 crate::server::compaction::COMPACT_PREFIX.to_string()
             } else {
                 let summary_tokens = crate::server::compaction::summary_max_tokens(&state.cfg);
+                // The summary is a model call too: check the window first and
+                // size its input to the model's cap, not the 32768 default.
+                state
+                    .ensure_window_allows(&model, turn_prompt_limit, 0)
+                    .await
+                    .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
                 let (text, p, c) = crate::server::compaction::summarize_turns(
                     &state.chat,
                     &model,
@@ -946,6 +952,7 @@ async fn chat_inner(
                     summary_tokens,
                     crate::server::compaction::reply_reservation(&state.backend, summary_tokens),
                     ratio,
+                    state.prompt_cap(&model),
                 )
                 .await
                 .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;

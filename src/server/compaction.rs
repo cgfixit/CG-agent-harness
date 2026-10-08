@@ -392,7 +392,17 @@ fn summary_input(middle: &[Message], max_bytes: usize) -> Result<String> {
     Ok(selected.concat())
 }
 
-/// One bounded local-model call. Empty or failed output must not persist.
+/// Most bytes of history the summary call reads: `prompt_cap` less its reply
+/// reservation and system prompt, at bytes/4 corrected by the session ratio.
+fn summary_input_bytes(prompt_cap: u64, reservation: u64, ratio: f64) -> usize {
+    let raw_budget = (prompt_cap.saturating_sub(reservation) as f64 / bounded_ratio(ratio)).floor() as u64;
+    raw_budget
+        .saturating_sub(estimate_tokens(SUMMARY_SYSTEM))
+        .saturating_mul(4) as usize
+}
+
+/// One bounded local-model call, its input sized to `prompt_cap` (the model's
+/// [`prompt_cap`]). Empty or failed output must not persist.
 pub async fn summarize_turns(
     chat: &ChatClient,
     model: &str,
@@ -400,12 +410,9 @@ pub async fn summarize_turns(
     max_tokens: u64,
     reservation: u64,
     ratio: f64,
+    prompt_cap: u64,
 ) -> Result<(String, u64, u64)> {
-    let raw_budget = (MAX_PROMPT_TOKENS.saturating_sub(reservation) as f64 / bounded_ratio(ratio)).floor() as u64;
-    let max_bytes = raw_budget
-        .saturating_sub(estimate_tokens(SUMMARY_SYSTEM))
-        .saturating_mul(4) as usize;
-    let clipped = summary_input(middle, max_bytes)?;
+    let clipped = summary_input(middle, summary_input_bytes(prompt_cap, reservation, ratio))?;
     let reply = chat
         .chat(
             SUMMARY_SYSTEM,
@@ -605,6 +612,16 @@ mod tests {
         // which fit; the raw reply and the untuned 32000 would not.
         assert!(configured_web_budget_warning(60_000, 56_000, Some(65_536), 8_192, 272).is_none());
         assert!(configured_web_budget_warning(60_000, 32_000, None, 25_904, 272).is_some());
+    }
+
+    #[test]
+    fn the_summary_reads_no_more_than_the_verified_window_holds() {
+        let reservation = 2_048;
+        let small = summary_input_bytes(prompt_cap(Some(16_384)), reservation, 1.0);
+        let default = summary_input_bytes(prompt_cap(None), reservation, 1.0);
+        // At a 16384 window, bytes/4 of the input plus the reservation fit 15000.
+        assert!(small / 4 + reservation as usize <= 15_000, "{small}");
+        assert!(small < default, "{small} vs {default}");
     }
 
     #[test]

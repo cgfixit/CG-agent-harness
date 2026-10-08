@@ -398,13 +398,24 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     assert_eq!(small["in_force"]["web_total_ceiling"], 16000, "{small}");
     let refused = state.ensure_window_allows("longctx:q8", 30_000, 0).await.unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
-    // Ollama restarted with a 16384 default and has not reloaded the model: the
-    // check loads it (the warmup request) and reads the window it now serves.
+    // Ollama restarted with a 16384 default and has not reloaded the model.
+    // The profile only reads: no load, and the defaults while it is not resident.
     *ollama.longctx_window.lock().unwrap() = 0;
     *ollama.longctx_load_window.lock().unwrap() = 16384;
     let before = ollama.generates.lock().unwrap().len();
-    let (_, reloaded) = s.get_json("/api/ollama/profile").await;
-    assert_eq!(reloaded["in_force"]["prompt_cap"], 15000, "{reloaded}");
+    let (_, absent) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(absent["in_force"]["prompt_cap"], 30000, "{absent}");
+    assert_eq!(
+        ollama.generates.lock().unwrap().len(),
+        before,
+        "a profile must not load the model"
+    );
+    // The check before a model call (under the caller's generation gate) loads it
+    // with the warmup request and reads the window it now serves.
+    state
+        .ensure_window_allows("longctx:q8", 15_000, 0)
+        .await
+        .expect("15000 fits the reloaded 16384 window");
     let loads = ollama.generates.lock().unwrap()[before..].to_vec();
     assert!(
         loads
@@ -412,6 +423,8 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
             .any(|g| g["model"] == "longctx:q8" && g["prompt"] == "" && g.get("num_ctx").is_none()),
         "{loads:?}"
     );
+    let (_, reloaded) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(reloaded["in_force"]["prompt_cap"], 15000, "{reloaded}");
     // A load that leaves the window unreported is refused, not given the
     // 32768 defaults: the model was measured, so an unknown window is a failure.
     *ollama.longctx_window.lock().unwrap() = 0;

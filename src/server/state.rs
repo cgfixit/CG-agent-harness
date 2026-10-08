@@ -285,33 +285,15 @@ impl AppState {
         self.probe_window(model).await
     }
 
-    /// Before a turn, research run or reload sizes its limits: re-read
+    /// Before a turn, research run, reload or profile sizes its limits: re-read
     /// `/api/ps` now, ignoring the cache, when `model` has a tuning (its caps
     /// follow the verified window). Untuned, the caps are the defaults and
-    /// nothing is read.
-    /// If Ollama answers that the model is not loaded (after a restart or a
-    /// keep_alive expiry), it is loaded first with the bounded warmup request,
-    /// then read again, so its caps follow the window it will actually serve.
+    /// nothing is read. Read-only: a model Ollama does not report loaded gets
+    /// the defaults here, and [`Self::ensure_window_allows`] loads it later,
+    /// under the caller's generation gate.
     pub async fn verify_window(&self, model: &str) {
-        if self.tuning_for(model).is_none() {
-            return;
-        }
-        if self.probe_window_state(model).await == crate::llm::ollama::LoadedWindow::NotLoaded {
-            let Some(native) = crate::llm::ollama::native_base_url(&self.chat.base_url) else {
-                return;
-            };
-            let keep_alive =
-                crate::llm::ollama::clamped(&self.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
-            let timeout = Duration::from_secs(crate::llm::ollama::clamped(
-                &self.cfg,
-                "models.local_llm.warmup.timeout_sec",
-                30,
-                1,
-                120,
-            ));
-            if crate::llm::ollama::load_model(&native, model, keep_alive, timeout).await {
-                self.probe_window_state(model).await;
-            }
+        if self.tuning_for(model).is_some() {
+            self.probe_window_state(model).await;
         }
     }
 
@@ -319,14 +301,19 @@ impl AppState {
     /// verified window: re-read `/api/ps` and refuse the call if the window
     /// Ollama reports no longer allows `prompt_limit` and `web_total`, so a
     /// restart with a different window mid-turn cannot truncate the prompt.
-    /// A tuned model's window was measured, so one Ollama no longer reports
-    /// even after a load is refused too, not treated as the 32768 defaults.
+    /// Callers hold the generation gate, so a model Ollama reports not loaded
+    /// (a restart, a keep_alive expiry) is loaded here with the bounded warmup
+    /// request and read again: the check uses the window it will actually serve.
+    /// A tuned model's window was measured, so one Ollama still does not report
+    /// is refused too, not treated as the 32768 defaults.
     /// An untuned model has the default caps and returns at once without a read.
     pub async fn ensure_window_allows(&self, model: &str, prompt_limit: u64, web_total: u64) -> Result<()> {
         if self.tuning_for(model).is_none() {
             return Ok(());
         }
-        self.verify_window(model).await;
+        if self.probe_window_state(model).await == crate::llm::ollama::LoadedWindow::NotLoaded {
+            self.load_for_window(model).await;
+        }
         let Some(window) = self.verified_window(model) else {
             return Err(HarnessError::new(
                 WINDOW_CHANGED,
@@ -349,6 +336,24 @@ impl AppState {
                  Send it again: limits now follow the window Ollama reports."
             ),
         ))
+    }
+
+    /// Load `model` with the bounded warmup request, then read its window.
+    async fn load_for_window(&self, model: &str) {
+        let Some(native) = crate::llm::ollama::native_base_url(&self.chat.base_url) else {
+            return;
+        };
+        let keep_alive = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
+        let timeout = Duration::from_secs(crate::llm::ollama::clamped(
+            &self.cfg,
+            "models.local_llm.warmup.timeout_sec",
+            30,
+            1,
+            120,
+        ));
+        if crate::llm::ollama::load_model(&native, model, keep_alive, timeout).await {
+            self.probe_window_state(model).await;
+        }
     }
 
     /// One bounded `/api/ps` read for `model`, cached (failures too).

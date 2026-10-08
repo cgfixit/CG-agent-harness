@@ -206,18 +206,21 @@ pub fn propose(
         set_path(&mut candidate, key, value);
         values.push(json!({"key": key, "current": current(key), "proposed": value}));
     }
+    // The timeout is installed as proposed, but budgets apply as
+    // min(configured, proposed): size it for the budgets that will be in force.
     if let Some(seconds) = speed.and_then(|speed| {
-        let proposed = |key: &str| {
+        let in_force = |key: &str| {
             values
                 .iter()
                 .find(|row| row["key"] == key)
                 .and_then(|row| row["proposed"].as_u64())
+                .map(|proposed| proposed.min(current(key)))
         };
         derived_timeout(
             speed,
-            proposed("chat.compact_prompt_tokens")?,
-            compaction::reply_reservation(backend, proposed_reply),
-            proposed("web.chat_tool_calls").unwrap_or(0),
+            in_force("chat.compact_prompt_tokens")?,
+            compaction::reply_reservation(backend, proposed_reply.min(current("models.local_llm.max_tokens"))),
+            in_force("web.chat_tool_calls").unwrap_or(0),
         )
     }) {
         let configured = cfg
@@ -539,6 +542,24 @@ mod tests {
         assert_eq!(value(&previous, "web.total_tokens"), 112_000);
         assert_eq!(value(&previous, "chat.compact_prompt_tokens"), 96_000);
         assert!(previous["notes"].to_string().contains("stop growing"), "{previous}");
+    }
+
+    #[test]
+    fn the_timeout_follows_the_budgets_in_force_not_larger_proposals() {
+        let cfg = shipped().unwrap();
+        let web = Limits::load(&cfg).unwrap();
+        let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
+        let none = backend(Some("none"));
+        let shipped_size = propose(&loaded(TUNED_WINDOW), Some(&speed), &cfg, &web, &none);
+        let large = propose(&loaded(131_072), Some(&speed), &cfg, &web, &none);
+        // The larger proposals are not applied over the shipped config (budgets
+        // only tighten), so the timeout is sized for the same in-force budgets.
+        assert!(value(&large, "chat.compact_prompt_tokens") > value(&shipped_size, "chat.compact_prompt_tokens"));
+        assert_eq!(
+            value(&large, "models.local_llm.timeout_sec"),
+            value(&shipped_size, "models.local_llm.timeout_sec"),
+            "{large}"
+        );
     }
 
     #[test]
