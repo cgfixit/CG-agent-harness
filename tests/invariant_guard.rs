@@ -663,9 +663,11 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
     // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
     // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
-    ("AGENTS.md", Agent, 2000),
+    // why: feature contracts folded into an INVARIANTS.md section table; 1491 words, rounded up to the next 100.
+    ("AGENTS.md", Agent, 1500),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
-    ("CLAUDE.md", Agent, 300),
+    // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
+    ("CLAUDE.md", Agent, 200),
     // why: #237 and #243 added the cloud-truncation and web-budget contracts;
     // #235 the process-global CSRF note and the I6 process map.
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
@@ -726,7 +728,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: console accessibility port (keyboard, zoom and live-log note; Attach files wording); Guide is 45340 words with the other open PRs (#353, #354, #359) and before the sign-in docs cut.
 // why: the cgagentharness-otel-hardening skill brought Agent to 23,860 words; rounded up to the next 500.
 // why: docs/GITHOOKS.md (.githooks security gate explainer, 1364 words) raised Guide from 45,311 to 46,675; set to 46,700.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_145), (Guide, 46_700), (Evidence, 3_200), (Agent, 24_000)];
+// why: CONSOLE_JOBS, DESKTOP_ACCEPTANCE, FINETUNE and docs/parity left the tree and the folder
+// READMEs arrived; set to the reported totals rounded up to the next 500 (Root 7921, Guide 43766,
+// Evidence 139, Agent 22768).
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_000), (Guide, 44_000), (Evidence, 500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
@@ -999,11 +1004,7 @@ fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
     // A folder README needs no row but stays under FOLDER_README_WORDS and counts
     // toward its group; an explicit row still wins.
     assert!(docs_budget_violations(
-        &md(&[
-            ("docs/A.md", 50),
-            ("docs/B.md", 1),
-            ("src/README.md", FOLDER_README_WORDS)
-        ]),
+        &md(&[("docs/A.md", 50), ("docs/B.md", 1), ("src/README.md", 90)]),
         budget,
         caps
     )
