@@ -228,7 +228,9 @@ pub fn propose(
             let tools =
                 compaction::estimate_tokens(&serde_json::to_string(&super::chat_web::tools()).unwrap_or_default());
             let reservation = compaction::reply_reservation(backend, proposed_reply);
-            if let Some(warning) = compaction::web_budget_warning(limits.total_tokens, reservation, tools) {
+            // At this window the proposal is the ceiling; only a larger window raises it.
+            let raise = compaction::WebRaise::for_budget(limits.total_tokens, limits.total_tokens, Some(window));
+            if let Some(warning) = compaction::web_budget_warning(limits.total_tokens, reservation, tools, raise) {
                 state = "not_viable";
                 notes.push(format!("Web chat would not fit at this window: {warning}"));
             }

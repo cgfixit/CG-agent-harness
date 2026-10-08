@@ -78,19 +78,60 @@ pub fn web_prompt_limit(web_total_tokens: u64, reservation: u64) -> u64 {
     web_total_tokens.saturating_sub(reservation)
 }
 
+/// What, if anything, can make more `web.total_tokens` available, so a remedy
+/// never suggests a change that cannot help.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebRaise {
+    /// The budget in force is below every ceiling: raise the setting.
+    Config,
+    /// It is at its ceiling, and a measured window below [`MAX_WINDOW`] (or none
+    /// yet) can still lift that ceiling.
+    LargerWindow,
+    /// It is at a ceiling that no longer grows.
+    Nothing,
+}
+
+impl WebRaise {
+    /// `in_force` is the budget chat uses, `ceiling` the most it can be for this
+    /// model (window cap, lowered to any tuned budget), `window` the measured one.
+    pub fn for_budget(in_force: u64, ceiling: u64, window: Option<u64>) -> Self {
+        if in_force < ceiling {
+            Self::Config
+        } else if window.is_none_or(|window| window < MAX_WINDOW) {
+            Self::LargerWindow
+        } else {
+            Self::Nothing
+        }
+    }
+
+    fn clause(self) -> &'static str {
+        match self {
+            Self::Config => "raise web.total_tokens, ",
+            Self::LargerWindow => "let models.local_llm.auto_tune measure a larger window, ",
+            Self::Nothing => "",
+        }
+    }
+}
+
 /// Why web-enabled chat cannot fit a usable prompt with these settings, if it
 /// cannot: under [`MIN_PROMPT_HEADROOM`] input tokens remain once both replies
 /// and the tool definitions are reserved, and the system prompt alone can fill that.
-pub fn web_budget_warning(web_total_tokens: u64, reservation: u64, tool_tokens: u64) -> Option<String> {
+pub fn web_budget_warning(
+    web_total_tokens: u64,
+    reservation: u64,
+    tool_tokens: u64,
+    raise: WebRaise,
+) -> Option<String> {
     let input = web_prompt_limit(web_total_tokens, reservation)
         .saturating_sub(reservation)
         .saturating_sub(tool_tokens);
+    let raise = raise.clause();
     (input < MIN_PROMPT_HEADROOM).then(|| {
         format!(
             "web.total_tokens {web_total_tokens} leaves {input} prompt tokens for web-enabled chat after two \
              {reservation}-token reply reservations (from models.local_llm.max_tokens) and {tool_tokens} tokens of \
              tool definitions; below {MIN_PROMPT_HEADROOM}, web chat refuses almost every message. Lower \
-             models.local_llm.max_tokens, raise web.total_tokens, or turn web off"
+             models.local_llm.max_tokens, {raise}or turn web off"
         )
     })
 }
@@ -98,8 +139,9 @@ pub fn web_budget_warning(web_total_tokens: u64, reservation: u64, tool_tokens: 
 /// [`web_budget_warning`] for a configured `web.total_tokens`, checked at the
 /// budget chat will use until `auto_tune` measures a larger window.
 pub fn configured_web_budget_warning(configured: u64, reservation: u64, tool_tokens: u64) -> Option<String> {
-    let held = configured.min(web_total_cap(None));
-    let warning = web_budget_warning(held, reservation, tool_tokens)?;
+    let cap = web_total_cap(None);
+    let held = configured.min(cap);
+    let warning = web_budget_warning(held, reservation, tool_tokens, WebRaise::for_budget(held, cap, None))?;
     Some(if held < configured {
         format!(
             "{warning} (web.total_tokens {configured} is held at {held} until models.local_llm.auto_tune measures a window above {BASE_WINDOW})"
@@ -152,23 +194,21 @@ pub fn turn_prompt_limit(
 
 /// What to change when a prompt exceeds `limit`, bound by `source`. Raising
 /// `chat.compact_prompt_tokens` is suggested only while the limit is under `cap`,
-/// and raising `web.total_tokens` only while it is under its window cap.
+/// and a larger web budget only in the way `web_raise` says can work.
 pub fn prompt_limit_remedy(
     source: &str,
     limit: u64,
     cap: u64,
-    web_at_cap: bool,
+    web_raise: WebRaise,
     reply_setting: &str,
     web_chat: bool,
 ) -> String {
     let below_cap = limit < cap;
     match source {
-        "web.total_tokens" if web_at_cap => format!(
-            "shorten the message, lower {reply_setting}, turn web off, or let models.local_llm.auto_tune measure a larger window"
+        "web.total_tokens" => format!(
+            "shorten the message, lower {reply_setting}, {}or turn web off",
+            web_raise.clause()
         ),
-        "web.total_tokens" => {
-            format!("shorten the message, lower {reply_setting}, raise web.total_tokens, or turn web off")
-        }
         "chat.compact_prompt_tokens" if below_cap => "shorten the message or raise chat.compact_prompt_tokens".into(),
         "chat.compact_prompt_tokens" => format!("shorten the message or lower {reply_setting}"),
         _ if web_chat => format!("shorten the message, lower {reply_setting}, or turn web off"),
@@ -401,14 +441,14 @@ mod tests {
     fn web_prompt_limit_reserves_the_reply_once_on_top_of_the_projection() {
         // Shipped web budget with a doubled reservation (MLX / LM Studio, max_tokens 4096).
         assert_eq!(web_prompt_limit(28_000, 8_192), 19_808);
-        assert!(web_budget_warning(28_000, 8_192, 272).is_none());
-        let warning = web_budget_warning(16_000, 8_192, 272).unwrap();
+        assert!(web_budget_warning(28_000, 8_192, 272, WebRaise::Config).is_none());
+        let warning = web_budget_warning(16_000, 8_192, 272, WebRaise::Config).unwrap();
         assert!(warning.contains("models.local_llm.max_tokens") && warning.contains("web.total_tokens"));
         // Exactly MIN_PROMPT_HEADROOM input tokens after both replies and the tools is usable.
         let usable = 2 * 8_192 + 272 + MIN_PROMPT_HEADROOM;
-        assert!(web_budget_warning(usable, 8_192, 272).is_none());
-        assert!(web_budget_warning(usable - 1, 8_192, 272).is_some());
-        assert!(web_budget_warning(0, 8_192, 272).is_some());
+        assert!(web_budget_warning(usable, 8_192, 272, WebRaise::Config).is_none());
+        assert!(web_budget_warning(usable - 1, 8_192, 272, WebRaise::Config).is_some());
+        assert!(web_budget_warning(0, 8_192, 272, WebRaise::Config).is_some());
     }
 
     #[test]
@@ -428,7 +468,7 @@ mod tests {
         let room = web_prompt_limit(32_000, 25_904);
         let (limit, source) = prompt_limit(24_000, MAX_PROMPT_TOKENS, Some(room), MAX_PROMPT_TOKENS, chat);
         assert_eq!((limit, source), (MAX_PROMPT_TOKENS, chat));
-        let remedy = prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, false, chat, true);
+        let remedy = prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, WebRaise::Config, chat, true);
         assert_eq!(
             remedy,
             "shorten the message, lower models.local_llm.max_tokens, or turn web off"
@@ -437,7 +477,7 @@ mod tests {
         let (limit, source) = prompt_limit(40_000, MAX_PROMPT_TOKENS, None, 8_288, chat);
         assert_eq!((limit, source), (MAX_PROMPT_TOKENS, "chat.compact_prompt_tokens"));
         assert_eq!(
-            prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, false, chat, false),
+            prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, WebRaise::Config, chat, false),
             "shorten the message or lower models.local_llm.max_tokens"
         );
         // Under the cap, raising the configured limit lifts a floor-bound limit too.
@@ -445,32 +485,74 @@ mod tests {
         let (limit, source) = prompt_limit(8_000, MAX_PROMPT_TOKENS, None, 12_288, loop_setting);
         assert_eq!((limit, source), (12_288, loop_setting));
         assert_eq!(
-            prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, false, loop_setting, false),
+            prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, WebRaise::Config, loop_setting, false),
             "shorten the message, lower api.harness_loop_rate_limit.max_tokens, or raise chat.compact_prompt_tokens"
         );
         assert_eq!(
-            prompt_limit_remedy(source, MAX_PROMPT_TOKENS, MAX_PROMPT_TOKENS, false, loop_setting, false),
+            prompt_limit_remedy(
+                source,
+                MAX_PROMPT_TOKENS,
+                MAX_PROMPT_TOKENS,
+                WebRaise::Config,
+                loop_setting,
+                false
+            ),
             "shorten the message or lower api.harness_loop_rate_limit.max_tokens"
         );
-        assert!(
-            prompt_limit_remedy("web.total_tokens", 15_096, MAX_PROMPT_TOKENS, false, chat, true)
-                .contains("raise web.total_tokens")
-        );
+        assert!(prompt_limit_remedy(
+            "web.total_tokens",
+            15_096,
+            MAX_PROMPT_TOKENS,
+            WebRaise::Config,
+            chat,
+            true
+        )
+        .contains("raise web.total_tokens"));
         assert_eq!(
             prompt_limit_remedy(
                 "chat.compact_prompt_tokens",
                 24_000,
                 MAX_PROMPT_TOKENS,
-                false,
+                WebRaise::Config,
                 chat,
                 true
             ),
             "shorten the message or raise chat.compact_prompt_tokens"
         );
         // web.total_tokens already at its window cap: raising it cannot help.
-        let at_cap = prompt_limit_remedy("web.total_tokens", 15_096, MAX_PROMPT_TOKENS, true, chat, true);
+        let at_cap = prompt_limit_remedy(
+            "web.total_tokens",
+            15_096,
+            MAX_PROMPT_TOKENS,
+            WebRaise::LargerWindow,
+            chat,
+            true,
+        );
         assert!(!at_cap.contains("raise web.total_tokens"), "{at_cap}");
         assert!(at_cap.contains("measure a larger window"), "{at_cap}");
+        // At the largest window the caps scale to, nothing can raise the budget.
+        let top = prompt_limit_remedy(
+            "web.total_tokens",
+            15_096,
+            MAX_PROMPT_TOKENS,
+            WebRaise::Nothing,
+            chat,
+            true,
+        );
+        assert_eq!(
+            top,
+            "shorten the message, lower models.local_llm.max_tokens, or turn web off"
+        );
+        assert_eq!(WebRaise::for_budget(28_000, 32_000, None), WebRaise::Config);
+        assert_eq!(WebRaise::for_budget(32_000, 32_000, None), WebRaise::LargerWindow);
+        assert_eq!(
+            WebRaise::for_budget(56_000, 56_000, Some(65_536)),
+            WebRaise::LargerWindow
+        );
+        assert_eq!(
+            WebRaise::for_budget(112_000, 112_000, Some(MAX_WINDOW)),
+            WebRaise::Nothing
+        );
         // The turn limit is prompt_limit over the reservation + headroom + tools floor.
         assert_eq!(
             turn_prompt_limit(24_000, MAX_PROMPT_TOKENS, Some(28_000), 4_096, 272, chat),
@@ -487,7 +569,14 @@ mod tests {
             (40_000, "chat.compact_prompt_tokens")
         );
         assert_eq!(
-            prompt_limit_remedy("chat.compact_prompt_tokens", MAX_PROMPT_TOKENS, cap, false, chat, false),
+            prompt_limit_remedy(
+                "chat.compact_prompt_tokens",
+                MAX_PROMPT_TOKENS,
+                cap,
+                WebRaise::Config,
+                chat,
+                false
+            ),
             "shorten the message or raise chat.compact_prompt_tokens"
         );
     }
@@ -497,6 +586,9 @@ mod tests {
         // A doubled 12952-token reservation: 128000 would fit, but 32000 is what applies.
         let warning = configured_web_budget_warning(128_000, 25_904, 272).expect("32000 cannot fit two replies");
         assert!(warning.contains("held at 32000"), "{warning}");
+        // Raising the setting cannot help; a larger measured window can.
+        assert!(!warning.contains("raise web.total_tokens"), "{warning}");
+        assert!(warning.contains("measure a larger window"), "{warning}");
         assert!(configured_web_budget_warning(28_000, 8_192, 272).is_none());
         let plain = configured_web_budget_warning(16_000, 8_192, 272).unwrap();
         assert!(!plain.contains("held at"), "{plain}");
