@@ -38,8 +38,8 @@ curl --fail --silent --show-error http://127.0.0.1:11434/api/generate \
 curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 ```
 
-`/api/ps` must report `context_length` **32768**; chat warns when a turn
-exceeds the loaded window. Otherwise keep `web.total_tokens: 16000` and
+`/api/ps` must report `context_length` ≥ **32768**; chat warns when
+a turn exceeds it. Otherwise keep `web.total_tokens: 16000` and
 `web.evidence_tokens: 3000` in the home `config.yaml`.
 
 Choose the **exact installed identifier**. The acceptance Mac had `qwen3.8:27b`

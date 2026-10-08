@@ -836,7 +836,7 @@ async fn chat_inner(
         let web_raise = crate::server::compaction::WebRaise::for_budget(
             web.limits.total_tokens,
             state.web_total_ceiling(&model),
-            state.tuning_for(&model).map(|tuning| tuning.window),
+            state.verified_window(&model),
         );
         // Name the setting that actually bounds this prompt: "start a new session"
         // cannot help when the system prompt and reply reservation fill the limit.
