@@ -437,6 +437,8 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
             "save",
             "remember",
             "proposals",
+            "facts",
+            "status",
         ],
         "api" => &["set", "clear"],
         "model" => &["list", "use", "profile"],
@@ -564,7 +566,7 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
     // Validate fixed operands before console dispatch so ignored extra text
     // cannot authorize an action. Keep free-form command payloads intact.
     let max_args = match (cmd, sub) {
-        ("memory", Some("on" | "off" | "clear" | "proposals"))
+        ("memory", Some("on" | "off" | "clear" | "proposals" | "facts" | "status"))
         | ("soul", Some("on" | "off" | "edit" | "propose"))
         | ("skill", Some("clear"))
         | ("web", Some("on" | "off" | "inject" | "forget" | "cancel"))
@@ -755,8 +757,26 @@ mod tests {
             "/memory proposals and then clear",
             "/memory retrieve --help",
             "/memory retrieve --dry-run private preference",
+            "/memory facts clear",
+            "/memory facts --help",
+            "/memory status off",
+            "/memory please facts",
+            "/memory my facts",
+            "/mem facts",
         ] {
             assert!(!parse_line(line).dispatch, "{line:?}");
+        }
+        for (line, sub) in [
+            ("/memory facts", "facts"),
+            ("/MEMORY FACTS", "facts"),
+            ("  /memory   status ", "status"),
+        ] {
+            let parsed = parse_line(line);
+            assert!(parsed.dispatch, "{line:?}");
+            assert_eq!(parsed.confidence, 100, "{line:?}");
+            assert_eq!(parsed.sub.as_deref(), Some(sub), "{line:?}");
+            assert_eq!(parsed.canonical.as_deref(), Some(format!("/memory {sub}").as_str()));
+            assert!(!is_mutation("memory", Some(sub)), "{line:?}");
         }
         for line in [
             "/memory",
@@ -1106,6 +1126,8 @@ mod tests {
             ("/memroy", vec!["/memory"]),
             ("/skil", vec!["/skill", "/skills"]),
             ("/memory cler", vec!["/memory clear"]),
+            ("/memory fact", vec!["/memory facts"]),
+            ("/memory stats", vec!["/memory status"]),
             (
                 "/memory retr notes",
                 vec!["/memory retrieval notes", "/memory retrieve notes"],

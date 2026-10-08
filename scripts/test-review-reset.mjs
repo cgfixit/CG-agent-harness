@@ -34,6 +34,7 @@ vm.runInContext([
   source('async function runSlashMaybeFuzzy(', '/* ── wiring ── */'),
   source('async function watchAgentJob(', 'function showPendingAgentRun('),
   source('function showPendingAgentRun(', "agentPlanInput.addEventListener('change'"),
+  source('function resetAccountView(', "/* mode is 'login', 'setup' or null"),
   source('if (hAuthLogout) {', 'const hAuthSetupBtn'),
 ].join('\n'), context);
 const run = code => vm.runInContext(code, context);

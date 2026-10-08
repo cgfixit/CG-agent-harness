@@ -11,7 +11,7 @@ const html = await readFile(new URL('../assets/static/harness.html', import.meta
 const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
 let persona=''; let clearFails=false, slashMode='dispatch';
-let authFixture=false, signedIn=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
+let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 let automationFixture=null; // null keeps the unknown-path {} reply for the header feature probes
 const headerState='["openAnalytics","openDeliveries","openSchedules"].filter(id=>!document.getElementById(id).hidden).join()';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
@@ -23,6 +23,7 @@ const memoryProposals=[
  {id:'proposal_labeled_reject',revision:'revision_reject',action:'add',category:'pref',content:'Prefer concise answers.',source_episode_ids:['episode_labeled_latest'],status:'pending'},
  {id:'proposal_labeled_old',revision:'revision_old',action:'add',content:'Already decided',status:'applied'}
 ];
+const savedFacts=[{id:'fact_labeled_saved',owner_id:'user_fixture_owner',revision:1,category:'insight',content:'Saved fact <script>throw new Error("unsafe fact")</script>',active:true}];
 const structuredGates={episode_capture:false,explicit_recall:false,retrieval:false,auto_retrieval:false,consolidation:false,auto_consolidation:false,auto_suggest_chat:false,auto_suggest_coding:false};
 const ftsHit={id:'fact_labeled_alpha',revision:1,category:'pref',content:'Prefer metric units in examples.',active:true,score:1,provenance:'fts5',type:'untrusted_background_context'};
 const memoryPayload=()=>({
@@ -58,7 +59,7 @@ const server=createServer(async(req,res)=>{
   if(apiSet){reply({kind:'dispatch',dispatch:true,canonical:'/api set '+apiSet[1],command:'api',sub:'set',rest:apiSet[1]});return;}
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
- if(path==='/api/auth/whoami'){reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
+ if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
  if(path==='/api/auth/setup-status'){reply({needs_password:false,default_password:authFixture&&mustChange});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
@@ -68,7 +69,7 @@ const server=createServer(async(req,res)=>{
   reply({username:authUsername,role:authRole,must_change_password:mustChange},signedIn?200:401);return;
  }
  if(path==='/api/auth/password'){assert.equal(body.current_password,'admin');assert.ok(body.password.length>=12);mustChange=false;reply({changed:true});return;}
- if(path==='/api/auth/logout'){signedIn=false;reply({logged_out:true});return;}
+ if(path==='/api/auth/logout'){if(logoutStatus!==200){reply({detail:{code:'AUTH_REQUIRED',message:'session expired'}},logoutStatus);return;}signedIn=false;reply({logged_out:true});return;}
  if(path==='/api/keys'){
   if(!signedIn || mustChange || authRole!=='admin'){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
   if(req.method==='POST'){if(body.clear?.includes('DEEPAGENT_API_KEY'))savedKey='';if(body.clear?.includes('SERPAPI_API_KEY'))savedSearchKey='';if(body.keys?.DEEPAGENT_API_KEY)savedKey=body.keys.DEEPAGENT_API_KEY;if(body.keys?.SERPAPI_API_KEY)savedSearchKey=body.keys.SERPAPI_API_KEY;}
@@ -125,7 +126,11 @@ const server=createServer(async(req,res)=>{
   reply(memoryPayload());return;
  }
  if(path==='/api/memory/add'||path==='/api/memory/forget'||path==='/api/memory/clear'){reply(memoryPayload());return;}
- if(path==='/api/structured-memory'){reply({enabled:structuredOpen,limits:{max_reason_chars:1000}});return;}
+ if(path==='/api/structured-memory'){reply({enabled:structuredOpen,fact_count:structuredOpen?savedFacts.length:0,pending_proposal_count:structuredOpen?memoryProposals.filter(p=>p.status==='pending').length:0,limits:{max_reason_chars:1000,max_facts_per_owner:64}});return;}
+ if(path==='/api/structured-memory/facts'&&req.method==='GET'){
+  if(!structuredOpen){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured memory is disabled'}},409);return;}
+  reply({owner_id:'user_fixture_owner',facts:savedFacts,count:savedFacts.length,search:false,retrieval:false,fts:false});return;
+ }
  if(path==='/api/structured-memory/facts'&&req.method==='POST'){
   if(!structuredOpen){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured memory is disabled'}},409);return;}
   assert.equal(req.headers['x-cyclaw-csrf'],'fixture');assert.equal(body.confirm,true);assert.ok(body.reason.trim());
@@ -145,7 +150,9 @@ const server=createServer(async(req,res)=>{
   const proposal=memoryProposals.find(p=>p.id===path.split('/').at(-1));
   assert.equal(req.method,'POST');assert.equal(req.headers['x-cyclaw-csrf'],'fixture');
   assert.equal(body.confirm,true);assert.ok(body.reason.trim());assert.equal(body.revision,proposal.revision);
-  proposal.status=body.apply?'applied':'rejected';reply(proposal);return;
+  proposal.status=body.apply?'applied':'rejected';
+  if(body.apply&&proposal.action==='add')savedFacts.unshift({id:'fact_from_'+proposal.id,owner_id:'user_fixture_owner',revision:1,category:proposal.category,content:proposal.content,active:true});
+  reply(proposal);return;
  }
  if(path==='/api/structured-memory/gates'){
   if(req.method==='POST'){
@@ -394,6 +401,25 @@ try {
  await send('/memory on');
  assert.equal(requests.filter(r=>r[1]==='/api/structured-memory/gates').length,beforeMemoryOn,'/memory on must not flip structured gates');
  assert.equal(structuredGates.retrieval,false);
+ for(const line of ['/memory','/memory status']){
+  await evaluate('document.getElementById("stream").replaceChildren()');
+  await send(line);
+  await until('document.getElementById("stream").innerText.includes("pending proposals")');
+  const readout=await evaluate('document.getElementById("stream").innerText');
+  assert.equal(readout.includes('RAG'),false,line+' must not show the always-false RAG rows');
+  assert.equal(readout.includes('undefined'),false,line+' must not render missing fields');
+  assert.ok(readout.includes('1 / 64'),line+' shows the owner fact count against the cap');
+ }
+ const factReads=()=>requests.filter(r=>r[0]==='GET'&&r[1]==='/api/structured-memory/facts').length;
+ const nonParsePosts=()=>requests.filter(r=>r[0]==='POST'&&r[1]!=='/api/slash/parse').length;
+ const beforeFactsWrites=nonParsePosts();
+ await evaluate('document.getElementById("stream").replaceChildren()');
+ await send('/memory facts');
+ await until('document.getElementById("stream").innerText.includes("fact_labeled_saved")');
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("<script>throw")'),'fact content renders as literal text');
+ assert.equal(await evaluate('document.querySelectorAll("#stream script").length'),0,'fact content must stay inert text');
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("not pinned notes")'));
+ assert.equal(nonParsePosts(),beforeFactsWrites,'/memory facts is read-only');
  const gateCommands=[['capture','episode_capture'],['recall','explicit_recall'],['retrieval','retrieval'],['auto-retrieve','auto_retrieval'],['consolidation','consolidation'],['auto-consolidate','auto_consolidation'],['auto-suggest-chat','auto_suggest_chat'],['auto-suggest-coding','auto_suggest_coding']];
  for(const [command,gate] of gateCommands){await send('/memory '+command+' on');assert.equal(structuredGates[gate],true,command+' on must persist the mapped gate');}
  for(const [command,gate] of gateCommands.toReversed()){await send('/memory '+command+' off');assert.equal(structuredGates[gate],false,command+' off must persist the mapped gate');}
@@ -426,10 +452,16 @@ try {
  await send('/memory proposals');
  await until('document.getElementById("pane-memory").textContent.includes("store is closed")');
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory form").length'),0);
+ const closedFactReads=factReads();
+ await send('/memory facts');
+ assert.ok(await evaluate('document.getElementById("stream").innerText.includes("store is closed; no facts to list")'));
+ assert.equal(factReads(),closedFactReads,'a closed store is reported without reading facts');
  structuredOpen=true;
  await send('/memory proposals');
  await until('document.querySelectorAll("#pane-memory form").length === 2');
- assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0,'proposal content must stay inert text');
+ await until('document.getElementById("pane-memory").textContent.includes("Saved facts (1)")');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory section form, #pane-memory section button").length'),0,'saved facts are listed read-only, outside the proposal forms');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0,'proposal and fact content must stay inert text');
  const decisions=()=>requests.filter(r=>r[0]==='POST'&&r[1].startsWith('/api/structured-memory/proposals/'));
  await evaluate('document.querySelector("#pane-memory form button").click()');
  assert.equal(decisions().length,0,'empty reason cannot apply');
@@ -437,6 +469,10 @@ try {
  assert.equal(decisions().length,0,'whitespace reason cannot apply');
  await evaluate('document.querySelector("#pane-memory form input").value="Reviewed preference";document.querySelector("#pane-memory form button").click()');
  await until('document.getElementById("pane-memory").textContent.includes("Proposal applied.")');
+ assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("/memory facts lists it")'),'Apply names where the fact went');
+ await until('document.getElementById("pane-memory").textContent.includes("Saved facts (2)")');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts").length'),1,'Apply re-lists saved facts in place');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0,'an applied fact stays inert text');
  assert.equal(decisions().at(-1)[2].apply,true);
  await evaluate('document.querySelectorAll("#pane-memory form")[1].querySelector("input").value="Not durable";document.querySelectorAll("#pane-memory form")[1].querySelectorAll("button")[1].click()');
  await until('document.getElementById("pane-memory").textContent.includes("Proposal rejected.")');
@@ -448,6 +484,8 @@ try {
  suggestionRun={...suggestionRun,state:'failed',error_class:'STRUCTURED_MEMORY_SCHEMA'};
  await evaluate('refreshMemoryProposals()');
  assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("STRUCTURED_MEMORY_SCHEMA")'));
+ await evaluate('Promise.all([refreshMemoryProposals(),refreshMemoryProposals()])');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts").length'),1,'overlapping refreshes leave one saved-facts section');
  await evaluate('finishChat({reply:"synthetic reply",model:"mock",memory_suggestion:{queued:true}})');
  assert.ok(await evaluate('document.getElementById("stream").textContent.includes("queued, not yet a proposal")'));
  await evaluate(`document.querySelector('[data-pane="commands"]').click()`);
@@ -646,6 +684,31 @@ try {
  await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
  // The cleared SerpAPI row already reads "Saved: unset", so wait on this row's status (the <p> before its input).
  await until('document.getElementById("saved-DEEPAGENT_API_KEY")?.previousElementSibling?.textContent.startsWith("Saved: unset")');assert.equal(savedKey,'');
+ // An expired session rejects logout (401); the Memory pane must still be cleared before anyone signs in again.
+ await send('/memory facts');
+ await until('document.getElementById("stream").innerText.includes("fact_labeled_saved")');
+ await send('/memory proposals');
+ await until('document.getElementById("pane-memory").textContent.includes("Saved facts (2)")');
+ await evaluate('currentSession="session_fixture_prior";sessionGoal="Prior goal";document.getElementById("input").value="unsent draft"');
+ // The follow-up whoami probe also fails here, so the reset must not depend on it.
+ signedIn=false;logoutStatus=401;whoamiDrop=true;
+ await evaluate('document.getElementById("hAuthLogout").click()');
+ await until('document.getElementById("hAuthWho").textContent==="logout rejected (401)"');
+ assert.equal(await evaluate('document.getElementById("pane-memory").childElementCount'),0,'a 401 logout clears facts even when the follow-up probe fails');
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("fact_labeled_saved")'),false);
+ assert.equal(await evaluate('currentSession'),null,'a 401 logout drops the session even when the follow-up probe fails');
+ whoamiDrop=false;
+ await evaluate('refreshHarnessAuth()');
+ await until('!document.getElementById("hAuthLoginBox").hidden');
+ assert.equal(await evaluate('document.getElementById("pane-memory").childElementCount'),0,'a rejected logout still clears account-private facts');
+ assert.equal(await evaluate('document.getElementById("stream").innerText.includes("fact_labeled_saved")'),false,'a rejected logout still clears listed facts from the transcript');
+ assert.equal(await evaluate('currentSession'),null,'a rejected logout drops the active session like a successful one');
+ assert.equal(await evaluate('sessionGoal'),'');assert.equal(await evaluate('document.getElementById("input").value'),'');
+ assert.equal(await evaluate('document.getElementById("sSession").textContent'),'none');
+ logoutStatus=200;
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ await until('document.getElementById("hAuthLoginBox").hidden');
+ assert.equal(await evaluate('document.getElementById("pane-memory").textContent.includes("Saved facts")'),false,'the next sign-in starts with an empty Memory pane');
  await send('/agent run codex/logout Reviewed before logout');
  await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}; reviewedPRBodies.set("old", "body"); prBodyTarget="old"');
  await evaluate('document.getElementById("hAuthLogout").click()');
@@ -673,7 +736,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }
