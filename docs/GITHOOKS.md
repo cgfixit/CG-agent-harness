@@ -6,9 +6,8 @@ for any person or coding agent (Claude Code, Codex, Grok, Kimi, Copilot,
 Cursor, aider) that commits through `git` in a clone where it is installed.
 
 It is a speed bump, not a boundary. CI secret scanning (`gitleaks.yml`) and
-the `main` branch ruleset are the controls. The gate makes the common mistake
-fail at the moment it is cheapest to fix, and tells whoever made it what to
-do next.
+the `main` branch ruleset are the controls. It fails the common mistake early and says
+what to do next.
 
 ## Install (once per clone)
 
@@ -43,17 +42,17 @@ Load order: gate defaults, then `security.conf`, then `private.conf`, then
 
 | Check | pre-commit | pre-push |
 |---|---|---|
-| Credential-shaped strings in added lines: provider prefixes (xAI, Anthropic, OpenAI, GitHub, AWS, Slack, Hugging Face, Google, Telegram, Dropbox, private-key headers), plus `gitleaks` when installed | staged diff | every commit being published |
-| Credential and runtime-state filenames: `.env*`, keys, keystores, `*.db` and its renamed copies, agent session residue (`.aider*`, `settings.local.json`, `*.har`, shell histories) | staged files | every commit being published |
+| Credential-shaped strings in added lines: provider prefixes (xAI, Anthropic, OpenAI incl. legacy `sk-`, Stripe, GitHub, AWS, Slack, Hugging Face, Google, Telegram, Dropbox, private-key headers), plus `gitleaks` when installed | staged diff | every commit being published |
+| Credential and runtime-state filenames (any case): `.env*`, keys, keystores, `*.db` and its renamed copies, agent session residue (`.aider*`, `settings.local.json`, `*.har`, shell histories) | staged files | every commit being published |
 | Your identifiers from `private.conf` | staged diff | every commit being published |
 | Absolute home-directory paths (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\`); placeholder users pass | staged diff | every commit being published |
 | Invisible bidi-override and Unicode tag characters (Trojan Source; hidden instructions in agent files) | staged diff | every commit being published |
 | New file over `SEC_MAX_NEW_FILE_KB` (default 2048); media with GPS/author metadata when `exiftool` is installed | staged | — |
-| Removed `.gitignore` rule | staged | — |
-| Personal address in author/committer (`SEC_AUTHOR_EMAIL_DENY`) | staged | — |
-| Protected control file changed | staged | reminder only |
+| Removed `.gitignore` rule | staged | every commit being published |
+| Personal address in author/committer (`SEC_AUTHOR_EMAIL_DENY`) | every commit | — |
+| Protected control file changed or deleted | staged | reminder only |
 | Push to, or deletion of, `main`/`master` | — | yes |
-| Non-fast-forward push (rewrites published history) | — | yes |
+| Existing tag update; non-fast-forward branch push | — | yes |
 
 Pre-push scans each commit, not the tip against the base: a key added in one
 commit and deleted in the next is still published, so it is still refused.
@@ -70,13 +69,13 @@ This also catches commits made with `--no-verify` or in a clone without hooks.
 | `.gitignore` no longer covers a probe path | `SEC_IGNORE_PROBES` |
 
 Reminder scans skip tests, docs, examples and Markdown. Push repeats only the
-blocking checks; the reminders were already shown at commit time.
+blocking checks.
 
 ## Overrides: operator only
 
 | Variable | Allows |
 |---|---|
-| `HOOK_OPERATOR_ACK=1` | a change to a protected path or a removed `.gitignore` rule |
+| `HOOK_OPERATOR_ACK=1` | a change to or deletion of a protected path, or a removed `.gitignore` rule |
 | `ALLOW_MAIN_PUSH=1` | a direct push to a protected branch |
 | `ALLOW_FORCE_WITH_LEASE=true` | a non-fast-forward push |
 
@@ -124,7 +123,7 @@ The gate sees text, not intent. These rules stay in `AGENTS.md` and review:
 - A clone that never set `core.hooksPath` has no gate.
 - An agent can set an override variable itself. The gate makes that a visible rule violation, not an impossible one.
 - Regex detection misses secrets with no known prefix and low entropy, and flags look-alike fixtures.
-- It does not scan inside archives, images or binaries; it refuses large new files and reminds on media instead.
+- It does not decompress archives or decode images; it refuses large new files and reminds on media instead.
 
 ## Reuse in another repository
 
@@ -142,10 +141,10 @@ Keep `_security.sh` byte-identical across repos, so a fix lands everywhere by co
 and title rules stay in `scripts/check-pr-template.sh` and CI.
 `.githooks/security.conf` adds:
 
-- **Blocked files:** the operator-home spill that `.gitignore` lists (`harness.json`, `soul.md`, `auth.json`, `cli-session.json`, `.CGagentHarness/`, `sessions/`, `tls/`, `soul-history/`, `attachments/`, `notes_corpus/`, `exports/`, `memory/`, `logs/`, `data/agentic/`), so `git add -f` or a home inside the checkout cannot publish it.
+- **Blocked files:** `.githooks/security.local.conf`, the operator-home spill that `.gitignore` lists (`harness.json`, `soul.md`, `auth.json`, `cli-session.json`, `.CGagentHarness/`, `sessions/`, `tls/`, `soul-history/`, `attachments/`, `notes_corpus/`, `exports/`, `memory/`, `logs/`, `data/agentic/`), so `git add -f` or a home inside the checkout cannot publish it.
 - **Protected (ask first):** `.gitleaks.toml`, `deny.toml` (root and `desktop/`), plus the template's `.githooks/*` and agent tool settings.
 - **Core-path reminder:** the CLAUDE.md core paths (`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`, `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`) print a reminder that the PR body needs an invariant statement.
-- **Repo check:** `cargo fmt --all -- --check` when staged files include Rust (the first line of the CI merge gate; skipped without `cargo`).
+- **Repo check:** `cargo fmt --all -- --check` when staged files include Rust (the first line of the CI merge gate; skipped with a notice without `cargo`).
 - **Fixture allowlist:** the synthetic AWS, GitHub and Anthropic values in `src/common/audit.rs`, `tests/common_layer.rs`, `tests/chat_and_sessions.rs` and `.gitleaks.toml`.
 
 The coding pipeline runs `git` with `core.hooksPath` pinned to the null device
