@@ -446,7 +446,10 @@ pub async fn run_from(
     let mut evidence = Vec::new();
     let mut coverage = Coverage::default();
     let mut answer = Answer::default();
-    let workflow = async {
+    // Two deadlines: `research_seconds` bounds discovery and planning, and
+    // `synthesis_seconds` starts only when they finish, so a slow local model's
+    // answer is not cut off by time the crawl already spent.
+    let gather = async {
         // An explicit research request refreshes discovery even if two cached
         // passages happen to match. Cached snippets do not prove site coverage.
         authorize_owner(&state, owner)?;
@@ -522,80 +525,97 @@ pub async fn run_from(
                 }
             }
         }
-        authorize_evidence(&state, &evidence, group, owner)?;
-        if evidence.is_empty() {
-            answer
-                .missing
-                .push("No supporting passage was found within the permitted sources and run budget.".into());
-        } else {
-            let synthesis_input = |evidence: &[Passage]| {
-                json!({"question":question,"evidence":prompt_passages(evidence, web.limits.stale_seconds),"bounded_coverage":{
-                "searched":coverage.searched.len(),"failed":coverage.failed.len(),"refused":coverage.refused.len(),"unvisited":coverage.unvisited.len(),"budget_exhausted":coverage.budget_exhausted},
-                "freshness":"stale:true marks a passage fetched long ago; retrieval time is not publication time. Note it in missing if a claim relies on one."})
-            };
-            // Fit synthesis into what web.total_tokens has left after planning, as
-            // `model_call` estimates it: drop the lowest-ranked passages rather
-            // than lose the whole answer to WEB_TOKEN_BUDGET when a smaller
-            // window's total_tokens sits close to evidence_tokens + model_tokens.
-            // When not even one passage fits, keep them all: `model_call` refuses
-            // without sending, and the operator still gets every passage.
-            let room = web
-                .limits
-                .total_tokens
-                .saturating_sub(spent(&usage))
-                .saturating_sub(web.limits.model_tokens);
-            let synthesis_prompt =
-                |evidence: &[Passage]| estimate(ANSWER_SYSTEM) + estimate(&synthesis_input(evidence).to_string()) + 16;
-            let mut keep = evidence.len();
-            while keep > 1 && synthesis_prompt(&evidence[..keep]) > room {
-                keep -= 1;
-            }
-            if keep < evidence.len() && synthesis_prompt(&evidence[..keep]) <= room {
-                evidence.truncate(keep);
-                warnings.push("WEB_EVIDENCE_TRIMMED".into());
-            }
-            let input = synthesis_input(&evidence);
-            match model_call(
-                &state,
-                owner,
-                "synthesis",
-                ANSWER_SYSTEM,
-                &input,
-                web.limits.model_tokens,
-                web.limits.total_tokens,
-                &mut usage,
-            )
-            .await
-            .and_then(|s| Answer::parse(&s, &evidence))
-            {
-                Ok((a, dropped)) => {
-                    answer = a;
-                    if dropped > 0 {
-                        warnings.push("WEB_CITATION_DROPPED".into());
-                    }
-                }
-                Err(e) => {
-                    warnings.push(e.code);
-                    answer.missing.push(
-                        "The model did not return a valid, attributable answer. Inspect the source passages.".into(),
-                    );
-                }
-            }
-        }
         Ok::<(), crate::common::errors::HarnessError>(())
     };
-    let outcome = tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(web.limits.research_seconds), workflow) => result,
+    let gathered = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(web.limits.research_seconds), gather) => result,
         _ = lease.token.cancelled() => Ok(Err(error("WEB_CANCELLED", "research cancelled"))),
     };
-    match outcome {
+    let synthesized = match gathered {
+        Ok(Ok(())) => {
+            let synthesize = async {
+                authorize_evidence(&state, &evidence, group, owner)?;
+                if evidence.is_empty() {
+                    answer
+                        .missing
+                        .push("No supporting passage was found within the permitted sources and run budget.".into());
+                } else {
+                    let synthesis_input = |evidence: &[Passage]| {
+                        json!({"question":question,"evidence":prompt_passages(evidence, web.limits.stale_seconds),"bounded_coverage":{
+                        "searched":coverage.searched.len(),"failed":coverage.failed.len(),"refused":coverage.refused.len(),"unvisited":coverage.unvisited.len(),"budget_exhausted":coverage.budget_exhausted},
+                        "freshness":"stale:true marks a passage fetched long ago; retrieval time is not publication time. Note it in missing if a claim relies on one."})
+                    };
+                    // Fit synthesis into what web.total_tokens has left after planning, as
+                    // `model_call` estimates it: drop the lowest-ranked passages rather
+                    // than lose the whole answer to WEB_TOKEN_BUDGET when a smaller
+                    // window's total_tokens sits close to evidence_tokens + model_tokens.
+                    // When not even one passage fits, keep them all: `model_call` refuses
+                    // without sending, and the operator still gets every passage.
+                    let room = web
+                        .limits
+                        .total_tokens
+                        .saturating_sub(spent(&usage))
+                        .saturating_sub(web.limits.model_tokens);
+                    let synthesis_prompt = |evidence: &[Passage]| {
+                        estimate(ANSWER_SYSTEM) + estimate(&synthesis_input(evidence).to_string()) + 16
+                    };
+                    let mut keep = evidence.len();
+                    while keep > 1 && synthesis_prompt(&evidence[..keep]) > room {
+                        keep -= 1;
+                    }
+                    if keep < evidence.len() && synthesis_prompt(&evidence[..keep]) <= room {
+                        evidence.truncate(keep);
+                        warnings.push("WEB_EVIDENCE_TRIMMED".into());
+                    }
+                    let input = synthesis_input(&evidence);
+                    match model_call(
+                        &state,
+                        owner,
+                        "synthesis",
+                        ANSWER_SYSTEM,
+                        &input,
+                        web.limits.model_tokens,
+                        web.limits.total_tokens,
+                        &mut usage,
+                    )
+                    .await
+                    .and_then(|s| Answer::parse(&s, &evidence))
+                    {
+                        Ok((a, dropped)) => {
+                            answer = a;
+                            if dropped > 0 {
+                                warnings.push("WEB_CITATION_DROPPED".into());
+                            }
+                        }
+                        Err(e) => {
+                            warnings.push(e.code);
+                            answer.missing.push(
+                                "The model did not return a valid, attributable answer. Inspect the source passages."
+                                    .into(),
+                            );
+                        }
+                    }
+                }
+                Ok::<(), crate::common::errors::HarnessError>(())
+            };
+            tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(web.limits.synthesis_seconds), synthesize) => {
+                    result.map_err(|_| "WEB_SYNTHESIS_TIMEOUT")
+                }
+                _ = lease.token.cancelled() => Ok(Err(error("WEB_CANCELLED", "research cancelled"))),
+            }
+        }
+        Ok(Err(e)) => Ok(Err(e)),
+        Err(_) => Err("WEB_RESEARCH_TIMEOUT"),
+    };
+    match synthesized {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
             warnings.push(e.code);
             answer = Answer::default();
         }
-        Err(_) => {
-            warnings.push("WEB_RESEARCH_TIMEOUT".into());
+        Err(code) => {
+            warnings.push(code.into());
             answer = Answer::default();
         }
     }

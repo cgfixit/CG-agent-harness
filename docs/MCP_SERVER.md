@@ -31,7 +31,7 @@ agent, chat, or loop tool.
 
    Merge these fields into the existing configuration; do not replace other
    sections. All gateway fields are restart-only and outside config reload's
-   22-key allowlist. Port collision or invalid configuration refuses startup.
+   23-key allowlist. Port collision or invalid configuration refuses startup.
 3. Mint a key using the local CLI. Use an existing account's stable `user_id`
    (`GET /api/auth/whoami`, or `GET /api/auth/users` for an administrator), `local` for an intentionally
    auth-disabled home's namespace, or an explicit `user_*` operator namespace:

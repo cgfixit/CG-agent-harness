@@ -78,7 +78,7 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 - Non-secret runtime limits reload through one validated snapshot:
   `POST /api/config/reload` (non-bootstrap admin + CSRF) and SIGHUP on Unix
   `serve` and native sidecars. The allowlist is
-  `src/server/config_reload.rs::RELOADABLE` (22 keys); everything else is
+  `src/server/config_reload.rs::RELOADABLE` (23 keys); everything else is
   restart-only, including `web.concurrency`. Invalid or mixed candidates keep the
   whole old snapshot and audit a refusal. See `docs/CONFIG_RELOAD.md`.
 
