@@ -418,7 +418,7 @@ pub async fn run_from(
     }
     // A web budget above 32000 needs a fresh read of the selected model's window.
     state.verify_window(&state.current_model()).await;
-    let web = state.web_snapshot();
+    let mut web = state.web_snapshot();
     let enabled = state
         .settings
         .lock()
@@ -445,6 +445,11 @@ pub async fn run_from(
         .generation_gate
         .claim("web_research")
         .ok_or_else(|| error("WEB_BUSY", "local model already busy"))?;
+    // With the gate held, wake a tuned model whose keep_alive expired and size
+    // the run for the window it now serves, not the snapshot's 32768 defaults.
+    if state.load_if_absent(&state.current_model()).await {
+        web.limits = state.web_snapshot().limits;
+    }
     let lease = web.research.start(owner)?;
     let start = tokio::time::Instant::now();
     let mut usage = Vec::new();

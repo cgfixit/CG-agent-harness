@@ -707,8 +707,14 @@ async fn chat_inner(
         }
     };
     // With the gate held, wake a tuned model whose keep_alive expired, so this
-    // turn is sized for the window it will serve, not the 32768 defaults.
-    if !cloud_selected && state.load_if_absent(&model).await {
+    // turn is sized for the window it will serve, not the 32768 defaults. A
+    // cold load can take the whole warmup timeout, so /api/chat/cancel ends it.
+    let loaded = tokio::select! {
+        biased;
+        _ = chat_owner.token.cancelled() => return Err(cancelled()),
+        loaded = async { !cloud_selected && state.load_if_absent(&model).await } => loaded,
+    };
+    if loaded {
         web.limits = state.model_web_limits(&model, live.web.clone());
     }
 

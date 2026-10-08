@@ -306,10 +306,32 @@ impl AppState {
     /// request and read again: the check uses the window it will actually serve.
     /// A tuned model's window was measured, so one Ollama still does not report
     /// is refused too, not treated as the 32768 defaults.
-    /// An untuned model has the default caps and returns at once without a read.
+    /// An untuned call within the default caps returns at once without a read.
     pub async fn ensure_window_allows(&self, model: &str, prompt_limit: u64, web_total: u64) -> Result<()> {
+        let within_defaults =
+            prompt_limit <= super::compaction::prompt_cap(None) && web_total <= super::compaction::web_total_cap(None);
         if self.tuning_for(model).is_none() {
-            return Ok(());
+            // Untuned limits never exceed the defaults. A call sized above them
+            // came from a tuning cleared mid-turn (a model switch), so it is
+            // checked against the live window, and refused if there is none.
+            if within_defaults {
+                return Ok(());
+            }
+            return match self.probe_window(model).await {
+                Some(window)
+                    if prompt_limit <= super::compaction::prompt_cap(Some(window))
+                        && web_total <= super::compaction::web_total_cap(Some(window)) =>
+                {
+                    Ok(())
+                }
+                _ => Err(HarnessError::new(
+                    WINDOW_CHANGED,
+                    format!(
+                        "{model} is no longer tuned for the window this request was sized for; nothing was sent. \
+                         Send it again: limits now follow the default window."
+                    ),
+                )),
+            };
         }
         if self.probe_window_state(model).await == crate::llm::ollama::LoadedWindow::NotLoaded {
             self.load_for_window(model).await;

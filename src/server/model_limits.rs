@@ -214,21 +214,22 @@ pub fn propose(
         set_path(&mut candidate, key, value);
         values.push(json!({"key": key, "current": current(key), "proposed": value}));
     }
-    // The timeout is installed as proposed, but budgets apply as
-    // min(configured, proposed): size it for the budgets that will be in force.
+    // The timeout is installed once, but budgets apply as min(configured,
+    // proposed). The prompt and reply settings are restart-only (a restart
+    // tunes again), so size those for what is in force. web.chat_tool_calls
+    // reloads up to the proposal, so size tool rounds for the proposal.
     if let Some(seconds) = speed.and_then(|speed| {
-        let in_force = |key: &str| {
+        let proposed = |key: &str| {
             values
                 .iter()
                 .find(|row| row["key"] == key)
                 .and_then(|row| row["proposed"].as_u64())
-                .map(|proposed| proposed.min(current(key)))
         };
         derived_timeout(
             speed,
-            in_force("chat.compact_prompt_tokens")?,
+            proposed("chat.compact_prompt_tokens")?.min(current("chat.compact_prompt_tokens")),
             compaction::reply_reservation(backend, proposed_reply.min(current("models.local_llm.max_tokens"))),
-            in_force("web.chat_tool_calls").unwrap_or(0),
+            proposed("web.chat_tool_calls").unwrap_or(0),
         )
     }) {
         let configured = cfg
@@ -582,21 +583,28 @@ mod tests {
     }
 
     #[test]
-    fn the_timeout_follows_the_budgets_in_force_not_larger_proposals() {
+    fn the_timeout_covers_in_force_budgets_and_reloadable_tool_calls() {
         let cfg = shipped().unwrap();
         let web = Limits::load(&cfg).unwrap();
         let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
         let none = backend(Some("none"));
         let shipped_size = propose(&loaded(TUNED_WINDOW), Some(&speed), &cfg, &web, &none);
         let large = propose(&loaded(131_072), Some(&speed), &cfg, &web, &none);
-        // The larger proposals are not applied over the shipped config (budgets
-        // only tighten), so the timeout is sized for the same in-force budgets.
+        // The larger prompt and reply proposals are not applied over the
+        // restart-only shipped config (budgets only tighten), so the timeout is
+        // sized for the configured ones. Tool calls reload up to the proposal,
+        // so they are sized for it.
         assert!(value(&large, "chat.compact_prompt_tokens") > value(&shipped_size, "chat.compact_prompt_tokens"));
-        assert_eq!(
-            value(&large, "models.local_llm.timeout_sec"),
-            value(&shipped_size, "models.local_llm.timeout_sec"),
-            "{large}"
+        let expected = derived_timeout(
+            &speed,
+            cfg.u64_or("chat.compact_prompt_tokens", compaction::DEFAULT_PROMPT_TOKENS),
+            compaction::reply_reservation(
+                &none,
+                cfg.u64_or("models.local_llm.max_tokens", compaction::DEFAULT_REPLY_TOKENS),
+            ),
+            value(&large, "web.chat_tool_calls"),
         );
+        assert_eq!(Some(value(&large, "models.local_llm.timeout_sec")), expected, "{large}");
     }
 
     #[test]
