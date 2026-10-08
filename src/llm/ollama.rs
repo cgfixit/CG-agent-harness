@@ -396,7 +396,7 @@ mod tests {
         assert!(model_name_ok("hf.co/user/repo:Q4_K_M"));
         assert!(!pull_name_ok("hf.co/user/repo:Q4_K_M"));
         assert!(!pull_name_ok("registry.example.invalid/ns/model"));
-        assert!(!pull_name_ok("127.0.0.1/ns/model:tag"));
+        assert!(!pull_name_ok("127.0.0.1/ns/model:tag")); // DevSkim: ignore DS162092 because this unit test must refuse a loopback registry host in a pull name.
         assert!(!pull_name_ok("a/b/c/d"));
     }
 
