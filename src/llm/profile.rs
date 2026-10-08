@@ -208,12 +208,12 @@ const MEASURE_TOKENS: u64 = 64;
 /// Fewer prompt tokens than this means a cache hit or a stub: prefill unknown.
 const MIN_SAMPLE_PROMPT_TOKENS: u64 = 64;
 
-/// One raw, bounded generate. The leading nonce defeats prefix caching so the
+/// One raw, bounded generate. The leading random marker defeats prefix caching so the
 /// whole prompt is evaluated. Never `num_ctx`: the server-side window stays.
-pub fn measure_payload(model: &str, keep_alive_sec: u64, nonce: &str) -> Value {
+pub fn measure_payload(model: &str, keep_alive_sec: u64, marker: &str) -> Value {
     json!({
         "model": model,
-        "prompt": format!("{nonce} {MEASURE_TEXT}"),
+        "prompt": format!("{marker} {MEASURE_TEXT}"),
         "raw": true,
         "stream": false,
         "keep_alive": keep_alive_sec,
@@ -254,10 +254,10 @@ pub async fn measure(
         return None;
     }
     let client = http_client(timeout).ok()?;
-    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let marker = uuid::Uuid::new_v4().simple().to_string();
     let request = client
         .post(format!("{native}/api/generate"))
-        .json(&measure_payload(model, keep_alive_sec, &nonce));
+        .json(&measure_payload(model, keep_alive_sec, &marker));
     match bounded_json(request, max_bytes).await {
         Bounded::Json(body) => parse_speed(&body),
         _ => None,
@@ -270,11 +270,11 @@ mod tests {
 
     #[test]
     fn measure_payload_is_raw_bounded_and_never_sets_num_ctx() {
-        let payload = measure_payload("hf.co/unsloth/Qwen3.5-9B-GGUF:Q8_0", 300, "n0nce");
+        let payload = measure_payload("hf.co/unsloth/Qwen3.5-9B-GGUF:Q8_0", 300, "m4rker");
         assert_eq!(payload["raw"], true);
         assert_eq!(payload["stream"], false);
         assert_eq!(payload["options"]["num_predict"], MEASURE_TOKENS);
-        assert!(payload["prompt"].as_str().unwrap().starts_with("n0nce "));
+        assert!(payload["prompt"].as_str().unwrap().starts_with("m4rker "));
         assert!(!payload.to_string().contains("num_ctx"), "{payload}");
     }
 
