@@ -272,6 +272,8 @@ async fn run_inner(
     let mut budget_used = 0u64;
     let definitions = tools();
     let definition_bytes = serde_json::to_vec(&definitions)?.len();
+    let definition_tokens = super::compaction::estimate_tokens(&serde_json::to_string(&definitions)?);
+    let mut peak_extra = 0u64;
     let mut tools_withheld = false;
     let mut initial_prompt_tools = false;
     for turn in 0..=web.limits.chat_tool_calls {
@@ -311,7 +313,11 @@ async fn run_inner(
         if turn == 0 {
             initial_prompt_tools = round_fits;
         }
-        let appended = appended_tokens(&messages[history.len()..]);
+        // A middle round can be the largest request: earlier results plus the
+        // definitions, which the final round may no longer carry.
+        let extra =
+            appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { definition_tokens };
+        peak_extra = peak_extra.max(extra);
         let validate = || check_evidence(state, owner, &sources);
         let response = state
             .chat
@@ -356,7 +362,7 @@ async fn run_inner(
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
             reply.final_prompt_tools = !available.is_empty();
-            reply.appended_prompt_tokens = appended;
+            reply.peak_prompt_extra_tokens = peak_extra;
             return Ok((reply, events));
         }
         let calls = message["tool_calls"]
@@ -562,7 +568,7 @@ async fn run_inner(
                             initial_prompt_tools,
                             // The last model call offered tools: it returned this batch.
                             final_prompt_tools: true,
-                            appended_prompt_tokens: appended,
+                            peak_prompt_extra_tokens: peak_extra,
                         },
                         events,
                     ));

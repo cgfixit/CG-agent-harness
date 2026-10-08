@@ -1087,10 +1087,10 @@ async fn chat_inner(
         let project = |extra| {
             crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", reservation, ratio, extra)
         };
-        // A web turn's last request also carries its tool calls and results.
-        let first = project(if reply.initial_prompt_tools { tool_tokens } else { 0 });
-        let last = project(if reply.final_prompt_tools { tool_tokens } else { 0 } + reply.appended_prompt_tokens);
-        let projected = first.max(last);
+        // The turn's largest request: the first one's tool definitions, or a later
+        // web round's definitions plus the tool calls and results sent so far.
+        let first = if reply.initial_prompt_tools { tool_tokens } else { 0 };
+        let projected = project(first.max(reply.peak_prompt_extra_tokens));
         loaded_window(&state, &model)
             .await
             .filter(|window| projected > *window)

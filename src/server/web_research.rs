@@ -189,9 +189,14 @@ impl Answer {
             .retain(|s| !s.trim().is_empty() && s.chars().count() <= 240);
         answer.missing.truncate(8);
         dropped += before - answer.missing.len();
-        // Filtering that leaves nothing at all is a refused answer, not an empty one.
-        if dropped > 0 && !kept_any && answer.missing.is_empty() {
-            return Err(refused());
+        // An answer with no claim and no limitation, after filtering or as sent
+        // (`{}` now parses), is refused rather than shown as a silent success.
+        if !kept_any && answer.missing.is_empty() {
+            return Err(if dropped > 0 {
+                refused()
+            } else {
+                error("WEB_ANSWER_INVALID", "answer has no claim or limitation")
+            });
         }
         Ok((answer, dropped))
     }
@@ -690,6 +695,18 @@ mod tests {
         // Filtering that leaves no claim and no limitation refuses the answer.
         let emptied = json!({"missing":["", "x".repeat(241)]});
         assert!(Answer::parse(&emptied.to_string(), std::slice::from_ref(&p)).is_err());
+        for empty in ["{}", r#"{"supported":[]}"#] {
+            assert_eq!(
+                Answer::parse(empty, std::slice::from_ref(&p)).unwrap_err().code,
+                "WEB_ANSWER_INVALID",
+                "{empty}"
+            );
+        }
+        assert!(Answer::parse(
+            r#"{"missing":["No passage covers retries."]}"#,
+            std::slice::from_ref(&p)
+        )
+        .is_ok());
         // Only a passage older than stale_seconds is marked stale.
         let fresh = Passage {
             fetched_at: crate::common::now_ts(),

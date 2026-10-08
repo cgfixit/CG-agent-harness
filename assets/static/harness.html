@@ -3223,7 +3223,9 @@ async function runSlash(line, webCommand) {
           sys('a loop turn is already in flight — /loop stop to abort after it returns');
           break;
         }
-        if (!sessionGoal && currentSession) {
+        /* Reload the stored goal every time: each turn restates it, and another
+           tab may have changed it since this page last read it. */
+        if (currentSession) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
           sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
           paintGoalLoop();

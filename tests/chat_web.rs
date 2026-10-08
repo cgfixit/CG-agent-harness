@@ -1209,3 +1209,78 @@ async fn window_warning_counts_the_tool_results_a_web_turn_sends() {
     );
     task.abort();
 }
+
+/// A middle web round can be the turn's largest request: a big result plus the
+/// tool definitions, which the final round (calls used up) no longer carries.
+/// Its projection must still reach the window check.
+#[tokio::test]
+async fn window_warning_counts_the_largest_middle_round() {
+    let fixture = Router::new()
+        .route(
+            "/docs/big",
+            get(|| async {
+                (
+                    [("content-type", "text/plain")],
+                    "Backoff doubles each retry. ".repeat(280),
+                )
+            }),
+        )
+        .route("/docs/tiny", get(|| async { ([("content-type", "text/plain")], "ok") }))
+        .route(
+            "/api/ps",
+            get(|| async { Json(json!({"models":[{"name":"mock-model","context_length":1}]})) }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                let messages = body["messages"].as_array().unwrap();
+                let flow = messages.iter().find(|m| m["role"] == "user").unwrap()["content"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                let reads = messages.iter().filter(|m| m["role"] == "tool").count();
+                let fetch = |page: &str, id: &str| {
+                    Json(tool_call_reply(
+                        "web_fetch",
+                        &json!({"url":format!("http://docs.example/docs/{page}")}).to_string(), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                        id,
+                    ))
+                };
+                match (flow.as_str(), reads) {
+                    ("flow b" | "flow c", 0) => fetch("big", "call_big"),
+                    ("flow b", 1) => fetch("tiny", "call_tiny"),
+                    _ => Json(common::ok_reply("done", 10, 2)),
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default()
+                .with("models.local_llm.model", "mock-model")
+                .with("web.chat_tool_calls", "2")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let mut projected = std::collections::BTreeMap::new();
+    for flow in ["flow b", "flow c"] {
+        let (status, reply) = s.post_json("/api/chat", json!({"message":flow})).await;
+        assert_eq!(status, 200, "{reply}");
+        projected.insert(flow, reply["context_window"]["projected_tokens"].as_u64().unwrap());
+    }
+    // Flow c's last request is the big result with the definitions (one call
+    // left). Flow b sends that same request in its middle round, then a final
+    // one with a small second result and no definitions.
+    assert!(projected["flow b"] + 2 >= projected["flow c"], "{projected:?}");
+    task.abort();
+}

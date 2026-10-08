@@ -36,9 +36,10 @@ pub struct ChatResult {
     /// Whether the request that produced `body_text` offered tools; grounding
     /// treats them as available only then.
     pub final_prompt_tools: bool,
-    /// Uncalibrated tokens that request carried beyond the stored history: a web
-    /// turn's tool-call batches and results. Zero for a plain chat.
-    pub appended_prompt_tokens: u64,
+    /// Uncalibrated tokens the largest request of this turn carried beyond the
+    /// system prompt and stored history: tool definitions when offered, plus a
+    /// web turn's tool-call batches and results so far. Zero for a plain chat.
+    pub peak_prompt_extra_tokens: u64,
 }
 
 pub struct ChatClient {
@@ -158,7 +159,7 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         initial_prompt_tokens: initial_prompt_tokens(parsed),
         initial_prompt_tools: false,
         final_prompt_tools: false,
-        appended_prompt_tokens: 0,
+        peak_prompt_extra_tokens: 0,
     })
 }
 
