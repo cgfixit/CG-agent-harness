@@ -816,6 +816,7 @@ const CSRF_TOKEN = csrfMeta ? csrfMeta.content : '';
 
 let sessionClearing = false;
 let sessionRevision = 0; // Discard replies and navigation responses from an older selection.
+let suggestionNoticeSession = null; // Session that already showed the one-time 'suggestion queued' note.
 let currentSession = null;   // session_id string or null
 let promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
 
@@ -3637,8 +3638,9 @@ async function finishChat(r) {
   /* The server compared this turn with the window Ollama loaded (/api/ps);
      an oversized prompt loses its oldest text silently, system prompt first. */
   if (r && r.context_window && r.context_window.message) sys(r.context_window.message);
-  if (r && r.memory_suggestion && r.memory_suggestion.queued) {
-    sys('Memory suggestion queued, not yet a proposal. Open /memory proposals and Refresh proposals to see the result. The model may return no candidates; nothing is applied without your approval and reason.');
+  if (r && r.memory_suggestion && r.memory_suggestion.queued && suggestionNoticeSession !== currentSession) {
+    suggestionNoticeSession = currentSession;
+    sys('Memory suggestion queued, not yet a proposal. Open /memory proposals and Refresh proposals to see results. Shown once per session; the model may return no candidates; nothing is applied without your approval and reason.');
   }
   await refreshStatus();
   await refreshSessions();
