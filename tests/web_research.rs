@@ -285,3 +285,60 @@ async fn synthesis_trims_evidence_to_the_remaining_token_budget() {
     model_task.abort();
     page_task.abort();
 }
+
+/// A planning call that fails in transport (here HTTP 500) is retried next
+/// round; only a refused plan or an exhausted budget stops planning.
+#[tokio::test]
+async fn a_transient_planner_failure_keeps_the_next_round() {
+    let plans = Arc::new(AtomicUsize::new(0));
+    let planned = plans.clone();
+    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+        let planned = planned.clone();
+        async move {
+            let system = request["messages"][0]["content"].as_str().unwrap().to_string();
+            if system.starts_with("Return only JSON") {
+                if planned.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error":"loading"})));
+                }
+                let plan = json!({"queries":["retry connections"],"gaps":[]}).to_string();
+                return (axum::http::StatusCode::OK, Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":plan}}],"usage":{"prompt_tokens":20,"completion_tokens":10}})));
+            }
+            let user: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let page = &user["evidence"][0];
+            let quote: String = page["text"].as_str().unwrap().chars().take(40).collect();
+            let answer = json!({"supported":[{"text":"Retries are documented.","citations":[{"id":page["id"],"quote":quote}]}]}).to_string();
+            (axum::http::StatusCode::OK, Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":answer}}],"usage":{"prompt_tokens":20,"completion_tokens":10}})))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let model_url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+    let model_task = tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
+    let pages = Router::new().route(
+        "/only",
+        get(|| async {
+            (
+                [("content-type", "text/plain")],
+                "Connections retry three times before failing.",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let page_task = tokio::spawn(async move { axum::serve(listener, pages).await.unwrap() });
+    let mut options = ServerOptions::default().with("web.pace_ms", "100");
+    options.web_resolve = Some(("research.invalid".into(), address));
+    let s = spawn_server(&model_url, options).await;
+    let url = format!("http://research.invalid:{}/only", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+    let (status, result) = s
+        .post_json("/api/web/research", json!({"query":"connection retry","urls":[url]}))
+        .await;
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(
+        plans.load(Ordering::SeqCst),
+        2,
+        "the second round planned again: {result}"
+    );
+    model_task.abort();
+    page_task.abort();
+}

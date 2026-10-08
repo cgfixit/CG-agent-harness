@@ -29,9 +29,8 @@ fn words(input: &str) -> Result<Vec<Word>, String> {
         let mut word = String::new();
         // An apostrophe opens a quoted argument only when a closing one ends a
         // later word (`'tokio select'`); otherwise it is text (`'til death`).
-        // `'90s` is an elision, not an opener.
-        let quoted =
-            c == '"' || c == '\'' && !chars.peek().is_some_and(char::is_ascii_digit) && closes_later(chars.clone());
+        // `'90s` and `'til` are elisions, not openers.
+        let quoted = c == '"' || c == '\'' && !elision(chars.clone()) && closes_later(chars.clone());
         if quoted {
             let mut closed = false;
             while let Some(next) = chars.next() {
@@ -61,6 +60,17 @@ fn words(input: &str) -> Result<Vec<Word>, String> {
         });
     }
     Ok(out)
+}
+
+/// Whether the text after an apostrophe is an elided word (`'90s`, `'til`,
+/// `'em`) rather than the start of a quoted phrase.
+fn elision(rest: impl Iterator<Item = char>) -> bool {
+    const WORDS: [&str; 6] = ["til", "em", "tis", "twas", "cause", "bout"];
+    let word = rest
+        .take_while(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase();
+    word.starts_with(|c: char| c.is_ascii_digit()) || WORDS.contains(&word.as_str())
 }
 
 /// Whether an apostrophe in `rest` ends a word (followed by whitespace or the
@@ -380,6 +390,10 @@ mod tests {
         assert_eq!(
             query("'90s bands musicians' influences"),
             "'90s bands musicians' influences"
+        );
+        assert_eq!(
+            query("'til death musicians' influences"),
+            "'til death musicians' influences"
         );
         assert_eq!(parse(Some("search"), "rust --help").unwrap().action, "help");
         assert_eq!(parse(Some("allow"), "-h").unwrap().action, "help");
