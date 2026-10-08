@@ -18,7 +18,7 @@ the server or the shim.
   corrupt the server's memory or bypass its guard chain; the exit-code contract
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
 
-Process map. These are the only edges; a new one changes this list and the code together.
+Process map. These are the only edges - a new one changes this list and the code together.
 
 - **Renderer:** the console (`assets/static/harness.html`, `/static/auth_admin.js`)
   in a browser or desktop webview, and the setup window (`desktop/ui/`). It never
