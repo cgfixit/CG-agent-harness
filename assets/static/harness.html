@@ -1826,7 +1826,7 @@ const COMMANDS = [
   ['/memory retrieve <query>', 'force fact retrieval for this chat prompt only'],
   ['/memory save <text> :: <reason>', 'confirm an immediate private fact write'],
   ['/memory search <query>', 'search fact candidates without injecting them'],
-  ['/model [use <name>|profile]', 'show or select a chat model, or profile the selected local model; planner selection is separate'],
+  ['/model [list|use <name>|profile]', 'show, list or select a chat model, or profile the selected local model; planner selection is separate'],
   ['/net status|devices', 'status is scope and gates and loads no collector; devices lists passive neighbors; aliases /netconnect /lan /scan /ports /speed only suggest on a near-miss'],
   ['/prompt', 'preview the next chat system prompt (private)'],
   ['/registry', 'combined skill, tool and connector catalog'],
@@ -1975,7 +1975,7 @@ const COMMAND_MAN = {
   '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
   '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
   '/memory search <query>': {detail:'Lists matching fact candidates with scores. Nothing is injected into chat.'},
-  '/model [use <name>|profile]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. With models.local_llm.auto_tune on, use also loads the model, times one short generate and applies per-model limits that only tighten. profile shows the selected local model as Ollama reports it, its loaded window, window-scaled limit proposals and any applied tuning; it changes nothing. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ', '/model profile']},
+  '/model [list|use <name>|profile]': {detail:'Alone, shows the chat model, provider and endpoint. list shows the installed local tags. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. With models.local_llm.auto_tune on, use also loads the model, times one short generate and applies per-model limits that only tighten. profile shows the selected local model as Ollama reports it, its loaded window, window-scaled limit proposals and any applied tuning; it changes nothing. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model list', '/model use ', '/model profile']},
   '/net status|devices': {detail:'status shows scope and gate state and loads no collector; devices lists passively seen neighbors. Both open the LAN pane. Anything else is refused: this console runs no scans or device control.'},
   '/prompt': {detail:'Previews the next chat system prompt: persona, style, pinned notes, selected facts and web context. Shown only to you; nothing is sent to the model.'},
   '/registry': {detail:'Lists skills, tools and connectors together.'},
@@ -2018,8 +2018,9 @@ const WORTH_KNOWING = [
   {label:'/agent pr-body <run-id>', insert:'/agent pr-body ', hint:'Review the PR template here before /agent publish will accept', key:'/agent pr-body <run-id>'},
   {label:'/memory save <text> :: <reason>', insert:'/memory save ', hint:'Two colons separate the fact from the required reason', key:'/memory save <text> :: <reason>'},
   {label:'/skill check:<profile>', insert:'/skill check:', hint:'One word with a colon; needs a staged /agent run', key:'/skill check:<profile>'},
-  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [use <name>|profile]'},
-  {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [use <name>|profile]'},
+  {label:'/model list', insert:'/model list', hint:'Read-only: installed local tags, exactly as /model use takes them', key:'/model [list|use <name>|profile]'},
+  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [list|use <name>|profile]'},
+  {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [list|use <name>|profile]'},
   {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [n]|auto|stop'},
   {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
 ];
@@ -2746,6 +2747,22 @@ async function runSlash(line, webCommand) {
           sys('chat model selected: ' + r.model + ' via ' + r.provider + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
           if (r.tuning === 'pending') sys('auto_tune is measuring this model in the background (it loads the model); /model profile shows the applied limits.');
           await refreshStatus();
+        } else if (rest[0] === 'list') {
+          // Read-only: the tags Ollama reports (GET /api/tags via the cached
+          // inventory), exactly as /model use expects them. Never pulls or loads.
+          const [inv, s] = await Promise.all([api('/api/ollama/inventory'), api('/api/status')]);
+          if (inv.configured_state === 'not_probed') { sys(inv.detail); break; }
+          if (inv.configured_state === 'unavailable') { sys('The model service at ' + inv.endpoint + ' did not answer. Start Ollama, then /model list again.'); break; }
+          // A failed tag query is not an empty install.
+          if (inv.tags_state !== 'listed') { sys('The model service did not return its tag list (failed, timed out or too large). Try /model list again, or run ollama list.'); break; }
+          const models = Array.isArray(inv.models) ? inv.models : [];
+          if (!models.length) { sys('No local models are installed. ollama pull <tag> downloads one.'); break; }
+          // A cloud selection never marks a local tag, even one with the same name.
+          const selected = s.provider === 'ollama' ? s.model || '' : '';
+          const isSelected = n => selected !== '' && (n === selected || n === selected + ':latest');
+          const gb = n => typeof n === 'number' && n > 0 ? (n / 1e9).toFixed(1) + ' GB' : '—';
+          sys(table(models.map(m => [m.name, gb(m.size), isSelected(m.name) ? 'selected' : '']), ['tag', 'size', 'chat']));
+          sys('/model use <tag> selects one, or grok or claude for cloud chat. The list is cached for models.local_llm.inventory.refresh_sec (30 s by default).');
         } else if (rest[0] === 'profile') {
           // Read-only: facts, proposals, and whatever auto_tune already applied.
           const p = await api('/api/ollama/profile');
