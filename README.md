@@ -3,11 +3,7 @@
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
-**A Rust workspace for local AI chat, permissioned research, and reviewed coding.**
-
 CG-Agent brings conversations, files, memory, and selected tools into one local workspace, and turns coding requests into checked, reviewable repository changes with separate approval to commit, push, or open a draft pull request.
-
-Run it as a native macOS app or a local browser console. It is a Rust port of [CyClaw](https://github.com/cgfixit/CyClaw)'s console and coding pipeline, with independent configuration, security contracts, and [parity status](docs/parity/STATUS.md).
 
 ![CG Agent Harness console, signed in, with a local model reply and the Console, Model and Web status chips](docs/screenshots/console-chat-signed-in-2026-10-05.png)
 
@@ -171,10 +167,6 @@ CI adds invariant guards, browser acceptance, sandbox and MCP lifecycle, and sec
 | Passive LAN observation | [Netconnect](docs/netconnect.md) |
 | Usage, costs, completion webhooks | [Analytics](docs/ANALYTICS.md), [Spend and notifications](docs/SPEND_AND_NOTIFICATIONS.md) |
 | API, dependencies, releases | [Routes](docs/API_ROUTES.md), [Dependencies](docs/DEPENDENCIES.md), [Releasing](docs/RELEASING.md) |
-
-## Contributing
-
-Start with [AGENTS.md](AGENTS.md) and the project guidance in [`.codex/skills`](.codex/skills) or [`.claude/skills`](.claude/skills). Keep changes focused, preserve the documented invariants, and include verification evidence. PRs use driver-prefixed branches, target `main`, open as drafts, and follow the repository template; validate the body with `scripts/check-pr-template.sh`.
 
 ## License
 
