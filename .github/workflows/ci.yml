@@ -204,6 +204,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Rust's bare executable search checks System32 before inherited PATH,
+          # where bash.exe is the WSL launcher. Use Git Bash for shell fixtures.
+          $gitRoot = Split-Path (Split-Path (Get-Command git.exe).Source)
+          $bash = Join-Path $gitRoot 'bin/bash.exe'
+          if (!(Test-Path $bash)) { throw "Git Bash fixture executable missing: $bash" }
+          "CGAH_TEST_BASH=$bash" >> $env:GITHUB_ENV
           "CGAH_WINDOWS_PYTHON=$((Get-Command python.exe).Source)" >> $env:GITHUB_ENV
           "CGAH_REQUIRE_WINDOWS_MCP=1" >> $env:GITHUB_ENV
           "CGAH_REQUIRE_WINDOWS_CREDENTIALS=1" >> $env:GITHUB_ENV

@@ -29,7 +29,7 @@ fn bundled_docs(packaging: &str) -> Vec<String> {
 }
 
 fn classify(script_path: &Path, paths: &[&str]) -> Output {
-    let mut child = Command::new("bash")
+    let mut child = Command::new(std::env::var_os("CGAH_TEST_BASH").unwrap_or_else(|| "bash".into()))
         .arg(script_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

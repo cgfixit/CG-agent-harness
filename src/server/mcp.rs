@@ -788,7 +788,8 @@ mod config_tests {
 
     #[test]
     fn stdio_never_invents_missing_or_malformed_capabilities() {
-        let base = "name: fixture\ntransport: stdio\ncommand: [/bin/echo]\ntools: [echo]\n";
+        let command = serde_json::to_string(&std::env::current_exe().unwrap()).unwrap();
+        let base = format!("name: fixture\ntransport: stdio\ncommand: [{command}]\ntools: [echo]\n");
         for suffix in [
             "",
             "capabilities: null",

@@ -942,7 +942,9 @@ mod list_cache_tests {
             "same-length titles must keep the JSON size"
         );
         std::fs::write(&a_path, rewritten).unwrap();
-        std::fs::File::open(&a_path)
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&a_path)
             .unwrap()
             .set_times(std::fs::FileTimes::new().set_modified(a_metadata.modified().unwrap()))
             .unwrap();
