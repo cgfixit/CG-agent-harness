@@ -4580,9 +4580,13 @@ function showSignIn(mode, defaultPassword) {
   hAuthSetup.hidden = mode !== 'setup';
   $('hAuthHint').hidden = !(mode === 'login' && defaultPassword === true);
   /* Every path into signed-out (logout, a rejected logout, an expired
-     session) drops the account-private Memory pane, so the next account
-     never sees it; clearing also stops any listing still in flight. */
-  if (out && !wasOut) $('pane-memory').replaceChildren();
+     session) drops the account-private transcript and Memory pane, so the
+     next account never sees them; clearing also stops any listing still in
+     flight. The first probe has shown nothing yet, so it clears nothing. */
+  if (out && !wasOut) {
+    if (!document.documentElement.classList.contains('auth-pending')) clearTranscript();
+    $('pane-memory').replaceChildren();
+  }
   if (!out) { $('hAuthError').textContent = ''; $('hAuthSetupError').textContent = ''; return; }
   if (!wasOut || !$('signInScreen').contains(document.activeElement)) {
     (mode === 'login' ? $('hAuthUser') : $('hAuthSetupPass')).focus();
