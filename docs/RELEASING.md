@@ -41,7 +41,9 @@ In GitHub, open **Actions → release → Run workflow**:
 - Select `main` and check **publish** to run the verified release pipeline now.
   An unchanged tree still skips. Other branches cannot publish this way.
 - For an intentional major/minor version, push an unused stable tag such as
-  `v0.2.0` pointing at the desired reviewed commit. Tag releases run the same
+  `v0.2.0` pointing at the desired reviewed commit, which must already be on
+  `main` (the planner refuses a tag GitHub reports `ahead` of or `diverged`
+  from `main`). Tag releases run the same
   verification pipeline. Prerelease tags are rejected by this regular-release
   workflow; create previews deliberately using a separate manual process.
 
