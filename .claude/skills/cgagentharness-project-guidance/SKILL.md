@@ -81,7 +81,7 @@ runtimes.
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test --all-targets` with planner keys blanked
+- `cargo test --all-targets` (keys blank): CI only; locally, targeted tests
 - `cargo deny check`
 - New routes → `REGISTERED_PATHS` (+ console views if listed)
 - New shim actions → `shim::ACTIONS` + CLI dispatch + invariant whitelist together

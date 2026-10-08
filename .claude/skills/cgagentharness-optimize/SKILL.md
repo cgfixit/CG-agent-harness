@@ -128,9 +128,9 @@ manufacture work.
 cargo fmt --all -- --check
 CLIPPY="${CLIPPY:-cargo clippy}"   # macOS gotcha: CLIPPY=/opt/homebrew/bin/cargo-clippy
 $CLIPPY --all-targets --all-features -- -D warnings
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
+# Targeted only; CI runs the suite:
+GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --test <target>
 command -v cargo-deny > /dev/null && cargo deny check
-# or: scripts/verify-local.sh  (SKIP_LIVE=1 when no model)
 ```
 
 Desktop/toolchain paths: run packaging or acceptance only when the chunk needs

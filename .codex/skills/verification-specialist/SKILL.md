@@ -39,15 +39,15 @@ HEAD/base and scope.
 | Ownership, memory, MCP, web, reload, jobs, notifications | Select tests from `cgagentharness-invariant-guard`; exercise foreign-owner, revoked-authority and disabled-feature paths for the changed contract |
 | Desktop package | Packaging/signing evidence ≠ HTTP console proof; WKWebView ≠ fetch/CSRF semantics; ad-hoc ≠ Developer ID |
 
-Blank planner keys for tests (mirror CI):
+Targeted tests only, planner keys blank (CI runs the suite):
 
 ```text
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --all-targets
+  cargo test --test <target>
 ```
 
 Quality bar when scope is code: `cargo fmt --check`, `clippy -D warnings`,
-tests, `cargo deny` when available (`scripts/verify-local.sh`). Scope docs-only
+targeted tests, `cargo deny` when available. Scope docs-only
 edits appropriately — do not invent a full app build requirement.
 
 ## Workflow
