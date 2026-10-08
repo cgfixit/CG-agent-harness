@@ -400,6 +400,14 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
     let cfg = home.load_config()?;
     let mut options = AppOptions::new(home.clone());
     options.config = Some(cfg.clone());
+    let drift = cfg.missing_shipped_true_flags();
+    if !drift.is_empty() {
+        tracing::warn!(
+            "config.yaml omits {} setting(s) that ship on, so they read as off: {}. Compare with the shipped default.",
+            drift.len(),
+            drift.join(", ")
+        );
+    }
     let plaintext = cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE);
     let store = crate::common::credential_store::OsCredentialStore::for_home(&home.root);
     let loaded = env_keys::load_startup(&home.env_path(), plaintext, &store)?;

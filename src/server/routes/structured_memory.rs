@@ -139,6 +139,12 @@ pub fn selections_from_items(items: &[crate::server::schemas::StructuredFactSele
 }
 
 pub fn status_payload(state: &AppState, owner_id: &str) -> ApiResult<Value> {
+    let mut payload = status_payload_inner(state, owner_id)?;
+    payload["config_drift"] = json!(state.cfg.missing_shipped_true_flags());
+    Ok(payload)
+}
+
+fn status_payload_inner(state: &AppState, owner_id: &str) -> ApiResult<Value> {
     let limits = Limits::from_config(&state.cfg);
     let gates = current_gates(state);
     if let Some(store) = state.structured_memory.as_ref() {

@@ -29,6 +29,7 @@ async fn disabled_gate_creates_no_database_and_refuses_writes() {
     assert_eq!(body["retrieval_fusion"], false);
     assert_eq!(body["consolidation"], false);
     assert_eq!(body["rag"], false);
+    assert!(body["config_drift"].is_array(), "{body}");
     assert_eq!(body["writable_from_model"], false);
     assert_eq!(body["at_rest_encryption"], false);
     assert!(body["at_rest"].as_str().unwrap().contains("not encryption"));

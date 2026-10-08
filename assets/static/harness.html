@@ -2730,6 +2730,12 @@ async function runSlash(line, webCommand) {
             ['auto_suggest_chat', (r.structured_memory && r.structured_memory.auto_suggest_chat) ? 'on' : 'off'],
             ['auto_suggest_coding', (r.structured_memory && r.structured_memory.auto_suggest_coding) ? 'on' : 'off'],
           ]));
+          const drift = store && Array.isArray(store.config_drift) ? store.config_drift : [];
+          if (drift.length) {
+            sys('config.yaml omits ' + String(drift.length) + ' setting(s) that ship on, so they read as off: ' +
+                drift.slice(0, 8).join(', ') + (drift.length > 8 ? ', …' : '') +
+                '. Add them to config.yaml (see the shipped default) or set the gates with the /memory commands.');
+          }
           if (r.notes && r.notes.length) {
             sys(table(r.notes.map(n => [n.id, n.text]), ['id', 'note']));
           }

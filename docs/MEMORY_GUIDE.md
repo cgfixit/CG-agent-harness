@@ -76,8 +76,8 @@ Administrators can change sub-gates live, such as `/memory auto-retrieve off`.
 These overlays persist in `memory/structured_gates.json` and override config,
 but cannot open the store. Only `enabled: true` plus a restart creates and opens
 `memory/structured.sqlite3`. `/memory` shows the effective gates;
-`GET /api/structured-memory` also shows suggestion queue status. Tunables live in
-`assets/config.default.yaml`; do not invent extra flags.
+`GET /api/structured-memory` adds queue status and `config_drift` (shipped-on keys
+your `config.yaml` omits; they read as off). Tunables: `assets/config.default.yaml`.
 
 Every gate, its overlay, its dependencies and what its off state guarantees are
 listed once in [the gate table](STRUCTURED_MEMORY.md#gates).
