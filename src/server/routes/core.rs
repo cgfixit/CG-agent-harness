@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::ChatMessage;
 use crate::server::attachments;
-use crate::server::compaction::{DEFAULT_REPLY_TOKENS, MAX_PROMPT_TOKENS, MIN_PROMPT_HEADROOM};
+use crate::server::compaction::{MAX_PROMPT_TOKENS, MIN_PROMPT_HEADROOM};
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::guards::retry_after_error;
 use crate::server::prompts::{compose_system_prompt, PromptInputs};
@@ -80,7 +80,7 @@ pub async fn status(
         "home": state.home.root.display().to_string(),
         "repo_root": Value::Null,
         "chat_mode": "conversation",
-        "chat_tools_available": settings.web_enabled && !cloud,
+        "chat_tools_available": settings.web_enabled && !cloud && !state.chat_tools_unsupported(&model),
         "sessions": sessions.len(),
         "total_tokens": total_tokens,
         "layout": {
@@ -470,8 +470,15 @@ pub async fn model_select(
     snapshot
         .save(&state.home)
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let model = state.current_model();
+    let tuning = if state.cfg.flag_is_true("models.local_llm.auto_tune") {
+        tokio::spawn(crate::server::model_limits::tune(state.clone(), model.clone()));
+        "pending"
+    } else {
+        "off"
+    };
     Ok(Json(
-        json!({"model": state.current_model(), "provider": state.current_provider()}),
+        json!({"model": model, "provider": state.current_provider(), "tuning": tuning}),
     ))
 }
 
@@ -547,6 +554,7 @@ fn busy_label(owner: &str) -> &str {
         "web_research" => "web research",
         "agent" => "a coding run",
         crate::server::structured_memory_suggest::GATE_OWNER => "a memory suggestion",
+        crate::server::model_limits::TUNE_OWNER => "a model speed measurement",
         other => other,
     }
 }
@@ -590,6 +598,9 @@ async fn chat_inner(
         ));
     }
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    // Web tools need web on and a model that can take them (auto_tune may have
+    // found it declares none, or that no web-chat prompt fits its window).
+    let chat_tools = settings.web_enabled && !state.chat_tools_unsupported(&model);
     let selected_skills = if cloud_selected {
         Vec::new()
     } else {
@@ -598,7 +609,7 @@ async fn chat_inner(
 
     let live = state.runtime_limits();
     let mut web = state.web.clone();
-    web.limits = live.web.clone();
+    web.limits = state.model_web_limits(&model, live.web.clone());
     let mut loop_claimed = false;
     if req.loop_turn {
         if session.goal.trim().is_empty() {
@@ -768,20 +779,22 @@ async fn chat_inner(
             selected_facts_context: Some(&facts),
             memory_budget,
             memory_enabled: settings.memory_enabled,
-            chat_tools_enabled: settings.web_enabled && !req.loop_turn,
+            chat_tools_enabled: chat_tools && !req.loop_turn,
             web_enabled: settings.web_enabled,
             attachment_fence: Some(attachment_fence.as_str()),
         })
     };
     let max_tokens = if req.loop_turn {
+        // Only a tuned model's window lowers the loop cap; untuned, it is unchanged.
         live.loop_max_tokens
+            .min(state.tuning_for(&model).map_or(u64::MAX, |tuning| tuning.max_tokens))
     } else {
-        state.cfg.u64_or("models.local_llm.max_tokens", DEFAULT_REPLY_TOKENS)
+        state.chat_max_tokens(&model)
     };
     let reservation = crate::server::compaction::reply_reservation(&state.backend, max_tokens);
     let ratio =
         crate::server::compaction::token_ratio(session.token_calibration.as_ref(), &state.chat.base_url, &model);
-    let tool_tokens = if !cloud_selected && settings.web_enabled && !req.loop_turn {
+    let tool_tokens = if !cloud_selected && chat_tools && !req.loop_turn {
         crate::server::compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_web::tools()).unwrap())
     } else {
         0
@@ -798,10 +811,7 @@ async fn chat_inner(
     let mut summary_prompt_tokens = 0u64;
     let mut summary_completion_tokens = 0u64;
     if !cloud_selected {
-        let configured_threshold = state.cfg.u64_or(
-            "chat.compact_prompt_tokens",
-            crate::server::compaction::DEFAULT_PROMPT_TOKENS,
-        );
+        let configured_threshold = state.compact_prompt_tokens(&model);
         let minimum_threshold = reservation
             .saturating_add(MIN_PROMPT_HEADROOM)
             .saturating_add(crate::server::compaction::calibrated_tokens(tool_tokens, ratio))
@@ -812,7 +822,7 @@ async fn chat_inner(
         } else {
             "models.local_llm.max_tokens"
         };
-        let web_chat = settings.web_enabled && !req.loop_turn;
+        let web_chat = chat_tools && !req.loop_turn;
         let (threshold, limit_source) = crate::server::compaction::prompt_limit(
             configured_threshold,
             web_chat.then(|| crate::server::compaction::web_prompt_limit(web.limits.total_tokens, reservation)),
@@ -970,7 +980,7 @@ async fn chat_inner(
                 })?,
             Vec::new(),
         )
-    } else if settings.web_enabled && !req.loop_turn {
+    } else if chat_tools && !req.loop_turn {
         crate::server::chat_web::run_stream(
             &state,
             &web,
@@ -1010,7 +1020,7 @@ async fn chat_inner(
     // Ground against the tools the answering request offered: web chat withholds
     // them when no tool round fits, and withdraws them after a refused batch.
     let inventory = crate::server::tool_inventory::chat_callable_names(
-        !cloud_selected && settings.web_enabled && !req.loop_turn && reply.final_prompt_tools,
+        !cloud_selected && chat_tools && !req.loop_turn && reply.final_prompt_tools,
     );
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
@@ -1073,6 +1083,36 @@ async fn chat_inner(
             estimated_input,
             reply.initial_prompt_tokens,
         )
+    };
+    // Ollama keeps the newest tokens of an oversized prompt and drops the rest,
+    // system prompt first, without an error. The harness sends no num_ctx, so
+    // compare this turn with the window Ollama actually loaded and say so.
+    let context_window = if cloud_selected || state.backend.provider != "ollama" {
+        None
+    } else {
+        // This turn's own usage may already show denser text than `ratio`.
+        let ratio = calibration.as_ref().map_or(ratio, |c| {
+            crate::server::compaction::token_ratio(Some(c), &state.chat.base_url, &model)
+        });
+        let project = |extra| {
+            crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", reservation, ratio, extra)
+        };
+        // The turn's largest request: the first one's tool definitions, or a later
+        // web round's definitions plus the tool calls and results sent so far.
+        let first = if reply.initial_prompt_tools { tool_tokens } else { 0 };
+        let projected = project(first.max(reply.peak_prompt_extra_tokens));
+        loaded_window(&state, &model)
+            .await
+            .filter(|window| projected > *window)
+            .map(|window| {
+                state.audit.log(json!({"event":"chat_context_window_exceeded","session_id":session.session_id,
+                    "model":model,"window":window,"projected":projected}));
+                json!({"model":model,"window_tokens":window,"projected_tokens":projected,
+                    "message":format!("Ollama loaded {model} with a {window}-token context window, but this turn needed about \
+                        {projected} tokens (prompt plus reply reserve). Ollama silently drops the oldest prompt text, starting \
+                        with the system prompt. Restart Ollama with a larger OLLAMA_CONTEXT_LENGTH (32768 is recommended; see \
+                        docs/MODELS.md), or start a new session.")})
+            })
     };
     let recorded = state.store.for_owner(&owner).record_exchange_inner(
         &session.session_id,
@@ -1137,6 +1177,7 @@ async fn chat_inner(
         "tally": updated.tally.to_json(),
         "episode": episode,
         "memory_suggestion": memory_suggestion,
+        "context_window": context_window,
         "structured_facts": {
             "explicit_recall": crate::server::structured_memory::recall_available(
                 &state.cfg,
@@ -1162,6 +1203,35 @@ async fn chat_inner(
     })))
         } => result,
     }
+}
+
+/// Longest the post-turn `/api/ps` window read may hold the generation gate.
+const WINDOW_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The context window Ollama loaded `model` with, cached for the inventory
+/// refresh interval. `None` when unknown (not loaded, not reported, not a
+/// loopback Ollama endpoint); a check that cannot run never blocks a turn.
+/// A failed read is cached too, so an endpoint without `/api/ps` is not
+/// probed again (up to the inventory timeout) on every turn. The live read
+/// wins over the window `auto_tune` recorded at selection, which goes stale
+/// once Ollama restarts with the larger window this warning asks for; that
+/// recorded window is used only when the live read fails.
+async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
+    let refresh = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
+    let live = match state.ollama.cached_window(model, refresh) {
+        Some(window) => window,
+        None => {
+            let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
+            let mut limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
+            // The turn still holds the generation gate here: a loopback /api/ps answers
+            // in milliseconds, so a slow one is skipped (and cached) rather than waited on.
+            limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
+            let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
+            state.ollama.store_window(model, window);
+            window
+        }
+    };
+    live.or_else(|| state.tuning_for(model).map(|tuning| tuning.window))
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.

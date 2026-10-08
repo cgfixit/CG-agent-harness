@@ -36,6 +36,10 @@ pub struct ChatResult {
     /// Whether the request that produced `body_text` offered tools; grounding
     /// treats them as available only then.
     pub final_prompt_tools: bool,
+    /// Uncalibrated tokens the largest request of this turn carried beyond the
+    /// system prompt and stored history: tool definitions when offered, plus a
+    /// web turn's tool-call batches and results so far. Zero for a plain chat.
+    pub peak_prompt_extra_tokens: u64,
 }
 
 pub struct ChatClient {
@@ -46,6 +50,9 @@ pub struct ChatClient {
     pub timeout_sec: f64,
     http: reqwest::Client,
     inflight: Mutex<BTreeMap<String, CancellationToken>>,
+    /// A measured per-model deadline (`models.local_llm.auto_tune`) that
+    /// replaces `timeout_sec` only for requests naming that exact model.
+    timeout_override: Mutex<Option<(String, f64)>>,
 }
 
 impl std::fmt::Debug for ChatClient {
@@ -76,6 +83,40 @@ pub(crate) fn initial_prompt_tokens(parsed: &Value) -> Option<u64> {
     parsed["usage"]["prompt_tokens"].as_u64().filter(|n| *n > 0)
 }
 
+/// The answer after a leading `<think>…</think>` block. Reasoning models served
+/// without a reasoning parser (LM Studio, `mlx_lm.server`, llama.cpp without
+/// `--reasoning-format`, older Ollama templates) return their chain of thought
+/// inline. That text is not the answer: kept, it is shown as the reply, stored in
+/// session history and re-sent with every later prompt, and it hides a JSON or
+/// `GOAL_DONE` answer from its parser. Only a block that opens the reply and is
+/// closed is removed; anything else is returned unchanged.
+pub fn strip_leading_reasoning(text: &str) -> &str {
+    const OPEN: &str = "<think>";
+    const CLOSE: &str = "</think>";
+    let Some(rest) = text.trim_start().strip_prefix(OPEN) else {
+        return text;
+    };
+    match rest.find(CLOSE) {
+        Some(end) => rest[end + CLOSE.len()..].trim_start(),
+        None => text,
+    }
+}
+
+/// The JSON object a small model wrapped in prose or a Markdown fence:
+/// `Here is the JSON: ```json {…} ``` ` yields `{…}`. Text that does not hold a
+/// `{` … `}` span is returned unchanged so the caller's parser reports it. This
+/// finds text to parse; the caller's schema still decides what it may contain.
+pub fn reply_json_text(text: &str) -> &str {
+    let text = strip_leading_reasoning(text).trim();
+    if text.starts_with('{') && text.ends_with('}') {
+        return text;
+    }
+    match (text.find('{'), text.rfind('}')) {
+        (Some(start), Some(end)) if start < end => &text[start..=end],
+        _ => text,
+    }
+}
+
 /// Extract body text + usage or fail with a typed error (never echoes the body).
 pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatResult> {
     let obj = parsed
@@ -91,6 +132,7 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         .get("message")
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
+        .map(strip_leading_reasoning)
         .ok_or_else(|| llm_err("malformed response from model server"))?
         .to_string();
     let usage = obj.get("usage").and_then(|u| u.as_object());
@@ -120,6 +162,7 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         initial_prompt_tokens: initial_prompt_tokens(parsed),
         initial_prompt_tools: false,
         final_prompt_tools: false,
+        peak_prompt_extra_tokens: 0,
     })
 }
 
@@ -148,7 +191,22 @@ impl ChatClient {
             timeout_sec,
             http,
             inflight: Mutex::new(BTreeMap::new()),
+            timeout_override: Mutex::new(None),
         })
+    }
+
+    /// Install (or clear) the measured deadline for one model.
+    pub fn set_timeout_override(&self, model_seconds: Option<(String, f64)>) {
+        *self.timeout_override.lock().unwrap_or_else(|p| p.into_inner()) = model_seconds;
+    }
+
+    /// The deadline a request for `model` gets: its measured override, else `timeout_sec`.
+    pub fn timeout_for(&self, model: &str) -> f64 {
+        match &*self.timeout_override.lock().unwrap_or_else(|p| p.into_inner()) {
+            Some((tuned, seconds)) if tuned == model => *seconds,
+            _ => self.timeout_sec,
+        }
+        .max(1.0)
     }
 
     /// Abort every registered POST. Production single-flights via GenerationGate;
@@ -266,17 +324,22 @@ impl ChatClient {
             }
         }
         let _call = Call { client: self, id };
+        let deadline = self.timeout_for(payload["model"].as_str().unwrap_or(&self.model));
         tokio::select! {
             _ = token.cancelled() => Err(llm_err("cancelled").detail("cancelled", true)),
-            result = tokio::time::timeout(Duration::from_secs_f64(self.timeout_sec.max(1.0)), self.send_request(payload, output)) =>
+            result = tokio::time::timeout(Duration::from_secs_f64(deadline), self.send_request(payload, output)) =>
                 result.map_err(|_| llm_err("model request deadline exceeded"))?,
         }
     }
 
     async fn send_request(&self, payload: Value, output: Option<super::openai_stream::Output<'_>>) -> Result<Value> {
+        // A per-request timeout replaces the client-wide one, so a measured
+        // deadline can be longer or shorter than the configured timeout_sec.
+        let deadline = self.timeout_for(payload["model"].as_str().unwrap_or(&self.model));
         let mut req = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
+            .timeout(Duration::from_secs_f64(deadline))
             .json(&payload);
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
@@ -330,5 +393,49 @@ impl ChatClient {
             Ok::<Value, HarnessError>(parsed)
         }
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reply(content: &str) -> Value {
+        json!({"choices":[{"finish_reason":"stop","message":{"content":content}}],"usage":{"prompt_tokens":3,"completion_tokens":2}})
+    }
+
+    #[test]
+    fn a_leading_closed_reasoning_block_is_not_the_answer() {
+        let parsed = parse_chat_response(&reply("\n<think>\nplan GOAL_DONE\n</think>\n\nThe answer."), "m").unwrap();
+        assert_eq!(parsed.body_text, "The answer.");
+        // Only a block that opens the reply and is closed is removed.
+        for kept in [
+            "Use <think>…</think> tags.",
+            "<think>never closed",
+            "Answer.\n<think>x</think>",
+            "</think> stray close",
+        ] {
+            assert_eq!(parse_chat_response(&reply(kept), "m").unwrap().body_text, kept);
+        }
+        // A reply that was only reasoning is empty, so chat refuses it as no answer.
+        assert_eq!(
+            parse_chat_response(&reply("<think>x</think>"), "m").unwrap().body_text,
+            ""
+        );
+    }
+
+    #[test]
+    fn reply_json_text_unwraps_fences_prose_and_reasoning_only() {
+        let object = r#"{"a":[1]}"#;
+        for wrapped in [
+            object.to_string(),
+            format!("```json\n{object}\n```"),
+            format!("Here is the JSON:\n{object}\nDone."),
+            format!("<think>{{\"no\":1}}</think>\n```\n{object}\n```"),
+        ] {
+            assert_eq!(reply_json_text(&wrapped), object, "{wrapped}");
+        }
+        assert_eq!(reply_json_text("no object here"), "no object here");
+        assert_eq!(reply_json_text("} backwards {"), "} backwards {");
     }
 }

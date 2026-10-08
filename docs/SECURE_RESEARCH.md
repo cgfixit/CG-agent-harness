@@ -400,23 +400,26 @@ no evidence. Sitemap discovery is absent. Page research needs no provider key
 and has no cloud fallback.
 
 Tantivy rebuilds a bounded in-memory BM25 index from permitted cached extracts.
-Phrases, identifiers, title and heading boosts improve ranking; diversity and
+Phrases, identifiers (each `a_b`/`a::b` word matches exactly), title and
+heading boosts improve ranking; diversity and
 deduplication reduce repetition. Derived cache corruption grants nothing.
 Conditional refresh repeats network checks. Validators reduce bytes, not requests.
 
 Research asks the local model for at most 3 subqueries in 2 rounds, runs at most
 one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults:
-28,000 model tokens, 300s discovery, 300s answering; smaller windows: see
+28,000 total model tokens, 300s discovery, 300s answering; smaller windows: see
 [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
 usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete
-output conservatively. Bounded JSON output has no commands or privileged tools.
+output conservatively. Synthesis drops unfitting low-ranked passages
+(`WEB_EVIDENCE_TRIMMED`). Bounded JSON output has no commands or privileged tools.
 Retrieval interleaves the question and subqueries without embeddings or reranking.
 `/web cancel` cancels dedicated research.
 
 Answers label support, conflicts, inference, and missing or stale evidence.
 Citation IDs and quotes are checked against passages, but semantic support still
-needs judgment. Rank is not truth, and fetch age is not publication date. Bounded
-runs never claim completeness; no-answer results abstain and failures stay visible.
+needs judgment; failed claims drop alone (`WEB_CITATION_DROPPED`). Rank is not
+truth, and fetch age is not publication date. Bounded runs never claim
+completeness; no-answer results abstain and failures stay visible.
 
 ### Saved web selection
 

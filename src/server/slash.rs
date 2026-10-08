@@ -245,6 +245,16 @@ fn parse_slash_primary(line: &str) -> SlashParse {
         if cmd == "web" && after_cmd == ["--help"] {
             return parse_line("/help web");
         }
+        if cmd == "web" {
+            // `/web tokio select macro` most often means a search. Suggest it;
+            // a suggestion is printed, never dispatched.
+            let mut parsed = suggest_only("unknown /web subcommand; not dispatched — did you mean a search?", &[]);
+            parsed.suggestions = vec![SlashSuggestion {
+                line: format!("/web search {}", after_cmd.join(" ")),
+                score: 60,
+            }];
+            return parsed;
+        }
         return suggest_only("unknown subcommand; not dispatched — use /help", &[]);
     }
     if let Some(notice) = mutation_argument_refusal(cmd, sub.as_deref(), &args) {
@@ -429,7 +439,7 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
             "proposals",
         ],
         "api" => &["set", "clear"],
-        "model" => &["use"],
+        "model" => &["use", "profile"],
         "skill" => &["use", "clear", "status"],
         "web" => &[
             "help", "status", "check", "on", "off", "allow", "deny", "fetch", "search", "pages", "research", "cancel",
@@ -1145,5 +1155,13 @@ mod tests {
         let (kept, dropped) = crate::netconnect::slash::classify_aliases(&preexisting_slash_names());
         assert!(dropped.is_empty(), "{dropped:?}");
         assert_eq!(kept, crate::netconnect::slash::CANDIDATE_ALIASES);
+    }
+
+    #[test]
+    fn a_bare_web_query_suggests_a_search_without_dispatching() {
+        let parsed = parse_line("/web tokio select macro");
+        assert!(!parsed.dispatch);
+        assert_eq!(parsed.kind, SlashKind::Suggest);
+        assert_eq!(parsed.suggestions[0].line, "/web search tokio select macro");
     }
 }

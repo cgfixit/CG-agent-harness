@@ -1826,7 +1826,7 @@ const COMMANDS = [
   ['/memory retrieve <query>', 'force fact retrieval for this chat prompt only'],
   ['/memory save <text> :: <reason>', 'confirm an immediate private fact write'],
   ['/memory search <query>', 'search fact candidates without injecting them'],
-  ['/model [use <name>]', 'show or select a chat model; planner selection is separate'],
+  ['/model [use <name>|profile]', 'show or select a chat model, or profile the selected local model; planner selection is separate'],
   ['/net status|devices', 'status is scope and gates and loads no collector; devices lists passive neighbors; aliases /netconnect /lan /scan /ports /speed only suggest on a near-miss'],
   ['/prompt', 'preview the next chat system prompt (private)'],
   ['/registry', 'combined skill, tool and connector catalog'],
@@ -1975,7 +1975,7 @@ const COMMAND_MAN = {
   '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
   '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
   '/memory search <query>': {detail:'Lists matching fact candidates with scores. Nothing is injected into chat.'},
-  '/model [use <name>]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ']},
+  '/model [use <name>|profile]': {detail:'Alone, shows the chat model, provider and endpoint. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. With models.local_llm.auto_tune on, use also loads the model, times one short generate and applies per-model limits that only tighten. profile shows the selected local model as Ollama reports it, its loaded window, window-scaled limit proposals and any applied tuning; it changes nothing. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model use ', '/model profile']},
   '/net status|devices': {detail:'status shows scope and gate state and loads no collector; devices lists passively seen neighbors. Both open the LAN pane. Anything else is refused: this console runs no scans or device control.'},
   '/prompt': {detail:'Previews the next chat system prompt: persona, style, pinned notes, selected facts and web context. Shown only to you; nothing is sent to the model.'},
   '/registry': {detail:'Lists skills, tools and connectors together.'},
@@ -2009,7 +2009,7 @@ const COMMAND_MAN = {
   '/web on': {detail:'Enables web for this home; URLs still need permission rules. Administrator only.'},
   '/web pages [--group name] <query>': {detail:'Finds permitted links and searches passages inside permitted pages. This is not Google; /web search gives listings.'},
   '/web research [--group name] [--url URL ...] <question>': {detail:'Bounded multi-page research over permitted pages with checked citations, starting from the group or the --url seeds. Shows supported claims, conflicts, inferences, gaps and the sources. Not an exhaustive crawl; /web cancel stops it.'},
-  '/web search [--count 1..10] [--engine google|pages] [--group name] <query>': {detail:'Google result listings by default; --engine pages or a group searches permitted pages instead. Listings grant no permission to read a page.'},
+  '/web search [--count 1..10] [--engine google|pages] [--group name] <query>': {detail:'Google result listings by default; --engine pages or a group searches permitted pages instead. Listings grant no permission to read a page. Words starting with a single dash (-tokio) are query text; put -- before query words that start with --.'},
 };
 /* Exact forms that are easy to get wrong. insert is what the composer gets;
    key names the catalog row whose manual the ? opens. */
@@ -2018,7 +2018,8 @@ const WORTH_KNOWING = [
   {label:'/agent pr-body <run-id>', insert:'/agent pr-body ', hint:'Review the PR template here before /agent publish will accept', key:'/agent pr-body <run-id>'},
   {label:'/memory save <text> :: <reason>', insert:'/memory save ', hint:'Two colons separate the fact from the required reason', key:'/memory save <text> :: <reason>'},
   {label:'/skill check:<profile>', insert:'/skill check:', hint:'One word with a colon; needs a staged /agent run', key:'/skill check:<profile>'},
-  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [use <name>]'},
+  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [use <name>|profile]'},
+  {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [use <name>|profile]'},
   {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [n]|auto|stop'},
   {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
 ];
@@ -2743,7 +2744,51 @@ async function runSlash(line, webCommand) {
           const r = await api('/api/model', 'POST', { model: rest.slice(1).join(' ') });
           const planner = await api('/api/agent/checks');
           sys('chat model selected: ' + r.model + ' via ' + r.provider + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
+          if (r.tuning === 'pending') sys('auto_tune is measuring this model in the background (it loads the model); /model profile shows the applied limits.');
           await refreshStatus();
+        } else if (rest[0] === 'profile') {
+          // Read-only: facts, proposals, and whatever auto_tune already applied.
+          const p = await api('/api/ollama/profile');
+          if (p.state !== 'profiled') { sys('model profile ' + p.state + ': ' + p.detail); break; }
+          const d = p.declared || {}, l = p.loaded, i = p.installed || {};
+          const show = v => v === null || v === undefined ? '—' : String(v);
+          const gb = n => typeof n === 'number' ? (n / 1e9).toFixed(1) + ' GB' : '—';
+          sys(table([
+            ['model', p.model],
+            ['architecture', show(d.architecture)],
+            ['parameters', show(d.parameter_size)],
+            ['quantization', show(d.quantization)],
+            ['tools', show(d.tools)],
+            ['thinking', show(d.thinking)],
+            ['native context', show(d.native_context)],
+            ['Modelfile num_ctx', show(d.modelfile_num_ctx)],
+            ['loaded context', l ? show(l.context_length) : (p.residency === 'unknown' ? 'unknown (/api/ps failed)' : 'not resident')],
+            ['memory GPU / total', l ? gb(l.size_vram) + ' / ' + gb(l.size_bytes) : '—'],
+            ['digest', i.digest ? i.digest.slice(0, 12) : '—'],
+          ], ['fact', 'value']));
+          sys(p.detail);
+          const q = p.proposed;
+          if (q && Array.isArray(q.values) && q.values.length) {
+            sys(table(q.values.map(v => [v.key, String(v.current), String(v.proposed)]), ['setting', 'current', 'proposed (' + q.state + ')']));
+          }
+          if (q) { (q.notes || []).forEach(n => sys(String(n))); sys(q.detail); }
+          const t = p.tuning;
+          if (t) {
+            const w = t.web || {}, sp = t.speed || {};
+            sys(table([
+              ['loaded window', String(t.window)],
+              ['decode / prefill tok/s', show(sp.decode_tps) + ' / ' + show(sp.prefill_tps)],
+              ['reply max_tokens', String(t.max_tokens)],
+              ['compact_prompt_tokens', String(t.compact_prompt_tokens)],
+              ['web total / evidence tokens', t.web ? w.total_tokens + ' / ' + w.evidence_tokens : 'as configured'],
+              ['web tool calls', t.web ? String(w.chat_tool_calls) : 'as configured'],
+              ['chat timeout (s)', t.timeout_sec ? String(t.timeout_sec) : 'as configured'],
+              ['web tools for this model', t.tools_off ? 'off' : 'on'],
+            ], ['applied by auto_tune', 'value']));
+            sys('Applied budgets are ceilings: a lower configured value still wins.');
+          } else if (p.auto_tune) {
+            sys('auto_tune is on but has not tuned this model yet; /model use ' + p.model + ' measures it.');
+          }
         } else {
           const s = await api('/api/status');
           sys(table([['model', s.model || '(unset)'], ['provider', s.provider], ['base_url', s.base_url]]));
@@ -3155,6 +3200,7 @@ async function runSlash(line, webCommand) {
       case 'goal': {
         if (rest[0] === 'stage') {
           if (!currentSession || !sessionGoal) { sys('Set /goal <text> first.'); break; }
+          if (!rest[1]) { sys('usage: /goal stage <branch> — name the branch the coding run should use'); break; }
           const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage', 'POST', {branch:rest[1] || ''});
           if (staleReview()) break;
           pendingAgentRun = r.request; showPendingAgentRun(); sys(r.next); break;
@@ -3222,7 +3268,9 @@ async function runSlash(line, webCommand) {
           sys('a loop turn is already in flight — /loop stop to abort after it returns');
           break;
         }
-        if (!sessionGoal && currentSession) {
+        /* Reload the stored goal every time: each turn restates it, and another
+           tab may have changed it since this page last read it. */
+        if (currentSession) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
           sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
           paintGoalLoop();
@@ -3349,9 +3397,62 @@ async function runSlash(line, webCommand) {
 }
 
 /* ── chat ── */
+/* GOAL_DONE on a line of its own. Small local models decorate it
+   (**GOAL_DONE**, `GOAL_DONE`, ## GOAL_DONE, 1. GOAL_DONE, GOAL_DONE.), so
+   Markdown emphasis, code ticks, heading/quote/list marks (numbered too) and
+   trailing punctuation around it are ignored. A sentence that merely
+   mentions it is not a match. */
 function replyHasGoalDone(text) {
   if (typeof text !== 'string' || !text) return false;
-  return text.split(/\r?\n/).some(function (line) { return line.trim() === 'GOAL_DONE'; });
+  return text.split(/\r?\n/).some(function (line) {
+    const bare = line.trim()
+      .replace(/^(?:(?:[#>*_`~\-]+|\d+[.)])\s*)+/, '')
+      .replace(/(?:\s*[*_`~.!:]+)+$/, '')
+      .trim();
+    return bare === 'GOAL_DONE';
+  });
+}
+
+/* One loop turn's instruction. It is model-agnostic, restates a bounded
+   slice of the goal next to the reply (small models lose a system-prompt
+   goal behind long history) and asks for one new step, the usual cure for a
+   7B-27B model restating its previous answer. */
+const LOOP_GOAL_REMINDER_CHARS = 240;
+function loopTurnPrompt(turn, total, goal) {
+  // Code points, not UTF-16 units: a cut surrogate pair is JSON the server rejects.
+  const g = Array.from(String(goal || '').replace(/\s+/g, ' ').trim());
+  const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1).join('') + '…' : g.join('');
+  return 'Loop turn ' + turn + ' of ' + total + '. Session goal: ' + reminder + '\n' +
+    'Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
+    'Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. ' +
+    'Stay in this chat; do not request a real-repo write.';
+}
+
+/* Words of a reply, lowercased, with punctuation and Markdown dropped. */
+function loopWords(text) {
+  return String(text || '').toLowerCase().replace(/[^\p{L}\p{N}_\s]+/gu, ' ').split(/\s+/).filter(Boolean);
+}
+/* A stall: the new reply is the previous one again, verbatim or nearly. The
+   measure is 2·LCS/(|a|+|b|) over words, at least LOOP_STALL_SIMILARITY: small
+   models often reword a sentence of an otherwise identical answer, while a new
+   step changes most of the word sequence. Short replies compare word for word,
+   since one changed word there is a real change. Bounded to the first
+   LOOP_STALL_MAX_WORDS words of each reply. */
+const LOOP_STALL_SIMILARITY = 0.9;
+const LOOP_STALL_MAX_WORDS = 2000;
+function repliesNearlyRepeat(previous, next) {
+  const a = loopWords(previous).slice(0, LOOP_STALL_MAX_WORDS), b = loopWords(next).slice(0, LOOP_STALL_MAX_WORDS);
+  if (!a.length || !b.length) return String(previous || '').trim() === String(next || '').trim();
+  if (a.join(' ') === b.join(' ')) return true;
+  if (a.length < 12 || b.length < 12) return false;
+  let row = new Uint16Array(b.length + 1), prev = new Uint16Array(b.length + 1);
+  for (let i = 1; i <= a.length; i++) {
+    [prev, row] = [row, prev];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], row[j - 1]);
+    }
+  }
+  return 2 * row[b.length] / (a.length + b.length) >= LOOP_STALL_SIMILARITY;
 }
 
 function sleepMs(ms) {
@@ -3373,7 +3474,16 @@ async function runLoopTurns() {
   try {
     while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
-      const framed = 'Continue toward the session goal. Be concise (local 27b). If the goal is fully satisfied, end with GOAL_DONE on its own line. Stay in this chat; do not request a real-repo write.';
+      /* Restate the stored goal, not this page's copy: another tab may have
+         changed or cleared it since the last turn. */
+      try {
+        const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
+        sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
+        paintGoalLoop();
+      } catch (_) { /* keep the last known goal; the turn reports its own failure */ }
+      if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
+      if (!sessionGoal) { stopLoop('loop stopped — the session goal was cleared'); return; }
+      const framed = loopTurnPrompt(turn, loopState.total, sessionGoal);
       /* A routed search started during the cooldown owns the gate, and so
          does the chat turn it may fall back to on a router failure; let both
          settle rather than starting a model turn that overlaps them. */
@@ -3396,7 +3506,7 @@ async function runLoopTurns() {
       }
       loopState.failures = 0;
       loopState.remaining -= 1;
-      if (loopState.lastReply && reply.trim() === loopState.lastReply) {
+      if (loopState.lastReply && repliesNearlyRepeat(loopState.lastReply, reply)) {
         stopLoop('loop stopped — model repeated the previous reply (stall)');
         return;
       }
@@ -3467,6 +3577,9 @@ async function finishChat(r) {
   renderChatWebTools(r && r.web_tools);
   agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
         ' tok · session total ' + (tally.total || 0));
+  /* The server compared this turn with the window Ollama loaded (/api/ps);
+     an oversized prompt loses its oldest text silently, system prompt first. */
+  if (r && r.context_window && r.context_window.message) sys(r.context_window.message);
   if (r && r.memory_suggestion && r.memory_suggestion.queued) {
     sys('Memory suggestion queued, not yet a proposal. Open /memory proposals and Refresh proposals to see the result. The model may return no candidates; nothing is applied without your approval and reason.');
   }
@@ -3715,7 +3828,7 @@ async function onSend() {
 function looksLikeNlSearch(text) {
   /* Mirrors src/server/web_intent.rs: command-shaped (optional politeness
      words, then a whole `search` token; `google` is an entity, not a verb)
-     plus a balanced quoted term or a `first N links|results|hits|pages`
+     plus a balanced quoted term or a `first|top N links|results|hits|pages`
      clause. A quote opens at a word start and closes at a word end, so the
      apostrophe inside 'women's health' does not end the term. Lead-in words
      and the verb need whitespace (or end) after any trailing punctuation so
@@ -3757,7 +3870,10 @@ function looksLikeNlSearch(text) {
   /* A signed or bracketed count (`first -2 results`, `first (2) links`) is
      still a count clause: it routes so the server's own range check refuses
      it (WEB_BAD_QUERY) rather than starting a model turn. */
-  var countRe = /\bfirst\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?)\b/ig;
+  /* `top N` is the same clause as `first N`; `first N pages of <book>` names
+     pages of a document, not results, while `top N pages of` still ranks
+     results (find_count_clause on the server). */
+  var countRe = /\b(?:first\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?(?!\s+of\b))|top\s+[(\[]?[-+−–]?\d+[)\]]?\s+(?:links?|results?|hits?|pages?))\b/ig;
   var quoted = 0, counts = 0;
   var Q = '\u0000';
   var masked = body
