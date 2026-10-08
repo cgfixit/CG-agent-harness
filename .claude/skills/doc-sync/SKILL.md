@@ -19,7 +19,8 @@ the code does. Code wins; the order is in `AGENTS.md` ("Where truth lives").
 Diff `origin/main...HEAD`; on `main`, diff from the last commit that touched the
 doc. Note routes (`REGISTERED_PATHS`), shim `ACTIONS`, config keys, CLI flags,
 exit codes, gate names and moved paths. Grep the docs for each changed name and
-fix only the sections that mention it.
+fix only the sections that mention it; with no hit, edit the section owning
+the topic.
 
 ## Rules
 
@@ -38,8 +39,11 @@ fix only the sections that mention it.
 ## Verify and report
 
 ```bash
-cargo test --test invariant_guard
+cargo test --locked --test invariant_guard
+cargo test --locked registered_paths_are_unique_and_cover_every_router_route
 ```
+
+Keep `--locked` on every cargo command you write.
 
 Re-grep every name you wrote and check that every link you touched resolves.
 Report each file and section you changed, and name the docs you did not check
