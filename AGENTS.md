@@ -175,10 +175,11 @@ elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
   check fails stacked PRs), title `[prefix] - Sentence`, body from
   `.github/PULL_REQUEST_TEMPLATE.md` (run `scripts/check-pr-template.sh` first).
   Touching a core path requires an explicit invariant statement in the body.
-- The `review gate` check (`.github/workflows/review-gate.yml`) is advisory: it
-  reports unresolved threads and an in-progress Codex review and does not fail
-  CI. Read it before merging; resolving a thread fires no webhook, so re-run the
-  job if the last thread was resolved without a push.
+- The advisory `review gate` check (`.github/workflows/review-gate.yml`) reports
+  unresolved threads and running Codex reviews; it never fails CI. Read it before
+  merging. Resolving a thread fires no webhook: re-run it after resolving the
+  last one without a push. Never comment `@codex review` without the operator's
+  approval.
 
 ## Docs policy
 

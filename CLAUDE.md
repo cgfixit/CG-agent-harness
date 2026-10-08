@@ -37,3 +37,4 @@ Locally: fmt, clippy, then run the changed code; never the full suite (CI runs i
 - Draft PR off `main`, one concern; branch, title and body follow
   `.github/PULL_REQUEST_TEMPLATE.md`, checked by `scripts/check-pr-template.sh`.
 - Loading a skill never authorizes push, merge or release.
+- Never comment `@codex review` on a PR without the operator's approval.
