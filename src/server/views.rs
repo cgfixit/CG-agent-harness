@@ -281,7 +281,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 70] = [
         "/memory",
         "GET",
         "/api/memory",
-        "operator notes in prompt (off by default; not RAG memory/)",
+        "operator notes in prompt (on for new homes; not RAG memory/)",
     ),
     (
         "memory-add",
