@@ -182,7 +182,7 @@ pub async fn probe(endpoint: &str, model: &str, limits: InventoryLimits) -> Valu
 mod tests {
     use super::*;
 
-    const DIGEST: &str = "6f7e1a3c9b2d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789ab";
+    const DIGEST: &str = "6f7e1a3c9b2d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789ab"; // DevSkim: ignore DS173237 because this is a made-up 64-hex model digest fixture, not a credential.
 
     /// Shaped like Ollama `/api/show` for a Qwen3.5 9B Q8_0 GGUF (hybrid attention,
     /// reasoning). Values follow the upstream config, not a live measurement.
