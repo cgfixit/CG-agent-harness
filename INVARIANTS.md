@@ -544,6 +544,8 @@ router (operator/admin). `POST /api/ollama/pull` streams NDJSON progress (SSE
 when `Accept: text/event-stream`) to a derived loopback origin (OpenAI `/v1`
 stripped). The pull is single-flighted on its own gate, abortable
 (`POST /api/ollama/pull/cancel` or disconnect), and never includes `num_ctx`.
+It accepts only `name` or `ns/name`: Ollama reads a three-segment name as
+`host/ns/name` and would dial that host.
 Startup `keep_alive` warmup is `models.local_llm.warmup.enabled` (`flag_is_true`;
 missing keys in old homes are off) and must not fail `serve`. Provider error
 bodies are not echoed.

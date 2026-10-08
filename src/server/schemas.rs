@@ -702,7 +702,7 @@ pub struct OllamaPullRequest {
 
 impl Validate for OllamaPullRequest {
     fn validate(&self) -> Vec<String> {
-        if crate::llm::ollama::model_name_ok(&self.model) {
+        if crate::llm::ollama::pull_name_ok(&self.model) {
             vec![]
         } else {
             vec!["model".into()]
