@@ -55,11 +55,10 @@ ollama show qwen3.8:27b
 
 Configure both `models.local_llm.model` (chat) and
 `agentic.deepagent_github.model` (planner) with your chosen tag in [first run](INSTALL.md#6-first-run).
-`/model use <tag>` changes chat selection only. Existing persisted chat selection
-can override the chat config, so inspect `/status` after restart.
+`/model use <tag>` changes chat selection only; inspect `/status` after restart.
 
 The shipped `qwen3.8:27b-mlx` default does not verify installation. The app
-does not require a 27B model. Use a tag your inventory contains. Chat uses `models.local_llm.base_url`; the
+does not require a 27B model. Chat uses `models.local_llm.base_url`; the
 planner uses `agentic.deepagent_github.base_url`. Both local paths require a
 loopback OpenAI-compatible service — which is also how a fine-tuned MLX model is
 served; see [FINETUNE.md](FINETUNE.md) for the QLoRA workflow.
@@ -76,8 +75,9 @@ and planner models**. Both use bounded `/models` inventories:
 | `unavailable` | Inventory failed, timed out, was oversized or malformed. Check the service and endpoint. |
 | `not_probed` | The endpoint is not an eligible loopback URL, or the planner is a cloud provider. Setup does not probe cloud planners. |
 
-`/model` reports selection; `/model use <tag>` persists it without checking or
-downloading. This shared selection can override configuration, including fallback.
+`/model` reports selection and `/model profile` its loaded window;
+`/model use <tag>` persists it without checking or downloading. This shared
+selection can override configuration, including fallback.
 Check it against the active local endpoint. For explicit cloud chat, use
 `/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only
 after an administrator saves the matching key and restarts. Cloud selection sends

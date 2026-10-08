@@ -1,4 +1,4 @@
-//! Native Ollama inventory/pull/warmup: loopback only, no num_ctx, abortable.
+//! Native Ollama inventory/profile/pull/warmup: loopback only, no num_ctx, abortable.
 
 mod common;
 
@@ -60,6 +60,30 @@ async fn start_native_ollama() -> NativeOllama {
             }),
         )
         .route(
+            "/api/show",
+            post(|Json(body): Json<Value>| async move {
+                if body.get("num_ctx").is_some() || body["model"] != "qwen3.8:27b-mlx" {
+                    return (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "fixture-private-missing"})));
+                }
+                (
+                    axum::http::StatusCode::OK,
+                    Json(json!({
+                        "license": "fixture-private-license",
+                        "parameters": "num_ctx 32768",
+                        "details": {"family": "qwen38", "parameter_size": "27.8B", "quantization_level": "Q4_K_M"},
+                        "model_info": {"general.architecture": "qwen38", "qwen38.context_length": 262144},
+                        "capabilities": ["completion", "tools"],
+                    })),
+                )
+            }),
+        )
+        .route(
+            "/api/ps",
+            get(|| async {
+                Json(json!({"models": [{"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20}]}))
+            }),
+        )
+        .route(
             "/api/generate",
             post(move |Json(body): Json<Value>| {
                 let g = g2.clone();
@@ -98,6 +122,44 @@ async fn inventory_is_csrf_guarded_and_lists_tags() {
         .collect();
     assert!(names.contains(&"tinyllama:latest"), "{body}");
     assert_eq!(body["configured_state"], "installed");
+}
+
+#[tokio::test]
+async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(&ollama.openai_url(), ServerOptions::default()).await;
+    assert_eq!(s.open_get("/api/ollama/profile").await.0, 403);
+    let (status, body) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["state"], "profiled", "{body}");
+    assert_eq!(body["declared"]["tools"], true);
+    assert_eq!(body["declared"]["native_context"], 262144);
+    assert_eq!(body["declared"]["modelfile_num_ctx"], 32768);
+    assert_eq!(body["loaded"]["context_length"], 32768);
+    assert_eq!(body["loaded"]["gpu_fraction"], 1.0);
+    assert!(!body.to_string().contains("fixture-private"), "{body}");
+    // Profiling never loads, pulls or warms a model (test warmup is off).
+    assert!(ollama.generates.lock().unwrap().is_empty());
+    assert!(ollama.pulls.lock().unwrap().is_empty());
+    // The console sends every slash line through this parser first. As a known
+    // subcommand, a typo is suggested back rather than dispatched as `/model`.
+    let (_, parsed) = s.post_json("/api/slash/parse", json!({"line": "/model profile"})).await;
+    assert_eq!(parsed["dispatch"], true, "{parsed}");
+    assert_eq!(parsed["canonical"], "/model profile", "{parsed}");
+    let (_, parsed) = s.post_json("/api/slash/parse", json!({"line": "/model profil"})).await;
+    assert_eq!(parsed["dispatch"], false, "{parsed}");
+    assert_eq!(parsed["suggestions"][0]["line"], "/model profile", "{parsed}");
+
+    let (status, _) = s.post_json("/api/model", json!({"model": "missing:latest"})).await;
+    assert_eq!(status, 200);
+    let (_, body) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(body["state"], "tag_missing", "{body}");
+    assert!(!body.to_string().contains("fixture-private"), "{body}");
+
+    let (status, _) = s.post_json("/api/model", json!({"model": "grok"})).await;
+    assert_eq!(status, 200);
+    let (_, body) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(body["state"], "not_probed", "{body}");
 }
 
 #[tokio::test]

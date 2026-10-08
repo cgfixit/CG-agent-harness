@@ -1,4 +1,4 @@
-//! Live Ollama inventory, abortable pull, and keep_alive warmup status.
+//! Live Ollama inventory, read-only model profile, abortable pull, and keep_alive warmup status.
 
 use std::sync::Arc;
 
@@ -12,7 +12,9 @@ use axum::Json;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::llm::inventory::InventoryLimits;
 use crate::llm::ollama::{self, PullLimits};
+use crate::llm::profile;
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::{OllamaPullRequest, ValidJson};
 use crate::server::state::AppState;
@@ -24,6 +26,21 @@ pub async fn inventory(State(state): State<Arc<AppState>>) -> ApiResult<Json<Val
     }
     let value = refresh_inventory(&state).await?;
     Ok(Json(value))
+}
+
+/// Declared and loaded facts for the selected chat model. Read-only: it never
+/// loads, pulls or retunes a model, and the planner model is not profiled here.
+pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    let model = state.current_model();
+    if state.cloud_chat.is_cloud_selection(&model) || state.backend.provider != "ollama" {
+        return Ok(Json(profile::not_probed(
+            &model,
+            "Profiles are available only for a local Ollama chat model.",
+        )));
+    }
+    let limits =
+        InventoryLimits::from_config(&state.cfg).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    Ok(Json(profile::probe(&state.backend.base_url, &model, limits).await))
 }
 
 async fn refresh_inventory(state: &AppState) -> ApiResult<Value> {

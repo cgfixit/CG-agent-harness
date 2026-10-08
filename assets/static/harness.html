@@ -2744,6 +2744,27 @@ async function runSlash(line, webCommand) {
           const planner = await api('/api/agent/checks');
           sys('chat model selected: ' + r.model + ' via ' + r.provider + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
           await refreshStatus();
+        } else if (rest[0] === 'profile') {
+          // Read-only facts; nothing here changes limits yet.
+          const p = await api('/api/ollama/profile');
+          if (p.state !== 'profiled') { sys('model profile ' + p.state + ': ' + p.detail); break; }
+          const d = p.declared || {}, l = p.loaded, i = p.installed || {};
+          const show = v => v === null || v === undefined ? '—' : String(v);
+          const gb = n => typeof n === 'number' ? (n / 1e9).toFixed(1) + ' GB' : '—';
+          sys(table([
+            ['model', p.model],
+            ['architecture', show(d.architecture)],
+            ['parameters', show(d.parameter_size)],
+            ['quantization', show(d.quantization)],
+            ['tools', show(d.tools)],
+            ['thinking', show(d.thinking)],
+            ['native context', show(d.native_context)],
+            ['Modelfile num_ctx', show(d.modelfile_num_ctx)],
+            ['loaded context', l ? show(l.context_length) : 'not resident'],
+            ['memory GPU / total', l ? gb(l.size_vram) + ' / ' + gb(l.size_bytes) : '—'],
+            ['digest', i.digest ? i.digest.slice(0, 12) : '—'],
+          ], ['fact', 'value']));
+          sys(p.detail);
         } else {
           const s = await api('/api/status');
           sys(table([['model', s.model || '(unset)'], ['provider', s.provider], ['base_url', s.base_url]]));

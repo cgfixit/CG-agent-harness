@@ -143,7 +143,7 @@ pub fn pull_payload(model: &str) -> Value {
     })
 }
 
-fn http_client(timeout: Duration) -> Result<reqwest::Client> {
+pub(crate) fn http_client(timeout: Duration) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -156,29 +156,43 @@ fn static_err(message: &str) -> HarnessError {
     HarnessError::new(OLLAMA_ERROR, message)
 }
 
+/// Outcome of one bounded native-API read. Provider text is never kept.
+pub(crate) enum Bounded {
+    Json(Value),
+    Status(u16),
+    Failed,
+}
+
+/// Sends `request` and parses at most `max_bytes` of JSON body. Oversized,
+/// malformed or unreachable responses are `Failed`; non-2xx is `Status`.
+pub(crate) async fn bounded_json(request: reqwest::RequestBuilder, max_bytes: usize) -> Bounded {
+    let Ok(mut response) = request.send().await else {
+        return Bounded::Failed;
+    };
+    if !response.status().is_success() {
+        return Bounded::Status(response.status().as_u16());
+    }
+    let mut bytes = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if chunk.len() <= max_bytes.saturating_sub(bytes.len()) => bytes.extend_from_slice(&chunk),
+            Ok(None) => break,
+            _ => return Bounded::Failed,
+        }
+    }
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(value) => Bounded::Json(value),
+        Err(_) => Bounded::Failed,
+    }
+}
+
 /// Installed tags from `GET /api/tags`. Empty on failure; never echoes provider text.
 pub async fn list_tags(native: &str, limits: InventoryLimits) -> Vec<Value> {
     let Ok(client) = http_client(limits.timeout) else {
         return Vec::new();
     };
-    let result = async {
-        let mut response = client
-            .get(format!("{native}/api/tags"))
-            .send()
-            .await?
-            .error_for_status()?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if chunk.len() > limits.max_bytes.saturating_sub(bytes.len()) {
-                return Ok::<_, reqwest::Error>(None);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(serde_json::from_slice::<Value>(&bytes).ok())
-    }
-    .await;
-    match result {
-        Ok(Some(value)) => value
+    match bounded_json(client.get(format!("{native}/api/tags")), limits.max_bytes).await {
+        Bounded::Json(value) => value
             .get("models")
             .and_then(Value::as_array)
             .into_iter()

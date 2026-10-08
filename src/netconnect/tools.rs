@@ -500,11 +500,11 @@ netconnect:
         // fills `tools_for_tier`. This table is not imported from that PR.
         const TIER_TOOLS: [usize; 7] = [0, 0, 0, 0, 0, 0, 0];
         let base = HARNESS_SURFACES.len();
-        assert_eq!(base, 69);
+        assert_eq!(base, 70);
         let shipped = app(AppConfig::embedded_default());
         let passive = app(ENABLED_PASSIVE);
         // Named rows. Removing `enabled-passive` fails the lookup below.
-        let wired_rows = [("default", &shipped, 69usize), ("enabled-passive", &passive, 71usize)];
+        let wired_rows = [("default", &shipped, 70usize), ("enabled-passive", &passive, 72usize)];
         for name in ["default", "enabled-passive"] {
             assert!(
                 wired_rows.iter().any(|(row, _, _)| *row == name),
