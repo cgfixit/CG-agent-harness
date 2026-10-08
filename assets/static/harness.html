@@ -2750,6 +2750,9 @@ async function runSlash(line, webCommand) {
           // Read-only: facts, proposals, and whatever auto_tune already applied.
           const p = await api('/api/ollama/profile');
           if (p.state !== 'profiled') { sys('model profile ' + p.state + ': ' + p.detail); break; }
+          sys(p.auto_tune
+            ? 'auto_tune: on. /model use measures this model and applies per-model limits.'
+            : 'auto_tune: off. Set models.local_llm.auto_tune: true in config.yaml and restart to measure and apply per-model limits.');
           const d = p.declared || {}, l = p.loaded, i = p.installed || {};
           const show = v => v === null || v === undefined ? '—' : String(v);
           const gb = n => typeof n === 'number' ? (n / 1e9).toFixed(1) + ' GB' : '—';
