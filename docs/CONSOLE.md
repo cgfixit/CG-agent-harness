@@ -111,13 +111,13 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 /goal clear
 ```
 
-`/loop 3` starts up to three follow-up chat turns toward the current goal. The
-default is three, hard maximum five. Manual mode pauses after each turn; another
-`/loop` continues. `/loop auto` toggles automatic continuation; enable it before
-starting, or follow it with `/loop` to resume a paused sequence. `/loop stop`
-requests cancellation during generation or cooldown. Goal clear and session
-switching stop continuation. Rate limits, failures, repeated output and token
-budgets can stop it earlier; the displayed `GOAL_DONE` marker is only model advice.
+`/loop 3` runs up to three follow-up turns toward the goal (default three,
+maximum five), each restating 240 goal characters. Manual mode pauses after each
+turn; `/loop` continues. `/loop auto` toggles automatic continuation, before
+starting or to resume. `/loop stop` cancels during generation or cooldown. Goal
+clear, session switching, rate limits, failures, token budgets and a
+90%-identical reply stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
+too, but is only model advice.
 
 This loop does not edit files, run skills as programs, or perform coding checks.
 The goal persists; continuation counters and auto state are page state.
@@ -443,7 +443,7 @@ confirmation and persistence.
 
 Web commands support the flags above; `--help` opens help without mutation.
 Named web flags accept `--flag value` or `--flag=value`. Quote whole arguments
-when needed; use `--` before query words that start with a hyphen. Legacy
+when needed. In queries `-tokio` is text; use `--` before words starting `--`. Legacy
 `group=name` and single-pattern `allow PATTERN GROUP SEED` remain accepted.
 Unknown, repeated singleton, or missing-value flags refuse; fetch takes URLs,
 not appended prose.

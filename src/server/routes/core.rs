@@ -1084,6 +1084,36 @@ async fn chat_inner(
             reply.initial_prompt_tokens,
         )
     };
+    // Ollama keeps the newest tokens of an oversized prompt and drops the rest,
+    // system prompt first, without an error. The harness sends no num_ctx, so
+    // compare this turn with the window Ollama actually loaded and say so.
+    let context_window = if cloud_selected || state.backend.provider != "ollama" {
+        None
+    } else {
+        // This turn's own usage may already show denser text than `ratio`.
+        let ratio = calibration.as_ref().map_or(ratio, |c| {
+            crate::server::compaction::token_ratio(Some(c), &state.chat.base_url, &model)
+        });
+        let project = |extra| {
+            crate::server::compaction::projected_prompt_tokens(&system_prompt, &history, "", reservation, ratio, extra)
+        };
+        // The turn's largest request: the first one's tool definitions, or a later
+        // web round's definitions plus the tool calls and results sent so far.
+        let first = if reply.initial_prompt_tools { tool_tokens } else { 0 };
+        let projected = project(first.max(reply.peak_prompt_extra_tokens));
+        loaded_window(&state, &model)
+            .await
+            .filter(|window| projected > *window)
+            .map(|window| {
+                state.audit.log(json!({"event":"chat_context_window_exceeded","session_id":session.session_id,
+                    "model":model,"window":window,"projected":projected}));
+                json!({"model":model,"window_tokens":window,"projected_tokens":projected,
+                    "message":format!("Ollama loaded {model} with a {window}-token context window, but this turn needed about \
+                        {projected} tokens (prompt plus reply reserve). Ollama silently drops the oldest prompt text, starting \
+                        with the system prompt. Restart Ollama with a larger OLLAMA_CONTEXT_LENGTH (32768 is recommended; see \
+                        docs/MODELS.md), or start a new session.")})
+            })
+    };
     let recorded = state.store.for_owner(&owner).record_exchange_inner(
         &session.session_id,
         &req.message,
@@ -1147,6 +1177,7 @@ async fn chat_inner(
         "tally": updated.tally.to_json(),
         "episode": episode,
         "memory_suggestion": memory_suggestion,
+        "context_window": context_window,
         "structured_facts": {
             "explicit_recall": crate::server::structured_memory::recall_available(
                 &state.cfg,
@@ -1172,6 +1203,29 @@ async fn chat_inner(
     })))
         } => result,
     }
+}
+
+/// Longest the post-turn `/api/ps` window read may hold the generation gate.
+const WINDOW_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The context window Ollama loaded `model` with, cached for the inventory
+/// refresh interval. `None` when unknown (not loaded, not reported, not a
+/// loopback Ollama endpoint); a check that cannot run never blocks a turn.
+/// A failed read is cached too, so an endpoint without `/api/ps` is not
+/// probed again (up to the inventory timeout) on every turn.
+async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
+    let refresh = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
+    if let Some(window) = state.ollama.cached_window(model, refresh) {
+        return window;
+    }
+    let native = crate::llm::ollama::native_base_url(&state.chat.base_url)?;
+    let mut limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).ok()?;
+    // The turn still holds the generation gate here: a loopback /api/ps answers
+    // in milliseconds, so a slow one is skipped (and cached) rather than waited on.
+    limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
+    let window = crate::llm::ollama::loaded_context_window(&native, model, limits).await;
+    state.ollama.store_window(model, window);
+    window
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.

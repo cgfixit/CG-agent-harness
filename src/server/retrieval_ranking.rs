@@ -8,7 +8,8 @@ const HIT_CAP: usize = 16;
 
 pub(super) struct PreparedQuery {
     pub expression: String,
-    identifier: Option<regex::Regex>,
+    /// One exact, word-bounded pattern per identifier-shaped word.
+    identifiers: Vec<regex::Regex>,
     lowercase: String,
 }
 
@@ -35,29 +36,47 @@ impl PreparedQuery {
         let Some(expression) = tantivy_expression(query) else {
             return Ok(None);
         };
-        let identifier = if query.contains('_') || query.contains("::") {
-            Some(
+        // Only the identifier-shaped words (`widget_open`, `Vec::new`) must match
+        // exactly. A whole-query pattern made `How does widget_open fail?` require
+        // that literal sentence, so a question about an identifier found nothing.
+        // Tokens are cut on identifier syntax, so `foo_bar/baz_qux` and
+        // `` `foo_bar`,`baz_qux` `` are two identifiers, not one literal.
+        static IDENTIFIER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"[\p{L}\p{N}_]+(?:::[\p{L}\p{N}_]+)*").expect("static identifier pattern")
+        });
+        let identifiers = IDENTIFIER
+            .find_iter(query)
+            .map(|m| m.as_str())
+            .filter(|word| word.contains('_') || word.contains("::"))
+            .take(MAX_TERMS)
+            .map(|word| {
+                // `::` continues a path, so `foo::bar` does not match inside
+                // `foo::bar::baz` or `outer::foo::bar`; a lone `:` still ends it.
                 regex::RegexBuilder::new(&format!(
-                    r"(?:^|[^\p{{L}}\p{{N}}_]){}(?:$|[^\p{{L}}\p{{N}}_])",
-                    regex::escape(query)
+                    r"(?:^|[^\p{{L}}\p{{N}}_:]|(?:^|[^:]):){}(?:$|[^\p{{L}}\p{{N}}_:]|:(?:$|[^:]))",
+                    regex::escape(word)
                 ))
                 .case_insensitive(true)
-                .build()?,
-            )
-        } else {
-            None
-        };
+                .build()
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(Some(Self {
             expression,
-            identifier,
+            identifiers,
             lowercase: query.to_lowercase(),
         }))
     }
 
+    /// At least one identifier in the query appears exactly in some field. Each
+    /// passage is checked alone, and docs describe `Vec::new` and
+    /// `Vec::with_capacity` in separate chunks, so one is enough per passage.
     pub fn identifier_matches<'a>(&self, fields: impl IntoIterator<Item = &'a str>) -> bool {
-        self.identifier
-            .as_ref()
-            .is_none_or(|identifier| fields.into_iter().any(|field| identifier.is_match(field)))
+        let fields: Vec<&str> = fields.into_iter().collect();
+        self.identifiers.is_empty()
+            || self
+                .identifiers
+                .iter()
+                .any(|identifier| fields.iter().any(|field| identifier.is_match(field)))
     }
 
     pub fn exact_bonus(&self, text: &str) -> f32 {
@@ -248,5 +267,36 @@ mod tests {
         }
         let selected = select_diverse(candidates, 100, |item| &item.text);
         assert_eq!(selected.len(), 16);
+    }
+
+    #[test]
+    fn identifier_words_in_a_question_match_exactly_without_requiring_the_question() {
+        let q = PreparedQuery::new("How does `widget_open` fail?").unwrap().unwrap();
+        assert!(q.identifier_matches(["widget_open returns EBUSY on a second open."]));
+        assert!(!q.identifier_matches(["widget_opener is unrelated."]));
+        assert!(!q.identifier_matches(["How does it fail?"]));
+        let both = PreparedQuery::new("compare Vec::new and Vec::with_capacity")
+            .unwrap()
+            .unwrap();
+        assert!(both.identifier_matches(["Vec::new allocates nothing.", "Vec::with_capacity reserves."]));
+        // Punctuation between identifiers separates them.
+        for joined in ["compare `foo_bar`,`baz_qux`", "foo_bar/baz_qux"] {
+            let q = PreparedQuery::new(joined).unwrap().unwrap();
+            assert!(
+                q.identifier_matches(["foo_bar is set.", "baz_qux is read."]),
+                "{joined}"
+            );
+        }
+        // A chunk that documents one of the queried identifiers is kept.
+        assert!(both.identifier_matches(["Vec::new allocates nothing."]));
+        assert!(!both.identifier_matches(["Vec::newer is unrelated."]));
+        let path = PreparedQuery::new("foo::bar").unwrap().unwrap();
+        assert!(path.identifier_matches(["Call foo::bar: it returns."]));
+        assert!(!path.identifier_matches(["foo::bar::baz and outer::foo::bar"]));
+        // A query without an identifier filters nothing.
+        assert!(PreparedQuery::new("retry count")
+            .unwrap()
+            .unwrap()
+            .identifier_matches(["x"]));
     }
 }

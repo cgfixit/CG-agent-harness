@@ -27,10 +27,16 @@ fn words(input: &str) -> Result<Vec<Word>, String> {
             continue;
         }
         let mut word = String::new();
-        if matches!(c, '\'' | '"') {
+        // An apostrophe opens a quoted argument only when a closing one ends a
+        // later word (`'tokio select'`); otherwise it is text (`'til death`).
+        // `'90s` and `'til` are elisions, not openers.
+        let quoted = c == '"' || c == '\'' && !elision(chars.clone()) && closes_later(chars.clone());
+        if quoted {
             let mut closed = false;
-            for next in chars.by_ref() {
-                if next == c {
+            while let Some(next) = chars.next() {
+                // A single-quoted span closes only at an apostrophe that ends a
+                // word, so `'women's health'` keeps its inner apostrophe.
+                if next == c && (c == '"' || chars.peek().is_none_or(|n| n.is_whitespace())) {
                     closed = true;
                     break;
                 }
@@ -50,10 +56,40 @@ fn words(input: &str) -> Result<Vec<Word>, String> {
         }
         out.push(Word {
             text: word,
-            quote: matches!(c, '\'' | '"').then_some(c),
+            quote: quoted.then_some(c),
         });
     }
     Ok(out)
+}
+
+/// Whether the text after an apostrophe is an elided word (`'90s`, `'til`,
+/// `'em`) rather than the start of a quoted phrase.
+fn elision(rest: impl Iterator<Item = char>) -> bool {
+    const WORDS: [&str; 6] = ["til", "em", "tis", "twas", "cause", "bout"];
+    let word = rest
+        .take_while(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase();
+    // `'cause,` and `'til.` are the same elisions.
+    let bare = word.trim_end_matches(|c: char| c.is_ascii_punctuation() && c != '\'');
+    word.starts_with(|c: char| c.is_ascii_digit()) || WORDS.contains(&bare)
+}
+
+/// Whether an apostrophe in `rest` ends a word (followed by whitespace or the
+/// end) before another word opens with one: in `'til death 'Rust Book'` the
+/// first apostrophe is text and `'Rust Book'` is the phrase.
+fn closes_later(mut rest: impl Iterator<Item = char>) -> bool {
+    let mut prev = None;
+    for c in rest.by_ref() {
+        if prev == Some('\'') && c.is_whitespace() {
+            return true;
+        }
+        if c == '\'' && prev.is_some_and(char::is_whitespace) {
+            return false;
+        }
+        prev = Some(c);
+    }
+    prev == Some('\'')
 }
 
 pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
@@ -62,7 +98,12 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
     if args
         .iter()
         .take_while(|a| a.quote.is_some() || a.text != "--")
-        .any(|a| a.quote.is_none() && matches!(a.text.as_str(), "--help" | "-h"))
+        // In a query `-h` is search text (`C compiler -h option`), like any
+        // single-dash word; `--help` still asks for help there.
+        .any(|a| {
+            a.quote.is_none()
+                && (a.text == "--help" || a.text == "-h" && !matches!(action, "search" | "pages" | "research"))
+        })
         || action == "help"
     {
         return Ok(WebCommand {
@@ -86,7 +127,15 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
             literal = true;
             continue;
         }
-        if !literal && word.quote.is_none() && (arg.starts_with('-') || arg.starts_with("group=")) {
+        // In a query, a single-dash word is search text (`rust async -tokio`,
+        // `i32 -1`, `->`), not a flag: every query flag is spelled `--name`.
+        let query_word = matches!(action, "search" | "pages" | "research") && !arg.starts_with("--");
+        let flag_shaped = if query_word {
+            arg.starts_with("group=")
+        } else {
+            arg.starts_with('-') || arg.starts_with("group=")
+        };
+        if !literal && word.quote.is_none() && flag_shaped {
             let (flag, inline) = if let Some(value) = arg.strip_prefix("group=") {
                 ("--group", Some(value))
             } else {
@@ -100,7 +149,9 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                 _ => false,
             };
             if !allowed {
-                return Err(format!("Unsupported flag {flag} for /web {action}. Use /help web."));
+                return Err(format!(
+                    "Unsupported flag {flag} for /web {action}. Put -- before query words that start with --, or use /help web."
+                ));
             }
             let value = if let Some(value) = inline {
                 value.to_string()
@@ -125,14 +176,25 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                             .ok_or("--count must be 1–10.")?,
                     )
                 }
-                "--engine" if engine.is_none() && matches!(value.as_str(), "google" | "pages") => engine = Some(value),
+                "--engine" if engine.is_none() && matches!(value.to_ascii_lowercase().as_str(), "google" | "pages") => {
+                    engine = Some(value.to_ascii_lowercase())
+                }
+                "--engine" => return Err("Invalid or duplicate --engine; use google or pages.".into()),
                 _ => return Err(format!("Invalid or duplicate {flag}.")),
             }
         } else {
             // Exact phrases are search semantics, not merely argument grouping.
-            // Preserve double quotes for queries while URL/flag values stay literal.
+            // A double-quoted query word, or a single-quoted multi-word span (as
+            // chat treats `'tokio select'`), becomes a double-quoted phrase;
+            // URL/flag values stay literal. A double quote inside single quotes
+            // would collide with that phrase, so it is refused, as chat refuses it.
+            if matches!(action, "search" | "pages" | "research") && word.quote == Some('\'') && arg.contains('"') {
+                return Err("A quoted search term contains an embedded double quote.".into());
+            }
             positional.push(
-                if word.quote == Some('"') && matches!(action, "search" | "pages" | "research") {
+                if matches!(action, "search" | "pages" | "research")
+                    && (word.quote == Some('"') || word.quote == Some('\'') && arg.contains(char::is_whitespace))
+                {
                     format!("\"{arg}\"")
                 } else {
                     arg.clone()
@@ -295,5 +357,61 @@ mod tests {
             parse(Some("fetch"), "\"https://example.com/\"").unwrap().body["urls"][0],
             "https://example.com/"
         );
+    }
+
+    #[test]
+    fn single_dash_words_are_query_text_and_double_dash_words_stay_flags() {
+        for (arg, query) in [
+            ("rust async -tokio", "rust async -tokio"),
+            ("what does -> mean in rust", "what does -> mean in rust"),
+            ("i32 -1 overflow", "i32 -1 overflow"),
+            ("\"serde\" -yaml", "\"serde\" -yaml"),
+        ] {
+            assert_eq!(parse(Some("search"), arg).unwrap().body["query"], query, "{arg}");
+        }
+        assert_eq!(
+            parse(Some("pages"), "--group docs retry -legacy").unwrap().body["group"],
+            "docs"
+        );
+        assert!(parse(Some("search"), "--dry-run x").is_err());
+        // Outside a query the old flag grammar is unchanged.
+        assert!(parse(Some("allow"), "https://example.com/* -x").is_err());
+    }
+
+    #[test]
+    fn single_quoted_phrases_stay_phrases_and_lone_apostrophes_are_text() {
+        let query = |arg: &str| parse(Some("search"), arg).unwrap().body["query"].clone();
+        assert_eq!(query("'tokio select' timeout"), "\"tokio select\" timeout");
+        assert_eq!(query("'women's health' study"), "\"women's health\" study");
+        assert_eq!(query("'til death do us part"), "'til death do us part");
+        assert_eq!(
+            query("'til death 'Rust Book' reviews"),
+            "'til death \"Rust Book\" reviews"
+        );
+        assert_eq!(query("C compiler -h option"), "C compiler -h option");
+        assert_eq!(
+            query("'90s bands musicians' influences"),
+            "'90s bands musicians' influences"
+        );
+        assert_eq!(
+            query("'til death musicians' influences"),
+            "'til death musicians' influences"
+        );
+        assert_eq!(query("'cause, musicians' influences"), "'cause, musicians' influences");
+        assert_eq!(parse(Some("search"), "rust --help").unwrap().action, "help");
+        assert_eq!(parse(Some("allow"), "-h").unwrap().action, "help");
+        // A whole single-quoted word is argument grouping, as before.
+        assert_eq!(query("rock 'n' roll"), "rock n roll");
+        assert!(parse(Some("search"), "\"unclosed").is_err());
+        assert!(parse(Some("search"), "'The \"Rust\" Book'")
+            .unwrap_err()
+            .contains("embedded double quote"));
+        assert_eq!(
+            parse(Some("search"), "--engine=Google tokio").unwrap().body["engine"],
+            "google"
+        );
+        assert!(parse(Some("search"), "--engine bing tokio")
+            .unwrap_err()
+            .contains("google or pages"));
     }
 }
