@@ -74,6 +74,17 @@ pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
 const WINDOW_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Error code when the loaded window shrank below what a request was sized for.
 pub const WINDOW_CHANGED: &str = "OLLAMA_WINDOW_CHANGED";
+
+/// A tuned model whose window Ollama does not report even after a load.
+fn unreported_window(model: &str) -> HarnessError {
+    HarnessError::new(
+        WINDOW_CHANGED,
+        format!(
+            "Ollama did not report the window {model} is loaded with, even after loading it; nothing was sent. \
+             Check that Ollama is running, then send it again."
+        ),
+    )
+}
 /// How old a `/api/ps` read may be and still set a tuned model's caps.
 /// [`AppState::verify_window`] takes a fresh one just before each use.
 const VERIFIED_WINDOW_MAX_AGE_SEC: u64 = 10;
@@ -306,22 +317,38 @@ impl AppState {
     /// request and read again: the check uses the window it will actually serve.
     /// A tuned model's window was measured, so one Ollama still does not report
     /// is refused too, not treated as the 32768 defaults.
-    /// An untuned model has the default caps and returns at once without a read.
+    /// An untuned call within the default caps returns at once without a read.
     pub async fn ensure_window_allows(&self, model: &str, prompt_limit: u64, web_total: u64) -> Result<()> {
+        let within_defaults =
+            prompt_limit <= super::compaction::prompt_cap(None) && web_total <= super::compaction::web_total_cap(None);
         if self.tuning_for(model).is_none() {
-            return Ok(());
+            // Untuned limits never exceed the defaults. A call sized above them
+            // came from a tuning cleared mid-turn (a model switch), so it is
+            // checked against the live window, and refused if there is none.
+            if within_defaults {
+                return Ok(());
+            }
+            return match self.probe_window(model).await {
+                Some(window)
+                    if prompt_limit <= super::compaction::prompt_cap(Some(window))
+                        && web_total <= super::compaction::web_total_cap(Some(window)) =>
+                {
+                    Ok(())
+                }
+                _ => Err(HarnessError::new(
+                    WINDOW_CHANGED,
+                    format!(
+                        "{model} is no longer tuned for the window this request was sized for; nothing was sent. \
+                         Send it again: limits now follow the default window."
+                    ),
+                )),
+            };
         }
         if self.probe_window_state(model).await == crate::llm::ollama::LoadedWindow::NotLoaded {
             self.load_for_window(model).await;
         }
         let Some(window) = self.verified_window(model) else {
-            return Err(HarnessError::new(
-                WINDOW_CHANGED,
-                format!(
-                    "Ollama did not report the window {model} is loaded with, even after loading it; nothing was sent. \
-                     Check that Ollama is running, then send it again."
-                ),
-            ));
+            return Err(unreported_window(model));
         };
         let window = Some(window);
         if prompt_limit <= super::compaction::prompt_cap(window)
@@ -340,18 +367,23 @@ impl AppState {
 
     /// Under the caller's generation gate, before it sizes a call: load a tuned
     /// `model` that Ollama reports not loaded, then read the window it serves.
-    /// True when it loaded, so the caller recomputes limits it took before the
-    /// gate. Without this, an absent model keeps the 30000 default cap, and a
-    /// prompt that fits its tuned window is refused before anything wakes it.
-    pub async fn load_if_absent(&self, model: &str) -> bool {
+    /// `Ok(true)` when it loaded, so the caller recomputes limits it took before
+    /// the gate. Without this, an absent model keeps the 30000 default cap, and a
+    /// prompt that fits its tuned window is refused before anything wakes it. A
+    /// load that leaves the window unreported is refused here, so the check
+    /// before the model call does not run the same bounded load a second time.
+    pub async fn load_if_absent(&self, model: &str) -> Result<bool> {
         if self.tuning_for(model).is_none() || self.verified_window(model).is_some() {
-            return false;
+            return Ok(false);
         }
         if self.probe_window_state(model).await != crate::llm::ollama::LoadedWindow::NotLoaded {
-            return false;
+            return Ok(false);
         }
         self.load_for_window(model).await;
-        true
+        match self.verified_window(model) {
+            Some(_) => Ok(true),
+            None => Err(unreported_window(model)),
+        }
     }
 
     /// Load `model` with the bounded warmup request, then read its window.

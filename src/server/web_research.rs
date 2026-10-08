@@ -416,9 +416,14 @@ pub async fn run_from(
     if question.trim().is_empty() || question.chars().count() > 200 || group.is_some_and(|g| !valid_group(g)) {
         return Err(error("WEB_BAD_QUERY", "invalid research question or group"));
     }
+    // The run keeps one model and one runtime-limit snapshot: a selection change
+    // or config reload during a cold load below does not reach it.
+    let model = state.current_model();
     // A web budget above 32000 needs a fresh read of the selected model's window.
-    state.verify_window(&state.current_model()).await;
-    let web = state.web_snapshot();
+    state.verify_window(&model).await;
+    let runtime_web = state.runtime_limits().web.clone();
+    let mut web = state.web.clone();
+    web.limits = state.model_web_limits(&model, runtime_web.clone());
     let enabled = state
         .settings
         .lock()
@@ -447,6 +452,21 @@ pub async fn run_from(
         .ok_or_else(|| error("WEB_BUSY", "local model already busy"))?;
     let lease = web.research.start(owner)?;
     let start = tokio::time::Instant::now();
+    // With the gate held, wake a tuned model whose keep_alive expired and size
+    // the run for the window it now serves, not the snapshot's 32768 defaults.
+    // The lease is already registered, so /api/web/research/cancel ends a cold
+    // load, and the run's deadlines count the time it took.
+    // A cold load is model work: recheck the account first, as gather does.
+    authorize_owner(&state, owner)?;
+    let loaded = tokio::select! {
+        biased;
+        _ = lease.token.cancelled() => return Err(error("WEB_CANCELLED", "research cancelled")),
+        loaded = state.load_if_absent(&model) => loaded?,
+    };
+    if loaded {
+        // Only the window-dependent caps change; the run's other limits stay.
+        web.limits = state.model_web_limits(&model, runtime_web);
+    }
     let mut usage = Vec::new();
     let mut warnings = Vec::new();
     let mut queries = vec![question.to_string()];
@@ -535,7 +555,8 @@ pub async fn run_from(
         Ok::<(), crate::common::errors::HarnessError>(())
     };
     let gathered = tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(web.limits.research_seconds), gather) => result,
+        // From the run's start, so a cold load counts against discovery's deadline.
+        result = tokio::time::timeout_at(start + Duration::from_secs(web.limits.research_seconds), gather) => result,
         _ = lease.token.cancelled() => Ok(Err(error("WEB_CANCELLED", "research cancelled"))),
     };
     let synthesized = match gathered {

@@ -432,7 +432,24 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     let refused = state.ensure_window_allows("longctx:q8", 1_000, 0).await.unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
     assert!(refused.message.contains("even after loading it"), "{refused:?}");
+    // The load under the gate refuses on its own failure, after one attempt, so
+    // the check before the model call does not repeat it.
+    let before = ollama.generates.lock().unwrap().len();
+    let refused = state.load_if_absent("longctx:q8").await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    assert_eq!(ollama.generates.lock().unwrap().len() - before, 1, "one load, not two");
+    // A turn sized for the tuning, which a model switch then clears: its raised
+    // limits are still checked against the live window, not waved through.
     *ollama.longctx_window.lock().unwrap() = 32768;
+    let tuning = state.tuning_for("longctx:q8").expect("tuned");
+    state.set_tuning(None);
+    let refused = state.ensure_window_allows("longctx:q8", 48_000, 0).await.unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
+    state
+        .ensure_window_allows("longctx:q8", 30_000, 0)
+        .await
+        .expect("defaults need no tuning");
+    state.set_tuning(Some((*tuning).clone()));
     // A window at the 32768 defaults allows calls sized for them.
     state
         .ensure_window_allows("longctx:q8", 30_000, 32_000)
