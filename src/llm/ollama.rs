@@ -239,25 +239,10 @@ pub enum LoadedWindow {
 }
 
 pub async fn loaded_window_state(native: &str, model: &str, limits: InventoryLimits) -> LoadedWindow {
-    let read = async {
-        let client = http_client(limits.timeout).ok()?;
-        let mut response = client
-            .get(format!("{native}/api/ps"))
-            .send()
-            .await
-            .ok()?
-            .error_for_status()
-            .ok()?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.ok()? {
-            if chunk.len() > limits.max_bytes.saturating_sub(bytes.len()) {
-                return None;
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice::<Value>(&bytes).ok()
+    let Ok(client) = http_client(limits.timeout) else {
+        return LoadedWindow::Unknown;
     };
-    let Some(body) = read.await else {
+    let Bounded::Json(body) = bounded_json(client.get(format!("{native}/api/ps")), limits.max_bytes).await else {
         return LoadedWindow::Unknown;
     };
     if !body["models"].is_array() {

@@ -106,10 +106,9 @@ impl Decoder {
                     if slot.as_str().unwrap_or("").len() + value.len() > 4096 {
                         return Err(invalid("streamed tool call exceeds limit"));
                     }
-                    if key == "type" {
-                        *slot = json!(value);
-                    } else {
-                        *slot = json!(format!("{}{value}", slot.as_str().unwrap_or("")));
+                    match slot {
+                        Value::String(text) if key != "type" => text.push_str(value),
+                        _ => *slot = json!(value),
                     }
                 }
             }
@@ -151,7 +150,7 @@ impl Decoder {
         if !self.done || self.response["choices"][0]["finish_reason"].is_null() {
             return Err(invalid("model stream ended before completion"));
         }
-        self.response["choices"][0]["message"]["content"] = json!(self.content);
+        self.response["choices"][0]["message"]["content"] = Value::String(std::mem::take(&mut self.content));
         if !self.tool_calls.is_empty() {
             if self.tool_calls.keys().copied().ne(0..self.tool_calls.len() as u64) {
                 return Err(invalid("streamed tool call indices must be contiguous"));

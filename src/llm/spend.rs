@@ -146,10 +146,6 @@ impl UsageTokens {
             && self.cache_creation_5m_tokens.is_none()
             && self.cache_creation_1h_tokens.is_none()
     }
-
-    fn count(&self, field: fn(&Self) -> Option<u64>) -> u64 {
-        field(self).unwrap_or(0)
-    }
 }
 
 fn json_u64(v: Option<&Value>) -> Option<u64> {
@@ -219,7 +215,7 @@ pub struct UsdEstimate {
 }
 
 pub fn billed_output_tokens(tokens: &UsageTokens) -> u64 {
-    tokens.count(|t| t.output_tokens) + tokens.count(|t| t.reasoning_tokens)
+    tokens.output_tokens.unwrap_or(0) + tokens.reasoning_tokens.unwrap_or(0)
 }
 
 pub fn rates_are_stale(now: Option<Date>) -> bool {
@@ -294,7 +290,7 @@ pub fn estimate_usd(model: &str, tokens: &UsageTokens, provider: &str) -> UsdEst
 }
 
 fn grok_table_usd(tokens: &UsageTokens, rates: &RateRow) -> f64 {
-    let prompt = tokens.count(|t| t.input_tokens);
+    let prompt = tokens.input_tokens.unwrap_or(0);
     let use_long = rates.long_prompt_threshold.is_some_and(|threshold| prompt >= threshold);
     let input_rate = if use_long {
         rates.long_input.unwrap_or(rates.input)
@@ -311,7 +307,7 @@ fn grok_table_usd(tokens: &UsageTokens, rates: &RateRow) -> f64 {
     } else {
         rates.output
     };
-    let cached = tokens.count(|t| t.cached_input_tokens);
+    let cached = tokens.cached_input_tokens.unwrap_or(0);
     let uncached = prompt.saturating_sub(cached);
     uncached as f64 * input_rate / 1_000_000.0
         + cached as f64 * cached_rate / 1_000_000.0
@@ -323,19 +319,19 @@ fn claude_table_usd(tokens: &UsageTokens, rates: &RateRow) -> f64 {
     let write_1h = rates.cache_creation_1h.unwrap_or(write_5m);
     let has_ttl = tokens.cache_creation_5m_tokens.is_some() || tokens.cache_creation_1h_tokens.is_some();
     let cache_write_usd = if has_ttl {
-        let split_5m = tokens.count(|t| t.cache_creation_5m_tokens);
-        let split_1h = tokens.count(|t| t.cache_creation_1h_tokens);
-        let total_write = tokens.count(|t| t.cache_creation_input_tokens);
+        let split_5m = tokens.cache_creation_5m_tokens.unwrap_or(0);
+        let split_1h = tokens.cache_creation_1h_tokens.unwrap_or(0);
+        let total_write = tokens.cache_creation_input_tokens.unwrap_or(0);
         let residual = total_write.saturating_sub(split_5m.saturating_add(split_1h));
         split_5m as f64 * write_5m / 1_000_000.0
             + split_1h as f64 * write_1h / 1_000_000.0
             + residual as f64 * write_5m / 1_000_000.0
     } else {
-        tokens.count(|t| t.cache_creation_input_tokens) as f64 * write_5m / 1_000_000.0
+        tokens.cache_creation_input_tokens.unwrap_or(0) as f64 * write_5m / 1_000_000.0
     };
-    tokens.count(|t| t.input_tokens) as f64 * rates.input / 1_000_000.0
+    tokens.input_tokens.unwrap_or(0) as f64 * rates.input / 1_000_000.0
         + cache_write_usd
-        + tokens.count(|t| t.cache_read_input_tokens) as f64 * rates.cache_read.unwrap_or(0.0) / 1_000_000.0
+        + tokens.cache_read_input_tokens.unwrap_or(0) as f64 * rates.cache_read.unwrap_or(0.0) / 1_000_000.0
         + billed_output_tokens(tokens) as f64 * rates.output / 1_000_000.0
 }
 
