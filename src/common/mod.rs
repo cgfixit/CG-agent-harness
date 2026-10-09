@@ -70,8 +70,7 @@ pub fn random_urlsafe(n: usize) -> String {
 
 /// SHA-256 hex digest of a UTF-8 string.
 pub fn sha256_hex(text: &str) -> String {
-    use sha2::Digest;
-    hex::encode(sha2::Sha256::digest(text.as_bytes()))
+    sha256_bytes_hex(text.as_bytes())
 }
 
 /// SHA-256 hex digest of raw bytes.
