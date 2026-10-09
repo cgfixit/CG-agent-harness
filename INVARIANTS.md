@@ -420,10 +420,9 @@ callers append inline.
 
 `deny.toml` and `desktop/deny.toml` ban push-telemetry and crash-reporting crates
 (OpenTelemetry, Sentry and similar) by exact name, and the two lists stay
-identical. CI runs `cargo deny check` on both lockfiles with `unsound = "all"` and
-wildcard requirements denied; the one advisory ignore carries a removal
-condition. Workflow actions are SHA-pinned and linted by zizmor. The backend pins
-Rust 1.88 and the desktop crate 1.90, independently.
+identical. CI runs `cargo deny check` on both lockfiles with `unsound = "all"`;
+the one advisory ignore carries a removal condition. Workflow actions are
+SHA-pinned and linted by zizmor. Rust is pinned independently: 1.88 backend, 1.90 desktop.
 
 - Locked by: `tests/invariant_guard.rs::deny_lists_ban_the_same_telemetry_crates`,
   `.github/workflows/{ci,advisories,desktop,zizmor}.yml`.

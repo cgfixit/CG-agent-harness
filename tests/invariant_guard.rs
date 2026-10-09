@@ -676,8 +676,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: caveat that loaded keys still reach gh and the shim child until #286; set to the reported 6026 words.
     // why: redaction claim narrowed to startup-loaded key values (#313); set to the reported
     // 6027 words after merging main 17b28d9. Whichever of #312/#313 lands second resets it exactly.
-    // why: operator-requested telemetry and dependency-posture section; set to the reported 6101 words.
-    ("INVARIANTS.md", Root, 6101),
+    // why: operator-requested telemetry and dependency-posture section; set to the reported 6094 words.
+    ("INVARIANTS.md", Root, 6094),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     ("README.md", Root, 1500),
     ("SECURITY.md", Root, 500),
