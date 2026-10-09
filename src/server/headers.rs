@@ -100,7 +100,7 @@ pub async fn trusted_host(req: Request<Body>, next: Next) -> Response {
     let host = request_authority(&req)
         .map(|a| a.host().trim_matches(['[', ']']).to_lowercase())
         .unwrap_or_default();
-    if !LOOPBACK_HOSTS.contains(&host.to_lowercase().as_str()) {
+    if !LOOPBACK_HOSTS.contains(&host.as_str()) {
         return (StatusCode::BAD_REQUEST, "Invalid host header").into_response();
     }
     next.run(req).await

@@ -271,8 +271,9 @@ async fn run_inner(
     let mut initial_prompt_tokens = None;
     let mut budget_used = 0u64;
     let definitions = tools();
-    let definition_bytes = serde_json::to_vec(&definitions)?.len();
-    let definition_tokens = super::compaction::estimate_tokens(&serde_json::to_string(&definitions)?);
+    let definition_json = serde_json::to_string(&definitions)?;
+    let definition_bytes = definition_json.len();
+    let definition_tokens = super::compaction::estimate_tokens(&definition_json);
     let mut peak_extra = 0u64;
     let mut tools_withheld = false;
     let mut initial_prompt_tools = false;

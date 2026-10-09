@@ -172,10 +172,10 @@ pub fn enforce_direct_loopback(req: &Request<Body>) -> Result<(), ApiError> {
 /// assets and the minimal status endpoint carry no operational authority.
 pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<Body>, next: Next) -> Response {
     use axum::response::IntoResponse;
-    let path = req.uri().path().to_string();
-    if !path.starts_with("/api/") {
+    if !req.uri().path().starts_with("/api/") {
         return next.run(req).await;
     }
+    let path = req.uri().path().to_string();
     if let Err(e) = enforce_rate_limit(&state, &req)
         .and_then(|_| enforce_same_origin(&req))
         .and_then(|_| enforce_direct_loopback(&req))
