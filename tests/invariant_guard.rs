@@ -664,7 +664,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
     // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
     // why: feature contracts folded into an INVARIANTS.md section table; 1491 words, rounded up to the next 100.
-    ("AGENTS.md", Agent, 1500),
+    // why: operator-approved raise (1508 words after the project-skills heading edit on main); set to 1510.
+    ("AGENTS.md", Agent, 1510),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 200),
@@ -732,7 +733,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: CONSOLE_JOBS, DESKTOP_ACCEPTANCE, FINETUNE and docs/parity left the tree and the folder
 // READMEs arrived; set to the reported totals rounded up to the next 500 (Root 7921, Guide 43766,
 // Evidence 139, Agent 22768).
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_000), (Guide, 44_000), (Evidence, 500), (Agent, 23_000)];
+// why: operator-approved raise from 8,000 to 8,200 for the INVARIANTS.md telemetry/dependency section and SECURITY.md posture bullets.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_200), (Guide, 44_000), (Evidence, 500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
