@@ -151,12 +151,8 @@ pub fn denied_read_basename(canonical_path: &str, patterns: &[String]) -> bool {
         }
         let folded_pat = fs_equiv_path(pat);
         let pat_base = folded_pat.rsplit('/').next().unwrap_or(folded_pat.as_str());
-        basename_star_match(basename, pat_base)
+        star_glob(basename.as_bytes(), pat_base.as_bytes())
     })
-}
-
-fn basename_star_match(name: &str, pattern: &str) -> bool {
-    star_glob(name.as_bytes(), pattern.as_bytes())
 }
 
 fn star_glob(name: &[u8], pattern: &[u8]) -> bool {

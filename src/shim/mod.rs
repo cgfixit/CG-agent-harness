@@ -484,6 +484,7 @@ fn child_environment(action: &str) -> BTreeMap<String, String> {
 }
 
 /// Spawn `argv` with the baseline agentic environment, without provider credentials.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<(i32, String, String), ShimError> {
     run_argv_with_env(argv, cwd, timeout, child_environment("")).await
 }

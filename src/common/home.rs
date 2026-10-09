@@ -146,6 +146,7 @@ impl Home {
     pub fn data_dir(&self) -> PathBuf {
         self.root.join("data")
     }
+    #[cfg(any(test, feature = "test-support"))]
     pub fn logs_dir(&self) -> PathBuf {
         self.root.join("logs")
     }
@@ -342,8 +343,10 @@ pub fn validate_port(raw: &str) -> Result<u16> {
     Ok(n as u16)
 }
 
+pub const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
+
 pub fn is_loopback_host(host: &str) -> bool {
-    matches!(host, "127.0.0.1" | "localhost" | "::1")
+    LOOPBACK_HOSTS.contains(&host)
 }
 
 #[cfg(test)]

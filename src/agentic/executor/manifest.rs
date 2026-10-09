@@ -65,14 +65,8 @@ pub fn build_manifest(worktree: &Path, paths: &[String], run_id: &str, base_head
     }
     // Canonical form: keys sorted, compact separators (matches Python's json.dumps(sort_keys=True, separators=(",",":"))).
     let payload = json!({"base_head": base_head, "files": files, "run_id": run_id});
-    let canonical = canonical_json(&payload);
+    let canonical = serde_json::to_string(&payload).unwrap_or_default();
     Ok((payload, crate::common::sha256_hex(&canonical)))
-}
-
-/// Compact JSON with object keys sorted (serde_json::Value objects are BTreeMap-backed
-/// without `preserve_order`, so serialization is already sorted; separators are compact).
-pub fn canonical_json(v: &Value) -> String {
-    serde_json::to_string(v).unwrap_or_default()
 }
 
 /// Rebuild the digest and refuse on any drift.
