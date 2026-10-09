@@ -76,7 +76,6 @@ models:
     #   model: "cgagent-fused"                 # exact id mlx_lm.server reports
     # Repoint `agentic.deepagent_github` too (provider: "openai_compatible",
     # same base_url) so the coding planner uses the fine-tune as well.
-    # See docs/FINETUNE.md and finetune/ for the full workflow.
 
 # Local chat prompt compaction. Trigger is estimated next-prompt size, not
 # lifetime TokenTally.total. System prompt and session.goal are never compacted.

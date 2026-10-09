@@ -10,7 +10,7 @@ debug/
 /desktop/gen/
 /dist/
 /upstream/
-# ── Fine-tune artifacts from docs/FINETUNE.md (repo-root only) ─
+# ── Fine-tune artifacts (repo-root only; the MLX workflow itself was removed) ─
 /adapters/
 /cgagent-fused/
 /.venv/

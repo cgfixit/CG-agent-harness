@@ -26,8 +26,7 @@ For live acceptance, use an owned temporary home and unique port. Record the
 known binary, environment and listener, issue harmless local chat, then stop it.
 Fake model/provider tests prove protocol behavior,
 not availability or live quality. App launch alone is not UI acceptance.
-Follow `docs/DESKTOP_ACCEPTANCE.md` for outstanding UI
-checks and record only interactions actually observed.
+Record only native UI interactions actually observed, in the PR body.
 
 Run a failing-case reproducer when correcting behavior. Never delete assertions or
 weaken guards to make tests pass. Baseline failures must be diagnosed before further

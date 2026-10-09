@@ -6,12 +6,6 @@ operator approval. Read `INVARIANTS.md` before touching a core path:
 `src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`,
 `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`.
 
-## Critical Rules for this project:
-- Ignore docs/learning/* completely unless explicitly requested by owner/operator.
-- generally avoid reading anything under docs/* unless a root project file links to something relevant to a task - 
-The idea is to avoid reading those .md files and .pdfs and .txt files under docs/ unless its for a defensible reason based on your task
-- Going forward add screenshots under the screenshots/ folder but only for significant changes/new features/something warranting a screenshot being stored.
-
 Reading scope: never open `docs/learning/*` unless the operator asks. Open other
 `docs/*` files only when a root file links the page and the task needs it.
 
@@ -129,18 +123,35 @@ When prose contradicts code, fix the prose in the same PR.
 
 ## Docs policy
 
-Edit the section that owns a topic; create no Markdown files. Link instead of
-duplicating. Evidence belongs in PRs/issues; screenshots go in
-`docs/screenshots/` (a root `screenshots/` fails the guard), and only for
-significant changes. `tests/invariant_guard.rs` enforces `DOCS_BUDGET`: every
-listed Markdown file has a word cap (this file 2000, `CLAUDE.md` 300), plus
-group caps, no new root screenshots or docs PDFs, no files over 1 MiB. Check
-`wc -w` before committing any `.md` edit, including web-UI edits. New rows or
-raised caps need operator approval and a `// why:`.
+Edit the section that owns a topic; create no Markdown files except a folder
+`README.md` (see below). Link instead of duplicating. Evidence belongs in
+PRs/issues; screenshots go in `docs/screenshots/` (a root `screenshots/` fails
+the guard), and only for significant changes. `tests/invariant_guard.rs`
+enforces `DOCS_BUDGET`: every listed Markdown file has a word cap (this file
+1500, `CLAUDE.md` 200), plus group caps, no new root screenshots or docs PDFs,
+no files over 1 MiB. Check `wc -w` before committing any `.md` edit, including
+web-UI edits. New rows or raised caps need operator approval and a `// why:`.
 
-Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md'`, checks changed
-behavior against its owning docs, lowers caps after folds, and reviews
-[dependency watches](docs/DEPENDENCIES.md#retained-constraints).
+Every directory carries a `README.md` of at most `FOLDER_README_WORDS` (150)
+words: what the folder holds, what reads it, and where the full doc lives. It
+is an index, not a second copy of the topic. The guard caps these by name
+pattern, so they need no `DOCS_BUDGET` row; a longer one fails.
+
+Deleting a doc means deleting every reference to it in the same PR: its guard
+row, links in other docs and skills, packaging scripts (`scripts/package-desktop.sh`
+bundles some docs), and any `README.md` that indexed it. `grep -rn` the basename
+before pushing.
+
+Sync, then trim. On any PR that touches more than one module, or when the last
+sync is older than a few weeks, run `doc-sync` (Claude: operator types
+`/doc-sync`) and `dep-sync` (model-loadable), or do their work by hand in
+another agent: re-read the code the docs describe, rewrite stale sections,
+refresh pins, locks and `deny.toml` against `origin/main`. The same pass must
+remove what no longer applies: duplicate rules, superseded notes, dead links,
+retired dependencies and their watches. A sync that only adds words is not
+done; lower the `DOCS_BUDGET` cap of every file that shrank so the cut stays
+cut. Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md'` and
+[dependency watches](docs/DEPENDENCIES.md#retained-constraints) the same way.
 
 ## Project skills
 
@@ -160,7 +171,6 @@ Three skill trees are repository guidance, not application `/api/skills` plugins
   CSRF names, Seatbelt noise, clippy toolchain fights).
 - `cgagentharness-optimize`: evidence-backed Rust/runtime/CI improvements; never
   transplant CyClaw topology or defaults.
-- `cgagentharness-parity`: CyClaw↔harness parity docs without weakening invariants.
 - Codex only: `cgagentharness-release` (macOS packaging, release prep),
   `cgagentharness-verify` (isolated backend, desktop and local-model checks).
 - Claude only: `cgagentharness-verify-deps` and

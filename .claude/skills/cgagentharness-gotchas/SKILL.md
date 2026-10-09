@@ -260,5 +260,4 @@ Load `cgagentharness-project-guidance` for read order;
 `cgagentharness-verify` / `cgagentharness-release` / `cgagentharness-optimize`
 for those jobs; `fable-protocol` for evidence-first discipline. Before merging
 core-path diffs, ask the operator to run `/cgagentharness-invariant-guard`;
-for CyClaw↔harness ledger work, ask the operator to run `/cgagentharness-parity`
-— both ship `disable-model-invocation: true`, so Claude cannot self-load them.
+it ships `disable-model-invocation: true`, so Claude cannot self-load it.

@@ -3,8 +3,8 @@
 The universal macOS app (Apple Silicon and Intel) opens the console in a native
 WKWebView and owns its bundled Rust backend. Ordinary launch needs no Terminal,
 external browser, frontend server, Rust, or Python. Coding checks still need their
-configured tools. Historical native evidence and its limits are in
-[DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md); it is not current procedure.
+configured tools. Native acceptance evidence lives in PR bodies, not in a
+standing checklist.
 
 ## Install and launch
 

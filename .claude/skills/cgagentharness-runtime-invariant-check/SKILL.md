@@ -21,7 +21,7 @@ This checks the supplied implementation; it does not authorize policy changes.
 | Default configuration | Master/deepagent/clone-write gates false; fresh auth/TLS and web settings true, empty URL allowlist; existing choices retained; quoted security switches invalid | `cargo test --locked --test invariant_guard --test common_layer` |
 | Mutation policy | Reloaded write gates, clone jail, exact edits and reviewed-tree approval before commit/push/publication | `cargo test --locked --test write_policy --test real_repo_loop` |
 | Web evidence | Exact/wildcard permission, checked DNS pinning, bounded retrieval and current-policy revocation | `cargo test --locked --test panels --test web_research` |
-| Native TLS | Owned handshake, exact certificate/origin and platform trust validation | Desktop tests plus actual native acceptance in `docs/DESKTOP_ACCEPTANCE.md` |
+| Native TLS | Owned handshake, exact certificate/origin and platform trust validation | Desktop tests plus actual native acceptance recorded in the PR body |
 
 The optional harness API key grants no authority and cannot bypass login.
 `writes_enabled: true` and mode `write` do not arm the combined coding policy.
