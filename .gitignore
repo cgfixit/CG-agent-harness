@@ -13,10 +13,10 @@ debug/
 # ── Fine-tune artifacts (repo-root only; the MLX workflow itself was removed) ─
 /adapters/
 /cgagent-fused/
+# ── Local Python virtualenv (scripts/ is stdlib-only) ─────────
 /.venv/
 # ── In-tree Python scripts ────────────────────────────────────
 __pycache__/
-**pycache**/
 *.pyc
 # ── OS / editor ───────────────────────────────────────────────
 .DS_Store
