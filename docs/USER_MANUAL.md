@@ -1,8 +1,8 @@
 # Operator manual
 
 Start with [setup](../README.md), [console commands](CONSOLE.md),
-[account roles](SECURE_RESEARCH.md#roles), and
-[coding jobs](CONSOLE_JOBS.md) for staging, monitoring and reviewed publication.
+[account roles](SECURE_RESEARCH.md#roles), and the
+[coding pipeline](CODING_PIPELINE.md) for staging, monitoring and reviewed publication.
 
 ## Review state and logout
 

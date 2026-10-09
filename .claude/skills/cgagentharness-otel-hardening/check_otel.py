@@ -501,16 +501,6 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "evidence": "feature traffic; the gh telemetry/update rows above are its secondary egress",
     },
     {
-        "name": "mlx-lm fine-tune toolchain", "category": 3, "controls": {},
-        "url": "docs/FINETUNE.md",
-        "versions": "finetune/requirements.txt: mlx-lm>=0.22.0 (operator venv on Apple Silicon)",
-        "enforcement": "operator-run shell, never spawned by the harness; model download from the HF "
-                       "hub is the intentional egress. Shell-only HF_HUB_DISABLE_TELEMETRY=1 is the "
-                       "operator's opt-out for the hub ping (a harness-side key would sit unread)",
-        "scope": "finetune/ only", "reviewed": "2026-10-03",
-        "evidence": "finetune/smoke_test.sh runs a stdlib mock server only; no HF import there",
-    },
-    {
         "name": "loopback console + sidecar transport", "category": 4, "controls": {},
         "url": "INVARIANTS.md",
         "versions": "axum 0.8, axum-server 0.8, rustls 0.23, rcgen, x509-parser; desktop reqwest probe",
@@ -629,8 +619,6 @@ INVENTORY_ALIASES: dict[str, str] = {
     "rustc": "sandbox and toolchain binaries", "rustdoc": "sandbox and toolchain binaries",
     "xcrun": "sandbox and toolchain binaries", "otool": "sandbox and toolchain binaries",
     "/usr/bin/open": "os opener (/usr/bin/open)",
-    # finetune
-    "mlx-lm": "mlx-lm fine-tune toolchain",
 }
 
 _REQUIRED_ROW_KEYS = ("name", "category", "controls", "url", "versions", "enforcement",

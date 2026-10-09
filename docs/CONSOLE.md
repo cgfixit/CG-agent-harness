@@ -364,8 +364,7 @@ Upstream names do not establish support. There is no `/fsconnect` or
 `/sqlconnect`; `/netconnect` is a read-only `/net` alias, not a scan control.
 See [netconnect](netconnect.md). Copying settings does not implement a connector,
 and the Setup folder chooser prepares offline Cargo inputs rather than chat file
-access. See the
-[capability ledger](parity/STATUS.md) for remaining work, checked against
+access. Remaining connector work is tracked in issues, checked against the
 [current connector inventory](../src/server/views.rs).
 
 ### 7.8 Slash-command quick reference

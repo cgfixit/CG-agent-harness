@@ -21,8 +21,7 @@ translated shell. Check **About This Mac** to distinguish them. The supported
 packaging recipe below runs on Apple Silicon and cross-builds Intel.
 
 The bundle targets macOS 12+, but that target does not prove acceptance on every
-older OS or Intel Mac. See [desktop details](DESKTOP.md) and the [historical
-native matrix](DESKTOP_ACCEPTANCE.md) for tested hardware and revisions.
+older OS or Intel Mac. See [desktop details](DESKTOP.md) for tested hardware and revisions.
 
 In Finder, press Cmd-I on the app. **Kind** must say Universal. Leave **Open using
 Rosetta** unchecked on Apple Silicon; both app and backend have native slices.
@@ -217,7 +216,7 @@ it. After verifying the source and attempting to open it, follow Apple's
 Do not disable global Gatekeeper settings or strip quarantine as a blanket fix.
 A damaged-bundle warning calls for re-download and integrity checks. Signature verification and a
 successful build do not prove native interaction acceptance; see
-[desktop details](DESKTOP.md). Historical checklist: [DESKTOP_ACCEPTANCE.md](DESKTOP_ACCEPTANCE.md).
+[desktop details](DESKTOP.md).
 
 ## 6. First run
 
@@ -461,7 +460,7 @@ Use `/agent jobs` to list handles and `/agent job <id>` to inspect one.
 
 `data/agentic/console-schedules.json` stores schedules. Occurrences are consumed
 before launch, and missed windows are skipped. See
-[schedules and completion notifications](CONSOLE_JOBS.md#schedules-and-completion-notifications).
+[spend and notifications](SPEND_AND_NOTIFICATIONS.md).
 Notifications do not replace job records. The private bounded outbox persists
 delivery state before networking, resumes eligible attempts after restart, and
 supports explicit owner-confirmed replay within current grants and limits.
@@ -479,7 +478,7 @@ appends audit lines on a background thread, flushed before each agentic child
 starts and at shutdown: requests never wait on the file or the child's lease. A
 full queue (`logging.audit_queue_lines`, default 4096; 0 appends inline) drops
 new lines with a warning. See
-[console jobs](CONSOLE_JOBS.md), [desktop recovery](DESKTOP.md) and
+[the coding pipeline](CODING_PIPELINE.md), [desktop recovery](DESKTOP.md) and
 [process lifecycle](PROCESS_LIFECYCLE.md) for precise limits.
 
 ### Update, backup, rollback and uninstall
@@ -581,8 +580,8 @@ SMOKE_MODEL=qwen3.8:27b scripts/smoke-ollama.sh
 ```
 
 Read the output. The smoke succeeds when an unavailable endpoint causes a skip.
-It neither proves real-model acceptance nor tests editing. See [Console
-jobs](CONSOLE_JOBS.md) for disposable Chrome, model, edit, verification,
+It neither proves real-model acceptance nor tests editing. See the [coding
+pipeline](CODING_PIPELINE.md) for disposable Chrome, model, edit, verification,
 approval, and publication acceptance.
 
 For a source-built app, also verify the separate desktop crate and packaged backend:
@@ -610,7 +609,7 @@ Run these after [packaging](INSTALL.md#52-macos-app). The shell embeds the signe
 sidecar hash, so do not replace or re-sign only the backend. The app bundle,
 unlike the CLI archive, includes the offline helper and desktop docs. Build and
 HTTP evidence do not prove native window, chooser, clipboard, or quit behavior.
-Record those in [desktop acceptance](DESKTOP_ACCEPTANCE.md).
+Record those in the PR body.
 
 ## Tests and CI/CD
 
@@ -646,5 +645,5 @@ tokens, fresh CSRF, and no replay.
 
 CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
 does not prove real-model quality, complete native GUI behavior, or notarized
-distribution. Live Ollama smoke and [historical desktop acceptance](DESKTOP_ACCEPTANCE.md)
+distribution. Live Ollama smoke and native desktop checks recorded in PR bodies
 cover different evidence. Windows CI/release legs remain parked.

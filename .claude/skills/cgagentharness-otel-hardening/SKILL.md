@@ -94,7 +94,7 @@ it actually calls, and an arm's names are never re-pinned at a site.
    update/version/toolchain-fetch egress · 3 intentional policy-gated feature
    traffic (controls stay empty) · 4 local-only, or network denied by the
    sandbox · 5 no mechanism found (evidence + date). T10 reads both manifests
-   and `finetune/requirements.txt` itself, but an external binary is swept only
+   and `finetune/requirements.txt` when present, but an external binary is swept only
    if named in `KNOWN_EXTERNAL_BINARIES`, and a run-time-chosen executable
    (MCP servers, caller checks) lives in `DYNAMIC_LAUNCHER_SITES` with the
    source marker that proves it still spawns. Remove the alias and row when a

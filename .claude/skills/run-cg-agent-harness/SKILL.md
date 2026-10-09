@@ -26,7 +26,7 @@ mock APIs and checks the real console/CSP. `CHROME_BIN` selects Chrome. Neither
 suite establishes actual-model or native WebKit acceptance.
 
 For a real disposable Chrome/model coding workflow, follow
-`docs/CONSOLE_JOBS.md` and `scripts/browser-fixture.py`. That fixture explicitly
+`docs/CODING_PIPELINE.md` and `scripts/browser-fixture.py`. That fixture explicitly
 opts into HTTP, retains account login, uses a local bare remote and mocks GitHub
 publication. No actual GitHub write is part of acceptance.
 
@@ -44,5 +44,5 @@ terminal operations. Preserve existing home/config/model state and never set a
 global Git identity for disposable tests.
 
 Run full repository checks per `AGENTS.md`. Actual native desktop verification is
-macOS-specific and recorded separately in `docs/DESKTOP_ACCEPTANCE.md`; Linux
+macOS-specific and recorded in PR bodies; Linux
 builds do not establish equivalent sandbox or WebKit behavior.

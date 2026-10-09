@@ -10,7 +10,10 @@ debug/
 /desktop/gen/
 /dist/
 /upstream/
-# ── Local Python virtualenv (scripts/ is stdlib-only) ─────────
+# — Local Python virtualenv (scripts/ is stdlib-only) —
+# — Fine-tune artifacts (repo-root only; the MLX workflow itself was removed) —
+/adapters/
+/cgagent-fused/
 /.venv/
 # ── In-tree Python scripts ────────────────────────────────────
 __pycache__/

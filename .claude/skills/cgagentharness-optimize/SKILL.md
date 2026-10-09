@@ -59,7 +59,7 @@ Dispatch **one read-only** explore pass (~4 minutes). Do not edit. Sweep:
 | `src/shim` | ACTIONS whitelist, argv encoding (`--opt=value`), timeouts |
 | `src/llm` | loopback URLs, timeout/retry, no secret echo |
 | desktop / packaging scripts | lipo→sign→embed order (re-verify live docs), ad-hoc ≠ Developer ID, WKWebView ≠ HTTP |
-| `scripts/` | `verify-local.sh`, `smoke-ollama.sh`, `package-release.sh`, `check-pr-template.sh`, `parity-status.py` if present |
+| `scripts/` | `verify-local.sh`, `smoke-ollama.sh`, `package-release.sh`, `check-pr-template.sh` |
 | `.github/workflows` | SHA pinning, `cancel-in-progress`, blank planner keys, no secret-requiring "optimizations" |
 | `tests/` | coverage gaps on hostile argv, write refuse (exit 4), jail, shipped gates; brittle fixtures |
 
@@ -203,7 +203,6 @@ Zero kept chunks after dedup is success.
   (manual-only, `disable-model-invocation: true`).
 - Config edits: `cgagentharness-config-guard`.
 - Write-surface hardening: `cgagentharness-write-policy-redteam`.
-- Parity ledger work: ask the operator to run `/cgagentharness-parity` (manual-only,
-  `disable-model-invocation: true`) — never weaken harness to match CyClaw product policy.
+- Never weaken harness invariants to match CyClaw product policy.
 - Independent adversarial verify of a supplied patch:
   `verification-specialist` (not a substitute for `cgagentharness-verify` smoke).
