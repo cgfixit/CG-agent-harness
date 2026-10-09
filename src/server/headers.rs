@@ -12,11 +12,9 @@ use crate::llm::backend::LOOPBACK_HOSTS;
 pub const NO_STORE: &str = "no-store, no-cache, must-revalidate, max-age=0";
 pub const DEFAULT_CSP: &str = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
-fn set_default(resp: &mut Response, name: header::HeaderName, value: &str) {
+fn set_default(resp: &mut Response, name: header::HeaderName, value: &'static str) {
     if !resp.headers().contains_key(&name) {
-        if let Ok(v) = HeaderValue::from_str(value) {
-            resp.headers_mut().insert(name, v);
-        }
+        resp.headers_mut().insert(name, HeaderValue::from_static(value));
     }
 }
 

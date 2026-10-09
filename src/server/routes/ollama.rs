@@ -4,10 +4,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{
-    sse::{Event, KeepAlive},
-    IntoResponse, Response, Sse,
-};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -139,21 +136,7 @@ pub async fn pull(
         };
         let _ = sender.send(event).await;
     });
-    struct AbortOnDrop(tokio::task::AbortHandle);
-    impl Drop for AbortOnDrop {
-        fn drop(&mut self) {
-            self.0.abort();
-        }
-    }
-    let abort = AbortOnDrop(task.abort_handle());
-    let stream = futures_util::stream::unfold((receiver, abort), |(mut receiver, abort)| async move {
-        let event = receiver.recv().await?;
-        Some((
-            Ok::<_, std::convert::Infallible>(Event::default().data(event.to_string())),
-            (receiver, abort),
-        ))
-    });
-    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    super::sse_from_channel(receiver, task)
 }
 
 async fn pull_inner(

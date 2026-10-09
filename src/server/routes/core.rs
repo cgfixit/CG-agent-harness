@@ -4,10 +4,7 @@ use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{
-    sse::{Event, KeepAlive},
-    IntoResponse, Response, Sse,
-};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -483,9 +480,8 @@ pub async fn model_select(
 
 /// Prior user/assistant turns for the next prompt. Compaction owns overflow.
 /// The persist cap is `MAX_MESSAGES`. There is no 20-turn or 8000-char clip.
-pub fn prompt_history(session: &crate::server::sessions::Session) -> Vec<ChatMessage> {
-    session
-        .messages
+pub fn prompt_history(messages: &[crate::server::sessions::Message]) -> Vec<ChatMessage> {
+    messages
         .iter()
         .filter(|m| m.role == "user" || m.role == "assistant")
         .map(|m| ChatMessage {
@@ -524,21 +520,7 @@ pub async fn chat(
         };
         let _ = sender.send(event).await;
     });
-    struct AbortOnDrop(tokio::task::AbortHandle);
-    impl Drop for AbortOnDrop {
-        fn drop(&mut self) {
-            self.0.abort();
-        }
-    }
-    let abort = AbortOnDrop(task.abort_handle());
-    let stream = futures_util::stream::unfold((receiver, abort), |(mut receiver, abort)| async move {
-        let event = receiver.recv().await?;
-        Some((
-            Ok::<_, std::convert::Infallible>(Event::default().data(event.to_string())),
-            (receiver, abort),
-        ))
-    });
-    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+    super::sse_from_channel(receiver, task)
 }
 
 /// How long a chat turn waits for a preempted memory suggestion to release the
@@ -827,7 +809,7 @@ async fn chat_inner(
     let mut history = if cloud_selected {
         Vec::new()
     } else {
-        prompt_history(&session)
+        prompt_history(&session.messages)
     };
     let mut compaction = None;
     let mut summary_prompt_tokens = 0u64;
@@ -929,14 +911,7 @@ async fn chat_inner(
             }
             let before = session.messages.len();
             let retained = crate::server::compaction::retained_messages(&session.messages, keep);
-            let retained_history: Vec<ChatMessage> = retained
-                .iter()
-                .filter(|m| m.role == "user" || m.role == "assistant")
-                .map(|m| ChatMessage {
-                    role: m.role.clone(),
-                    content: m.text.clone(),
-                })
-                .collect();
+            let retained_history = prompt_history(&retained);
             let retained_projected = crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
                 &retained_history,
@@ -978,8 +953,7 @@ async fn chat_inner(
                 summary_completion_tokens = c;
                 text
             };
-            let mut compacted = session.clone();
-            compacted.messages = crate::server::compaction::compact_messages(&session.messages, keep, &summary);
+            let compacted = crate::server::compaction::compact_messages(&session.messages, keep, &summary);
             let compacted_history = prompt_history(&compacted);
             let compacted_projected = crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
@@ -996,7 +970,7 @@ async fn chat_inner(
                     compacted_projected,
                 ));
             }
-            let after = compacted.messages.len();
+            let after = compacted.len();
             compaction = Some((keep, before, after, projected, compacted_projected, threshold, summary));
             history = compacted_history;
         }
