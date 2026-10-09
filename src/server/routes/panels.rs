@@ -509,7 +509,7 @@ fn key_status(state: &AppState) -> Result<Value, crate::common::errors::HarnessE
     let keys = if plaintext {
         env_keys::read_status(&path, &state.key_file_sources)?
     } else {
-        env_keys::status_from_saved(&stored, &state.key_file_sources, true)
+        env_keys::status_rows(&stored, &state.key_file_sources, true)
     };
     Ok(json!({
         "keys": keys,

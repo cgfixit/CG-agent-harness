@@ -26,7 +26,6 @@ pub use collect::{
     collect_passive, FixtureInterfaces, FixtureNeighbors, FixtureRoutes, InterfaceSource, NeighborSource,
     PassiveReport, RouteSource,
 };
-pub use config::{NetconnectConfig, Tier, THROUGHPUT_WARNING};
-pub use parse::{parse_bsd_arp, parse_bsd_netstat, parse_interface_lines, parse_proc_net_arp, parse_proc_net_route};
+pub use config::{NetconnectConfig, Tier};
 pub use sanitize::{sanitize_untrusted, UntrustedString};
 pub use scope::Scope;

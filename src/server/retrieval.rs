@@ -51,10 +51,6 @@ pub fn refuse_forbidden_attachments(
     .detail("surface", surface.as_str()))
 }
 
-pub fn allows_local_file_bytes(surface: RetrievalSurface) -> bool {
-    allows_attachment_bytes(surface)
-}
-
 pub fn assemble_local_untrusted(
     surface: RetrievalSurface,
     attachments: &AttachmentStore,
@@ -63,7 +59,7 @@ pub fn assemble_local_untrusted(
     ids: &[String],
     query: Option<&str>,
 ) -> Result<String> {
-    if !allows_local_file_bytes(surface) {
+    if !allows_attachment_bytes(surface) {
         return Ok(String::new());
     }
     let q = query.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
