@@ -1,5 +1,6 @@
 //! Content permission only. Account and provider authority are separate gates.
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::io::Read;
 use std::path::Path;
 
@@ -77,7 +78,7 @@ pub(super) fn canonical_http_url(raw: &str, admit_private: bool) -> Result<Url> 
             if byte < 32 || byte == 127 || !query && matches!(byte, 32 | 37 | 46 | 47 | 92) {
                 return Err(bad());
             }
-            normalized.push_str(&format!("{byte:02X}"));
+            let _ = write!(normalized, "{byte:02X}");
         }
     }
     let mut url = Url::parse(&normalized).map_err(|_| bad())?;
