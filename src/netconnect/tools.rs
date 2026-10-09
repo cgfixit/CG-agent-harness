@@ -79,6 +79,7 @@ pub fn registered_tools(cfg: &NetconnectConfig) -> Vec<&'static ToolRegistration
 }
 
 /// Catalog size is the existing wired count plus tools this config registers.
+#[cfg(test)]
 pub fn wired_count(base: usize, cfg: &NetconnectConfig) -> usize {
     base + registered_tools(cfg).len()
 }
@@ -397,6 +398,7 @@ pub fn panel(
     }))
 }
 
+#[cfg(test)]
 pub fn call_named(
     cfg: &NetconnectConfig,
     name: &str,

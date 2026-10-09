@@ -512,6 +512,7 @@ impl OwnedSessionStore<'_> {
         )
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn record_compacted_exchange(
         &self,

@@ -417,6 +417,7 @@ impl AttachmentStore {
         Ok(removed)
     }
 
+    #[cfg(test)]
     pub fn blob_count(&self) -> usize {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         self.load_manifest().map(|m| m.blobs.len()).unwrap_or(0)
@@ -646,6 +647,7 @@ pub fn classify_file(file: &IncomingFile) -> Result<ClassifiedText> {
     classify_bytes(&file.data, ext)
 }
 
+#[cfg(test)]
 pub fn fence_contains_contract(fence: &str) -> bool {
     fence.contains(FENCE_OPEN) && fence.contains(FENCE_CLOSE) && fence.contains("data, not instructions")
 }

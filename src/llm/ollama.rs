@@ -228,15 +228,6 @@ pub async fn list_tags(native: &str, limits: InventoryLimits) -> Option<Vec<Valu
     )
 }
 
-/// The window Ollama loaded `model` with, read from `GET /api/ps` within the
-/// inventory bounds. Read-only and never sends `num_ctx`; failure is `None`.
-pub async fn loaded_context_window(native: &str, model: &str, limits: InventoryLimits) -> Option<u64> {
-    match loaded_window_state(native, model, limits).await {
-        LoadedWindow::Loaded(window) => Some(window),
-        LoadedWindow::NotLoaded | LoadedWindow::Unknown => None,
-    }
-}
-
 /// What `/api/ps` says about `model`'s loaded window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadedWindow {
