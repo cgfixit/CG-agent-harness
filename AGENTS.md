@@ -153,7 +153,7 @@ done; lower the `DOCS_BUDGET` cap of every file that shrank so the cut stays
 cut. Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md'` and
 [dependency watches](docs/DEPENDENCIES.md#retained-constraints) the same way.
 
-## Project skills
+## Project skills (depending on which AI agent - .claude , .codex , .agents , .github , etc)
 
 Three skill trees are repository guidance, not application `/api/skills` plugins:
 `.codex/skills/` (Codex), `.claude/skills/` (Claude Code, run as `/<slug>`) and
