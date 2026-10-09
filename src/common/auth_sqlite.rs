@@ -4,8 +4,9 @@ use super::{authn, AuthDb, SessionRow, UserRow};
 use crate::common::{
     atomic::write_atomic,
     errors::{HarnessError, Result},
+    private_sqlite::{self, present},
 };
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection};
 use std::{io::Read, path::Path};
 
 fn invalid(message: impl Into<String>) -> HarnessError {
@@ -15,35 +16,14 @@ fn sql(error: rusqlite::Error) -> HarnessError {
     invalid(format!("account database refused: {error}"))
 }
 
+const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
 fn private_file(path: &Path) -> Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
-    }
-    let file = options.open(path)?;
-    let meta = file.metadata()?;
-    if !meta.is_file() || meta.len() > 16 * 1024 * 1024 {
-        return Err(invalid("account file must be a bounded regular file"));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if meta.mode() & 0o077 != 0 || meta.uid() != unsafe { libc::geteuid() } || meta.nlink() != 1 {
-            return Err(invalid("account file must be owned, private, and not hard-linked"));
-        }
-    }
-    Ok(file)
+    private_sqlite::private_file(path, MAX_FILE_BYTES, "account", invalid)
 }
 
-fn present(path: &Path) -> Result<bool> {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e.into()),
-    }
+fn connect(path: &Path) -> Result<Connection> {
+    private_sqlite::connect(path, MAX_FILE_BYTES, "account", invalid)
 }
 
 pub(super) fn validate(db: &AuthDb) -> Result<()> {
@@ -195,38 +175,6 @@ fn load(conn: &Connection) -> Result<AuthDb> {
     }
     validate(&db)?;
     Ok(db)
-}
-
-fn connect(path: &Path) -> Result<Connection> {
-    private_file(path)?;
-    // macOS exposes its temporary directory through /var -> /private/var.
-    // Resolve the directory only; SQLite still refuses a linked database leaf.
-    let parent = path
-        .parent()
-        .ok_or_else(|| invalid("missing account directory"))?
-        .canonicalize()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let meta = parent.metadata()?;
-        if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o022 != 0 {
-            return Err(invalid(
-                "account directory must be owned and not writable by other users",
-            ));
-        }
-    }
-    let path = parent.join(path.file_name().ok_or_else(|| invalid("missing account filename"))?);
-    let conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )
-    .map_err(sql)?;
-    conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(sql)?;
-    conn.execute_batch(
-        "PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;",
-    )
-    .map_err(sql)?;
-    Ok(conn)
 }
 
 /// `legacy` remains an immutable private recovery source. A durable marker

@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -29,6 +29,7 @@ use crate::common::atomic::write_atomic;
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
+use crate::common::private_sqlite::{self, present};
 
 pub const SCHEMA_VERSION: i64 = 4;
 pub const PUBLIC_ID_LEN: usize = 32;
@@ -739,70 +740,10 @@ fn sql(error: rusqlite::Error) -> HarnessError {
     invalid(format!("structured memory database refused: {error}"))
 }
 
-fn present(path: &Path) -> Result<bool> {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e.into()),
-    }
-}
-
-fn private_file(path: &Path) -> Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
-    }
-    let file = options.open(path)?;
-    let meta = file.metadata()?;
-    if !meta.is_file() || meta.len() > 64 * 1024 * 1024 {
-        return Err(invalid("structured memory file must be a bounded regular file"));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if meta.mode() & 0o077 != 0 || meta.uid() != unsafe { libc::geteuid() } || meta.nlink() != 1 {
-            return Err(invalid(
-                "structured memory file must be owned, private, and not hard-linked",
-            ));
-        }
-    }
-    Ok(file)
-}
+const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 fn connect(path: &Path) -> Result<Connection> {
-    private_file(path)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| invalid("missing structured memory directory"))?
-        .canonicalize()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let meta = parent.metadata()?;
-        if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o022 != 0 {
-            return Err(invalid(
-                "structured memory directory must be owned and not writable by other users",
-            ));
-        }
-    }
-    let path = parent.join(
-        path.file_name()
-            .ok_or_else(|| invalid("missing structured memory filename"))?,
-    );
-    let conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )
-    .map_err(sql)?;
-    conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(sql)?;
-    conn.execute_batch(
-        "PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;",
-    )
-    .map_err(sql)?;
-    Ok(conn)
+    private_sqlite::connect(path, MAX_FILE_BYTES, "structured memory", invalid)
 }
 
 fn user_version(conn: &Connection) -> Result<i64> {
