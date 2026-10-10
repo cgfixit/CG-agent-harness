@@ -64,29 +64,18 @@ pub async fn model_readiness(endpoint: &str, model: &str, key: &str, limits: Inv
     if !local_endpoint(endpoint) {
         return json!({"model":model,"state":"not_probed","detail":"Only a configured loopback model endpoint can be checked here."});
     }
-    let result = async {
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(limits.timeout)
-            .build()?;
-        let mut request = client.get(format!("{}/models", endpoint.trim_end_matches('/')));
-        if !key.is_empty() {
-            request = request.bearer_auth(key);
-        }
-        let mut response = request.send().await?.error_for_status()?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if chunk.len() > limits.max_bytes.saturating_sub(bytes.len()) {
-                return Ok::<_, reqwest::Error>(None);
+    let result = match super::ollama::http_client(limits.timeout) {
+        Ok(client) => {
+            let mut request = client.get(format!("{}/models", endpoint.trim_end_matches('/')));
+            if !key.is_empty() {
+                request = request.bearer_auth(key);
             }
-            bytes.extend_from_slice(&chunk);
+            super::ollama::bounded_json(request, limits.max_bytes).await
         }
-        Ok(serde_json::from_slice::<Value>(&bytes).ok())
-    }
-    .await;
+        Err(_) => super::ollama::Bounded::Failed,
+    };
     match result {
-        Ok(Some(value)) if value["data"].is_array() => {
+        super::ollama::Bounded::Json(value) if value["data"].is_array() => {
             let found = value["data"]
                 .as_array()
                 .unwrap()
