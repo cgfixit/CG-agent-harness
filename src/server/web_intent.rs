@@ -316,7 +316,7 @@ fn placeholder_index(tok: &str) -> Option<usize> {
 /// is an ordinary character and an unclosed quote is ignored.
 ///
 /// Google's quoted exclusion `-"cats"` is one span too: the operator and the
-/// quotes stay attached (`-"cats"`, `-"Chris Grady"`), so the provider sees
+/// quotes stay attached (`-"cats"`, `-"Bob Smith"`), so the provider sees
 /// the exclusion of the whole phrase instead of a detached `-"cats`.
 fn split_quoted(text: &str) -> (Vec<String>, Vec<bool>, String) {
     let mut terms = Vec::new();
@@ -614,11 +614,11 @@ mod tests {
 
     #[test]
     fn fixture_quoted_terms_and_count() {
-        let p = parse("search Google (serpapi) for the first 2 links for 'cgfixit' and 'Chris Grady'").expect("intent");
+        let p = parse("search Google (serpapi) for the first 2 links for 'alice' and 'Bob Smith'").expect("intent");
         assert_eq!(p.count, 2);
-        assert_eq!(p.terms, vec!["cgfixit".to_string(), "Chris Grady".to_string()]);
+        assert_eq!(p.terms, vec!["alice".to_string(), "Bob Smith".to_string()]);
         assert_eq!(p.engine, SearchEngine::Serpapi);
-        assert_eq!(p.query(), "\"cgfixit\" \"Chris Grady\"");
+        assert_eq!(p.query(), "\"alice\" \"Bob Smith\"");
     }
 
     #[test]
@@ -978,9 +978,9 @@ mod tests {
         assert_eq!(p.query(), "+\"rust async\"");
         let p = parse("search ~\"cheap\" flights").expect("intent");
         assert_eq!(p.terms, vec!["~\"cheap\"".to_string(), "flights".into()]);
-        let p = parse("search \"dogs\" -'Chris Grady'").expect("intent");
-        assert_eq!(p.terms, vec!["dogs".to_string(), "-'Chris Grady'".into()]);
-        assert_eq!(p.query(), "\"dogs\" -'Chris Grady'");
+        let p = parse("search \"dogs\" -'Bob Smith'").expect("intent");
+        assert_eq!(p.terms, vec!["dogs".to_string(), "-'Bob Smith'".into()]);
+        assert_eq!(p.query(), "\"dogs\" -'Bob Smith'");
         // A hyphen inside a word is not an exclusion operator.
         let p = parse("search first 2 links for well-known rust").expect("intent");
         assert_eq!(p.terms, vec!["for".to_string(), "well-known".into(), "rust".into()]);
