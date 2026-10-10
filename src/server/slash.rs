@@ -127,9 +127,24 @@ impl Validate for SlashParseRequest {
     }
 }
 
+/// Invisible or direction-changing characters a slash line may not carry.
+/// U+FEFF is whitespace to the console's JS `\s` but not to Rust, so the two
+/// sides would split one line into different commands; the rest render as
+/// nothing or reorder the text shown. ZWJ/ZWNJ (emoji, Persian, Indic text)
+/// and LRM/RLM stay allowed: neither side splits on them.
+pub(crate) fn is_hidden_format_char(c: char) -> bool {
+    matches!(
+        c,
+        '\u{FEFF}' | '\u{200B}' | '\u{180E}' | '\u{2060}'..='\u{2064}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
 pub fn parse_line(input: &str) -> SlashParse {
     let trimmed = input.trim();
-    if trimmed.is_empty() || !trimmed.starts_with('/') {
+    // A leading U+FEFF is trimmed by the console but not by `str::trim`; such a
+    // line is meant as a slash command and is refused below, not passed to chat.
+    let bom_slash = trimmed.trim_start_matches(['\u{FEFF}', ' ']).starts_with('/');
+    if trimmed.is_empty() || !(trimmed.starts_with('/') || bom_slash) {
         return SlashParse {
             web: None,
             kind: SlashKind::NotSlash,
@@ -152,6 +167,12 @@ pub fn parse_line(input: &str) -> SlashParse {
     {
         return suggest_only(
             "slash commands require one line without control characters; not dispatched",
+            &[],
+        );
+    }
+    if input.chars().any(is_hidden_format_char) {
+        return suggest_only(
+            "slash commands cannot contain invisible or direction-changing characters (such as U+FEFF, U+200B or U+202E); retype the line; not dispatched",
             &[],
         );
     }
@@ -722,6 +743,87 @@ mod tests {
             let parsed = parse_line(line);
             assert!(!parsed.dispatch, "{line}: {parsed:?}");
             assert_eq!(parsed.kind, SlashKind::Suggest);
+        }
+    }
+
+    const HIDDEN_NOTICE: &str = "slash commands cannot contain invisible or direction-changing characters (such as U+FEFF, U+200B or U+202E); retype the line; not dispatched";
+
+    /// The console re-splits a dispatched canonical with JS `/\s+/`
+    /// (assets/static/harness.html, `runSlash`). ECMAScript `\s` is Rust's
+    /// whitespace minus U+0085, plus U+FEFF.
+    fn js_split(line: &str) -> Vec<&str> {
+        line.split(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{FEFF}')
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn hidden_format_characters_never_dispatch_or_echo() {
+        for line in [
+            // U+FEFF splits for the console but not for the parser, so these
+            // used to dispatch as a bare root and run as push/confirm/apply.
+            "/agent push\u{FEFF}abc --dry-run",
+            "/agent confirm\u{FEFF}--dry-run",
+            "/soul apply\u{FEFF}p1 --help",
+            "/goal \u{FEFF}clear",
+            "/api set KEY\u{FEFF}secret-value",
+            "\u{FEFF}/model list",
+            "/memory remember fact\u{202E}txet :: because",
+            "/session rename a\u{200B}b",
+            "/agent run fix\u{2066}bug\u{2069}",
+            "/web search word\u{2060}joined",
+        ] {
+            let parsed = parse_line(line);
+            assert!(!parsed.dispatch, "{line:?}: {parsed:?}");
+            assert_eq!(parsed.kind, SlashKind::Suggest, "{line:?}");
+            assert_eq!(parsed.notice.as_deref(), Some(HIDDEN_NOTICE), "{line:?}");
+            let json = parsed.to_json().to_string();
+            assert!(!json.contains("secret-value"), "{line:?} echoed: {json}");
+        }
+        // Joiners and marks that neither side splits on stay usable in text.
+        for line in [
+            "/memory save family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} :: operator note",
+            "/memory save heart \u{2764}\u{FE0F} :: operator note",
+            "/memory save \u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0645} :: operator note",
+        ] {
+            assert!(parse_line(line).dispatch, "{line:?}");
+        }
+    }
+
+    use proptest::prelude::*;
+
+    proptest::proptest! {
+        /// Whatever the parser dispatches, the console must split into the
+        /// same words the parser saw: a mismatch lets one side refuse what the
+        /// other runs.
+        #[test]
+        fn dispatched_canonical_splits_the_same_in_rust_and_js(
+            words in proptest::collection::vec(
+                proptest::sample::select(vec![
+                    "agent", "push", "confirm", "status", "memory", "save", "facts", "api", "set", "clear",
+                    "goal", "stage", "loop", "stop", "model", "list", "use", "soul", "apply", "web", "search",
+                    "session", "rename", "abc", "KEY", "--dry-run", "--help", "::", "reason", "please",
+                ]),
+                1..6,
+            ),
+            seps in proptest::collection::vec(
+                proptest::sample::select(vec![" ", "  ", "\u{A0}", "\u{FEFF}", "\u{200B}", "\u{3000}", "\u{2009}", "\u{202E}", "\u{200D}"]),
+                6,
+            ),
+        ) {
+            let mut line = String::from("/");
+            for (i, word) in words.iter().enumerate() {
+                if i > 0 {
+                    line.push_str(seps[i]);
+                }
+                line.push_str(word);
+            }
+            let parsed = parse_line(&line);
+            if parsed.dispatch {
+                let canonical = parsed.canonical.clone().unwrap_or_default();
+                prop_assert_eq!(js_split(&canonical), canonical.split_whitespace().collect::<Vec<_>>(), "{:?}", line);
+                prop_assert!(!line.chars().any(is_hidden_format_char), "{:?}", line);
+            }
         }
     }
 
