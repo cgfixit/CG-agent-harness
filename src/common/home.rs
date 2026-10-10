@@ -343,8 +343,7 @@ pub fn validate_port(raw: &str) -> Result<u16> {
     Ok(n as u16)
 }
 
-// DevSkim: ignore DS162092 because this is the loopback allowlist the bind check and guards enforce.
-pub const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
+pub const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"]; // DevSkim: ignore DS162092 because this is the loopback allowlist the bind check and guards enforce.
 
 pub fn is_loopback_host(host: &str) -> bool {
     LOOPBACK_HOSTS.contains(&host)
