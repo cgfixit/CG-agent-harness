@@ -126,9 +126,7 @@ Paste the head SHA and each command with its exit code. List skipped checks and 
 ---
 
 **Notes for contributors (including solo maintainer / multi-agent PRs):**
-- Core invariant or write-gate changes require the strongest evidence.
 - `src/agentic/` and console-only changes may use a lighter checklist, but still need Benefits + Risks + the relevant items.
-- Docs-only PRs may skip some technical checklist rows; Benefits and Risks remain required.
 - Prefer squash-and-merge. The final squashed commit message is the permanent record; keep intermediate agent WIP out of `main`.
 - PRs are draft by default until a human marks them ready.
 
