@@ -394,7 +394,7 @@ try {
  slashMode='suggest';
  await evaluate('runSlashMaybeFuzzy("/memory clear\\n")');
  assert.equal(requests.filter(r=>r[1]==='/api/slash/parse').at(-1)[2].line,'/memory clear\n','slash wrapper must preserve command boundaries');
- for(const pasted of ['/memory\n clear','/memory clear\n','/memory\tclear','/web allow https://example.org/*\n/web on','/agent\nconfirm operator-approved','/api\tclear GROK_API_KEY','/session\u2028new']) {
+ for(const pasted of ['/memory\n clear','/memory clear\n','/memory\tclear','/web allow https://example.org/*\n/web on','/agent\nconfirm operator-approved','/api\tclear GROK_API_KEY','/session\u2028new','/agent push\ufeffabc --dry-run','\ufeff/model list','/memory save a\u202eb :: why','/session rename a\u200bb']) {
   assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain",'+JSON.stringify(pasted)+');return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'ambiguous slash-command paste must be prevented before native input normalization');
  }
  assert.equal(await evaluate('(()=>{input.value="/memory ";input.setSelectionRange(8,8);const data=new DataTransfer();data.setData("text/plain","clear\\n");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'partial paste must consider existing command text');

@@ -2061,7 +2061,7 @@ function openCommandHelp(syntax) {
   const insertAndClose = line => { input.value = line; dialog.close(); input.focus(); };
   heading('Synopsis');
   const pre = document.createElement('pre'); pre.textContent = m.syntax; body.appendChild(pre);
-  para('<…> required · […] optional · a|b one of · one line, no control characters', 'legend');
+  para('<…> required · […] optional · a|b one of · one line, no control or invisible characters', 'legend');
   heading('Description');
   para(m.summary ? m.summary.charAt(0).toUpperCase() + m.summary.slice(1) + '.' : '');
   if (m.detail) para(m.detail);
@@ -2148,7 +2148,7 @@ function renderHelp(topic = '', compact = false) {
   const box = document.createElement('section'); box.className = 'command-guide'; box.setAttribute('aria-label','Command guide');
   if (!compact) {
     const title = document.createElement('h3'); title.textContent = 'Command guide'; box.appendChild(title);
-    const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click a command to insert it, then review and send; ? opens its full help page. <…> is required; […] is optional. Commands must be one line without control characters. Suggestions never execute.'; box.appendChild(note);
+    const note = document.createElement('p'); note.textContent = 'Search a topic, action or flag. Click a command to insert it, then review and send; ? opens its full help page. <…> is required; […] is optional. Commands must be one line without control or invisible characters. Suggestions never execute.'; box.appendChild(note);
   }
   const search = document.createElement('input'); search.type = 'search'; search.placeholder = compact ? 'Search commands or flags, e.g. --group' : 'Search commands, e.g. web, session, --group'; search.setAttribute('aria-label','Search commands'); search.value = topic; box.appendChild(search);
   let topicSelect = null;
@@ -4095,6 +4095,10 @@ async function runSlashMaybeFuzzy(text) {
       sys(box,'Suggestions only — click to edit, then explicitly send.');
       return;
     }
+    if (parsed && parsed.kind === 'not_slash') {
+      sys('command not dispatched: the server did not read this as a slash command (check for an invisible character before the /); nothing was sent');
+      return;
+    }
     throw new Error('invalid slash-parser response');
   } catch (e) {
     sys('command not dispatched: slash parsing unavailable (' + e.message + '). Retry or inspect the Commands pane.');
@@ -4109,9 +4113,10 @@ input.addEventListener('paste', e => {
   const pasted = e.clipboardData && e.clipboardData.getData('text/plain');
   if (!pasted) return;
   const proposed = input.value.slice(0, input.selectionStart) + pasted + input.value.slice(input.selectionEnd);
-  if (/^\s*\//.test(proposed) && /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(proposed)) {
+  /* Same refusal set as the parser (is_hidden_format_char in src/server/slash.rs). */
+  if (/^\s*\//.test(proposed) && /[\u0000-\u001f\u007f-\u009f\u2028\u2029\ufeff\u200b\u180e\u2060-\u2064\u202a-\u202e\u2066-\u2069]/.test(proposed)) {
     e.preventDefault();
-    sys('slash-command paste refused: use one line without control characters; nothing was dispatched');
+    sys('slash-command paste refused: use one line without control or invisible characters; nothing was dispatched');
   }
 });
 input.addEventListener('input', () => {
