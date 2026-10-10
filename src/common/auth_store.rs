@@ -151,7 +151,9 @@ impl AuthManager {
         Ok(mgr)
     }
 
-    /// Test hook: inject a clock.
+    /// Test hook: inject a clock. Session expiry reads it, so production code
+    /// must not reach it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_clock(&mut self, clock: Box<dyn Fn() -> f64 + Send + Sync>) {
         self.clock = clock;
     }
