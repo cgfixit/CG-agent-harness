@@ -200,7 +200,9 @@ impl<'a> RepoWorkspace<'a> {
         })
     }
 
-    /// Test/constructor for an already-populated directory (no clone).
+    /// Test constructor for an already-populated directory (no clone). It skips
+    /// `attach`'s workspace-root checks, so production code must not reach it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn open_existing(ctx: &'a AgenticCtx, dest: &Path) -> Result<Self> {
         let dest = dunce::canonicalize(dest)?;
         let dir = open_jail_dir(&dest)?;
