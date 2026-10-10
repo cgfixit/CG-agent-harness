@@ -20,6 +20,7 @@ pub mod local_tls;
 pub mod mcp;
 pub mod mcp_policy;
 pub mod mcp_worker;
+pub mod private_sqlite;
 pub mod process;
 pub mod ratelimit;
 pub mod repo_paths;
