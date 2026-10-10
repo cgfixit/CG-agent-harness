@@ -21,8 +21,8 @@ consistent (evidence-first; I6 preserve; `scripts/check-pr-template.sh`).
 **What this skill does:** time-boxed scan of the default branch, group findings
 into **1–4 earned** PR-sized chunks (**guideline, not quota**; zero is valid),
 implement only when scope is authorized, open **draft** PRs only when
-publication is authorized. Human merges. Prefer merge order lowest PR number →
-highest; parent before child when stacked.
+publication is authorized. Human merges. Merge order: opened order unless a
+named dependency says otherwise; format per the PR template.
 
 ---
 
@@ -90,11 +90,13 @@ Build a **file → chunks** map. Hotspots: `.github/workflows/ci.yml`,
 `REGISTERED_PATHS`, `deny.toml`. For shared files:
 
 - **(A) Consolidate** shared edits into one PR, or
-- **(B) Stack** later branch on earlier; GitHub `base` = parent branch until
-  parent merges.
+- **(B) Sequence** both on `main` (never a stacked base): land the earlier,
+  then rebase the later with `git rebase --onto origin/main <old-parent-tip>`.
 
-Trial-merge pairs locally before opening when ≥2 chunks touch one file. Prefer
-session merge order: lowest PR number → highest, parents before children.
+Trial-merge each branch on fresh `origin/main` (`git merge --no-commit --no-ff`,
+then `--abort`); when ≥2 chunks share a file, also build the merged tree. Write
+the hybrid `## Suggested merge order of open PRs` blocks from
+`.github/PULL_REQUEST_TEMPLATE.md`.
 
 ### Step 4 — Implement authorized scope only
 
