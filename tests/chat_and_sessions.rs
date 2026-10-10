@@ -466,7 +466,7 @@ async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_cal
             let session = s.state.store.for_owner("local").get(id).unwrap();
             let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":id})).await;
             let system = preview["prompt"].as_str().unwrap();
-            let history = prompt_history(&session);
+            let history = prompt_history(&session.messages);
             let raw = compaction::projected_prompt_tokens(system, &history, "next", 4096, 1.0, tool_tokens);
             let calibrated = compaction::projected_prompt_tokens(system, &history, "next", 4096, 2.0, tool_tokens);
             assert!(

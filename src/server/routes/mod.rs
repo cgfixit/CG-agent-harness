@@ -131,6 +131,32 @@ pub const REGISTERED_PATHS: [&str; 102] = [
     "/api/auth/users/{username}/disabled",
 ];
 
+/// Stream a worker's JSON events as SSE. Dropping the response (client gone)
+/// aborts the worker task.
+fn sse_from_channel(
+    receiver: tokio::sync::mpsc::Receiver<serde_json::Value>,
+    task: tokio::task::JoinHandle<()>,
+) -> axum::response::Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use axum::response::IntoResponse;
+
+    struct AbortOnDrop(tokio::task::AbortHandle);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let abort = AbortOnDrop(task.abort_handle());
+    let stream = futures_util::stream::unfold((receiver, abort), |(mut receiver, abort)| async move {
+        let event = receiver.recv().await?;
+        Some((
+            Ok::<_, std::convert::Infallible>(Event::default().data(event.to_string())),
+            (receiver, abort),
+        ))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
 pub fn registered_paths() -> BTreeSet<String> {
     let mut set: BTreeSet<String> = REGISTERED_PATHS.iter().map(|s| s.to_string()).collect();
     for extra in [
