@@ -381,6 +381,20 @@ mod tests {
     }
 
     #[test]
+    fn a_derived_modelfile_window_is_separate_from_the_loaded_one() {
+        // Registry-style native context can be larger than the Modelfile pin.
+        // Chat uses /api/ps context_length, not this declared field.
+        let declared = parse_show(&json!({
+            "parameters": "num_ctx                        32768",
+            "model_info": {"general.architecture": "qwen38", "qwen38.context_length": 262_144},
+            "capabilities": ["completion", "tools", "thinking"],
+        }));
+        assert_eq!(declared["modelfile_num_ctx"], 32_768);
+        assert_eq!(declared["native_context"], 262_144);
+        assert_eq!(declared["thinking"], true);
+    }
+
+    #[test]
     fn ps_reports_the_loaded_window_and_spill() {
         let body = json!({"models": [
             {"name": "other:latest", "context_length": 4096, "size": 10, "size_vram": 10},
@@ -394,6 +408,14 @@ mod tests {
         // An untagged selection matches its implicit :latest row, and only that.
         assert!(same_model("qwen3.8", "qwen3.8:latest") && same_model(" a:b ", "a:b"));
         assert!(!same_model("qwen3.8", "qwen3.8:q8") && !same_model("", ":latest"));
+        // A derived tag is a different model: its Modelfile window must not reuse the parent's.
+        assert!(!same_model("qwen3.8:27b-mlx", "qwen3.8:27b-mlx-cg"));
+        let derived = parse_ps(
+            &json!({"models": [{"name": "qwen3.8:27b-mlx-cg", "context_length": 32_768, "size": 20, "size_vram": 20}]}),
+            "qwen3.8:27b-mlx-cg",
+        )
+        .unwrap();
+        assert_eq!(derived["context_length"], 32_768);
         assert!(parse_ps(&body, "other").is_some());
         assert!(parse_ps(&body, "other:q8").is_none());
         // Older Ollama without context_length still reports memory.

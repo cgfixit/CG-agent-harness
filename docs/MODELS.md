@@ -44,6 +44,27 @@ curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 a turn exceeds it. Otherwise keep `web.total_tokens: 16000` and
 `web.evidence_tokens: 3000` in the home `config.yaml`.
 
+### Pin 32768 with a local derived tag
+
+A Modelfile `PARAMETER num_ctx` wins over `OLLAMA_CONTEXT_LENGTH` and over a
+`/v1` request. The harness sends no `num_ctx`, so a tag can load a window
+other than the 32768 the seeded budgets assume. The shipped default stays
+`qwen3.8:27b-mlx`. A derived tag exists only after `ollama create`.
+
+```bash
+ollama create qwen3.8:27b-mlx-cg -f scripts/qwen3.8-27b-mlx-cg.Modelfile
+```
+
+That file is `FROM qwen3.8:27b-mlx` with `PARAMETER num_ctx 32768`. Select it
+with `/model use qwen3.8:27b-mlx-cg`. It is local-only: do not pull it.
+`/model profile` reports `declared.modelfile_num_ctx` and
+`loaded.context_length`; chat uses the loaded value. Confirm `/api/ps` is 32768.
+
+The recipe does not disable thinking. The harness sends `reasoning_effort:
+none` for provider `ollama` on every tag.
+`SMOKE_MODEL=qwen3.8:27b-mlx-cg scripts/smoke-ollama.sh` selects it. Pinned
+models under `scripts/live-ollama/` are a separate fingerprint set.
+
 Choose the **exact installed identifier**. The acceptance Mac had `qwen3.8:27b`
 and a separate `qwen3.8:27b-mlx` with a different digest. Neither is assumed
 installed elsewhere. With an empty inventory, deliberately download a model
