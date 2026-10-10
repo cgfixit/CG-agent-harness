@@ -25,7 +25,7 @@ use super::collect::{collect_passive, InterfaceSource, NeighborSource, PassiveRe
 #[cfg(any(test, feature = "test-support"))]
 use super::collect::{FixtureInterfaces, FixtureNeighbors, FixtureRoutes};
 use super::config::{NetconnectConfig, Tier};
-use super::sanitize::{sanitize_untrusted, UntrustedString};
+use super::sanitize::sanitize_untrusted;
 use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,12 +108,8 @@ pub fn catalog_rows(cfg: &NetconnectConfig) -> Vec<Value> {
 }
 
 /// One device-supplied field. The value is display data inside JSON.
-pub fn present_untrusted(raw: &str, max_chars: usize) -> UntrustedString {
-    sanitize_untrusted(raw, max_chars)
-}
-
 fn field(raw: Option<&str>, max_chars: usize) -> Value {
-    raw.map(|text| serde_json::to_value(present_untrusted(text, max_chars)).unwrap_or(Value::Null))
+    raw.map(|text| serde_json::to_value(sanitize_untrusted(text, max_chars)).unwrap_or(Value::Null))
         .unwrap_or(Value::Null)
 }
 
@@ -617,7 +613,7 @@ netconnect:
             ("vendor", "ACME\tCorp"),
         ];
         for (_, raw) in samples {
-            let marked = present_untrusted(raw, 64);
+            let marked = sanitize_untrusted(raw, 64);
             assert!(marked.is_untrusted());
             assert!(!marked.value().chars().any(|c| c.is_control()));
             let json = serde_json::to_value(&marked).unwrap();

@@ -7,5 +7,5 @@ pub mod prepared;
 pub mod runner;
 pub mod sandbox;
 
-pub use runner::{run_verification, Check, CheckResult, VerificationReport, DEFAULT_CHECK_TIMEOUT_SEC};
-pub use sandbox::{production_sandbox, ArgvListSandbox, HardSandbox, SandboxOutcome, MAX_OUTPUT_CHARS};
+pub use runner::{run_verification, Check, VerificationReport, DEFAULT_CHECK_TIMEOUT_SEC};
+pub use sandbox::{production_sandbox, ArgvListSandbox, HardSandbox};

@@ -29,7 +29,7 @@ pub enum DispatchOutcome {
     Refused,
 }
 use super::schedule_time::Occurrence;
-pub use super::schedule_time::{ScheduleSpec, MAX_INTERVAL_SECS, MIN_INTERVAL_SECS};
+pub use super::schedule_time::ScheduleSpec;
 
 #[derive(Debug, Clone)]
 pub struct Settings {

@@ -154,15 +154,7 @@ pub fn read_status(path: &Path, loaded_from_file: &BTreeSet<String>) -> Result<V
     Ok(status_rows(&stored, loaded_from_file, false))
 }
 
-pub fn status_from_saved(
-    stored: &BTreeMap<String, String>,
-    loaded_from_saved: &BTreeSet<String>,
-    from_store: bool,
-) -> Vec<Value> {
-    status_rows(stored, loaded_from_saved, from_store)
-}
-
-fn status_rows(
+pub fn status_rows(
     stored: &BTreeMap<String, String>,
     loaded_from_saved: &BTreeSet<String>,
     from_store: bool,
