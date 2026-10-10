@@ -47,6 +47,9 @@ const server=createServer(async(req,res)=>{
   if(slashMode==='error'){reply({detail:{code:'UNAVAILABLE',message:'parser fixture unavailable'}},503);return;}
   if(slashMode==='invalid'){reply({});return;}
   if(slashMode==='suggest'){reply({kind:'suggest',dispatch:false,suggestions:[],notice:'inspection only; not dispatched'});return;}
+  // Mirrors the parser's control and hidden-format refusal (src/server/slash.rs).
+  const refused=n=>n<0x20||(n>=0x7f&&n<=0x9f)||[0x2028,0x2029,0xfeff,0x200b,0x180e].includes(n)||(n>=0x2060&&n<=0x2064)||(n>=0x202a&&n<=0x202e)||(n>=0x2066&&n<=0x2069);
+  if([...body.line].some(c=>refused(c.codePointAt(0)))){reply({kind:'suggest',dispatch:false,suggestions:[],notice:'not dispatched'});return;}
   if(body.line==='/web help'){reply({kind:'dispatch',dispatch:true,canonical:'/help web'});return;}
   if(body.line.startsWith('/web ')){
    const [,action,...words]=body.line.split(' ');
@@ -548,6 +551,8 @@ try {
  for(const command of ['/loop stop --help','/ loop stop'])await send(command);
  // A text input strips newlines, so exercise that raw wrapper input directly.
  slashMode='error';await evaluate('runSlashMaybeFuzzy('+JSON.stringify('/\nloop stop')+')');slashMode='dispatch';
+ // JS \s splits on U+FEFF but the parser does not: hidden characters never earn the local stop bypass.
+ for(const code of [0xfeff,0x200b,0x202e])await evaluate('runSlashMaybeFuzzy('+JSON.stringify('/loop'+String.fromCharCode(code)+'stop')+')');
  assert.equal(requests.filter(r=>r[1]==='/api/chat/cancel').length,beforeHelpStop,'malformed stop commands must not trigger the cancellation exception');
  assert.ok(await evaluate('!!inflightChat'));
  await send('/LOOP   STOP');await generation;assert.equal(await evaluate('loopState'),null);

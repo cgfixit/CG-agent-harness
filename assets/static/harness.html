@@ -3809,9 +3809,16 @@ async function previewChatPrompt(extra) {
 function isLoopStopCommand(text) {
   /* Only the exact local cancellation control bypasses slash parsing. */
   if (!text || text.charAt(0) !== '/' || /\s/.test(text.charAt(1))) return false;
+  /* JS \s splits on U+FEFF; the server does not, so a hidden character never
+     gets this local bypass either. */
+  if (SLASH_REFUSED_CHARS.test(text)) return false;
   const parts = text.slice(1).split(/\s+/).filter(Boolean);
   return parts.length === 2 && parts[0].toLowerCase() === 'loop' && parts[1].toLowerCase() === 'stop';
 }
+
+/* Same refusal set as the parser (is_hidden_format_char and the control-char
+   refusal in src/server/slash.rs). */
+const SLASH_REFUSED_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\ufeff\u200b\u180e\u2060-\u2064\u202a-\u202e\u2066-\u2069]/;
 
 async function onSend() {
   /* sendBtn.disabled is the console's existing in-flight signal (see
@@ -4113,8 +4120,7 @@ input.addEventListener('paste', e => {
   const pasted = e.clipboardData && e.clipboardData.getData('text/plain');
   if (!pasted) return;
   const proposed = input.value.slice(0, input.selectionStart) + pasted + input.value.slice(input.selectionEnd);
-  /* Same refusal set as the parser (is_hidden_format_char in src/server/slash.rs). */
-  if (/^\s*\//.test(proposed) && /[\u0000-\u001f\u007f-\u009f\u2028\u2029\ufeff\u200b\u180e\u2060-\u2064\u202a-\u202e\u2066-\u2069]/.test(proposed)) {
+  if (/^\s*\//.test(proposed) && SLASH_REFUSED_CHARS.test(proposed)) {
     e.preventDefault();
     sys('slash-command paste refused: use one line without control or invisible characters; nothing was dispatched');
   }
