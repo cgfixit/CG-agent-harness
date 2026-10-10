@@ -571,7 +571,8 @@ impl Notifier {
             .count())
     }
 
-    /// One worker pass. The background task calls the same sweep.
+    /// One worker pass; the background task calls `tick` directly.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn poll_once(&self) {
         self.0.tick().await;
     }

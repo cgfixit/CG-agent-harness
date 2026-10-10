@@ -367,6 +367,7 @@ impl AuthManager {
     }
 
     /// The account stays present and must set a new password before automation runs.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn require_password_change(&self, username: &str) -> Result<()> {
         let canonical = Self::canonical(username);
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());

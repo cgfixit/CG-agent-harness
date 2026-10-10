@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 
-pub const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
+pub use crate::common::home::LOOPBACK_HOSTS;
 const VALID_EFFORTS: [&str; 5] = ["none", "low", "medium", "high", "max"];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
