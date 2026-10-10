@@ -21,10 +21,9 @@ Rules for agents:
 Also allowed (non-feature): `main`, `dependabot/*`, `renovate/*`, `release/*`, `hotfix/*`.
 
 **Base branch: `main`.** Never open a PR against another feature branch (no stacking).
-#36–#41 were squash-merged into their predecessors and never reached `main`; the
-`base branch is main` check now fails such PRs. Fix with `gh pr edit <n> --base main`.
+The `base branch is main` check fails stacked PRs; fix with `gh pr edit <n> --base main`.
 
-Record the head SHA in Further comments after the branch exists. Fix a wrong name with `git branch -m` before the first push. Do not force-push. Do not open against any base except `main`. If you skipped a fetch of `origin/main`, say so under Risks and why.
+Record the head SHA in Further comments after the branch exists. Do not force-push, except `--force-with-lease` after rebasing your own unshared branch (see merge order). If you skipped a fetch of `origin/main`, say so under Risks and why.
 
 ## Title
 **Use this format:**  
@@ -86,7 +85,7 @@ State the maintainer outcome in concrete terms. Do not market a capability or cl
 - For write-enablement changes: what failure modes exist if a gate is skipped or `reason` becomes optional?
 - How will you (or future maintainers) detect drift from the intended behavior?
 
-Name residual risk after the checks you actually ran. Include failed or skipped commands, their exit codes, and why you skipped them. Say which invariants the diff touches. Rollback is reverting this PR. Detect drift by re-running `scripts/check-pr-template.sh` on the body and the quality bar on the same head SHA.
+Name residual risk after the checks you actually ran. Include failed or skipped commands, their exit codes, and why you skipped them. Say which invariants the diff touches. Detect drift by re-running `scripts/check-pr-template.sh` on the body and the quality bar on the same head SHA.
 
 ---
 
@@ -109,7 +108,7 @@ Mark a box only after that command exits 0 on the head SHA you will push. A skip
 ---
 
 ## Further comments
-If this is a relatively large, complex, or core-path change, kick off the discussion here in ELI5 technical tone.
+If this is a relatively large, complex, or core-path change, kick off the discussion here.
 
 **For changes touching `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`, `src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`, or `assets/config.default.yaml`, include:**
 - Explicit before/after invariant statement (which `INVARIANTS.md` guarantee holds and why)
@@ -122,7 +121,7 @@ If this is a relatively large, complex, or core-path change, kick off the discus
 - "Write gates still ship closed. `confirm` is not defaulted; `reason` remains required. Clone jail tests still refuse escapes."
 - "Docs-only: no code, no config, no CI Windows parking. Invariants untouched."
 
-Paste the head SHA and each command with its exit code. List skipped checks and why. Restate invariants touched, residual risk, and rollback. A core-path diff still needs the before/after statement above. A docs-only diff names the guarantee it leaves untouched.
+Paste the head SHA and each command with its exit code. List skipped checks and why. Restate invariants touched, residual risk, and rollback. A docs-only diff names the guarantee it leaves untouched.
 
 ---
 
@@ -131,16 +130,25 @@ Paste the head SHA and each command with its exit code. List skipped checks and 
 - `src/agentic/` and console-only changes may use a lighter checklist, but still need Benefits + Risks + the relevant items.
 - Docs-only PRs may skip some technical checklist rows; Benefits and Risks remain required.
 - Prefer squash-and-merge. The final squashed commit message is the permanent record; keep intermediate agent WIP out of `main`.
-- Be blunt about impact: if I6, write gates, or loopback-only bind are affected, say so explicitly.
 - PRs are draft by default until a human marks them ready.
 
 ## Suggested merge order of open PRs
 
-List the other open PRs. Then give the order to land them relative to this one. Parents land first, then dependencies, then siblings that conflict. Give the reason for that order. Merge a PR only when its checks are green on that exact head. Wait for green `main` CI before you merge the next PR.
+One block per open PR, this one included, in landing order, at most three lines each. Default to opened order; reorder only for a named dependency or conflict.
+
+**#45** · Safe ✅  
+Impact: Base skill prompts + routing. No dependency.  
+Action: Merge first. Trial merge clean vs main.
+
+**#47** · Dirty ⚠️  
+Impact: Context injection; depends on #45's schema.  
+Action: After #45 → rebase onto `origin/main` → `--force-with-lease` → re-verify.
+
+Status: **Safe ✅** applies clean to current `main`; **Dirty ⚠️** conflicts; **Blocked ⛔** waits on another PR or red CI. Verify each with `git merge --no-commit --no-ff origin/<branch>` on a fresh `origin/main` checkout, then `git merge --abort`, and say so. Fix Dirty with a local rebase, not GitHub "Update branch"; on a branch someone else pushes to, merge `main` in instead. When a parent squash-merges, rebase a child with `git rebase --onto origin/main <old-parent-tip>`. A clean merge can still break: when two PRs touch one file or a `DOCS_BUDGET` cap, build and lint the merged tree. Merge a PR only when its checks are green on that head; wait for green `main` CI, then re-check the rest.
 
 ## ELI5
 
-<!-- Replace the placeholder with one short plain-but-technical paragraph. Say what this PR changes and why. Name the files. Do not add a heading after this one. Do not market a feature or soften a gate. -->
+<!-- Required on every PR. Write for the operator: plain but technical, nothing glossed. Cover the whole branch diff against main, later commits included. Say what changed and why, naming files and functions; what could break and where to look; what was run versus only reasoned. Mark guesses. Do not market a feature or soften a gate. No heading after this one. -->
 
 <what changed and why>
 
