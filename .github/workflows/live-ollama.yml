@@ -48,9 +48,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
-        with:
-          toolchain: "1.88"
+      # rustup is on every hosted runner; no third-party toolchain action.
+      - name: Rust 1.88 (rust-toolchain.toml)
+        run: |
+          rustup toolchain install 1.88 --profile minimal --component clippy,rustfmt
+          cargo --version
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}

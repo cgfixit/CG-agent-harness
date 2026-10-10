@@ -16,8 +16,8 @@ DIR="$(cd "$DIR" && pwd)"
 
 OLLAMA_VERSION="v0.12.6"
 case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64) ASSET="ollama-linux-amd64.tgz"; SUM="de82adce2ab79235115d511ff22fcb099ac53b67127870f12b80198c033ec0a1" ;;
-  Darwin-*) ASSET="ollama-darwin.tgz"; SUM="60e652314f08cd88c85e45f6b48211fb189664c0386d4ebf14bc7223bb5504c6" ;;
+  Linux-x86_64) ASSET="ollama-linux-amd64.tgz"; SUM="de82adce2ab79235115d511ff22fcb099ac53b67127870f12b80198c033ec0a1" ;; # DevSkim: ignore DS173237 because this is the release's published SHA-256, not a secret.
+  Darwin-*) ASSET="ollama-darwin.tgz"; SUM="60e652314f08cd88c85e45f6b48211fb189664c0386d4ebf14bc7223bb5504c6" ;; # DevSkim: ignore DS173237 because this is the release's published SHA-256, not a secret.
   *) echo "unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
 
@@ -43,21 +43,22 @@ if [ ! -x "$OLLAMA" ]; then
   rm -f "$DIR/$ASSET"
 fi
 
-export OLLAMA_HOST="${LIVE_OLLAMA_HOST:-127.0.0.1:11434}"
-case "$OLLAMA_HOST" in 127.0.0.1:*) ;; *) echo "LIVE_OLLAMA_HOST must be 127.0.0.1:<port>" >&2; exit 1 ;; esac
-if ! curl -fsS -m 2 "http://$OLLAMA_HOST/api/version" >/dev/null 2>&1; then
+export OLLAMA_HOST="${LIVE_OLLAMA_HOST:-127.0.0.1:11434}" # DevSkim: ignore DS162092 because the pinned Ollama must listen on loopback only.
+case "$OLLAMA_HOST" in 127.0.0.1:*) ;; *) echo "LIVE_OLLAMA_HOST must be 127.0.0.1:<port>" >&2; exit 1 ;; esac # DevSkim: ignore DS162092 because this refuses any non-loopback address.
+API="http://$OLLAMA_HOST/api" # DevSkim: ignore DS137138 because Ollama serves plain HTTP on loopback only (checked above).
+if ! curl -fsS -m 2 "$API/version" >/dev/null 2>&1; then
   OLLAMA_MODELS="$DIR/models" OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_KEEP_ALIVE=30m \
     nohup "$OLLAMA" serve >"$DIR/serve.log" 2>&1 &
-  for _ in $(seq 1 100); do curl -fsS -m 2 "http://$OLLAMA_HOST/api/version" >/dev/null 2>&1 && break; sleep 0.3; done
+  for _ in $(seq 1 100); do curl -fsS -m 2 "$API/version" >/dev/null 2>&1 && break; sleep 0.3; done
 fi
-curl -fsS "http://$OLLAMA_HOST/api/version"; echo
+curl -fsS "$API/version"; echo
 
 # name  repo  revision  file  sha256
 while read -r name repo rev file sum; do
   fetch "https://huggingface.co/$repo/resolve/$rev/$file" "$sum" "$DIR/gguf/$file"
   { printf 'FROM %s\nTEMPLATE """' "$DIR/gguf/$file"; cat scripts/live-ollama/qwen25.template; printf '"""\nPARAMETER stop "<|im_end|>"\n'; } >"$DIR/gguf/$name.Modelfile"
   "$OLLAMA" create "$name" -f "$DIR/gguf/$name.Modelfile" >/dev/null
-  curl -fsS "http://$OLLAMA_HOST/api/show" -d "{\"model\":\"$name\"}" |
+  curl -fsS "$API/show" -d "{\"model\":\"$name\"}" |
     python3 -c 'import json,sys;caps=json.load(sys.stdin).get("capabilities") or [];assert "tools" in caps,caps;print(sys.argv[1],caps)' "$name"
 done <<'MODELS'
 fp-qwen25-05b:q4km Qwen/Qwen2.5-0.5B-Instruct-GGUF 9217f5db79a29953eb74d5343926648285ec7e67 qwen2.5-0.5b-instruct-q4_k_m.gguf 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
