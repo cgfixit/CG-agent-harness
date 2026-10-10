@@ -34,8 +34,8 @@ SLASH_CORPUS = [
     ("/web on", True),
     ("/goal clear", True),
     ("/modle list", False),
-    ("/m​odel list", False),
-    ("/model list", False),
+    ("/m\u200bodel list", False),
+    ("/model\u2028list", False),
     ("/model list\n/agent run x", False),
     ("//model list", False),
     ("/api sett SERPAPI_API_KEY fingerprint-secret-value", False),
@@ -43,7 +43,7 @@ SLASH_CORPUS = [
 SECRET = "fingerprint-secret-value"
 
 
-def compare(paths):
+def compare_runs(paths):
     """Exit 1 if any file recorded failures or its "compare" section differs."""
     runs = [(path, json.load(open(path))) for path in paths]
     status = 0
@@ -85,7 +85,7 @@ def main():
     ap.add_argument("--tune-timeout", type=float, default=900)
     args = ap.parse_args()
     if args.compare:
-        return compare(args.compare)
+        return compare_runs(args.compare)
     missing = [k for k in ("base", "cacert", "session_file", "csrf", "model_url", "models", "out") if not getattr(args, k)]
     if missing:
         ap.error("missing --" + ", --".join(m.replace("_", "-") for m in missing))
@@ -233,7 +233,7 @@ def main():
 
     out = {"compare": compare, "info": info, "failures": failures}
     with open(args.out, "w") as handle:
-        json.dump(out, handle, indent=2, sort_keys=True, ensure_ascii=False)
+        json.dump(out, handle, indent=2, sort_keys=True)
     print(json.dumps({"failures": failures}, indent=2))
     return 1 if failures else 0
 

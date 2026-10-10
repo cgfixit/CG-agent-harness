@@ -1,0 +1,101 @@
+{
+  "compare": {
+    "models": {
+      "fp-qwen25-05b:q4km": {
+        "budgets_fit_window": true,
+        "chat_ok": true,
+        "chat_tools_available": true,
+        "compact_prompt_tokens": 6000,
+        "declared_tools": true,
+        "in_force": {
+          "limit_source": "web.total_tokens",
+          "prompt_cap": 7500,
+          "prompt_limit": 5976,
+          "web_total_ceiling": 7000,
+          "web_total_tokens": 7000
+        },
+        "installed": true,
+        "max_tokens": 1024,
+        "planner_timeout_in_range": true,
+        "profile_loaded_matches": true,
+        "select_ok": true,
+        "speed_measured": true,
+        "state": "scaled",
+        "timeout_in_range": true,
+        "tools_off": false,
+        "tools_off_consistent": true,
+        "tuned": true,
+        "web": {
+          "chat_tool_calls": 3,
+          "evidence_tokens": 1500,
+          "model_tokens": 256,
+          "total_tokens": 7000
+        },
+        "window": 8192,
+        "window_matches_api_ps": true
+      },
+      "fp-qwen25-15b:q4km": {
+        "budgets_fit_window": true,
+        "chat_ok": true,
+        "chat_tools_available": true,
+        "compact_prompt_tokens": 6000,
+        "declared_tools": true,
+        "in_force": {
+          "limit_source": "chat.compact_prompt_tokens",
+          "prompt_cap": 7500,
+          "prompt_limit": 6000,
+          "web_total_ceiling": 7000,
+          "web_total_tokens": 7000
+        },
+        "installed": true,
+        "max_tokens": 1024,
+        "planner_timeout_in_range": true,
+        "profile_loaded_matches": true,
+        "select_ok": true,
+        "speed_measured": true,
+        "state": "scaled",
+        "timeout_in_range": true,
+        "tools_off": false,
+        "tools_off_consistent": true,
+        "tuned": true,
+        "web": {
+          "chat_tool_calls": 3,
+          "evidence_tokens": 1500,
+          "model_tokens": 256,
+          "total_tokens": 7000
+        },
+        "window": 8192,
+        "window_matches_api_ps": true
+      }
+    },
+    "routes": {
+      "goal_set": true,
+      "inventory_listed": true,
+      "memory": true,
+      "structured_memory": true,
+      "swap_back_retunes_same": true
+    },
+    "schema": 1,
+    "slash": {
+      "//model list": false,
+      "/api sett SERPAPI_API_KEY fingerprint-secret-value": false,
+      "/goal clear": true,
+      "/loop stop": true,
+      "/loop stop now": false,
+      "/memory facts": true,
+      "/memory facts clear": false,
+      "/memory status": true,
+      "/model list": true,
+      "/model list\n/agent run x": false,
+      "/model list extra": false,
+      "/model profile --dry-run": false,
+      "/model use some-model:latest": true,
+      "/model\u2028list": false,
+      "/modle list": false,
+      "/m\u200bodel list": false,
+      "/web on": true,
+      "/web status": true
+    }
+  },
+  "failures": []
+}
