@@ -1,0 +1,103 @@
+# Live-model fingerprint: the release binary against a real Ollama on Linux and
+# macOS runners, with the same pinned Ollama and models (scripts/live-ollama/).
+# Each run records what auto_tune derives from the loaded window, the slash
+# parse decisions and the memory and goal routes, then the compare job diffs
+# the two runs and the checked-in baseline. Speeds are never compared: GitHub
+# runners have no GPU, so this proves behavior, not Apple-silicon performance.
+# Not a required check; it downloads Ollama and model weights.
+name: live-ollama
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 7 * * *"
+  pull_request:
+    paths:
+      - ".github/workflows/live-ollama.yml"
+      - "scripts/live-ollama/**"
+      - "scripts/smoke-ollama.sh"
+      - "src/server/model_limits.rs"
+      - "src/server/routes/ollama.rs"
+      - "src/server/slash.rs"
+      - "src/llm/ollama.rs"
+      - "src/llm/inventory.rs"
+      - "src/llm/profile.rs"
+
+permissions: {}
+
+concurrency:
+  group: live-ollama-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  fingerprint:
+    name: fingerprint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build release binary
+        run: cargo build --release --locked
+      - name: Pinned Ollama and models
+        run: scripts/live-ollama/setup.sh "$RUNNER_TEMP/live-ollama"
+      - name: Smoke and fingerprint
+        env:
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
+          SMOKE_REQUIRE_MODEL: "1"
+          SMOKE_MODEL: "fp-qwen25-05b:q4km"
+          FINGERPRINT_MODELS: "fp-qwen25-05b:q4km,fp-qwen25-15b:q4km"
+          RUNNER_OS_NAME: ${{ runner.os }}
+        run: FINGERPRINT_OUT="$RUNNER_TEMP/fingerprint-$RUNNER_OS_NAME.json" scripts/smoke-ollama.sh
+      - name: Ollama log
+        if: ${{ failure() }}
+        run: tail -n 200 "$RUNNER_TEMP/live-ollama/serve.log" || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: fingerprint-${{ runner.os }}
+          path: ${{ runner.temp }}/fingerprint-*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  compare:
+    name: compare fingerprints
+    needs: fingerprint
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: fingerprint-*
+          path: fingerprints
+          merge-multiple: true
+      - name: Baseline, Linux and macOS must agree
+        run: |
+          ls -l fingerprints
+          python3 scripts/live-ollama/fingerprint.py --compare \
+            scripts/live-ollama/baseline.json fingerprints/fingerprint-Linux.json fingerprints/fingerprint-macOS.json
