@@ -60,7 +60,7 @@ The default endpoint is `http://127.0.0.1:11434/v1`. Seeded research budgets ass
 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 ```
 
-Restart an existing service rather than starting a second daemon; the harness sends no `num_ctx` override. See [Models](docs/MODELS.md) for Ollama.app and smaller windows.
+Restart an existing service rather than starting a second daemon; the harness sends no `num_ctx` override. A Modelfile `num_ctx` beats that variable. See [Models](docs/MODELS.md) for Ollama.app, smaller windows, and a local derived tag that pins 32768.
 
 Other OpenAI-compatible services work on any loopback address (`127.0.0.1`, `localhost`, or `[::1]`); chat and the coding planner have separate settings.
 

@@ -1138,8 +1138,9 @@ async fn chat_inner(
                 json!({"model":model,"window_tokens":window,"projected_tokens":projected,
                     "message":format!("Ollama loaded {model} with a {window}-token context window, but this turn needed about \
                         {projected} tokens (prompt plus reply reserve). Ollama silently drops the oldest prompt text, starting \
-                        with the system prompt. Restart Ollama with a larger OLLAMA_CONTEXT_LENGTH (32768 is recommended; see \
-                        docs/MODELS.md), or start a new session.")})
+                        with the system prompt. A Modelfile PARAMETER num_ctx wins over OLLAMA_CONTEXT_LENGTH, and the harness \
+                        sends no num_ctx. 32768 is the window the seeded budgets assume (see docs/MODELS.md). Start a new \
+                        session, or load a tag whose window covers this turn.")})
             })
     };
     let recorded = state.store.for_owner(&owner).record_exchange_inner(
