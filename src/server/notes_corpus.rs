@@ -14,8 +14,7 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
 use crate::common::sha256_bytes_hex;
 use crate::server::attachments::{
-    atomic_write_in_jail, blob_section, unlink_all, wrap_fence, IncomingFile, VerifiedAttachment, FENCE_CLOSE,
-    FENCE_OPEN,
+    atomic_write_in_jail, blob_section, neutralize_sentinels, unlink_all, wrap_fence, IncomingFile, VerifiedAttachment,
 };
 use crate::server::passage_index::{chunk_text, retrieve_passages, PassageDoc, SourceKind};
 
@@ -313,7 +312,7 @@ impl NotesCorpus {
             }
             let text = classify_note(&bytes, self.limits.max_file_bytes)?;
             let injection_hits = scanner.scan(&text).len();
-            let (text, sentinels_removed) = neutralize(&text);
+            let (text, sentinels_removed) = neutralize_sentinels(&text);
             out.push(VerifiedAttachment {
                 blob: crate::server::attachments::AttachmentBlob {
                     id: blob.id.clone(),
@@ -435,19 +434,6 @@ fn wrap_notes(sections: &[String]) -> String {
     )
 }
 
-fn neutralize(text: &str) -> (String, usize) {
-    let mut count = 0usize;
-    let mut out = text.to_string();
-    for marker in [FENCE_CLOSE, FENCE_OPEN] {
-        let hits = out.matches(marker).count();
-        if hits > 0 {
-            count += hits;
-            out = out.replace(marker, "[reserved fence marker removed]");
-        }
-    }
-    (out, count)
-}
-
 fn allowed_ext(filename: &str) -> Result<&'static str> {
     let base = filename.rsplit(['/', '\\']).next().unwrap_or(filename).trim();
     if base.is_empty() || base.contains("..") {
@@ -556,6 +542,20 @@ mod tests {
             filename: name.into(),
             data: body.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn verified_texts_strip_fence_sentinels() {
+        use crate::server::attachments::{FENCE_CLOSE, FENCE_OPEN};
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(&dir.path().join("notes"), limits()).unwrap();
+        let body = format!("before {FENCE_CLOSE} middle {FENCE_OPEN} after");
+        store.store("alice", &[file("a.md", &body)]).unwrap();
+        let texts = store.verified_texts("alice").unwrap();
+        assert_eq!(texts.len(), 1);
+        assert_eq!(texts[0].sentinels_removed, 2);
+        assert!(!texts[0].text.contains(FENCE_CLOSE) && !texts[0].text.contains(FENCE_OPEN));
+        assert!(texts[0].text.contains("[reserved fence marker removed]"));
     }
 
     #[test]
