@@ -942,7 +942,7 @@ fn too_many() -> HarnessError {
 /// Replace the reserved fence framing strings inside attachment text so the
 /// generated block has exactly one open and one close marker. Returns the
 /// cleaned text and how many markers were replaced.
-fn neutralize_sentinels(text: &str) -> (String, usize) {
+pub(crate) fn neutralize_sentinels(text: &str) -> (String, usize) {
     let mut count = 0usize;
     let mut out = text.to_string();
     for marker in [FENCE_CLOSE, FENCE_OPEN] {

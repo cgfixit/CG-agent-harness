@@ -105,7 +105,20 @@ fi
 MODEL="${SMOKE_MODEL:-$(curl -fsS "$MODEL_URL/v1/models" | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])')}"
 echo "== model $MODEL"
 curl_account -fsS -X POST "$BASE/api/model" -H "X-CyClaw-CSRF: $CSRF" -H 'Content-Type: application/json' -d "{\"model\":\"$MODEL\"}" >/dev/null
-REPLY=$(curl_account -fsS -m 600 -X POST "$BASE/api/chat" -H "X-CyClaw-CSRF: $CSRF" -H 'Content-Type: application/json' -d '{"message":"Reply with the single word pong."}')
+# With auto_tune on, /model use starts a speed sample that holds the model;
+# a chat meanwhile answers 409 CHAT_BUSY. Retry only that answer, bounded.
+for attempt in $(seq 1 300); do
+  REPLY=$(curl_account -sS -m 600 -X POST "$BASE/api/chat" -H "X-CyClaw-CSRF: $CSRF" -H 'Content-Type: application/json' -d '{"message":"Reply with the single word pong."}')
+  echo "$REPLY" | grep -q '"code":"CHAT_BUSY"' || break
+  [ "$attempt" -eq 1 ] && echo "model busy (auto_tune sample); retrying"
+  sleep 2
+done
 echo "$REPLY" | tee /dev/stderr | grep -q '"reply"'; echo
 echo "$REPLY" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["usage"]["completion_tokens"]>=0;assert d["reply"].strip().lower().rstrip(".!")=="pong",d["reply"];print("model:",d["model"],"tokens:",d["tally"]["total"])'
+if [[ -n "${FINGERPRINT_OUT:-}" ]]; then
+  echo "== fingerprint (${FINGERPRINT_MODELS:-$MODEL})"
+  python3 scripts/live-ollama/fingerprint.py --base "$BASE" --cacert "$CERT" \
+    --session-file "$CGAGENTHARNESS_HOME/cli-session.json" --csrf "$CSRF" \
+    --model-url "$MODEL_URL" --models "${FINGERPRINT_MODELS:-$MODEL}" --out "$FINGERPRINT_OUT"
+fi
 echo "== OK"

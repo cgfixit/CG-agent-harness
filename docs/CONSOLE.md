@@ -379,8 +379,9 @@ examples, suggestions and **Insert into composer** only insert the fixed prefix
 (`/agent approve `), never execute.
 Unknown flags, `--dry-run` and `--confirm` cannot authorize an action. These are
 console commands, not a shell: nothing is expanded, substituted or run as a
-script. Every command must be one line without control characters; the parser
-refuses embedded separators before tokenization can reinterpret them as spaces.
+script. Every command must be one line without control characters, U+FEFF, zero-width
+spaces or bidi overrides; the parser refuses them before tokenization can split a line
+differently from the console.
 
 Memory commands require an exact `/memory` root and subcommand (case-insensitive;
 ordinary spaces are allowed). `/mem`, typos and conversational forms such as

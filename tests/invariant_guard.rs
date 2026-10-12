@@ -665,7 +665,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
     // why: feature contracts folded into an INVARIANTS.md section table; 1491 words, rounded up to the next 100.
     // why: operator-approved raise (1508 words after the project-skills heading edit on main); set to 1510.
-    ("AGENTS.md", Agent, 1510),
+    // why: operator-approved headroom for research-job steps 8-12 (#415 review roadmap): ~45 words
+    // (gate list, /loop stays tool-free, no job-long gate), plus ~10%, rounded up to the next 50.
+    ("AGENTS.md", Agent, 1600),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 200),
@@ -678,7 +680,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: redaction claim narrowed to startup-loaded key values (#313); set to the reported
     // 6027 words after merging main 17b28d9. Whichever of #312/#313 lands second resets it exactly.
     // why: operator-requested telemetry and dependency-posture section; set to the reported 6094 words.
-    ("INVARIANTS.md", Root, 6094),
+    // why: operator-approved headroom for research-job steps 8-12 (#415 review roadmap): ~310 words
+    // (job runtime ~120, unit chain ~90, report unit ~50, /research slash rules ~35, unslop note ~15),
+    // plus ~10%, rounded up to the next 50. Lower it to the reported size once those land.
+    ("INVARIANTS.md", Root, 6450),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     ("README.md", Root, 1500),
     ("SECURITY.md", Root, 500),
@@ -734,7 +739,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // READMEs arrived; set to the reported totals rounded up to the next 500 (Root 7921, Guide 43766,
 // Evidence 139, Agent 22768).
 // why: operator-approved raise from 8,000 to 8,200 for the INVARIANTS.md telemetry/dependency section and SECURITY.md posture bullets.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_200), (Guide, 44_000), (Evidence, 500), (Agent, 23_000)];
+// why: operator-approved Root headroom matching the INVARIANTS.md row above (+356); rounded up to the next 500, under the slack rule.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 44_000), (Evidence, 500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

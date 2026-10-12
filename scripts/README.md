@@ -2,7 +2,8 @@
 
 Operator and CI helpers. Verification: `verify-local.sh`, `check-pr-template.sh`,
 `ci-docs-only.sh`, `test-desktop-backend.py`, the `test-*.mjs` browser checks,
-`smoke-ollama.sh`. Packaging: `package-desktop.sh`, `package-release.sh`,
+`smoke-ollama.sh` (with `FINGERPRINT_OUT`, plus `live-ollama/` for a pinned
+Ollama and models, the live-model fingerprint CI compares). Packaging: `package-desktop.sh`, `package-release.sh`,
 `verify-desktop-bundle.sh`, `release-plan.py`, `prepare-cargo.py`,
 `desktop-icon.swift`. Hooks: `ensure-githooks.sh`, `install-githooks.sh`.
 Fixtures and probes: `browser-fixture.py`, `mcp-fixture.py`,
