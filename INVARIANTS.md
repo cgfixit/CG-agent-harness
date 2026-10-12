@@ -12,8 +12,9 @@ spawns `current_exe() agentic <action>` as a CHILD PROCESS with a hard timeout
 (shared bounded Unix runner with cancellation cleanup; `kill_on_drop` elsewhere). The agentic side never references
 the server or the shim.
 
-- Locked by: `tests/invariant_guard.rs` (source scan, both directions; only the
-  shim may spawn a process on the server side).
+- Locked by: `tests/invariant_guard.rs` (source checks in both directions).
+  Console-side process creation is restricted to `shim/mod.rs`, `common/process.rs`,
+  `common/mcp.rs` and `common/mcp_worker.rs`; shared runners preserve I6.
 - Why a process, not a module: a SIGKILL'd child can leak a clone, but it cannot
   corrupt the server's memory or bypass its guard chain; the exit-code contract
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
@@ -80,14 +81,13 @@ Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
 and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`
 and require `confirm: true`. MCP tools are not attached to `/loop`. `GET /api/mcp`
-discloses declared server and tool names to any authenticated session; revisit
-that before persistent multi-user accounts. Calls and refusals are audited (`mcp_stdio_spawn`,
+discloses declared server and tool names to authenticated accounts; declarations
+are shared. Calls and refusals are audited (`mcp_stdio_spawn`,
 `mcp_sse_call`, `mcp_refused`) without arguments or payloads. The mutation CSRF token
 has the same single-operator scope: `src/server/mod.rs` mints one per process and
 embeds it in the console page, which is served before login, so it is bound to no
 account or session. SameSite=Strict session cookies and exact same-origin checks are
-what stop cross-site use; bind the token to the session before persistent multi-user
-accounts.
+what stop cross-site use; the CSRF token provides no account isolation.
 
 ## Account, transport and request boundaries
 
@@ -337,7 +337,9 @@ scratch, tmpfs `/tmp`, and `--unshare-net`. Binding the host root (`--ro-bind / 
 is forbidden because it exposes SSH keys and any plaintext key file. When
 `bwrap` is missing or its probe fails, Linux falls back to
 `unshare --net` only (`name()` is `linux-netns`): network isolation without
-filesystem confinement. That fallback is explicit in the backend name, an
+filesystem confinement. Filesystem Unix sockets remain reachable, including
+user-service-manager, D-Bus/Secret Service and SSH-agent sockets; network namespaces
+do not remove that local-service authority. That fallback is explicit in the backend name, an
 info-level `linux hard sandbox backend selected` line, the self-test line, and
 the audit `sandbox` field. `/api/status` does not report the backend. Both backends missing is
 `HARD_SANDBOX_UNAVAILABLE` (exit 3). Linux CI (`CI=true`) fails if `bwrap` is

@@ -64,12 +64,12 @@ The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
 
 ## Local authority and shared resources
 
-An administrator/operator can access shared portal chat sessions, jobs, persona
-and notes; these are not tenants. Research requests, web selections, and
-structured-memory facts/episodes/FTS hits are account scoped. Recalled facts
-are untrusted context and cannot grant tool, coding, or network authority. Auditors see designated redacted status/audit information. Filesystem
-owners can edit configuration, databases and binaries, and are outside the portal
-account boundary; no guarantee against a malicious same-user filesystem race is
-claimed. Native sandbox limits remain in INVARIANTS.md. See
+Chat sessions, jobs, schedules, research, web selections and structured memory
+are owner-private. Persona, pinned notes, model selection, spend and agentic run
+records remain shared; accounts are not isolated tenants. Recalled facts grant
+no tool, coding or network authority. Auditors see designated redacted status/audit
+information. Filesystem owners can edit configuration, databases and binaries
+outside the account boundary; malicious same-user filesystem races are not
+covered. Native sandbox limits remain in INVARIANTS.md. See
 [secure research](docs/SECURE_RESEARCH.md) for migration, revocation, TLS recovery
 and evidence limitations.
