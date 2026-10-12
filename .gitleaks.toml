@@ -17,6 +17,6 @@ regexes = [
     '''^ANTHROPIC_API_KEY=$''',
     # Exact synthetic values in the redaction and MCP tests, including history.
     '''^0123456789abcdef$''',
-    '''^ghp_0123456789abcdef0123456789abcdef0123$''',
+    '''^ghp_0123456789abcdef0123456789abcdef0123$''', # DevSkim: ignore DS173239 because this exact patterned token is the approved synthetic redaction fixture.
     '''^test-api-key-0123456789$''',
 ]
