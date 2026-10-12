@@ -527,18 +527,16 @@ async fn rotating_one_bearer_revokes_only_that_destination() {
     let cfg = two_destinations(&home, &alice_url, &bob_url, &alice_id, &bob_id, true);
     let bearers = home.data_dir().join("notifications");
     std::fs::create_dir_all(&bearers).unwrap();
-    cgagentharness::common::atomic::write_atomic(
+    cgagentharness::common::config::AppConfig::write_private(
         &bearers.join("bearers.json"),
-        serde_json::to_vec(&json!({
+        &serde_json::to_string(&json!({
             "version": 1,
             "tokens": {
                 "alicehook": "alice-dest-fixture-secret",
                 "bobhook": "bob-dest-fixture-secret"
             }
         }))
-        .unwrap()
-        .as_slice(),
-        Some(0o600),
+        .unwrap(),
     )
     .unwrap();
     let notifier = Notifier::start(&home, &cfg, Some(auth)).unwrap().unwrap();
@@ -558,18 +556,16 @@ async fn rotating_one_bearer_revokes_only_that_destination() {
         finished_at: now,
     });
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    cgagentharness::common::atomic::write_atomic(
+    cgagentharness::common::config::AppConfig::write_private(
         &bearers.join("bearers.json"),
-        serde_json::to_vec(&json!({
+        &serde_json::to_string(&json!({
             "version": 1,
             "tokens": {
                 "alicehook": "alice-dest-fixture-rotated",
                 "bobhook": "bob-dest-fixture-secret"
             }
         }))
-        .unwrap()
-        .as_slice(),
-        Some(0o600),
+        .unwrap(),
     )
     .unwrap();
     notifier.poll_once().await;

@@ -371,7 +371,7 @@ pub(crate) fn read_private_config(path: &Path, limit: u64) -> anyhow::Result<Opt
         .read_to_string(&mut text)
         .map_err(|_| anyhow::anyhow!("credential file unreadable or not UTF-8"))?;
     if text.len() as u64 > limit {
-        anyhow::bail!("private file exceeds its size limit");
+        anyhow::bail!("credential file exceeds its size limit");
     }
     Ok(Some(text))
 }
