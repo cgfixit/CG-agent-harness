@@ -6,6 +6,9 @@ on:
       artifact-name:
         type: string
         default: cg-agent-harness-macos-universal
+      skip-cache:
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions: {}
@@ -37,6 +40,7 @@ jobs:
           components: rustfmt, clippy
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: '!inputs.skip-cache'
         with:
           shared-key: desktop-universal
           # Only main writes the cache: PR runs restore main's entry instead of

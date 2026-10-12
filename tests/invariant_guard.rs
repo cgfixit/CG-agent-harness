@@ -699,7 +699,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2900),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
-    ("docs/GITHOOKS.md", Guide, 1400),
+    ("docs/GITHOOKS.md", Guide, 1358),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     ("docs/INSTALL.md", Guide, 5600),
     ("docs/MCP_CLIENT.md", Guide, 1000),

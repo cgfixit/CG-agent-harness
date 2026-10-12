@@ -1,13 +1,12 @@
 # Git hooks security gate
 
 A `pre-commit` and `pre-push` gate that catches secrets, private data and
-ask-first actions before they leave the machine. It is agent-neutral: it runs
-for any person or coding agent (Claude Code, Codex, Grok, Kimi, Copilot,
-Cursor, aider) that commits through `git` in a clone where it is installed.
+ask-first actions. It runs for anyone committing through `git` in an installed clone.
 
 It is a speed bump, not a boundary. CI secret scanning (`gitleaks.yml`) and
-the `main` branch ruleset are the controls. It fails the common mistake early and says
-what to do next.
+the `main` branch ruleset are the controls. Pull-request CI reads `.gitleaks.toml`
+from the immutable base commit; other events use their source commit. Candidate
+ignore files and inline `gitleaks:allow` comments cannot suppress that scan.
 
 ## Install (once per clone)
 
@@ -87,9 +86,9 @@ transcript, so a self-granted override is detectable after the fact.
 
 Findings about secrets, blocked files, identifiers, home paths and invisible
 characters have no override variable. Fix the content. For a confirmed
-synthetic fixture, put `gitleaks:allow` on the line (also honored by CI's
-gitleaks) or extend `SEC_ALLOW_REGEX` / `SEC_BLOCKED_EXCEPT` in
-`security.conf`, which is itself a protected path.
+synthetic fixture, local hooks accept `gitleaks:allow` or
+`SEC_ALLOW_REGEX` / `SEC_BLOCKED_EXCEPT` in protected `security.conf`.
+CI requires a reviewed `.gitleaks.toml` exception already present on the PR base.
 
 ## Privacy setup
 
