@@ -690,7 +690,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/ANALYTICS.md", Guide, 900),
     ("docs/API_ROUTES.md", Guide, 2000),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
-    ("docs/CODING_PIPELINE.md", Guide, 3900),
+    ("docs/CODING_PIPELINE.md", Guide, 3875),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.

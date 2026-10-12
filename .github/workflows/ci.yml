@@ -192,6 +192,9 @@ jobs:
       - name: Grok ACP Phase 0 fake-runtime contract
         if: runner.os != 'Windows' # POSIX process groups; its tests skip on Windows.
         run: python3 scripts/test-grok-acp-probe.py
+      - name: Cargo preparation ignores candidate toolchain executables
+        if: runner.os != 'Windows' # The adversarial compiler fixture is a POSIX script.
+        run: python3 scripts/test-prepare-cargo.py
       - name: Install bubblewrap on Linux
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap pkg-config libdbus-1-dev
