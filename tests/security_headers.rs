@@ -69,13 +69,12 @@ async fn api_responses_cannot_opt_into_caching() {
             get(|| async { ([(header::CACHE_CONTROL, "public, max-age=3600")], "ok") }),
         )
         .layer(middleware::from_fn(cgagentharness::server::headers::security_headers));
-    // DevSkim: ignore DS162092 because the fixture listener must bind only to loopback.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this owned fixture must bind only to loopback.
     let addr = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let client = reqwest::Client::new();
     for path in ["/api/example", "/api/missing", "/api"] {
-        let response = client.get(format!("http://{addr}{path}")).send().await.unwrap();
+        let response = client.get(format!("http://{addr}{path}")).send().await.unwrap(); // DevSkim: ignore DS137138 because this HTTP URL reaches only the owned loopback fixture.
         assert_eq!(
             response.headers()["cache-control"],
             cgagentharness::server::headers::NO_STORE
