@@ -67,7 +67,7 @@ fn addresses(value: &Value) -> Vec<Ipv4Addr> {
 fn cli_exit_codes_for_disabled_and_bad_scope() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.yaml");
-    std::fs::write(&path, "netconnect:\n  enabled: false\n").unwrap();
+    cgagentharness::common::config::AppConfig::write_private(&path, "netconnect:\n  enabled: false\n").unwrap();
     for action in ["status", "devices"] {
         let (code, stdout, stderr) = invoke(&path, action);
         assert_eq!(code, 4, "{action} stderr={stderr}");
@@ -76,7 +76,11 @@ fn cli_exit_codes_for_disabled_and_bad_scope() {
         assert_eq!(body["ok"], false);
     }
 
-    std::fs::write(&path, "netconnect:\n  enabled: true\n  allowed_cidrs: ['8.8.8.8/32']\n").unwrap();
+    cgagentharness::common::config::AppConfig::write_private(
+        &path,
+        "netconnect:\n  enabled: true\n  allowed_cidrs: ['8.8.8.8/32']\n",
+    )
+    .unwrap();
     for action in ["status", "devices"] {
         let (code, stdout, _) = invoke(&path, action);
         assert_eq!(code, 3, "{action}");

@@ -202,7 +202,7 @@ async fn action_parent_fixture() {
     let inherited_empty = std::env::var_os("DEEPAGENT_API_KEY").unwrap().is_empty();
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.yaml");
-    std::fs::write(&config, "agentic:\n  enabled: false\n").unwrap();
+    cgagentharness::common::config::AppConfig::write_private(&config, "agentic:\n  enabled: false\n").unwrap();
     let mut ctx = shim::ShimContext::new(&config, dir.path(), &dir.path().join("tmp"), 720).unwrap();
     ctx.exe = std::env::var_os("CGAH_CHILD_ENV_PROBE").unwrap().into();
     for action in shim::ACTIONS {

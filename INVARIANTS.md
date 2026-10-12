@@ -396,7 +396,8 @@ See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility cha
 ## Secrets never reach a response or a log line
 
 Audit records are redacted recursively (emails, IPs, secret shapes, startup-loaded key values);
-model error bodies are never echoed; `/api/keys` returns presence and a masked
+model error bodies are never echoed; `AppConfig`/MCP Debug output omits raw
+secrets and local-backend Debug/Serialize omit API keys. `/api/keys` returns presence and a masked
 tail only; the tool broker logs an argv digest, never argv; validation errors
 substitute `(unexpected field)` for a caller-supplied key. A `query` field is
 stored as a SHA-256 hash or, with `logging.audit_fields.include_query_hash:
@@ -437,7 +438,7 @@ Legacy home `.env` migration removes only store-verified assignments;
 unknown/failed lines stay. Failures warn without values and leave keys unloaded.
 Settings save/clear use the store and fail closed when unavailable.
 `security.allow_plaintext_key_file` ships false; only literal boolean `true`
-permits live plaintext; quoted `"true"` is off. Unix requires owner uid, 0600
+permits managed keys in `.env`; quoted `"true"` is off. Unix requires owner uid, 0600
 access and one link. Windows requires a regular non-reparse file owned by the
 effective user with a verifiable DACL containing only ordinary allow
 ACEs for that user. Windows writes create an explicit owner and
@@ -452,6 +453,13 @@ the harness environment. Git/`gh` children receive an allowlist without provider
 keys. Shim children receive a separate allowlist; only `real-repo-run` receives
 `DEEPAGENT_API_KEY` for its local planner. Sandboxed checks receive a scrubbed
 environment.
+
+Local primary/fallback API keys, MCP environment values and the complete MCP
+SSE URL accept whole-value `env:NAME` references. Resolution occurs once at
+startup after managed keys load; raw YAML remains unchanged. Missing/invalid
+references fail closed when resolved; no interpolation or recursive expansion
+occurs. Changes need restart. MCP strips blocked destination environment names
+and rejects references to reserved source names, including in SSE URLs.
 
 - Locked by: `common::credential_store::tests`, `server::env_keys::tests`,
   `server::slash::tests::api_set_never_echoes_the_credential`,
@@ -671,7 +679,10 @@ Status/replay storage methods require the acting owner. Replay additionally need
 explicit reason/confirmation and has finite count/retention limits. Every attempt
 and replay rechecks startup destination authority against current disk grants and
 current enabled operator/admin owner. Disk changes only revoke until restart;
-in-flight requests may finish. Credentials stay in the protected managed environment.
+in-flight requests may finish. Per-destination credentials live in private
+`data/notifications/bearers.json` (64 KiB maximum), independently of
+`security.allow_plaintext_key_file`. The legacy environment bearer is limited to
+one owner. Both credential sources stay out of outbox rows, responses and audits.
 
 All DNS answers are validated/pinned, redirects/proxies are disabled, public
 receivers require HTTPS and private receivers require exact URL grants. Retries
@@ -684,8 +695,12 @@ content adapter or inbound listener is enabled. See
 ## Reload changes limits, not authority
 
 The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE`
-contains 23 API/web limits. A bounded regular-file config read (no-follow on Unix) is parsed
-and fully validated before one runtime snapshot is replaced. Any invalid limit,
+contains 23 API/web limits. Startup, reload and disk-policy rechecks use the same
+private, UTF-8 config reader (1 MiB maximum). Unix checks the open file's owner,
+owner-only mode and single link; symlink files are refused. macOS also refuses
+extended ACL entries. Windows uses the credential reader's owner/DACL checks.
+Seeded and rewritten configs stay private. Parsed limits are fully validated
+before one runtime snapshot is replaced. Any invalid limit,
 malformed YAML, unknown or restart-only change refuses the entire candidate
 and leaves running limits intact. Refusal audit/errors never echo YAML contents.
 HTTP reload requires a current non-bootstrap admin session and CSRF, even in

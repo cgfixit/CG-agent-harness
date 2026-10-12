@@ -141,7 +141,7 @@ fn process_exit_codes_lock_disabled_noop_and_env_failure() {
     assert!(err.contains("cannot read config file"), "{err}");
 
     let broken = dir.path().join("broken.yaml");
-    std::fs::write(&broken, format!("[\n{SECRET}\n")).unwrap();
+    cgagentharness::common::config::AppConfig::write_private(&broken, &format!("[\n{SECRET}\n")).unwrap();
     let (code, out, err) = invoke(dir.path(), &broken, &["status"], &[]);
     assert_eq!(code, 3, "{out} {err}");
     assert!(err.contains("not valid YAML"), "{err}");
@@ -149,7 +149,11 @@ fn process_exit_codes_lock_disabled_noop_and_env_failure() {
     assert!(!out.contains(SECRET), "{out}");
 
     let quoted_auth = dir.path().join("quoted-auth.yaml");
-    std::fs::write(&quoted_auth, "auth:\n  enabled: \"true\"\ntls:\n  enabled: true\n").unwrap();
+    cgagentharness::common::config::AppConfig::write_private(
+        &quoted_auth,
+        "auth:\n  enabled: \"true\"\ntls:\n  enabled: true\n",
+    )
+    .unwrap();
     let (code, out, err) = invoke(dir.path(), &quoted_auth, &["status"], &[]);
     assert_eq!(code, 3, "{out} {err}");
     assert!(err.contains("literal YAML boolean"), "{err}");

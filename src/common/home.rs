@@ -175,7 +175,7 @@ impl Home {
             let _ = std::fs::create_dir_all(self.root.join(sub));
         }
         let _ = std::fs::create_dir_all(self.tmp_dir());
-        if !self.config_path().exists() {
+        if std::fs::symlink_metadata(self.config_path()).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
             // Only a genuinely new home is seeded. A missing policy on restart
             // remains an error instead of silently replacing authoritative data.
             let policy = self.tools_dir().join("web_allowlist.json");
@@ -185,7 +185,7 @@ impl Home {
             self.seed_default_soul()?;
             // Atomic: a truncated seed that still parses would read as a legacy
             // home with no `auth`/`tls` section, and exists() never re-seeds it.
-            write_atomic(&self.config_path(), AppConfig::embedded_default().as_bytes(), None)?;
+            AppConfig::write_private(&self.config_path(), AppConfig::embedded_default())?;
         }
         if !self.registry_path().exists() {
             write_atomic(

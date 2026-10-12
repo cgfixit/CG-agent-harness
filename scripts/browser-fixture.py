@@ -73,6 +73,7 @@ for key, value in {
     'security.allow_plaintext_key_file': True,
 }.items():
     config = override(config, key, value)
+(home / 'config.yaml').touch(mode=0o600)
 (home / 'config.yaml').write_text(config)
 run(['python3', str(repo / 'scripts/prepare-cargo.py'), str(seed), str(home)])
 fakebin = root / 'fakebin'

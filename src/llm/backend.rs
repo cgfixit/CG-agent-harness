@@ -9,19 +9,33 @@ use crate::common::errors::{HarnessError, Result};
 pub use crate::common::home::LOOPBACK_HOSTS;
 const VALID_EFFORTS: [&str; 5] = ["none", "low", "medium", "high", "max"];
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq)]
 pub struct ResolvedLocalBackend {
     pub provider: String,
     pub base_url: String,
     pub model: String,
     /// "primary" | "fallback"
     pub source: String,
+    #[serde(skip_serializing)]
     pub api_key: String,
     /// True when neither backend answered and this is the boot-must-not-die
     /// fallback to primary rather than a positive selection.
     pub degraded: bool,
     /// Ollama-only; `None` means "omit the field".
     pub reasoning_effort: Option<String>,
+}
+
+impl std::fmt::Debug for ResolvedLocalBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedLocalBackend")
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("source", &self.source)
+            .field("degraded", &self.degraded)
+            .field("reasoning_effort", &self.reasoning_effort)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Whether `url`'s host is one of the supported loopback names. `host_str()`
@@ -66,7 +80,7 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
     if primary_provider.is_empty() {
         primary_provider = "ollama".to_string();
     }
-    let primary_key = cfg.str_or("models.local_llm.api_key", "").trim().to_string();
+    let primary_key = cfg.secret("models.local_llm.api_key")?.trim().to_string();
     if primary_url.is_empty() {
         // Empty/unreadable config degrades to the Ollama default rather than failing app build.
         return Ok(ResolvedLocalBackend {
@@ -99,6 +113,7 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
     if !cfg.flag_is_true("models.local_llm.fallback.enabled") {
         return Ok(primary);
     }
+    let fallback_key = cfg.secret("models.local_llm.fallback.api_key")?.trim().to_string();
     let fb_url = cfg.str_or("models.local_llm.fallback.base_url", "").trim().to_string();
     let fb_model = cfg.str_or("models.local_llm.fallback.model", "").trim().to_string();
     let mut fb_provider = cfg
@@ -132,7 +147,7 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
         base_url: fb_url.trim_end_matches('/').to_string(),
         model: fb_model,
         source: "fallback".into(),
-        api_key: cfg.str_or("models.local_llm.fallback.api_key", "").trim().to_string(),
+        api_key: fallback_key,
         degraded: false,
         reasoning_effort: effort_for(&fb_provider),
     };

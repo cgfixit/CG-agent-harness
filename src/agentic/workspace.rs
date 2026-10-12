@@ -999,7 +999,7 @@ mod transaction_tests {
             )
             .replacen("allow_git_write_tools: false", "allow_git_write_tools: true", 1);
         let path = dir.join("config.yaml");
-        std::fs::write(&path, &text).unwrap();
+        AppConfig::write_private(&path, &text).unwrap();
         AgenticCtx::new(AppConfig::from_str(&text, &path).unwrap(), &path).unwrap()
     }
 

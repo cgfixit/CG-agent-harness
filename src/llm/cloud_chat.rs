@@ -60,7 +60,7 @@ impl Provider {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct ProviderConfig {
     provider: Provider,
     enabled: bool,

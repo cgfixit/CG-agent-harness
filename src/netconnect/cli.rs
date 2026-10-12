@@ -176,7 +176,7 @@ mod tests {
     fn write_config(text: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
-        std::fs::write(&path, text).unwrap();
+        AppConfig::write_private(&path, text).unwrap();
         (dir, path)
     }
 

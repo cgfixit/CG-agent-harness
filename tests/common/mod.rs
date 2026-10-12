@@ -51,7 +51,7 @@ pub fn config_with(dir: &Path, overrides: &[(&str, &str)]) -> AppConfig {
         text = override_yaml(&text, dotted, value);
     }
     let path = dir.join("config.yaml");
-    std::fs::write(&path, &text).unwrap();
+    AppConfig::write_private(&path, &text).unwrap();
     AppConfig::from_str(&text, &path).unwrap()
 }
 

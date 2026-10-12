@@ -26,7 +26,7 @@ fn load(yaml: &str) -> NetconnectConfig {
 fn invoke(yaml: &str, action: &str) -> (i32, Value) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.yaml");
-    std::fs::write(&path, yaml).unwrap();
+    cgagentharness::common::config::AppConfig::write_private(&path, yaml).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_cgagentharness"))
         .args(["netconnect", "--config", path.to_str().expect("utf-8"), action])
         .env("GROK_API_KEY", "")

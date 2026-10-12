@@ -268,8 +268,12 @@ mod windows_private_writer;
 
 /// Replace a bounded credential file without exposing staged secret bytes.
 pub(crate) fn write_private_text_atomic(path: &Path, bytes: &[u8]) -> super::errors::Result<()> {
-    let refusal = || super::errors::HarnessError::new("IO_ERROR", "private credential file write refused");
-    if bytes.len() > 65536
+    write_private_file_atomic(path, bytes, 65_536)
+}
+
+pub(crate) fn write_private_file_atomic(path: &Path, bytes: &[u8], limit: usize) -> super::errors::Result<()> {
+    let refusal = || super::errors::HarnessError::new("IO_ERROR", "private file write refused");
+    if bytes.len() > limit
         || path
             .components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
@@ -290,7 +294,11 @@ pub(crate) fn write_private_text_atomic(path: &Path, bytes: &[u8]) -> super::err
 /// Private credential file: regular, owner-only, not a symlink, at most 64 KiB.
 /// Missing is empty. The bytes are migration input or the plaintext opt-in, never a log line.
 pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
-    use std::io::Read;
+    Ok(read_private_file(path, 65_536)?.unwrap_or_default())
+}
+
+/// Read a bounded private UTF-8 file through its validated descriptor.
+pub(crate) fn read_private_file(path: &Path, limit: u64) -> anyhow::Result<Option<String>> {
     use std::path::Component;
     // rust/path-injection's only barrier is str::contains of these literals.
     // Component::ParentDir is the real check; the string checks are what the query sees.
@@ -310,6 +318,13 @@ pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
     {
         anyhow::bail!("credential file path refused");
     }
+    read_private_config(path, limit)
+}
+
+/// Config is an operator-selected path, including relative parent components.
+/// Validate the opened object without imposing the credential-store path jail.
+pub(crate) fn read_private_config(path: &Path, limit: u64) -> anyhow::Result<Option<String>> {
+    use std::io::Read;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -327,7 +342,7 @@ pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
     }
     let file = match options.open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => anyhow::bail!("credential file unreadable; check its owner, access and symlink status"),
     };
     let metadata = file.metadata()?;
@@ -337,21 +352,28 @@ pub(crate) fn read_private_text(path: &Path) -> anyhow::Result<String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        // SAFETY: getuid has no arguments or memory effects.
-        if metadata.uid() != unsafe { libc::getuid() } || metadata.mode() & 0o077 != 0 || metadata.nlink() != 1 {
+        // SAFETY: geteuid has no arguments or memory effects.
+        if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 || metadata.nlink() != 1 {
             anyhow::bail!("credential file must be private, singly linked, and owned by this user (0600)");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::io::AsRawFd;
+        if macos_acl::fd_has_acl_entries(file.as_raw_fd()) != Some(false) {
+            anyhow::bail!("private file ACL refused");
         }
     }
     #[cfg(windows)]
     windows_private::validate_file(&file)?;
     let mut text = String::new();
-    file.take(65537)
+    file.take(limit + 1)
         .read_to_string(&mut text)
         .map_err(|_| anyhow::anyhow!("credential file unreadable or not UTF-8"))?;
-    if text.len() > 65536 {
-        anyhow::bail!("credential file exceeds 64 KiB");
+    if text.len() as u64 > limit {
+        anyhow::bail!("private file exceeds its size limit");
     }
-    Ok(text)
+    Ok(Some(text))
 }
 
 #[cfg(windows)]
@@ -1078,5 +1100,80 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         assert!(secret_eq(&got, value));
         store.delete(name).unwrap();
         assert!(store.get(name).unwrap().is_none());
+    }
+}
+
+/// Minimal libSystem ACL bindings (no crate): shared private-file
+/// checks. Declarations follow `<sys/acl.h>` on Darwin.
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_acl {
+    use std::os::raw::{c_int, c_void};
+
+    type AclT = *mut c_void;
+    type AclEntryT = *mut c_void;
+    /// `ACL_TYPE_EXTENDED` in `<sys/acl.h>`.
+    const ACL_TYPE_EXTENDED: u32 = 0x0000_0100;
+    /// `ACL_FIRST_ENTRY` in `<sys/acl.h>`.
+    const ACL_FIRST_ENTRY: c_int = 0;
+
+    extern "C" {
+        fn acl_get_fd_np(fd: c_int, kind: u32) -> AclT;
+        fn acl_get_entry(acl: AclT, entry_id: c_int, entry: *mut AclEntryT) -> c_int;
+        fn acl_free(obj: *mut c_void) -> c_int;
+        fn acl_init(count: c_int) -> AclT;
+        fn acl_set_fd_np(fd: c_int, acl: AclT, kind: u32) -> c_int;
+    }
+
+    /// Frees the ACL on every return path.
+    struct Acl(AclT);
+
+    impl Drop for Acl {
+        fn drop(&mut self) {
+            // SAFETY: `self.0` is a non-null ACL from `acl_get_fd_np`, freed once.
+            unsafe {
+                acl_free(self.0);
+            }
+        }
+    }
+
+    /// Remove inherited grants while the staged file is still empty.
+    pub(crate) fn clear_inherited_acl(fd: c_int) -> std::io::Result<()> {
+        if fd_has_acl_entries(fd) == Some(false) {
+            return Ok(());
+        }
+        // SAFETY: acl_init returns a new owned ACL or null on failure.
+        let raw = unsafe { acl_init(0) };
+        if raw.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let acl = Acl(raw);
+        // SAFETY: the caller owns the live fd; acl is valid for this call.
+        if unsafe { acl_set_fd_np(fd, acl.0, ACL_TYPE_EXTENDED) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if fd_has_acl_entries(fd) != Some(false) {
+            return Err(std::io::Error::other("private staged file retains an ACL"));
+        }
+        Ok(())
+    }
+
+    /// `Some(true)` when the open file has at least one extended ACL entry,
+    /// `Some(false)` when it has none (or the filesystem has no ACLs), and
+    /// `None` when the ACL could not be read; callers refuse on `None`.
+    pub(super) fn fd_has_acl_entries(fd: c_int) -> Option<bool> {
+        // SAFETY: `fd` is a live descriptor owned by the caller for this call.
+        let raw = unsafe { acl_get_fd_np(fd, ACL_TYPE_EXTENDED) };
+        if raw.is_null() {
+            return match std::io::Error::last_os_error().raw_os_error() {
+                // No extended ACL on this file, or none possible on this filesystem.
+                Some(libc::ENOENT) | Some(libc::ENOTSUP) => Some(false),
+                _ => None,
+            };
+        }
+        let acl = Acl(raw);
+        let mut entry: AclEntryT = std::ptr::null_mut();
+        // SAFETY: `acl.0` is a valid ACL and `entry` is a valid out-pointer.
+        let found = unsafe { acl_get_entry(acl.0, ACL_FIRST_ENTRY, &mut entry) } == 0;
+        Some(found)
     }
 }

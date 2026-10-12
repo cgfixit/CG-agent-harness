@@ -13,7 +13,7 @@ use serde_yaml_ng::Value;
 
 use super::errors::{HarnessError, Result};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppConfig {
     pub raw: Value,
     pub path: PathBuf,
@@ -21,17 +21,56 @@ pub struct AppConfig {
 
 pub type SharedConfig = Arc<AppConfig>;
 
+impl std::fmt::Debug for AppConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppConfig")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+const MAX_CONFIG_BYTES: u64 = 1_048_576;
+
+/// Resolve only an explicitly supported secret field, once, without changing YAML.
+pub(crate) fn resolve_secret(value: &str) -> Result<String> {
+    let Some(name) = value.strip_prefix("env:") else {
+        return Ok(value.to_string());
+    };
+    let mut bytes = name.bytes();
+    if !bytes.next().is_some_and(|c| c.is_ascii_alphabetic() || c == b'_')
+        || !bytes.all(|c| c.is_ascii_alphanumeric() || c == b'_')
+    {
+        return Err(HarnessError::config("invalid environment secret reference"));
+    }
+    std::env::var(name).map_err(|_| HarnessError::config("environment secret reference is unavailable"))
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path).map_err(|e| {
-            HarnessError::config(format!("cannot read config file: {e}")).detail("path", path.display().to_string())
-        })?;
+        let text = super::credential_store::read_private_config(path, MAX_CONFIG_BYTES)
+            .map_err(|_| HarnessError::config("config file must be a bounded private regular file owned by this user (0600), without links or extra ACL grants"))?
+            .ok_or_else(|| HarnessError::config("cannot read config file: file is missing"))?;
         Self::from_str(&text, path)
     }
 
+    /// Create or replace config without exposing its literal secrets while staged.
+    pub fn write_private(path: &Path, text: &str) -> Result<()> {
+        super::credential_store::write_private_file_atomic(path, text.as_bytes(), MAX_CONFIG_BYTES as usize)
+    }
+
+    pub(crate) fn secret(&self, dotted: &str) -> Result<String> {
+        match self.get(dotted) {
+            None | Some(Value::Null) => Ok(String::new()),
+            Some(Value::String(value)) => resolve_secret(value),
+            // Keep the existing local-backend str_or number conversion.
+            Some(Value::Number(value)) => Ok(value.to_string()),
+            Some(_) => Err(HarnessError::config("configured secret must be a string")),
+        }
+    }
+
     pub fn from_str(text: &str, path: &Path) -> Result<Self> {
-        let raw: Value = serde_yaml_ng::from_str(text)
-            .map_err(|e| HarnessError::config(format!("config file is not valid YAML: {e}")))?;
+        let raw: Value =
+            serde_yaml_ng::from_str(text).map_err(|_| HarnessError::config("config file is not valid YAML"))?;
         if !raw.is_mapping() {
             return Err(HarnessError::config("config file must contain a YAML mapping"));
         }
@@ -166,6 +205,62 @@ fn collect_true_flags(node: &Value, prefix: String, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_config_roundtrip_and_content_free_diagnostics() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let canary = "synthetic-private-config-value";
+        AppConfig::write_private(&path, &format!("secret: {canary}\n")).unwrap();
+        let cfg = AppConfig::load(&path).unwrap();
+        assert_eq!(cfg.str_or("secret", ""), canary);
+        assert!(!format!("{cfg:?}").contains(canary));
+        AppConfig::write_private(&path, &format!("secret: [{canary}\n")).unwrap();
+        let error = AppConfig::load(&path).unwrap_err();
+        assert_eq!(error.code, "CONFIG_ERROR");
+        assert!(!format!("{error:?}").contains(canary));
+        AppConfig::write_private(&path, &" ".repeat(MAX_CONFIG_BYTES as usize + 1)).unwrap_err();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_config_refuses_readable_files_links_and_special_files() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        AppConfig::write_private(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(AppConfig::load(&path).is_err());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let nested = dir.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        assert!(AppConfig::load(&nested.join("../config.yaml")).is_ok());
+        let link = dir.path().join("alias");
+        symlink(&path, &link).unwrap();
+        assert!(AppConfig::load(&link).is_err());
+        std::fs::remove_file(&link).unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+        assert!(AppConfig::load(&path).is_err());
+        assert!(AppConfig::load(dir.path()).is_err());
+    }
+
+    #[test]
+    fn environment_references_are_one_pass_and_leave_raw_config_unchanged() {
+        let name = "CGAH_304_CONFIG_REFERENCE_TEST";
+        std::env::set_var(name, "env:literal-returned-by-environment");
+        let cfg = cfg(&format!("secret: env:{name}\n"));
+        assert_eq!(cfg.secret("secret").unwrap(), "env:literal-returned-by-environment");
+        assert_eq!(cfg.str_or("secret", ""), format!("env:{name}"));
+        std::env::remove_var(name);
+        assert!(cfg.secret("secret").is_err());
+        assert!(resolve_secret("env:").is_err());
+        assert!(resolve_secret("env:BAD-NAME").is_err());
+        assert_eq!(resolve_secret("literal").unwrap(), "literal");
+        assert_eq!(
+            super::tests::cfg("secret: 123456789012").secret("secret").unwrap(),
+            "123456789012"
+        );
+    }
 
     fn cfg(yaml: &str) -> AppConfig {
         AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap()

@@ -1,5 +1,4 @@
 //! Only listed non-secret limits can change. One validated snapshot is published.
-use std::io::Read;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -157,25 +156,7 @@ fn restart_fields(cfg: &AppConfig) -> Value {
 }
 
 fn candidate(state: &AppState) -> Result<RuntimeLimits> {
-    // The file is local operator input, but a pipe or growing file must not
-    // hold a worker indefinitely or allocate without a bound.
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(&state.cfg.path)?;
-    if !file.metadata()?.is_file() {
-        return Err(invalid_limit("config.yaml"));
-    }
-    let mut text = String::new();
-    file.take(1_048_577).read_to_string(&mut text)?;
-    if text.len() > 1_048_576 {
-        return Err(invalid_limit("config.yaml"));
-    }
-    let cfg = AppConfig::from_str(&text, &state.cfg.path)?;
+    let cfg = AppConfig::load(&state.cfg.path)?;
     if restart_fields(&cfg) != restart_fields(&state.cfg) {
         return Err(HarnessError::new(
             "CONFIG_RESTART_REQUIRED",

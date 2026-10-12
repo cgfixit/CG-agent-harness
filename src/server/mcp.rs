@@ -28,7 +28,7 @@ pub enum Transport {
     Sse,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DeclaredServer {
     pub name: String,
     pub transport: Transport,
@@ -38,6 +38,16 @@ pub struct DeclaredServer {
     pub tools: BTreeSet<String>,
     pub env: BTreeMap<String, String>,
     pub capabilities: Option<StdioCapabilities>,
+}
+
+impl std::fmt::Debug for DeclaredServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeclaredServer")
+            .field("name", &self.name)
+            .field("transport", &self.transport)
+            .field("tools", &self.tools)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -333,6 +343,11 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
             "mcp server '{name}' env must be a mapping"
         )));
     }
+    // Keep the existing blocked destination-name policy before resolving values.
+    let env = crate::common::mcp::filter_env(&env)
+        .into_iter()
+        .map(|(key, value)| resolve_mcp_secret(&value).map(|value| (key, value)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
     match transport {
         Transport::Stdio => {
             let capabilities: StdioCapabilities =
@@ -390,8 +405,8 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
         Transport::Sse => {
             let url = get("url")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| HarnessError::config(format!("mcp server '{name}' sse transport requires url")))?
-                .to_string();
+                .ok_or_else(|| HarnessError::config(format!("mcp server '{name}' sse transport requires url")))?;
+            let url = resolve_mcp_secret(url)?;
             Ok(DeclaredServer {
                 name,
                 transport,
@@ -404,6 +419,18 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
             })
         }
     }
+}
+
+fn resolve_mcp_secret(value: &str) -> Result<String> {
+    if value
+        .strip_prefix("env:")
+        .is_some_and(crate::common::mcp::blocked_env_key)
+    {
+        return Err(HarnessError::config(
+            "MCP cannot reference a reserved environment secret",
+        ));
+    }
+    crate::common::config::resolve_secret(value)
 }
 
 struct RefuseDns;
@@ -784,6 +811,32 @@ mod config_tests {
         // Not refused for size: it reached JSON parsing (the placeholder id is not valid JSON).
         assert_eq!(err.code, "MCP_PROTOCOL");
         server.join().unwrap();
+    }
+
+    #[test]
+    fn secret_references_resolve_at_the_mcp_consumer_without_exposing_or_forwarding_reserved_keys() {
+        let name = "CGAH_MCP_REFERENCE_FIXTURE";
+        let secret = "test-api-key-0123456789";
+        std::env::set_var(name, secret);
+        let command = serde_json::to_string(&std::env::current_exe().unwrap()).unwrap();
+        let yaml = format!("name: fixture\ntransport: stdio\ncommand: [{command}]\ncapabilities: {{version: 1, network: deny, containment: process_group}}\nenv:\n  FIXTURE_TOKEN: env:{name}\n  GROK_API_KEY: env:MISSING_RESERVED_DESTINATION\n");
+        let input = serde_yaml_ng::from_str(&yaml).unwrap();
+        let server = parse_server(&input).unwrap();
+        assert_eq!(server.env.get("FIXTURE_TOKEN").unwrap(), secret);
+        assert!(!server.env.contains_key("GROK_API_KEY"));
+        assert!(!format!("{server:?}").contains(secret));
+        assert!(yaml.contains(&format!("env:{name}")));
+        let alias = serde_yaml_ng::from_str(&yaml.replace(&format!("env:{name}"), "env:GROK_API_KEY")).unwrap();
+        assert!(parse_server(&alias).is_err());
+        std::env::set_var(name, "https://example.invalid/sse?token=synthetic-url-bearer-304");
+        let sse = serde_yaml_ng::from_str(&format!("name: fixture\ntransport: sse\nurl: env:{name}\n")).unwrap();
+        let server = parse_server(&sse).unwrap();
+        assert!(server.url.unwrap().contains("synthetic-url-bearer-304"));
+        std::env::remove_var(name);
+        let error = parse_server(&sse).unwrap_err();
+        assert!(!error.to_string().contains(name));
+        let reserved = serde_yaml_ng::from_str("name: fixture\ntransport: sse\nurl: env:GROK_API_KEY\n").unwrap();
+        assert!(parse_server(&reserved).is_err());
     }
 
     #[test]

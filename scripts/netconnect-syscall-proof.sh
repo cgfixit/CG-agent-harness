@@ -852,6 +852,7 @@ prove() {
   trap "rm -rf '$tmp'" EXIT
   cp "$root/assets/config.default.yaml" "$tmp/default.yaml"
   printf '%s\n' "netconnect:" "  enabled: true" "  allowed_cidrs: ['8.8.8.8/32']" >"$tmp/rejected.yaml"
+  chmod 600 "$tmp/default.yaml" "$tmp/rejected.yaml"
 
   trace_command "$binary" "$tmp/default.yaml" status 4 "$tmp/default-status.txt" "$tmp/default-status.out" "$tmp/default-status.err"
   trace_command "$binary" "$tmp/default.yaml" devices 4 "$tmp/default-devices.txt" "$tmp/default-devices.out" "$tmp/default-devices.err"
@@ -870,6 +871,7 @@ netconnect:
   home_automation: false
   allowed_cidrs: ['127.0.0.0/16']
 EOF
+  chmod 600 "$tmp/enabled.yaml"
   trace_command "$binary" "$tmp/enabled.yaml" status 0 "$tmp/enabled-status.txt" "$tmp/enabled-status.out" "$tmp/enabled-status.err"
   trace_command "$binary" "$tmp/enabled.yaml" devices 0 "$tmp/enabled-devices.txt" "$tmp/enabled-devices.out" "$tmp/enabled-devices.err"
   local failed=0

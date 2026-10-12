@@ -291,54 +291,57 @@ available at its configured local endpoint.
 
 ### Home and optional credentials
 
-Both launch paths use `~/.CGagentHarness` by default. An explicit
-`CGAGENTHARNESS_HOME` selects another home; set it in the launching process's
-environment. The desktop requires an absolute override, and a shell export does
-not automatically configure a separately Finder-launched app. Setup shows the
-actual home. Config, credentials, sessions, notes, model selection and run evidence
-live outside the bundle, so replacing or uninstalling the app preserves them.
+Both launch paths default to `~/.CGagentHarness`. Set `CGAGENTHARNESS_HOME` in
+the launching process to override it; desktop requires an absolute path and does
+not inherit shell exports when Finder launches it. Setup shows the active home.
+Uninstalling/replacing the bundle preserves this external data.
 
 | Home content | Purpose |
 |---|---|
-| `config.yaml` | Seeded configuration; edit existing mappings, reload supported limits or restart |
-| `harness.json` | Persisted chat model selection, soul/memory/web toggles and other console settings |
-| `soul.md`, `soul-history/`, `soul-pending-apply.json` | Optional persona, bounded backups/proposals, and temporary apply-recovery marker |
+| `config.yaml` | Private configuration (1 MiB maximum); reload supported limits or restart |
+| `harness.json` | Persisted model selection, toggles and console settings |
+| `soul.md`, `soul-history/`, `soul-pending-apply.json` | Optional persona, bounded history/proposals, apply-recovery marker |
 | `skills/<id>/SKILL.md` | Runtime skill bodies; existing files are preserved |
-| `sessions/` | Chat history, goals, selected skills and current goal-stage linkage |
+| `sessions/` | Chat history, goals, selected skills, goal-stage linkage |
 | `memory/`, `tools/` | Pinned notes (`memory/notes.json`); optional structured store (`memory/structured.sqlite3`) and gate overlay (`memory/structured_gates.json`); web context/allowlist under `tools/` |
-| `.env`, `auth.sqlite3`, `auth.initialized` | Legacy managed-key migration input, or a private file (Unix `0600`) only when `security.allow_plaintext_key_file` is literal true; transactional accounts and initialization marker; legacy JSON retained for recovery |
+| `.env`, `auth.sqlite3`, `auth.initialized` | Managed-key migration input/opt-in store; transactional accounts and initialization marker; legacy JSON retained for recovery |
 | `tls/server.pem`, `cli-session.json` | Private persisted TLS material and optional CLI login bound to its origin/certificate |
 | `data/agentic/` | Registry, retained console jobs, workspaces and run evidence |
 | `logs/` | Bounded audit/spend/optional metrics logs |
 
 
-New homes require HTTPS and account login. The old key-required setting is
-deprecated; a harness metadata key is optional and grants no account authority.
-Administrators save/replace/clear credentials in **API Keys**; saved and active
-masks are separate. Startup reads macOS Keychain, Linux Secret Service, or
-Windows Credential Manager. A Linux build needs `pkg-config` and
-`libdbus-1-dev`; macOS and Windows use native stores without those packages.
-Explicit inherited environment values
-override stored values. A legacy `.env` is migration input unless
-`security.allow_plaintext_key_file` is literal true. Restart to reload, and remove
-an inherited value separately when clearing a saved key is insufficient.
-On Unix, plaintext credential files use mode `0600`. On Windows, the writer
-creates a non-reparse regular file with a protected DACL for the effective owner,
-verifies it, and publishes it atomically. The reader accepts only a regular,
-non-reparse file owned by the effective user whose DACL has ordinary allow ACEs
-only for that user. It does not require the protected-DACL flag. See the [credential
-file invariant](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store).
+Fresh homes require HTTPS and login; metadata keys grant no account authority.
+**API Keys** manages credentials and distinguishes saved/active masks. Startup
+loads Keychain, Secret Service or Credential Manager; Linux builds need
+`pkg-config` and `libdbus-1-dev`. Inherited values override stored values, including
+after clearing a saved key. Legacy `.env` migrates unless
+`security.allow_plaintext_key_file` is literal true. Restart to reload.
+
+`config.yaml` uses the [private credential reader](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)
+at startup, reload and policy rechecks (1 MiB UTF-8 maximum). Unix requires current
+ownership, one link and no group/other permissions; macOS also refuses extended
+ACL entries. Windows requires effective-user ownership, ordinary allow ACEs only
+for that user, and no reparse point. Writers atomically publish private files
+(Unix `0600`, Windows protected DACL); readers need not require the protected flag.
+Repair Unix permissions with `chmod 600` and remove extended ACLs; refusals never
+repair files.
+
+Only local/fallback `api_key`, MCP `env` values and complete SSE `url` accept
+`env:NAME`, e.g. `api_key: env:LOCAL_MODEL_TOKEN`. Resolution follows managed-key
+loading; missing/invalid references fail without substring/recursive expansion.
+YAML retains references; restart after credential changes. Arbitrary names must
+be inherited, not saved through API Keys. MCP refuses reserved sources;
+see [declarations](MCP_CLIENT.md).
+
 Forwarded or proxy requests are unsupported. See [secure setup](SECURE_RESEARCH.md).
 
 ### Which settings take effect where?
 
-Edit the **active home's** `config.yaml`, not the copy inside the app bundle or
-repository. Merge into existing mappings instead of appending duplicate YAML
-keys. Use literal `true`/`false` booleans: quoted `"true"` does not enable a gate.
-For the [supported web/API limits](CONFIG_RELOAD.md), use **Reload limits** or
-Unix SIGHUP after editing. Other startup settings require a full quit/relaunch
-or `serve` restart; closing the app window only hides it. Existing coding-policy
-checks still reread disk at mutation boundaries.
+Edit the **active home's** `config.yaml`. Merge existing mappings; duplicate YAML
+keys are invalid. Only literal `true` enables gates.
+Use **Reload limits** or Unix SIGHUP for [reloadable limits](CONFIG_RELOAD.md).
+Other settings require quit/relaunch or `serve` restart; closing the window only
+hides it. Coding-policy checks reread disk at mutation boundaries.
 
 | Setting | Scope / persistence | How to verify |
 |---|---|---|
@@ -352,24 +355,19 @@ checks still reread disk at mutation boundaries.
 | Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/memory consolidate`, `/memory auto-consolidate`, `/prompt`; retrieval-off search is 409 |
 | Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |
 | Coding repo, gates, budgets and planner | `config.yaml`; separate child execution and explicit approvals | `/github`, staged request and retained job/run results |
-| Managed credentials | OS credential store at process startup; inherited values win. Legacy `.env` migrates once, or stays the store when `security.allow_plaintext_key_file` is literal true | `/api` reports presence/masked tail, not proof of provider authentication |
+| Managed credentials | Startup rules above | `/api` reports presence/masked tail, not successful authentication |
 | Spend ledger and dashboard | Retained `logs/spend.jsonl` and `.1`; dashboard state is page memory only | [Completeness and pricing](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero) |
 | Completion webhooks | `notifications.*` plus optional bearer; restart-only; private durable outbox with bounded owner replay | [Setup, destination rules and delivery audit](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook) |
 | Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |
 
-Use [response style](CONSOLE.md#74-customize-response-style) before generation parameters.
-`models.local_llm.max_tokens` is an output ceiling and can truncate a reply.
-To keep at least 4096 estimated prompt tokens inside the 30000-token safety
-limit, startup rejects unsigned numeric local-chat values of `0`, and caps
-both local chat and `/loop` at 25904 with resolved Ollama and explicit reasoning
-`none`, or 12952 otherwise (a doubled reservation). The legacy `/loop` value
-`0` keeps its existing meaning of the 2048-token default. Web-enabled
-chat remains subject to the separate `web.total_tokens` per-turn budget.
-Local context is the Ollama server window (32768 via `OLLAMA_CONTEXT_LENGTH`,
-verified in [model setup](MODELS.md)); the harness sends no `num_ctx`. `temperature` changes
-sampling, not a deterministic filler filter. Loop requests also have the
-separate `api.harness_loop_rate_limit` budget. Keep persona and selected skills
-concise enough to leave useful room for the question and context.
+Use [response style](CONSOLE.md#74-customize-response-style) before generation
+parameters. `max_tokens` limits output, not context; see the ceilings below.
+Startup reserves 4096 estimated prompt tokens within the 30000-token safety
+limit. Legacy `/loop` zero means 2048; chat zero is invalid. Web chat also obeys
+`web.total_tokens`. The Ollama server controls context; the harness sends no
+`num_ctx` ([model setup](MODELS.md)). `temperature` changes sampling, not filler
+filtering. Keep persona and skills concise; `/loop` also has its separate API
+rate budget.
 
 ### Tunables you may want to know about
 
