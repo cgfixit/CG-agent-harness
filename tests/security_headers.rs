@@ -48,12 +48,40 @@ async fn every_response_carries_the_hardening_headers() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 400);
     assert_hardened(&resp);
+    assert_eq!(
+        resp.headers()["cache-control"],
+        cgagentharness::server::headers::NO_STORE
+    );
     // JSON routes carry the strict default CSP.
     let resp = s.client.get(s.url("/api/status")).send().await.unwrap();
     assert_eq!(
         resp.headers()["content-security-policy"].to_str().unwrap(),
         "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
+}
+
+#[tokio::test]
+async fn api_responses_cannot_opt_into_caching() {
+    use axum::{http::header, middleware, routing::get, Router};
+    let app = Router::new()
+        .route(
+            "/api/example",
+            get(|| async { ([(header::CACHE_CONTROL, "public, max-age=3600")], "ok") }),
+        )
+        .layer(middleware::from_fn(cgagentharness::server::headers::security_headers));
+    // DevSkim: ignore DS162092 because the fixture listener must bind only to loopback.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::new();
+    for path in ["/api/example", "/api/missing", "/api"] {
+        let response = client.get(format!("http://{addr}{path}")).send().await.unwrap();
+        assert_eq!(
+            response.headers()["cache-control"],
+            cgagentharness::server::headers::NO_STORE
+        );
+    }
+    task.abort();
 }
 
 #[tokio::test]
