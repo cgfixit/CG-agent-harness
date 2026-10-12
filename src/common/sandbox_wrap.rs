@@ -575,7 +575,7 @@ int main(void) {
 int main(void) {
     alarm(10);
     struct addrinfo *answers = 0;
-    int result = getaddrinfo("localhost", "443", 0, &answers);
+    int result = getaddrinfo("localhost", "443", 0, &answers); // DevSkim: ignore DS162092 because this native fixture checks loopback hostname resolution.
     if (answers) freeaddrinfo(answers);
     return result == 0 ? 0 : 1;
 }
