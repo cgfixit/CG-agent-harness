@@ -349,19 +349,17 @@ async fn generate_and_finish(
     let user = episode_prompt_payload(episodes);
     // Recalled facts must never appear in this payload (self-confirm fence).
     debug_assert!(!user.contains("\"facts\""));
-    let reply = state
-        .chat
-        .chat(
-            SYSTEM_PROMPT,
-            &[ChatMessage {
-                role: "user".to_string(),
-                content: user,
-            }],
-            None,
-            1024,
-            0.0,
-        )
-        .await?;
+    let messages = [ChatMessage {
+        role: "user".to_string(),
+        content: user,
+    }];
+    let reply = tokio::select! {
+        biased;
+        _ = store.wait_for_cancel(&run.id) => {
+            return Err(HarnessError::new("STRUCTURED_MEMORY_CANCELLED", "cancelled").detail("cancelled", true));
+        }
+        reply = state.chat.chat(SYSTEM_PROMPT, &messages, None, 1024, 0.0) => reply?,
+    };
     if store.is_cancel_requested(&run.id) {
         return Err(HarnessError::new("STRUCTURED_MEMORY_CANCELLED", "cancelled").detail("cancelled", true));
     }

@@ -22,6 +22,8 @@ CG-Agent brings conversations, files, memory, and selected tools into one local 
 | **MCP integrations** | Declared external tools and a separate read-only memory gateway with dedicated machine credentials. | Both disabled. |
 | **LAN observation** | Netconnect reads in-scope interfaces, routes, and neighbors from local tables. | Disabled with empty scope; no active scans, probes, or device control. |
 
+**Memory** shows source-linked attempts and outcomes. Refreshes preserve proposal review reasons; generation never applies facts.
+
 Starting states describe fresh homes; upgrades keep existing choices. Only `/web research` produces checked quote references. See the [console guide](docs/CONSOLE.md#what-you-can-do).
 
 ## How reviewed coding works

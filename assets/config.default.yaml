@@ -435,6 +435,7 @@ structured_memory:
   suggestion_max_queue: 8 # queued inputs; one additional generation may be running
   suggestion_queue_ttl_secs: 300 # volatile inputs expire; restart drops them
   suggestion_idle_ms: 2000
+  status_poll_ms: 30000 # visible Memory pane only; 250–30000
   max_facts_per_owner: 64
   max_fact_chars: 1000
   max_category_chars: 64

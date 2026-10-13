@@ -994,12 +994,6 @@ pub async fn cancel_consolidation(
         let owner = owner(user);
         let store = require_store(&state)?;
         let run = store.cancel_consolidation_run(&owner, &id).map_err(|e| store_err(&e))?;
-        if matches!(
-            state.generation_gate.owner().as_str(),
-            "consolidation" | crate::server::structured_memory_suggest::GATE_OWNER
-        ) {
-            state.abort_chat();
-        }
         audit(
             &state,
             "structured_memory_consolidation_cancelled",

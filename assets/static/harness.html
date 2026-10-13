@@ -158,6 +158,7 @@
     width: clamp(208px, 22vw, 288px); flex-shrink: 0; background: var(--bg-secondary);
     border-right: 1px solid var(--border); display: flex; flex-direction: column;
   }
+  .sidebar.memory-review { width: clamp(320px, 38vw, 440px); }
   .side-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
   .side-tab {
     flex: 1 0 30%; padding: 8px 0; text-align: center; font-family: var(--mono);
@@ -170,7 +171,13 @@
   .side-pane { display: none; }
   .side-pane.active { display: block; }
   #pane-memory { overflow-wrap: anywhere; }
-  #pane-memory form { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+  #pane-memory .memory-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #pane-memory .memory-heading h3 { margin: 0; }
+  #pane-memory form { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); margin: 12px 0; padding: 12px; }
+  #pane-memory .memory-automatic, #pane-memory .memory-latest { color: var(--text-secondary); font-size: var(--fs-small); }
+  #pane-memory .memory-outcomes { margin: 16px 0; }
+  #pane-memory .memory-save { background: var(--accent-blue); color: var(--bg-primary); font-weight: 600; }
+  #pane-memory form h3 { margin-top: 0; }
   #pane-memory p, #pane-memory pre { white-space: pre-wrap; margin: 6px 0; }
   #pane-memory pre { font-size: var(--fs-small); }
   #pane-memory summary { cursor: pointer; color: var(--accent-blue); }
@@ -529,6 +536,7 @@ dialog p { margin-bottom:12px; }
   /* ── RESPONSIVE ── the console is loopback-only, but it still gets opened in
      a split pane, on a laptop, or over a forwarded port from a phone. ── */
   @media (max-width: 860px) {
+    .sidebar.memory-review { width: 100%; }
     .header { gap: 8px; padding: 8px 12px; }
     .header-right { width: 100%; margin-left: 0; gap: 8px; }
     .main { flex-direction: column; }
@@ -1229,6 +1237,8 @@ function renderWebCoverage(coverage = {}) {
    regex, so every call would silently record as GET). Changing only this body is
    invisible to it. The parser also has no comment handling, so this comment must
    avoid writing the helper's name followed by an open paren. */
+let apiRetryUntil = 0;
+function apiRetryDelay() { return Math.max(0, apiRetryUntil - Date.now()); }
 async function api(path, method, body, timeoutMs, onDelta, signal) {
   const opts = { method: method || 'GET', headers: {} };
   if (onDelta) opts.headers.Accept = 'text/event-stream';
@@ -1340,6 +1350,7 @@ async function api(path, method, body, timeoutMs, onDelta, signal) {
     const headerWait = parseInt(resp.headers.get('Retry-After') || '0', 10);
     const bodyWait = typed && typed.details && typed.details.retry_after_sec;
     err.retryAfter = headerWait || (typeof bodyWait === 'number' ? bodyWait : 0);
+    if (err.status === 429 && err.retryAfter) apiRetryUntil = Math.max(apiRetryUntil, Date.now() + err.retryAfter * 1000);
     throw err;
   }
   return data;
@@ -1506,6 +1517,7 @@ async function refreshReadiness(s) {
 }
 
 async function refreshStatus() {
+  if (apiRetryDelay()) { scheduleStatusRefresh(); return; }
   if (statusTimer) { window.clearTimeout(statusTimer); statusTimer = null; }
   try {
     const [s] = await Promise.all([api('/api/status'), refreshSessionTokens()]);
@@ -1547,7 +1559,7 @@ async function refreshStatus() {
 function scheduleStatusRefresh() {
   if (statusTimer) { window.clearTimeout(statusTimer); statusTimer = null; }
   if (statusVisible) {
-    statusTimer = window.setTimeout(refreshStatus, statusBackoffMs);
+    statusTimer = window.setTimeout(refreshStatus, Math.max(statusBackoffMs, apiRetryDelay()));
   }
 }
 
@@ -2254,6 +2266,8 @@ async function watchAgentJob(id) {
         if (job.result) {
           const record = agentRecord(job.result);
           if (record) showAgentRecord(record);
+          showMemoryAttempt(job.result.memory_suggestion, false);
+          if ($('pane-memory').classList.contains('active')) refreshMemoryProposals();
         } else if (job.error) {
           sys('job failed: ' + JSON.stringify(job.error.detail));
         }
@@ -3710,10 +3724,8 @@ async function finishChat(r, asLoop) {
   /* The server compared this turn with the window Ollama loaded (/api/ps);
      an oversized prompt loses its oldest text silently, system prompt first. */
   if (r && r.context_window && r.context_window.message) sys(r.context_window.message);
-  if (r && r.memory_suggestion && r.memory_suggestion.queued && suggestionNoticeSession !== currentSession) {
-    suggestionNoticeSession = currentSession;
-    sys('Memory suggestion queued, not yet a proposal. Open /memory proposals and Refresh proposals to see results. Shown once per session; the model may return no candidates; nothing is applied without your approval and reason.');
-  }
+  showMemoryAttempt(r && r.memory_suggestion, true);
+  if ($('pane-memory').classList.contains('active')) refreshMemoryProposals();
   await refreshStatus();
   await refreshSessions();
   return r && r.reply;
@@ -4586,6 +4598,8 @@ function selectSideTab(pane) {
     t.tabIndex = on ? 0 : -1;
   });
   document.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + pane));
+  document.querySelector('.sidebar').classList.toggle('memory-review', pane === 'memory');
+  if (pane !== 'memory') clearTimeout(memoryRefreshTimer);
 }
 const sideTabs = Array.from(document.querySelectorAll('.side-tab'));
 sideTabs.forEach((tab, index) => {
@@ -4659,6 +4673,7 @@ function setHarnessLogoutVisible(on) {
    expired session), so neither the next account nor the same user's next
    message inherits the previous view. */
 function resetAccountView() {
+  clearTimeout(memoryRefreshTimer); memoryViewRevision++; memoryRefreshBusy = false;
   clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
   netconnectRevision++; $('pane-netconnect').replaceChildren();
   currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
@@ -4917,104 +4932,205 @@ $('passwordForm').addEventListener('submit', async event => {
   } catch (error) { $('passwordFeedback').textContent = error.message; }
 });
 refreshHarnessAuth();
+let memoryRefreshTimer = null, memoryRefreshBusy = false, memoryViewRevision = 0, memoryFactsRevision = 0;
+document.addEventListener('visibilitychange', () => {
+  clearTimeout(memoryRefreshTimer);
+  if (!document.hidden) refreshMemoryProposals();
+});
+function memoryRecovery(reason) {
+  if (reason === 'queue_expired') return 'This suggestion expired while waiting. Repeat the relevant message to try again.';
+  if (['input_lost_on_restart', 'interrupted'].includes(reason)) return 'The app restarted before this suggestion finished. Repeat the relevant message to try again; old conversations are not replayed.';
+  if (reason === 'source_cleared') return 'The source conversation was cleared, so its unfinished suggestion was discarded.';
+  if (reason === 'queue_full') return 'Too many suggestions are waiting. Let them finish, then repeat the relevant message.';
+  if (['source_disabled', 'capture_disabled', 'disabled'].includes(reason)) return 'Automatic suggestions are off for this activity. An administrator can enable them.';
+  if (reason === 'store_closed') return 'Structured memory is unavailable. Check the local memory configuration.';
+  if (reason === 'invalid_mode') return 'The suggestion mode is not valid. Check the local memory configuration.';
+  if (reason === 'injection_detected') return 'The input safety check refused this content.';
+  if (reason === 'already_recorded') return 'This activity already has a suggestion attempt. See Suggestion activity for its result.';
+  if (reason === 'receipt_store_failed') return 'The input was discarded, but its status could not be saved. Check local storage before trying again.';
+  if (reason === 'run_not_accepted') return 'The coding run produced no accepted changes to remember.';
+  if (reason === 'run_not_successful') return 'The coding run did not succeed, so no memory was suggested.';
+  if (reason === 'cancelled' || reason === 'SUGGESTION_CANCELLED') return 'You cancelled this suggestion. It will not retry automatically.';
+  if (reason === 'preempted') return 'Paused while you chat. It will continue when the local model is free.';
+  if (reason === 'STRUCTURED_MEMORY_SCHEMA') return 'The local model returned an unreadable suggestion. Nothing was saved. Try again with a new message or a reviewed summary.';
+  return 'The suggestion could not finish. Check the local model and storage, then try again. Technical details are in Suggestion activity.';
+}
+function showMemoryAttempt(attempt, chat) {
+  if (!attempt) return;
+  if (attempt.queued) {
+    if (!chat || suggestionNoticeSession !== currentSession) {
+      if (chat) suggestionNoticeSession = currentSession;
+      sys('Checking this activity for useful memories. Suggestions will appear in Memory for you to review; nothing is saved automatically.');
+    }
+  } else {
+    sys('No memory suggestion started. ' + memoryRecovery(attempt.reason));
+  }
+}
+function memoryRunOutcome(run) {
+  if (run.state === 'idle') return 'Waiting for the local model.';
+  if (run.state === 'running') return 'Looking for useful memories on this device…';
+  if (run.state === 'failed' || run.state === 'cancelled') return memoryRecovery(run.error_class);
+  if (run.proposal_count > 0) return 'Created ' + run.proposal_count + (run.proposal_count === 1 ? ' suggestion' : ' suggestions') + '.';
+  return run.candidate_count === 0 ? 'No lasting details found to suggest. Nothing was saved.' : 'No suitable new memories to suggest. Nothing was saved.';
+}
 async function refreshMemoryProposals() {
   const panel = $('pane-memory');
-  panel.replaceChildren();
-  const feedback = document.createElement('p'); feedback.setAttribute('role', 'status');
-  const refresh = document.createElement('button'); refresh.textContent = 'Refresh proposals';
-  refresh.addEventListener('click', refreshMemoryProposals);
-  panel.append(refresh, feedback);
+  if (memoryRefreshBusy || document.hidden || !panel.classList.contains('active') || document.body.classList.contains('signed-out')) return;
+  if (apiRetryDelay()) { clearTimeout(memoryRefreshTimer); memoryRefreshTimer = setTimeout(refreshMemoryProposals, apiRetryDelay()); return; }
+  memoryRefreshBusy = true;
+  clearTimeout(memoryRefreshTimer);
+  const revision = memoryViewRevision;
+  let delay = null;
+  let feedback = panel.querySelector(':scope > .memory-feedback');
+  if (!feedback) {
+    const header = document.createElement('div'); header.className = 'memory-heading';
+    const heading = document.createElement('h3'); heading.textContent = 'Suggested memories';
+    const refresh = document.createElement('button'); refresh.textContent = 'Refresh';
+    refresh.addEventListener('click', refreshMemoryProposals);
+    feedback = document.createElement('p'); feedback.className = 'memory-feedback'; feedback.setAttribute('role', 'status');
+    const automatic = document.createElement('p'); automatic.className = 'memory-automatic';
+    const latest = document.createElement('p'); latest.className = 'memory-latest';
+    const outcomes = document.createElement('details'); outcomes.className = 'memory-outcomes';
+    const activityTitle = document.createElement('summary'); activityTitle.textContent = 'Suggestion activity';
+    const activityText = document.createElement('pre'); outcomes.append(activityTitle, activityText);
+    const forms = document.createElement('section'); forms.className = 'memory-proposals';
+    header.append(heading, refresh);
+    panel.replaceChildren(header, feedback, latest, forms, automatic, outcomes);
+  }
+  const current = () => revision === memoryViewRevision && feedback.isConnected;
   try {
     const status = await api('/api/structured-memory');
-    if (!feedback.isConnected) return;
-    if (!status.enabled) { feedback.textContent = 'Structured memory store is closed. /memory on includes pinned notes only.'; return; }
+    if (!current()) return;
     const automatic = status.automatic_suggestions;
+    delay = automatic && automatic.poll_interval_ms;
+    if (automatic && (automatic.queued || automatic.running)) delay = Math.max(250, delay / 2);
+    const info = panel.querySelector(':scope > .memory-automatic');
     if (automatic) {
-      const info = document.createElement('p');
-      info.textContent = 'Automatic suggestions: chat ' + (automatic.chat ? 'on' : 'off') + ', coding ' + (automatic.coding ? 'on' : 'off') + '; mode ' + automatic.mode + '. Queued: ' + automatic.queued + (automatic.running ? '; generating.' : '.') + ' Generated drafts need your approval before they become saved memory.';
-      panel.appendChild(info);
+      const modes = {summaries:'Conversation summaries', insights:'Useful details', both:'Summaries and useful details'};
+      info.textContent = 'Automatic suggestions: conversations ' + (automatic.chat ? 'on' : 'off') + ' · coding ' + (automatic.coding ? 'on' : 'off') + '. ' + (modes[automatic.mode] || 'Invalid suggestion mode') + '.';
     }
+    if (!status.enabled) { feedback.textContent = 'Saved memory is unavailable. Your pinned notes are separate and can still be used.'; return; }
     const result = await api('/api/structured-memory/proposals?status=pending');
-    if (!feedback.isConnected) return;
+    if (!current()) return;
     const pending = (result.proposals || []).filter(p => p.status === 'pending');
-    feedback.textContent = pending.length ? 'Review each proposal. Apply changes your structured facts (listed under Saved facts and by /memory facts), not pinned notes; Reject dismisses the suggestion. Both require your reason.' : 'No pending proposals.';
-    if (!pending.length) {
-      if ((automatic && (automatic.queued || automatic.running)) || (status.consolidation_health && status.consolidation_health.running)) {
-        feedback.textContent = 'No pending proposals yet. Memory generation is queued or running. Refresh after it finishes.';
-      } else {
-        try {
-          const history = await api('/api/structured-memory/consolidation');
-          if (!feedback.isConnected) return;
-          const latest = (history.runs || []).find(run => run.summarizer_version === 'completion-suggestions-v1');
-          if (latest && latest.state === 'failed') {
-            feedback.textContent = 'No pending proposals. The latest automatic suggestion failed (' + (latest.error_class || 'unknown error') + ').';
-          } else if (latest && latest.state === 'done' && latest.proposal_count === 0) {
-            feedback.textContent = latest.candidate_count === 0
-              ? 'No pending proposals. The latest automatic suggestion completed, but the model returned no candidates.'
-              : 'No pending proposals. The latest automatic suggestion produced candidates, but none passed review rules.';
-          } else if (latest && latest.state === 'done' && latest.proposal_count > 0) {
-            feedback.textContent = 'No pending proposals. The latest automatic suggestion created ' + latest.proposal_count + ' proposal(s), but none remain pending.';
-          }
-        } catch (error) {
-          feedback.textContent = 'No pending proposals. The latest suggestion outcome could not be loaded (' + error.message + ').';
-        }
+    feedback.textContent = pending.length ? pending.length + (pending.length === 1 ? ' suggestion to review.' : ' suggestions to review.') + ' Nothing is saved until you choose.' : 'Nothing to review yet. Not every conversation needs a memory.';
+    const outcomes = panel.querySelector(':scope > .memory-outcomes');
+    const lines = [];
+    let recentRun = null;
+    const attempt = automatic && automatic.last_attempt;
+    if (attempt) lines.push('Most recent completion attempt: ' + attempt.source + ' · ' + new Date(attempt.created_ts * 1000).toLocaleTimeString() + ' · episode ' + (attempt.episode_id || 'not created') + (attempt.queued ? ' · run ' + attempt.run_id : ' · not queued (' + attempt.reason + (attempt.discarded_reason ? '; discarded: ' + attempt.discarded_reason : '') + '). ' + memoryRecovery(attempt.reason)));
+    try {
+      const history = await api('/api/structured-memory/consolidation');
+      if (!current()) return;
+      recentRun = (history.runs || []).find(run => attempt && run.id === attempt.run_id) || (history.runs || [])[0];
+      for (const run of history.runs || []) {
+        lines.push((run.summarizer_version === 'completion-suggestions-v1' ? 'Completion suggestion' : 'Summary consolidation') + ' · ' + new Date(run.created_ts * 1000).toLocaleString() + '\nRun ' + run.id + ' · episodes ' + (run.episode_ids || []).join(', ') + '\n' + (attempt && attempt.run_id === run.id && attempt.reason === 'receipt_store_failed' ? 'Input discarded; stored state could not be updated.' : memoryRunOutcome(run)) + '\nStatus: ' + run.state + (run.error_class ? ' · ' + run.error_class : '') + '\nModel: ' + (run.model_id || 'not started') + ' · candidates ' + run.candidate_count + ' · rejected ' + run.rejected_count + ' · proposals ' + (run.proposal_ids || []).join(', '));
       }
+      if (!lines.length) lines.push('No suggestion activity yet. Completed conversations and coding work can suggest memories. Summary consolidation needs a summary you have written and reviewed.');
+      if (automatic && (!automatic.chat || !automatic.coding)) lines.push('Unavailable sources: ' + (!automatic.chat ? 'conversations (' + automatic.chat_unavailable_reason + ') ' : '') + (!automatic.coding ? 'coding (' + automatic.coding_unavailable_reason + ')' : ''));
+    } catch (error) {
+      if (error.status === 429) throw error;
+      lines.push('Memory run history unavailable: ' + error.message);
     }
+    if (!current()) return;
+    // Keep proposal forms in place; a poll must not reset input, focus, expanded
+    // details, or an in-flight Apply/Reject request.
+    const outcomeText = lines.join('\n\n');
+    const activityText = outcomes.querySelector('pre');
+    if (activityText.textContent !== outcomeText) activityText.textContent = outcomeText;
+    const latest = panel.querySelector(':scope > .memory-latest');
+    latest.textContent = attempt && !attempt.queued ? memoryRecovery(attempt.reason) : recentRun ? memoryRunOutcome(recentRun) : '';
+    if (automatic && automatic.queued) latest.textContent = automatic.queued + (automatic.queued === 1 ? ' suggestion is waiting' : ' suggestions are waiting') + ' for the local model.';
+    if (automatic && automatic.running) latest.textContent = 'Looking for useful memories on this device…';
+    if (latest.textContent) latest.textContent = 'Latest activity: ' + latest.textContent;
+    const forms = panel.querySelector(':scope > .memory-proposals');
+    const keys = new Set(pending.map(p => p.id + ':' + p.revision));
+    for (const form of Array.from(forms.children)) if (!keys.has(form.dataset.proposal)) form.remove();
     for (const proposal of pending) {
-      const form = document.createElement('form');
-      const summary = document.createElement('p');
-      summary.textContent = proposal.action + ' · ' + (proposal.category || 'uncategorized') + '\n' + Array.from(proposal.content || '').slice(0, 160).join('');
+      const key = proposal.id + ':' + proposal.revision;
+      if (Array.from(forms.children).some(form => form.dataset.proposal === key)) continue;
+      const form = document.createElement('form'); form.dataset.proposal = key; form.dataset.reviewState = 'pending';
+      const targeted = proposal.action === 'update' || proposal.action === 'deactivate';
+      const target = document.createElement('p'); target.className = 'memory-target';
+      if (targeted) { form.dataset.targetFact = proposal.target_fact_id || ''; target.textContent = 'Loading the saved memory this suggestion changes…'; }
+      const heading = document.createElement('h3');
+      heading.textContent = proposal.action === 'deactivate' ? 'Remove a saved memory' : proposal.action === 'update' ? 'Update a saved memory' : proposal.category === 'session_summary' ? 'Conversation summary' : 'Useful detail';
+      const summary = document.createElement('p'); summary.textContent = (proposal.action === 'update' ? 'Suggested replacement:\n' : '') + (proposal.content || '');
       const detail = document.createElement('details'), title = document.createElement('summary'), content = document.createElement('pre');
-      title.textContent = 'Review full proposal';
+      title.textContent = 'Source and technical details';
       content.textContent = JSON.stringify(proposal, null, 2); detail.append(title, content);
-      const source = document.createElement('p'); source.textContent = 'Proposal ' + proposal.id + '\nSource episodes: ' + (proposal.source_episode_ids || []).join(', ');
-      const label = document.createElement('label'); label.textContent = 'Reason ';
-      const reason = document.createElement('input'); reason.required = true; reason.maxLength = status.limits.max_reason_chars; label.appendChild(reason);
-      const apply = document.createElement('button'); apply.type = 'submit'; apply.textContent = 'Apply';
-      const reject = document.createElement('button'); reject.type = 'submit'; reject.textContent = 'Reject';
+      const label = document.createElement('label'); label.textContent = 'Reason for your choice ';
+      const reason = document.createElement('input'); reason.required = true; reason.placeholder = 'Why is this useful, inaccurate, or unnecessary?'; reason.maxLength = status.limits.max_reason_chars; label.appendChild(reason);
+      const apply = document.createElement('button'); apply.type = 'submit'; apply.className = 'memory-save'; apply.textContent = proposal.action === 'deactivate' ? 'Remove memory' : proposal.action === 'update' ? 'Update memory' : 'Save memory';
+      apply.disabled = targeted;
+      const reject = document.createElement('button'); reject.type = 'submit'; reject.textContent = 'Dismiss';
       const resultText = document.createElement('p'); resultText.setAttribute('role', 'status');
-      form.append(summary, detail, source, label, apply, reject, resultText);
+      form.append(heading); if (targeted) form.append(target);
+      form.append(summary, label, apply, reject, resultText, detail);
       form.addEventListener('submit', async event => {
         event.preventDefault();
-        if (!reason.value.trim() || ![apply, reject].includes(event.submitter)) { resultText.textContent = 'Enter a reason and choose Apply or Reject.'; return; }
+        if (!reason.value.trim() || ![apply, reject].includes(event.submitter)) { resultText.textContent = 'Add a reason, then save or dismiss this suggestion.'; return; }
+        if (event.submitter === apply && targeted && form.dataset.targetLoaded !== 'true') { resultText.textContent = 'Wait for the saved memory to load, or dismiss this suggestion.'; return; }
+        form.dataset.reviewState = 'working';
         apply.disabled = reject.disabled = true;
         try {
           const result = await api('/api/structured-memory/proposals/' + encodeURIComponent(proposal.id), 'POST', {revision:proposal.revision,reason:reason.value.trim(),confirm:true,apply:event.submitter === apply});
           /* The decision reply is the proposal row; an add carries no new fact id. */
           const where = result.status !== 'applied' ? ''
-            : result.action === 'deactivate' ? ' Fact ' + String(result.target_fact_id || '') + ' is no longer active.'
-            : ' Saved as a structured fact, not a pinned note; /memory facts lists it.';
-          reason.disabled = true; resultText.textContent = 'Proposal ' + result.status + '.' + where;
+            : result.action === 'deactivate' ? ' This memory is no longer active.'
+            : ' You can find it in Saved facts below.';
+          form.dataset.reviewState = 'decided';
+          reason.disabled = true; resultText.textContent = (result.status === 'applied' ? result.action === 'deactivate' ? 'Memory removed.' : 'Memory saved.' : 'Suggestion dismissed.') + where;
           if (result.status === 'applied' && form.isConnected) await appendSavedFacts(panel);
-        } catch (error) { resultText.textContent = error.message; apply.disabled = reject.disabled = false; }
+        } catch (error) { form.dataset.reviewState = 'pending'; resultText.textContent = error.message; apply.disabled = targeted && form.dataset.targetLoaded !== 'true'; reject.disabled = false; }
       });
-      panel.appendChild(form);
+      forms.appendChild(form);
     }
-    if (!feedback.isConnected) return;
-    await appendSavedFacts(panel);
-  } catch (error) { feedback.textContent = error.message; }
+    if (!current()) return;
+    const factsError = await appendSavedFacts(panel);
+    if (factsError && factsError.retryAfter) delay = Math.max(delay || 0, factsError.retryAfter * 1000);
+  } catch (error) {
+    if (current()) feedback.textContent = error.status === 429 ? 'Updates are paused briefly. Your review is kept; we will retry automatically.' : 'Could not refresh suggestions. Your review is kept. ' + error.message;
+    if (error.retryAfter) delay = Math.max(delay || 0, error.retryAfter * 1000);
+  }
+  finally {
+    if (revision === memoryViewRevision) {
+      memoryRefreshBusy = false;
+      if (delay && !document.hidden && panel.classList.contains('active') && !document.body.classList.contains('signed-out')) memoryRefreshTimer = setTimeout(refreshMemoryProposals, Math.max(delay, apiRetryDelay()));
+    }
+  }
 }
 
 /* Saved facts render after the proposal forms and outside any form. They
    load and fail on their own, so a listing error never replaces the
    proposals feedback. No query: filters switch the route to a capped search. */
 async function appendSavedFacts(panel) {
-  const section = document.createElement('section'); section.className = 'saved-facts';
-  const heading = document.createElement('h3'); heading.textContent = 'Saved facts';
-  const note = document.createElement('p'); note.setAttribute('role', 'status');
-  section.append(heading, note);
-  /* Re-listing after Apply replaces the section; the replaced one's pending
-     load then sees itself disconnected and stops. */
+  const revision = memoryViewRevision, request = ++memoryFactsRevision;
   const previous = panel.querySelector(':scope > section.saved-facts');
-  if (previous) previous.replaceWith(section); else panel.appendChild(section);
   try {
     const result = await api('/api/structured-memory/facts');
-    if (!section.isConnected) return;
+    if (revision !== memoryViewRevision || request !== memoryFactsRevision || !panel.isConnected) return;
     const facts = result && Array.isArray(result.facts) ? result.facts : [];
-    heading.textContent = 'Saved facts (' + facts.length + ')';
+    // New proposal cards may need their target even when the saved-facts list
+    // is unchanged. Update text in place; never unlock a decision in flight.
+    for (const form of panel.querySelectorAll(':scope > .memory-proposals > form[data-target-fact]')) {
+      if (form.dataset.reviewState === 'decided') continue;
+      const fact = facts.find(row => row.id === form.dataset.targetFact);
+      form.dataset.targetLoaded = String(!!fact);
+      const text = fact ? 'Current saved memory:\n' + fact.content : 'This saved memory is unavailable. Refresh or dismiss this suggestion.';
+      const target = form.querySelector('.memory-target');
+      if (target.textContent !== text) target.textContent = text;
+      if (form.dataset.reviewState === 'pending') form.querySelector('.memory-save').disabled = !fact;
+    }
+    const snapshot = JSON.stringify(facts);
+    if (previous && previous.isConnected && previous.dataset.snapshot === snapshot) return;
+    const section = document.createElement('section'); section.className = 'saved-facts'; section.dataset.snapshot = snapshot;
+    const heading = document.createElement('h3'); heading.textContent = 'Saved facts (' + facts.length + ')';
+    const note = document.createElement('p'); note.setAttribute('role', 'status');
     note.textContent = facts.length
-      ? 'Most recently changed first. These are structured facts, not pinned notes; a fact reaches chat only through an explicit selection or a retrieval match while its gates are on.'
-      : 'No saved facts yet. Apply a proposal or use /memory save.';
+      ? 'Memories you chose to keep, most recently changed first. Chat uses them when you select them or enabled retrieval finds a match.'
+      : 'No saved facts yet. Save a suggestion above or add one with /memory save.';
+    section.append(heading, note);
     for (const fact of facts) {
       const detail = document.createElement('details'), title = document.createElement('summary'), body = document.createElement('pre');
       title.textContent = String(fact.category || 'uncategorized') + ' · ' + Array.from(String(fact.content || '')).slice(0, 160).join('');
@@ -5022,8 +5138,17 @@ async function appendSavedFacts(panel) {
       detail.append(title, body);
       section.appendChild(detail);
     }
+    const existing = panel.querySelector(':scope > section.saved-facts');
+    if (existing) existing.replaceWith(section); else panel.appendChild(section);
   } catch (error) {
-    if (section.isConnected) note.textContent = 'Saved facts could not be loaded (' + error.message + ').';
+    if (revision !== memoryViewRevision || request !== memoryFactsRevision || !panel.isConnected) return;
+    let section = panel.querySelector(':scope > section.saved-facts');
+    if (!section) { section = document.createElement('section'); section.className = 'saved-facts'; panel.appendChild(section); }
+    let note = section.querySelector('[role="status"]');
+    if (!note) { note = document.createElement('p'); note.setAttribute('role', 'status'); section.appendChild(note); }
+    note.textContent = error.status === 429 ? 'Saved facts will refresh after a short pause. Your changes are kept.' : 'Could not load saved facts: ' + error.message;
+    delete section.dataset.snapshot;
+    return error;
   }
 }
 
