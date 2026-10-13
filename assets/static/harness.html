@@ -4814,7 +4814,7 @@ if (hAuthLogin) {
       showSignIn(null);
       refreshHeaderFeatures(!data.must_change_password);
       if (data.must_change_password) openPasswordChange(true);
-      else { await refreshStatus(); await refreshSessions(); }
+      else { await refreshMemoryProposals(); await refreshStatus(); await refreshSessions(); }
     } catch (e) {
       pass.value = '';
       error.textContent = "Can't reach the harness. Check that it is still running, then try again.";

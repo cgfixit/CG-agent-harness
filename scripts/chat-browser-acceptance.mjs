@@ -839,11 +839,12 @@ try {
  await Promise.race([historyRequestSeen,pause(5000).then(()=>{throw Error('history fixture request not held');})]);
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');
- memoryOwnerFixture={owner:'user_next',facts:[],proposals:[{id:'proposal_next_owner',revision:'revision_next',action:'add',category:'insight',content:'NEXT_OWNER_PROPOSAL',status:'pending'}]};
+ memoryOwnerFixture={owner:'user_next',facts:[{id:'fact_next_owner',revision:1,category:'insight',content:'NEXT_OWNER_FACT',active:true}],proposals:[{id:'proposal_next_owner',revision:'revision_next',action:'add',category:'insight',content:'NEXT_OWNER_PROPOSAL',status:'pending'}]};
  await evaluate('document.getElementById("hAuthUser").value="memory-second";document.getElementById("hAuthPass").value="browser-memory-password";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("hAuthLoginBox").hidden');
- await send('/memory proposals');
- await until('document.getElementById("pane-memory").textContent.includes("NEXT_OWNER_PROPOSAL")');
+ // Login must refresh the retained active pane without another tab click or slash command.
+ await until('document.getElementById("pane-memory").textContent.includes("NEXT_OWNER_PROPOSAL") && document.getElementById("pane-memory").textContent.includes("NEXT_OWNER_FACT")');
+ assert.equal(await evaluate('document.getElementById("pane-memory").classList.contains("active")'),true,'successful login reloads the retained Memory tab');
  rejectHeldMemoryHistory();await evaluate('window.oldMemoryLoad');
  assert.equal(await evaluate('document.getElementById("pane-memory").textContent.includes("PRIVATE_PRIOR_OWNER_PROPOSAL")'),false,'old-account history failure cannot reveal its captured proposals after account switch');
  assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("NEXT_OWNER_PROPOSAL")'));
