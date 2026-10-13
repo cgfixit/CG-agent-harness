@@ -83,7 +83,7 @@ override.
 | `consolidation` | `/memory consolidation on\|off` | store | No selected-episode summarizer call (`/memory consolidate <id...>`). The completion-suggestion path may still create its own run records. |
 | `auto_consolidation` | `/memory auto-consolidate on\|off` | `consolidation` (AND) | No idle worker starts. Eligibility and bounds: [Consolidation](#consolidation). |
 | `auto_suggest_chat` | `/memory auto-suggest-chat on\|off` | store + `episode_capture` | Completed chat turns are not queued for suggestions. |
-| `auto_suggest_coding` | `/memory auto-suggest-coding on\|off` | store + `episode_capture` | Successful coding runs are not queued for suggestions. |
+| `auto_suggest_coding` | `/memory auto-suggest-coding on\|off` | store + `episode_capture` | Accepted coding runs are not queued for suggestions. |
 
 Consolidation is independent of capture, recall, retrieval, and `auto_retrieval`;
 `explicit_recall` is independent of `retrieval` and consolidation.
@@ -127,8 +127,8 @@ values disable suggestions.
 The `completion-suggestions-v1` worker reads only bounded redacted current
 completion evidence in RAM, using the initiating account captured by the chat or
 coding route. It does not scan shared archives or attach generated text as a
-human semantic summary. Successful synchronous and detached coding routes share
-the hook after the existing shim boundary; I6 is unchanged. Coding input is the
+human semantic summary. Synchronous and detached coding share the shim hook
+(I6): only `pending_decision` results qualify; exhausted runs do not. Coding input is the
 submitted instruction plus a projection of the child result (repository, status,
 run id, changed files, push/PR fields and commit message), not stdout/stderr,
 file bodies or tool logs. Metadata alone cannot prove a coding lesson or

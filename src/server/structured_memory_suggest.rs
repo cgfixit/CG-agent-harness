@@ -201,6 +201,10 @@ pub fn coding_completed(state: &Arc<AppState>, owner: &str, instruction: &str, r
         return json!({"queued":false,"reason":"run_not_successful"});
     }
     let parsed = &result["parsed"];
+    // A normal child exit can also report exhausted, without an accepted change.
+    if parsed["status"] != "pending_decision" {
+        return json!({"queued":false,"reason":"run_not_accepted"});
+    }
     let evidence = json!({"repo":parsed["repo"],"status":parsed["status"],"run_id":parsed["run_id"],
         "changed_files":parsed["changed_files"],"pushed":parsed["pushed"],"pr_url":parsed["pr_url"],
         "commit_message":parsed["commit_message"]});

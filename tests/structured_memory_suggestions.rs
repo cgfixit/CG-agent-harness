@@ -565,6 +565,42 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
 }
 
 #[tokio::test]
+async fn unaccepted_coding_results_never_stage_completion_memory() {
+    let model = model().await;
+    let s = spawn_server(&model.base, options("insights")).await;
+    for status in [
+        "exhausted",
+        "failed",
+        "running",
+        "interrupted",
+        "approved",
+        "rejected",
+        "discarded",
+        "unknown",
+        "",
+    ] {
+        let result = suggest::coding_completed(
+            &s.state,
+            "local",
+            "Use metric units in examples.",
+            &json!({"ok":true,"parsed":{"status":status}}),
+        );
+        assert_eq!(result, json!({"queued":false,"reason":"run_not_accepted"}), "{status}");
+    }
+    assert_eq!(
+        suggest::coding_completed(&s.state, "local", "missing run record", &json!({"ok":true})),
+        json!({"queued":false,"reason":"run_not_accepted"})
+    );
+    settled(&s, "local").await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    assert_eq!(store.episode_count("local").unwrap(), 0);
+    assert!(store.list_consolidation_runs("local").unwrap().is_empty());
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert!(store.list_facts("local").unwrap().is_empty());
+    assert!(model.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn shipped_defaults_capture_suggest_consolidate_and_retrieve_reviewed_facts() {
     let model = model().await;
     let mut opts = ServerOptions::default();
