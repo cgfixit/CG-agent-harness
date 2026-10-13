@@ -136,7 +136,8 @@ successful tests.
 
 The local model returns `session_summary` or `insight` candidates. Strict parsing,
 source membership, sensitivity checks, confidence, and existing bindings create
-pending proposals through idempotent runs. Facts change only after Apply with
+pending proposals through idempotent runs. Only validated candidates count toward
+the single-summary limit. Facts change only after Apply with
 confirm and reason. Generation has no tools, web, recalled facts, schema change,
 or cloud egress; it uses temperature 0 and 1024 output tokens. Automatic
 `consolidator-v2` still requires human semantic summaries.

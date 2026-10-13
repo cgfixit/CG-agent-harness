@@ -325,16 +325,11 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         }
         let mut parsed = parse_consolidator_output(&reply.body_text, store.limits().max_consolidation_candidates)?;
         let count = parsed.candidates.len();
-        let mut summaries = 0;
         parsed.candidates.retain(|c| {
-            let category_ok = match (mode(state), c.category.as_deref()) {
-                ("summaries" | "both", Some("session_summary")) => {
-                    summaries += 1;
-                    summaries == 1
-                }
-                ("insights" | "both", Some("insight")) => true,
-                _ => false,
-            };
+            let category_ok = matches!(
+                (mode(state), c.category.as_deref()),
+                ("summaries" | "both", Some("session_summary")) | ("insights" | "both", Some("insight"))
+            );
             category_ok
                 && c.action == "add"
                 && c.target_fact_id.is_none()
@@ -342,7 +337,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
                     .as_ref()
                     .is_some_and(|s| state.audit.redact(s) == *s && !s.contains("[REDACTED_"))
         });
-        let (bound, rejected) = bind_candidates(
+        let (mut bound, _) = bind_candidates(
             &parsed,
             &ids,
             &store.list_facts(&job.owner)?,
@@ -350,6 +345,14 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
             store.limits().max_category_chars,
             store.limits().min_consolidation_confidence,
         );
+        // Only a valid candidate consumes the single-summary allowance.
+        let mut has_summary = false;
+        bound.retain(|candidate| {
+            if candidate.category.as_deref() != Some("session_summary") {
+                return true;
+            }
+            !std::mem::replace(&mut has_summary, true)
+        });
         let queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
         if job.source == Source::Chat && queue.running_chat_cancelled {
             return Err(HarnessError::new("SUGGESTION_CANCELLED", "chat cleared"));
@@ -359,7 +362,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
             &run.id,
             &reply.model,
             count,
-            count - parsed.candidates.len() + rejected,
+            count - bound.len(),
             &drafts_from_bound(&bound),
         )?;
         drop(queue);
