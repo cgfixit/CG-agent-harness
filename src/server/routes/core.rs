@@ -61,12 +61,20 @@ pub async fn status(
     let sessions = state.store.for_owner(&owner).list();
     let total_tokens: u64 = sessions.iter().filter_map(|s| s["tokens"]["total"].as_u64()).sum();
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    // One model read, so model, provider, base_url and tools agree.
-    let model = state.current_model();
+    // One settings snapshot, so model and saved-override notice agree.
+    // An automatic fallback is an effective backend, not a saved selection.
+    let model = if settings.selected_model.trim().is_empty() {
+        state.backend.model.clone()
+    } else {
+        settings.selected_model.clone()
+    };
     let cloud = state.cloud_chat.is_cloud_selection(&model);
     Json(json!({
         "version": crate::VERSION,
         "model": model,
+        "configured_model": state.cfg.str_or("models.local_llm.model", &state.backend.model),
+        "selection_overrides_config": !settings.selected_model.trim().is_empty()
+            && settings.selected_model != state.cfg.str_or("models.local_llm.model", &state.backend.model).trim(),
         "provider": state.provider_for(&model),
         "api_key_optional": state.api_key_optional,
         "base_url": if cloud { Value::Null } else { json!(state.backend.base_url) },
@@ -389,8 +397,44 @@ pub async fn get_session(
     out["messages"] = json!(messages);
     out["prompt_history"] = json!(session.prompt_history);
     out["goal"] = json!(session.goal);
+    out["goal_web_mode"] = json!(session.goal_web_mode);
     out["style"] = json!(session.style);
+    out["live_attachment_pins"] = json!(session
+        .pinned_ids_for(&owner)
+        .iter()
+        .filter(|id| state.attachments.owned_blob(&owner, id).is_some())
+        .count());
     Ok(Json(out))
+}
+
+pub async fn clear_attachment_pins(
+    State(state): State<Arc<AppState>>,
+    user: Caller,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    state
+        .store
+        .for_owner(&owner)
+        .get(&session_id)
+        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    // A completing turn must not re-pin attachments after this response.
+    let _gate = state.generation_gate.claim("attachment_unpin").ok_or_else(|| {
+        ApiError::new(
+            StatusCode::CONFLICT,
+            "CHAT_BUSY",
+            "stop the active turn before /session unpin",
+        )
+    })?;
+    let removed = state
+        .store
+        .for_owner(&owner)
+        .clear_attachment_pins(&session_id)
+        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    state
+        .audit
+        .log(json!({"event": "chat_attachment_pins_cleared", "session_id": session_id, "removed": removed}));
+    Ok(Json(json!({"removed": removed, "blobs_retained": true})))
 }
 
 pub async fn rename_session(
@@ -418,10 +462,11 @@ pub async fn session_goal(
     let session = state
         .store
         .for_owner(&owner)
-        .rename(&session_id, None, Some(&req.goal))
+        .set_goal(&session_id, &req.goal, req.web_mode)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let mut out = session.summary();
     out["goal"] = json!(session.goal);
+    out["goal_web_mode"] = json!(session.goal_web_mode);
     Ok(Json(out))
 }
 
@@ -461,6 +506,13 @@ pub async fn model_select(
     let snapshot = {
         let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
         s.selected_model = req.model.trim().to_string();
+        s.selected_model_config = Some(
+            state
+                .cfg
+                .str_or("models.local_llm.model", &state.backend.model)
+                .trim()
+                .to_string(),
+        );
         s.clone()
     };
     snapshot
@@ -581,7 +633,8 @@ async fn chat_inner(
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
     // Web tools need web on and a model that can take them (auto_tune may have
     // found it declares none, or that no web-chat prompt fits its window).
-    let chat_tools = settings.web_enabled && !state.chat_tools_unsupported(&model);
+    let chat_web_mode = session.chat_web_mode(settings.web_enabled && !state.chat_tools_unsupported(&model));
+    let chat_tools = chat_web_mode.enabled();
     let selected_skills = if cloud_selected {
         Vec::new()
     } else {
@@ -728,7 +781,7 @@ async fn chat_inner(
     let web_context = if cloud_selected {
         String::new()
     } else {
-        web.context_text(settings.web_enabled, &owner)
+        web.context_text(session.chat_web_mode(settings.web_enabled).enabled(), &owner)
     };
     let selections = req
         .selected_facts
@@ -736,13 +789,19 @@ async fn chat_inner(
         .map(|items| super::structured_memory::selections_from_items(items))
         .unwrap_or_else(|| session.selected_facts.clone());
     let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
+    // Clients may abbreviate loop reminders; retrieve against the full stored goal.
+    let attachment_query = if req.loop_turn {
+        format!("{}\n{}", session.goal, req.message)
+    } else {
+        req.message.clone()
+    };
     let attachment_fence = crate::server::retrieval::assemble_local_untrusted(
         surface,
         &state.attachments,
         &state.notes_corpus,
         &owner,
         &ids,
-        Some(req.message.as_str()),
+        Some(attachment_query.as_str()),
     )
     .map_err(|e| attachments::upload_error(&e))?;
     // Fact recall and retrieval read SQLite: run them off the async worker.
@@ -783,7 +842,7 @@ async fn chat_inner(
             selected_facts_context: Some(&facts),
             memory_budget,
             memory_enabled: settings.memory_enabled,
-            chat_tools_enabled: chat_tools && !req.loop_turn,
+            chat_web_mode,
             web_enabled: settings.web_enabled,
             attachment_fence: Some(attachment_fence.as_str()),
         })
@@ -798,8 +857,8 @@ async fn chat_inner(
     let reservation = crate::server::compaction::reply_reservation(&state.backend, max_tokens);
     let ratio =
         crate::server::compaction::token_ratio(session.token_calibration.as_ref(), &state.chat.base_url, &model);
-    let tool_tokens = if !cloud_selected && chat_tools && !req.loop_turn {
-        crate::server::compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_web::tools()).unwrap())
+    let tool_tokens = if !cloud_selected && chat_tools {
+        crate::server::compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_web::tools_for(chat_web_mode)).unwrap())
     } else {
         0
     };
@@ -825,7 +884,7 @@ async fn chat_inner(
         } else {
             "models.local_llm.max_tokens"
         };
-        let web_chat = chat_tools && !req.loop_turn;
+        let web_chat = chat_tools;
         let (threshold, limit_source) = crate::server::compaction::turn_prompt_limit(
             configured_threshold,
             prompt_cap,
@@ -984,7 +1043,7 @@ async fn chat_inner(
     // Compaction can take a while: the window must still allow what this turn
     // was sized for before the reply is requested (a no-op within the defaults).
     if !cloud_selected {
-        let web_total = if chat_tools && !req.loop_turn { web.limits.total_tokens } else { 0 };
+        let web_total = if chat_tools { web.limits.total_tokens } else { 0 };
         state
             .ensure_window_allows(&model, turn_prompt_limit, web_total)
             .await
@@ -1008,7 +1067,7 @@ async fn chat_inner(
                 })?,
             Vec::new(),
         )
-    } else if chat_tools && !req.loop_turn {
+    } else if chat_tools {
         crate::server::chat_web::run_stream(
             &state,
             &web,
@@ -1019,6 +1078,7 @@ async fn chat_inner(
             max_tokens,
             temperature,
             ratio,
+            chat_web_mode,
             output,
         )
         .await
@@ -1048,7 +1108,7 @@ async fn chat_inner(
     // Ground against the tools the answering request offered: web chat withholds
     // them when no tool round fits, and withdraws them after a refused batch.
     let inventory = crate::server::tool_inventory::chat_callable_names(
-        !cloud_selected && chat_tools && !req.loop_turn && reply.final_prompt_tools,
+        if !cloud_selected && reply.final_prompt_tools { chat_web_mode } else { crate::server::sessions::GoalWebMode::Off },
     );
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
@@ -1154,7 +1214,7 @@ async fn chat_inner(
         calibration,
     );
     let updated = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    if !cloud_selected && !req.loop_turn {
+    if !cloud_selected {
         let live = |id: &str| state.attachments.owned_blob(&owner, id).is_some();
         state
             .store

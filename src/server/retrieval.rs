@@ -1,4 +1,4 @@
-//! Local chat and prompt preview may inline attachment bytes. Cloud, loop,
+//! Local chat, loop and prompt preview may inline attachment bytes. Cloud,
 //! and agent refuse both request ids and leftover session pins so sticky
 //! pins cannot ride along on those surfaces.
 
@@ -30,7 +30,10 @@ impl RetrievalSurface {
 }
 
 pub fn allows_attachment_bytes(surface: RetrievalSurface) -> bool {
-    matches!(surface, RetrievalSurface::LocalChat | RetrievalSurface::PromptPreview)
+    matches!(
+        surface,
+        RetrievalSurface::LocalChat | RetrievalSurface::Loop | RetrievalSurface::PromptPreview
+    )
 }
 
 pub fn refuse_forbidden_attachments(
@@ -45,9 +48,9 @@ pub fn refuse_forbidden_attachments(
         return Ok(());
     }
     let message = if pinned_ids_for_owner.is_empty() {
-        "this surface does not receive attachment bytes (cloud / loop / agent)"
+        "this surface does not receive attachment bytes (cloud / agent)"
     } else {
-        "this surface does not receive attachment bytes (cloud / loop / agent); this session keeps files from earlier local chat, so start /session new for cloud chat, /loop or /agent"
+        "this surface does not receive attachment bytes (cloud / agent); this session keeps files from earlier local chat, so use /session unpin or /session new for cloud chat or /agent"
     };
     Err(HarnessError::new("ATTACHMENT_SURFACE_FORBIDDEN", message)
         .detail("surface", surface.as_str())
@@ -111,7 +114,7 @@ mod tests {
         assert!(allows_attachment_bytes(RetrievalSurface::LocalChat));
         assert!(allows_attachment_bytes(RetrievalSurface::PromptPreview));
         assert!(!allows_attachment_bytes(RetrievalSurface::CloudChat));
-        assert!(!allows_attachment_bytes(RetrievalSurface::Loop));
+        assert!(allows_attachment_bytes(RetrievalSurface::Loop));
         assert!(!allows_attachment_bytes(RetrievalSurface::Agent));
 
         let ids = vec!["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into()];
@@ -121,11 +124,7 @@ mod tests {
         assert!(refuse_forbidden_attachments(RetrievalSurface::Loop, &[], &[]).is_ok());
         assert!(refuse_forbidden_attachments(RetrievalSurface::Agent, &[], &[]).is_ok());
 
-        for surface in [
-            RetrievalSurface::CloudChat,
-            RetrievalSurface::Loop,
-            RetrievalSurface::Agent,
-        ] {
+        for surface in [RetrievalSurface::CloudChat, RetrievalSurface::Agent] {
             let err = refuse_forbidden_attachments(surface, &ids, &[]).unwrap_err();
             assert_eq!(err.code, "ATTACHMENT_SURFACE_FORBIDDEN");
             assert!(err.message.contains("does not receive attachment bytes"));

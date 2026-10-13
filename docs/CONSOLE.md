@@ -31,7 +31,7 @@ persona, or reply never authorizes commands, commits, pushes, or publication.
 
 Fresh chat has no assigned repository or automatic coding skills. When web is
 enabled, local chat can dispatch only the bounded read-only `web_search` and
-`web_fetch` tools; `/loop` remains tool-free. Chat cannot inspect local files or
+`web_fetch` tools, including local `/loop` turns. Chat cannot inspect local files or
 certify live wiring. Use command results as evidence and the coding workflow for
 execution.
 
@@ -48,7 +48,7 @@ Enter slash commands in chat. `/help` lists installed commands. Begin with
 
 ```text
 /session new Setup check
-/goal Explain this project's test strategy
+/goal --web off Explain the attached test strategy
 /goal
 ```
 
@@ -112,7 +112,7 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 ```
 
 `/loop 3` runs up to three follow-up turns toward the goal (default three,
-maximum five), each restating 240 goal characters. Manual mode pauses after each
+maximum five), each restating the full bounded goal. Manual mode pauses after each
 turn; `/loop` continues. `/loop auto` toggles automatic continuation, before
 starting or to resume. `/loop stop` cancels during generation or cooldown. Goal
 clear, session switching, rate limits, failures, token budgets and a
@@ -120,7 +120,7 @@ clear, session switching, rate limits, failures, token budgets and a
 too, but is only model advice.
 
 This loop does not edit files, run skills as programs, or perform coding checks.
-The goal persists; continuation counters and auto state are page state.
+Use `/goal --web off|fetch|all <text>` to restrict chat tools while that goal is set. Default `all`; `fetch` excludes search, `off` excludes web context and tools. URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
 Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
 an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task).
 
@@ -497,10 +497,12 @@ clears them. Uploads count toward the home quota until session or owner cleanup.
 Sessions retain at most 12 owner-scoped blob IDs. The next local turn may
 BM25-search them and inject matching passages into the attachment fence.
 `.md` and `.txt` notes ingested at `/api/notes-corpus` use a separate home jail
-but share that local prompt budget (`source=notes_corpus`). Cloud chat, `/loop`,
-and `/agent` refuse attachment IDs or live pins with
-`ATTACHMENT_SURFACE_FORBIDDEN` and never receive notes-corpus bytes. Preview
-proves only local-chat context.
+but share that local prompt budget (`source=notes_corpus`). Local loops include
+these sources; cloud chat and `/agent` refuse attachment IDs or live pins with
+`ATTACHMENT_SURFACE_FORBIDDEN` and never receive notes-corpus bytes. `/session unpin` clears session references, keeping blobs and messages.
+Loop startup reports live pins/web availability and uploads selected files.
+Tool failures stop continuation with the goal incomplete; fix the reported
+permission/provider/budget problem before retrying `/loop`.
 Unsupported formats are refused. Clipped sections explicitly say they are incomplete.
 
 The notes corpus has multipart ingest, list, and delete
