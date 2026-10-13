@@ -4953,6 +4953,9 @@ function memoryRecovery(reason) {
   if (reason === 'cancelled' || reason === 'SUGGESTION_CANCELLED') return 'You cancelled this suggestion. It will not retry automatically.';
   if (reason === 'preempted') return 'Paused while you chat. It will continue when the local model is free.';
   if (reason === 'STRUCTURED_MEMORY_SCHEMA') return 'The local model returned an unreadable suggestion. Nothing was saved. Try again with a new message or a reviewed summary.';
+  if (reason === 'STRUCTURED_MEMORY_CAP') return 'The memory storage limit was reached. Review pending suggestions and check local memory limits before trying again.';
+  if (reason === 'STRUCTURED_MEMORY_IO') return 'The suggestion could not be saved. Check local storage before trying again.';
+  if (reason === 'HARNESS_LLM_ERROR') return 'The local model could not finish the suggestion. Check that it is available and has enough time and output capacity, then try again.';
   return 'The suggestion could not finish. Check the local model and storage, then try again. Technical details are in Suggestion activity.';
 }
 function showMemoryAttempt(attempt, chat) {
