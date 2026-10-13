@@ -977,6 +977,55 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
 }
 
 #[tokio::test]
+async fn unaccepted_coding_results_never_stage_completion_memory() {
+    let model = model().await;
+    let s = spawn_server(&model.base, options("insights")).await;
+    let other_owner = suggest::coding_completed(&s.state, "user_bob", "failed run", &json!({"ok":false}));
+    for status in [
+        "exhausted",
+        "failed",
+        "running",
+        "interrupted",
+        "approved",
+        "rejected",
+        "discarded",
+        "unknown",
+        "",
+        "missing",
+    ] {
+        let previous = suggest::coding_completed(&s.state, "local", "failed run", &json!({"ok":false}));
+        assert_eq!(previous["reason"], "run_not_successful");
+        let outcome = if status == "missing" {
+            json!({"ok":true})
+        } else {
+            json!({"ok":true,"parsed":{"status":status}})
+        };
+        let result = suggest::coding_completed(&s.state, "local", "Use metric units in examples.", &outcome);
+        assert_eq!(result["queued"], false, "{status}");
+        assert_eq!(result["reason"], "run_not_accepted", "{status}");
+        let (code, memory) = s.get_json("/api/structured-memory").await;
+        assert_eq!(code, 200, "{memory}");
+        let latest = &memory["automatic_suggestions"]["last_attempt"];
+        assert_eq!(latest["reason"], "run_not_accepted", "{status}: {memory}");
+        assert_eq!(*latest, result, "the panel sees the current completion outcome");
+        assert_eq!(latest["source"], "coding");
+        assert!(latest["episode_id"].is_null());
+        assert!(latest["run_id"].is_null());
+        assert!(latest["created_ts"].as_f64().is_some());
+        assert_eq!(memory["automatic_suggestions"]["queued"], 0);
+        assert_eq!(memory["automatic_suggestions"]["running"], false);
+        assert_eq!(suggest::status(&s.state, "user_bob")["last_attempt"], other_owner);
+    }
+    settled(&s, "local").await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    assert_eq!(store.episode_count("local").unwrap(), 0);
+    assert!(store.list_consolidation_runs("local").unwrap().is_empty());
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert!(store.list_facts("local").unwrap().is_empty());
+    assert!(model.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn shipped_defaults_capture_suggest_consolidate_and_retrieve_reviewed_facts() {
     let model = model().await;
     let mut opts = ServerOptions::default();
