@@ -2871,6 +2871,7 @@ async function runSlash(line, webCommand) {
         } else {
           const s = await api('/api/status');
           sys(table([['model', s.model || '(unset)'], ['provider', s.provider], ['base_url', s.base_url]]));
+          if (s.selection_overrides_config) sys('Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
         }
         break;
       }
@@ -3434,6 +3435,7 @@ async function runSlash(line, webCommand) {
           sys(table([['version', s.version], ['access', access]]));
           break;
         }
+        if (s.selection_overrides_config) sys('Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
         /* The style row must reflect the persisted state: settle queued
            style writes and re-read the open session's selection. */
         await awaitStyleWrites();

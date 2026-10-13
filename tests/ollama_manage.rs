@@ -711,3 +711,103 @@ async fn quoted_warmup_true_does_not_generate() {
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert!(ollama.generates.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
+    // Changed config wins; unchanged config retains an explicit selection.
+    // A legacy mismatch is reset, while a legacy matching tag is migrated.
+    for (saved, previous, expected) in [
+        ("longctx:q8", Some("old:q8"), "qwen3.8:27b-mlx"),
+        ("longctx:q8", Some("qwen3.8:27b-mlx"), "longctx:q8"),
+        ("longctx:q8", None, "qwen3.8:27b-mlx"),
+        ("qwen3.8:27b-mlx", None, "qwen3.8:27b-mlx"),
+        ("", None, "qwen3.8:27b-mlx"),
+        ("grok", Some("qwen3.8:27b-mlx"), "grok"),
+    ] {
+        let ollama = start_native_ollama().await;
+        let prepared = prepare_server(
+            &ollama.openai_url(),
+            ServerOptions::default()
+                .with("models.local_llm.warmup.enabled", "true")
+                .with("models.local_llm.auto_tune", "true"),
+        )
+        .await;
+        std::fs::write(
+            prepared.home_dir.join("harness.json"),
+            json!({
+                "selected_model": saved, "selected_model_config": previous,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let (router, state) = cgagentharness::server::build_app(prepared.app_opts).await.unwrap();
+        let s = start_test_server(prepared.tmp, prepared.home_dir, prepared.api_key, router, state).await;
+        assert_eq!(s.state.current_model(), expected);
+        for _ in 0..200 {
+            if expected == "grok" || s.state.tuning_for(expected).is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let gens = ollama.generates.lock().unwrap().clone();
+        if expected == "grok" {
+            assert!(gens.is_empty(), "cloud selection must not load local model: {gens:?}");
+        } else {
+            assert_eq!(gens.len(), 2, "{saved} / {previous:?}: {gens:?}");
+            assert_eq!(gens[0]["prompt"], "");
+            assert_eq!(gens[1]["raw"], true);
+            assert!(gens
+                .iter()
+                .all(|g| g["model"] == expected && !g.to_string().contains("num_ctx")));
+        }
+        let persisted: Value =
+            serde_json::from_str(&std::fs::read_to_string(s.home.join("harness.json")).unwrap()).unwrap();
+        assert_eq!(persisted["selected_model_config"], "qwen3.8:27b-mlx");
+        let status: Value = s
+            .req(Method::GET, "/api/status")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(status["configured_model"], "qwen3.8:27b-mlx");
+        assert_eq!(status["selection_overrides_config"], expected != "qwen3.8:27b-mlx");
+        let (code, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+        assert_eq!(code, 200, "{body}");
+        let saved = cgagentharness::common::home::HarnessSettings::load(&s.state.home).unwrap();
+        assert_eq!(saved.selected_model, "longctx:q8");
+        assert_eq!(saved.selected_model_config.as_deref(), Some("qwen3.8:27b-mlx"));
+    }
+}
+
+#[tokio::test]
+async fn status_distinguishes_automatic_fallback_from_a_saved_model_override() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.model", "missing-primary:fixture")
+            .with("models.local_llm.fallback.enabled", "true")
+            .with("models.local_llm.fallback.provider", "ollama")
+            .with(
+                "models.local_llm.fallback.base_url",
+                &format!("\"{}\"", ollama.openai_url()),
+            )
+            .with("models.local_llm.fallback.model", "qwen3.8:27b-mlx"),
+    )
+    .await;
+    assert_eq!(s.state.backend.source, "fallback");
+    let (code, status) = s.get_json("/api/status").await;
+    assert_eq!(code, 200);
+    assert_eq!(status["model"], "qwen3.8:27b-mlx");
+    assert_eq!(status["configured_model"], "missing-primary:fixture");
+    assert_eq!(status["selection_overrides_config"], false);
+    assert!(s.state.settings.lock().unwrap().selected_model.is_empty());
+    let (code, body) = s.post_json("/api/model", json!({"model":"longctx:q8"})).await;
+    assert_eq!(code, 200, "{body}");
+    let (_, status) = s.get_json("/api/status").await;
+    assert_eq!(status["model"], "longctx:q8");
+    assert_eq!(status["selection_overrides_config"], true);
+}
