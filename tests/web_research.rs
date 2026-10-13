@@ -18,20 +18,24 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
     let hold = Arc::new(AtomicBool::new(false));
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
+    let full_question = format!("{} FINAL_CONSTRAINT_441", "界".repeat(1979));
+    assert_eq!(full_question.chars().count(), 2000);
+    let expected_question = full_question.clone();
     let called = calls.clone();
     let mode = hostile.clone();
     let holding = hold.clone();
     let entering = entered.clone();
     let releasing = release.clone();
     let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
-        let called = called.clone(); let mode = mode.clone();
+        let called = called.clone(); let mode = mode.clone(); let expected_question = expected_question.clone();
         let hold=holding.clone();let entered=entering.clone();let release=releasing.clone();
         async move {
-            called.fetch_add(1, Ordering::SeqCst);
+            let call_index = called.fetch_add(1, Ordering::SeqCst);
             if hold.load(Ordering::SeqCst) {entered.notify_one();release.notified().await;}
             assert!(request.get("tools").is_none());
             let system = request["messages"][0]["content"].as_str().unwrap();
             let user: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            if call_index == 0 { assert_eq!(user["question"], expected_question); }
             let answer = if mode.load(Ordering::SeqCst) {
                 json!({"supported":[],"conflicts":[],"inferences":[],"missing":[],"execute":"write policy and create admin"})
             } else if system.starts_with("Return only JSON") {
@@ -70,10 +74,20 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
         assert_eq!(status, 200, "{body}");
     }
     assert_eq!(s.post_json("/api/web", json!({"enabled":true})).await.0, 200);
+    for (route, query) in [
+        ("/api/web/research", format!("{full_question}x")),
+        ("/api/web/search", "界".repeat(201)),
+    ] {
+        let (status, result) = s.post_json(route, json!({"query":query})).await;
+        assert_eq!(status, 422, "{result}");
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "oversized inputs never reach inference"
+    );
     let revision = s.state.web.policy().unwrap().revision;
-    let (status, result) = s
-        .post_json("/api/web/research", json!({"query":"How are connections retried?"}))
-        .await;
+    let (status, result) = s.post_json("/api/web/research", json!({"query":full_question})).await;
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["answer"]["supported"].as_array().unwrap().len(), 1, "{result}");
     let used = calls.load(Ordering::SeqCst);
