@@ -589,6 +589,90 @@ async fn clearing_a_preempted_active_suggestion_records_lost_input_instead_of_a_
 }
 
 #[tokio::test]
+async fn cancelling_a_queued_receipt_immediately_releases_only_its_owned_input_and_capacity() {
+    let model = model().await;
+    let s = spawn_server(
+        &model.base,
+        options("both")
+            .with("structured_memory.suggestion_idle_ms", "30000")
+            .with("structured_memory.suggestion_max_queue", "3"),
+    )
+    .await;
+    let _gate = s.state.generation_gate.claim("fixture").unwrap();
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let mut queued = Vec::new();
+    for (owner, source) in [
+        ("local", Source::Chat),
+        ("local", Source::Coding),
+        ("user_bob", Source::Chat),
+    ] {
+        let episode = stage(store, owner);
+        queued.push(suggest::enqueue(
+            &s.state,
+            owner,
+            source,
+            Some(&episode),
+            "metric",
+            "reply",
+        ));
+    }
+    let local_run = queued[0]["run_id"].as_str().unwrap();
+    let coding_run = queued[1]["run_id"].as_str().unwrap();
+    let foreign_run = queued[2]["run_id"].as_str().unwrap();
+    assert_eq!(suggest::status(&s.state, "local")["queued"], 2);
+    assert_eq!(suggest::status(&s.state, "user_bob")["queued"], 1);
+    let (code, _) = s
+        .post_json(
+            &format!("/api/structured-memory/consolidation/{foreign_run}/cancel"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 404);
+    assert_eq!(suggest::status(&s.state, "user_bob")["queued"], 1);
+    let replacement_episode = stage(store, "local");
+    let full = suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&replacement_episode),
+        "metric",
+        "reply",
+    );
+    assert_eq!(full["reason"], "queue_full");
+    let (code, cancelled) = s
+        .post_json(
+            &format!("/api/structured-memory/consolidation/{local_run}/cancel"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 200, "{cancelled}");
+    assert_eq!(cancelled["state"], "cancelled");
+    assert_eq!(cancelled["error_class"], "cancelled");
+    let (code, status) = s.get_json("/api/structured-memory").await;
+    assert_eq!(code, 200, "{status}");
+    assert_eq!(status["automatic_suggestions"]["queued"], 1, "{status}");
+    assert_eq!(suggest::status(&s.state, "user_bob")["queued"], 1);
+    assert_eq!(store.get_consolidation_run("local", coding_run).unwrap().state, "idle");
+    assert_eq!(
+        store.get_consolidation_run("user_bob", foreign_run).unwrap().state,
+        "idle"
+    );
+    let replacement = suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&replacement_episode),
+        "metric",
+        "reply",
+    );
+    assert_eq!(replacement["queued"], true, "{replacement}");
+    assert!(model.requests.lock().unwrap().is_empty());
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert!(store.list_facts("local").unwrap().is_empty());
+    s.state.shutdown.cancel();
+}
+
+#[tokio::test]
 async fn cancelling_a_queued_receipt_does_not_abort_another_owners_running_suggestion() {
     let model = model().await;
     model.delay.store(300, Ordering::SeqCst);
@@ -909,8 +993,9 @@ async fn an_owner_cancel_stops_a_preempted_suggestion_from_resuming() {
         .await;
     assert_eq!(code, 200, "{cancelled}");
     assert_eq!(cancelled["error_class"], "cancelled", "{cancelled}");
+    assert_eq!(suggest::status(&s.state, "local")["queued"], 1);
 
-    // Settle across two slow idle waits: the cancelled job, then the second chat's.
+    // Only the second chat's queued input remains after the owner's cancel.
     let mut quiet = false;
     for _ in 0..1000 {
         let status = suggest::status(&s.state, "local");

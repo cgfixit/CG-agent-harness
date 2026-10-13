@@ -41,7 +41,7 @@ file runs unskipped somewhere. CI expectations: [docs/INSTALL.md](../docs/INSTAL
 
 - [`structured_memory.rs`](structured_memory.rs): gates, facts, proposals, episodes, explicit recall, FTS retrieval, consolidation workers.
 - [`structured_memory_phase7.rs`](structured_memory_phase7.rs): fixture-model evaluation meets documented baselines (`fixtures/structured_memory/phase7`).
-- [`structured_memory_suggestions.rs`](structured_memory_suggestions.rs): pending-only automatic drafts; owner-scoped queue outcomes, expiry, clear, preemption and detached coding results.
+- [`structured_memory_suggestions.rs`](structured_memory_suggestions.rs): pending-only automatic drafts; owner-scoped queue outcomes, expiry, cancellation, clear, preemption; detached coding results.
 
 ## MCP
 

@@ -162,6 +162,12 @@ pub fn preempt(state: &AppState) -> bool {
     }
 }
 
+/// Drop bounded input immediately after the store accepts its owner's cancel.
+pub fn remove_cancelled_input(state: &AppState, owner: &str, run_id: &str) {
+    let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
+    queue.jobs.retain(|job| job.owner != owner || job.run != run_id);
+}
+
 pub fn clear_chat_queue(state: &AppState, owner: &str) {
     let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
     let Queue { jobs, attempts, .. } = &mut *queue;
@@ -445,9 +451,15 @@ async fn worker(state: Arc<AppState>) {
             "episode_id":job.episode,"run_id":job.run,"source":job.source.name(),"ok":result.is_ok(),
             "error_class":result.err().map(|e|e.code)}));
         // A preempted job runs again once the chat turn is done, unless the chat
-        // it came from was cleared meanwhile.
+        // it came from was cleared or its owner cancelled the run meanwhile.
         if preempted {
-            if job.source == Source::Chat && queue.running_chat_cancelled {
+            if state
+                .structured_memory
+                .as_ref()
+                .is_some_and(|store| store.is_cancel_requested(&job.run))
+            {
+                discard(&state, &job, "cancelled", &mut queue.attempts);
+            } else if job.source == Source::Chat && queue.running_chat_cancelled {
                 discard(&state, &job, "source_cleared", &mut queue.attempts);
             } else {
                 queue.jobs.push_front(job);

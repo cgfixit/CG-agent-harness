@@ -2740,6 +2740,11 @@ impl StructuredMemoryStore {
                 )
                 .map_err(sql)?;
             tx.commit().map_err(sql)?;
+            self.cancelled_runs
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(id.to_string());
+            self.cancellation_changed.notify_waiters();
             return Ok(run);
         }
         if !matches!(current.state.as_str(), "idle" | "running") {
@@ -4595,6 +4600,7 @@ mod tests {
             (stopped.state.as_str(), stopped.error_class.as_deref()),
             ("cancelled", Some(PREEMPTED_CLASS))
         );
+        assert!(!store.is_cancel_requested(&run.id));
         // The requeued suggestion resumes the run a chat turn stopped.
         let resumed = store
             .begin_suggestion_run("user_alice", ids, SUMMARIZER_VERSION)
@@ -4612,6 +4618,7 @@ mod tests {
             (cancelled.state.as_str(), cancelled.error_class.as_deref()),
             ("cancelled", Some("cancelled"))
         );
+        assert!(store.is_cancel_requested(&run.id));
         let refused = store
             .begin_suggestion_run("user_alice", ids, SUMMARIZER_VERSION)
             .unwrap();
@@ -4621,6 +4628,7 @@ mod tests {
             .begin_consolidation_run("user_alice", ids, SUMMARIZER_VERSION)
             .unwrap();
         assert_eq!(rerun.state, "running");
+        assert!(!store.is_cancel_requested(&run.id));
     }
 
     #[test]

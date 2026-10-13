@@ -163,7 +163,7 @@ runs remain separately available. Visible status does not authorize mutations.
 
 Empty candidates and filtered results are valid; failures do not fail completed
 work. Chat preempts active suggestion inference, records `cancelled/preempted`,
-and requeues the same input. Explicit owner cancellation or source clear ends
+and requeues it. Owner cancellation immediately discards queued input; source clear ends
 it. Cancellation requires an open store and matching owner, even when manual
 consolidation is off. Redaction and scanning are bounded safeguards; human review
 remains mandatory.
@@ -322,7 +322,7 @@ when they carry memory content:
 | GET | `/api/structured-memory/consolidation` | n/a (this owner's run metadata) |
 | POST | `/api/structured-memory/consolidation` | start = suggest; selected episode IDs |
 | GET | `/api/structured-memory/consolidation/{id}` | n/a |
-| POST | `/api/structured-memory/consolidation/{id}/cancel` | abort in-flight generation |
+| POST | `/api/structured-memory/consolidation/{id}/cancel` | stop queued/running work |
 
 Existing `/api/memory*` routes are unchanged. `POST /api/sessions/clear`
 accepts optional `delete_derived_episodes`. `/api/chat` and
