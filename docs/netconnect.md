@@ -132,9 +132,7 @@ Exact lines do parse as dispatch:
 | `/net ports`, `/net diag`, `/net watch` | `invoke_tier` for `port_scan`, `diagnostics`, or `passive_listen`. Refuses when `tier_may_run` is false. When the tier may run, still refuses because that tier has no tool. Does not load collectors. Exit 4. | Prints `netconnect refusal: this console does not run active tiers or device control` without loading the panel. |
 | `/net device` | Always `NETCONNECT_REFUSED`, exit 4. No collector. | Same refusal, no panel load. |
 
-So a near-miss never executes. An exact `status` or `devices` in the console refreshes the read-only panel. It does not start a tier. When `enabled` is true, that panel read does load the three passive sources, including for `/net status`. The CLI `status` command and the `netconnect_status` tool do not.
-
-`ports`, `diag`, and `watch` check the matching tier and still do not connect. Supplying an address to `invoke_tier` rechecks it with `Scope::check_target` first. An address outside the scope is `NETCONNECT_REFUSED` (`address <ip> is outside netconnect scope`). A host name is not a target.
+When `enabled` is true, the console panel read loads the three passive sources, including for `/net status`; the CLI `status` command and the `netconnect_status` tool do not. Supplying an address to `invoke_tier` rechecks it with `Scope::check_target` first. An address outside the scope is `NETCONNECT_REFUSED` (`address <ip> is outside netconnect scope`). A host name is not a target.
 
 ## Panel
 
@@ -160,9 +158,8 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 
 ## Security and trust boundaries
 
-- Gates ship closed, quoted `"true"` is off, and an empty scope refuses every tier.
-- Only the validated operator CIDRs define scope. Interface addresses do not.
-- `status` and `netconnect_status` read config without loading collectors.
+The [gate contract](../INVARIANTS.md#netconnect-is-fail-closed-and-lan-scoped) owns the shipped gates and scope rules. In addition:
+
 - `devices`, `netconnect_devices`, and the enabled panel load each passive source
   once, then remove IPv6 and out-of-scope rows. Failed guards do not load them.
 - `packets_sent` is always 0. Linux `getifaddrs` can open a netlink socket inside

@@ -14,7 +14,8 @@ the server or the shim.
 
 - Locked by: `tests/invariant_guard.rs` (source checks in both directions).
   Console-side process creation is restricted to `shim/mod.rs`, `common/process.rs`,
-  `common/mcp.rs` and `common/mcp_worker.rs`; shared runners preserve I6.
+  `common/mcp.rs`, `common/mcp_worker.rs` and `common/windows_job.rs`; shared
+  runners preserve I6.
 - Why a process, not a module: a SIGKILL'd child can leak a clone, but it cannot
   corrupt the server's memory or bypass its guard chain; the exit-code contract
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
@@ -32,8 +33,7 @@ Process map. These are the only edges - a new one changes this list and the code
   ownership, never API authority (`src/server/desktop.rs`). It also runs
   `python3 prepare-cargo.py` for `prepare_cargo` and, once natively confirmed,
   `/usr/bin/open -- <url>`.
-- **Pipeline child:** hidden `cgagentharness agentic <action>`, spawned only by
-  `src/shim` with a `shim::ACTIONS` entry.
+- **Pipeline child:** hidden `cgagentharness agentic <action>`, a `shim::ACTIONS` entry.
 - **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` in the
   sandbox wrapper. Strict Linux mode puts the hidden `cgagentharness mcp-stdio-worker`
   byte pump between them, in a transient `systemd-run` service.
@@ -364,9 +364,7 @@ writes. The network probe first connects to an owned host listener outside the
 sandbox, then requires a different network namespace and connection denial
 inside it. No public endpoint or generic nonzero exit serves as network proof.
 The job changes no host sysctl and preserves the production backend ladder.
-SIGKILL of the runner with a live grandchild is unverified. Windows Job
-Object remains a process-tree kill boundary without network or filesystem
-isolation. See `docs/CODING_PIPELINE.md#offline-cargo-verification` for preparation, required native tests,
+SIGKILL of the runner with a live grandchild is unverified. See `docs/CODING_PIPELINE.md#offline-cargo-verification` for preparation, required native tests,
 and remaining process/resource limitations.
 
 - Locked by: `tests/macos_cargo.rs` (no sandbox capability skip),
@@ -431,7 +429,7 @@ callers append inline.
 `deny.toml` and `desktop/deny.toml` ban push-telemetry and crash-reporting crates
 (OpenTelemetry, Sentry and similar) by exact name, and the two lists stay
 identical. CI runs `cargo deny check` on both lockfiles with `unsound = "all"`;
-the one advisory ignore carries a removal condition. Workflow actions are
+each advisory ignore carries a removal condition. Workflow actions are
 SHA-pinned and linted by zizmor. Rust is pinned independently: 1.88 backend, 1.90 desktop.
 
 - Locked by: `tests/invariant_guard.rs::deny_lists_ban_the_same_telemetry_crates`,

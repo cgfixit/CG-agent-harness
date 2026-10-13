@@ -29,7 +29,7 @@ default `~/.CGagentHarness`).
 | Canonical structured facts | Private `memory/structured.sqlite3`; `/memory save`, governed fact HTTP writes, or approved proposals | List with `/memory facts`; select for explicit recall or use separately gated facts-only retrieval. Saving does not itself enable prompt inclusion. |
 | Pending proposals | Same private SQLite store; a model or operator may propose | Memory panel shows content, action, category, sources and revision. Pending text is never recalled into chat. Apply/Reject requires a reason. |
 | Episodes | Private bounded metadata from successful captured chat; coding metadata when coding suggestions are enabled; optional human `semantic_summary` | Provenance and consolidation input. Never injected into chat or indexed by FTS. Metadata is not a durable fact. |
-| Facts search index | Derived, contentless FTS5 index in the structured store | Lexical search over facts only. No embeddings, vector database, episode search or RAG fusion. |
+| Facts search index | Derived, contentless FTS5 index in the structured store | Lexical search over facts only; no episode search. |
 | Detached coding jobs / run records | Owner-scoped jobs; shared underlying pipeline run records | Evidence about a coding run, not automatically injected memory. The completion-suggestion hook only uses the initiating account's current completed run. |
 
 `session_summary` and `insight` are categories, not storage systems. A generated
@@ -101,8 +101,7 @@ structured_memory:
   auto_retrieval: true
 ```
 
-Slash overrides take precedence. After restart, use `/memory capture on` and
-enable any other overlays needed for this recipe. To enable gates separately,
+Slash overrides take precedence over these keys. To enable gates separately,
 follow the [enable order](STRUCTURED_MEMORY.md#enable-order).
 
 ## Automatic suggestions and review
@@ -146,9 +145,8 @@ or model inference. Plain language such as "remember this" does not run the
 command. It may produce a draft when suggestions are enabled, but cannot approve
 one. Saving and retrieval remain separate.
 
-For manual-only facts, run `/memory auto-suggest-chat off`,
-`/memory auto-suggest-coding off`, and `/memory auto-consolidate off`, or set
-their config values false and restart. For a shared literal note, use `/memory add <text>`.
+For manual-only facts, see [turn automation off](#turn-automation-or-the-store-off).
+For a shared literal note, use `/memory add <text>`.
 
 ## Summarize and consolidate episodes
 
@@ -173,11 +171,10 @@ pending proposals. It does **not** create or update facts; review them as above.
 Manual selection of summary-less episodes still runs but has worse quality:
 metadata alone is not a source of facts.
 
-With `auto_consolidation` on, a bounded idle worker may claim the episode. It requires
-nonblank human summaries, unexpired `none`/`pending` episodes and no running
-owner batch, waits for the generation gate, and never preempts chat. A completed
-suggestion batch marks its episode done; later summary edits do not reset it for
-automatic replay. Manual consolidation remains available.
+With `auto_consolidation` on, a bounded idle worker may claim summarized
+episodes ([eligibility](STRUCTURED_MEMORY.md#consolidation)); it never preempts
+chat, and later summary edits do not reset a completed batch for automatic
+replay. Manual consolidation remains available.
 
 ## Retrieve and inspect
 
@@ -214,7 +211,8 @@ budget.
 ## Turn automation or the store off
 
 To keep manual facts but stop capture and suggestions, leave the store enabled
-and disable both `auto_suggest_*` switches, `auto_consolidation`, and capture.
+and turn off `/memory auto-suggest-chat`, `/memory auto-suggest-coding`,
+`/memory auto-consolidate` and `/memory capture` (or their config keys).
 Saved facts and pending proposals remain. To stop opening the database, set
 `enabled: false` and restart. This does not delete it or disable pinned notes,
 persona, or chat-history persistence. Successful exchanges still enter the

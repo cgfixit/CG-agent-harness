@@ -24,9 +24,8 @@ standing checklist.
    TLS recovery](SECURE_RESEARCH.md). After restart, `/model use grok` or
    `/model use claude` selects that cloud provider. Local prompt context is
    excluded; the coding planner remains separate.
-5. Web starts enabled with an empty URL allowlist. An administrator grants sources
-   with `/web allow`; operators can then ask chat to fetch permitted URLs or search
-   Google. `/web pages` and `/web research` retain permitted-page retrieval.
+5. Web starts enabled with an empty URL allowlist; an administrator grants
+   sources with `/web allow` ([web permissions](SECURE_RESEARCH.md#web-permissions)).
    Launch fetches no content. With the shipped local model tag installed, chat
    needs no config edit. `/model list` and
    `/model use <exact-tag>` select another installed chat model.
@@ -61,9 +60,8 @@ separately from `Contents/Resources/COMMIT` when comparing app copies.
 
 Desktop and headless `serve` load managed keys from the OS credential
 store (macOS Keychain, Linux Secret Service, Windows Credential Manager). The
-service name includes the canonical home, so two homes do not share entries.
-The keyring target uses the platform default: a macOS keychain domain or the sole
-Windows credential name. An inherited environment value wins, including empty.
+service name includes the canonical home, so two homes do not share entries. An
+inherited environment value wins, including empty.
 A one-time migration reads legacy home `.env`: each managed line is written,
 read back, and removed only after the values match. Unknown lines stay. A failed
 store write or verify leaves that line, shows a setup warning without the value,
@@ -75,16 +73,9 @@ preserved; fresh homes enable accounts and roles. No desktop session elevation e
 
 Settings save and clear go to the OS store. If it is unavailable, save is refused
 and `.env` is unchanged. Literal `security.allow_plaintext_key_file: true`
-(default false, restart required) enables the legacy private `.env`; quoted
-`"true"` stays off. On Unix, reads require a regular, singly linked file owned by
-the current uid with mode 0600. On Windows, reads require a regular non-reparse
-file owned by the effective user with a verifiable DACL that allows only that
-user. The Windows writer creates and verifies an empty stage with an explicit owner
-and protected DACL, then writes, syncs and replaces through that handle.
-The reader verifies owner and DACL but does not require the DACL's
-protected flag. Unsafe or unreadable files refuse startup. SerpAPI key changes
-apply immediately; other keys need a restart.
-A SerpAPI key selects API-backed Google results without a Google page grant;
+(default false, restart required) enables the legacy private `.env` under the
+[file checks](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store);
+unsafe or unreadable files refuse startup. A SerpAPI key selects API-backed Google results without a Google page grant;
 linked pages still require URL permission. Without a key, public Google may hit
 JavaScript or CAPTCHA blocks. Other provider gates
 remain independent. Loading a key never grants content, account, or repository-write
@@ -172,12 +163,9 @@ if its endpoint is unavailable; no runtime is automatically switched.
 When local fallback is enabled, HTTP success is insufficient; inventory must list
 the exact model. A missing primary permits fallback; two missing tags leave the
 primary degraded. Disabled fallback makes no inventory request, and no other tag
-is substituted. `models.local_llm.inventory`
-sets a default 2-second timeout and 262144-byte response cap; supported bounds
-are 0.1–30 seconds and 1024–1048576 bytes. Fallback retains its separate
-`probe_timeout_sec` (default 1.5, now validated to 0.1–30 finite seconds).
-Inventory refuses malformed values. Existing homes without this block retain
-their old limits without a config rewrite.
+is substituted. `models.local_llm.inventory` bounds the probe (default 2 s and
+262144 bytes; 0.1–30 s and 1024–1048576 bytes); fallback keeps its separate
+`probe_timeout_sec` (default 1.5 s, 0.1–30). Malformed values are refused.
 
 **Choose repository and prepare offline** runs the bundled `prepare-cargo.py`
 with fixed arguments and an actual native folder choice. Python 3, Cargo, the
@@ -297,7 +285,8 @@ run records, workspaces, credentials and sessions. There is no automatic reset.
 
 To uninstall, quit and move only the app to Trash. Removing the application home
 is a separate, optional destructive action after backing up wanted data; it is
-not part of uninstall. The per-user focus directory under `/private/tmp` contains
+not part of uninstall. `scripts/reset-macos.sh` prints the home and Keychain
+entries it would delete, and removes them only with `--yes`. The per-user focus directory under `/private/tmp` contains
 only lock/socket files, no credentials. No persistent service needs removal.
 
 ## Primary references

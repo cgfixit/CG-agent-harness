@@ -7,11 +7,9 @@ and [coding](CODING_PIPELINE.md) requirements.
 ## Build requirements
 
 Check the installed bundle's `Contents/Resources/COMMIT` or source checkout;
-the Cargo package version does not identify these capabilities. Current main
-has retained-summary completeness metadata, the read-only Spend view, bounded
-MCP diagnostics, and the versioned durable notification outbox.
-`GET /api/notifications` and version-2 envelopes identify this interface. See
-[process lifecycle](PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics) for MCP diagnostics.
+the Cargo package version does not identify these capabilities.
+`GET /api/notifications` and version-2 envelopes identify the notification
+interface.
 
 [Analytics](ANALYTICS.md) combines this ledger summary with session/coding
 metrics, preserving completeness and pricing semantics.
@@ -159,8 +157,7 @@ pending rows (`authority_revoked`) and leaves every other destination's secret
 and deliveries alone. `CGAGENTHARNESS_WEBHOOK_TOKEN` remains only as a legacy
 bootstrap, and only when every enabled bearer destination belongs to one owner.
 A second owner's bearer destination is refused at startup unless `bearers.json`
-has that destination's own secret. The house token is never copied onto another
-owner. No signing-secret or payload-content adapter is enabled implicitly.
+has that destination's own secret. No signing-secret or payload-content adapter is enabled implicitly.
 Credentials are absent from the outbox, status responses, event payloads and
 content-free delivery audit records.
 
@@ -175,8 +172,7 @@ account, startup destination revision,
 subscription, grant, and credential. Disk changes can revoke startup authority,
 not add it. Destination changes or owner disablement, deletion, or demotion stop
 later attempts; an active request may finish. Malformed config refuses delivery.
-This creates only outbound requests, with no listener, commands, tunnel, or
-public memory API.
+This creates only outbound requests, with no listener.
 
 Public receivers require HTTPS. Loopback, RFC1918, and IPv6 unique-local receivers
 need an exact URL in `notifications.private_url_allowlist`, which accepts eight.

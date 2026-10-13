@@ -57,8 +57,9 @@ settings guidance](INSTALL.md#which-settings-take-effect-where) for those fields
 
 ## Refusal and recovery
 
-An unreadable file, symlink on Unix, non-regular file, invalid UTF-8/YAML, more than
-1 MiB of config, or an invalid limit returns `CONFIG_RELOAD_INVALID`. A mixed
+An unreadable or [non-private](INSTALL.md#home-and-optional-credentials) file,
+symlink on Unix, non-regular file, invalid UTF-8/YAML, more than 1 MiB of
+config, or an invalid limit returns `CONFIG_RELOAD_INVALID`. A mixed
 candidate changing anything outside the allowlist returns
 `CONFIG_RESTART_REQUIRED`. Both preserve **all** running limits. Restore invalid or unsupported edits and
 retry, or restart with a valid complete configuration. Error messages and audit never

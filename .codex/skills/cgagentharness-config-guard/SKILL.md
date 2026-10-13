@@ -30,7 +30,7 @@ is not evidence.
 | H6 | FAIL | Loopback posture: serve binds loopback only; model `base_url` examples stay `127.0.0.1`; non-loopback refused in code |
 | H7 | FAIL | Mode/write-enabled defaults alone cannot authorize mutation. Fresh disk policy also requires master/deepagent/clone-write gates, reason, confirm and the disable-only kill switch (`tests/write_policy.rs`) |
 | H8 | FAIL | `policy.prompt_filter.banned_patterns` length stays aligned with the documentary CyClaw-port count (asserted 40 in `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`) |
-| H9 | FAIL | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agents_md`) |
+| H9 | FAIL | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agent_instruction_files`) |
 
 ## Run
 

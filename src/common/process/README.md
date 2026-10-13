@@ -1,6 +1,6 @@
 # src/common/process
 
-Platform halves of the argv-list subprocess runner in `../process.rs`: `unix.rs`
+The Unix half of the argv-list subprocess runner in `../process.rs`: `unix.rs`
 captures output over nonblocking pipes under one deadline and byte ceiling.
-Every subprocess in the crate goes through this runner; there is no shell-string
-path.
+There is no shell-string path; MCP stdio children have their own owner in
+`../mcp.rs` ([lifecycle](../../../docs/PROCESS_LIFECYCLE.md)).

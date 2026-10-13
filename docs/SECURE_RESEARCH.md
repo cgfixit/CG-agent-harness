@@ -55,10 +55,8 @@ that a submitted account change was rejected; refresh before retrying it.
 | Portal operator (`operator`) | Chat; enabled permitted fetch/search/research; own sessions/jobs/schedules, shared notes/persona and authorized coding workflows; own password/logout | Users/roles, global keys, web enablement/allowlist changes, provider security configuration |
 | Auditor (`audit`) | Minimal status, designated redacted `/api/audit`, own password/logout | Chat/research/jobs, shared operational data, keys, user administration, other mutations |
 
-The account bar displays the signed-in role. An Auditor sees a permission refusal
-in **Sessions** and a read-only `/status` with minimal details; chat, web, users
-and API Keys remain unavailable to that role. This presentation does not grant
-additional backend permissions. Audit request records identify the actor and
+The account bar displays the signed-in role; an Auditor sees a permission refusal
+in **Sessions** and a minimal read-only `/status`. Audit request records identify the actor and
 matched route, without passwords, session tokens, query bodies, or keys; the
 auditor projection exposes only those redacted fields.
 
@@ -121,11 +119,10 @@ must stage and review coding work again. There is no implicit sharing or account
 reassignment. Unknown-schema, unreadable and interrupted staged files remain for
 manual recovery; clearing history cannot invent their owner.
 
-Detached job and schedule management uses the same owner boundary. Old ownerless
-job records remain on disk outside account APIs. Schedule dispatch rechecks the
-current account role and disabled/password-change state; revocation stops later
-occurrences. Account deletion does not reassign retained records to a newly
-created account with the same username.
+Detached job and schedule management uses the same owner boundary
+([contract](../INVARIANTS.md#session-export-and-transcript-search-stay-on-the-machine));
+schedule dispatch rechecks the current account, so revocation stops later
+occurrences.
 
 ## HTTPS and native trust
 
@@ -135,9 +132,7 @@ private `tls/server.pem` (0600, directory 0700). SANs cover `localhost`,
 `127.0.0.1`, and `::1`. The material is reused across restarts and checked for
 name, time validity and key consistency. Invalid/expired material refuses startup;
 there is no HTTP fallback. Explicit `tls.enabled: false` is the legacy HTTP choice.
-The loopback HTTPS listener accepts TLS 1.3 only. This policy is explicit on the
-server configuration, independent of dependency feature unification. Outbound
-public-web clients retain their existing verified TLS compatibility.
+The loopback HTTPS listener accepts TLS 1.3 only. Outbound public-web clients retain their existing verified TLS compatibility.
 
 The desktop receives certificate DER and fingerprint through its owned sidecar's
 challenge and PID handshake. Readiness verifies that leaf before HTTP. WKWebView
@@ -269,10 +264,8 @@ Direct commands:
 /web fetch https://doc.rust-lang.org/book/ch01-01-installation.html
 /web allow https://www.veeam.com/* https://example.org/* --group vendors
 /web check https://www.veeam.com/ https://example.org/ --group vendors
-/web fetch https://www.veeam.com/ https://example.org/ --group vendors
 /web research --group vendors Compare the backup approaches
 /web research --url https://www.veeam.com/ Summarize products and permitted internal links
-/web allow https://example.com/docs/* https://example.com/robots.txt --group docs
 /web pages --group docs widget_open
 /web research --group docs How does widget_open fail?
 /web cancel
@@ -334,8 +327,7 @@ An active nonempty key selects the fixed `https://serpapi.com/search.json` Googl
 backend. The API receives the chosen keyword query, engine, result count and its key;
 it receives neither the full chat history nor harness account credentials.
 The key appears only in the fixed provider's HTTPS request query, never in
-user-facing URLs, model context, returned metadata or error messages. Responses reflecting the credential in extracted listings are refused.
-Returned destination URLs never receive the key. The API client retains public
+user-facing URLs, model context, returned metadata or error messages. Responses reflecting the credential in extracted listings are refused. The API client retains public
 DNS pinning, shared concurrency, no proxy/redirect/retry/pooling, and finite
 header/body/time bounds. With web enabled, SerpAPI listings need no Google URL
 grant.
@@ -373,11 +365,9 @@ A `fetch` batch validates all targets before any request and shares page, byte,
 time and per-site limits. Partial reads show coverage/failures rather than
 claiming complete success.
 
-Every content request resolves once, rejects any non-public/mixed address set,
-and pins only the checked addresses to the actual connection while preserving
-TLS hostname validation. Connection reuse, resolver fallback, retries, proxies,
-redirects, compression and cookies cannot broaden that request. The exact child
-URL is fetched. Bounds cover queueing, DNS, headers, body, time and cancellation.
+Every content request is DNS-pinned to checked public addresses with TLS hostname
+validation and no reuse, retries, proxies, redirects, compression or cookies
+([contract](../INVARIANTS.md#public-web-evidence-requires-current-content-permission)).
 The HTML parser removes executable/hidden/navigation content and retains headings,
 paragraphs, tables, lists and code. Extracts keep canonical URLs, hashes, fetch
 age, validators, extraction version and original passage offsets.
@@ -438,13 +428,11 @@ or legacy bootstrap. Mutation CSRF remains `X-CyClaw-CSRF`. Forwarding headers
 are refused, and reverse proxies are unsupported. The dedicated
 [machine gateway](MCP_SERVER.md) does not inherit console authority.
 
-Sessions, transcript search/export, jobs, and schedules are account scoped; see
-[session ownership](#session-ownership-and-legacy-adoption). Run records, spend,
-persona, pinned notes, model selection, and public-page cache are shared among
-authorized operators and administrators. This is not universal tenant isolation.
+Ownership follows [session ownership](#session-ownership-and-legacy-adoption)
+and the shared-resource list in [SECURITY.md](../SECURITY.md#local-authority-and-shared-resources).
 Research questions, answers, controller state, and web selections belong to the
-initiating random account identity, so a recreated username inherits nothing. Auth-off mode uses owner `local`. Deleted
-accounts can leave private selections on disk, inaccessible to replacements.
+initiating random account identity, so a recreated username inherits nothing.
+Deleted accounts can leave private selections on disk, inaccessible to replacements.
 
 A non-empty allowlist is an armed content surface: every granted origin or path
 is reachable by chat `web_fetch`, still bounded by `web.chat_tool_calls`. Fresh
@@ -453,11 +441,10 @@ authorize their destinations: a follow-up `web_fetch` must independently pass th
 current allowlist and account checks.
 
 Policy is rechecked at dispatch, cache/index/context reads, storage, model use,
-and delivery. Revocation discards in-flight evidence and blocks revoked cache,
-even under overlapping rules. Research rechecks the account before model calls
-and delivery. It cannot erase earlier conversation text or model requests. URL
-policy covers only web, not OS, model, or GitHub connections. Content, provider,
-and account permissions remain separate.
+and delivery; revocation discards in-flight evidence and blocks revoked cache,
+but cannot erase earlier conversation text or model requests
+([contract](../INVARIANTS.md#public-web-evidence-requires-current-content-permission)).
+URL policy covers only web, not OS, model, or GitHub connections.
 
 ## Reproducible evidence
 

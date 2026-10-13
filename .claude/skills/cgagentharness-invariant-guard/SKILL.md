@@ -51,7 +51,7 @@ Core paths that always trigger this skill:
 
    | Concern | Primary evidence |
    |---|---|
-   | I6 import / spawn boundary | `invariant_guard::server_side_never_references_agentic`, `only_the_shim_spawns_a_child_on_the_server_side`, `agentic_side_never_references_server_or_shim`, ACTIONS whitelist assertions |
+   | I6 import / spawn boundary | `invariant_guard::server_side_never_references_agentic`, `only_registered_process_owners_construct_commands`, `agentic_side_never_references_server_or_shim`, ACTIONS whitelist assertions |
    | Shipped gates closed | `invariant_guard::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
    | Write-policy / kill switch | `real_repo_loop::writer_gates_in_order_and_plan_integrity`, `invariant_guard::writer_kill_switch_is_and_not_or` |
    | Git / approval binding | `real_repo_loop::loop_iterates_on_feedback_then_accepts_and_finalizes`, `agentic_foundations::manifest_digest_binds_files_and_head` |

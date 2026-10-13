@@ -30,8 +30,7 @@ agent, chat, or loop tool.
    ```
 
    Merge these fields into the existing configuration; do not replace other
-   sections. All gateway fields are restart-only and outside config reload's
-   23-key allowlist. Port collision or invalid configuration refuses startup.
+   sections. All gateway fields are restart-only. Port collision or invalid configuration refuses startup.
 3. Mint a key using the local CLI. Use an existing account's stable `user_id`
    (`GET /api/auth/whoami`, or `GET /api/auth/users` for an administrator), `local` for an intentionally
    auth-disabled home's namespace, or an explicit `user_*` operator namespace:
@@ -69,7 +68,7 @@ mode-0600 files with no symlinks or hard links; the home must be mode `0700`.
 Windows does not apply those Unix mode checks or install a database ACL. It
 relies on the operator home's private ACL and SQLite's no-follow open. Missing,
 corrupt, oversized, or unknown-schema storage refuses instead of recreating
-credentials. Unix `0700` and `0600` are not claimed on Windows.
+credentials.
 
 ```sh
 cgagentharness mcp-key list

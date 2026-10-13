@@ -30,7 +30,7 @@ INFERENCE only if labeled as such and never replaces cargo evidence.
 | H6 | FAIL | Loopback posture: serve binds loopback only; model `base_url` examples stay `127.0.0.1`; non-loopback refused in code |
 | H7 | WARN | `writes_enabled: true` in shipped agentic block is **armed-by-construction** and held closed by `agentic.enabled` + kill switch — changing either without an invariant statement is conscious risk |
 | H8 | WARN | `policy.prompt_filter.banned_patterns` length stays aligned with the documentary CyClaw-port count (asserted 40 in `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`) |
-| H9 | WARN | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agents_md`) |
+| H9 | WARN | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agent_instruction_files`) |
 
 ## Run
 

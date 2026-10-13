@@ -12,12 +12,11 @@ lifecycle policy; upgrades grant no ambient access. Disabled, undeclared MCP
 stays off. Declarations require restart, outside the 23-key reload allowlist.
 
 Keep `config.yaml` private; see [configuration storage](INSTALL.md#home-and-optional-credentials).
-An `env` value or complete SSE `url` accepts `env:NAME` from the inherited
-environment. References resolve once at startup; missing/invalid references
-refuse. No substring or recursive expansion occurs; raw YAML retains references.
-Restart after credential changes. Blocked destination names are stripped;
-reserved harness-secret/runtime-hijack source names are refused for both
-transports. API Keys cannot store arbitrary MCP variables.
+An `env` value or complete SSE `url` accepts whole-value `env:NAME` from the
+inherited environment ([resolution rules](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)).
+Blocked destination names are stripped; reserved harness-secret/runtime-hijack
+source names are refused for both transports. API Keys cannot store arbitrary
+MCP variables.
 
 ```yaml
 mcp:

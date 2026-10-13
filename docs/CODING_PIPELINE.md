@@ -62,11 +62,10 @@ agentic:
         enabled: false
 ```
 
-Master enablement, write mode, writes-enabled, deepagent enablement, and clone
-write capability must all permit an operation. The emergency switch only disables
-writes. Approval, push, and publication each require a reason and confirmation;
-an earlier approval does not authorize a later boundary.
-Keep cloud-provider child flags false when their parent allow flag is false.
+All five write gates must permit an operation, and approval, push and
+publication each need their own reason and confirmation
+([contract](../INVARIANTS.md#every-write-to-a-repository-is-gated)). Keep
+cloud-provider child flags false when their parent allow flag is false.
 
 Quit/relaunch the app, or stop/restart `serve`, to load the changed configuration.
 
@@ -98,9 +97,8 @@ Back in the app or browser console:
 2. `/agent checks` lists supported profiles. The server default is `cargo-test`;
    `/agent checks cargo-fmt` is an example explicit selection.
 3. `/agent read src/lib.rs#L40-L80` declares a bounded existing-file window
-   (up to 8 staged paths). A **local** planner may also request reads (see
-   [Bounded edits](#bounded-edits)); a **cloud** planner refuses every
-   model-requested read so undeclared files are not sent off-machine —
+   (up to 8 staged paths). A **local** planner may also request reads
+   ([Bounded edits](#bounded-edits)); a **cloud** planner refuses them, so
    pre-stage what that run may see here.
 4. `/agent confirm <reason>` submits a job and returns its ID immediately.
 5. `/agent job <job-id>` resumes monitoring after refresh and account login; the optional harness key may stay empty.
@@ -164,11 +162,10 @@ this environment variable before launch (shown here for `serve`):
 export CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1
 ```
 
-Values `1`, `true`, `yes`, and `on` block writes regardless of YAML. The switch
-cannot enable writes. An export in another shell does not update a running process.
-Restart with the switch set, or revoke `agentic.writes_enabled` to block later
-mutation boundaries in an active child. Neither action cancels a running Git
-command or check. Scope and budget changes also refuse later writes.
+Values `1`, `true`, `yes`, and `on` block writes regardless of YAML; the switch
+cannot enable writes. It is read at process start, so restart with it set, or
+revoke `agentic.writes_enabled` to block later mutation boundaries in an active
+child. Neither cancels a running Git command or check.
 
 ## Bounded edits
 
@@ -315,10 +312,9 @@ and a provider enabled, `--confirm-online` does not send a short plan prompt —
 it sends the real working context for that iteration. `real_repo_loop.rs`
 assembles, per attempt: the operator's instruction, the approved plan (if
 staged), the prior attempt's check failure feedback, and a bounded excerpt of
-every source file the run declared or read via `/agent read` — `edits::collect`
-caps each file at `MAX_READ_FILE_CHARS` (4,000 chars), caps the aggregate at
-`MAX_TOTAL_READ_CHARS` (12,000 chars), can omit unreadable or oversized files,
-and an explicit `#L10-L40` selector sends only that window — plus any GitHub
+every source file the run declared or read via `/agent read` (within the
+[read ceilings](#bounded-edits); an explicit `#L10-L40` selector sends only
+that window) plus any GitHub
 PR/issue text pulled into session context. A cloud planner never expands that
 read set from model `=== READ ===` output (`apply_model_read_request` refuses
 with `cloud_proposer`); a local planner still refuses denied basenames
@@ -479,15 +475,11 @@ remain unchanged.
 
 The HTTP server reaches agentic execution only through twelve actions in
 `src/shim`. `tests/invariant_guard.rs` checks `src/server`, `src/shim`, `src/llm`,
-and `src/common` against the agentic tree in both directions. It checks literal
-agentic paths and parses `use` bindings, including grouped, nested, renamed,
-inline-module, and function-local imports. Comments do not trigger the guard.
-Child exit codes are the entire
-interface: `0` ok, `2` failed, `3` env/config, `4` write refused. A non-zero
-child exit is HTTP 200 with `ok=false`; only shim failures map to 400/502/504
-and a disabled layer to 409.
+`src/common` and `src/netconnect` against the agentic tree in both directions:
+literal and direct paths, macro indirection, and `use` bindings including
+grouped, nested, renamed, inline-module and function-local imports. Comments do
+not trigger the guard. Child exit codes are the entire interface
+([I6](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline)).
 
-Model output is judged before it lands; see [Bounded edits](#bounded-edits).
-`writer.rs` is a different gate: it guards the single executable GitHub write
-op (`gh pr create`, always `--draft`). Quoted YAML `"true"` does not enable a
-gate.
+`writer.rs` is a separate gate from [bounded edits](#bounded-edits): it guards
+the single executable GitHub write op (`gh pr create`, always `--draft`).
