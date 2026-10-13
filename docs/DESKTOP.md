@@ -277,14 +277,13 @@ resources, CLI/worker dispatch, policy tests, extracted ZIP, and dependencies. A
 the exact SHA for 14 days. Backend CI remains separate. A successful build is not
 GUI acceptance.
 
-Tauri is pinned to 2.11.5. Its `tauri-utils` uses upstream commit
-`dd725f4b13c30a86b398ccc59eb498f151f461c5` to replace the unmaintained rust-unic
-chain with ICU through urlpattern 0.6. This requires desktop Rust 1.90; backend
-Rust 1.88 remains independently pinned. Each crate owns its lockfile; see
-[dependency maintenance](DEPENDENCIES.md). Desktop dependency policy uses the same
-advisory/license/source rules, scoped to both shipped macOS targets,
-with only that upstream Git repository permitted and no advisory exceptions.
-This unreleased upstream pin needs review when moving to a published replacement.
+Tauri is pinned to `=2.12.0`, whose published `tauri-utils` 2.10.1 replaces the
+unmaintained rust-unic chain with ICU through urlpattern 0.6; the upstream-commit
+patch that carried this fix was removed once Cargo reported it unused. Desktop
+Rust 1.90 is required; backend Rust 1.88 remains independently pinned. Each crate
+owns its lockfile; see [dependency maintenance](DEPENDENCIES.md). Desktop
+dependency policy uses the same advisory/license/source rules, scoped to both
+shipped macOS targets, with no Git source in the lock and no advisory exceptions.
 
 ## Update, recovery and uninstall
 
@@ -304,7 +303,6 @@ only lock/socket files, no credentials. No persistent service needs removal.
 
 - [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 - [Sidecars](https://v2.tauri.app/develop/sidecar/), [capabilities](https://v2.tauri.app/security/capabilities/), [CSP](https://v2.tauri.app/security/csp/)
-- [Navigation APIs](https://docs.rs/tauri/2.11.5/tauri/webview/struct.WebviewWindowBuilder.html)
+- [Navigation APIs](https://docs.rs/tauri/2.12.0/tauri/webview/struct.WebviewWindowBuilder.html)
 - [macOS bundles](https://v2.tauri.app/distribute/macos-application-bundle/), [signing](https://v2.tauri.app/distribute/sign/macos/)
 - [macOS WebDriver limitation](https://v2.tauri.app/develop/tests/webdriver/)
-- [Pinned upstream dependency change](https://github.com/tauri-apps/tauri/commit/dd725f4b13c30a86b398ccc59eb498f151f461c5)

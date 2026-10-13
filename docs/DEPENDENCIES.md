@@ -18,7 +18,8 @@ preparation are separate from the application's offline Cargo verification.
 | `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
 | `keyring` 3.6.3 | OS store for managed provider keys. Features: `apple-native`, `windows-native`, `sync-secret-service`, `crypto-rust`. Linux uses Secret Service, not keyutils. A Linux build needs `pkg-config` and `libdbus-1-dev` |
 
-Reqwest 0.12 already serves both crates. Public fetching disables proxies,
+Reqwest 0.12 serves both crates; the desktop lock also resolves Reqwest 0.13
+for Tauri's own Apple-target dependencies, a warn-only duplicate. Public fetching disables proxies,
 redirects, compression, retries and connection reuse and pins checked DNS
 addresses. Native/CLI certificate pinning applies only to the owned loopback
 service; it never replaces public-web trust. Feature review is manual: cargo-deny
@@ -35,11 +36,13 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
 - The backend license allowlist names only identifiers the locked graph uses.
   Add an identifier deliberately, with the crate that needs it, rather than
   keeping unused allowances that would admit a future dependency silently.
-- Desktop Tauri is pinned to 2.11.5. The immutable upstream `tauri-utils`
-  patch at `dd725f4b13c30a86b398ccc59eb498f151f461c5` replaces its unmaintained
-  rust-unic dependency path. The desktop policy allows only that upstream Git
-  source. Remove the patch only after a published
-  version provides the same dependency correction and passes native packaging.
+- Desktop Tauri is pinned to `=2.12.0`. Its published `tauri-utils` 2.10.1
+  routes `urlpattern` 0.6 through ICU, so no `unic-*` crate remains in the
+  desktop lock. The former `[patch.crates-io]` override of `tauri-utils` at
+  upstream `dd725f4b13c30a86b398ccc59eb498f151f461c5` carried that correction
+  until Tauri 2.12 shipped it; Cargo then reported the patch unused, and it was
+  removed on 2026-10-13 without changing the resolved graph. No Git source
+  remains in the desktop lock; `cargo tree` must show none.
 - Backend `deny.toml` temporarily ignores `RUSTSEC-2026-0253` for Tantivy 0.26.2's
   `lru` 0.16 dependency (locked at 0.16.4). The policy records its
   `StoreReader` call-pattern justification and removal condition, Tantivy 0.27
