@@ -268,6 +268,7 @@ Direct commands:
 /web check https://www.veeam.com/ https://example.org/ --group vendors
 /web research --group vendors Compare the backup approaches
 /web research --url https://www.veeam.com/ Summarize products and permitted internal links
+/web allow https://example.com/docs/* https://example.com/robots.txt --group docs
 /web pages --group docs widget_open
 /web research --group docs How does widget_open fail?
 /web cancel
