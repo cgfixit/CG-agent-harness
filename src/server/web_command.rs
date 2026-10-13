@@ -260,8 +260,13 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
         }
         "search" | "pages" | "research" => {
             let query = positional.join(" ");
-            if query.trim().is_empty() || query.chars().count() > 200 {
-                return Err("Supply a question or query of 1–200 characters.".into());
+            let limit = if action == "research" {
+                super::schemas::MAX_WEB_RESEARCH_QUESTION_LEN
+            } else {
+                super::schemas::MAX_WEB_QUERY_LEN
+            };
+            if query.trim().is_empty() || query.chars().count() > limit {
+                return Err(format!("Supply a question or query of 1–{limit} characters."));
             }
             for url in &urls {
                 canonical_url(url).map_err(|e| e.message)?;
@@ -413,5 +418,17 @@ mod tests {
         assert!(parse(Some("search"), "--engine bing tokio")
             .unwrap_err()
             .contains("google or pages"));
+    }
+    #[test]
+    fn research_question_limit_is_separate_from_search_queries() {
+        for action in ["search", "pages", "research"] {
+            let limit = if action == "research" { 2000 } else { 200 };
+            let query = "界".repeat(limit);
+            let command = parse(Some(action), &query).unwrap();
+            assert_eq!(command.body["query"], query);
+            assert!(parse(Some(action), &format!("{query}x"))
+                .unwrap_err()
+                .contains(&format!("1–{limit}")));
+        }
     }
 }
