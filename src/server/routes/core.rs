@@ -61,14 +61,20 @@ pub async fn status(
     let sessions = state.store.for_owner(&owner).list();
     let total_tokens: u64 = sessions.iter().filter_map(|s| s["tokens"]["total"].as_u64()).sum();
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    // One model read, so model, provider, base_url and tools agree.
-    let model = state.current_model();
+    // One settings snapshot, so model and saved-override notice agree.
+    // An automatic fallback is an effective backend, not a saved selection.
+    let model = if settings.selected_model.trim().is_empty() {
+        state.backend.model.clone()
+    } else {
+        settings.selected_model.clone()
+    };
     let cloud = state.cloud_chat.is_cloud_selection(&model);
     Json(json!({
         "version": crate::VERSION,
         "model": model,
         "configured_model": state.cfg.str_or("models.local_llm.model", &state.backend.model),
-        "selection_overrides_config": model != state.cfg.str_or("models.local_llm.model", &state.backend.model).trim(),
+        "selection_overrides_config": !settings.selected_model.trim().is_empty()
+            && settings.selected_model != state.cfg.str_or("models.local_llm.model", &state.backend.model).trim(),
         "provider": state.provider_for(&model),
         "api_key_optional": state.api_key_optional,
         "base_url": if cloud { Value::Null } else { json!(state.backend.base_url) },

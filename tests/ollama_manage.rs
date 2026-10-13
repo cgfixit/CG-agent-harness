@@ -781,3 +781,33 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
         assert_eq!(saved.selected_model_config.as_deref(), Some("qwen3.8:27b-mlx"));
     }
 }
+
+#[tokio::test]
+async fn status_distinguishes_automatic_fallback_from_a_saved_model_override() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.model", "missing-primary:fixture")
+            .with("models.local_llm.fallback.enabled", "true")
+            .with("models.local_llm.fallback.provider", "ollama")
+            .with(
+                "models.local_llm.fallback.base_url",
+                &format!("\"{}\"", ollama.openai_url()),
+            )
+            .with("models.local_llm.fallback.model", "qwen3.8:27b-mlx"),
+    )
+    .await;
+    assert_eq!(s.state.backend.source, "fallback");
+    let (code, status) = s.get_json("/api/status").await;
+    assert_eq!(code, 200);
+    assert_eq!(status["model"], "qwen3.8:27b-mlx");
+    assert_eq!(status["configured_model"], "missing-primary:fixture");
+    assert_eq!(status["selection_overrides_config"], false);
+    assert!(s.state.settings.lock().unwrap().selected_model.is_empty());
+    let (code, body) = s.post_json("/api/model", json!({"model":"longctx:q8"})).await;
+    assert_eq!(code, 200, "{body}");
+    let (_, status) = s.get_json("/api/status").await;
+    assert_eq!(status["model"], "longctx:q8");
+    assert_eq!(status["selection_overrides_config"], true);
+}
