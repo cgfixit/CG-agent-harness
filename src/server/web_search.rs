@@ -1222,8 +1222,8 @@ mod tests {
     }
 
     #[test]
-    fn rule_cap_is_bounded_and_defaults_to_the_shipped_32() {
-        for value in ["1", "32", "100", "256", "0", "257", "-1", "1.5", "\"32\"", "null"] {
+    fn rule_cap_is_bounded_and_defaults_to_the_shipped_64() {
+        for value in ["1", "32", "64", "100", "256", "0", "257", "-1", "1.5", "\"32\"", "null"] {
             let cfg = AppConfig::from_str(&format!("web: {{max_rules: {value}}}"), Path::new("config.yaml")).unwrap();
             let parsed = Limits::load(&cfg);
             if let Ok(n @ 1..=256) = value.parse::<usize>() {
