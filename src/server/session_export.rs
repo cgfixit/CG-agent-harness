@@ -143,12 +143,12 @@ fn export_filename(n: u64) -> Result<PathBuf> {
     Ok(PathBuf::from(s))
 }
 
-pub fn write_export(home: &Home, session: &Session, attachment_pins: Vec<ExportAttachmentPin>) -> Result<PathBuf> {
+/// Write `markdown` (from [`render`]) as this session's export file.
+pub fn write_export(home: &Home, session: &Session, markdown: &str) -> Result<PathBuf> {
     let n = crate::server::sessions::session_id_u64(&session.session_id)?;
     let dir = home.exports_dir();
     let path = dir.join(export_filename(n)?);
-    let bytes = render(session, attachment_pins).into_bytes();
-    write_atomic(&path, &bytes, Some(0o600))?;
+    write_atomic(&path, markdown.as_bytes(), Some(0o600))?;
     Ok(path)
 }
 
@@ -197,11 +197,11 @@ mod tests {
         home.ensure_layout().unwrap();
         let mut s = session("hi");
         s.session_id = "../etc/passwd".into();
-        assert!(write_export(&home, &s, Vec::new()).is_err());
+        assert!(write_export(&home, &s, &render(&s, Vec::new())).is_err());
         assert!(!home.exports_dir().join("../etc/passwd.md").exists());
         assert!(!home.exports_dir().join("aaaaaaaaaaaa.md").exists());
         let ok = session("hi");
-        let written = write_export(&home, &ok, Vec::new()).unwrap();
+        let written = write_export(&home, &ok, &render(&ok, Vec::new())).unwrap();
         assert_eq!(written.file_name().unwrap(), "aaaaaaaaaaaa.md");
         assert!(written.is_file());
     }

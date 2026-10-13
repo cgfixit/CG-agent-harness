@@ -58,11 +58,11 @@ impl Scanner {
     }
 
     /// The enforced core set only (what `/memory add` and soul writes use).
-    pub fn core() -> Self {
-        // Compiled once; clones share the compiled programs.
+    /// Compiled once and borrowed, so per-request callers allocate nothing.
+    pub fn core() -> &'static Self {
         static CORE: std::sync::LazyLock<Scanner> =
             std::sync::LazyLock::new(|| Scanner::from_patterns(CORE_INJECTION_PATTERNS));
-        CORE.clone()
+        &CORE
     }
 
     /// OWASP set union the configured `banned_patterns`, order preserving, deduplicated.
