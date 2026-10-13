@@ -582,6 +582,11 @@ fn registry_propose_apply_gates_and_lock() {
         .unwrap_err()
         .message
         .contains("reason"));
+    assert!(reg
+        .apply_skill(&spec, "\u{200B}\u{FEFF}", true)
+        .unwrap_err()
+        .message
+        .contains("reason"));
     let unconfirmed = reg.apply_skill(&spec, "because", false).unwrap_err();
     assert_eq!(unconfirmed.code, "AGENTIC_WRITE_REFUSED");
     assert_eq!(unconfirmed.details["failed_gate"], "confirm");

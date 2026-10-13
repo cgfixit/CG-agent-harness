@@ -96,6 +96,23 @@ pub fn tail_chars(text: &str, max: usize) -> &str {
     }
 }
 
+/// Unicode format controls that render as nothing: zero-width spaces and
+/// joiners, bidi marks, the BOM, soft hyphen and tag characters. Shared by the
+/// `.git` name-equivalence fold and every human-reason gate.
+pub fn is_format_control(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00AD | 0x061C | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xE0001 | 0xE0020..=0xE007F
+    )
+}
+
+/// True when `text` carries no visible content: every character is Unicode
+/// white space or a format control. `str::trim` alone keeps a zero-width
+/// space, so a reason gate that only trims accepts an invisible "reason".
+pub fn is_visibly_blank(text: &str) -> bool {
+    text.chars().all(|c| c.is_whitespace() || is_format_control(c))
+}
+
 /// Levenshtein distance in characters, for "did you mean" suggestions.
 pub fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -120,6 +137,26 @@ pub const MAX_PR_BODY_BYTES: usize = 65_536;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn visibly_blank_covers_white_space_and_format_controls_but_not_text() {
+        for blank in [
+            "",
+            " ",
+            "\t\n",
+            "\u{00A0}\u{3000}",
+            "\u{200B}",
+            "\u{FEFF}",
+            " \u{2060} ",
+            "\u{00AD}\u{200D}\u{200E}",
+            "\u{E0001}\u{E0020}",
+        ] {
+            assert!(super::is_visibly_blank(blank), "{blank:?}");
+        }
+        for text in ["x", " x ", "\u{200B}x\u{200B}", "reviewed", "日本", "-"] {
+            assert!(!super::is_visibly_blank(text), "{text:?}");
+        }
+    }
+
     #[test]
     fn tail_chars_keeps_the_last_chars_on_char_boundaries() {
         let reference =
