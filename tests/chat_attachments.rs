@@ -195,7 +195,7 @@ async fn oversize_fourth_mismatch_and_content_length_lie_leave_no_blob() {
 }
 
 #[tokio::test]
-async fn cloud_loop_and_agent_ignore_attachments() {
+async fn cloud_and_agent_refuse_attachments_but_local_loop_uses_them() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let (status, stored) = post_files(&s, &[("note.md", b"secret-attachment-body")]).await;
@@ -242,8 +242,11 @@ async fn cloud_loop_and_agent_ignore_attachments() {
             }),
         )
         .await;
-    assert_eq!(status, 400, "{body}");
-    assert_eq!(code(&body), "ATTACHMENT_SURFACE_FORBIDDEN");
+    assert_eq!(status, 200, "{body}");
+    assert!(model.last_request().unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("secret-attachment-body"));
     let (status, body) = s
         .post_json(
             "/api/chat",
@@ -254,8 +257,11 @@ async fn cloud_loop_and_agent_ignore_attachments() {
             }),
         )
         .await;
-    assert_eq!(status, 400, "{body}");
-    assert_eq!(code(&body), "ATTACHMENT_SURFACE_FORBIDDEN");
+    assert_eq!(status, 200, "{body}");
+    assert!(model.last_request().unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("secret-attachment-body"));
 
     let (status, body) = s
         .post_json(
@@ -362,8 +368,7 @@ async fn docx_uses_local_prompt_fence_and_refuses_hostile_xml() {
             json!({"message": "continue", "session_id":sid, "loop":true, "attachment_ids":[id]}),
         )
         .await;
-    assert_eq!(status, 400, "{body}");
-    assert_eq!(code(&body), "ATTACHMENT_SURFACE_FORBIDDEN");
+    assert_eq!(status, 200, "{body}");
 }
 
 #[tokio::test]
@@ -431,7 +436,7 @@ async fn merge_pins_keep_the_other_owner_and_fence_for_rejects_cross_owner() {
 }
 
 #[tokio::test]
-async fn local_chat_bm25_hit_keeps_honesty_and_stays_off_loop() {
+async fn local_chat_and_loop_bm25_hits_stay_fenced() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let mut body = "padding ".repeat(400);
@@ -461,20 +466,15 @@ async fn local_chat_bm25_hit_keeps_honesty_and_stays_off_loop() {
             json!({"message": "continue", "session_id": sid, "loop": true}),
         )
         .await;
-    assert_eq!(status, 400, "{loop_body}");
-    assert_eq!(code(&loop_body), "ATTACHMENT_SURFACE_FORBIDDEN");
-    assert_eq!(loop_body["detail"]["details"]["live_pins"], 1, "{loop_body}");
-    assert!(
-        loop_body["detail"]["message"]
-            .as_str()
-            .unwrap_or("")
-            .contains("/session new"),
-        "{loop_body}"
-    );
+    assert_eq!(status, 200, "{loop_body}");
+    let sent = model.last_request().unwrap();
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("UNIQUE_NEEDLE_TOKEN"));
+    assert!(system.contains("<<<ATTACHMENT_DATA>>>"));
 }
 
 #[tokio::test]
-async fn notes_corpus_injects_local_chat_and_stays_off_loop() {
+async fn notes_corpus_injects_local_chat_and_loop() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let (ct, body) = multipart(&[("ops.md", b"NOTES_CORPUS_NEEDLE in the runbook")]);
@@ -512,8 +512,8 @@ async fn notes_corpus_injects_local_chat_and_stays_off_loop() {
     assert_eq!(status, 200, "{loop_body}");
     let sent = model.last_request().unwrap();
     let system = sent["messages"][0]["content"].as_str().unwrap();
-    assert!(!system.contains("NOTES_CORPUS_NEEDLE"), "{system}");
-    assert!(!system.contains("source=notes_corpus"));
+    assert!(system.contains("NOTES_CORPUS_NEEDLE"), "{system}");
+    assert!(system.contains("source=notes_corpus"));
 }
 
 #[tokio::test]
@@ -594,4 +594,46 @@ async fn attachments_still_refuse_a_fourth_file() {
     .await;
     assert_eq!(status, 400, "{body}");
     assert_eq!(code(&body), "ATTACHMENT_TOO_MANY");
+}
+
+#[tokio::test]
+async fn unpin_preserves_blobs_and_refuses_inflight_repin() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, stored) = post_files(&s, &[("brief.txt", b"UNPIN_TEST_NEEDLE")]).await;
+    let id = stored["attachments"][0]["id"].as_str().unwrap();
+    let (status, chat) = s
+        .post_json("/api/chat", json!({"message":"read","attachment_ids":[id]}))
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    let sid = chat["session_id"].as_str().unwrap();
+    let path = format!("/api/sessions/{sid}/attachment-pins");
+    assert_eq!(s.client.delete(s.url(&path)).send().await.unwrap().status(), 403);
+    let gate = s.state.generation_gate.claim("chat").unwrap();
+    assert_eq!(
+        s.req(reqwest::Method::DELETE, &path).send().await.unwrap().status(),
+        409
+    );
+    drop(gate);
+    let r = s.req(reqwest::Method::DELETE, &path).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.json::<serde_json::Value>().await.unwrap()["removed"], 1);
+    assert!(s.state.attachments.owned_blob("local", id).is_some());
+    assert!(s
+        .state
+        .store
+        .for_owner("local")
+        .get(sid)
+        .unwrap()
+        .attachment_pins
+        .is_empty());
+    assert!(s.state.store.for_owner("other").clear_attachment_pins(sid).is_err());
+    let (status, _) = s
+        .post_json("/api/chat", json!({"message":"continue","session_id":sid}))
+        .await;
+    assert_eq!(status, 200);
+    assert!(!model.last_request().unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("UNPIN_TEST_NEEDLE"));
 }

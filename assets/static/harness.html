@@ -1837,6 +1837,7 @@ const COMMANDS = [
   ['/registry', 'combined skill, tool and connector catalog'],
   ['/session [list]', 'list saved chat sessions'],
   ['/session info', 'inspect the current session'],
+  ['/session unpin', 'clear this session’s attachment pins; keep uploaded files'],
   ['/session new [title]', 'start a fresh conversation'],
   ['/session rename <title>', 'rename the current session'],
   ['/session use <id>', 'restore a saved conversation'],
@@ -1987,6 +1988,7 @@ const COMMAND_MAN = {
   '/registry': {detail:'Lists skills, tools and connectors together.'},
   '/session [list]': {detail:'Lists saved sessions with ids, titles, message and token counts.'},
   '/session info': {detail:'Shows the current session’s id, title, model, message count and tokens.'},
+  '/session unpin': {detail:'Stops continuation, clears this session’s attachment pins, and retains uploaded files. Existing messages remain. Cloud and coding-agent turns still reject live attachment pins.'},
   '/session new [title]': {detail:'Starts a fresh conversation. Shared persona, enabled notes and web context carry over; /prompt shows what is included.'},
   '/session rename <title>': {detail:'Renames the current session.'},
   '/session use <id>': {detail:'Restores a saved session and replays its messages. Ids come from /session list or the Sessions pane.'},
@@ -2468,7 +2470,17 @@ async function runSlash(line, webCommand) {
 
       case 'session': {
         const sub = rest[0] || 'list';
-        if (sub === 'new' || sub === 'use') {
+        if (sub === 'unpin') {
+          if (rest.length !== 1) { sys('usage: /session unpin'); break; }
+          if (!currentSession) { sys('no active session'); break; }
+          await requestLoopStop();
+          if (staleReview()) break;
+          const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/attachment-pins', 'DELETE');
+          if (staleReview()) break;
+          retryAttachmentIds = null;
+          if (attachInput) { attachInput.value = ''; paintAttach(); }
+          sys('Cleared ' + r.removed + ' attachment pin(s); uploaded files and existing messages remain.');
+        } else if (sub === 'new' || sub === 'use') {
           const revision = ++sessionRevision;
           sendBtn.disabled = true;
           abortInflightSearch(); if (inflightChat) await requestLoopStop(); else stopLoop();
@@ -3342,6 +3354,10 @@ async function runSlash(line, webCommand) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
           sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
           paintGoalLoop();
+          const status = await api('/api/status');
+          if (staleReview()) break;
+          if (status.provider !== 'ollama' && status.base_url === null) { sys('Select a local model before /loop; cloud loops are unavailable.'); break; }
+          sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); web tools ' + (status.chat_tools_available ? 'available within current URL permissions' : 'off') + '. /session unpin clears pins.');
         }
         if (!sessionGoal) { sys('set a goal first: /goal <what you want done>'); break; }
         if (sub) {
@@ -3502,7 +3518,7 @@ function loopTurnPrompt(turn, total, goal) {
   const g = Array.from(String(goal || '').replace(/\s+/g, ' ').trim());
   const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1).join('') + '…' : g.join('');
   return 'Loop turn ' + turn + ' of ' + total + '. Session goal: ' + reminder + '\n' +
-    'Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
+    'Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
     'Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. ' +
     'Stay in this chat; do not request a real-repo write.';
 }
@@ -3568,7 +3584,21 @@ async function runLoopTurns() {
          settle rather than starting a model turn that overlaps them. */
       while ((inflightSearch || inflightChat) && loopState === activeLoop && !loopState.stop) await sleepMs(250);
       if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
-      const reply = await sendChat(framed, true);
+      let attachmentIds = retryAttachmentIds && retryAttachmentIds.session === currentSession ? retryAttachmentIds.ids : [];
+      const files = attachInput && attachInput.files ? Array.from(attachInput.files) : [];
+      if (files.length) {
+        const uploadSession = currentSession, uploadRevision = sessionRevision;
+        try {
+          sendBtn.disabled = true;
+          attachmentIds = await uploadChatAttachments(files);
+          if (uploadRevision !== sessionRevision || uploadSession !== currentSession || loopState !== activeLoop || activeLoop.stop) return;
+          retryAttachmentIds = {session: uploadSession, ids: attachmentIds};
+          attachInput.value = ''; paintAttach();
+        } catch (e) { showError(e); stopLoop('loop stopped — attachment upload failed'); return; }
+        finally { releaseSendGate(); }
+      }
+      const reply = await sendChat(framed, true, {attachment_ids: attachmentIds});
+      if (reply !== null && retryAttachmentIds && retryAttachmentIds.session === currentSession) retryAttachmentIds = null;
       if (loopState !== activeLoop) return;
       if (!loopState || loopState.stop) {
         stopLoop(loopState && loopState.stop ? 'loop stop honored' : '');
@@ -3583,6 +3613,7 @@ async function runLoopTurns() {
         sys('loop turn failed (' + loopState.failures + '/' + MAX_LOOP_FAILURES + ') — /loop to retry, /loop stop to abort');
         return;
       }
+      if (loopState.blockedTool) { stopLoop('loop stopped — ' + loopState.blockedTool + '; goal remains incomplete. Check /web status and the reported permission, provider or budget error before retrying /loop.'); return; }
       loopState.failures = 0;
       loopState.remaining -= 1;
       if (loopState.lastReply && repliesNearlyRepeat(loopState.lastReply, reply)) {
@@ -3635,7 +3666,7 @@ window.addEventListener('beforeunload', function () {
   fetch('/api/chat/cancel', { method: 'POST', headers: headers, keepalive: true, credentials: 'same-origin' }).catch(function () {});
 });
 
-async function finishChat(r) {
+async function finishChat(r, asLoop) {
   promptHistory.session = null;
   if (r && r.session_id) {
     /* A session the server just auto-created starts with style off; the
@@ -3654,6 +3685,8 @@ async function finishChat(r) {
     loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
   }
   renderChatWebTools(r && r.web_tools);
+  const failedTool = ((r && r.web_tools) || []).find(tool => tool.ok === false);
+  if (asLoop && loopState && failedTool) loopState.blockedTool = failedTool.code || 'WEB_TOOL_FAILED';
   agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
         ' tok · session total ' + (tally.total || 0));
   /* The server compared this turn with the window Ollama loaded (/api/ps);
@@ -3703,14 +3736,14 @@ async function sendChat(text, asLoop, extra) {
     body.retrieve = true;
     if (extra.retrieve_query) body.retrieve_query = extra.retrieve_query;
   }
-  if (!asLoop && extra && extra.attachment_ids && extra.attachment_ids.length) {
+  if (extra && extra.attachment_ids && extra.attachment_ids.length) {
     body.attachment_ids = extra.attachment_ids;
   }
   try {
     const r = await api('/api/chat', 'POST', body, undefined, onDelta);
     if (revision !== sessionRevision) return null;
     if (preview) { preview.remove(); preview = null; }
-    return finishChat(r);
+    return finishChat(r, asLoop);
   } catch (e) {
     if (revision !== sessionRevision) return null;
     if (e && e.name === 'AbortError') return null;
@@ -3724,7 +3757,7 @@ async function sendChat(text, asLoop, extra) {
         const retry = await api('/api/chat', 'POST', body, undefined, onDelta);
         if (revision !== sessionRevision) return null;
         if (preview) { preview.remove(); preview = null; }
-        return finishChat(retry);
+        return finishChat(retry, asLoop);
       } catch (e2) {
         if (revision !== sessionRevision) return null;
         if (e2 && e2.name === 'AbortError') return null;
@@ -3733,7 +3766,7 @@ async function sendChat(text, asLoop, extra) {
         return null;
       }
     }
-    if (asLoop && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT' || code === 'LOOP_IN_FLIGHT' || code === 'CHAT_BUSY' || code === 'ATTACHMENT_SURFACE_FORBIDDEN')) {
+    if (asLoop && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT' || code === 'LOOP_IN_FLIGHT' || code === 'CHAT_BUSY' || code === 'ATTACHMENT_SURFACE_FORBIDDEN' || code.startsWith('WEB_'))) {
       showError(e);
       stopLoop('loop stopped — ' + code);
       return null;

@@ -177,7 +177,7 @@ pub struct PromptInputs<'a> {
     pub memory_budget: MemoryBudget,
     pub memory_enabled: bool,
     pub web_enabled: bool,
-    /// Tools actually attached to this request; loop turns remain tool-free.
+    /// Tools actually attached to this local chat or loop request.
     pub chat_tools_enabled: bool,
     pub attachment_fence: Option<&'a str>,
 }

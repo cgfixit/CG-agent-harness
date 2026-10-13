@@ -31,7 +31,7 @@ persona, or reply never authorizes commands, commits, pushes, or publication.
 
 Fresh chat has no assigned repository or automatic coding skills. When web is
 enabled, local chat can dispatch only the bounded read-only `web_search` and
-`web_fetch` tools; `/loop` remains tool-free. Chat cannot inspect local files or
+`web_fetch` tools, including local `/loop` turns. Chat cannot inspect local files or
 certify live wiring. Use command results as evidence and the coding workflow for
 execution.
 
@@ -497,10 +497,12 @@ clears them. Uploads count toward the home quota until session or owner cleanup.
 Sessions retain at most 12 owner-scoped blob IDs. The next local turn may
 BM25-search them and inject matching passages into the attachment fence.
 `.md` and `.txt` notes ingested at `/api/notes-corpus` use a separate home jail
-but share that local prompt budget (`source=notes_corpus`). Cloud chat, `/loop`,
-and `/agent` refuse attachment IDs or live pins with
-`ATTACHMENT_SURFACE_FORBIDDEN` and never receive notes-corpus bytes. Preview
-proves only local-chat context.
+but share that local prompt budget (`source=notes_corpus`). Local loops include
+these sources; cloud chat and `/agent` refuse attachment IDs or live pins with
+`ATTACHMENT_SURFACE_FORBIDDEN` and never receive notes-corpus bytes. `/session unpin` clears session references, keeping blobs and messages.
+Loop startup reports live pins/web availability and uploads selected files.
+Tool failures stop continuation with the goal incomplete; fix the reported
+permission/provider/budget problem before retrying `/loop`.
 Unsupported formats are refused. Clipped sections explicitly say they are incomplete.
 
 The notes corpus has multipart ingest, list, and delete

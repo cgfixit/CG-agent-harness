@@ -92,7 +92,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
 }
 
 #[tokio::test]
-async fn loop_prompt_does_not_advertise_tools_even_with_web_enabled() {
+async fn loop_advertises_only_permitted_web_tool_types_when_enabled() {
     let model = common::start_mock_model().await;
     let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
     s.post_json("/api/web", json!({"enabled":true})).await;
@@ -100,7 +100,7 @@ async fn loop_prompt_does_not_advertise_tools_even_with_web_enabled() {
     let id = session["session_id"].as_str().unwrap();
     s.post_json(
         &format!("/api/sessions/{id}/goal"),
-        json!({"goal":"Explain arithmetic"}),
+        json!({"goal":format!("Explain arithmetic. {} FINAL_CONSTRAINT: use the operator data only.", "Check each input and assumption. ".repeat(45))}),
     )
     .await;
     let (status, body) = s
@@ -108,14 +108,35 @@ async fn loop_prompt_does_not_advertise_tools_even_with_web_enabled() {
         .await;
     assert_eq!(status, 200, "{body}");
     let request = model.last_request().unwrap();
-    assert!(request.get("tools").is_none());
+    let names: Vec<_> = request["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["web_search", "web_fetch"]);
     let prompt = request["messages"][0]["content"].as_str().unwrap();
-    assert!(!prompt.contains("you MAY call:"));
-    assert!(prompt.contains("This turn has no chat-callable web tools"));
+    assert!(prompt.contains("you MAY call:"));
+    assert!(prompt.contains("FINAL_CONSTRAINT: use the operator data only."));
+    s.post_json("/api/web", json!({"enabled":false})).await;
+    let (status, body) = s
+        .post_json("/api/chat", json!({"message":"continue", "session_id":id, "loop":true}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model.last_request().unwrap().get("tools").is_none());
 }
 
 #[tokio::test]
 async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
+    check_fetch_evidence(false).await;
+}
+
+#[tokio::test]
+async fn loop_fetches_authorized_urls_and_keeps_denial_and_tool_boundaries() {
+    check_fetch_evidence(true).await;
+}
+
+async fn check_fetch_evidence(loop_turn: bool) {
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let reads = Arc::new(AtomicUsize::new(0));
     let recorded = requests.clone();
@@ -157,8 +178,18 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
             .0,
         200
     );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Research the allowed source and verify version 7. Do not run shell commands."}),
+    )
+    .await;
     let (status, reply) = s
-        .post_json("/api/chat", json!({"message":"Read the allowed URL"}))
+        .post_json(
+            "/api/chat",
+            json!({"message":"Read the allowed URL", "session_id":sid, "loop":loop_turn}),
+        )
         .await;
     assert_eq!(status, 200, "{reply}");
     assert!(reply["reply"].as_str().unwrap().contains("Version 7"));
@@ -180,19 +211,32 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
     );
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     assert_eq!(requests.lock().unwrap().len(), 2);
-    let (_, denied) = s.post_json("/api/chat", json!({"message":"deny"})).await;
+    let (_, denied) = s
+        .post_json(
+            "/api/chat",
+            json!({"message":"deny", "session_id":sid, "loop":loop_turn}),
+        )
+        .await;
     assert_eq!(denied["web_tools"][0]["ok"], false);
     assert_eq!(
         reads.load(Ordering::SeqCst),
         1,
         "denied destination must not be fetched"
     );
-    let (status, unsafe_tool) = s.post_json("/api/chat", json!({"message":"unsafe"})).await;
+    let (status, unsafe_tool) = s
+        .post_json(
+            "/api/chat",
+            json!({"message":"unsafe", "session_id":sid, "loop":loop_turn}),
+        )
+        .await;
     assert_eq!(status, 502);
     assert_eq!(common::code(&unsafe_tool), "WEB_TOOL_DENIED");
     s.post_json("/api/web", json!({"enabled":false})).await;
     let (_, off) = s
-        .post_json("/api/chat", json!({"message":"Read the allowed URL"}))
+        .post_json(
+            "/api/chat",
+            json!({"message":"Read the allowed URL", "session_id":sid, "loop":loop_turn}),
+        )
         .await;
     assert_eq!(off["reply"], "Web tools unavailable");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
@@ -791,6 +835,15 @@ async fn web_chat_counts_the_tool_definitions_once_per_round() {
 
 #[tokio::test]
 async fn cancel_during_fetch_prevents_followup_model_call_and_releases_turn() {
+    check_fetch_cancel(false).await;
+}
+
+#[tokio::test]
+async fn loop_cancel_during_fetch_releases_turn_and_allows_recovery() {
+    check_fetch_cancel(true).await;
+}
+
+async fn check_fetch_cancel(loop_turn: bool) {
     let started = Arc::new(tokio::sync::Notify::new());
     let signal = started.clone();
     let router = Router::new().route(
@@ -819,7 +872,14 @@ async fn cancel_during_fetch_prevents_followup_model_call_and_releases_turn() {
     .await;
     s.post_json("/api/web/allow", json!({"url":"http://docs.example/slow"}))
         .await;
-    let read = s.post_json("/api/chat", json!({"message":"Read slow URL"}));
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal":"Read slow URL"}))
+        .await;
+    let read = s.post_json(
+        "/api/chat",
+        json!({"message":"Read slow URL", "loop":loop_turn, "session_id":sid}),
+    );
     let cancel = async {
         started.notified().await;
         s.post_json("/api/chat/cancel", json!({})).await

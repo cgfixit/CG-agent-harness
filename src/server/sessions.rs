@@ -629,6 +629,16 @@ impl OwnedSessionStore<'_> {
         self.write(&session)
     }
 
+    pub fn clear_attachment_pins(&self, session_id: &str) -> Result<usize> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        let before = session.attachment_pins.len();
+        session.attachment_pins.retain(|pin| pin.owner != self.owner);
+        let removed = before - session.attachment_pins.len();
+        self.write(&session)?;
+        Ok(removed)
+    }
+
     pub fn merge_attachment_pins(
         &self,
         session_id: &str,

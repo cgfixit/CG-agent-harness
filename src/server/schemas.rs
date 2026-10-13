@@ -139,7 +139,7 @@ pub struct ChatRequest {
     /// Optional FTS query for `retrieve`. When empty, the user message is used.
     #[serde(default)]
     pub retrieve_query: Option<String>,
-    /// Local-chat-only blob ids from `POST /api/chat/attachments`. Cloud, `/loop`, and `/agent` refuse them.
+    /// Local chat/loop blob ids from `POST /api/chat/attachments`. Cloud and `/agent` refuse them.
     #[serde(default)]
     pub attachment_ids: Vec<String>,
 }

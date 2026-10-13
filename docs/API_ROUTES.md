@@ -51,11 +51,12 @@ session timeouts.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
-| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs. Concurrent bodies use `attachments.max_concurrent_uploads`, else 503. UUID blobs use `0600`. Local chat retains up to 12 owner-scoped IDs per session for fenced BM25 context. Cloud, `/loop` and `/agent` refuse saved/requested attachment IDs with `ATTACHMENT_SURFACE_FORBIDDEN`. |
+| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs. Concurrent bodies use `attachments.max_concurrent_uploads`, else 503. UUID blobs use `0600`. Local chat/loops retain 12 owner-scoped IDs for fenced BM25 context. Cloud and `/agent` refuse attachments (`ATTACHMENT_SURFACE_FORBIDDEN`). |
 | GET | `/api/notes-corpus` | List owned jailed `.md`/`.txt` metadata (ID, MIME, SHA prefix, bytes), without bodies or host paths. |
 | POST | `/api/notes-corpus` | Copy/classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` under `notes_corpus.*` caps; local chat/preview only. |
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
+| DELETE | `/api/sessions/{session_id}/attachment-pins` | Owner-scoped unpin; keeps blobs/messages; refuses during generation. Session GET reports `live_attachment_pins`. |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
 | GET | `/api/ollama/inventory` | Live loopback tags (`/model list`) plus configured-model readiness |
 | GET | `/api/ollama/profile` | Selected-model facts (`/model profile`) |

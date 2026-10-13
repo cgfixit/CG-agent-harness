@@ -80,7 +80,10 @@ the error code. See `docs/MCP_CLIENT.md` and
 Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
 and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`
-and require `confirm: true`. MCP tools are not attached to `/loop`. `GET /api/mcp`
+and require `confirm: true`. MCP tools are not attached to `/loop`. Local loops reuse chat attachment retrieval
+and permitted web search/fetch, with the same owner, URL, token and cancellation
+boundaries. Cloud loops remain refused. Unpinning is owner-scoped and excludes
+in-flight generation; it removes references, retaining blobs and prior messages. `GET /api/mcp`
 discloses declared server and tool names to authenticated accounts; declarations
 are shared. Calls and refusals are audited (`mcp_stdio_spawn`,
 `mcp_sse_call`, `mcp_refused`) without arguments or payloads. The mutation CSRF token
