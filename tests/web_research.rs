@@ -467,7 +467,9 @@ async fn a_selection_change_mid_run_keeps_the_starting_model() {
     assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
     let research = s.post_json("/api/web/research", json!({"query":"connection retry","urls":[url]}));
     let switch = async {
-        entered.notified().await;
+        tokio::time::timeout(std::time::Duration::from_secs(30), entered.notified())
+            .await
+            .expect("research reached its first model call");
         let (status, body) = s.post_json("/api/model", json!({"model":"switched-model"})).await;
         assert_eq!(status, 200, "{body}");
         release.notify_one();
@@ -475,6 +477,11 @@ async fn a_selection_change_mid_run_keeps_the_starting_model() {
     let ((status, result), ()) = tokio::join!(research, switch);
     assert_eq!(status, 200, "{result}");
     let seen = seen.lock().unwrap().clone();
+    assert_eq!(
+        result["model"],
+        seen[0].as_str(),
+        "the result names the model that answered"
+    );
     assert!(seen.len() >= 2, "planning and synthesis both called: {seen:?}");
     assert!(
         seen.iter().all(|m| m == &seen[0] && m != "switched-model"),
