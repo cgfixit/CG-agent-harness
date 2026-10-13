@@ -32,7 +32,10 @@ async fn batch_grants_checks_and_fetches_preserve_permission_and_atomicity() {
         &model.base_url(),
         ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..ServerOptions::default().with("web.pace_ms", "100")
+            // The cap check below fills the allowlist, so pin the cap instead of the shipped default.
+            ..ServerOptions::default()
+                .with("web.pace_ms", "100")
+                .with("web.max_rules", "32")
         },
     )
     .await;

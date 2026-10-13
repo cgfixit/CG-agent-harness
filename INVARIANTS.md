@@ -174,7 +174,7 @@ See [migration and operation](docs/SECURE_RESEARCH.md).
 Fresh web settings are enabled with an empty URL allowlist: content reads need
 an administrator's grant. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is versioned and bounded by
-restart-only `web.max_rules` (default 32); over-cap, malformed, missing,
+restart-only `web.max_rules` (default 64); over-cap, malformed, missing,
 unreadable or partially invalid policy refuses access.
 Exact HTTP(S) rules retain scheme, port, path and query identity.
 Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
