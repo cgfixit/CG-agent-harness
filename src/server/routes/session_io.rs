@@ -119,8 +119,8 @@ pub async fn export_session(
         ));
     }
     let pins = export_pins_for_owner(&session, &owner, &state.attachments);
-    write_export(&state.home, &session, pins.clone()).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let body = session_export::render(&session, pins);
+    write_export(&state.home, &session, &body).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let mut resp = Response::new(Body::from(body));
     *resp.status_mut() = StatusCode::OK;
     resp.headers_mut().insert(

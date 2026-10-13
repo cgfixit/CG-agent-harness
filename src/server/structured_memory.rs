@@ -1024,7 +1024,7 @@ impl StructuredMemoryStore {
             path,
             conn: Mutex::new(conn),
             limits: Limits::from_config(cfg),
-            scanner: Scanner::core(),
+            scanner: Scanner::core().clone(),
             health: Mutex::new(EpisodeHealth::default()),
             retrieval_health: Mutex::new(RetrievalHealth {
                 index_ready,
@@ -3532,7 +3532,7 @@ mod tests {
                         },
                     )
                     .unwrap();
-                store.scanner = Scanner::core();
+                store.scanner = Scanner::core().clone();
                 let err = store
                     .decide_proposal("local", &proposal.id, &proposal.revision, true, "reviewed fixture")
                     .unwrap_err();
