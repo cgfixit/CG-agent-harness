@@ -3352,7 +3352,8 @@ async function runSlash(line, webCommand) {
            tab may have changed it since this page last read it. */
         if (currentSession) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
-          sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
+          if (loopState !== activeLoop || turnRevision !== sessionRevision || turnSession !== currentSession) return;
+        sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
           paintGoalLoop();
           const status = await api('/api/status');
           if (staleReview()) break;
@@ -3569,21 +3570,25 @@ async function runLoopTurns() {
   try {
     while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
+      const turnSession = currentSession, turnRevision = sessionRevision;
       /* Restate the stored goal, not this page's copy: another tab may have
          changed or cleared it since the last turn. */
       try {
         const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
+        if (loopState !== activeLoop || turnRevision !== sessionRevision || turnSession !== currentSession) return;
         sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
         paintGoalLoop();
       } catch (_) { /* keep the last known goal; the turn reports its own failure */ }
-      if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
+      if (loopState !== activeLoop) return;
+      if (activeLoop.stop) { stopLoop('loop stop honored'); return; }
       if (!sessionGoal) { stopLoop('loop stopped — the session goal was cleared'); return; }
       const framed = loopTurnPrompt(turn, loopState.total, sessionGoal);
       /* A routed search started during the cooldown owns the gate, and so
          does the chat turn it may fall back to on a router failure; let both
          settle rather than starting a model turn that overlaps them. */
       while ((inflightSearch || inflightChat) && loopState === activeLoop && !loopState.stop) await sleepMs(250);
-      if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
+      if (loopState !== activeLoop) return;
+      if (activeLoop.stop) { stopLoop('loop stop honored'); return; }
       let attachmentIds = retryAttachmentIds && retryAttachmentIds.session === currentSession ? retryAttachmentIds.ids : [];
       const files = attachInput && attachInput.files ? Array.from(attachInput.files) : [];
       if (files.length) {
@@ -3594,12 +3599,14 @@ async function runLoopTurns() {
           if (uploadRevision !== sessionRevision || uploadSession !== currentSession || loopState !== activeLoop || activeLoop.stop) return;
           retryAttachmentIds = {session: uploadSession, ids: attachmentIds};
           attachInput.value = ''; paintAttach();
-        } catch (e) { showError(e); stopLoop('loop stopped — attachment upload failed'); return; }
-        finally { releaseSendGate(); }
+        } catch (e) {
+          if (loopState === activeLoop && uploadRevision === sessionRevision && uploadSession === currentSession) { showError(e); stopLoop('loop stopped — attachment upload failed'); }
+          return;
+        } finally { if (uploadRevision === sessionRevision && uploadSession === currentSession) releaseSendGate(); }
       }
       const reply = await sendChat(framed, true, {attachment_ids: attachmentIds});
-      if (reply !== null && retryAttachmentIds && retryAttachmentIds.session === currentSession) retryAttachmentIds = null;
-      if (loopState !== activeLoop) return;
+      if (loopState !== activeLoop || turnRevision !== sessionRevision || turnSession !== currentSession) return;
+      if (reply !== null && retryAttachmentIds && retryAttachmentIds.session === turnSession) retryAttachmentIds = null;
       if (!loopState || loopState.stop) {
         stopLoop(loopState && loopState.stop ? 'loop stop honored' : '');
         return;
