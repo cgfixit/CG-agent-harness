@@ -100,7 +100,9 @@ async fn loop_advertises_only_permitted_web_tool_types_when_enabled() {
     let id = session["session_id"].as_str().unwrap();
     s.post_json(
         &format!("/api/sessions/{id}/goal"),
-        json!({"goal":format!("Explain arithmetic. {} FINAL_CONSTRAINT: use the operator data only.", "Check each input and assumption. ".repeat(45))}),
+        // Explicit `all`: this test covers the web on/off toggle, not the shipped
+        // goal default (`fetch`), which the goal_web_default tests lock.
+        json!({"goal":format!("Explain arithmetic. {} FINAL_CONSTRAINT: use the operator data only.", "Check each input and assumption. ".repeat(45)), "web_mode":"all"}),
     )
     .await;
     let (status, body) = s

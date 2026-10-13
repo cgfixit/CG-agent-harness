@@ -104,7 +104,7 @@ const server=createServer(async(req,res)=>{
   const session={session_id:String(++sequence).padStart(12,'0'),goal:'',messages:[],title:'fixture',tokens:{total:0}};sessions.set(session.session_id,session);reply(session,201);return;
  }
  const match=path.match(/^\/api\/sessions\/([^/]+)(\/goal)?$/);
- if(match){const s=sessions.get(match[1]);if(match[2])s.goal=body.goal;reply(s);return;}
+ if(match){const s=sessions.get(match[1]);if(match[2]){s.goal=body.goal;s.goal_web_mode=s.goal?(body.web_mode??'fetch'):'all';}reply(s);return;}
  if(path.match(/^\/api\/sessions\/[^/]+\/goal-stage$/)){
   const session=sessions.get(path.split('/')[3]);
   if(req.method==='POST')session.stage={stage_id:'a'.repeat(32),goal:session.goal,request:{instruction:session.goal,branch:body.branch,commit_message:'Fixture goal',checks:null,read_files:[],max_iterations:1,goal_stage:{session_id:session.session_id,stage_id:'a'.repeat(32)}}};
@@ -538,7 +538,7 @@ try {
  const retrieveReq=requests.filter(r=>r[1]==='/api/chat').at(-1)[2];
  assert.equal(retrieveReq.retrieve,true);assert.equal(retrieveReq.retrieve_query,'metric');assert.equal(retrieveReq.message,'metric');
  assert.ok(retrieveReq.session_id,'force-include chat keeps the current session');
- await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal (web: all):")'));
+ await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal (web: fetch):")'));
  let before=chatCount();await send('/loop 2');assert.equal(chatCount(),before+1);assert.equal(await evaluate('loopState.remaining'),1);
  await send('/loop');assert.equal(chatCount(),before+2);assert.equal(await evaluate('loopState'),null);
  mode='repeat';await send('/loop 3');await send('/loop');assert.equal(await evaluate('loopState'),null);
