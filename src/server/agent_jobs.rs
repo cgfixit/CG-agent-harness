@@ -219,6 +219,7 @@ impl JobStore {
     }
 
     /// Register a running job. Evicts the oldest terminal jobs beyond the cap.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn insert_running(&self, owner: &str, job_id: &str, action: &str, handle: JoinHandle<()>) {
         // Compatibility for in-memory fixture users; runtime routes use the
         // fallible entrypoint and never launch work before durable registration.

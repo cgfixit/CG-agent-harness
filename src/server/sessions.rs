@@ -491,6 +491,7 @@ impl OwnedSessionStore<'_> {
             "Could not clear all session history; some files may already be deleted. Retry after resolving the storage error."))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn record_exchange(
         &self,
         session_id: &str,
