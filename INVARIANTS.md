@@ -177,6 +177,11 @@ Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
 query strings; exact rules retain exact query identity. Encoded query data cannot
 alter host/path, and encoded path escapes stay refused. Legacy rows authorize
 only their stored fetch target, never old host aliases or implicit descendants.
+Wildcard grants can send arbitrary query data to the allowed site. This is an
+accepted single-operator residual, not prevented by prompt framing; use exact
+URL grants to restrict queries. Injected extracts are bounded, fenced and labeled
+untrusted, with embedded instructions denied authority. This does not prove a
+model will ignore hostile text.
 
 The fetcher resolves once, rejects mixed/special-use answers, then pins
 Reqwest to validated addresses with a refusing fallback. Public TLS stays on;
