@@ -200,6 +200,8 @@ pub fn new_csrf_token() -> String {
     super::random_urlsafe(32)
 }
 
+/// Digest a high-entropy minted token for storage or lookup. Passwords must use
+/// `hash_password` / `verify_password`, which apply the scrypt cost policy.
 pub fn hash_token(token: &str) -> String {
     super::sha256_hex(token)
 }
