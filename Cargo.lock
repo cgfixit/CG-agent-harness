@@ -565,7 +565,6 @@ dependencies = [
  "cron",
  "dunce",
  "futures-util",
- "hex",
  "html5ever",
  "keyring",
  "libc",

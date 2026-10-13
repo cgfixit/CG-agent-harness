@@ -51,7 +51,15 @@ pub fn random_hex(n: usize) -> String {
     use rand::RngCore;
     let mut buf = vec![0u8; n];
     rand::thread_rng().fill_bytes(&mut buf);
-    hex::encode(buf)
+    hex_lower(&buf)
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Whether `value` is exactly `len` lowercase ASCII hexadecimal bytes.
@@ -77,7 +85,7 @@ pub fn sha256_hex(text: &str) -> String {
 /// SHA-256 hex digest of raw bytes.
 pub fn sha256_bytes_hex(data: &[u8]) -> String {
     use sha2::Digest;
-    hex::encode(sha2::Sha256::digest(data))
+    hex_lower(&sha2::Sha256::digest(data))
 }
 
 /// Truncate a string to at most `max` characters (not bytes).

@@ -390,10 +390,6 @@ agentic:
       claude:
         enabled: true
         model: "claude-sonnet-5"
-  harness_optimizer:
-    enabled: false
-    max_iterations: 3
-    output_dir: "data/agentic/harness_optimizer/runs"
 
 unslop:
   enabled: false
