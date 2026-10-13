@@ -101,8 +101,9 @@ structured_memory:
   auto_retrieval: true
 ```
 
-Slash overrides take precedence over these keys. To enable gates separately,
-follow the [enable order](STRUCTURED_MEMORY.md#enable-order).
+Slash overrides take precedence over these keys; after a restart, run
+`/memory capture on` and any other overlay this recipe needs. To enable gates
+separately, follow the [enable order](STRUCTURED_MEMORY.md#enable-order).
 
 ## Automatic suggestions and review
 

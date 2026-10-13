@@ -55,6 +55,7 @@ Load order: gate defaults, then `security.conf`, then `private.conf`, then
 
 Pre-push scans each commit, not the tip against the base: a key added in one
 commit and deleted in the next is still published, so it is still refused.
+This also catches `--no-verify` commits and commits from hookless clones.
 
 **Reminders.** Printed, never blocking. Answer them in the PR body.
 
@@ -117,7 +118,7 @@ The gate sees text, not intent. These rules stay with review:
 
 ## Known limits
 
-- `git commit --no-verify` skips pre-commit; pre-push still scans those commits. `git push --no-verify` skips both; CI is the backstop.
+- `git commit --no-verify` skips pre-commit; `git push --no-verify` skips both; CI is the backstop.
 - A clone that never set `core.hooksPath` has no gate.
 - An agent can set an override variable itself. The gate makes that a visible rule violation, not an impossible one.
 - Regex detection misses secrets with no known prefix and low entropy, and flags look-alike fixtures.
