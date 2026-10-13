@@ -35,8 +35,8 @@ async fn fixture() -> (String, Arc<Mutex<Vec<Value>>>) {
             }
         }),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+    let base = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (base, requests)
 }
