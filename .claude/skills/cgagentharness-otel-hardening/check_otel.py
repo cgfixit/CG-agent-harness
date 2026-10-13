@@ -295,7 +295,7 @@ DENIED_TELEMETRY_CRATE_PATTERNS: tuple[str, ...] = (
 # to re-read the changelog (SKILL.md step 3).
 LAST_VERIFIED_CRATE_PINS: dict[str, str] = {
     "reqwest": "0.12.28",
-    "rmcp": "3.4.0",
+    "rmcp": "3.5.0",
     "axum": "0.8.9",
     "rustls": "0.23.45",
     "hyper": "1.11.1",
@@ -303,7 +303,7 @@ LAST_VERIFIED_CRATE_PINS: dict[str, str] = {
     "tantivy": "0.26.2",
     "tracing-subscriber": "0.3.23",
 }
-DESKTOP_VERIFIED_CRATE_PINS: dict[str, str] = {"tauri": "2.11.5", "reqwest": "0.12.28"}
+DESKTOP_VERIFIED_CRATE_PINS: dict[str, str] = {"tauri": "2.12.0", "reqwest": "0.12.28"}
 
 # gh floor the agentic layer enforces (src/agentic/gh_client.rs DEFAULT_MIN_GH).
 EXPECTED_MIN_GH = (2, 40, 0)
@@ -470,8 +470,9 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "versions": "src/server/web_search.rs, web_policy.rs, web_research.rs",
         "enforcement": "web.enabled + exact/wildcard URL allowlist + DNS-pinned SSRF checks; proxies, "
                        "redirects, compression, retries and connection reuse disabled on the client",
-        "scope": "chat web_search/web_fetch tools", "reviewed": "2026-10-03",
-        "evidence": "policy-gated feature traffic",
+        "scope": "chat web_search/web_fetch tools", "reviewed": "2026-10-13",
+        "evidence": "policy-gated feature traffic; html5ever 0.39 (scraper's own parser, pinned directly "
+                    "for cancellable bounded parsing) has no network code",
     },
     {
         "name": "completion webhooks", "category": 3, "controls": {},
@@ -485,11 +486,15 @@ INVENTORY: tuple[dict[str, object], ...] = (
     {
         "name": "mcp clients (SSE / streamable HTTP)", "category": 3, "controls": {},
         "url": "docs/MCP_CLIENT.md",
-        "versions": "rmcp =3.4.0 + reqwest; src/server/mcp.rs",
+        "versions": "reqwest clients in src/server/mcp.rs (SSE + streamable HTTP); rmcp =3.5.0 is "
+                    "server-only here (features server, transport-streamable-http-server) behind the "
+                    "inbound memory server in src/server/mcp_server.rs",
         "enforcement": "mcp.enabled literal true, declared mcp.servers only, DNS-pinned SSRF, "
                        "sse_allow_loopback ships false, confirm: true per call",
-        "scope": "declared MCP servers", "reviewed": "2026-10-03",
-        "evidence": "policy-gated feature traffic",
+        "scope": "declared MCP servers", "reviewed": "2026-10-13",
+        "evidence": "policy-gated feature traffic; rmcp 3.4.0->3.5.0 changelog and crates.io dependency "
+                    "set read 2026-10-13: inbound Origin/header validation fixes only, no new "
+                    "dependency, no client transport feature enabled",
     },
     {
         "name": "github via gh/git (agentic reads and gated writes)", "category": 3, "controls": {},
@@ -523,12 +528,14 @@ INVENTORY: tuple[dict[str, object], ...] = (
     {
         "name": "hard-sandboxed verification children", "category": 4, "controls": {},
         "url": "docs/PROCESS_LIFECYCLE.md",
-        "versions": "bwrap (--unshare-net) > unshare --net on Linux; sandbox-exec (deny network*) on "
-                    "Darwin; Windows Job Object (process-tree kill only -- sockets keep working there)",
+        "versions": "bwrap (--unshare-net) > unshare --net on Linux; sandbox-exec deny-default profile "
+                    "on Darwin ((allow network*) only on an explicit Unrestricted grant); Windows Job "
+                    "Object (process-tree kill only -- sockets keep working there)",
         "enforcement": "src/agentic/executor/sandbox.rs fails closed when no backend probes; the "
                        "executor-runner env pairs are the second layer, and the only layer on Windows",
-        "scope": "caller-declared checks", "reviewed": "2026-10-03",
-        "evidence": "network-denial literals confirmed in sandbox_wrap.rs / sandbox.rs (T12)",
+        "scope": "caller-declared checks", "reviewed": "2026-10-13",
+        "evidence": "network-denial literals confirmed in sandbox_wrap.rs / sandbox.rs (T12); Seatbelt "
+                    "moved from (allow default)+(deny network*) to (deny default) in PR #425",
     },
     {
         "name": "netconnect passive LAN inventory", "category": 4, "controls": {},
@@ -550,11 +557,14 @@ INVENTORY: tuple[dict[str, object], ...] = (
     {
         "name": "tauri desktop shell", "category": 5, "controls": {},
         "url": "https://v2.tauri.app/",
-        "versions": "tauri =2.11.5, tauri-plugin-dialog 2, tauri-build 2; objc2/WebKit bindings",
+        "versions": "tauri =2.12.0, tauri-plugin-dialog 2, tauri-build 2; objc2/WebKit bindings",
         "enforcement": "no analytics or crash-reporting crate in desktop/Cargo.lock (T5); the webview's "
                        "own OS-level network behavior is Apple's, not this process's",
-        "scope": "desktop/", "reviewed": "2026-10-03",
-        "evidence": "T5 lock scan clean on 2026-10-03; tauri's updater plugin is NOT a dependency",
+        "scope": "desktop/", "reviewed": "2026-10-13",
+        "evidence": "T5 lock scan clean on 2026-10-13; tauri 2.11.5->2.12.0 changelog read 2026-10-13: no "
+                    "telemetry, updater or crash reporting, adds limit_navigations_to_app_bound_domains "
+                    "(a restriction), MSRV 1.90 matches the desktop pin; tauri's updater plugin is NOT a "
+                    "dependency",
     },
     {
         "name": "pure library crates", "category": 5, "controls": {},
@@ -603,6 +613,7 @@ INVENTORY_ALIASES: dict[str, str] = {
     "walkdir": "pure library crates", "zip": "pure library crates", "quick-xml": "pure library crates",
     "dunce": "pure library crates", "cap-std": "pure library crates",
     "scraper": "web search / fetch (SerpAPI, public Google, permitted URLs)",
+    "html5ever": "web search / fetch (SerpAPI, public Google, permitted URLs)",
     "robotstxt": "web search / fetch (SerpAPI, public Google, permitted URLs)",
     "libc": "pure library crates", "windows-sys": "pure library crates",
     # desktop crates
@@ -1158,19 +1169,32 @@ def check_launcher_posture(root: Path) -> None:
 def check_sandbox_network(root: Path) -> None:
     # The executor-runner pairs are the SECOND layer: the first is the sandbox
     # denying network. If those literals disappear the pairs become the only
-    # layer on every platform, which Windows already is.
+    # layer on every platform, which Windows already is. Seatbelt has been
+    # deny-default since PR #425: network is refused by `(deny default)`, and
+    # `(allow network*)` may appear exactly once, on the Unrestricted branch.
     wrap = _strip_test_tail(_read(root, "src/common/sandbox_wrap.rs") or "")
     sandbox = _strip_test_tail(_read(root, "src/agentic/executor/sandbox.rs") or "")
     bad = 0
     for label, text, needle in (("bwrap", wrap, '"--unshare-net"'),
-                                ("seatbelt", wrap, "deny network*"),
+                                ("seatbelt", wrap, "(deny default)"),
                                 ("netns", sandbox, '"--net"')):
         if needle not in text:
             fail("T12", f"{label}: network-denial literal {needle} missing from the sandbox wrapper")
             bad += 1
+    if "(allow default)" in wrap:
+        fail("T12", "seatbelt: (allow default) is back in the profile; the contract is deny-default")
+        bad += 1
+    grants = wrap.count("(allow network*)")
+    if grants != 1:
+        fail("T12", f"seatbelt: (allow network*) appears {grants} time(s); exactly one, on the Unrestricted "
+                    "branch, is the contract")
+        bad += 1
+    elif not re.search(r'NetworkPolicy::Unrestricted\s*\{\s*"\(allow network\*\)', wrap):
+        fail("T12", "seatbelt: (allow network*) is not gated by NetworkPolicy::Unrestricted")
+        bad += 1
     if not bad:
-        ok("T12", "sandbox network denial literals present (bwrap --unshare-net, seatbelt deny network*, "
-                  "unshare --net); Windows Job Object remains env-only")
+        ok("T12", "sandbox network denial literals present (bwrap --unshare-net, seatbelt deny-default with "
+                  "network* only on Unrestricted, unshare --net); Windows Job Object remains env-only")
 
 
 def main(argv: list[str] | None = None) -> int:
