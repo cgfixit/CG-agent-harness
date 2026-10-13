@@ -272,7 +272,7 @@ impl<'a> SkillRegistry<'a> {
     /// the disable-only kill switch is AND-ed, as for repository writes.
     pub fn apply_skill(&mut self, spec: &SkillSpec, reason: &str, confirm: bool) -> Result<Value> {
         spec.validate()?;
-        if reason.trim().is_empty() {
+        if crate::common::is_visibly_blank(reason) {
             return Err(rerr("apply_skill requires a non-empty human reason").detail("name", spec.name.clone()));
         }
         let cfg = crate::common::config::AppConfig::load(&self.ctx.config_path)?;

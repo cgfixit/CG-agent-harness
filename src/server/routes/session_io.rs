@@ -46,7 +46,10 @@ pub struct AdoptRequest {
 }
 impl crate::server::schemas::Validate for AdoptRequest {
     fn validate(&self) -> Vec<String> {
-        if !self.confirm || !(1..=512).contains(&self.reason.trim().chars().count()) {
+        if !self.confirm
+            || crate::common::is_visibly_blank(&self.reason)
+            || !(1..=512).contains(&self.reason.trim().chars().count())
+        {
             vec!["Explicit confirmation and a reason of 1-512 characters are required".into()]
         } else {
             vec![]

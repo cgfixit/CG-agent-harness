@@ -25,6 +25,7 @@ const HOST_CAP: (u64, u64) = (1, 4096);
 const RATE_PER_MIN: (u64, u64) = (1, 10_000);
 const TIMEOUT_MS: (u64, u64) = (100, 60_000);
 const NAME_CAP: (u64, u64) = (8, 256);
+const MAX_DIALS: (u64, u64) = (1, 65_536);
 const MAX_PORTS: usize = 128;
 const MAX_TARGETS: usize = 64;
 const MAX_ENDPOINT_CHARS: usize = 256;
@@ -83,6 +84,8 @@ pub struct NetconnectConfig {
     pub rate_limit_per_min: u64,
     pub connect_timeout_ms: u64,
     pub read_timeout_ms: u64,
+    /// Per-run dial ceiling for active tiers. A run also stops at `rate_limit_per_min`.
+    pub max_dials: u64,
     pub diagnostics_targets: Vec<Ipv4Addr>,
     pub throughput_endpoint: Option<String>,
     pub ha_endpoint: Option<String>,
@@ -137,6 +140,7 @@ impl NetconnectConfig {
             rate_limit_per_min: integer(cfg, &defaults, "rate_limit_per_min", RATE_PER_MIN)?,
             connect_timeout_ms: integer(cfg, &defaults, "connect_timeout_ms", TIMEOUT_MS)?,
             read_timeout_ms: integer(cfg, &defaults, "read_timeout_ms", TIMEOUT_MS)?,
+            max_dials: integer(cfg, &defaults, "max_dials", MAX_DIALS)?,
             diagnostics_targets,
             throughput_endpoint,
             ha_endpoint,
@@ -438,5 +442,13 @@ mod tests {
         assert!(NetconnectConfig::from_config(&app("netconnect:\n  host_cap: 0\n")).is_err());
         assert!(NetconnectConfig::from_config(&app("netconnect:\n  port_allowlist: [0]\n")).is_err());
         assert!(NetconnectConfig::from_config(&app("netconnect:\n  connect_timeout_ms: 1\n")).is_err());
+        assert_eq!(load(AppConfig::embedded_default()).max_dials, 256);
+        assert_eq!(load("netconnect:\n  max_dials: 65536\n").max_dials, 65_536);
+        for bad in ["0", "65537", "\"256\""] {
+            assert!(
+                NetconnectConfig::from_config(&app(&format!("netconnect:\n  max_dials: {bad}\n"))).is_err(),
+                "{bad}"
+            );
+        }
     }
 }

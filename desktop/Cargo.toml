@@ -43,8 +43,3 @@ custom-protocol = ["tauri/custom-protocol"]
 strip = true
 lto = "thin"
 codegen-units = 1
-
-# Upstream replaces unmaintained rust-unic with ICU through urlpattern 0.6.
-# Exact upstream revision; no advisory exceptions and no backend dependency change.
-[patch.crates-io]
-tauri-utils = { git = "https://github.com/tauri-apps/tauri", rev = "dd725f4b13c30a86b398ccc59eb498f151f461c5" }

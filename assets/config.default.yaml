@@ -124,6 +124,7 @@ web:
   request_seconds: 8 # 1–30, includes queue, DNS, headers, body and extraction
   html_parser_handles: 512 # 64–4096; bound open-element/formatting state, restart-only
   concurrency: 2 # 1–4 total fetches; restart-only (shared permits)
+  max_rules: 32 # 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least 64 KiB
   pages: 20 # 1–40 per run
   run_bytes: 2097152 # 1024–8388608 per run
   run_seconds: 60 # 1–180
@@ -479,7 +480,10 @@ structured_memory:
 # endpoint warns because that path is internet egress outside this LAN scope.
 # Endpoints must not carry credentials. These keys are restart-only.
 # host_cap 1–4096; rate_limit_per_min 1–10000; timeouts 100–60000 ms;
-# untrusted_string_max_chars 8–256. Passive commands send no packets.
+# max_dials 1–65536; untrusted_string_max_chars 8–256. Passive commands send
+# no packets. Active tiers dial through one budgeted dialer: a run stops at
+# host_cap hosts, at min(max_dials, rate_limit_per_min) dials, and at
+# connect_timeout_ms per allowed dial capped at 60 seconds.
 netconnect:
   enabled: false
   passive_listen: false
@@ -495,6 +499,7 @@ netconnect:
   rate_limit_per_min: 30
   connect_timeout_ms: 1000
   read_timeout_ms: 2000
+  max_dials: 256
   diagnostics_targets: []
   throughput_endpoint: null
   ha_endpoint: null

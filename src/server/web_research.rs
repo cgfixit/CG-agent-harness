@@ -430,7 +430,7 @@ pub async fn run_from(
         .map_err(|_| error("WEB_DISABLED", "settings unavailable"))?
         .web_enabled;
     let policy = web.require_enabled(enabled)?;
-    if starts.len() > super::web_policy::MAX_RULES {
+    if starts.len() > super::web_policy::MAX_BATCH_URLS {
         return Err(error("WEB_BAD_URL", "too many starting URLs"));
     }
     for url in starts {

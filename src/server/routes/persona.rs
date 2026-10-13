@@ -259,7 +259,7 @@ pub struct EditRequest {
 impl Validate for EditRequest {
     fn validate(&self) -> Vec<String> {
         if self.content.len() > MAX_BYTES
-            || self.reason.trim().is_empty()
+            || crate::common::is_visibly_blank(&self.reason)
             || self.reason.len() > 1000
             || !(self.base_revision == "missing" || valid_id(&self.base_revision))
         {
@@ -517,7 +517,7 @@ pub struct DecisionRequest {
 }
 impl Validate for DecisionRequest {
     fn validate(&self) -> Vec<String> {
-        if !valid_id(&self.revision) || self.reason.trim().is_empty() || self.reason.len() > 1000 {
+        if !valid_id(&self.revision) || crate::common::is_visibly_blank(&self.reason) || self.reason.len() > 1000 {
             vec!["revision, reason".into()]
         } else {
             vec![]

@@ -9,9 +9,34 @@ use url::Url;
 
 use crate::common::errors::{HarnessError, Result};
 
-pub const MAX_POLICY_BYTES: u64 = 65_536;
-pub const MAX_RULES: usize = 32;
+/// URLs or patterns one request may name: one grant, `/web fetch`, `/web check`
+/// or research `--url` starts. The policy's total is `web.max_rules`.
+pub const MAX_BATCH_URLS: usize = 32;
+/// Default and ceiling of the restart-only `web.max_rules` total rule cap.
+pub const DEFAULT_MAX_RULES: usize = 32;
+pub const MAX_RULES_CEILING: usize = 256;
+/// The policy file grows 4 KiB per allowed rule, never below the original 64 KiB.
+const POLICY_BYTES_PER_RULE: u64 = 4_096;
+const MIN_POLICY_BYTES: u64 = 65_536;
 pub const MAX_URL_BYTES: usize = 2048;
+
+/// Largest policy file `max_rules` admits.
+pub fn max_policy_bytes(max_rules: usize) -> u64 {
+    (max_rules as u64)
+        .saturating_mul(POLICY_BYTES_PER_RULE)
+        .max(MIN_POLICY_BYTES)
+}
+
+/// More rules than `web.max_rules` (a lowered cap or a hand edit) refuses the
+/// whole policy; the message names the recovery and never echoes file content.
+fn over_cap(rules: usize, max_rules: usize) -> HarnessError {
+    error(
+        "WEB_POLICY_INVALID",
+        &format!(
+            "policy has {rules} rules but web.max_rules is {max_rules}; raise web.max_rules and restart, then /web deny extra rules"
+        ),
+    )
+}
 
 pub fn error(code: &str, message: &str) -> HarnessError {
     HarnessError::new(code, message)
@@ -305,24 +330,28 @@ impl Policy {
         }
     }
 
-    pub fn parse(bytes: &[u8]) -> Result<Self> {
+    /// `max_rules` is the configured `web.max_rules`; it also sizes the byte cap.
+    pub fn parse(bytes: &[u8], max_rules: usize) -> Result<Self> {
         let bad = || {
             error(
                 "WEB_POLICY_INVALID",
                 "policy must be a supported, valid, bounded rule document",
             )
         };
-        if bytes.len() as u64 > MAX_POLICY_BYTES {
+        if bytes.len() as u64 > max_policy_bytes(max_rules) {
             return Err(bad());
         }
         let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| bad())?;
         let mut policy = if value.get("version").is_some() {
             serde_json::from_value::<Self>(value).map_err(|_| bad())?
         } else {
-            Self::legacy(value)?
+            Self::legacy(value, max_rules)?
         };
-        if policy.version != 1 || policy.rules.len() > MAX_RULES {
+        if policy.version != 1 {
             return Err(bad());
+        }
+        if policy.rules.len() > max_rules {
+            return Err(over_cap(policy.rules.len(), max_rules));
         }
         let mut ids = BTreeSet::new();
         for rule in &policy.rules {
@@ -335,7 +364,7 @@ impl Policy {
         Ok(policy)
     }
 
-    fn legacy(value: serde_json::Value) -> Result<Self> {
+    fn legacy(value: serde_json::Value, max_rules: usize) -> Result<Self> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Legacy {
@@ -361,8 +390,8 @@ impl Policy {
             map.get("entries").cloned().ok_or_else(bad)?
         };
         let rows: Vec<Legacy> = serde_json::from_value(rows).map_err(|_| bad())?;
-        if rows.len() > MAX_RULES {
-            return Err(bad());
+        if rows.len() > max_rules {
+            return Err(over_cap(rows.len(), max_rules));
         }
         let mut policy = Self::empty();
         for row in rows {
@@ -402,7 +431,7 @@ impl Policy {
         Ok(policy)
     }
 
-    pub fn load(path: &Path) -> Result<Self> {
+    pub fn load(path: &Path, max_rules: usize) -> Result<Self> {
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
@@ -420,8 +449,8 @@ impl Policy {
             return Err(error("WEB_POLICY_INVALID", "policy must be a regular file"));
         }
         let mut bytes = Vec::new();
-        file.take(MAX_POLICY_BYTES + 1).read_to_end(&mut bytes)?;
-        Self::parse(&bytes)
+        file.take(max_policy_bytes(max_rules) + 1).read_to_end(&mut bytes)?;
+        Self::parse(&bytes, max_rules)
     }
 
     pub fn permits(&self, target: &Url, group: Option<&str>) -> bool {
@@ -525,14 +554,14 @@ mod tests {
     #[test]
     fn legacy_rows_become_only_saved_targets_and_invalid_policy_fails_whole() {
         let bytes = br#"{"entries":[{"scheme":"https","host":"example.com","port":"","path":"/docs","raw":"https://www.example.com/"}]}"#;
-        let p = Policy::parse(bytes).unwrap();
+        let p = Policy::parse(bytes, DEFAULT_MAX_RULES).unwrap();
         assert!(p.authorize("https://example.com/docs", None).is_ok());
         assert!(p.authorize("https://example.com/docs/child", None).is_err());
         assert!(p.authorize("https://www.example.com/", None).is_err());
         assert!(p.authorize("https://example.com/docs", Some("other")).is_err());
         let mut value = serde_json::to_value(&p).unwrap();
         value["rules"][0]["pattern"] = serde_json::json!("https://example.com/docs/*");
-        let wildcard = Policy::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+        let wildcard = Policy::parse(&serde_json::to_vec(&value).unwrap(), DEFAULT_MAX_RULES).unwrap();
         assert_eq!(wildcard.rules[0].start_urls(), vec!["https://example.com/docs/"]);
         assert!(wildcard.rules[0].permits(&canonical_url(&wildcard.rules[0].start_urls()[0]).unwrap()));
         assert!(Rule::new("https://*.example.com/docs/*", "docs", &[])
@@ -540,19 +569,49 @@ mod tests {
             .start_urls()
             .is_empty());
         value["rules"][0]["seeds"] = serde_json::json!(["https://other.test/"]);
-        assert!(Policy::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+        assert!(Policy::parse(&serde_json::to_vec(&value).unwrap(), DEFAULT_MAX_RULES).is_err());
         for bad in [
             br#"{}"#.as_slice(),
             br#"{"version":9,"rules":[]}"#,
             br#"{"entries":[{}]}"#,
             br#"{"version":1,"rules":[],"typo":true}"#,
         ] {
-            assert!(Policy::parse(bad).is_err());
+            assert!(Policy::parse(bad, DEFAULT_MAX_RULES).is_err());
         }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("web_allowlist.json");
-        assert!(Policy::load(&path).is_err());
-        std::fs::write(&path, vec![b' '; MAX_POLICY_BYTES as usize + 1]).unwrap();
-        assert!(Policy::load(&path).is_err());
+        assert!(Policy::load(&path, DEFAULT_MAX_RULES).is_err());
+        std::fs::write(&path, vec![b' '; max_policy_bytes(DEFAULT_MAX_RULES) as usize + 1]).unwrap();
+        assert!(Policy::load(&path, DEFAULT_MAX_RULES).is_err());
+    }
+
+    #[test]
+    fn the_configured_rule_cap_bounds_the_policy_and_scales_its_byte_cap() {
+        assert_eq!(max_policy_bytes(1), 65_536);
+        assert_eq!(max_policy_bytes(16), 65_536);
+        assert_eq!(max_policy_bytes(DEFAULT_MAX_RULES), 131_072);
+        assert_eq!(max_policy_bytes(100), 409_600);
+        assert_eq!(max_policy_bytes(MAX_RULES_CEILING), 1_048_576);
+        let mut policy = Policy::empty();
+        for i in 0..3 {
+            policy
+                .rules
+                .push(Rule::new(&format!("https://site{i}.example/*"), "docs", &[]).unwrap());
+        }
+        let bytes = serde_json::to_vec(&policy).unwrap();
+        assert_eq!(Policy::parse(&bytes, 3).unwrap().rules.len(), 3);
+        let over = Policy::parse(&bytes, 2).unwrap_err();
+        assert_eq!(over.code, "WEB_POLICY_INVALID");
+        assert!(over.message.contains("web.max_rules is 2"), "{}", over.message);
+        let rows: Vec<_> = (0..3)
+            .map(|i| serde_json::json!({"scheme":"https","host":format!("site{i}.example"),"port":"","path":"/","raw":""}))
+            .collect();
+        let legacy = serde_json::to_vec(&rows).unwrap();
+        assert_eq!(Policy::parse(&legacy, 3).unwrap().rules.len(), 3);
+        assert!(Policy::parse(&legacy, 2).unwrap_err().message.contains("web.max_rules"));
+        // The byte cap follows the configured rule count above its 64 KiB floor.
+        let padded = [bytes.as_slice(), &vec![b' '; 70_000]].concat();
+        assert!(Policy::parse(&padded, 3).is_err());
+        assert_eq!(Policy::parse(&padded, DEFAULT_MAX_RULES).unwrap().rules.len(), 3);
     }
 }

@@ -47,15 +47,14 @@ pub fn canonical_repo_path(target: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
-fn is_format_control(c: char) -> bool {
-    matches!(c as u32, 0x00AD | 0x061C | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xE0001 | 0xE0020..=0xE007F)
-}
-
 /// True when a filesystem could resolve `part` to the `.git` directory
 /// (trailing dots/spaces, NTFS `git~1`, HFS-ignored codepoints, case folding).
 pub fn is_dotgit_name(part: &str) -> bool {
     let trimmed = part.trim_end_matches([' ', '.']);
-    let cleaned: String = trimmed.chars().filter(|c| !is_format_control(*c)).collect();
+    let cleaned: String = trimmed
+        .chars()
+        .filter(|c| !crate::common::is_format_control(*c))
+        .collect();
     let folded: String = cleaned.to_lowercase();
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| regex::Regex::new(r"(?i)\A\.?git~[0-9]+\z").expect("static regex"));
@@ -71,7 +70,7 @@ pub fn fs_equiv_path(path: &str) -> String {
             let trimmed = part.trim_end_matches([' ', '.']);
             trimmed
                 .chars()
-                .filter(|c| !is_format_control(*c))
+                .filter(|c| !crate::common::is_format_control(*c))
                 .collect::<String>()
                 .nfkc()
                 .collect::<String>()

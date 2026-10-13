@@ -408,6 +408,10 @@ async fn latest_completed_summary_attach_requires_confirmation_reason_and_valid_
             "STRUCTURED_MEMORY_CONTENT",
         ),
         (
+            json!({"summary":"Prefer concise answers.","reason":"\u{200B}","confirm":true}),
+            "STRUCTURED_MEMORY_CONTENT",
+        ),
+        (
             json!({"summary":" ","reason":"operator summary","confirm":true}),
             "STRUCTURED_MEMORY_CONTENT",
         ),

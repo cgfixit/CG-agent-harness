@@ -62,6 +62,30 @@ pub async fn netconnect_panel(State(state): State<Arc<AppState>>) -> ApiResult<J
     Ok(Json(body))
 }
 
+/// Diagnostics tier: one TCP connect per configured target and port.
+///
+/// The query string is ignored and no method but GET is routed, so the
+/// browser supplies nothing: targets, ports and limits come from config. The
+/// dial loop runs inside this request future, so the server dropping the
+/// request stops it; the run deadline (at most 60 seconds) bounds it
+/// otherwise. A gate refusal is 409. A run cut short by the budget is 200
+/// with `ok: false`, `code: NETCONNECT_BUDGET`, and the partial results.
+pub async fn netconnect_diag(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    let cfg = crate::netconnect::NetconnectConfig::from_config(state.cfg.as_ref())
+        .map_err(|err| ApiError::from_err(StatusCode::BAD_REQUEST, &err))?;
+    let body = crate::netconnect::tools::call_diag(&cfg, &state.netconnect_rate, crate::netconnect::LiveConnector)
+        .await
+        .map_err(|err| {
+            let status = if err.is("NETCONNECT_DISABLED") || err.is("NETCONNECT_REFUSED") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            ApiError::from_err(status, &err)
+        })?;
+    Ok(Json(body))
+}
+
 pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(views::list_wired_skills(&state.home))
 }
@@ -83,7 +107,8 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_HOST_DENIED" => "This exact URL is outside the current shared-home allowlist. Run /web check URL; www and apex hosts are distinct. Only an administrator can grant a matching rule.",
         "WEB_ALLOWLIST_EMPTY" => "No content URLs are permitted. An administrator must add an exact URL or explicit wildcard using /web allow.",
         "WEB_GROUP_UNKNOWN" => "Unknown source group. /web status lists groups; add rules with /web allow PATTERN --group NAME.",
-        "WEB_POLICY_INVALID" => "Invalid URL rule, group or seed. Each seed must be inside a requested rule; the entire grant was refused.",
+        "WEB_POLICY_INVALID" => "Invalid URL rule, group or seed, or a saved policy over web.max_rules. Each seed must be inside a requested rule; the entire grant was refused. After lowering web.max_rules, raise it again and restart, then /web deny extra rules.",
+        "WEB_ALLOWLIST_FULL" => "The shared allowlist is at its rule cap (web.max_rules, restart-only); the entire grant was refused. Remove unused rules with /web deny, or raise web.max_rules in config.yaml and restart.",
         "WEB_DISABLED" => "Web access is disabled for this home. An administrator can enable it with /web on; URL permission is still required.",
         "WEB_GOOGLE_PERMISSION" => "Configure a Google results (SerpAPI) key in API Keys; it needs no URL grant. Otherwise an administrator can allow https://www.google.com/* for public Google, which may answer with a challenge. Exact homepage grants do not permit search URLs.",
         "WEB_GOOGLE_BLOCKED" => "Public Google refused or redirected the request. Configure a SerpAPI key in API Keys, then retry.",
