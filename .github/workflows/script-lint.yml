@@ -1,0 +1,76 @@
+# Static checks for the repository's helper scripts: shellcheck on every
+# tracked shell script and git hook, a full compile of every Python script,
+# and `node --check` on every .mjs script. Nothing here runs a script; the
+# contract tests that do live in ci.yml. File lists come from `git ls-files`
+# so a new script is linted without editing this workflow.
+name: script lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - ".githooks/**"
+      - ".claude/hooks/**"
+      - ".claude/skills/**"
+      - ".github/workflows/script-lint.yml"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - ".githooks/**"
+      - ".claude/hooks/**"
+      - ".claude/skills/**"
+      - ".github/workflows/script-lint.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: script-lint-${{ github.workflow }}-${{ github.ref }}
+  # Pull requests only. Do not cancel main, tags, schedules, or release calls.
+  # workflow_call keeps the caller event; if it does not, still refuse main and tags.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  scripts:
+    name: shellcheck, python compile, node --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Digest is the Docker Hub multi-arch index digest for tag v0.11.0.
+      - name: shellcheck (pinned, from the official container image)
+        run: |
+          set -euo pipefail
+          # Git pathspec `*` also matches `/`, so 'scripts/*.sh' and
+          # '.claude/skills/*.sh' reach nested helpers (live-ollama/, skill dirs).
+          mapfile -d '' files < <(git ls-files -z -- 'scripts/*.sh' '.githooks/*' '.claude/hooks/*.sh' '.claude/skills/*.sh' ':!:*.md')
+          test "${#files[@]}" -gt 0
+          printf '%s\n' "${files[@]}"
+          docker run --rm -v "${PWD}:/mnt:ro" -w /mnt \
+            koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
+            "${files[@]}"
+      - name: Python scripts compile
+        # compile() rather than py_compile: same syntax check, no __pycache__.
+        run: |
+          set -euo pipefail
+          git ls-files -z -- 'scripts/*.py' | xargs -0 python3 -I -c '
+          import sys
+          for path in sys.argv[1:]:
+              with open(path, encoding="utf-8") as f:
+                  compile(f.read(), path, "exec")
+              print(path)
+          '
+      - name: Node scripts parse
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(git ls-files -z -- 'scripts/*.mjs')
+          test "${#files[@]}" -gt 0
+          for f in "${files[@]}"; do
+            echo "== $f"
+            node --check "$f"
+          done
