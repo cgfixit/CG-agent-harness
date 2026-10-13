@@ -110,8 +110,8 @@ Both crates resolve independently under their pinned Rust versions and do not
 exchange Rust types across an ABI. Duplicate transitive versions in `cargo tree
 -d` are warnings, not resolution failures. `ordered-float` 5.5 still exceeds the
 backend MSRV; incompatible major lines require separate API migrations. The
-Tauri patch remains required. No dependency update is part of this documentation
-refresh.
+Tauri patch was still required at that audit; it was removed on 2026-10-13 (see
+Retained constraints). No dependency update was part of that refresh.
 
 The September 16 audit applied all compatible updates within the manifest and
 Rust-version constraints: 13 backend and 12 desktop lock entries changed. Shared
