@@ -54,7 +54,8 @@ it actually calls, and an arm's names are never re-pinned at a site.
    `GH_TELEMETRY=false` · T10 every direct dependency, external binary and
    finetune requirement classified; dynamic launcher markers present · T11 MCP
    spawn/worker clear, opener clears, sidecar pins its home · T12 sandbox
-   network-denial literals (`--unshare-net`, `deny network*`, `--net`) present.
+   network-denial literals present: `--unshare-net`, `--net`, deny-default
+   Seatbelt with `(allow network*)` only under `Unrestricted`.
 
 2. **Mutation self-test** — a checker that cannot fail proves nothing:
 
