@@ -149,3 +149,43 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
         ..primary
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::config::AppConfig;
+
+    async fn resolved(yaml: &str) -> ResolvedLocalBackend {
+        let cfg = AppConfig::from_str(yaml, std::path::Path::new("config.yaml")).unwrap();
+        resolve_local_backend(&cfg).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn reasoning_effort_follows_provider_ollama_not_the_model_tag() {
+        // The derived tag is still local Ollama. Effort is the provider's, not the tag's.
+        let ollama = resolved(concat!(
+            "models:\n  local_llm:\n",
+            "    provider: \"ollama\"\n",
+            "    base_url: \"http://127.0.0.1:11434/v1\"\n", // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
+            "    model: \"qwen3.8:27b-mlx-cg\"\n",
+            "    reasoning_effort: \"none\"\n",
+            "    fallback:\n      enabled: false\n",
+        ))
+        .await;
+        assert_eq!(ollama.provider, "ollama");
+        assert_eq!(ollama.model, "qwen3.8:27b-mlx-cg");
+        assert_eq!(ollama.reasoning_effort.as_deref(), Some("none"));
+        let other = resolved(concat!(
+            "models:\n  local_llm:\n",
+            "    provider: \"lmstudio\"\n",
+            "    base_url: \"http://127.0.0.1:11434/v1\"\n", // DevSkim: ignore DS162092 because this unit test pins the loopback Ollama origin.
+            "    model: \"qwen3.8:27b-mlx-cg\"\n",
+            "    reasoning_effort: \"none\"\n",
+            "    fallback:\n      enabled: false\n",
+        ))
+        .await;
+        assert_eq!(other.provider, "lmstudio");
+        assert_eq!(other.model, "qwen3.8:27b-mlx-cg");
+        assert!(other.reasoning_effort.is_none());
+    }
+}

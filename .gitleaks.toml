@@ -1,7 +1,10 @@
-# Allowlist only. Default rules stay on. These matches are fixtures /
+# Extend built-in rules explicitly. These matches are fixtures /
 # key-blanking, not live credentials. The pinned CLI (see
 # .github/workflows/gitleaks.yml) reads this file from the repo root.
 title = "CGagentHarness"
+
+[extend]
+useDefault = true
 
 [allowlist]
 description = "Operator-key blanking before cargo test, and a documented fake AWS-shaped token used to lock redaction"
@@ -10,4 +13,10 @@ regexes = [
     '''GROK_API_KEY=""''',
     '''ANTHROPIC_API_KEY=""''',
     '''DEEPAGENT_API_KEY=""''',
+    # The generic detector consumes the next variable name after an empty value.
+    '''^ANTHROPIC_API_KEY=$''',
+    # Exact synthetic values in the redaction and MCP tests, including history.
+    '''^0123456789abcdef$''',
+    '''^ghp_0123456789abcdef0123456789abcdef0123$''', # DevSkim: ignore DS173239 because this exact patterned token is the approved synthetic redaction fixture.
+    '''^test-api-key-0123456789$''',
 ]

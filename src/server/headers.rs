@@ -19,9 +19,11 @@ fn set_default(resp: &mut Response, name: header::HeaderName, value: &'static st
 }
 
 /// Stamp the hardening headers on every response (setdefault semantics so the
-/// console's own nonce CSP survives). `/static/*` also gets no-store.
+/// console's own nonce CSP survives). API responses always forbid caching,
+/// including refusals; `/static/*` also gets no-store by default.
 pub async fn security_headers(req: Request<Body>, next: Next) -> Response {
     let is_static = req.uri().path().starts_with("/static/");
+    let is_api = req.uri().path() == "/api" || req.uri().path().starts_with("/api/");
     let mut resp = next.run(req).await;
     set_default(&mut resp, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
     set_default(&mut resp, header::X_FRAME_OPTIONS, "DENY");
@@ -37,7 +39,10 @@ pub async fn security_headers(req: Request<Body>, next: Next) -> Response {
         "none",
     );
     set_default(&mut resp, header::CONTENT_SECURITY_POLICY, DEFAULT_CSP);
-    if is_static {
+    if is_api {
+        resp.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
+    } else if is_static {
         set_default(&mut resp, header::CACHE_CONTROL, NO_STORE);
     }
     resp

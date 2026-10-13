@@ -3,6 +3,11 @@
 # turn against the local model server (Ollama on 127.0.0.1:11434 by default),
 # negative auth controls, the subprocess exit-code contract, and the
 # /api/github/status route crossing the shim into a real child process.
+# SMOKE_MODEL is any installed tag (default: the first /v1/models id), including
+# a local derived tag such as qwen3.8:27b-mlx-cg. The first chat must answer
+# exactly "pong". The server sends reasoning_effort none when the provider is
+# ollama, for every tag. FINGERPRINT_MODELS, when set, is the fingerprint set
+# (scripts/live-ollama/), not that derived tag.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

@@ -12,8 +12,9 @@ spawns `current_exe() agentic <action>` as a CHILD PROCESS with a hard timeout
 (shared bounded Unix runner with cancellation cleanup; `kill_on_drop` elsewhere). The agentic side never references
 the server or the shim.
 
-- Locked by: `tests/invariant_guard.rs` (source scan, both directions; only the
-  shim may spawn a process on the server side).
+- Locked by: `tests/invariant_guard.rs` (source checks in both directions).
+  Console-side process creation is restricted to `shim/mod.rs`, `common/process.rs`,
+  `common/mcp.rs` and `common/mcp_worker.rs`; shared runners preserve I6.
 - Why a process, not a module: a SIGKILL'd child can leak a clone, but it cannot
   corrupt the server's memory or bypass its guard chain; the exit-code contract
   (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
@@ -80,14 +81,13 @@ Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
 and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`
 and require `confirm: true`. MCP tools are not attached to `/loop`. `GET /api/mcp`
-discloses declared server and tool names to any authenticated session; revisit
-that before persistent multi-user accounts. Calls and refusals are audited (`mcp_stdio_spawn`,
+discloses declared server and tool names to authenticated accounts; declarations
+are shared. Calls and refusals are audited (`mcp_stdio_spawn`,
 `mcp_sse_call`, `mcp_refused`) without arguments or payloads. The mutation CSRF token
 has the same single-operator scope: `src/server/mod.rs` mints one per process and
 embeds it in the console page, which is served before login, so it is bound to no
 account or session. SameSite=Strict session cookies and exact same-origin checks are
-what stop cross-site use; bind the token to the session before persistent multi-user
-accounts.
+what stop cross-site use; the CSRF token provides no account isolation.
 
 ## Account, transport and request boundaries
 
@@ -177,6 +177,11 @@ Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
 query strings; exact rules retain exact query identity. Encoded query data cannot
 alter host/path, and encoded path escapes stay refused. Legacy rows authorize
 only their stored fetch target, never old host aliases or implicit descendants.
+Wildcard grants can send arbitrary query data to the allowed site. This is an
+accepted single-operator residual, not prevented by prompt framing; use exact
+URL grants to restrict queries. Injected extracts are bounded, fenced and labeled
+untrusted, with embedded instructions denied authority. This does not prove a
+model will ignore hostile text.
 
 The fetcher resolves once, rejects mixed/special-use answers, then pins
 Reqwest to validated addresses with a refusing fallback. Public TLS stays on;
@@ -323,12 +328,14 @@ means exit 3.
 
 Cargo sources are prepared explicitly against a Cargo.lock digest before model
 execution. Verification uses the selected installed toolchain, vendored sources,
-`--frozen`, an empty Cargo home, and fresh build/temp directories. Seatbelt denies
-all network operations and file data reads outside candidate, prepared inputs,
-specific OS/SDK/runtime roots, and scratch. Candidate source and `.git` are
-read-only to checks; only owned scratch is writable. Shared compiler/source
-caches are never writable by checks. Tests that formerly wrote into the
-candidate must use the provided temporary directory.
+`--frozen`, an empty Cargo home, and fresh build/temp directories. Seatbelt uses
+deny-default with explicit grants for process execution/forking, same-sandbox
+signals/process inspection, metadata/sysctl reads, and file data/executable maps
+within candidate, prepared inputs, OS/SDK/runtime roots, and scratch. Mach lookup,
+Apple Events and LaunchServices are denied. Verification has no network grant;
+only owned scratch is writable. Candidate source, `.git` and shared caches stay
+read-only. Checks must use the provided temporary directory. MCP shares this
+profile with its explicitly declared write roots and optional unrestricted network.
 
 Metadata discovery remains allowed. Seatbelt is not a memory/disk quota, and the
 current process group implementation does not contain every escaped descendant.
@@ -337,7 +344,9 @@ scratch, tmpfs `/tmp`, and `--unshare-net`. Binding the host root (`--ro-bind / 
 is forbidden because it exposes SSH keys and any plaintext key file. When
 `bwrap` is missing or its probe fails, Linux falls back to
 `unshare --net` only (`name()` is `linux-netns`): network isolation without
-filesystem confinement. That fallback is explicit in the backend name, an
+filesystem confinement. Filesystem Unix sockets remain reachable, including
+user-service-manager, D-Bus/Secret Service and SSH-agent sockets; network namespaces
+do not remove that local-service authority. That fallback is explicit in the backend name, an
 info-level `linux hard sandbox backend selected` line, the self-test line, and
 the audit `sandbox` field. `/api/status` does not report the backend. Both backends missing is
 `HARD_SANDBOX_UNAVAILABLE` (exit 3). Linux CI (`CI=true`) fails if `bwrap` is

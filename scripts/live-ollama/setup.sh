@@ -3,7 +3,8 @@
 # live fingerprint (scripts/smoke-ollama.sh with FINGERPRINT_OUT). Every
 # download is checked against a pinned SHA-256. The window is fixed with
 # OLLAMA_CONTEXT_LENGTH so every machine loads the same one; speeds still
-# differ, and the fingerprint does not record them.
+# differ, and the fingerprint does not record them. These pinned models are
+# not the local derived tag in scripts/qwen3.8-27b-mlx-cg.Modelfile.
 #   scripts/live-ollama/setup.sh <dir>     # Linux x86_64 or macOS
 # LIVE_OLLAMA_HOST (default 127.0.0.1:11434) picks the loopback address; use
 # another port on a machine whose own Ollama already listens there, and pass

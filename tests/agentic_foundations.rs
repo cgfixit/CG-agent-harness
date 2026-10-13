@@ -394,11 +394,13 @@ fn seatbelt_profile_is_byte_exact() {
     let c = serde_json::to_string(&dunce::canonicalize(cwd.path()).unwrap()).unwrap();
     let t = serde_json::to_string(&dunce::canonicalize(tmp.path()).unwrap()).unwrap();
     let profile = seatbelt_profile(cwd.path(), Some(tmp.path()));
-    let expected = format!("(deny file-write* (require-not (subpath {t})))");
-    assert_eq!(profile.lines().last().unwrap(), expected);
-    assert!(profile.contains("(deny file-read-data"));
+    let expected = format!("(allow file-write* (require-any (subpath {t})))");
+    assert!(profile.lines().any(|line| line == expected));
+    assert!(profile.starts_with("(version 1)\n(deny default)\n"));
+    assert!(profile.contains("(allow file-read-data"));
     assert!(profile.contains(&format!("(subpath {c})")));
-    assert!(profile.contains("(deny network*)"));
+    assert!(!profile.contains("(allow network"));
+    assert!(profile.contains("(deny mach-lookup appleevent-send lsopen)"));
 }
 
 #[cfg(unix)]

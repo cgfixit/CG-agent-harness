@@ -135,18 +135,27 @@ fn seatbelt_profile_with_grants(
         .map(|p| format!("(subpath \"{}\")", esc(p)))
         .collect::<Vec<_>>();
     let writes = if writable.is_empty() {
-        "(deny file-write*)".into()
-    } else if writable.len() == 1 {
-        format!("(deny file-write* (require-not {}))", writable[0])
+        String::new()
     } else {
-        format!("(deny file-write* (require-not (require-any {})))", writable.join(" "))
+        format!("(allow file-write* (require-any {}))", writable.join(" "))
     };
-    let network = if network == NetworkPolicy::Deny {
-        "(deny network*)\n"
+    let network = if network == NetworkPolicy::Unrestricted {
+        "(allow network*)\n"
     } else {
         ""
     };
-    format!("(version 1)\n(allow default)\n{network}(deny file-read-data (require-not (require-any (literal \"/\") (literal \"/private/etc/ssl/openssl.cnf\") {reads})))\n{writes}\n")
+    // These operation families do not all inherit deny-default on Darwin.
+    // No Mach/XPC, Apple Events or LaunchServices grant permits delegation.
+    format!(
+        "(version 1)\n(deny default)\n\
+         (deny file-map-executable process-info* nvram* iokit-get-properties)\n\
+         (deny mach-lookup appleevent-send lsopen)\n\
+         (allow process-exec process-fork)\n\
+         (allow signal process-info* (target same-sandbox))\n\
+         (allow file-read-metadata sysctl-read)\n\
+         (allow file-read-data (require-any (literal \"/\") (literal \"/private/etc/ssl/openssl.cnf\") {reads}))\n\
+         (allow file-map-executable (require-any {reads}))\n{writes}\n{network}"
+    )
 }
 
 pub fn canonical_existing(path: &Path) -> std::result::Result<PathBuf, String> {
@@ -486,6 +495,112 @@ mod tests {
         assert!(
             !argv[..sep].iter().any(|a| a == "--new-session"),
             "bwrap must not split the child out of the killable process group"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_deny_default_refuses_service_delegation() {
+        use std::process::Command;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("service.c");
+        let executable = root.path().join("service");
+        std::fs::write(
+            &source,
+            r#"
+#include <mach/mach.h>
+#include <servers/bootstrap.h>
+int main(void) {
+    mach_port_t service = MACH_PORT_NULL;
+    kern_return_t result = bootstrap_look_up(bootstrap_port, "com.apple.cfprefsd.daemon", &service);
+    if (service != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), service);
+    return result == KERN_SUCCESS ? 0 : 1;
+}
+"#,
+        )
+        .unwrap();
+        assert!(Command::new("/usr/bin/cc")
+            .args([source.as_os_str(), std::ffi::OsStr::new("-o"), executable.as_os_str()])
+            .status()
+            .unwrap()
+            .success());
+        assert!(
+            Command::new(&executable).status().unwrap().success(),
+            "service must be reachable outside Seatbelt"
+        );
+        for network in [NetworkPolicy::Deny, NetworkPolicy::Unrestricted] {
+            let profile = seatbelt_profile_with_grants(root.path(), Some(root.path()), &[], &[], network);
+            assert!(!Command::new("/usr/bin/sandbox-exec")
+                .args(["-p", &profile])
+                .arg(&executable)
+                .status()
+                .unwrap()
+                .success());
+            let app = "/System/Applications/Calculator.app";
+            assert!(
+                Path::new(app).exists(),
+                "LaunchServices refusal needs an installed target"
+            );
+            let open = Command::new("/usr/bin/sandbox-exec")
+                .args(["-p", &profile, "/usr/bin/open", "-a", app])
+                .output()
+                .unwrap();
+            assert!(!open.status.success(), "LaunchServices must refuse delegation");
+            let apple_event = Command::new("/usr/bin/sandbox-exec")
+                .args([
+                    "-p",
+                    &profile,
+                    "/usr/bin/osascript",
+                    "-e",
+                    "tell application \"System Events\" to count processes",
+                ])
+                .output()
+                .unwrap();
+            assert!(!apple_event.status.success(), "Apple Events must refuse delegation");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_unrestricted_network_retains_hostname_resolution() {
+        use std::process::Command;
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("resolve.c");
+        let executable = root.path().join("resolve");
+        std::fs::write(
+            &source,
+            r#"
+#include <netdb.h>
+#include <unistd.h>
+int main(void) {
+    alarm(10);
+    struct addrinfo *answers = 0;
+    int result = getaddrinfo("localhost", "443", 0, &answers); // DevSkim: ignore DS162092 because this native fixture checks loopback hostname resolution.
+    if (answers) freeaddrinfo(answers);
+    return result == 0 ? 0 : 1;
+}
+"#,
+        )
+        .unwrap();
+        assert!(Command::new("/usr/bin/cc")
+            .args([source.as_os_str(), std::ffi::OsStr::new("-o"), executable.as_os_str()])
+            .status()
+            .unwrap()
+            .success());
+        assert!(
+            Command::new(&executable).status().unwrap().success(),
+            "DNS control must work outside Seatbelt"
+        );
+        let profile =
+            seatbelt_profile_with_grants(root.path(), Some(root.path()), &[], &[], NetworkPolicy::Unrestricted);
+        assert!(
+            Command::new("/usr/bin/sandbox-exec")
+                .args(["-p", &profile])
+                .arg(&executable)
+                .status()
+                .unwrap()
+                .success(),
+            "explicit unrestricted network must support hostnames"
         );
     }
 
