@@ -96,6 +96,7 @@ pub fn prompt_memory(
     state: &AppState,
     owner: &str,
     memory_enabled: bool,
+    cloud_selected: bool,
     selections: &[FactSelection],
     intent: RetrievalIntent<'_>,
 ) -> (
@@ -109,6 +110,25 @@ pub fn prompt_memory(
         Some(store) => store.limits(),
         None => Limits::from_config(&state.cfg),
     };
+    let budget = crate::server::prompts::MemoryBudget::from_limits(
+        limits.pinned_prompt_chars,
+        limits.selected_fact_prompt_chars,
+    );
+    // Cloud chat sends only the current message. Do not read local context or
+    // claim it was injected into a request that cannot carry it.
+    if cloud_selected {
+        let recalled = crate::server::structured_memory::RecallResult {
+            injected: Vec::new(),
+            dropped: selections
+                .iter()
+                .map(|item| crate::server::structured_memory::DroppedSelection {
+                    id: item.id.clone(),
+                    reason: "cloud_chat",
+                })
+                .collect(),
+        };
+        return (String::new(), String::new(), budget, recalled, None);
+    }
     let pinned = if memory_enabled {
         state.notes.context_text()
     } else {
@@ -121,10 +141,6 @@ pub fn prompt_memory(
     let max = limits.max_selected_facts.max(limits.max_retrieval_results);
     let recalled = merge_recall(selected, retrieved, max);
     let facts = crate::server::structured_memory::format_selected_facts(&recalled.injected);
-    let budget = crate::server::prompts::MemoryBudget::from_limits(
-        limits.pinned_prompt_chars,
-        limits.selected_fact_prompt_chars,
-    );
     (pinned, facts, budget, recalled, retrieval_error)
 }
 

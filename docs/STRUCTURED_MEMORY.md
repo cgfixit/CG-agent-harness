@@ -221,8 +221,8 @@ session (`POST /api/sessions/{id}/structured-facts`) or a single
 `/api/chat` / `/api/prompt/preview` request. At prompt assembly the store is
 re-read with the current owner filter. Missing, inactive, stale-revision, and
 cross-owner facts are dropped; only survivors are formatted as untrusted
-background context. Preview `structured_facts.injected` / `dropped` is the same
-set chat would send. Suggest still does not mutate canonical facts.
+background context. Preview describes local chat. Cloud chat omits memory;
+`structured_facts.injected` stays empty and selected facts are dropped as `cloud_chat`.
 
 ## FTS retrieval
 

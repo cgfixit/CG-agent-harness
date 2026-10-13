@@ -814,6 +814,7 @@ async fn chat_inner(
                 &state,
                 &owner,
                 memory_enabled,
+                cloud_selected,
                 &selections,
                 crate::server::structured_memory::RetrievalIntent {
                     force,
