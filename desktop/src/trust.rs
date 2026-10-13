@@ -11,7 +11,7 @@ use objc2_foundation::{
     MainThreadMarker, NSObjectProtocol, NSURLAuthenticationChallenge, NSURLCredential,
     NSURLSessionAuthChallengeDisposition,
 };
-use objc2_security::{SecPolicy, SecTrust};
+use objc2_security::{SecCertificate, SecPolicy, SecTrust};
 use objc2_web_kit::{WKNavigationDelegate, WKWebView};
 
 struct Pin {
@@ -77,11 +77,15 @@ define_class!(
 unsafe fn accepts(trust: &SecTrust, expected: &[u8]) -> bool {
     // Evaluate only the supplied peer, with one explicit anchor and SSL host
     // policy. Pinning is in addition to platform validation, not a bypass.
-    // why: Apple deprecated SecTrustGetCertificateAtIndex (macOS 12) for
-    // SecTrustCopyCertificateChain; this single leaf lookup is kept until the
-    // objc2-security binding is migrated.
-    #[allow(deprecated)]
-    let Some(leaf) = (unsafe { trust.certificate_at_index(0) }) else {
+    if unsafe { trust.set_network_fetch_allowed(false) } != 0 {
+        return false;
+    }
+    let Some(chain) = (unsafe { trust.certificate_chain() }) else {
+        return false;
+    };
+    // SAFETY: SecTrustCopyCertificateChain returns an owned array of
+    // SecCertificate objects, ordered from leaf to anchor.
+    let Some(leaf) = (unsafe { chain.cast_unchecked::<SecCertificate>() }).get(0) else {
         return false;
     };
     if unsafe { leaf.data() }.to_vec() != expected {
@@ -90,8 +94,7 @@ unsafe fn accepts(trust: &SecTrust, expected: &[u8]) -> bool {
     let anchors = CFArray::from_objects(&[&*leaf]);
     let policy = unsafe { SecPolicy::new_ssl(true, Some(&CFString::from_str("127.0.0.1"))) };
     unsafe {
-        trust.set_network_fetch_allowed(false) == 0
-            && trust.set_anchor_certificates(Some(anchors.as_ref())) == 0
+        trust.set_anchor_certificates(Some(anchors.as_ref())) == 0
             && trust.set_anchor_certificates_only(true) == 0
             && trust.set_policies(policy.as_ref()) == 0
             && trust.evaluate_with_error(std::ptr::null_mut())
@@ -145,7 +148,6 @@ pub fn install(window: &tauri::WebviewWindow, origin: &str, certificate: Vec<u8>
 mod tests {
     use super::*;
     use objc2_core_foundation::{CFData, CFRetained};
-    use objc2_security::SecCertificate;
     use std::ptr::NonNull;
 
     fn certificate(host: &str, expired: bool) -> Vec<u8> {
