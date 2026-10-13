@@ -252,6 +252,7 @@ fn spent(usage: &[Usage]) -> u64 {
 async fn model_call(
     state: &AppState,
     owner: &str,
+    model: &str,
     phase: &str,
     system: &str,
     body: &Value,
@@ -260,7 +261,7 @@ async fn model_call(
     usage: &mut Vec<Usage>,
 ) -> Result<String> {
     authorize_owner(state, owner)?;
-    if state.cloud_chat.is_cloud_selection(&state.current_model()) {
+    if state.cloud_chat.is_cloud_selection(model) {
         return Err(error(
             "CLOUD_CHAT_CONTEXT",
             "web research requires a locally selected chat model",
@@ -273,9 +274,7 @@ async fn model_call(
     }
     // Gathering sources can take minutes: the window must still allow this
     // budget. Checked before reserving, since a refused call sends nothing.
-    state
-        .ensure_window_allows(&state.current_model(), 0, total_budget)
-        .await?;
+    state.ensure_window_allows(model, 0, total_budget).await?;
     // Reserve before awaiting so cancellation, timeout and malformed upstream
     // responses still appear in total usage, explicitly estimated at the cap.
     usage.push(Usage {
@@ -294,7 +293,7 @@ async fn model_call(
                 role: "user".into(),
                 content: user,
             }],
-            Some(&state.current_model()),
+            Some(model),
             cap,
             0.0,
         )
@@ -503,6 +502,7 @@ pub async fn run_from(
                     match model_call(
                         &state,
                         owner,
+                        &model,
                         "planning",
                         PLAN_SYSTEM,
                         &prompt,
@@ -599,6 +599,7 @@ pub async fn run_from(
                     match model_call(
                         &state,
                         owner,
+                        &model,
                         "synthesis",
                         ANSWER_SYSTEM,
                         &input,
