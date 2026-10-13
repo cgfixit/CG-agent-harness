@@ -1,8 +1,7 @@
 # Install and first run
 
-This guide covers prerequisites, build, first run, credentials, and verification.
-See the [index](../README.md), [model setup](MODELS.md), and
-[accounts](SECURE_RESEARCH.md#accounts-and-roles).
+For model and account details, see [Models](MODELS.md) and
+[Accounts](SECURE_RESEARCH.md#accounts-and-roles).
 
 ## 2. Prerequisites
 
@@ -223,11 +222,10 @@ successful build do not prove native interaction acceptance; see
 
 ## 6. First run
 
-Fresh homes enable account login, role permissions, HTTPS and web
-fetch/search/research automatically; no harness API key or configuration edit
-is required for those features. Web starts with an empty URL allowlist, so an
-administrator must grant sources through `/web allow` before content reads. For
-the app, open it from Finder. For the standalone path, start the server:
+Fresh homes enable login, role permissions, HTTPS and web fetch/search/research
+without a harness API key or configuration edit. The content allowlist starts
+empty; administrators grant sources through `/web allow`. Open the app from
+Finder, or start the standalone server:
 
 ```bash
 ./target/release/cgagentharness serve
@@ -245,10 +243,9 @@ The standalone server prints its address, for example:
 CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarness)
 ```
 
-On first run either path seeds the application home. If the configured loopback
-service already has the shipped `qwen3.8:27b-mlx` tag, chat needs no model-config
-edit. Use `/model list` to inspect available tags and `/model use <exact-tag>` to
-select another installed chat model. The harness never downloads a missing tag.
+First run seeds the application home. Chat uses the configured loopback service's
+`qwen3.8:27b-mlx` tag by default. Inspect installed tags with `/model list` and
+select one with `/model use <exact-tag>`. The harness never downloads missing tags.
 
 To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
 `serve` with Ctrl-C. Merge the exact installed tag into the active home's
@@ -278,15 +275,35 @@ For the standalone server, leave its terminal open and visit:
 https://127.0.0.1:8790/
 ```
 
-The native app verifies its owned local certificate. External browsers need
-explicit operator-controlled trust or an operator certificate already trusted by
-the browser; see the secure setup guide. After login and password replacement,
-leave the optional metadata key field empty and send a message. Replies
-[stream](CONSOLE.md#streaming-chat-and-cancellation) and `/loop stop` aborts the
-turn; time to first token depends on the selected local model.
+The app verifies its owned certificate. External browsers require
+operator-controlled trust or an operator certificate trusted by the browser;
+see [secure setup](SECURE_RESEARCH.md). After login and password replacement,
+leave the optional metadata key empty and send a message. Replies
+[stream](CONSOLE.md#streaming-chat-and-cancellation); `/loop stop` aborts the turn.
+Time to first token depends on the model.
 
-If the browser page hangs and never responds, double-check that Ollama ([model setup](MODELS.md)) is still
-available at its configured local endpoint.
+If replies stall, check that [Ollama](MODELS.md) is available at its configured endpoint.
+
+### Memory setup
+
+Run `/memory` to inspect gates. Fresh homes enable capture, suggestions and
+retrieval; upgrades preserve settings. To open a disabled store, set `enabled: true`
+under `structured_memory` in `config.yaml` and restart. Administrators can then
+enable `/memory capture on`, `/memory auto-suggest-chat on` and
+`/memory auto-suggest-coding on`.
+
+Select an installed local tag with `/model use <exact-tag>`, including 9B models.
+Under `structured_memory`, set `suggestion_mode: summaries` for summaries or `both`
+for summaries and useful details; restart after editing. Empty results can be valid.
+
+After completed work, open **Memory** for pending proposals. Review each and enter
+a reason to save, update, deactivate or dismiss; generation never changes saved
+facts. **Suggestion activity** explains empty, skipped, failed or interrupted work.
+Restart preserves proposals, but queued inputs are lost.
+
+`/memory search <query>` only finds facts; `/memory retrieve <query>` includes
+matches in that chat. Automatic retrieval separately requires `retrieval` and
+`auto_retrieval`; inspect `/prompt`. See [Memory](MEMORY_GUIDE.md) for gates and recovery.
 
 ## 8. Persistence, optional keys and recovery
 
