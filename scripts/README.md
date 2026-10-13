@@ -9,6 +9,7 @@ chat-browser job and `verify-local.sh`.
 ## Operator
 
 - [`start-web.sh`](start-web.sh): starts the console on loopback (default 8790) and opens a browser.
+- [`web-allowlist-bootstrap.sh`](web-allowlist-bootstrap.sh): grants a technical-docs web allowlist through `cgagentharness web allow` (admin login needed); extra lines from `CGAH_GRANTS_FILE`.
 - [`reset-macos.sh`](reset-macos.sh): dry-runs, or with `--yes` deletes, the harness home and Keychain entries.
 - [`smoke-ollama.sh`](smoke-ollama.sh): live smoke of the release binary against local Ollama; optional `FINGERPRINT_OUT`.
 - [`qwen3.8-27b-mlx-cg.Modelfile`](qwen3.8-27b-mlx-cg.Modelfile): `ollama create` recipe pinning `num_ctx` 32768 ([MODELS.md](../docs/MODELS.md)).
