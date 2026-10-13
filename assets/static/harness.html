@@ -1989,8 +1989,8 @@ const COMMAND_MAN = {
   '/memory consolidation on|off': {detail:'Administrator switch for manual consolidation.'},
   '/memory facts': {detail:'Lists your active structured facts, most recently changed first: saved with /memory save or applied from a proposal. These are not pinned notes. Listing injects nothing; a fact reaches chat only through an explicit selection or a retrieval match while the recall or retrieval gate is on.'},
   '/memory forget <id>': {detail:'Removes one pinned note. Ids are listed by /memory.'},
-  '/memory proposals': {detail:'Opens the Memory pane with the pending proposals and your saved facts. Apply and Reject each require a reason. Apply changes structured facts, not pinned notes.'},
-  '/memory remember <sentence> :: <reason>': {detail:'Attaches your summary to the latest completed episode of this account. The two colons separate the summary from the required reason. Needs capture on and a completed chat turn; no fact is written.'},
+  '/memory proposals': {detail:'Opens suggested memories and saved facts. Saving, updating, removing or dismissing a suggestion requires a reason. Saved memories are separate from pinned notes.'},
+  '/memory remember <sentence> :: <reason>': {detail:'Attaches your summary to the latest completed episode of this account. The two colons separate the summary from the required reason. Needs a previously captured, completed episode; works even with capture off. No fact is written.'},
   '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
   '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
   '/memory search <query>': {detail:'Lists matching fact candidates with scores. Needs the retrieval gate; /memory facts lists facts without it. Nothing is injected into chat.'},
@@ -4980,7 +4980,8 @@ async function refreshMemoryProposals() {
   memoryRefreshBusy = true;
   clearTimeout(memoryRefreshTimer);
   const revision = memoryViewRevision;
-  let delay = null;
+  // A transient failure before status arrives must not stop visible polling.
+  let delay = statusBackoffMs;
   let feedback = panel.querySelector(':scope > .memory-feedback');
   if (!feedback) {
     const header = document.createElement('div'); header.className = 'memory-heading';
@@ -5018,11 +5019,18 @@ async function refreshMemoryProposals() {
     const lines = [];
     let recentRun = null;
     const attempt = automatic && automatic.last_attempt;
+    let latestIsCompletion = !!attempt;
     if (attempt) lines.push('Most recent completion attempt: ' + attempt.source + ' · ' + new Date(attempt.created_ts * 1000).toLocaleTimeString() + ' · episode ' + (attempt.episode_id || 'not created') + (attempt.queued ? ' · run ' + attempt.run_id : ' · not queued (' + attempt.reason + (attempt.discarded_reason ? '; discarded: ' + attempt.discarded_reason : '') + '). ' + memoryRecovery(attempt.reason)));
     try {
       const history = await api('/api/structured-memory/consolidation');
       if (!current()) return;
-      recentRun = (history.runs || []).find(run => attempt && run.id === attempt.run_id) || (history.runs || [])[0];
+      const runs = history.runs || [];
+      const latestSummary = runs.find(run => run.summarizer_version !== 'completion-suggestions-v1');
+      const newerSummary = attempt && latestSummary && latestSummary.created_ts > attempt.created_ts;
+      latestIsCompletion = !!attempt && !newerSummary;
+      // A newer summary run is real activity too. Otherwise keep the exact
+      // completion/skip correlation; an unrelated old success explains nothing.
+      recentRun = newerSummary ? latestSummary : attempt ? runs.find(run => run.id === attempt.run_id) : runs[0];
       for (const run of history.runs || []) {
         lines.push((run.summarizer_version === 'completion-suggestions-v1' ? 'Completion suggestion' : 'Summary consolidation') + ' · ' + new Date(run.created_ts * 1000).toLocaleString() + '\nRun ' + run.id + ' · episodes ' + (run.episode_ids || []).join(', ') + '\n' + (attempt && attempt.run_id === run.id && attempt.reason === 'receipt_store_failed' ? 'Input discarded; stored state could not be updated.' : memoryRunOutcome(run)) + '\nStatus: ' + run.state + (run.error_class ? ' · ' + run.error_class : '') + '\nModel: ' + (run.model_id || 'not started') + ' · candidates ' + run.candidate_count + ' · rejected ' + run.rejected_count + ' · proposals ' + (run.proposal_ids || []).join(', '));
       }
@@ -5039,9 +5047,11 @@ async function refreshMemoryProposals() {
     const activityText = outcomes.querySelector('pre');
     if (activityText.textContent !== outcomeText) activityText.textContent = outcomeText;
     const latest = panel.querySelector(':scope > .memory-latest');
-    latest.textContent = attempt && !attempt.queued ? memoryRecovery(attempt.reason) : recentRun ? memoryRunOutcome(recentRun) : '';
-    if (automatic && automatic.queued) latest.textContent = automatic.queued + (automatic.queued === 1 ? ' suggestion is waiting' : ' suggestions are waiting') + ' for the local model.';
-    if (automatic && automatic.running) latest.textContent = 'Looking for useful memories on this device…';
+    latest.textContent = latestIsCompletion && !attempt.queued ? memoryRecovery(attempt.reason) : recentRun ? memoryRunOutcome(recentRun) : '';
+    if (latestIsCompletion && attempt.queued) {
+      if (automatic.queued) latest.textContent = automatic.queued + (automatic.queued === 1 ? ' suggestion is waiting' : ' suggestions are waiting') + ' for the local model.';
+      if (automatic.running) latest.textContent = 'Looking for useful memories on this device…';
+    }
     if (latest.textContent) latest.textContent = 'Latest activity: ' + latest.textContent;
     const forms = panel.querySelector(':scope > .memory-proposals');
     const keys = new Set(pending.map(p => p.id + ':' + p.revision));
@@ -5052,7 +5062,12 @@ async function refreshMemoryProposals() {
       const form = document.createElement('form'); form.dataset.proposal = key; form.dataset.reviewState = 'pending';
       const targeted = proposal.action === 'update' || proposal.action === 'deactivate';
       const target = document.createElement('p'); target.className = 'memory-target';
-      if (targeted) { form.dataset.targetFact = proposal.target_fact_id || ''; target.textContent = 'Loading the saved memory this suggestion changes…'; }
+      if (targeted) {
+        form.dataset.targetFact = proposal.target_fact_id || '';
+        form.dataset.targetRevision = String(proposal.expected_revision);
+        form.dataset.targetDigest = proposal.expected_digest || '';
+        target.textContent = 'Loading the saved memory this suggestion changes…';
+      }
       const heading = document.createElement('h3');
       heading.textContent = proposal.action === 'deactivate' ? 'Remove a saved memory' : proposal.action === 'update' ? 'Update a saved memory' : proposal.category === 'session_summary' ? 'Conversation summary' : 'Useful detail';
       const summary = document.createElement('p'); summary.textContent = (proposal.action === 'update' ? 'Suggested replacement:\n' : '') + (proposal.content || '');
@@ -5116,11 +5131,13 @@ async function appendSavedFacts(panel) {
     for (const form of panel.querySelectorAll(':scope > .memory-proposals > form[data-target-fact]')) {
       if (form.dataset.reviewState === 'decided') continue;
       const fact = facts.find(row => row.id === form.dataset.targetFact);
-      form.dataset.targetLoaded = String(!!fact);
-      const text = fact ? 'Current saved memory:\n' + fact.content : 'This saved memory is unavailable. Refresh or dismiss this suggestion.';
+      const current = !!fact && String(fact.revision) === form.dataset.targetRevision && fact.content_digest === form.dataset.targetDigest;
+      form.dataset.targetLoaded = String(current);
+      const text = !fact ? 'This saved memory is unavailable. Refresh or dismiss this suggestion.'
+        : 'Current saved memory:\n' + fact.content + (current ? '' : '\nThis memory changed since the suggestion was made. Dismiss this outdated suggestion and create a new one if needed.');
       const target = form.querySelector('.memory-target');
       if (target.textContent !== text) target.textContent = text;
-      if (form.dataset.reviewState === 'pending') form.querySelector('.memory-save').disabled = !fact;
+      if (form.dataset.reviewState === 'pending') form.querySelector('.memory-save').disabled = !current;
     }
     const snapshot = JSON.stringify(facts);
     if (previous && previous.isConnected && previous.dataset.snapshot === snapshot) return;
