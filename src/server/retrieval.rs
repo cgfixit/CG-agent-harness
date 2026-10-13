@@ -44,11 +44,14 @@ pub fn refuse_forbidden_attachments(
     if request_ids.is_empty() && pinned_ids_for_owner.is_empty() {
         return Ok(());
     }
-    Err(HarnessError::new(
-        "ATTACHMENT_SURFACE_FORBIDDEN",
-        "this surface does not receive attachment bytes (cloud / loop / agent)",
-    )
-    .detail("surface", surface.as_str()))
+    let message = if pinned_ids_for_owner.is_empty() {
+        "this surface does not receive attachment bytes (cloud / loop / agent)"
+    } else {
+        "this surface does not receive attachment bytes (cloud / loop / agent); this session keeps files from earlier local chat, so start /session new for cloud chat, /loop or /agent"
+    };
+    Err(HarnessError::new("ATTACHMENT_SURFACE_FORBIDDEN", message)
+        .detail("surface", surface.as_str())
+        .detail("live_pins", pinned_ids_for_owner.len()))
 }
 
 pub fn assemble_local_untrusted(
@@ -127,9 +130,14 @@ mod tests {
             assert_eq!(err.code, "ATTACHMENT_SURFACE_FORBIDDEN");
             assert!(err.message.contains("does not receive attachment bytes"));
             assert_eq!(err.details["surface"], surface.as_str());
+            assert_eq!(err.details["live_pins"], 0);
+            assert!(!err.message.contains("/session new"));
             let err = refuse_forbidden_attachments(surface, &[], &ids).unwrap_err();
             assert_eq!(err.code, "ATTACHMENT_SURFACE_FORBIDDEN");
             assert_eq!(err.details["surface"], surface.as_str());
+            assert_eq!(err.details["live_pins"], 1);
+            assert!(err.message.contains("does not receive attachment bytes"));
+            assert!(err.message.contains("/session new"));
         }
     }
 

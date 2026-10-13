@@ -3733,7 +3733,7 @@ async function sendChat(text, asLoop, extra) {
         return null;
       }
     }
-    if (asLoop && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT' || code === 'LOOP_IN_FLIGHT' || code === 'CHAT_BUSY')) {
+    if (asLoop && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT' || code === 'LOOP_IN_FLIGHT' || code === 'CHAT_BUSY' || code === 'ATTACHMENT_SURFACE_FORBIDDEN')) {
       showError(e);
       stopLoop('loop stopped — ' + code);
       return null;

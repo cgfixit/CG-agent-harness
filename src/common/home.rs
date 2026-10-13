@@ -156,6 +156,7 @@ impl Home {
     pub fn registry_path(&self) -> PathBuf {
         self.root.join("data").join("agentic").join("skills_registry.json")
     }
+    /// Fixed layout path read by the panels route; not a config tunable.
     pub fn optimizer_runs_dir(&self) -> PathBuf {
         self.root
             .join("data")
