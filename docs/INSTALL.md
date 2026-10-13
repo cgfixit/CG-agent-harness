@@ -404,9 +404,8 @@ on first run. Common operator settings follow:
 | `web.model_tokens` | 1024 | Maximum synthesis completion, clamped 256–2048 |
 | `web.total_tokens` | 28000 | Planning and synthesis budget, 2048–128000 (32000 without a larger measured window); sized for a **verified** 32768-token Ollama window ([model setup](MODELS.md)). Keep 16000 if `/api/ps` shows a smaller `context_length` |
 
-`assets/config.default.yaml` is seed-only. Existing homes keep their seeded
-`config.yaml` until you edit it. Missing settings use their documented runtime
-fallbacks; existing explicit settings remain authoritative. Restart after edits.
+Upgrades preserve `config.yaml`; missing settings use documented fallbacks.
+Explicit settings win. Restart after edits.
 
 Quoted YAML strings such as `"true"` never arm a gate. See [coding pipeline](CODING_PIPELINE.md) for the
 coding-pipeline gates and [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md)
@@ -557,17 +556,15 @@ test_home="$(mktemp -d)"
 CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
-The disposable home avoids the app's home lock. The script runs formatting, warning-denied Clippy, tests with planner
-keys blanked, CI contract scripts, and a release build. It passes `--locked` to
-Cargo without setting `CARGO_NET_OFFLINE`, so a stale lockfile fails instead of
-changing. It runs cargo-deny only when installed; record a skip and run that gate
-separately. An outer sandbox can block nested Seatbelt. Run native acceptance
-from the operator terminal without weakening the profile.
+The disposable home avoids the app's lock. The script runs formatting,
+warning-denied Clippy, tests with planner keys blanked, CI contracts and a release
+build. Cargo uses `--locked`, not offline mode. Missing cargo-deny is a skip;
+run it separately. An outer sandbox can block nested Seatbelt; use the operator
+terminal without weakening the profile.
 
 For dependency acceptance, run `cargo build --locked` and `cargo deny check` in
-both the root and `desktop/` with their pinned toolchains. [Dependency
-maintenance](DEPENDENCIES.md) covers updates, pins, features, and drift. Newer
-releases do not make a lockfile invalid; blind updates can exceed the MSRV.
+the root and `desktop/` with their pinned toolchains. [Dependency
+maintenance](DEPENDENCIES.md) covers updates and MSRV constraints.
 
 For the existing live chat smoke, set the exact installed tag explicitly:
 
@@ -603,21 +600,14 @@ The script uses an isolated profile and mock APIs. Set `CHROME_BIN` for another
 installation. It checks the console and CSP, not model behavior or WKWebView.
 The fixture needs no new app build or model download.
 
-Run these after [packaging](INSTALL.md#52-macos-app). The shell embeds the signed
-sidecar hash, so do not replace or re-sign only the backend. The app bundle,
-unlike the CLI archive, includes the offline helper and desktop docs. Build and
-HTTP evidence do not prove native window, chooser, clipboard, or quit behavior.
-Record those in the PR body.
+Run desktop checks after [packaging](INSTALL.md#52-macos-app). Build and HTTP
+checks do not prove native window, chooser, clipboard or quit behavior; record
+those separately in the PR body.
 
 ## Tests and CI/CD
 
-The [verification commands above](#11-verify-your-setup) cover local gates,
-desktop packaging, Chrome, and Ollama. Additional focused commands are:
-
-```bash
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
-cargo test --test invariant_guard          # fast I6 source scan
-```
+Use [focused local checks](#11-verify-your-setup) for changed behavior; CI runs
+all targets with provider keys blanked.
 
 Fixtures neutralize `GIT_CONFIG_GLOBAL` and set repository identity. Set
 `CGAH_TEST_BINARY` for another backend, including a bundle copy. The standard-library
