@@ -163,9 +163,8 @@ Each passive row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, 
 
 ## Security and trust boundaries
 
-- Gates ship closed, quoted `"true"` is off, and an empty scope refuses every tier.
-- Only the validated operator CIDRs define scope. Interface addresses do not.
-- `status` and `netconnect_status` read config without loading collectors.
+The [gate contract](../INVARIANTS.md#netconnect-is-fail-closed-and-lan-scoped) owns the shipped gates and scope rules. In addition:
+
 - `devices`, `netconnect_devices`, and the enabled panel load each passive source
   once, then remove IPv6 and out-of-scope rows. Failed guards do not load them.
 - `packets_sent` is 0 for everything except `diag`, where it counts connect

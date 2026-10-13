@@ -281,11 +281,9 @@ https://127.0.0.1:8790/
 The native app verifies its owned local certificate. External browsers need
 explicit operator-controlled trust or an operator certificate already trusted by
 the browser; see the secure setup guide. After login and password replacement,
-leave the optional metadata key field empty and send a message. The console
-requests `POST /api/chat` with `Accept: text/event-stream`, so text arrives as
-`delta` events until a final `done`; `/loop stop` (`POST /api/chat/cancel`)
-aborts the turn. Time to first token still depends on the selected local model.
-See [streaming chat](CONSOLE.md#streaming-chat-and-cancellation).
+leave the optional metadata key field empty and send a message. Replies
+[stream](CONSOLE.md#streaming-chat-and-cancellation) and `/loop stop` aborts the
+turn; time to first token depends on the selected local model.
 
 If the browser page hangs and never responds, double-check that Ollama ([model setup](MODELS.md)) is still
 available at its configured local endpoint.
@@ -320,21 +318,17 @@ loads Keychain, Secret Service or Credential Manager; Linux builds need
 after clearing a saved key. Legacy `.env` migrates unless
 `security.allow_plaintext_key_file` is literal true. Restart to reload.
 
-`config.yaml` uses the [private credential reader](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)
-at startup, reload and policy rechecks (1 MiB UTF-8 maximum). Unix requires current
-ownership, one link and no group/other permissions; macOS also refuses extended
-ACL entries. Windows requires effective-user ownership, ordinary allow ACEs only
-for that user, and no reparse point. Writers atomically publish private files
-(Unix `0600`, Windows protected DACL); readers need not require the protected flag.
+`config.yaml` must be private at startup, reload and policy rechecks (1 MiB
+UTF-8 maximum): Unix owner, one link and no group/other permissions, no extended
+ACLs on macOS, and the [credential reader's](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)
+owner/DACL checks on Windows ([contract](../INVARIANTS.md#reload-changes-limits-not-authority)).
 Repair Unix permissions with `chmod 600` and remove extended ACLs; refusals never
 repair files.
 
 Only local/fallback `api_key`, MCP `env` values and complete SSE `url` accept
-`env:NAME`, e.g. `api_key: env:LOCAL_MODEL_TOKEN`. Resolution follows managed-key
-loading; missing/invalid references fail without substring/recursive expansion.
-YAML retains references; restart after credential changes. Arbitrary names must
-be inherited, not saved through API Keys. MCP refuses reserved sources;
-see [declarations](MCP_CLIENT.md).
+whole-value `env:NAME`, e.g. `api_key: env:LOCAL_MODEL_TOKEN`, resolved once at
+startup. Arbitrary names must be inherited, not saved through API Keys. MCP
+refuses reserved sources; see [declarations](MCP_CLIENT.md).
 
 Forwarded or proxy requests are unsupported. See [secure setup](SECURE_RESEARCH.md).
 
@@ -364,13 +358,8 @@ hides it. Coding-policy checks reread disk at mutation boundaries.
 | Optional `unslop` | `config.yaml`; local coding planner only | Coding metrics, not chat phrasing |
 
 Use [response style](CONSOLE.md#74-customize-response-style) before generation
-parameters. `max_tokens` limits output, not context; see the ceilings below.
-Startup reserves 4096 estimated prompt tokens within the 30000-token safety
-limit. Legacy `/loop` zero means 2048; chat zero is invalid. Web chat also obeys
-`web.total_tokens`. The Ollama server controls context; the harness sends no
-`num_ctx` ([model setup](MODELS.md)). `temperature` changes sampling, not filler
-filtering. Keep persona and skills concise; `/loop` also has its separate API
-rate budget.
+parameters: `max_tokens` limits output, not context (chat zero is invalid), and
+`temperature` changes sampling, not filler filtering.
 
 ### Tunables you may want to know about
 
@@ -474,11 +463,9 @@ or approval. Cancellation is best-effort; inspect escaped descendants before
 further writes.
 
 Audit/spend/optional metrics JSONL logs retain a current file and one previous
-`.1` generation, default 8 MiB each. Logging remains best-effort. The server
-appends audit lines on a background thread, flushed before each agentic child
-starts and at shutdown: requests never wait on the file or the child's lease. A
-full queue (`logging.audit_queue_lines`, default 4096; 0 appends inline) drops
-new lines with a warning. See
+`.1` generation, default 8 MiB each. Logging remains best-effort; audit lines use
+a [bounded background writer](../INVARIANTS.md#secrets-never-reach-a-response-or-a-log-line).
+See
 [the coding pipeline](CODING_PIPELINE.md), [desktop recovery](DESKTOP.md) and
 [process lifecycle](PROCESS_LIFECYCLE.md) for precise limits.
 
@@ -514,17 +501,10 @@ both app source and data home when comparing versions. Do not change `HOME`.
 
 The app has no built-in updater. The [release
 workflow](../.github/workflows/release.yml) checks changed `main` at **08:17 and
-20:17 UTC**. These are 04:17 and 16:17 New York daylight time, or 03:17 and
-15:17 standard time. Runs may be delayed. The workflow skips unchanged source
-and any SHA without a successful Bundle run. It then verifies backend and
-universal desktop builds before publishing Latest. A Bundle run or PR alone does
-not publish; a later scheduled run can include merged source.
-
-Maintainers change the schedule in `.github/workflows/release.yml` through a PR.
-The manual workflow's `publish: false` default previews the plan; setting it true
-requests publication after verification. A pushed `v*` tag is another release
-trigger. See [release planning](../scripts/release-plan.py) for source/version checks.
-Changing cadence is a repository workflow change, not an app preference.
+20:17 UTC** (runs may be delayed), skips unchanged source and any SHA without a
+successful Bundle run, and verifies backend and universal desktop builds before
+publishing Latest. A Bundle run or PR alone does not publish. Manual preview,
+`v*` tags and cadence changes are in [releasing](RELEASING.md).
 
 ## 11. Verify your setup
 
@@ -544,9 +524,8 @@ gh auth status
 git remote get-url origin
 ```
 
-`/api/ps` must report `context_length` 32768 before using the seeded
-`web.total_tokens` 28000 and `web.evidence_tokens` 6000. If it does not, keep
-16000 and 3000 in the home `config.yaml`.
+`/api/ps` must report `context_length` 32768 for the seeded web budgets
+([Ollama](#25-ollama)); otherwise keep 16000 and 3000 in the home `config.yaml`.
 
 Check both configured model tags, the selected repository and write gates. The
 existing hidden `agentic test` command checks some configuration/tools, but is
@@ -561,8 +540,7 @@ test_home="$(mktemp -d)"
 CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
-The disposable home avoids the app's home lock; use another `--port` if `:8790`
-is occupied. The script runs formatting, warning-denied Clippy, tests with planner
+The disposable home avoids the app's home lock. The script runs formatting, warning-denied Clippy, tests with planner
 keys blanked, CI contract scripts, and a release build. It passes `--locked` to
 Cargo without setting `CARGO_NET_OFFLINE`, so a stale lockfile fails instead of
 changing. It runs cargo-deny only when installed; record a skip and run that gate
@@ -622,13 +600,8 @@ desktop packaging, Chrome, and Ollama. Additional focused commands are:
 ```bash
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
 cargo test --test invariant_guard          # fast I6 source scan
-python3 scripts/test-desktop-backend.py    # built release backend; disposable homes
-node scripts/chat-browser-acceptance.mjs   # installed Chrome + Node with WebSocket; mock APIs
-# Optional, with your configured local inference service running:
-scripts/smoke-ollama.sh
 ```
 
-Always blank the three planner keys so tests never depend on developer secrets.
 Fixtures neutralize `GIT_CONFIG_GLOBAL` and set repository identity. Set
 `CGAH_TEST_BINARY` for another backend, including a bundle copy. The standard-library
 Python suite uses a loopback model fixture with no downloads or cloud inference.
@@ -642,7 +615,7 @@ tokens, fresh CSRF, and no replay.
 | Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
 | [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and packaged backend, verify signatures, checksums, and extraction, then retain ZIP and checksums. |
 | [Bundle](../.github/workflows/bundle.yml) | Packages `linux-x86_64` and `macos-arm64` CLIs beside desktop, checksums and re-verifies each artifact, then tests loopback binding and exit-3 missing configuration. |
-| Workflow and source checks | CodeQL, DevSkim, Gitleaks secret scanning, and PR-template/base-branch checks are separate workflows. Workflow changes additionally trigger actionlint/zizmor. |
+| Workflow and source checks | CodeQL, DevSkim, Gitleaks secret scanning, PR-template/base-branch checks, the advisory review gate and a daily RustSec scan (`advisories.yml`) are separate workflows. Workflow changes additionally trigger actionlint/zizmor. The optional `live-ollama.yml` fingerprint runs the release binary against a pinned real Ollama on Linux and macOS. |
 | [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope, collector, and untrusted-string tests on Linux and macOS, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |
 | [Release](../.github/workflows/release.yml) | At 08:17 and 20:17 UTC, publishes the next patch only when `main` differs and its SHA has a successful Bundle. Backend CI, CLI packaging, desktop checks, and downloaded checksums still gate publication. Stable tags and manual preview/publish also work. See [release controls](RELEASING.md). |
 

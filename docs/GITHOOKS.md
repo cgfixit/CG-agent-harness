@@ -55,7 +55,7 @@ Load order: gate defaults, then `security.conf`, then `private.conf`, then
 
 Pre-push scans each commit, not the tip against the base: a key added in one
 commit and deleted in the next is still published, so it is still refused.
-This also catches commits made with `--no-verify` or in a clone without hooks.
+This also catches `--no-verify` commits and commits from hookless clones.
 
 **Reminders.** Printed, never blocking. Answer them in the PR body.
 
@@ -106,7 +106,7 @@ version of the author check.
 
 ## What a hook cannot check
 
-The gate sees text, not intent. These rules stay in `AGENTS.md` and review:
+The gate sees text, not intent. These rules stay with review:
 
 - Reading a secret or personal file in an agent session sends it to that agent's vendor.
 - Collect less: a new field, log line or export needs a stated reason.
@@ -118,7 +118,7 @@ The gate sees text, not intent. These rules stay in `AGENTS.md` and review:
 
 ## Known limits
 
-- `git commit --no-verify` skips pre-commit; pre-push still scans those commits. `git push --no-verify` skips both; CI is the backstop.
+- `git commit --no-verify` skips pre-commit; `git push --no-verify` skips both; CI is the backstop.
 - A clone that never set `core.hooksPath` has no gate.
 - An agent can set an override variable itself. The gate makes that a visible rule violation, not an impossible one.
 - Regex detection misses secrets with no known prefix and low entropy, and flags look-alike fixtures.
@@ -140,9 +140,9 @@ Keep `_security.sh` byte-identical across repos, so a fix lands everywhere by co
 and title rules stay in `scripts/check-pr-template.sh` and CI.
 `.githooks/security.conf` adds:
 
-- **Blocked files:** `.githooks/security.local.conf`, the operator-home spill that `.gitignore` lists (`harness.json`, `soul.md`, `auth.json`, `cli-session.json`, `.CGagentHarness/`, `sessions/`, `tls/`, `soul-history/`, `attachments/`, `notes_corpus/`, `exports/`, `memory/`, `logs/`, `data/agentic/`), so `git add -f` or a home inside the checkout cannot publish it.
+- **Blocked files:** `.githooks/security.local.conf`, the operator-home spill that `.gitignore` lists (`harness.json`, `soul.md`, `soul-pending-apply.json`, `auth.json`, `auth.initialized`, `cli-session.json`, `.CGagentHarness/`, `sessions/`, `tls/`, `soul-history/`, `attachments/`, `notes_corpus/`, `exports/`, `memory/`, `logs/`, `data/agentic/`), so `git add -f` or a home inside the checkout cannot publish it.
 - **Protected (ask first):** `.gitleaks.toml`, `deny.toml` (root and `desktop/`), plus the template's `.githooks/*` and agent tool settings.
-- **Core-path reminder:** the CLAUDE.md core paths (`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`, `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`) print a reminder that the PR body needs an invariant statement.
+- **Core-path reminder:** the `AGENTS.md` core paths (`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`, `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`) print a reminder that the PR body needs an invariant statement.
 - **Repo check:** `cargo fmt --all -- --check` when staged files include Rust (the first line of the CI merge gate; skipped with a notice without `cargo`).
 - **Fixture allowlist:** the synthetic AWS, GitHub and Anthropic values in `src/common/audit.rs`, `tests/common_layer.rs`, `tests/chat_and_sessions.rs` and `.gitleaks.toml`.
 

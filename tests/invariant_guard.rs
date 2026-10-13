@@ -920,6 +920,7 @@ use Kind::{Agent, Evidence, Guide, Root};
 /// `(path, kind, word cap)`, sorted by path. Caps started at each file's size
 /// on 2026-09-27, rounded up to the next 100 words. Lower them when a fold lands.
 const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
+    // Rows the 2026-10-13 doc-sync trimmed carry their new size plus about 2%, rounded up to the next 10.
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
@@ -962,7 +963,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved raise (1508 words after the project-skills heading edit on main); set to 1510.
     // why: operator-approved headroom for research-job steps 8-12 (#415 review roadmap): ~45 words
     // (gate list, /loop stays tool-free, no job-long gate), plus ~10%, rounded up to the next 50.
-    ("AGENTS.md", Agent, 1600),
+    // why: the 2026-10-13 doc-sync cut it to 1441 words; 1490 keeps the ~50-word roadmap allowance above.
+    ("AGENTS.md", Agent, 1490),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 200),
@@ -978,46 +980,46 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved headroom for research-job steps 8-12 (#415 review roadmap): ~310 words
     // (job runtime ~120, unit chain ~90, report unit ~50, /research slash rules ~35, unslop note ~15),
     // plus ~10%, rounded up to the next 50. Lower it to the reported size once those land.
-    ("INVARIANTS.md", Root, 6450),
+    ("INVARIANTS.md", Root, 6440),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
-    ("README.md", Root, 1500),
+    ("README.md", Root, 1450),
     ("SECURITY.md", Root, 490),
-    ("docs/ANALYTICS.md", Guide, 900),
-    ("docs/API_ROUTES.md", Guide, 2000),
+    ("docs/ANALYTICS.md", Guide, 680),
+    ("docs/API_ROUTES.md", Guide, 1730),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
-    ("docs/CODING_PIPELINE.md", Guide, 3875),
+    ("docs/CODING_PIPELINE.md", Guide, 3510),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
-    ("docs/CONSOLE.md", Guide, 6700),
+    ("docs/CONSOLE.md", Guide, 5820),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
-    ("docs/DESKTOP.md", Guide, 2900),
+    ("docs/DESKTOP.md", Guide, 2480),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
-    ("docs/GITHOOKS.md", Guide, 1358),
+    ("docs/GITHOOKS.md", Guide, 1350),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
-    ("docs/INSTALL.md", Guide, 5000),
-    ("docs/MCP_CLIENT.md", Guide, 1000),
-    ("docs/MCP_SERVER.md", Guide, 1200),
+    ("docs/INSTALL.md", Guide, 4740),
+    ("docs/MCP_CLIENT.md", Guide, 890),
+    ("docs/MCP_SERVER.md", Guide, 1030),
     // why: #244 folded MEMORY_SETUP.md and USER_MANUAL.md's memory sections in here.
-    ("docs/MEMORY_GUIDE.md", Guide, 2000),
+    ("docs/MEMORY_GUIDE.md", Guide, 1750),
     // why: #237 documented refused truncated cloud replies.
-    ("docs/MODELS.md", Guide, 1000),
-    ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
+    ("docs/MODELS.md", Guide, 970),
+    ("docs/PROCESS_LIFECYCLE.md", Guide, 1160),
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
     ("docs/README.md", Guide, 1200),
     ("docs/RELEASING.md", Guide, 700),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
-    ("docs/SECURE_RESEARCH.md", Guide, 4100),
-    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2100),
+    ("docs/SECURE_RESEARCH.md", Guide, 3550),
+    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 1910),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
-    ("docs/STRUCTURED_MEMORY.md", Guide, 3700),
-    ("docs/TROUBLESHOOTING.md", Guide, 1500),
+    ("docs/STRUCTURED_MEMORY.md", Guide, 3440),
+    ("docs/TROUBLESHOOTING.md", Guide, 1300),
     ("docs/USER_MANUAL.md", Guide, 500),
-    // why: operator netconnect user guide; 3392 words after the review corrections, rounded up to the next 100.
-    ("docs/netconnect.md", Guide, 3400),
+    // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
+    ("docs/netconnect.md", Guide, 3300),
     ("docs/screenshots/README.md", Evidence, 200),
 ];
 
@@ -1039,7 +1041,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-approved Root headroom matching the INVARIANTS.md row above (+356); rounded up to the next 500, under the slack rule.
 // why: #432 CI/release trust docs put Guide at 44,006 words; operator-approved raise from 44,000 to 45,000 (under the slack rule).
 // why: the docs/README.md per-file index put Guide at 45,059 words; operator-requested raise from 45,000 to 45,500 (under the slack rule).
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 45_500), (Evidence, 500), (Agent, 23_000)];
+// why: the 2026-10-13 doc-sync cut Guide to 44,132 words with that index; lowered to the next 500 so the cut stays cut.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 44_500), (Evidence, 500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

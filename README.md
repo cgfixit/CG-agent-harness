@@ -60,7 +60,7 @@ The default endpoint is `http://127.0.0.1:11434/v1`. Seeded research budgets ass
 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 ```
 
-Restart an existing service rather than starting a second daemon; the harness sends no `num_ctx` override. A Modelfile `num_ctx` beats that variable. See [Models](docs/MODELS.md) for Ollama.app, smaller windows, and a local derived tag that pins 32768.
+Restart an existing service rather than starting a second daemon. The harness sends no `num_ctx`; see [Models](docs/MODELS.md) for Ollama.app, smaller windows, and a local derived tag that pins 32768.
 
 Other OpenAI-compatible services work on any loopback address (`127.0.0.1`, `localhost`, or `[::1]`); chat and the coding planner have separate settings.
 
@@ -91,25 +91,12 @@ cargo build --release --locked
 
 Open `https://127.0.0.1:8790/` and trust the local certificate ([certificate guide](docs/SECURE_RESEARCH.md)). Non-loopback binds are refused.
 
-<details>
-<summary>Build the macOS app from source</summary>
-
-The packaging recipe uses an Apple Silicon build host, Xcode Command Line Tools, and Rust toolchains **1.88 and 1.90**:
-
-```bash
-rustup target add --toolchain 1.88 aarch64-apple-darwin x86_64-apple-darwin
-rustup target add --toolchain 1.90 aarch64-apple-darwin x86_64-apple-darwin
-scripts/package-desktop.sh --universal
-```
-
-Full instructions: [macOS app installation](docs/INSTALL.md#52-macos-app).
-
-</details>
+To build the macOS app from source (Apple Silicon host, Rust 1.88 and 1.90), see [macOS app installation](docs/INSTALL.md#52-macos-app).
 
 ### 3. Sign in and try a conversation
 
 1. On the sign-in screen, use `admin` / `admin`; the console then **requires a new password** before anything else.
-2. List installed local tags with `/model list`, then select one with `/model use <exact-installed-tag>`. With `models.local_llm.auto_tune` (on by default) this also loads the model, times one short reply, and sets per-model limits from the measured speed and window; `/model profile` shows the result.
+2. List installed local tags with `/model list`, then select one with `/model use <exact-installed-tag>`. With `models.local_llm.auto_tune` (on by default) this also measures the model and sets per-model limits; `/model profile` shows them.
 3. Read the header chips: **Console** (API reachable), **Model** (selected tag installed at the loopback Ollama endpoint; other providers read *not checked*), and **Web** (*off*, *search only*, or URL rules). Then run `/status`, send a message, and inspect the assembled context with `/prompt`.
 4. Run `/help` for topics, `/help web` for research, or `/help all` for the command catalog.
 

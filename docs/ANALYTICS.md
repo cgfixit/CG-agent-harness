@@ -4,8 +4,7 @@ After sign-in, choose **Analytics** or `/analytics` in the native or browser
 console. The overview shows retained session tokens, readable sessions and coding
 runs. A `+` marks a truncated run list. **Refresh** rereads history and timestamps
 success. **Close** or Escape clears the dialog and restores focus. Account
-transitions invalidate cached and late responses. The command also appears in
-Commands and `/help`.
+transitions invalidate cached and late responses.
 
 Administrators who replaced the bootstrap password and operators can read the
 view; auditors cannot. Session counts and tokens are owner-filtered. Spend and
@@ -37,8 +36,7 @@ page. Filter displayed values, including session IDs; **Clear filter** restores
 all rows. Tables show at most 25 rows per page and the record range. Charts and
 overview cover all retained records. Refresh preserves filters and clamps pages
 if records shrink. Closing or changing accounts clears filters, sorting and cache.
-Tables scroll within fixed Close/Refresh and paging controls. Empty, no-match
-and unavailable states are distinct.
+Empty, no-match and unavailable states are distinct.
 
 Run listing scans at most 4,097 directory entries to detect overflow and returns at most 128
 records. A truncated listing is marked partial, and its totals cover only the
@@ -54,7 +52,7 @@ calls, chart dependencies or CSP permissions. User labels render as text.
 
 `GET /api/analytics/summary` uses the same account, role, same-origin, rate and
 CSRF guards as `GET /api/spend/summary`. Supply the existing `X-CyClaw-CSRF` header
-with the authenticated session. No new configuration is required.
+with the authenticated session.
 
 The response combines these sources:
 

@@ -117,10 +117,6 @@ injection detector. Clean fragments can combine into unsafe text, and assembled
 recall is not scanned. Treat facts as untrusted context and review proposals
 together before applying them.
 
-Tests cover HTTP refusals, consolidation staging, apply-time rescanning of a
-legacy unsafe proposal, valid propose/apply/recall flows, and the distinction
-between injection and secret detection.
-
 ## Completion suggestions
 
 `auto_suggest_chat` and `auto_suggest_coding` are independent default-true gates
@@ -199,8 +195,6 @@ capability does not grant inspection of another owner's structured memory.
   empty list; a closed store returns the existing disabled error.
 - Retention: oldest `created_ts`, then `public_id`. Pending proposal
   references are not pruned.
-- Feature-off means no episode inserts. Existing leftover rows remain
-  listable/exportable/purgeable while the store is open (rollback).
 
 ## Proposal contract (persona semantics, SQLite store)
 
@@ -277,8 +271,7 @@ set chat would send. Suggest still does not mutate canonical facts.
   failure become run `failed`/`cancelled` with a non-content `error_class`.
 - **Idempotent.** The same owner + sorted episode set + `consolidator-v2` key
   returns the completed run and does not insert a second proposal batch.
-  A completed v1 key does not suppress a v2 run on the same episode set. Retrying
-  v2 reuses its completed run; it does not create another proposal batch.
+  A completed v1 key does not suppress a v2 run on the same episode set.
   Interrupted `running` rows become `failed`/`interrupted` on reopen and may
   be retried on the same key.
 - Audit records run id, counts, state, and error class. It does not record
@@ -288,9 +281,8 @@ set chat would send. Suggest still does not mutate canonical facts.
 
 The database is a regular file under the harness home with owner-private mode
 (0600) and NOFOLLOW/ownership checks on open. That is **OS access control**,
-not encryption. A process running as the home owner can read the SQLite bytes.
-Application-managed encryption needs a separate key-lifecycle design; this
-release does not place a key beside the database and call the store encrypted.
+not encryption. A process running as the home owner can read the SQLite bytes;
+application-managed encryption would need a separate key-lifecycle design.
 
 Audit events record owner-safe ids, revisions, counts, and status. They must
 not record fact text, proposal payloads, episode summaries, or reasons that
@@ -365,8 +357,7 @@ not a live-model SLA.
 | Database growth / pruning | Oldest-first episode prune with `max_episodes_per_owner: 2` | unreferenced row dropped; pending-proposal refs kept |
 | Chat / feature-combination regression | Existing `tests/structured_memory.rs` + shipped-gate scan | extend those tests; do not add live E2E |
 
-The corpus includes one unsupported candidate, `unsupported-paris`, to exercise
-the scorer. A future live local-model evaluation should target precision 1.0
+A future live local-model evaluation should target precision 1.0
 and unsupported rate 0 on a reviewed set. Rejected-class retention is zero for `sensitivity: reject` and core
 injection hits. No secret scanner exists; a confirmed human write can contain
 non-injection secret-shaped text.
@@ -395,10 +386,8 @@ green:
 Completion suggestions (`auto_suggest_chat` / `auto_suggest_coding`) are
 enabled separately, beside that list. They still write pending proposals only.
 
-Suggested checks before enabling a gate are zero sensitive retention, zero stale or
-cross-owner recall, prompt body at most 3000, no silent fact apply, and the
-corpus precision and unsupported-rate thresholds. Review rate and latency remain
-operator measurements.
+Before enabling a gate, the [asserted baselines](#asserted-baselines-provisional)
+should hold; review rate and latency remain operator measurements.
 
 ## Rollback
 
@@ -418,6 +407,6 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --locked --test structured_memory -- --nocapture
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --locked --lib structured_memory -- --nocapture
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --locked --test structured_memory_phase7 -- --nocapture
 ```
+
+The phase-7 corpus run is under [Evaluation corpus](#evaluation-corpus).

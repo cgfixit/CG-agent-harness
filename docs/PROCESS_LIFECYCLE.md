@@ -98,8 +98,7 @@ heartbeat progress, denied breakaway, actual process/memory limits, nine exit
 paths and a fresh successful call after each. It does not establish filesystem
 or network isolation. The coding executor's check sandbox uses the same
 `JobChild` path, so its checks are also assigned to the kill-on-close job during
-`CreateProcess` (32-process limit, no job memory limit). It is likewise a
-process-tree kill boundary only, not filesystem or network isolation.
+`CreateProcess` (32-process limit, no job memory limit).
 
 Strict mode bounds process memory/count and lifetime; it does not impose a
 scratch disk quota. A hard-killed harness may leave its private temporary
