@@ -194,7 +194,12 @@ const server=createServer(async(req,res)=>{
  }
  if(path==='/api/structured-memory/consolidation'||path.startsWith('/api/structured-memory/consolidation?')){
   if(req.method==='GET'){
-   if(holdMemoryHistory){holdMemoryHistory=false;rejectHeldMemoryHistory=()=>reply({detail:{code:'FIXTURE_HISTORY_ERROR',message:'Old account history failed'}},503);memoryHistoryHeld();return;}
+   if(holdMemoryHistory){
+    holdMemoryHistory=false;
+    // The next owner's history read must not wait on a cached GET transaction.
+    res.writeHead(503,{'Content-Type':'application/json','Cache-Control':'no-store'});res.flushHeaders();
+    rejectHeldMemoryHistory=()=>reply({detail:{code:'FIXTURE_HISTORY_ERROR',message:'Old account history failed'}},503);memoryHistoryHeld();return;
+   }
    reply({runs:suggestionRun?[suggestionRun]:[],count:suggestionRun?1:0});return;
   }
   if(!structuredGates.consolidation){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured consolidation is disabled; selected episodes are not summarized'}},409);return;}
