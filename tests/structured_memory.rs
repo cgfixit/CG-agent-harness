@@ -702,6 +702,13 @@ async fn no_fact_is_injected_without_explicit_selection() {
 
 #[tokio::test]
 async fn selected_facts_are_revalidated_and_preview_matches_chat() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/structured_memory/explicit-recall-selection.json"
+    ))
+    .unwrap();
+    assert_eq!(fixture["name"], "explicit-recall-selection");
+    assert_eq!(fixture["gates"]["structured_memory.explicit_recall"], true);
+    assert_eq!(fixture["gates"]["structured_memory.episode_capture"], false);
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), recall()).await;
     let live = add_fact(&s, "Prefer metric units in examples.", "pref").await;
@@ -734,6 +741,8 @@ async fn selected_facts_are_revalidated_and_preview_matches_chat() {
         json!({"revision": update["revision"], "reason": "apply update", "confirm": true, "apply": true}),
     )
     .await;
+    // A well-formed id that names no fact.
+    let missing = "0".repeat(live["id"].as_str().unwrap().len());
     let session = s.post_json("/api/sessions", json!({})).await.1;
     let sid = session["session_id"].as_str().unwrap();
     let (status, selected) = s
@@ -743,7 +752,8 @@ async fn selected_facts_are_revalidated_and_preview_matches_chat() {
                 "facts":[
                     {"id": live["id"], "expected_revision": live["revision"]},
                     {"id": stale["id"], "expected_revision": stale["revision"]},
-                    {"id": inactive["id"], "expected_revision": inactive["revision"]}
+                    {"id": inactive["id"], "expected_revision": inactive["revision"]},
+                    {"id": missing, "expected_revision": live["revision"]}
                 ]
             }),
         )
@@ -757,8 +767,19 @@ async fn selected_facts_are_revalidated_and_preview_matches_chat() {
         .iter()
         .map(|d| d["reason"].as_str().unwrap())
         .collect();
-    assert!(dropped.contains(&"stale_revision"));
-    assert!(dropped.contains(&"inactive"));
+    // Every drop reason the fixture names is produced at assembly.
+    let revalidate = fixture["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["action"] == "revalidate_at_assembly")
+        .unwrap();
+    for reason in revalidate["drop"].as_array().unwrap() {
+        assert!(
+            dropped.contains(&reason.as_str().unwrap()),
+            "{reason} not in {dropped:?}"
+        );
+    }
 
     let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
     assert_eq!(status, 200, "{preview}");
