@@ -1967,7 +1967,7 @@ const COMMAND_MAN = {
   '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
   '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
-  '/loop [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Chat only: it never starts a coding run and has no tools.'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
+  '/loop [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
   '/memory [on|off|status]': {detail:'Alone or with status, shows the pinned notes, your structured fact and pending proposal counts, and every gate. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
   '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
   '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
@@ -3352,8 +3352,8 @@ async function runSlash(line, webCommand) {
            tab may have changed it since this page last read it. */
         if (currentSession) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
-          if (loopState !== activeLoop || turnRevision !== sessionRevision || turnSession !== currentSession) return;
-        sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
+          if (staleReview()) break;
+          sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
           paintGoalLoop();
           const status = await api('/api/status');
           if (staleReview()) break;

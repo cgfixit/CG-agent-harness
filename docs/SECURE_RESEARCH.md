@@ -283,11 +283,11 @@ that literal argument. Other flag rules are in the
 
 ### Chat web tools
 
-With web enabled, ordinary chat can invoke `web_search` (Google keyword listings)
+With web enabled, local chat and `/loop` can invoke `web_search` (Google keyword listings)
 and `web_fetch` (an exact permitted public URL). They use OpenAI-compatible tool
 calls, which the configured local model must support; it receives the retrieved
 content. No repository, shell, policy, account, key or other mutation tool is
-exposed. `/loop` remains tool-free. Invalid names,
+exposed. Invalid names,
 arguments and excess tool requests are refused; batches are validated before
 their first read and executed sequentially. A turn allows at most
 `web.chat_tool_calls` (1–10, default 10) across all rounds, shares the chat
