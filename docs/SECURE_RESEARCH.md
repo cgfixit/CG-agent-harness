@@ -203,7 +203,9 @@ URL grants remain required. Enablement/allowlist are **shared-home** settings;
 saved selections are account-private. `/web status` shows groups/seeds;
 `/web check URL` checks exact permission without network access.
 
-`tools/web_allowlist.json` is the v1 policy (64 KiB, 32 rules). `/web allow`
+`tools/web_allowlist.json` is the v1 policy: up to `web.max_rules` rules
+(default 32, 1–256, restart-only; one grant names 1–32), 2 KiB each and at
+least 64 KiB. A policy over a lowered cap is refused whole. `/web allow`
 and terminal `web allow` validate groups/seeds and assign stable IDs. Batches
 write atomically. Missing policy refuses reads; a validated admin grant can
 initialize it with that rule only. Invalid/unreadable files never reset.

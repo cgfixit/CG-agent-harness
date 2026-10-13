@@ -3,7 +3,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::web_policy::{canonical_url, valid_group, Rule, MAX_RULES};
+use super::web_policy::{canonical_url, valid_group, Rule, MAX_BATCH_URLS};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WebCommand {
@@ -222,7 +222,7 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                     seeds.push(positional.remove(1));
                 }
             }
-            if positional.is_empty() || positional.len() > MAX_RULES || seeds.len() > 16 {
+            if positional.is_empty() || positional.len() > MAX_BATCH_URLS || seeds.len() > 16 {
                 return Err("Allow needs 1–32 URL patterns and at most 16 seeds.".into());
             }
             let group = group.unwrap_or_else(|| "default".into());
@@ -240,7 +240,7 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
             json!({"urls":positional,"group":group,"seeds":seeds})
         }
         "fetch" | "check" => {
-            if positional.is_empty() || positional.len() > MAX_RULES {
+            if positional.is_empty() || positional.len() > MAX_BATCH_URLS {
                 return Err(format!("/web {action} needs 1–32 exact URLs. For links and site research, use /web research --url URL <question>."));
             }
             for url in &positional {
@@ -266,7 +266,7 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
             for url in &urls {
                 canonical_url(url).map_err(|e| e.message)?;
             }
-            if urls.len() > MAX_RULES {
+            if urls.len() > MAX_BATCH_URLS {
                 return Err("Too many research starting URLs.".into());
             }
             let engine = engine.unwrap_or_else(|| {

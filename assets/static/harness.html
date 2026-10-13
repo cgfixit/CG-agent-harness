@@ -1196,7 +1196,7 @@ function renderWebStatus(data) {
   box.appendChild(intro);
   const rows = [
     ['enabled', data.enabled ? 'yes' : 'no (fail-closed)'],
-    ['permission rules', (data.allowlist || []).length + ' — see groups below; empty denies content reads'],
+    ['permission rules', (data.allowlist || []).length + (Number.isInteger(data.max_allow) ? ' of ' + data.max_allow + ' (web.max_rules)' : '') + ' — see groups below; empty denies content reads'],
     ['keyword search', data.search_provider || 'Google; /web pages for permitted-page passages'],
     ['web calls per chat', Number.isInteger(data.limits?.chat_tool_calls) ? data.limits.chat_tool_calls + ' maximum; token and time limits also apply' : 'unknown'],
     ['injected', data.injected ? 'yes' : 'no'],

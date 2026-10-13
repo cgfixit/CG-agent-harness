@@ -485,7 +485,7 @@ impl WebTool {
         owner: &str,
     ) -> Result<Value> {
         let policy = self.require_enabled(enabled)?;
-        if urls.is_empty() || urls.len() > super::web_policy::MAX_RULES || group.is_some_and(|g| !valid_group(g)) {
+        if urls.is_empty() || urls.len() > super::web_policy::MAX_BATCH_URLS || group.is_some_and(|g| !valid_group(g)) {
             return Err(error("WEB_BAD_URL", "invalid batch or group"));
         }
         let mut targets = Vec::new();
