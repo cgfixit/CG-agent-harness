@@ -280,7 +280,8 @@ UTF-8 source. It retrieves at most `top_k` files using up to 32 path-boosted
 terms. Excerpts center on matches; lexical search does not guarantee repository
 coverage. Use explicit windows for large repositories, synonyms, or long lines.
 Each step rebuilds the index and re-reads each selected file; its full SHA-256
-must still match before inclusion.
+must still match before inclusion. Run status records a per-step retrieval
+trace (indexed files and bytes, whether a limit was hit, and the files supplied).
 
 | Setting | Accepted range | Bound |
 |---|---:|---|
