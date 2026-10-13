@@ -191,7 +191,9 @@ Treat every PR, branch, and doc as something another model may also be touching.
 | Pipeline | clone → plan → patch → hard-sandbox verify → human decide → commit → push → draft PR |
 
 Not CyClaw: no external-corpus RAG or LangGraph topology, no Telegram /
-fsconnect / sqlconnect / netconnect. Same security *posture*, different product.
+fsconnect / sqlconnect. `cgagentharness netconnect status|devices|diag` exists
+but is fail-closed and LAN-scoped (`INVARIANTS.md`, `docs/netconnect.md`). Same
+security *posture*, different product.
 
 ### 8.4 Invariants outline (see INVARIANTS.md)
 
