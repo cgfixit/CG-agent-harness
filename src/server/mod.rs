@@ -173,13 +173,30 @@ pub async fn build_app_with_sources(
         cfg.u64_or("models.local_llm.max_tokens", compaction::DEFAULT_REPLY_TOKENS),
         &backend,
     )?;
-    let settings = HarnessSettings::load(&home)?;
+    let mut settings = HarnessSettings::load(&home)?;
     let store = SessionStore::new(&home.sessions_dir())?;
     // Request handlers queue audit lines; one thread appends them in order.
     // Loaded credentials are redacted by exact value as well as by shape.
     let audit = Audit::from_home(&home.root, &cfg)
         .with_literal_secrets(crate::common::audit::known_secret_values(&cfg))
         .with_writer_thread();
+    let configured_model = cfg.str_or("models.local_llm.model", &backend.model).trim().to_string();
+    let selection_stale = !settings.selected_model.trim().is_empty()
+        && settings.selected_model_config.as_deref().map_or_else(
+            || settings.selected_model.trim() != configured_model,
+            |previous| previous != configured_model,
+        );
+    if selection_stale {
+        settings.selected_model.clear();
+    }
+    if selection_stale || settings.selected_model_config.as_deref() != Some(&configured_model) {
+        settings.selected_model_config = Some(configured_model.clone());
+        settings.save(&home)?;
+    }
+    if selection_stale {
+        audit.log(serde_json::json!({"event": "model_selection_reset", "reason": "configured_model_changed_or_legacy_mismatch", "configured_model": configured_model}));
+        tracing::info!(model = configured_model, "saved model selection reset to configuration");
+    }
     let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
     let upload_permits = Arc::new(tokio::sync::Semaphore::new(state::upload_concurrency(&cfg)?));
     let upload_body_timeout = state::upload_body_timeout(&cfg)?;
@@ -334,9 +351,11 @@ pub async fn build_app_with_sources(
     {
         let warmup = state.clone();
         tokio::spawn(async move {
-            crate::llm::ollama::run_warmup(&warmup.backend, &warmup.cfg, &warmup.audit).await;
-            // models.local_llm.auto_tune: no-op unless the literal boolean true.
             let model = warmup.current_model();
+            if !warmup.cloud_chat.is_cloud_selection(&model) {
+                crate::llm::ollama::run_warmup(&warmup.backend, &model, &warmup.cfg, &warmup.audit).await;
+            }
+            // models.local_llm.auto_tune: no-op unless the literal boolean true.
             crate::server::model_limits::tune(warmup, model).await;
         });
     }

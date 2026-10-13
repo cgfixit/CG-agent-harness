@@ -103,8 +103,9 @@ generate and applies per-model limits (budgets only tighten; chat and same-model
 planner timeouts and `web.synthesis_seconds` follow measured speed; a tool-less
 model gets none). Above 32768, proposals scale up; set them in `config.yaml`
 (`auto_tune` only lowers); caps follow the measured window, up to 131072.
-This shared selection can override configuration, including fallback.
-Check it against the active local endpoint. For explicit cloud chat, use
+Startup warms and tunes the same selected local model; cloud selections skip both.
+A changed config model clears saved selections at restart; legacy mismatches clear too.
+Otherwise selections persist; `/status` and `/model` disclose overrides. For explicit cloud chat, use
 `/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only
 after an administrator saves the matching key and restarts. Cloud selection sends
 only the newly typed message and does not change the coding planner. A cloud reply
