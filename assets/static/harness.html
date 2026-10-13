@@ -1570,7 +1570,7 @@ document.addEventListener('visibilitychange', () => {
 });
 function paintSoul() {
   const v = $('sSoulV');
-  v.textContent = soulEnabled ? (soulStatus.loaded ? 'loaded' : (soulStatus.unavailable_reason || 'unverified')) : 'off';
+  v.textContent = soulEnabled ? (soulStatus.loaded ? 'loaded' : (soulStatus.unavailable_reason === 'missing' ? 'unset' : (soulStatus.unavailable_reason || 'unverified'))) : 'off';
   v.className = 'v ' + (soulEnabled ? 'on' : 'off');
 }
 function paintMemory() {
@@ -2614,7 +2614,7 @@ async function runSlash(line, webCommand) {
               ' (system prompt only — soul.md itself is governed and untouched)');
         } else {
           const r = await api('/api/soul');
-          sys(JSON.stringify(r, null, 2));
+          sys(JSON.stringify({...r, unavailable_reason:r.unavailable_reason === 'missing' ? 'unset' : r.unavailable_reason}, null, 2));
         }
         break;
       }
@@ -4992,7 +4992,7 @@ async function openSoulEditor(proposalOnly) {
   $('soulReason').value = ''; $('soulConfirm').checked = false;
   $('soulSave').hidden = proposalOnly;
   $('soulPropose').classList.toggle('primary', proposalOnly);
-  $('soulFeedback').textContent = 'revision: ' + soulDocument.revision + '\nMaximum ' + soulDocument.max_chars + ' characters. Preview before saving.';
+  $('soulFeedback').textContent = 'revision: ' + (soulDocument.revision === 'missing' ? 'unset' : soulDocument.revision) + '\nMaximum ' + soulDocument.max_chars + ' characters. Preview before saving.';
   $('soulEditor').showModal(); $('soulContent').focus();
 }
 $('soulClose').addEventListener('click', () => { $('soulEditor').close(); $('soulContent').value = ''; $('soulFeedback').textContent = ''; });

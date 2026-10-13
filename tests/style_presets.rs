@@ -5,11 +5,12 @@ use common::*;
 use serde_json::json;
 
 #[tokio::test]
-async fn every_builtin_style_reaches_chat_and_off_reverts_without_touching_default_soul() {
+async fn every_builtin_style_reaches_chat_and_off_reverts_without_touching_existing_soul() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
-    let soul_before = std::fs::read_to_string(s.home.join("soul.md")).unwrap();
-    assert_eq!(soul_before, cgagentharness::common::home::DEFAULT_SOUL);
+    assert!(!s.home.join("soul.md").exists());
+    let soul_before = cgagentharness::common::home::DEFAULT_SOUL;
+    std::fs::write(s.home.join("soul.md"), soul_before).unwrap();
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
     let sid = created["session_id"].as_str().unwrap();
 
