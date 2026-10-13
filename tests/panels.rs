@@ -428,7 +428,10 @@ async fn web_search_fetches_each_overlapping_allowlist_entry() {
 async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
     let model = start_mock_model().await;
     let page = start_page_server("<html><head><style>x{}</style><script>evil()</script></head><body><h1>Title</h1><p>Hello &amp; welcome to the docs page</p></body></html>", "text/html; charset=utf-8").await;
-    let mut opts = ServerOptions::default().with("api.rate_limit.max_requests", "1000");
+    // The cap check below fills the allowlist, so pin the cap instead of the shipped default.
+    let mut opts = ServerOptions::default()
+        .with("api.rate_limit.max_requests", "1000")
+        .with("web.max_rules", "32");
     opts.web_resolve = Some(("docs.example".to_string(), page));
     let s = spawn_server(&model.base_url(), opts).await;
     let host_port = format!("docs.example:{}", page.port());
