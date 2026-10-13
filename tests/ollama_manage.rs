@@ -547,6 +547,77 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
 }
 
 #[tokio::test]
+async fn planner_endpoint_defaults_and_aliases_keep_sync_and_job_budgets_consistent() {
+    let chat = start_native_ollama().await;
+    let other = start_native_ollama().await;
+    let chat_url = chat.openai_url();
+    let cases = [
+        ("omitted", None, 720),
+        ("same listener", Some(chat_url.clone()), 180),
+        (
+            "normalized URL",
+            Some(format!("{}/", chat_url.replacen("http:", "HTTP:", 1))),
+            180,
+        ),
+        ("distinct listener", Some(other.openai_url()), 720),
+        ("hostname alias", Some(chat_url.replace("127.0.0.1", "localhost")), 720),
+        (
+            "IPv4/IPv6 distinction",
+            Some(chat_url.replace("127.0.0.1", "[::1]")),
+            720,
+        ),
+        ("path case", Some(chat_url.replace("/v1", "/V1")), 720),
+        ("different path", Some(chat_url.replace("/v1", "/other/v1")), 720),
+    ];
+    for (label, planner_url, expected_timeout) in cases {
+        let mut prepared = prepare_server(
+            &chat_url,
+            ServerOptions::default()
+                .with("models.local_llm.auto_tune", "true")
+                .with("api.rate_limit.max_requests", "1000")
+                .with("agentic.repo", "fixture/repository")
+                .with("agentic.deepagent_github.planner_timeout_sec", "720"),
+        )
+        .await;
+        let cfg = prepared.app_opts.config.as_mut().unwrap();
+        let planner = cfg.raw["agentic"]["deepagent_github"].as_mapping_mut().unwrap();
+        let key = serde_yaml_ng::Value::String("base_url".into());
+        if let Some(url) = &planner_url {
+            planner.insert(key, serde_yaml_ng::Value::String(url.clone()));
+        } else {
+            planner.remove(&key);
+        }
+        // Persist before startup: this is sparse-config compatibility, not a reload race.
+        std::fs::write(&cfg.path, serde_yaml_ng::to_string(&cfg.raw).unwrap()).unwrap();
+        if planner_url.is_none() {
+            let child = cgagentharness::agentic::config::load_agentic_config(cfg, &prepared.home_dir).unwrap();
+            assert_eq!(child.deepagent.base_url, "http://localhost:11434/v1");
+            assert_eq!(child.deepagent.planner_timeout_sec, 720);
+        }
+        let (router, state) = cgagentharness::server::build_app(prepared.app_opts).await.unwrap();
+        let s = start_test_server(prepared.tmp, prepared.home_dir, prepared.api_key, router, state).await;
+        let profile = wait_for_tuning(&s, 32768).await;
+        assert_eq!(profile["tuning"]["planner_timeout_sec"], 180, "{label}: {profile}");
+        let run = json!({"instruction": "fix the parser", "branch": "codex/parser-fix",
+            "commit_message": "fix: parser", "reason": "endpoint regression", "max_iterations": 10,
+            "checks": ["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]});
+        let budget = cgagentharness::shim::real_repo_run_budget_sec(expected_timeout, Some(10), 5);
+        for route in ["/api/agent/run", "/api/agent/jobs"] {
+            let (status, response) = s.post_json(route, run.clone()).await;
+            assert_eq!(status, 422, "{label} {route}: {response}");
+            assert_eq!(
+                response["detail"]["code"], "AGENTIC_BUDGET_EXCEEDED",
+                "{label} {route}: {response}"
+            );
+            assert_eq!(
+                response["detail"]["details"]["estimated_sec"], budget,
+                "{label} {route}: {response}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn pull_posts_name_without_num_ctx_and_refreshes_inventory() {
     let ollama = start_native_ollama().await;
     let s = spawn_server(&ollama.openai_url(), ServerOptions::default()).await;

@@ -97,8 +97,11 @@ pub async fn agent_checks(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// and a timeout measured on one must not cut off a slower planner on the other.
 pub(crate) fn planner_timeout_sec(state: &AppState) -> Option<u64> {
     let planner_model = state.cfg.str_or("agentic.deepagent_github.model", "");
-    let planner_url = state.cfg.str_or("agentic.deepagent_github.base_url", "");
-    if !planner_url.trim().is_empty() && !same_endpoint(&planner_url, &state.backend.base_url) {
+    // Sparse configs must resolve to the same endpoint as the planner child.
+    let planner_url = state
+        .cfg
+        .str_or("agentic.deepagent_github.base_url", "http://localhost:11434/v1");
+    if !same_endpoint(&planner_url, &state.backend.base_url) {
         return None;
     }
     state
