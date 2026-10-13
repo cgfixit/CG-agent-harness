@@ -956,6 +956,17 @@ fn runtime_markdown(manifest: &Path) -> Vec<String> {
     out
 }
 
+/// Exact checkout paths exempt from the new-file rule and the group word cap.
+/// Entries need owner approval. No wildcards and no environment switch.
+/// An agent must not add a path.
+const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[
+    // why: owner approved 2026-10-10. Measured bake-off report from one ordered pass. It picks no winner.
+    (
+        "docs/bakeoff/local-model-bakeoff-2026-10-10.md",
+        "owner approved 2026-10-10: measured bake-off report, one ordered pass, picks no winner",
+    ),
+];
+
 #[test]
 fn markdown_stays_on_the_docs_budget() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -965,9 +976,25 @@ fn markdown_stays_on_the_docs_budget() {
         runtime.iter().any(|p| p == "assets/soul.default.md"),
         "include_str! scan found no runtime Markdown: {runtime:?}"
     );
+    for (path, reason) in DOCS_BUDGET_OWNER_EXEMPT {
+        assert!(
+            !path.contains(['*', '?', '[']),
+            "docs budget exempt {path} must be an exact path; entries need owner approval"
+        );
+        assert!(
+            !reason.is_empty(),
+            "docs budget exempt {path} needs its one-line reason"
+        );
+        assert!(
+            files.iter().any(|p| p == path),
+            "docs budget exempt {path} is not in the checkout; entries need owner approval"
+        );
+    }
     let markdown: Vec<(String, usize)> = files
         .iter()
-        .filter(|p| is_markdown(p) && !runtime.contains(p))
+        .filter(|p| {
+            is_markdown(p) && !runtime.contains(p) && !DOCS_BUDGET_OWNER_EXEMPT.iter().any(|(exempt, _)| exempt == p)
+        })
         .map(|p| {
             let bytes = std::fs::read(manifest.join(p)).unwrap();
             (p.clone(), word_count(&String::from_utf8_lossy(&bytes)))

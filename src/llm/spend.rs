@@ -771,6 +771,9 @@ mod tests {
         let est = estimate_usd("qwen3.8:27b-mlx", &tokens, "local");
         assert_eq!(est.usd_source, "local_unpriced");
         assert!(est.usd.is_none());
+        let derived = estimate_usd("qwen3.8:27b-mlx-cg", &tokens, "local");
+        assert_eq!(derived.usd_source, "local_unpriced");
+        assert!(derived.usd.is_none());
     }
 
     #[test]

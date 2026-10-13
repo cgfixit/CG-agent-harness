@@ -1274,7 +1274,8 @@ async fn chat_warns_when_the_turn_exceeds_the_loaded_ollama_window() {
         small["context_window"]["message"]
             .as_str()
             .unwrap()
-            .contains("OLLAMA_CONTEXT_LENGTH"),
+            .contains("OLLAMA_CONTEXT_LENGTH")
+            && small["context_window"]["message"].as_str().unwrap().contains("num_ctx"),
         "{small}"
     );
     window.store(32768, std::sync::atomic::Ordering::SeqCst);

@@ -102,6 +102,9 @@ install Ollama or download a model automatically.
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 `OLLAMA_CONTEXT_LENGTH=32768` is set **before** the Ollama process starts.
 [Model setup](MODELS.md) is the set-and-verify step. The harness sends no `num_ctx`.
+A Modelfile `num_ctx` beats that variable; pin 32768 with the
+[local derived tag](MODELS.md#pin-32768-with-a-local-derived-tag). The shipped
+default stays `qwen3.8:27b-mlx`.
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
@@ -577,6 +580,8 @@ For the existing live chat smoke, set the exact installed tag explicitly:
 
 ```bash
 SMOKE_MODEL=qwen3.8:27b scripts/smoke-ollama.sh
+# Local derived tag after ollama create. Not a fingerprint model.
+SMOKE_MODEL=qwen3.8:27b-mlx-cg scripts/smoke-ollama.sh
 ```
 
 Read the output. The smoke succeeds when an unavailable endpoint causes a skip.

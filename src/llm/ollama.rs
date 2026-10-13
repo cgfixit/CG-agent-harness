@@ -472,6 +472,8 @@ mod tests {
         assert!(model_name_ok("tinyllama"));
         assert!(model_name_ok("library/tinyllama:latest"));
         assert!(model_name_ok("qwen3.8:27b-mlx"));
+        // A local derived tag (same weights, different Modelfile) is still an Ollama name.
+        assert!(model_name_ok("qwen3.8:27b-mlx-cg"));
         assert!(!model_name_ok(""));
         assert!(!model_name_ok("../etc/passwd"));
         assert!(!model_name_ok("http://evil.example/model")); // DevSkim: ignore DS137138 because this unit test rejects URL-shaped model names.
@@ -483,6 +485,7 @@ mod tests {
     fn pull_names_never_select_a_registry_host() {
         assert!(pull_name_ok("tinyllama"));
         assert!(pull_name_ok("library/tinyllama:latest"));
+        assert!(pull_name_ok("qwen3.8:27b-mlx-cg"));
         assert!(model_name_ok("hf.co/user/repo:Q4_K_M"));
         assert!(!pull_name_ok("hf.co/user/repo:Q4_K_M"));
         assert!(!pull_name_ok("registry.example.invalid/ns/model"));

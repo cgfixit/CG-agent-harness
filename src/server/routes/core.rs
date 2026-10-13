@@ -1139,7 +1139,8 @@ async fn chat_inner(
                     "message":format!("Ollama loaded {model} with a {window}-token context window, but this turn needed about \
                         {projected} tokens (prompt plus reply reserve). Ollama silently drops the oldest prompt text, starting \
                         with the system prompt. Restart Ollama with a larger OLLAMA_CONTEXT_LENGTH (32768 is recommended; see \
-                        docs/MODELS.md), or start a new session.")})
+                        docs/MODELS.md), or start a new session. A Modelfile PARAMETER num_ctx wins over that variable, so \
+                        a derived tag needs its own num_ctx raised; the harness sends no num_ctx.")})
             })
     };
     let recorded = state.store.for_owner(&owner).record_exchange_inner(
