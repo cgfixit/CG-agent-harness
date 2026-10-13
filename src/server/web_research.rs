@@ -252,6 +252,8 @@ fn spent(usage: &[Usage]) -> u64 {
 async fn model_call(
     state: &AppState,
     owner: &str,
+    model: &str,
+    deadline_sec: f64,
     phase: &str,
     system: &str,
     body: &Value,
@@ -260,7 +262,7 @@ async fn model_call(
     usage: &mut Vec<Usage>,
 ) -> Result<String> {
     authorize_owner(state, owner)?;
-    if state.cloud_chat.is_cloud_selection(&state.current_model()) {
+    if state.cloud_chat.is_cloud_selection(model) {
         return Err(error(
             "CLOUD_CHAT_CONTEXT",
             "web research requires a locally selected chat model",
@@ -273,9 +275,7 @@ async fn model_call(
     }
     // Gathering sources can take minutes: the window must still allow this
     // budget. Checked before reserving, since a refused call sends nothing.
-    state
-        .ensure_window_allows(&state.current_model(), 0, total_budget)
-        .await?;
+    state.ensure_window_allows(model, 0, total_budget).await?;
     // Reserve before awaiting so cancellation, timeout and malformed upstream
     // responses still appear in total usage, explicitly estimated at the cap.
     usage.push(Usage {
@@ -288,15 +288,16 @@ async fn model_call(
     let row = usage.last_mut().unwrap();
     let reply = state
         .chat
-        .chat(
+        .chat_with_deadline(
             system,
             &[ChatMessage {
                 role: "user".into(),
                 content: user,
             }],
-            Some(&state.current_model()),
+            model,
             cap,
             0.0,
+            deadline_sec,
         )
         .await;
     match reply {
@@ -421,6 +422,9 @@ pub async fn run_from(
     let model = state.current_model();
     // A web budget above 32000 needs a fresh read of the selected model's window.
     state.verify_window(&model).await;
+    // The request deadline is part of that snapshot: a retune after a selection
+    // change clears the starting model's measured override.
+    let deadline_sec = state.chat.timeout_for(&model);
     let runtime_web = state.runtime_limits().web.clone();
     let mut web = state.web.clone();
     web.limits = state.model_web_limits(&model, runtime_web.clone());
@@ -503,6 +507,8 @@ pub async fn run_from(
                     match model_call(
                         &state,
                         owner,
+                        &model,
+                        deadline_sec,
                         "planning",
                         PLAN_SYSTEM,
                         &prompt,
@@ -599,6 +605,8 @@ pub async fn run_from(
                     match model_call(
                         &state,
                         owner,
+                        &model,
+                        deadline_sec,
                         "synthesis",
                         ANSWER_SYSTEM,
                         &input,
@@ -667,7 +675,7 @@ pub async fn run_from(
         .unwrap_or_else(|e| (Vec::new(), vec![json!({"code":e.code})]));
     let estimated = usage.iter().any(|u| u.estimated);
     Ok(
-        json!({"question":question,"group":group,"scope":"request","answer":answer,"passages":evidence,
+        json!({"question":question,"group":group,"model":model,"scope":"request","answer":answer,"passages":evidence,
         "queries":queries,"coverage":coverage,"stale_passages":stale,"cache_errors":cache_errors,
         "usage":{"calls":usage,"total_tokens":spent(&usage),"contains_estimates":estimated,"estimate_method":"UTF-8 bytes / 4 + message overhead; incomplete output reserved at requested maximum"},
         "warnings":warnings,"complete":false,"elapsed_ms":start.elapsed().as_millis(),

@@ -239,6 +239,44 @@ impl ChatClient {
         temperature: f64,
         output: Option<super::openai_stream::Output<'_>>,
     ) -> Result<ChatResult> {
+        self.chat_inner(system_prompt, messages, model, max_tokens, temperature, output, None)
+            .await
+    }
+
+    /// `chat` with a caller-held deadline, for a run that snapshots its model's
+    /// limits at start: a later retune or selection change does not move it.
+    pub async fn chat_with_deadline(
+        &self,
+        system_prompt: &str,
+        messages: &[ChatMessage],
+        model: &str,
+        max_tokens: u64,
+        temperature: f64,
+        deadline_sec: f64,
+    ) -> Result<ChatResult> {
+        self.chat_inner(
+            system_prompt,
+            messages,
+            Some(model),
+            max_tokens,
+            temperature,
+            None,
+            Some(deadline_sec),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn chat_inner(
+        &self,
+        system_prompt: &str,
+        messages: &[ChatMessage],
+        model: Option<&str>,
+        max_tokens: u64,
+        temperature: f64,
+        output: Option<super::openai_stream::Output<'_>>,
+        deadline: Option<f64>,
+    ) -> Result<ChatResult> {
         let use_model = model
             .map(|m| m.trim())
             .filter(|m| !m.is_empty())
@@ -261,7 +299,7 @@ impl ChatClient {
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = Value::String(effort.clone());
         }
-        let parsed = self.send_payload(payload, output).await?;
+        let parsed = self.send_payload(payload, output, deadline).await?;
         parse_chat_response(&parsed, &use_model)
     }
 
@@ -292,13 +330,14 @@ impl ChatClient {
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = json!(effort);
         }
-        self.send_payload(payload, output).await
+        self.send_payload(payload, output, None).await
     }
 
     async fn send_payload(
         &self,
         mut payload: Value,
         output: Option<super::openai_stream::Output<'_>>,
+        deadline: Option<f64>,
     ) -> Result<Value> {
         if output.is_some() {
             payload["stream"] = json!(true);
@@ -324,18 +363,24 @@ impl ChatClient {
             }
         }
         let _call = Call { client: self, id };
-        let deadline = self.timeout_for(payload["model"].as_str().unwrap_or(&self.model));
+        let deadline = deadline
+            .unwrap_or_else(|| self.timeout_for(payload["model"].as_str().unwrap_or(&self.model)))
+            .max(1.0);
         tokio::select! {
             _ = token.cancelled() => Err(llm_err("cancelled").detail("cancelled", true)),
-            result = tokio::time::timeout(Duration::from_secs_f64(deadline), self.send_request(payload, output)) =>
+            result = tokio::time::timeout(Duration::from_secs_f64(deadline), self.send_request(payload, output, deadline)) =>
                 result.map_err(|_| llm_err("model request deadline exceeded"))?,
         }
     }
 
-    async fn send_request(&self, payload: Value, output: Option<super::openai_stream::Output<'_>>) -> Result<Value> {
+    async fn send_request(
+        &self,
+        payload: Value,
+        output: Option<super::openai_stream::Output<'_>>,
+        deadline: f64,
+    ) -> Result<Value> {
         // A per-request timeout replaces the client-wide one, so a measured
         // deadline can be longer or shorter than the configured timeout_sec.
-        let deadline = self.timeout_for(payload["model"].as_str().unwrap_or(&self.model));
         let mut req = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
@@ -402,6 +447,43 @@ mod tests {
 
     fn reply(content: &str) -> Value {
         json!({"choices":[{"finish_reason":"stop","message":{"content":content}}],"usage":{"prompt_tokens":3,"completion_tokens":2}})
+    }
+
+    #[tokio::test]
+    async fn a_caller_held_deadline_outlives_a_cleared_override() {
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(|| async {
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                axum::Json(reply("late but fine"))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+        let url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ChatClient::new(&url, "slow", 1.0, "", None).unwrap();
+        // The run snapshotted a 10s measured deadline; a retune then cleared it.
+        client.set_timeout_override(Some(("slow".into(), 10.0)));
+        let held = client.timeout_for("slow");
+        client.set_timeout_override(None);
+        let user = [ChatMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }];
+        // Without the held deadline the configured 1s timeout cuts the 1.5s reply.
+        let started = std::time::Instant::now();
+        assert!(client.chat("s", &user, Some("slow"), 8, 0.0).await.is_err());
+        assert!(
+            started.elapsed() < Duration::from_millis(1400),
+            "{:?}",
+            started.elapsed()
+        );
+        let ok = client
+            .chat_with_deadline("s", &user, "slow", 8, 0.0, held)
+            .await
+            .unwrap();
+        assert_eq!(ok.body_text, "late but fine");
+        server.abort();
     }
 
     #[test]

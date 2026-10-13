@@ -414,3 +414,79 @@ async fn a_transient_planner_failure_keeps_the_next_round() {
     model_task.abort();
     page_task.abort();
 }
+
+#[tokio::test]
+async fn a_selection_change_mid_run_keeps_the_starting_model() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (record, entering, released) = (seen.clone(), entered.clone(), release.clone());
+    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+        let (record, entering, released) = (record.clone(), entering.clone(), released.clone());
+        async move {
+            let first = {
+                let mut seen = record.lock().unwrap();
+                seen.push(request["model"].as_str().unwrap_or("").to_string());
+                seen.len() == 1
+            };
+            let system = request["messages"][0]["content"].as_str().unwrap().to_string();
+            if system.starts_with("Return only JSON") {
+                if first {
+                    entering.notify_one();
+                    released.notified().await;
+                }
+                let plan = json!({"queries":[],"gaps":[]}).to_string();
+                return Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":plan}}],"usage":{"prompt_tokens":20,"completion_tokens":10}}));
+            }
+            let user: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let page = &user["evidence"][0];
+            let quote: String = page["text"].as_str().unwrap().chars().take(40).collect();
+            let answer = json!({"supported":[{"text":"Retries are documented.","citations":[{"id":page["id"],"quote":quote}]}]}).to_string();
+            Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":answer}}],"usage":{"prompt_tokens":20,"completion_tokens":10}}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let model_url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+    let model_task = tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
+    let pages = Router::new().route(
+        "/only",
+        get(|| async {
+            (
+                [("content-type", "text/plain")],
+                "Connections retry three times before failing.",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let page_task = tokio::spawn(async move { axum::serve(listener, pages).await.unwrap() });
+    let mut options = ServerOptions::default().with("web.pace_ms", "100");
+    options.web_resolve = Some(("research.invalid".into(), address));
+    let s = spawn_server(&model_url, options).await;
+    let url = format!("http://research.invalid:{}/only", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+    let research = s.post_json("/api/web/research", json!({"query":"connection retry","urls":[url]}));
+    let switch = async {
+        tokio::time::timeout(std::time::Duration::from_secs(30), entered.notified())
+            .await
+            .expect("research reached its first model call");
+        let (status, body) = s.post_json("/api/model", json!({"model":"switched-model"})).await;
+        assert_eq!(status, 200, "{body}");
+        release.notify_one();
+    };
+    let ((status, result), ()) = tokio::join!(research, switch);
+    assert_eq!(status, 200, "{result}");
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(
+        result["model"],
+        seen[0].as_str(),
+        "the result names the model that answered"
+    );
+    assert!(seen.len() >= 2, "planning and synthesis both called: {seen:?}");
+    assert!(
+        seen.iter().all(|m| m == &seen[0] && m != "switched-model"),
+        "every call in the run uses the starting model: {seen:?}"
+    );
+    model_task.abort();
+    page_task.abort();
+}
