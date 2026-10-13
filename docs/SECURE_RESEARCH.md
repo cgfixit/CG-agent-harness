@@ -298,8 +298,8 @@ fit. A batch without that minimum per call runs no read; the model answers
 without tools. Results are cut to the room left, keeping that minimum per later
 call: pages keep prefixes, listings drop trailing results. Budget refusals report
 `WEB_TOKEN_BUDGET`; after successful reads, `WEB_TOOLS_WITHHELD` reserves synthesis
-with `tool_choice: none`. Chat reuses duplicate searches and stops when evidence
-answers the question.
+with `tool_choice: none`, buffered as JSON to avoid stale streamed calls. Chat
+reuses duplicate searches and stops when evidence answers the question.
 Reported usage sums all completed model calls; absent upstream usage stays marked
 unreported, never invented.
 `/loop stop` or the chat cancellation endpoint aborts the whole turn, including
