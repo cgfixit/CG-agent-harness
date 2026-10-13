@@ -882,10 +882,13 @@ try {
  assert.equal(await evaluate('currentSession'),null,'a rejected logout drops the active session like a successful one');
  assert.equal(await evaluate('sessionGoal'),'');assert.equal(await evaluate('document.getElementById("input").value'),'');
  assert.equal(await evaluate('document.getElementById("sSession").textContent'),'none');
- logoutStatus=200;
+ logoutStatus=200;const factsBeforeRelogin=factReads();
  await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("hAuthLoginBox").hidden');
- assert.equal(await evaluate('document.getElementById("pane-memory").textContent.includes("Saved facts")'),false,'the next sign-in starts with an empty Memory pane');
+ // Logout cleared the old view above; successful login now reloads the retained
+ // Memory tab through the current account instead of leaving it empty.
+ await until('document.getElementById("pane-memory").textContent.includes("Saved facts (2)") && !memoryRefreshBusy');
+ assert.ok(factReads()>factsBeforeRelogin,'sign-in loads saved facts through a fresh owner-scoped read');
  await send('/agent run codex/logout Reviewed before logout');
  await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}; reviewedPRBodies.set("old", "body"); prBodyTarget="old"');
  await evaluate('document.getElementById("hAuthLogout").click()');
