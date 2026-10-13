@@ -1,7 +1,19 @@
 # desktop
 
-The Tauri macOS shell (separate crate, Rust 1.90): `src/` launches and trusts the
-bundled sidecar, `ui/` is the setup window, `capabilities/` and `permissions/`
-scope what that window may call, `icons/` the app icon. Packaged by
-`scripts/package-desktop.sh`, verified by `scripts/verify-desktop-bundle.sh`.
-Docs: [DESKTOP.md](../docs/DESKTOP.md), [RELEASING.md](../docs/RELEASING.md).
+The Tauri macOS shell, a separate crate on Rust 1.90. It launches and trusts
+the bundled `cgagentharness` sidecar; it holds process ownership, never API
+authority. Packaged by [scripts/package-desktop.sh](../scripts/package-desktop.sh),
+verified by [scripts/verify-desktop-bundle.sh](../scripts/verify-desktop-bundle.sh).
+Docs: [DESKTOP.md](../docs/DESKTOP.md), [RELEASING.md](../docs/RELEASING.md),
+[PROCESS_LIFECYCLE.md](../docs/PROCESS_LIFECYCLE.md).
+
+- [`Cargo.toml`](Cargo.toml) and [`Cargo.lock`](Cargo.lock): the `cg-agent-harness-desktop` manifest (Tauri 2) and its lockfile.
+- [`rust-toolchain.toml`](rust-toolchain.toml): pins Rust 1.90 with clippy and rustfmt.
+- [`deny.toml`](deny.toml): cargo-deny policy mirroring the backend, scoped to Apple targets.
+- [`build.rs`](build.rs): embeds the SHA-256 of the prebuilt backend as `CGAH_BACKEND_SHA256`, then `tauri_build`.
+- [`tauri.conf.json`](tauri.conf.json): strict CSP, the `setup` capability, `ui/` as `frontendDist`, ad-hoc signing.
+- [`Info.plist`](Info.plist): bundle metadata: identifier, icon, local networking only.
+- [`src/`](src/README.md): Rust sources: Tauri app, sidecar spawn, single instance, certificate trust.
+- [`ui/`](ui/README.md): the static setup window.
+- [`capabilities/`](capabilities/README.md) and [`permissions/`](permissions/README.md): what the setup window may call.
+- [`icons/`](icons/README.md): app icon sources.

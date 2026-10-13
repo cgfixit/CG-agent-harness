@@ -52,7 +52,7 @@ agentic:
   deepagent_github:
     enabled: true
     provider: "ollama"
-    model: "qwen3.8:27b"
+    model: "qwen3.8:27b-mlx"
     allow_git_write_tools: true
     allow_cloud_providers: false
     providers:

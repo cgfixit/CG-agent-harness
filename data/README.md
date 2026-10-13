@@ -1,6 +1,12 @@
 # data
 
-Compile-time data: `styles/` holds the reply style presets `src/server/style.rs`
-embeds by name. `notes.txt` is the operator's scratch notes, not documentation.
-Runtime data (sessions, workspaces, the skills registry) lives under the harness
-home, `~/.CGagentHarness`, never here.
+Compile-time data. Runtime data (sessions, workspaces, the skills registry)
+lives under the harness home, `~/.CGagentHarness`, never here.
+
+- [`styles/`](styles/README.md): the five reply style presets `src/server/style.rs`
+  embeds by name.
+- [`notes.txt`](notes.txt): the operator's scratch notes, not documentation;
+  agents do not act on it.
+
+Related: [docs/CONSOLE.md](../docs/CONSOLE.md) (response styles),
+[docs/INSTALL.md](../docs/INSTALL.md) (home layout).

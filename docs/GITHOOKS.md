@@ -11,7 +11,7 @@ ignore files and inline `gitleaks:allow` comments cannot suppress that scan.
 ## Install (once per clone)
 
 ```sh
-bash scripts/install-githooks.sh        # or: git config core.hooksPath .githooks
+bash scripts/ensure-githooks.sh         # or: git config core.hooksPath .githooks
 git config core.hooksPath               # -> .githooks
 ```
 

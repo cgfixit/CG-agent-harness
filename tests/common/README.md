@@ -1,6 +1,11 @@
 # tests/common
 
-Shared test fixtures (`mod.rs`): a temp harness home, an in-process server on
-`127.0.0.1:0`, a mock OpenAI-compatible model, a fake `gh` and a bare git
-remote. It also isolates `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` so write-gate
-tests fail on the gate under test, not on the operator's environment.
+Shared test fixtures, `#[path]`-included by the integration tests.
+
+- [`mod.rs`](mod.rs): `TestServer` and `ServerOptions` (a temp harness home and an
+  in-process server on `127.0.0.1:0`), `MockModel` (OpenAI-compatible),
+  `real_bare_repo`, `install_fake_gh`, `run_agentic`, and
+  `isolate_write_kill_switch`, which clears `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
+  so write-gate tests fail on the gate under test, not the operator's environment.
+
+Not to be confused with [`../common_layer.rs`](../common_layer.rs), which tests `src/common`.

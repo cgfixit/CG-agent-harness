@@ -20,12 +20,12 @@ These keys are outside the 23-key reload allowlist. Edit `config.yaml` under `~/
 | `passive_listen` | `false` | Flag only. `/net watch` maps here and does not join multicast. |
 | `discovery` | `false` | Flag only. No discovery tool is registered. |
 | `port_scan` | `false` | Flag only. `/net ports` maps here and does not scan. |
-| `diagnostics` | `false` | Flag only. `/net diag` maps here and does not probe. |
+| `diagnostics` | `false` | Arms `netconnect_diag`; see [Diagnostics](#diagnostics). |
 | `throughput` | `false` | Flag only. A literal `true`, or any `throughput_endpoint`, warns at load. Passive commands do not use the endpoint. |
 | `anomaly_detection` | `false` | Flag only. No anomaly tool is registered. |
 | `home_automation` | `false` | Flag only. `/net device` always refuses, including when this flag and the scope are set. |
 
-`runnable: true` in `status` means `tier_may_run` is true. It does not mean a tier tool exists. Every tier's tool list is empty in this build. An armed tier still returns `NETCONNECT_REFUSED` with `netconnect tier <name> has no tool in this build`.
+`runnable: true` in `status` means `tier_may_run` is true. It does not mean a tier tool exists. Only `diagnostics` has a tool in this build. Another armed tier still returns `NETCONNECT_REFUSED` with `netconnect tier <name> has no tool in this build`.
 
 ## `allowed_cidrs`
 
@@ -196,7 +196,7 @@ The [gate contract](../INVARIANTS.md#netconnect-is-fail-closed-and-lan-scoped) o
 | Exit 2, `NETCONNECT_IO`, `cannot read a local network table` | `/proc/net/arp`, `/proc/net/route`, or the macOS `arp`/`netstat` helper failed or timed out. |
 | stderr `netconnect throughput is configured...` | The throughput flag or endpoint is set. Passive commands do not call it. The warning is not a scan. |
 | `did you mean /net status or /net devices?` | The line was a near-miss. Nothing ran. Send an exact line. |
-| Console text `this console does not run active tiers or device control` | The subcommand was not `status` or `devices`. The panel did not refresh. No tier ran. |
+| Console text `this console does not run active tiers or device control` | The subcommand was not `status`, `devices`, or `diag`. The panel did not refresh. No tier ran. |
 | Panel HTTP 400 | Host guard, or the `netconnect` section failed to load (a bad CIDR, limit, or endpoint). Collectors did not run. |
 | Panel HTTP 403 | CSRF guard. Collectors did not run. |
 | Panel HTTP 405 | The method was not GET. |
@@ -213,7 +213,7 @@ Only `diagnostics` is implemented. Other tiers keep the flag, scope check, and r
 |---|---|---|---|
 | Passive listen | `passive_listen` | `/net watch` | Joining a multicast group. The flag does not listen. |
 | Discovery | `discovery` | none | A discovery tool. `devices` remains the passive table read. |
-| Port scan | `port_scan` | `/net ports` | Any dial. `port_allowlist` is stored and printed only. |
+| Port scan | `port_scan` | `/net ports` | Any dial. `port_allowlist` feeds only `diag`. |
 | Diagnostics | `diagnostics` | `/net diag` | Implemented: TCP connect only, no ICMP, no reads. |
 | Throughput | `throughput` | none | Any measurement. The endpoint is internet egress and triggers a warning. |
 | Anomaly detection | `anomaly_detection` | none | A detector. |

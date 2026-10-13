@@ -1,5 +1,12 @@
 # .codex
 
-Codex project configuration: `skills/` holds the Codex skill entrypoints and
-`rules/` is reserved for Codex rule files (none yet). Codex reads the root
-[AGENTS.md](../AGENTS.md) directly.
+Codex project configuration. Codex reads the root [AGENTS.md](../AGENTS.md)
+directly; nothing here grants authority. Markdown here counts toward the
+`DOCS_BUDGET` Agent group in [tests/invariant_guard.rs](../tests/invariant_guard.rs).
+
+- [`skills/`](skills/README.md): the Codex skill entrypoints, one `SKILL.md`
+  per folder; short versions of the Claude playbooks plus two Codex-only skills.
+- [`rules/`](rules/README.md): reserved for Codex rule files; empty today.
+
+Related: [.claude/](../.claude/README.md) (Claude Code counterpart),
+[.github/skills/](../.github/skills/README.md) (Copilot counterpart).
