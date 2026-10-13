@@ -698,6 +698,16 @@ fn writer_gates_in_order_and_plan_integrity() {
             .details["failed_gate"],
         "reason"
     );
+    // Format controls render as nothing and are not a human reason either.
+    for invisible in ["\u{200B}", "\u{FEFF}", " \u{2060} ", "\u{00AD}\u{200D}"] {
+        assert_eq!(
+            require_gates(&armed, &audit, "pr_create", invisible, true)
+                .unwrap_err()
+                .details["failed_gate"],
+            "reason",
+            "{invisible:?}"
+        );
+    }
     assert_eq!(
         require_gates(&armed, &audit, "pr_create", "r", false)
             .unwrap_err()

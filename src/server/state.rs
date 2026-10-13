@@ -165,6 +165,8 @@ pub struct AppState {
     /// No route, slash command, reload, or config key replaces this value.
     /// Any runtime path that does needs a policy review.
     pub(crate) netconnect_sources: crate::netconnect::tools::PassiveSources,
+    /// `netconnect.rate_limit_per_min`, shared by every `GET /api/netconnect/diag`.
+    pub(crate) netconnect_rate: crate::netconnect::RateBucket,
 }
 
 /// Single-flight native Ollama pull plus a short-lived tags cache.

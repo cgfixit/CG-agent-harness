@@ -14,13 +14,14 @@ use serde_json::{json, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
-use super::web_policy::{canonical_url, error, is_public_ip, Policy, Rule, MAX_RULES};
+use super::web_policy::{
+    canonical_url, error, is_public_ip, Policy, Rule, DEFAULT_MAX_RULES, MAX_BATCH_URLS, MAX_RULES_CEILING,
+};
 use crate::common::audit::Audit;
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::tool_broker::assert_allowed;
 
-pub const MAX_ALLOW: usize = MAX_RULES;
 pub const MAX_BYTES: usize = 262_144;
 const MAX_CONTEXT: usize = 4000;
 
@@ -36,6 +37,8 @@ pub struct Limits {
     pub request_seconds: u64,
     pub html_parser_handles: usize,
     pub concurrency: usize,
+    /// Total allowlist rules (`web.max_rules`, restart-only); one grant still names at most 32.
+    pub max_rules: usize,
     pub pages: usize,
     pub run_bytes: usize,
     pub run_seconds: u64,
@@ -75,6 +78,7 @@ impl Limits {
             request_seconds: bound("request_seconds", 8, 1, 30)?,
             html_parser_handles: bound("html_parser_handles", 512, 64, 4096)? as usize,
             concurrency: bound("concurrency", 2, 1, 4)? as usize,
+            max_rules: bound("max_rules", DEFAULT_MAX_RULES as u64, 1, MAX_RULES_CEILING as u64)? as usize,
             pages: bound("pages", 20, 1, 40)? as usize,
             run_bytes: bound("run_bytes", 2_097_152, 1024, 8_388_608)? as usize,
             run_seconds: bound("run_seconds", 60, 1, 180)?,
@@ -424,7 +428,7 @@ impl WebTool {
             .join(format!("web_{}_context.json", crate::common::sha256_hex(owner)))
     }
     pub fn policy(&self) -> Result<Policy> {
-        Policy::load(&self.allow_path())
+        Policy::load(&self.allow_path(), self.limits.max_rules)
     }
 
     pub(super) fn read_page(&self, path: &Path, group: Option<&str>) -> Result<Page> {
@@ -462,7 +466,7 @@ impl WebTool {
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
             "search_provider": if self.search_key()?.is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
             "injected": enabled && stored, "context_stored": stored,
-            "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": MAX_ALLOW}),
+            "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules}),
         )
     }
 
@@ -475,7 +479,7 @@ impl WebTool {
 
     /// Validate the entire grant before writing once; a bad tail never grants a prefix.
     pub fn allow_rules(&self, patterns: &[String], group: &str, seeds: &[String], enabled: bool) -> Result<Value> {
-        if patterns.is_empty() || patterns.len() > MAX_ALLOW || seeds.len() > 16 {
+        if patterns.is_empty() || patterns.len() > MAX_BATCH_URLS || seeds.len() > 16 {
             return Err(error("WEB_POLICY_INVALID", "invalid rule or seed count"));
         }
         let mut rules = patterns
@@ -511,8 +515,14 @@ impl WebTool {
             if let Some(existing) = policy.rules.iter_mut().find(|r| r.id == rule.id) {
                 *existing = rule;
             } else {
-                if policy.rules.len() >= MAX_ALLOW {
-                    return Err(error("WEB_ALLOWLIST_FULL", "rule cap reached"));
+                if policy.rules.len() >= self.limits.max_rules {
+                    return Err(error(
+                        "WEB_ALLOWLIST_FULL",
+                        &format!(
+                            "rule cap reached (web.max_rules = {}); /web deny unused rules, or raise it in config.yaml and restart",
+                            self.limits.max_rules
+                        ),
+                    ));
                 }
                 policy.rules.push(rule);
             }
@@ -539,7 +549,7 @@ impl WebTool {
 
     fn save_policy(&self, policy: &Policy) -> Result<()> {
         let bytes = serde_json::to_vec(policy)?;
-        Policy::parse(&bytes)?;
+        Policy::parse(&bytes, self.limits.max_rules)?;
         crate::common::atomic::write_atomic(&self.allow_path(), &bytes, Some(0o600))
     }
 
@@ -1209,6 +1219,60 @@ mod tests {
                 512
             );
         }
+    }
+
+    #[test]
+    fn rule_cap_is_bounded_and_defaults_to_the_shipped_32() {
+        for value in ["1", "32", "100", "256", "0", "257", "-1", "1.5", "\"32\"", "null"] {
+            let cfg = AppConfig::from_str(&format!("web: {{max_rules: {value}}}"), Path::new("config.yaml")).unwrap();
+            let parsed = Limits::load(&cfg);
+            if let Ok(n @ 1..=256) = value.parse::<usize>() {
+                assert_eq!(parsed.unwrap().max_rules, n);
+            } else {
+                assert!(parsed.is_err(), "{value}");
+            }
+        }
+        for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
+            assert_eq!(
+                Limits::load(&AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap())
+                    .unwrap()
+                    .max_rules,
+                DEFAULT_MAX_RULES
+            );
+        }
+    }
+
+    #[test]
+    fn the_configured_rule_cap_limits_the_policy_but_not_one_grant() {
+        let site = |i: usize| format!("https://site{i}.example/");
+        let batch = |range: std::ops::Range<usize>| range.map(site).collect::<Vec<_>>();
+        let three = AppConfig::from_str("web: {max_rules: 3}", Path::new("config.yaml")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let web = WebTool::new(dir.path(), &three).unwrap();
+        assert_eq!(
+            web.allow_rules(&batch(0..3), "docs", &[], true).unwrap()["max_allow"],
+            3
+        );
+        // Re-granting an existing rule replaces it, even at the cap.
+        web.allow_rules(&batch(0..1), "docs", &[], true).unwrap();
+        let full = web.allow_rules(&batch(3..4), "docs", &[], true).unwrap_err();
+        assert_eq!(full.code, "WEB_ALLOWLIST_FULL");
+        assert!(full.message.contains("web.max_rules = 3"), "{}", full.message);
+        // A raised cap admits more rules in total; one grant still names at most 32.
+        let hundred = AppConfig::from_str("web: {max_rules: 100}", Path::new("config.yaml")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let web = WebTool::new(dir.path(), &hundred).unwrap();
+        assert_eq!(
+            web.allow_rules(&batch(0..33), "docs", &[], true).unwrap_err().code,
+            "WEB_POLICY_INVALID"
+        );
+        web.allow_rules(&batch(0..32), "docs", &[], true).unwrap();
+        let status = web.allow_rules(&batch(32..64), "docs", &[], true).unwrap();
+        assert_eq!(status["rules"].as_array().unwrap().len(), 64);
+        // A lowered cap refuses the whole policy and names the key; it never truncates.
+        let refused = WebTool::new(dir.path(), &three).unwrap().policy().unwrap_err();
+        assert_eq!(refused.code, "WEB_POLICY_INVALID");
+        assert!(refused.message.contains("web.max_rules is 3"), "{}", refused.message);
     }
 
     #[test]

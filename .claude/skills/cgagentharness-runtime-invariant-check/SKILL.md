@@ -25,8 +25,10 @@ This checks the supplied implementation; it does not authorize policy changes.
 
 The optional harness API key grants no authority and cannot bypass login.
 `writes_enabled: true` and mode `write` do not arm the combined coding policy.
-Public login/minimal status still get early guards. Research selection is private
-to the account; chat sessions/jobs/persona/notes remain shared portal resources.
+Public login/minimal status still get early guards. Web selection, chat sessions,
+detached jobs and schedules are private to the account (unassigned legacy records
+stay quarantined until explicit adoption); persona, pinned notes, model selection,
+spend and agentic run records remain shared portal resources.
 
 Run with isolated homes and provider credentials excluded. Check Cargo's own
 exit status and every failure/skip. Required native sandbox tests may need the

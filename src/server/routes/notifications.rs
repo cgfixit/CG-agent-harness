@@ -23,7 +23,7 @@ pub async fn replay(
     Path(id): Path<String>,
     ValidJson(body): ValidJson<StructuredMemoryReasonRequest>,
 ) -> ApiResult<Json<Value>> {
-    if !body.confirm || body.reason.trim().is_empty() {
+    if !body.confirm || crate::common::is_visibly_blank(&body.reason) {
         return Err(ApiError::bad_request(
             "CONFIRM_REQUIRED",
             "Replay requires explicit confirmation and a reason",

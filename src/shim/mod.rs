@@ -216,8 +216,12 @@ fn write_temp(tmp_dir: &Path, prefix: &str, text: &str) -> Result<TempPath, Shim
     Ok(f.into_temp_path())
 }
 
+/// A reason must be visibly non-blank: white space and format controls
+/// (zero-width space, BOM, soft hyphen) alone are not a human reason.
 fn non_empty(v: &Option<String>) -> bool {
-    v.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false)
+    v.as_deref()
+        .map(|s| !crate::common::is_visibly_blank(s))
+        .unwrap_or(false)
 }
 
 /// Validate a request before any process is launched (mirrors ops_runner's checks).

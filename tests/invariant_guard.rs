@@ -289,6 +289,38 @@ fn server_side_never_references_agentic() {
 }
 
 #[test]
+fn netconnect_dials_only_through_the_budgeted_dialer() {
+    // Sockets and name lookups. Only connect.rs may open a socket, and
+    // nothing under src/netconnect may resolve a host name.
+    const SOCKETS: &[&str] = &["TcpStream", "TcpSocket", "UdpSocket", "socket2", "RawSocket"];
+    const LOOKUPS: &[&str] = &["lookup_host", "ToSocketAddrs", "to_socket_addrs", "getaddrinfo"];
+    for (path, text) in read_tree(&root().join("netconnect")) {
+        let dialer = path.replace('\\', "/").ends_with("netconnect/connect.rs");
+        for needle in LOOKUPS {
+            assert!(!text.contains(needle), "{path} resolves names via {needle:?}");
+        }
+        if !dialer {
+            for needle in SOCKETS {
+                assert!(
+                    !text.contains(needle),
+                    "{path} opens a socket via {needle:?}; dial through netconnect::Dialer"
+                );
+            }
+        }
+    }
+    let dialer = std::fs::read_to_string(root().join("netconnect").join("connect.rs")).unwrap();
+    assert!(!dialer.contains("UdpSocket"), "the diagnostics dialer is TCP only");
+    let body = &dialer[dialer.find("pub async fn probe_all").expect("probe_all exists")..];
+    let recheck = body.find("check_target").expect("probe_all rechecks scope");
+    let dial = body.find("self.connector.connect").expect("probe_all dials");
+    assert!(recheck < dial, "scope recheck must precede the dial");
+    assert!(
+        dialer.contains("SocketAddr::V4(addr)"),
+        "the live dial takes an IPv4 socket address"
+    );
+}
+
+#[test]
 fn only_registered_process_owners_construct_commands() {
     const OWNERS: &[&str] = &[
         "shim/mod.rs",
@@ -974,6 +1006,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #237 documented refused truncated cloud replies.
     ("docs/MODELS.md", Guide, 970),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1160),
+    // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
+    ("docs/README.md", Guide, 1200),
     ("docs/RELEASING.md", Guide, 700),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
@@ -984,8 +1018,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/STRUCTURED_MEMORY.md", Guide, 3440),
     ("docs/TROUBLESHOOTING.md", Guide, 1300),
     ("docs/USER_MANUAL.md", Guide, 500),
-    // why: operator netconnect user guide; 3392 words after the review corrections, rounded up to the next 100.
-    ("docs/netconnect.md", Guide, 3060),
+    // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
+    ("docs/netconnect.md", Guide, 3300),
     ("docs/screenshots/README.md", Evidence, 200),
 ];
 
@@ -1006,8 +1040,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-approved raise from 8,000 to 8,200 for the INVARIANTS.md telemetry/dependency section and SECURITY.md posture bullets.
 // why: operator-approved Root headroom matching the INVARIANTS.md row above (+356); rounded up to the next 500, under the slack rule.
 // why: #432 CI/release trust docs put Guide at 44,006 words; operator-approved raise from 44,000 to 45,000 (under the slack rule).
-// why: the 2026-10-13 doc-sync cut Guide to 42,583 words; lowered to the next 500 so the cut stays cut.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 43_000), (Evidence, 500), (Agent, 23_000)];
+// why: the docs/README.md per-file index put Guide at 45,059 words; operator-requested raise from 45,000 to 45,500 (under the slack rule).
+// why: the 2026-10-13 doc-sync cut Guide to 44,132 words with that index; lowered to the next 500 so the cut stays cut.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 44_500), (Evidence, 500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

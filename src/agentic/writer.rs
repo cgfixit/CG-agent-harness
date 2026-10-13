@@ -1,7 +1,7 @@
 //! GitHub WRITE gate, port of `agentic/writer.py`. Exactly one executable op
 //! (`pr_create`, always `--draft`) behind the master switch plus four gates:
-//! `agentic.enabled` -> `mode == write` -> `writes_enabled` -> non-empty reason
-//! -> `confirm == true`. `EXECUTION_ENABLED` ships true; the env kill switch is
+//! `agentic.enabled` -> `mode == write` -> `writes_enabled` -> visibly
+//! non-blank reason -> `confirm == true`. `EXECUTION_ENABLED` ships true; the env kill switch is
 //! AND-ed in (disable-only), checked at each mutation boundary.
 
 use std::time::Duration;
@@ -169,7 +169,7 @@ pub fn require_write_policy(cfg: &AgenticConfig, audit: &Audit, op: &str, reason
             reason,
         ));
     }
-    if reason.trim().is_empty() {
+    if crate::common::is_visibly_blank(reason) {
         return Err(refuse(
             audit,
             "a non-empty human reason is required",

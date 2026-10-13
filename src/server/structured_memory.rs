@@ -1094,7 +1094,10 @@ impl StructuredMemoryStore {
 
     fn validate_reason(&self, reason: &str) -> Result<()> {
         let reason = reason.trim();
-        if reason.is_empty() || reason.chars().count() > self.limits.max_reason_chars || reason.contains('\0') {
+        if crate::common::is_visibly_blank(reason)
+            || reason.chars().count() > self.limits.max_reason_chars
+            || reason.contains('\0')
+        {
             return Err(HarnessError::new(
                 "STRUCTURED_MEMORY_CONTENT",
                 "reason must be nonempty and within the configured bound",

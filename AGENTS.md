@@ -22,8 +22,9 @@ When prose contradicts code, fix the prose in the same PR.
   `mcp-key` manages machine keys by local file authority.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim` as a child process, never called in-process).
-- `cgagentharness netconnect status|devices` and `/net` -> `src/netconnect`,
-  passive and read-only; gates, scope and aliases are in the netconnect row below.
+- `cgagentharness netconnect status|devices|diag` and `/net` -> `src/netconnect`.
+  Only `diag` dials, through the budgeted `Dialer` in `connect.rs`; gates, scope
+  and aliases are in the netconnect row below.
 - Exit codes are an API for the `agentic` and `netconnect` children: `0` ok,
   `2` failed, `3` env/config, `4` write refused. A non-zero child exit is HTTP
   200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer

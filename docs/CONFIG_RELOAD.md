@@ -49,6 +49,8 @@ code fallback.
 | `web.chat_tool_calls` | 1–10 |
 
 `web.concurrency` is **restart-only** because it sizes shared fetch permits.
+`web.max_rules` (default 32, 1–256) is restart-only too: a cap below the saved
+rule count refuses the policy until it is raised and extras are denied.
 TLS, authentication, credentials, `security.allow_plaintext_key_file` (default
 false), models, sandbox, coding policy, notifications and unknown keys require
 restart.

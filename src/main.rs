@@ -51,7 +51,7 @@ enum Command {
         #[command(subcommand)]
         action: cgagentharness::server::client::TlsCommand,
     },
-    /// Passive LAN observation. Sends no packets. Gates ship closed.
+    /// LAN observation. Gates ship closed; only `diag` sends packets, inside its budget.
     Netconnect {
         /// Config file. Defaults to the home `config.yaml`.
         #[arg(long)]

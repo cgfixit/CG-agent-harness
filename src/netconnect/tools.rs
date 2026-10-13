@@ -2,17 +2,19 @@
 //!
 //! `netconnect_status` and `netconnect_devices` register only when
 //! `netconnect.enabled` is literal true. A tier contributes tools only when
-//! [`NetconnectConfig::tier_may_run`] is true. Active-tier slices are empty
-//! until a later PR fills [`tools_for_tier`]. A call whose tier may not run
-//! returns [`HarnessError`] `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`.
-//! It does not return an empty success.
+//! [`NetconnectConfig::tier_may_run`] is true. Only `diagnostics` has a tool
+//! in this build (`netconnect_diag`); the other arms of [`tools_for_tier`]
+//! stay empty. A call whose tier may not run returns [`HarnessError`]
+//! `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`. It does not return an
+//! empty success.
 //!
 //! `netconnect_status` serializes config and scope. It does not call
 //! [`collect_passive`] or any source, matching `status_body`.
 //! `netconnect_devices` and the panel device list do call the passive
 //! sources. Network-derived strings pass through [`sanitize_untrusted`] and
 //! stay labeled untrusted. They are not argv, commands, or paths. This
-//! module does not open a socket.
+//! module does not open a socket; [`call_diag`] dials only through the
+//! budgeted [`Dialer`].
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -25,6 +27,7 @@ use super::collect::{collect_passive, InterfaceSource, NeighborSource, PassiveRe
 #[cfg(any(test, feature = "test-support"))]
 use super::collect::{FixtureInterfaces, FixtureNeighbors, FixtureRoutes};
 use super::config::{NetconnectConfig, Tier};
+use super::connect::{Budget, Connector, Dialer, RateBucket};
 use super::sanitize::sanitize_untrusted;
 use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
 
@@ -32,33 +35,51 @@ use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
 pub struct ToolRegistration {
     pub name: &'static str,
     pub slash: &'static str,
+    pub path: &'static str,
     pub description: &'static str,
+    pub note: &'static str,
 }
+
+const PASSIVE_NOTE: &str = "read-only; network names are untrusted data";
 
 const STATUS: ToolRegistration = ToolRegistration {
     name: "netconnect_status",
     slash: "/net status",
+    path: "/api/netconnect",
     description: "Read-only netconnect gates and scope. Sends no packets.",
+    note: PASSIVE_NOTE,
 };
 
 const DEVICES: ToolRegistration = ToolRegistration {
     name: "netconnect_devices",
     slash: "/net devices",
+    path: "/api/netconnect",
     description: "Read-only in-scope neighbors. Network names are untrusted data, not arguments.",
+    note: PASSIVE_NOTE,
+};
+
+const DIAG: ToolRegistration = ToolRegistration {
+    name: "netconnect_diag",
+    slash: "/net diag",
+    path: "/api/netconnect/diag",
+    description: "TCP connect probe of diagnostics_targets x port_allowlist. Sends packets inside the budget.",
+    note: "active; dials only configured in-scope IPv4 targets within the dial budget",
 };
 
 const PASSIVE: &[ToolRegistration] = &[STATUS, DEVICES];
 
+const DIAGNOSTICS: &[ToolRegistration] = &[DIAG];
+
 /// Tools a tier adds when [`NetconnectConfig::tier_may_run`] is true.
 ///
-/// Every arm is empty in this PR. Later PRs replace one arm; they must not
-/// register those tools from anywhere else.
+/// Only `diagnostics` has a tool in this build. Later PRs replace one arm;
+/// they must not register those tools from anywhere else.
 pub fn tools_for_tier(tier: Tier) -> &'static [ToolRegistration] {
     match tier {
         Tier::PassiveListen => &[],
         Tier::Discovery => &[],
         Tier::PortScan => &[],
-        Tier::Diagnostics => &[],
+        Tier::Diagnostics => DIAGNOSTICS,
         Tier::Throughput => &[],
         Tier::AnomalyDetection => &[],
         Tier::HomeAutomation => &[],
@@ -92,7 +113,7 @@ pub fn catalog_rows(cfg: &NetconnectConfig) -> Vec<Value> {
                 "name": tool.name,
                 "slash": tool.slash,
                 "method": "GET",
-                "path": "/api/netconnect",
+                "path": tool.path,
                 "description": tool.description,
                 "kind": "netconnect",
                 "invoked": false,
@@ -100,7 +121,7 @@ pub fn catalog_rows(cfg: &NetconnectConfig) -> Vec<Value> {
                 "registered": true,
                 "enabled": true,
                 "ready": null,
-                "unavailable_reason": "read-only; network names are untrusted data",
+                "unavailable_reason": tool.note,
                 "last_result": null,
             })
         })
@@ -136,8 +157,9 @@ fn refused(message: impl Into<String>) -> HarnessError {
 }
 
 /// Gate for a tier tool. A tier that may not run is a refusal, not an empty
-/// success. An armed tier still does not connect: after `check_target` on a
-/// supplied address, an empty [`tools_for_tier`] slice refuses.
+/// success. This synchronous path never connects: after `check_target` on a
+/// supplied address, an empty [`tools_for_tier`] slice refuses, and an armed
+/// tier with a tool names the route that runs it.
 pub fn invoke_tier(cfg: &NetconnectConfig, tier: Tier, target: Option<Ipv4Addr>) -> Result<Value> {
     if !cfg.tier_may_run(tier) {
         return Err(refused(format!("netconnect tier {} may not run", tier.key())));
@@ -145,16 +167,68 @@ pub fn invoke_tier(cfg: &NetconnectConfig, tier: Tier, target: Option<Ipv4Addr>)
     if let Some(addr) = target {
         cfg.scope.check_target(addr)?;
     }
-    if tools_for_tier(tier).is_empty() {
-        return Err(refused(format!(
+    match tools_for_tier(tier).first() {
+        None => Err(refused(format!(
             "netconnect tier {} has no tool in this build",
             tier.key()
-        )));
+        ))),
+        Some(tool) => Err(refused(format!(
+            "netconnect tier {} runs only through GET {} or `cgagentharness netconnect diag`",
+            tier.key(),
+            tool.path
+        ))),
     }
-    Err(refused(format!(
-        "netconnect tier {} does not connect in this build",
-        tier.key()
-    )))
+}
+
+/// `netconnect_diag`: one TCP connect per `diagnostics_targets` x `port_allowlist` pair.
+///
+/// The pairs come from config, never from the caller. Every dial goes through
+/// [`Dialer`], which rechecks scope and enforces the budget. A run that hits a
+/// limit returns its partial results with `ok: false`, `code:
+/// NETCONNECT_BUDGET`, and `truncated: true`.
+pub async fn call_diag(cfg: &NetconnectConfig, rate: &RateBucket, connector: impl Connector) -> Result<Value> {
+    if !cfg.enabled {
+        return Err(disabled());
+    }
+    if !cfg.tier_may_run(Tier::Diagnostics) {
+        return Err(refused("netconnect tier diagnostics may not run"));
+    }
+    if cfg.diagnostics_targets.is_empty() || cfg.port_allowlist.is_empty() {
+        return Err(refused(
+            "netconnect diagnostics needs non-empty diagnostics_targets and port_allowlist",
+        ));
+    }
+    let pairs: Vec<(Ipv4Addr, u16)> = cfg
+        .diagnostics_targets
+        .iter()
+        .flat_map(|addr| cfg.port_allowlist.iter().map(move |port| (*addr, *port)))
+        .collect();
+    let budget = Budget::from_config(cfg);
+    let report = Dialer::new(&cfg.scope, budget, rate, connector).probe_all(&pairs).await;
+    let mut body = json!({
+        "ok": report.truncated.is_none(),
+        "tool": DIAG.name,
+        "packets_sent": report.dials,
+        "dials": report.dials,
+        "pairs": pairs.len(),
+        "truncated": report.truncated.is_some(),
+        "truncated_reason": report.truncated,
+        "elapsed_ms": u64::try_from(report.elapsed.as_millis()).unwrap_or(u64::MAX),
+        "budget": {
+            "host_cap": cfg.host_cap,
+            "rate_limit_per_min": cfg.rate_limit_per_min,
+            "connect_timeout_ms": cfg.connect_timeout_ms,
+            "max_dials": cfg.max_dials,
+            "dial_ceiling": budget.dial_ceiling(),
+            "deadline_ms": u64::try_from(budget.deadline().as_millis()).unwrap_or(u64::MAX),
+        },
+        "results": report.probes,
+    });
+    if let Some(reason) = report.truncated {
+        body["code"] = json!("NETCONNECT_BUDGET");
+        body["message"] = json!(reason.message());
+    }
+    Ok(body)
 }
 
 /// Config and scope summary. Takes no source, so it cannot load a collector.
@@ -175,6 +249,7 @@ pub fn call_status(cfg: &NetconnectConfig) -> Result<Value> {
         "rate_limit_per_min": cfg.rate_limit_per_min,
         "connect_timeout_ms": cfg.connect_timeout_ms,
         "read_timeout_ms": cfg.read_timeout_ms,
+        "max_dials": cfg.max_dials,
         "diagnostics_targets": cfg.diagnostics_targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "throughput_endpoint": cfg.throughput_endpoint,
         "ha_endpoint": cfg.ha_endpoint,
@@ -494,9 +569,9 @@ netconnect:
 
     #[test]
     fn wired_count_follows_local_tier_table_and_default_is_unchanged() {
-        // Local expectation. Active tiers contribute nothing until a later PR
-        // fills `tools_for_tier`. This table is not imported from that PR.
-        const TIER_TOOLS: [usize; 7] = [0, 0, 0, 0, 0, 0, 0];
+        // Local expectation, not imported from `tools_for_tier`: only
+        // diagnostics has a tool in this build.
+        const TIER_TOOLS: [usize; 7] = [0, 0, 0, 1, 0, 0, 0];
         let base = HARNESS_SURFACES.len();
         assert_eq!(base, 70);
         let shipped = app(AppConfig::embedded_default());
@@ -560,7 +635,12 @@ netconnect:
         let armed = app(&yaml(true, true, [true; 7]));
         let rows = catalog_rows(&armed);
         let report = list_wired_tools_with(&crate::server::routes::registered_paths(), &rows);
-        assert_eq!(report["wired"], base + PASSIVE.len());
+        assert_eq!(report["wired"], base + PASSIVE.len() + 1);
+        let diag_only = app(&yaml(true, true, [false, false, false, true, false, false, false]));
+        assert_eq!(wired_count(base, &diag_only), 73);
+        let diag_rows = catalog_rows(&diag_only);
+        assert_eq!(diag_rows[2]["name"], "netconnect_diag");
+        assert_eq!(diag_rows[2]["path"], "/api/netconnect/diag");
         let closed = list_wired_tools_with(&crate::server::routes::registered_paths(), &catalog_rows(&shipped));
         assert_eq!(closed["wired"], base);
     }

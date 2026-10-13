@@ -63,6 +63,7 @@ fails=0
 _expect() {
   local name="$1" expect_rc="$2" pattern="$3" extra="${4:-}"
   local out rc
+  # shellcheck disable=SC2086  # $extra is a space-separated arg list; splitting is the point
   out="$(python3 "$checker" --repo-root "$a" --as-of "$AS_OF" $extra 2>&1)"; rc=$?
   if [ "$rc" -eq "$expect_rc" ] && echo "$out" | grep -q "$pattern"; then
     echo "$name: PASS"

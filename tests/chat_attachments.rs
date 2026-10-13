@@ -509,6 +509,37 @@ async fn notes_corpus_injects_local_chat_and_stays_off_loop() {
 }
 
 #[tokio::test]
+async fn notes_corpus_lists_and_deletes_by_id() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, stored) = post_notes(&s, &[("keep.md", b"KEEP_NOTE body"), ("drop.md", b"DROP_NOTE body")]).await;
+    assert_eq!(status, 200, "{stored}");
+    let (status, listed) = s.get_json("/api/notes-corpus").await;
+    assert_eq!(status, 200, "{listed}");
+    assert_eq!(listed["count"], 2);
+    let ids: Vec<String> = listed["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap().to_string())
+        .collect();
+    let route = format!("/api/notes-corpus/{}", ids[0]);
+    let resp = s.req(reqwest::Method::DELETE, &route).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    let deleted = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(deleted["id"], ids[0].as_str());
+    let listed = s.get_json("/api/notes-corpus").await.1;
+    assert_eq!(listed["count"], 1, "{listed}");
+    assert_eq!(listed["notes"][0]["id"], ids[1].as_str());
+    // A second delete of the same id is a not-found, not a silent success.
+    let resp = s.req(reqwest::Method::DELETE, &route).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 404);
+    let body = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(code(&body), "NOTES_NOT_FOUND");
+    assert_eq!(s.get_json("/api/notes-corpus").await.1["count"], 1);
+}
+
+#[tokio::test]
 async fn notes_ingest_honors_default_file_count() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
