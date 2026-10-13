@@ -921,6 +921,8 @@ use Kind::{Agent, Evidence, Guide, Root};
 /// on 2026-09-27, rounded up to the next 100 words. Lower them when a fold lands.
 const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Rows the 2026-10-13 doc-sync trimmed carry their new size plus about 2%, rounded up to the next 10.
+    // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
+    (".claude/skills/README.md", Agent, 240),
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
@@ -957,6 +959,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: evidence guidance, merge order, and the ELI5 footer counted 1614 words, rounded up to the next 100.
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1700),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
+    // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
+    (".github/workflows/README.md", Agent, 300),
     // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
     // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
     // why: feature contracts folded into an INVARIANTS.md section table; 1491 words, rounded up to the next 100.
@@ -1007,7 +1011,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/MODELS.md", Guide, 970),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1160),
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
-    ("docs/README.md", Guide, 1200),
+    // why: operator-requested reading paths plus an owning-code and tests line per doc; size plus about 5%, rounded up to the next 50.
+    ("docs/README.md", Guide, 1650),
     ("docs/RELEASING.md", Guide, 700),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
@@ -1021,6 +1026,15 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     ("docs/netconnect.md", Guide, 3300),
     ("docs/screenshots/README.md", Evidence, 200),
+    // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
+    // each is its size plus about 10%, rounded up to the next 10.
+    ("scripts/README.md", Guide, 500),
+    ("src/agentic/README.md", Guide, 350),
+    ("src/common/README.md", Guide, 400),
+    ("src/netconnect/README.md", Guide, 190),
+    ("src/server/README.md", Guide, 740),
+    ("src/server/routes/README.md", Guide, 190),
+    ("tests/README.md", Guide, 730),
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
@@ -1042,7 +1056,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: #432 CI/release trust docs put Guide at 44,006 words; operator-approved raise from 44,000 to 45,000 (under the slack rule).
 // why: the docs/README.md per-file index put Guide at 45,059 words; operator-requested raise from 45,000 to 45,500 (under the slack rule).
 // why: the 2026-10-13 doc-sync cut Guide to 44,132 words with that index; lowered to the next 500 so the cut stays cut.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 44_500), (Evidence, 500), (Agent, 23_000)];
+// why: operator-requested per-file folder indexes (src, tests, scripts, desktop, assets, data) and the docs/README.md
+// owning-code map put Guide at 47,658 and the .claude/skills and workflows indexes put Agent at 23,299; each rounded
+// up to the next 500 under the slack rule.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 48_000), (Evidence, 500), (Agent, 23_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

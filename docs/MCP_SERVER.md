@@ -49,9 +49,9 @@ agent, chat, or loop tool.
    `localhost` is not an alias for a different Host authority. The console
    retains its own account and TLS configuration.
 
-The pinned Rust SDK is `rmcp =3.4.0`, with only server and Streamable HTTP
+The pinned Rust SDK is `rmcp =3.5.0`, with only server and Streamable HTTP
 transport features. The transport is stateless, including for older supported
-protocol versions, and creates no durable MCP sessions. The CLI suppresses SDK trace output because protocol traces can
+protocol versions, and creates no durable MCP sessions. The server suppresses SDK trace output because protocol traces can
 contain memory. Call and refusal audits contain only public key IDs, recognized
 tool names, and coarse outcomes. They omit arguments, fact text, tokens, and hashes.
 

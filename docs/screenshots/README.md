@@ -3,6 +3,16 @@
 Store captures flat here with unique filenames. Record new artifact hashes,
 platform, fixture/live distinction and verification limits in the adding PR;
 do not add Markdown files. Historical screenshots do not verify newer builds.
+`slash-single-line-note.txt` is an operator aside.
+
+## Series index
+
+- `console-chat-signed-in-*`, `console-sign-in-first-run-*`: README hero and first-run sign-in (below).
+- `console-ux-*-{before,after}-*-chromium`: console UX pass, desktop and phone.
+- `0N-browser-*`, `0N-native-*`, `0N-help-*`: browser and native acceptance, help overlay.
+- `0N-session-*`, `05-independent-spend-ledger`: per-session spend isolation.
+- `*-safari`: ownership, cron, delivery, MCP and private-memory acceptance.
+- `slash-single-line-0N-native-*`: the 2026-09-22 native slash captures (below).
 
 ## Overview captures
 
