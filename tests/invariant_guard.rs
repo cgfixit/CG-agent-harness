@@ -1003,7 +1003,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // Evidence 139, Agent 22768).
 // why: operator-approved raise from 8,000 to 8,200 for the INVARIANTS.md telemetry/dependency section and SECURITY.md posture bullets.
 // why: operator-approved Root headroom matching the INVARIANTS.md row above (+356); rounded up to the next 500, under the slack rule.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 44_000), (Evidence, 500), (Agent, 23_000)];
+// why: #432 CI/release trust docs put Guide at 44,006 words; operator-approved raise from 44,000 to 45,000 (under the slack rule).
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 45_000), (Evidence, 500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
