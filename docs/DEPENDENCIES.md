@@ -32,7 +32,7 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
   for both crates: plain `cargo update` prefers releases within each crate's
   `rust-version`, and `--ignore-rust-version` or `--precise` remain explicit
   overrides.
-- The backend license allowlist names only identifiers the locked graph uses.
+- Each crate's license allowlist names only identifiers its locked graph uses.
   Add an identifier deliberately, with the crate that needs it, rather than
   keeping unused allowances that would admit a future dependency silently.
 - Desktop Tauri is pinned to 2.12.0. The immutable upstream `tauri-utils`
