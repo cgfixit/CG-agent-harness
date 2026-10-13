@@ -6,7 +6,7 @@ const html = readFileSync(process.env.CGAH_CONSOLE || new URL('../assets/static/
 const source = (start, end) => html.slice(html.indexOf(start), html.indexOf(end));
 const nodes = new Map(), messages = [], calls = [];
 let analyticsClears = 0, scheduleClears = 0, notificationClears = 0;
-const headerStates = []; let headersAtLogoutRequest = null;
+const headerStates = [], clearedTimers = []; let headersAtLogoutRequest = null;
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {value:'', files:[], textContent:'', replaceChildren(){this.textContent='';}, addEventListener(event, handler){this[event]=handler;}});
   return nodes.get(id);
@@ -15,6 +15,7 @@ const context = vm.createContext({
   document:{getElementById:node}, $:node, window:{}, TextEncoder,
   stream:node('stream'), hAuthLogout:node('logout'), CSRF_TOKEN:'fixture',
   reviewRevision:0, sessionRevision:1, netconnectRevision:0, sessionClearing:false, agentWatchGeneration:0,
+  clearTimeout:timer=>clearedTimers.push(timer), memoryRefreshTimer:'pending-memory-poll', memoryViewRevision:0, memoryRefreshBusy:true,
   pendingAgentRun:null, shownAgentDiffs:new Map(), reviewedSoulProposal:null,
   currentSession:'fixture-session', sessionGoal:'fixture goal', promptHistory:{},
   input:node('input'), loopAuto:false, retryAttachmentIds:null, stopLoop(){}, paintGoalLoop(){}, resetScheduleReview(){++scheduleClears;}, resetNotificationView(){++notificationClears;},
@@ -48,6 +49,9 @@ const reset = () => {
 };
 seed(); context.clearTranscript(); reset();
 seed(); await context.hAuthLogout.click(); reset();
+assert.deepEqual(clearedTimers, ['pending-memory-poll'], 'logout cancels the old account memory poll');
+assert.equal(context.memoryViewRevision, 1, 'logout invalidates in-flight memory replies');
+assert.equal(context.memoryRefreshBusy, false);
 assert.equal(analyticsClears, 1, 'logout must invalidate analytics');
 assert.equal(context.netconnectRevision, 1, 'logout must drop in-flight LAN panel replies');
 assert.deepEqual(headersAtLogoutRequest, [false], 'logout must hide header automation buttons before its request');
