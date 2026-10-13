@@ -21,7 +21,7 @@ is not evidence.
 | ID | Severity | Contract |
 |---|---|---|
 | H1 | FAIL | `flag_is_true`: unquoted YAML `true` only; quoted `"true"` / `"false"` / other strings are **OFF** |
-| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `unslop.enabled`, `mcp.enabled`, `mcp.sse_allow_loopback`, `mcp.server.enabled`; inbound MCP tools stay empty. Fresh web settings start enabled with an empty URL allowlist; existing choices and missing/invalid legacy web values stay unchanged/off. Fresh `auth.enabled` and `tls.enabled` must be true. Config gates are locked by `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; web seeding and legacy preservation by the home/settings tests in `tests/common_layer.rs`. `security.api_key_optional` remains true but is deprecated metadata, not an account bypass |
+| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `unslop.enabled`, `mcp.enabled`, `mcp.sse_allow_loopback`, `mcp.server.enabled`, every `netconnect.*` gate; inbound MCP tools stay empty. Fresh web settings start enabled with an empty URL allowlist; existing choices and missing/invalid legacy web values stay unchanged/off. Fresh `auth.enabled` and `tls.enabled` must be true. Config gates are locked by `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; web seeding and legacy preservation by the home/settings tests in `tests/common_layer.rs`. `security.api_key_optional` remains true but is deprecated metadata, not an account bypass |
 | H11 | FAIL | Fresh `memory.enabled` and all nine `structured_memory` feature gates are true; persisted explicit off choices still win. Proposals never auto-apply facts. Memory defaults do not arm repository execution/write gates |
 | H10 | FAIL | Invalid auth/TLS switch types refuse configuration; missing legacy fields remain off. Do not apply the generic quoted-gate OFF behavior to these security switches |
 | H3 | FAIL | Literal YAML needles: `api_key_optional: true` and `allow_git_write_tools: false`; shipped YAML must not contain `allow_git_write_tools: true` (string forms hide mistakes) |
@@ -30,7 +30,7 @@ is not evidence.
 | H6 | FAIL | Loopback posture: serve binds loopback only; model `base_url` examples stay `127.0.0.1`; non-loopback refused in code |
 | H7 | FAIL | Mode/write-enabled defaults alone cannot authorize mutation. Fresh disk policy also requires master/deepagent/clone-write gates, reason, confirm and the disable-only kill switch (`tests/write_policy.rs`) |
 | H8 | FAIL | `policy.prompt_filter.banned_patterns` length stays aligned with the documentary CyClaw-port count (asserted 40 in `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`) |
-| H9 | FAIL | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agents_md`) |
+| H9 | FAIL | Protected paths (e.g. `AGENTS.md` in `protected_write_paths`) still present (`shipped_defaults_protect_agent_instruction_files`) |
 
 ## Run
 
@@ -39,13 +39,13 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --test invariant_guard shipped_config -- --nocapture
 
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --test common_layer quoted_true_is_off -- --nocapture
+  cargo test --test common_layer -- quoted_true_is_off security_switches_require_boolean_values --nocapture
 ```
 
-Also run `security_switches_require_boolean_values` in `common_layer`. Check
-`notifications.enabled` and `agentic.deepagent_github.retrieval.enabled` remain
-false in shipped YAML; select `notifications` and `real_repo_loop` tests when
-changed.
+Check `notifications.enabled` and `agentic.deepagent_github.retrieval.enabled`
+remain false in shipped YAML; select `notifications` and `real_repo_loop` tests
+when changed. Diff-read `assets/config.default.yaml` for quoted booleans or
+opened gates.
 
 ### Interpret
 
