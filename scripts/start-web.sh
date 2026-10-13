@@ -10,6 +10,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 bin=${CGAH_BIN:-$root/target/release/cgagentharness}
 home=${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}
 port=${1:-${PORT:-8790}}
+loopback=127.0.0.1 # DevSkim: ignore DS162092 because the console binds and is reached on loopback only.
 
 case $port in
   '' | *[!0-9]*) echo "start-web: port must be a number" >&2; exit 3 ;;
@@ -19,10 +20,10 @@ if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
   exit 3
 fi
 
-port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+port_open() { (exec 3<>"/dev/tcp/$loopback/$1") 2>/dev/null; }
 
 if port_open "$port"; then
-  echo "start-web: 127.0.0.1:$port is already in use; pass another port" >&2
+  echo "start-web: $loopback:$port is already in use; pass another port" >&2
   exit 3
 fi
 
@@ -42,7 +43,7 @@ if [ -f "$cfg" ]; then
   tls=$(awk '/^tls:/ {t=1; next} t && /^[^ #]/ {t=0} t && $1=="enabled:" {print $2; exit}' "$cfg")
   [ "${tls:-true}" = true ] || scheme=http
 fi
-url=$scheme://127.0.0.1:$port/
+url=$scheme://$loopback:$port/
 
 "$bin" serve --port "$port" &
 server=$!
