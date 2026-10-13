@@ -11,11 +11,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../../.." && pwd)"
 checker="$here/check_otel.py"
 
-# The date the shipped contract was last reviewed (every INVENTORY row's
+# The date the shipped contract was last re-verified (the newest INVENTORY
 # `reviewed`). The strict clean-tree run pins it so this script stays
 # deterministic; the default run uses today so real staleness still surfaces
 # as WARN/exit 0 without breaking the script.
-AS_OF="2026-10-03"
+AS_OF="2026-10-13"
 
 echo "== cgagentharness-otel-hardening verify =="
 
@@ -281,6 +281,19 @@ a="$(_mktree)"
 _mutate "$a/src/common/sandbox_wrap.rs" '
 text = text.replace("\"--unshare-net\"", "\"--share-net\"", 1)'
 _expect "T12 sandbox network-denial-dropped mutation" 2 "FAIL  \[T12\] bwrap"
+
+# T12: the seatbelt profile returns to allow-default (every occurrence, so a
+# comment cannot absorb the mutation).
+a="$(_mktree)"
+_mutate "$a/src/common/sandbox_wrap.rs" '
+text = text.replace("(deny default)", "(allow default)")'
+_expect "T12 seatbelt deny-default-dropped mutation" 2 "FAIL  \[T12\] seatbelt"
+
+# T12: the seatbelt network grant flips onto the Deny branch.
+a="$(_mktree)"
+_mutate "$a/src/common/sandbox_wrap.rs" '
+text = text.replace("network == NetworkPolicy::Unrestricted {", "network == NetworkPolicy::Deny {", 1)'
+_expect "T12 seatbelt network-grant-flipped mutation" 2 "FAIL  \[T12\] seatbelt"
 
 echo
 if [ "$fails" -eq 0 ]; then
