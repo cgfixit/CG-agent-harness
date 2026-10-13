@@ -38,7 +38,7 @@ fn system_prompt(mode: &str) -> Cow<'static, str> {
         SYSTEM_PROMPT.replace(
             "Respect mode: summaries means at most one session_summary; insights means durable insights only; both allows both.",
             "Respect mode: summaries allows only category session_summary and at most one candidate; insights allows only category insight; both allows both categories and at most one session_summary.",
-        ).into()
+        ).replace("session_summary|insight", "session_summary").into()
     } else {
         SYSTEM_PROMPT.into()
     }

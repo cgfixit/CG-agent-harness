@@ -206,10 +206,10 @@ async fn each_mode_filters_the_other_category_and_inputs_are_bounded_and_redacte
         assert_eq!(proposals[0].category.as_deref(), Some(expected));
         let request = model.requests.lock().unwrap()[0].clone();
         if mode == "summaries" {
-            assert!(request["messages"][0]["content"]
-                .as_str()
-                .unwrap()
-                .contains("summaries allows only category session_summary and at most one candidate"));
+            let system = request["messages"][0]["content"].as_str().unwrap();
+            assert!(system.contains("summaries allows only category session_summary and at most one candidate"));
+            assert!(system.contains("\"category\":\"session_summary\""));
+            assert!(!system.contains("session_summary|insight"));
         } else {
             assert_eq!(request["messages"][0]["content"], suggest::SYSTEM_PROMPT);
         }
