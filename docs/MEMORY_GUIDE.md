@@ -211,8 +211,9 @@ budget.
 ## Turn automation or the store off
 
 To keep manual facts but stop capture and suggestions, leave the store enabled
-and turn off `/memory auto-suggest-chat`, `/memory auto-suggest-coding`,
-`/memory auto-consolidate` and `/memory capture` (or their config keys).
+and run `/memory auto-suggest-chat off`, `/memory auto-suggest-coding off`,
+`/memory auto-consolidate off` and `/memory capture off` (or set their config
+keys false and restart).
 Saved facts and pending proposals remain. To stop opening the database, set
 `enabled: false` and restart. This does not delete it or disable pinned notes,
 persona, or chat-history persistence. Successful exchanges still enter the

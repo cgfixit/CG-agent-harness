@@ -77,8 +77,8 @@ When prose contradicts code, fix the prose in the same PR.
   `cargo test` isolates it so later write gates are what fail. Never flip
   `EXECUTION_ENABLED` to false (or OR the kill switch) to make tests green.
 - Server audit appends go to one bounded writer thread
-  (`logging.audit_queue_lines`); SQLite work stays off async workers; requests
-  never wait on a file.
+  (`logging.audit_queue_lines`; 0 appends inline); SQLite work stays off async
+  workers; requests never wait on a file.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
 - `RELOADABLE` in `src/server/config_reload.rs` (23 keys) is the only
