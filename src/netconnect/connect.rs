@@ -440,7 +440,11 @@ mod tests {
         };
         let scope = Scope::parse(&["127.0.0.0/16".to_string()]).unwrap();
         let rate = RateBucket::new();
-        let dialer = Dialer::new(&scope, budget(4, 100, 4, 5_000), &rate, LiveConnector);
+        // why: Windows retries a SYN after the RST from a closed port, so a refusal there takes
+        // about two seconds; a 100 ms connect timeout would report it as a timeout (PR #451 CI).
+        let mut live = budget(4, 100, 4, 10_000);
+        live.connect = Duration::from_secs(5);
+        let dialer = Dialer::new(&scope, live, &rate, LiveConnector);
         let report = dialer
             .probe_all(&[(Ipv4Addr::LOCALHOST, open), (Ipv4Addr::LOCALHOST, closed)])
             .await;

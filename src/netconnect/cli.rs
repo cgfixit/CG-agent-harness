@@ -287,8 +287,10 @@ mod tests {
             .port();
         let base = format!(
             "netconnect:\n  enabled: true\n  diagnostics: true\n  allowed_cidrs: ['127.0.0.0/16']\n  \
-             diagnostics_targets: ['127.0.0.1']\n  port_allowlist: [{open}, {closed}]\n" // DevSkim: ignore DS162092 because the diag fixture must target the loopback listener it owns.
+             diagnostics_targets: ['127.0.0.1']\n  port_allowlist: [{open}, {closed}]\n  connect_timeout_ms: 5000\n" // DevSkim: ignore DS162092 because the diag fixture must target the loopback listener it owns.
         );
+        // why: connect_timeout_ms 5000 because Windows takes about two seconds to report a
+        // closed loopback port (it retries the SYN after the RST); 1000 would read as timeout.
         let (_dir, path) = write_config(&base);
         let outcome = execute(Some(path), Action::Diag);
         assert_eq!(outcome.code, EXIT_OK, "{}", outcome.body);
