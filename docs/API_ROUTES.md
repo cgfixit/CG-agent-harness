@@ -21,7 +21,7 @@ check-profile names and run IDs, never browser-supplied commands.
 | GET | `/api/netconnect` | Read-only LAN panel (query ignored; see [netconnect.md](netconnect.md)) |
 | GET | `/api/netconnect/diag` | Budgeted TCP probe of configured diagnostics targets; 409 unless the tier may run (see [netconnect.md](netconnect.md#diagnostics)) |
 | GET | `/api/registry` | Skill/persona registry listing |
-| GET | `/api/audit` | Audit events (administrator) |
+| GET | `/api/audit` | Audit events (any role) |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |
 | GET | `/api/analytics/summary` | Owned sessions plus shared spend/coding analytics (`/analytics`; [details](ANALYTICS.md)) |
 | POST | `/api/config/reload` | Reload the non-secret limits allowlist (administrator, CSRF-guarded; see [CONFIG_RELOAD.md](CONFIG_RELOAD.md)) |
@@ -131,7 +131,7 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | POST | `/api/web/deny` | Remove a grant |
 | POST | `/api/web/fetch` | Read one or more exact permitted URLs within shared resource limits |
 | POST | `/api/web/check` | Check exact URL permissions locally, without fetching or granting access |
-| POST | `/api/web/search` | Bounded Google search (`SERPAPI_API_KEY` optional) |
+| POST | `/api/web/search` | Page search; Google needs `engine:"google"` |
 | POST | `/api/web/research` | Research permitted sources, optionally narrowing the group and concrete starting URLs |
 | POST | `/api/web/research/cancel` | Cancel research |
 | POST | `/api/web/inject` | Inject a read into the session context |
@@ -184,7 +184,7 @@ Bounds and capability policy: [MCP_CLIENT.md](MCP_CLIENT.md). `/loop` has no MCP
 
 Run and job creation share `agent::prepare_run`, then spawn through the shim; see
 [CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
-`GET /api/agent/runs` lists metadata only while `agentic.enabled` is literal true. Otherwise it is HTTP 409 `AGENTIC_DISABLED` and does not read or reconcile records; detail, decision, push, and discard do the same. `GET /api/github/status` stays HTTP 200.
+`GET /api/agent/runs` lists metadata only while `agentic.enabled` is literal true. Otherwise it is HTTP 409 `AGENTIC_DISABLED` and does not read or reconcile records; the other run routes do the same. `GET /api/github/status` stays HTTP 200.
 
 The two notification routes serve default-off completion webhooks; destinations,
 payload and crash semantics are in

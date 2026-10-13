@@ -1,7 +1,15 @@
 # src/agentic/executor
 
-Runs verification checks inside a sandbox: `sandbox.rs` (core path: Seatbelt on
-macOS, bubblewrap on Linux, no unconfined fallback), `prepared.rs` and
-`manifest.rs` (what a run may touch), `runner.rs` (bounded execution),
-`apply.rs` (landing a judged result). Nothing lands before it is judged; see
-[INVARIANTS.md](../../../INVARIANTS.md).
+Runs verification checks inside a hard sandbox. Nothing lands before it is
+judged, and nothing here commits; see [INVARIANTS.md](../../../INVARIANTS.md)
+and [docs/CODING_PIPELINE.md](../../../docs/CODING_PIPELINE.md#offline-cargo-verification).
+
+- [`mod.rs`](mod.rs): declares the modules; re-exports `run_verification`, `Check`, `production_sandbox`, `HardSandbox`.
+- [`apply.rs`](apply.rs): `prove_disposable_copy`: copy the candidate tree, re-verify its digest, destroy it.
+- [`manifest.rs`](manifest.rs): acceptance digest over run id, HEAD, path hashes and modes; re-verified at approve.
+- [`prepared.rs`](prepared.rs): operator-prepared, lock-bound Cargo sources (`CargoInputs`); no dependency retrieval.
+- [`runner.rs`](runner.rs): runs fixed `Check` argv lists in the sandbox with a scrubbed env and timeouts.
+- [`sandbox.rs`](sandbox.rs): **core path.** Seatbelt, bubblewrap/netns and Windows Job Object backends; fail closed, no fallback.
+
+Tests: [tests/linux_bwrap.rs](../../../tests/linux_bwrap.rs), [tests/macos_cargo.rs](../../../tests/macos_cargo.rs),
+[tests/exhausted_run.rs](../../../tests/exhausted_run.rs).

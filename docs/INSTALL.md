@@ -610,7 +610,7 @@ tokens, fresh CSRF, and no replay.
 
 | Gate | Evidence and scope |
 |---|---|
-| [Backend CI](../.github/workflows/ci.yml) | On PRs, `main`, and reusable release calls: rustfmt, warning-denied Clippy, `cargo deny`, MSRV, I6 scan, Chrome commands, Linux/macOS tests, and real-repo smoke. Bundle owns release builds and CLI packaging; Release rebuilds before publication. |
+| [Backend CI](../.github/workflows/ci.yml) | On PRs, `main`, and reusable release calls: rustfmt, warning-denied Clippy, `cargo deny`, MSRV, I6 scan, Chrome commands, Linux/macOS/Windows tests, and real-repo smoke. Bundle owns release builds and CLI packaging; Release rebuilds before publication. |
 | Coding and chat regression tests | Revocation, exact edits, clone jail, reviewed trees, job cancellation, session and goal gates, loop budgets, and failed-chat claim release. See [`tests/`](../tests/). |
 | Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
 | [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and packaged backend, verify signatures, checksums, and extraction, then retain ZIP and checksums. |
@@ -622,4 +622,4 @@ tokens, fresh CSRF, and no replay.
 CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
 does not prove real-model quality, complete native GUI behavior, or notarized
 distribution. Live Ollama smoke and native desktop checks recorded in PR bodies
-cover different evidence. Windows CI/release legs remain parked.
+cover different evidence. Windows release legs remain parked.
