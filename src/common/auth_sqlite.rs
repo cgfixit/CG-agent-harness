@@ -354,6 +354,55 @@ mod tests {
     }
 
     #[test]
+    fn password_change_persists_scrypt_and_returns_an_independent_session() {
+        use base64::Engine;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
+        let mgr = AuthManager::open(&path, &cfg).unwrap();
+        // Minted per run so no literal reaches the password hasher.
+        let old_password = crate::common::random_urlsafe(24);
+        let new_password = crate::common::random_urlsafe(24);
+        let (old_password, new_password) = (old_password.as_str(), new_password.as_str());
+        mgr.create_user("tester", old_password, "operator").unwrap();
+        let old_session = mgr.login("tester", old_password).unwrap();
+        let changed = mgr.change_password("tester", old_password, new_password).unwrap();
+
+        // CodeQL #839 treats change_password's return value as a password.
+        // It is LoginResult: the session is freshly minted from 32 random bytes.
+        let raw_token = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&changed.session_id)
+            .unwrap();
+        assert_eq!(raw_token.len(), 32);
+        assert_ne!(changed.session_id, old_session.session_id);
+        assert_ne!(changed.session_id, new_password);
+        let conn = connect(&path.with_extension("sqlite3")).unwrap();
+        let password_record: String = conn
+            .query_row("SELECT password_hash FROM users WHERE username='tester'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(password_record.starts_with("scrypt$131072$8$1$"));
+        assert_eq!(authn::verify_password(new_password, &password_record), (true, false));
+        assert_eq!(authn::verify_password(old_password, &password_record), (false, false));
+        let token_hash: String = conn
+            .query_row("SELECT token_hash FROM sessions WHERE revoked=0", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(token_hash, authn::hash_token(&changed.session_id));
+        assert_ne!(token_hash, changed.session_id);
+
+        drop(mgr);
+        let reopened = AuthManager::open(&path, &cfg).unwrap();
+        assert!(reopened.validate_session(&old_session.session_id).is_none());
+        assert!(reopened.validate_session(new_password).is_none());
+        assert_eq!(
+            reopened.validate_session(&changed.session_id).unwrap().username,
+            "tester"
+        );
+    }
+
+    #[test]
     fn a_live_session_slides_its_idle_window_at_most_once_a_minute() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auth.json");
