@@ -96,13 +96,41 @@ pub fn tail_chars(text: &str, max: usize) -> &str {
     }
 }
 
-/// Unicode format controls that render as nothing: zero-width spaces and
-/// joiners, bidi marks, the BOM, soft hyphen and tag characters. Shared by the
-/// `.git` name-equivalence fold and every human-reason gate.
+/// Code points that render as nothing: Unicode `Cf` format controls (zero-width
+/// spaces and joiners, bidi marks, the BOM, soft hyphen, Arabic and Syriac
+/// marks, interlinear annotation, musical and Egyptian format controls, tags)
+/// plus the rest of `Default_Ignorable_Code_Point` (combining grapheme joiner,
+/// Hangul fillers, Khmer and Mongolian selectors, variation selectors, plane-14
+/// selectors). Shared by the `.git` name-equivalence fold and every human-reason
+/// gate; a superset only widens what the jail treats as equivalent.
 pub fn is_format_control(c: char) -> bool {
     matches!(
         c as u32,
-        0x00AD | 0x061C | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xE0001 | 0xE0020..=0xE007F
+        0x00AD
+            | 0x034F
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x115F..=0x1160
+            | 0x17B4..=0x17B5
+            | 0x180B..=0x180F
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x206F
+            | 0x3164
+            | 0xFE00..=0xFE0F
+            | 0xFEFF
+            | 0xFFA0
+            | 0xFFF0..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0000..=0xE0FFF
     )
 }
 
@@ -149,6 +177,12 @@ mod tests {
             " \u{2060} ",
             "\u{00AD}\u{200D}\u{200E}",
             "\u{E0001}\u{E0020}",
+            "\u{FFF9}",
+            "\u{034F}",
+            "\u{FE0F}\u{E0100}",
+            "\u{3164}\u{115F}\u{FFA0}",
+            "\u{0600}\u{06DD}\u{070F}",
+            "\u{1D173}\u{13430}\u{180E}",
         ] {
             assert!(super::is_visibly_blank(blank), "{blank:?}");
         }
