@@ -972,6 +972,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #237 documented refused truncated cloud replies.
     ("docs/MODELS.md", Guide, 1000),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1300),
+    // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
+    ("docs/README.md", Guide, 1200),
     ("docs/RELEASING.md", Guide, 700),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
@@ -1004,7 +1006,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-approved raise from 8,000 to 8,200 for the INVARIANTS.md telemetry/dependency section and SECURITY.md posture bullets.
 // why: operator-approved Root headroom matching the INVARIANTS.md row above (+356); rounded up to the next 500, under the slack rule.
 // why: #432 CI/release trust docs put Guide at 44,006 words; operator-approved raise from 44,000 to 45,000 (under the slack rule).
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 45_000), (Evidence, 500), (Agent, 23_000)];
+// why: the docs/README.md per-file index put Guide at 45,059 words; operator-requested raise from 45,000 to 45,500 (under the slack rule).
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 45_500), (Evidence, 500), (Agent, 23_000)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
