@@ -181,6 +181,7 @@ mod tests {
             tally: TokenTally::default(),
             token_calibration: None,
             goal: "do the thing".into(),
+            goal_web_mode: Default::default(),
             selected_skills: Vec::new(),
             style: None,
             selected_facts: Vec::new(),

@@ -92,7 +92,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
 }
 
 #[tokio::test]
-async fn loop_prompt_does_not_advertise_tools_even_with_web_enabled() {
+async fn loop_advertises_only_permitted_web_tool_types_when_enabled() {
     let model = common::start_mock_model().await;
     let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
     s.post_json("/api/web", json!({"enabled":true})).await;
@@ -100,7 +100,7 @@ async fn loop_prompt_does_not_advertise_tools_even_with_web_enabled() {
     let id = session["session_id"].as_str().unwrap();
     s.post_json(
         &format!("/api/sessions/{id}/goal"),
-        json!({"goal":"Explain arithmetic"}),
+        json!({"goal":format!("Explain arithmetic. {} FINAL_CONSTRAINT: use the operator data only.", "Check each input and assumption. ".repeat(45))}),
     )
     .await;
     let (status, body) = s
@@ -108,14 +108,143 @@ async fn loop_prompt_does_not_advertise_tools_even_with_web_enabled() {
         .await;
     assert_eq!(status, 200, "{body}");
     let request = model.last_request().unwrap();
-    assert!(request.get("tools").is_none());
+    let names: Vec<_> = request["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["web_search", "web_fetch"]);
     let prompt = request["messages"][0]["content"].as_str().unwrap();
-    assert!(!prompt.contains("you MAY call:"));
-    assert!(prompt.contains("This turn has no chat-callable web tools"));
+    assert!(prompt.contains("you MAY call:"));
+    assert!(prompt.contains("FINAL_CONSTRAINT: use the operator data only."));
+    s.post_json("/api/web", json!({"enabled":false})).await;
+    let (status, body) = s
+        .post_json("/api/chat", json!({"message":"continue", "session_id":id, "loop":true}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model.last_request().unwrap().get("tools").is_none());
+}
+
+#[tokio::test]
+async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_before_reads() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let (r, seen) = (reads.clone(), observed.clone());
+    let fixture = Router::new()
+        .route("/page", get(move || { r.fetch_add(1, Ordering::SeqCst); async { "evidence" } }))
+        .route("/v1/chat/completions", post(move |Json(body):Json<Value>| {
+            seen.lock().unwrap().push(body.clone());
+            async move {
+                if body["messages"].as_array().unwrap().last().unwrap()["content"] != "malicious batch" {
+                    return Json(common::ok_reply("Complete. GOAL_DONE", 10, 3));
+                }
+                Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":[
+                    {"id":"allowed_first","type":"function","function":{"name":"web_fetch","arguments":json!({"url":"http://docs.example/page"}).to_string()}},
+                    {"id":"forbidden_second","type":"function","function":{"name":"web_search","arguments":json!({"query":"private goal must not leave"}).to_string()}}
+                ]}}],"usage":{"prompt_tokens":10,"completion_tokens":3}})) // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, fixture).await.unwrap();
+    });
+    let s = common::spawn_server(
+        &format!("http://{addr}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), addr)),
+            ..common::ServerOptions::default().with("web.chat_tool_calls", "3")
+        },
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled":true})).await;
+    s.post_json("/api/web/allow", json!({"urls":["http://docs.example/page"]}))
+        .await; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    for (mode, names) in [
+        ("off", vec![]),
+        ("fetch", vec!["web_fetch"]),
+        ("all", vec!["web_search", "web_fetch"]),
+    ] {
+        let (status, set) = s
+            .post_json(
+                &format!("/api/sessions/{sid}/goal"),
+                json!({"goal":"Read only the designated inputs", "web_mode":mode}),
+            )
+            .await;
+        assert_eq!(status, 200, "{set}");
+        assert_eq!(set["goal_web_mode"], mode);
+        let (_, loaded) = s.get_json(&format!("/api/sessions/{sid}")).await;
+        assert_eq!(loaded["goal_web_mode"], mode);
+        let (status, reply) = s
+            .post_json("/api/chat", json!({"session_id":sid,"message":"continue","loop":true}))
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        let last = observed.lock().unwrap().last().unwrap().clone();
+        let actual: Vec<_> = last["tools"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|t| t["function"]["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(actual, names);
+        let prompt = last["messages"][0]["content"].as_str().unwrap();
+        if mode == "fetch" {
+            assert!(!prompt.contains("- web_search:"));
+        }
+        if mode == "off" {
+            assert!(prompt.contains("no chat-callable web tools"));
+        }
+    }
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Read a page, never search", "web_mode":"fetch"}),
+    )
+    .await;
+    let (status, denied) = s
+        .post_json(
+            "/api/chat",
+            json!({"session_id":sid,"message":"malicious batch","loop":true}),
+        )
+        .await;
+    assert_eq!(status, 502, "{denied}");
+    assert_eq!(common::code(&denied), "WEB_TOOL_DENIED");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        0,
+        "a forbidden suffix prevents every read in the batch"
+    );
+    assert!(!s.state.generation_gate.is_held());
+    let (status, _) = s
+        .post_json(
+            &format!("/api/sessions/{sid}/goal"),
+            json!({"goal":"test", "web_mode":"unknown"}),
+        )
+        .await;
+    assert_eq!(status, 422);
+    let (_, cleared) = s
+        .post_json(
+            &format!("/api/sessions/{sid}/goal"),
+            json!({"goal":"", "web_mode":"off"}),
+        )
+        .await;
+    assert_eq!(cleared["goal_web_mode"], "all");
+    task.abort();
 }
 
 #[tokio::test]
 async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
+    check_fetch_evidence(false).await;
+}
+
+#[tokio::test]
+async fn loop_fetches_authorized_urls_and_keeps_denial_and_tool_boundaries() {
+    check_fetch_evidence(true).await;
+}
+
+async fn check_fetch_evidence(loop_turn: bool) {
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let reads = Arc::new(AtomicUsize::new(0));
     let recorded = requests.clone();
@@ -157,8 +286,18 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
             .0,
         200
     );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Research the allowed source and verify version 7. Do not run shell commands."}),
+    )
+    .await;
     let (status, reply) = s
-        .post_json("/api/chat", json!({"message":"Read the allowed URL"}))
+        .post_json(
+            "/api/chat",
+            json!({"message":"Read the allowed URL", "session_id":sid, "loop":loop_turn}),
+        )
         .await;
     assert_eq!(status, 200, "{reply}");
     assert!(reply["reply"].as_str().unwrap().contains("Version 7"));
@@ -180,19 +319,32 @@ async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
     );
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     assert_eq!(requests.lock().unwrap().len(), 2);
-    let (_, denied) = s.post_json("/api/chat", json!({"message":"deny"})).await;
+    let (_, denied) = s
+        .post_json(
+            "/api/chat",
+            json!({"message":"deny", "session_id":sid, "loop":loop_turn}),
+        )
+        .await;
     assert_eq!(denied["web_tools"][0]["ok"], false);
     assert_eq!(
         reads.load(Ordering::SeqCst),
         1,
         "denied destination must not be fetched"
     );
-    let (status, unsafe_tool) = s.post_json("/api/chat", json!({"message":"unsafe"})).await;
+    let (status, unsafe_tool) = s
+        .post_json(
+            "/api/chat",
+            json!({"message":"unsafe", "session_id":sid, "loop":loop_turn}),
+        )
+        .await;
     assert_eq!(status, 502);
     assert_eq!(common::code(&unsafe_tool), "WEB_TOOL_DENIED");
     s.post_json("/api/web", json!({"enabled":false})).await;
     let (_, off) = s
-        .post_json("/api/chat", json!({"message":"Read the allowed URL"}))
+        .post_json(
+            "/api/chat",
+            json!({"message":"Read the allowed URL", "session_id":sid, "loop":loop_turn}),
+        )
         .await;
     assert_eq!(off["reply"], "Web tools unavailable");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
@@ -747,6 +899,10 @@ async fn web_chat_sizes_a_tool_free_follow_up_without_the_tool_definitions() {
         .unwrap();
     let follow_up = requests.iter().find(|r| last(r)["role"] == "tool").unwrap();
     assert!(follow_up.get("tools").is_none(), "the last call carries no tools");
+    assert_eq!(
+        follow_up["tool_choice"], "none",
+        "historical calls must not enable more tool use"
+    );
     // What the web budget charged the tool call, and its estimate of the follow-up.
     let definitions = call["tools"].to_string().len() as u64;
     let charged = (call["messages"].to_string().len() as u64 + definitions) / 4 + 2048;
@@ -791,6 +947,15 @@ async fn web_chat_counts_the_tool_definitions_once_per_round() {
 
 #[tokio::test]
 async fn cancel_during_fetch_prevents_followup_model_call_and_releases_turn() {
+    check_fetch_cancel(false).await;
+}
+
+#[tokio::test]
+async fn loop_cancel_during_fetch_releases_turn_and_allows_recovery() {
+    check_fetch_cancel(true).await;
+}
+
+async fn check_fetch_cancel(loop_turn: bool) {
     let started = Arc::new(tokio::sync::Notify::new());
     let signal = started.clone();
     let router = Router::new().route(
@@ -819,7 +984,14 @@ async fn cancel_during_fetch_prevents_followup_model_call_and_releases_turn() {
     .await;
     s.post_json("/api/web/allow", json!({"url":"http://docs.example/slow"}))
         .await;
-    let read = s.post_json("/api/chat", json!({"message":"Read slow URL"}));
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal":"Read slow URL"}))
+        .await;
+    let read = s.post_json(
+        "/api/chat",
+        json!({"message":"Read slow URL", "loop":loop_turn, "session_id":sid}),
+    );
     let cancel = async {
         started.notified().await;
         s.post_json("/api/chat/cancel", json!({})).await
@@ -1283,4 +1455,31 @@ async fn window_warning_counts_the_largest_middle_round() {
     // one with a small second result and no definitions.
     assert!(projected["flow b"] + 2 >= projected["flow c"], "{projected:?}");
     task.abort();
+}
+
+#[tokio::test]
+async fn loop_reserves_final_synthesis_without_reporting_successful_reads_as_failures() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let (s, reads, base) = budget_server(budget_model(1, None, None, requests.clone()), 3).await;
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Summarize the fetched page", "web_mode":"fetch"}),
+    )
+    .await;
+    let message = format!("fetch the page {}", "x".repeat(4 * (5_000 - base) as usize));
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"loop":true,"message":message}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "Answer from the page");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    let events = body["web_tools"].as_array().unwrap();
+    assert!(events.iter().all(|e| e["ok"] == true), "{events:?}");
+    assert_eq!(events.last().unwrap()["code"], "WEB_TOOLS_WITHHELD");
+    let requests = requests.lock().unwrap();
+    let final_call = requests.last().unwrap();
+    assert!(final_call.get("tools").is_none());
+    assert_eq!(final_call["tool_choice"], "none");
 }

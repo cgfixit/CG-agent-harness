@@ -26,7 +26,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 103] = [
+pub const REGISTERED_PATHS: [&str; 104] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -83,6 +83,7 @@ pub const REGISTERED_PATHS: [&str; 103] = [
     "/api/sessions/clear",
     "/api/sessions/{session_id}",
     "/api/sessions/{session_id}/export",
+    "/api/sessions/{session_id}/attachment-pins",
     "/api/sessions/{session_id}/rename",
     "/api/sessions/{session_id}/goal",
     "/api/sessions/{session_id}/goal-stage",
@@ -296,6 +297,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/sessions/{session_id}/adopt", post(session_io::adopt_session))
         .route("/api/sessions/clear", post(core::clear_sessions))
         .route("/api/sessions/{session_id}", get(core::get_session))
+        .route(
+            "/api/sessions/{session_id}/attachment-pins",
+            axum::routing::delete(core::clear_attachment_pins),
+        )
         .route("/api/sessions/{session_id}/export", get(session_io::export_session))
         .route("/api/sessions/{session_id}/rename", post(core::rename_session))
         .route("/api/sessions/{session_id}/goal", post(core::session_goal))
@@ -419,7 +424,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 103);
+        assert_eq!(REGISTERED_PATHS.len(), 104);
 
         let all = registered_paths();
         assert!(
