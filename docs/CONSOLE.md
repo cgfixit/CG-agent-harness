@@ -13,7 +13,7 @@ persona, or reply never authorizes commands, commits, pushes, or publication.
 | Capability | How it works |
 |---|---|
 | Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear my session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
-| Persona, memory and prompt context | Inspect `/prompt`, manage shared `soul.md`, select session prompt skills, and save literal `/memory` notes. `/memory on` includes only those notes. Account-private structured facts, proposals, episodes, facts-only FTS, and consolidation use separate gates. Models propose but never approve. Search does not inject. Only `selected_facts`, `/memory retrieve`, `retrieve`, or `auto_retrieval` adds facts. Episodes never enter prompts, and consolidation writes only pending proposals. |
+| Persona, memory and prompt context | Inspect `/prompt`, manage shared `soul.md`, select session prompt skills, and save literal `/memory` notes. `/memory on` includes only those notes; account-private structured memory has separate gates, and models propose but never approve ([memory guide](MEMORY_GUIDE.md)). |
 | Chat model selection | Select an installed local tag, or select `grok` or `claude` after an administrator saves its key and restarts. The unvalidated name persists. Cloud chat sends only the new message; local history, memory, skills, and web context stay local. `/loop` refuses cloud selection (`CLOUD_CHAT_LOOP`). [Cloud defaults](INSTALL.md#tunables-you-may-want-to-know-about). |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
@@ -150,8 +150,7 @@ means no persona file loaded; the base general-chat prompt still operates.
 Planning and coding use the same public shipped communication guidance, beneath
 their governed output contracts. Private local persona edits are not implicitly
 sent to a cloud coding provider. The two seeded coding skills are
-optional context and are not injected automatically. A missing persona is not fetched
-from CyClaw or Codex automatically.
+optional context and are not injected automatically.
 
 ```text
 /soul status
@@ -259,11 +258,8 @@ evidence. A missing, empty, unreadable, or invalid selected file blocks chat;
 restore it or use `/skill clear`. Clearing removes optional prompt bodies,
 including seeded selections, but does not delete files.
 
-For repository maintenance, use the development-skill entrypoints in
-[AGENTS.md](../AGENTS.md), such as `$cgagentharness-optimize` or
-`$fable-protocol`; Claude Code has corresponding slash commands. If an agent does
-not list one, reference its checkout `SKILL.md`. Copying a file does not load it.
-Development skills neither enter app chat nor authorize publication.
+Repository development skills are indexed in [AGENTS.md](../AGENTS.md); they
+neither enter app chat nor authorize publication.
 
 ### 7.4 Customize response style
 
@@ -291,10 +287,6 @@ Select `/skill use concise`, then inspect `/prompt`. To combine it with another
 skill, supply both IDs in the same command. Avoid contradictory rules in soul,
 selected skills and memory: a “give full detail” instruction can conflict with a
 “one sentence only” instruction.
-
-For customization, compare three disliked responses with your preferred rewrites
-and explain each difference. Use observable rules such as "answer before
-explanation" or "no repeated closing summary" instead of "sound human."
 
 **Style presets.** `/style <name>` selects a session preset;
 `/style off` is the default and `/style` prints
@@ -330,8 +322,7 @@ unslop:
 ```
 
 It ships disabled. Metrics follow bounded JSONL policy. There is no configurable
-phrase list or `/unslop` command. Use persona or skills for chat; this setting
-adds no chat rewrite and does not justify repository writes.
+phrase list or `/unslop` command.
 See [the current probe](../src/agentic/unslop.rs) and
 [its loop integration](../src/agentic/real_repo_loop.rs).
 
@@ -360,9 +351,7 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |
 | Runtime prompt skill | Home skill file plus `/skill use` | Prompt context, not an executable plugin or permission grant |
 
-Upstream names do not establish support. There is no `/fsconnect` or
-`/sqlconnect`; `/netconnect` is a read-only `/net` alias, not a scan control.
-See [netconnect](netconnect.md). Copying settings does not implement a connector,
+Upstream names do not establish support. Copying settings does not implement a connector,
 and the Setup folder chooser prepares offline Cargo inputs rather than chat file
 access. Remaining connector work is tracked in issues, checked against the
 [current connector inventory](../src/server/views.rs).
@@ -422,7 +411,7 @@ confirmation and persistence.
 | `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List your active facts, force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
 | `/model`, `/model list`, `/model use <name>\|grok\|claude` | Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner |
-| `/net status`, `/net devices` | `status` is scope and gates and loads no collector. `devices` lists passive neighbors. Exact aliases: `/netconnect`, `/lan`, `/scan`, `/ports`, `/speed`. A near-miss only suggests. `ports`, `diag`, `watch`, and `device` do not scan or control a device |
+| `/net status`, `/net devices` | Read-only scope and gates, or passive neighbors. Aliases and refused tier words: [netconnect](netconnect.md) |
 | `/prompt` | Private preview of the next chat system prompt |
 | `/registry` | Combined skill, tool and connector catalog |
 | `/session`, `list`, `info`, `new [title]`, `rename <title>`, `use <id>` | List sessions, inspect the current session, create, rename or reopen one |
@@ -451,9 +440,8 @@ Unknown, repeated singleton, or missing-value flags refuse; fetch takes URLs,
 not appended prose.
 Memory `save` and `remember` split text from the required reason at the final `::`.
 
-Common misspellings such as `/memroy` and `/memory cler` suggest `/memory` and
-`/memory clear` without executing either. Ambiguous `/skil` offers both `/skill`
-and `/skills`; edit the input and submit the intended command yourself. Supported
+Misspellings only suggest: ambiguous `/skil` offers both `/skill` and
+`/skills`; edit the input and submit the intended command yourself. Supported
 conversational prefixes preserve the following query words: `/web please search
 The Who` becomes `/web search The Who`. Existing normalization still collapses
 repeated whitespace. Unsupported fixed arguments such as `/memory clear --help`
@@ -468,7 +456,7 @@ The `/agent` family operates the separate coding workflow:
 | `/agent iterations <n>` or `clear` | Set a staged iteration cap from 1–10, or restore the configured default |
 | `/agent pr <number>` or `/agent issue <number>`; `clear` | Select one context source; choosing one clears the other |
 | `/agent plan` or `/agent plan clear` | Open a file chooser for a supplied plan, or clear it; does not generate a plan |
-| `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage up to 8 bounded file-context declarations, or clear them. A local planner may later emit `=== READ path ===` (cap 6, next iteration, same jail + basename deny-list); that is not a slash command. Denied basenames (`.env`, keys, credentials, …) refuse operator and model READ alike. Optional [repository retrieval](CODING_PIPELINE.md#optional-repository-retrieval) can add bounded local-only excerpts; it starts off and shows per-step provenance in run status. A cloud planner refuses model-requested and automatic retrieval reads. The deny-list is not a secret scanner; the jail is not a secrets control. |
+| `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage up to 8 bounded file-context declarations, or clear them. A local planner may later emit `=== READ path ===` (cap 6, next iteration; not a slash command). Denied basenames (`.env`, keys, credentials, …) refuse operator and model reads alike; a cloud planner refuses model-requested and [retrieval](CODING_PIPELINE.md#optional-repository-retrieval) reads. The deny-list is not a secret scanner. |
 | `/agent cancel` | Clear the staged request; does not stop an already submitted job |
 | `/agent confirm <reason>` | Explicitly submit the staged request through the execution gates |
 | `/agent jobs`, `/agent job [job-id]`, `/agent stop [job-id]` | List, monitor or request cancellation; an omitted ID uses the retained job from the URL |
@@ -591,27 +579,14 @@ intact; other middle turns clip at 800 characters. Summary input is at most
 fails without changing history.
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
-`reasoning_effort: "none"`, or twice that otherwise. The threshold floor adds
-4096 prompt tokens and calibrated tool definitions, capped at 30000 (scaled to
-a verified window). Web chat
-also moves toward `web.total_tokens - reservation`, leaving two replies, while
-its dispatcher checks each call independently. Startup accepts at most 25904
-reply tokens on the first path or 12952 on the second for chat and `/loop`.
-
-This doubled reservation is a conservative harness policy, not a claim that
-every provider counts reasoning separately. For example, OpenAI documents
-`max_completion_tokens` as including reasoning tokens, while compatible local
-servers differ in supported parameters ([OpenAI](https://developers.openai.com/api/reference/resources/chat),
-[Ollama](https://docs.ollama.com/api/openai-compatibility)). The harness retains
-its existing `max_tokens` request field.
-
-Initial input estimate is UTF-8 bytes divided by four. Positive prompt usage from
-successful local replies trains a model/backend ratio within 1–3. Increases apply
-immediately; decreases use a half-weight moving average. Only the initial web-tool
-prompt trains it; summary, cloud, and missing usage do not. Session calibration
-survives restart and resets to 1 when model or endpoint changes. It cannot predict
-language shifts, same-name model replacement, or ratios above 3. Verify the model
-window as described in [MODELS.md](MODELS.md).
+`reasoning_effort: "none"`, or twice that otherwise: a conservative harness
+margin, not a claim about provider accounting. Startup accepts at most 25904
+reply tokens on the first path or 12952 on the second for chat and `/loop`. The
+trigger floor, web-chat tightening and the bytes/4 estimate with its per-session
+calibration (1–3, reset when model or endpoint changes) are specified in
+[INVARIANTS.md](../INVARIANTS.md#local-chat-compaction-preserves-goal-and-the-first-user-turn).
+Calibration cannot predict language shifts, same-name model replacement, or
+ratios above 3; verify the model window as described in [MODELS.md](MODELS.md).
 
 `compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048, including
 in older homes. Tune it in home `config.yaml`, then restart. Compaction is inline.

@@ -10,8 +10,6 @@ same-origin, direct loopback/no forwarding headers, account/RBAC, mutation
 CSRF (`X-CyClaw-CSRF`). Public routes retain early guards. Agent requests carry
 check-profile names and run IDs, never browser-supplied commands.
 
-Spend and outbound completion webhooks: [operator guide](SPEND_AND_NOTIFICATIONS.md).
-
 ## Console and status
 
 | Method | Path | Purpose |
@@ -104,7 +102,7 @@ See [CONSOLE.md](CONSOLE.md) and
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/structured-memory` | Truthful status and effective gates |
-| POST | `/api/structured-memory/gates` | Administrator gate override for this process |
+| POST | `/api/structured-memory/gates` | Administrator gate override, persisted in `memory/structured_gates.json` |
 | GET | `/api/structured-memory/search` | Facts-only FTS candidates |
 | GET, POST | `/api/structured-memory/facts` | List active facts or add one (confirm) |
 | GET | `/api/structured-memory/facts/{id}` | Recall one fact, including inactive |
@@ -114,7 +112,7 @@ See [CONSOLE.md](CONSOLE.md) and
 | GET | `/api/structured-memory/episodes` | List episodes |
 | POST | `/api/structured-memory/episodes/purge` | Purge expired episodes |
 | GET | `/api/structured-memory/episodes/{id}` | One episode |
-| POST | `/api/structured-memory/episodes/{id}/summary` | Generate a semantic summary |
+| POST | `/api/structured-memory/episodes/{id}/summary` | Attach a human semantic summary (confirm + reason) |
 | POST | `/api/structured-memory/episodes/{id}/delete` | Delete one episode |
 | GET, POST | `/api/structured-memory/consolidation` | List or start consolidation |
 | GET | `/api/structured-memory/consolidation/{id}` | Consolidation status |
@@ -188,20 +186,6 @@ Run and job creation share `agent::prepare_run`, then spawn through the shim; se
 [CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
 `GET /api/agent/runs` lists metadata only while `agentic.enabled` is literal true. Otherwise it is HTTP 409 `AGENTIC_DISABLED` and does not read or reconcile records; detail, decision, push, and discard do the same. `GET /api/github/status` stays HTTP 200.
 
-## Completion webhooks
-
-Default-off, restart-only `notifications.enabled: true` activates a private
-bounded outbox for owned destinations and terminal-job subscriptions. Schema 1
-`destinations` replace the legacy `webhook_url`, which must be empty. Status and
-replay cannot select another account owner.
-
-Version-2 batches contain stable event/delivery IDs, job ID, status and
-timestamps. Attempts recheck destination/account grants, pin validated DNS,
-refuse proxies/redirects and require public HTTPS. Exact private URL grants can
-permit private HTTP. Explicit managed credentials never enter status, outbox,
-payloads or audit.
-
-Attempts/rate state persist before dispatch. Retained jobs reconcile enqueue
-crash gaps on restart. At-least-once delivery has finite retries, retention and
-queue bounds; deduplicate by delivery ID. Replay never restarts jobs. See
-[configuration and crash semantics](SPEND_AND_NOTIFICATIONS.md).
+The two notification routes serve default-off completion webhooks; destinations,
+payload and crash semantics are in
+[SPEND_AND_NOTIFICATIONS.md](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).

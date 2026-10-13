@@ -18,21 +18,18 @@ When prose contradicts code, fix the prose in the same PR.
 ## The map
 
 - `cgagentharness serve` -> loopback HTTP/HTTPS console in `src/server`. Public
-  `account`, `web` and `tls` CLI commands call the same protected service.
+  `account`, `web` and `tls` CLI commands call the same protected service;
+  `mcp-key` manages machine keys by local file authority.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim` as a child process, never called in-process).
-- `cgagentharness netconnect status|devices|diag` -> `src/netconnect`. Every
-  netconnect gate ships false; empty `allowed_cidrs` refuses armed tiers. Only
-  `diag` dials, through the budgeted `Dialer` in `connect.rs` (the one file
-  that opens a socket). `/net` (aliases `/netconnect`, `/lan`, `/scan`, `/ports`,
-  `/speed`, each dropped if it collides with an existing slash name) dispatches
-  `status`, `devices`, `ports`, `diag`, `watch`; tier commands refuse unless
-  `tier_may_run` is true. `device` always refuses.
+- `cgagentharness netconnect status|devices|diag` and `/net` -> `src/netconnect`.
+  Only `diag` dials, through the budgeted `Dialer` in `connect.rs`; gates, scope
+  and aliases are in the netconnect row below.
 - Exit codes are an API for the `agentic` and `netconnect` children: `0` ok,
   `2` failed, `3` env/config, `4` write refused. A non-zero child exit is HTTP
   200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
-  banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`) exit `1`
-  on error.
+  banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
+  `mcp-key`) exit `1` on error.
 - Home: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`). Never write outside it
   except into a clone the pipeline itself made under `data/agentic/workspaces`.
 - Feature contracts live in `INVARIANTS.md`; read the owning section before
@@ -80,9 +77,9 @@ When prose contradicts code, fix the prose in the same PR.
 - `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` on an operator machine is real:
   `cargo test` isolates it so later write gates are what fail. Never flip
   `EXECUTION_ENABLED` to false (or OR the kill switch) to make tests green.
-- Server audit appends go to one writer thread (`logging.audit_queue_lines`,
-  default 4096; 0 appends inline). SQLite work stays off async workers.
-  Requests never wait on a file.
+- Server audit appends go to one bounded writer thread
+  (`logging.audit_queue_lines`; 0 appends inline); SQLite work stays off async
+  workers; requests never wait on a file.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
 - `RELOADABLE` in `src/server/config_reload.rs` (23 keys) is the only
@@ -128,15 +125,14 @@ Edit the section that owns a topic; create no Markdown files except a folder
 `README.md` (see below). Link instead of duplicating. Evidence belongs in
 PRs/issues; screenshots go in `docs/screenshots/` (a root `screenshots/` fails
 the guard), and only for significant changes. `tests/invariant_guard.rs`
-enforces `DOCS_BUDGET`: every listed Markdown file has a word cap (this file
-1500, `CLAUDE.md` 200), plus group caps, no new root screenshots or docs PDFs,
-no files over 1 MiB. Check `wc -w` before committing any `.md` edit, including
-web-UI edits. New rows or raised caps need operator approval and a `// why:`.
+enforces `DOCS_BUDGET`: a word cap per listed Markdown file, group caps, no new
+root screenshots or docs PDFs, no files over 1 MiB. Check `wc -w` before
+committing any `.md` edit, including web-UI edits. New rows or raised caps need
+operator approval and a `// why:`.
 
-Every directory carries a `README.md` of at most `FOLDER_README_WORDS` (150)
-words: what the folder holds, what reads it, and where the full doc lives. It
-is an index, not a second copy of the topic. The guard caps these by name
-pattern, so they need no `DOCS_BUDGET` row; a longer one fails.
+A folder `README.md` holds at most `FOLDER_README_WORDS` (150) words: what the
+folder holds, what reads it, and where the full doc lives. It is an index, not
+a second copy of the topic; the guard caps it by name, without a `DOCS_BUDGET` row.
 
 Deleting a doc means deleting every reference to it in the same PR: its guard
 row, links in other docs and skills, packaging scripts (`scripts/package-desktop.sh`
@@ -144,21 +140,20 @@ bundles some docs), and any `README.md` that indexed it. `grep -rn` the basename
 before pushing.
 
 Sync, then trim. On any PR that touches more than one module, or when the last
-sync is older than a few weeks, run `doc-sync` (Claude: operator types
-`/doc-sync`) and `dep-sync` (model-loadable), or do their work by hand in
-another agent: re-read the code the docs describe, rewrite stale sections,
-refresh pins, locks and `deny.toml` against `origin/main`. The same pass must
-remove what no longer applies: duplicate rules, superseded notes, dead links,
-retired dependencies and their watches. A sync that only adds words is not
-done; lower the `DOCS_BUDGET` cap of every file that shrank so the cut stays
-cut. Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md'` and
+sync is older than a few weeks, run `doc-sync` (operator-typed in Claude) and
+`dep-sync`, or do their work by hand in another agent: re-read the code the
+docs describe, rewrite stale sections, refresh pins, locks and `deny.toml`
+against `origin/main`. The same pass removes duplicate rules, superseded notes,
+dead links, and retired dependencies and their watches. A sync that only adds
+words is not done; lower the `DOCS_BUDGET` cap of every file that shrank so the
+cut stays cut. Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md'` and
 [dependency watches](docs/DEPENDENCIES.md#retained-constraints) the same way.
 
-## Project skills (depending on which AI agent - .claude , .codex , .agents , .github , etc)
+## Project skills
 
-Three skill trees are repository guidance, not application `/api/skills` plugins:
-`.codex/skills/` (Codex), `.claude/skills/` (Claude Code, run as `/<slug>`) and
-`.github/skills/` (Copilot). Read the relevant `SKILL.md` when its task applies:
+Repository guidance, not `/api/skills` plugins: `.codex/skills/` (Codex),
+`.claude/skills/` (Claude Code, `/<slug>`) and `.github/skills/` (Copilot).
+Read the relevant `SKILL.md` when its task applies:
 
 - `cgagentharness-project-guidance`: read order and skill routing; start here.
 - `fable-protocol`: evidence-first reasoning before costly code/security/CI claims.
@@ -168,8 +163,8 @@ Three skill trees are repository guidance, not application `/api/skills` plugins
 - `cgagentharness-write-policy-redteam`: attack write gates, confirm+reason,
   clone jail and shim argv.
 - `verification-specialist`: break a *supplied* change without modifying the tree.
-- `cgagentharness-gotchas`: session-tested traps (Chrome CI flake, YAML `"true"`,
-  CSRF names, Seatbelt noise, clippy toolchain fights).
+- `cgagentharness-gotchas`: session-tested traps (CI flakes, YAML `"true"`,
+  Seatbelt noise, toolchain fights).
 - `cgagentharness-optimize`: evidence-backed Rust/runtime/CI improvements; never
   transplant CyClaw topology or defaults.
 - Codex only: `cgagentharness-release` (macOS packaging, release prep),
@@ -179,3 +174,4 @@ Three skill trees are repository guidance, not application `/api/skills` plugins
   dependency and CI drift against `origin/main`), `doc-sync` (rewrites stale
   docs), `run-cg-agent-harness` (fake-model console smoke),
   `cgagentharness-otel-hardening` (telemetry-kill contract).
+- Copilot only: `repo-optimize` (focused draft PRs from the default branch).
