@@ -5,6 +5,7 @@
 
 use std::net::Ipv4Addr;
 
+#[cfg(any(test, feature = "test-support", target_os = "linux", target_os = "macos"))]
 use super::scope::network_address;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +31,7 @@ pub struct InterfaceRecord {
     pub address: Ipv4Addr,
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "linux"))]
 pub fn parse_proc_net_arp(text: &str) -> Vec<NeighborRecord> {
     let mut rows = Vec::new();
     for line in text.lines() {
@@ -54,6 +56,7 @@ pub fn parse_proc_net_arp(text: &str) -> Vec<NeighborRecord> {
     rows
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "linux"))]
 pub fn parse_proc_net_route(text: &str) -> Vec<RouteRecord> {
     let mut rows = Vec::new();
     for line in text.lines() {
@@ -93,6 +96,7 @@ pub fn parse_proc_net_route(text: &str) -> Vec<RouteRecord> {
 }
 
 /// Fixture lines: `name address`. IPv6 addresses are dropped.
+#[cfg(any(test, feature = "test-support"))]
 pub fn parse_interface_lines(text: &str) -> Vec<InterfaceRecord> {
     let mut rows = Vec::new();
     for line in text.lines() {
@@ -117,6 +121,7 @@ pub fn parse_interface_lines(text: &str) -> Vec<InterfaceRecord> {
     rows
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "macos"))]
 pub fn parse_bsd_arp(text: &str) -> Vec<NeighborRecord> {
     let mut rows = Vec::new();
     for line in text.lines() {
@@ -127,6 +132,7 @@ pub fn parse_bsd_arp(text: &str) -> Vec<NeighborRecord> {
     rows
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "macos"))]
 pub fn parse_bsd_netstat(text: &str) -> Vec<RouteRecord> {
     let mut rows = Vec::new();
     let mut in_table = false;
@@ -149,6 +155,7 @@ pub fn parse_bsd_netstat(text: &str) -> Vec<RouteRecord> {
     rows
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "macos"))]
 fn parse_bsd_arp_line(line: &str) -> Option<NeighborRecord> {
     let open = line.find(" (")?;
     let rest = &line[open + 2..];
@@ -182,6 +189,7 @@ fn parse_bsd_arp_line(line: &str) -> Option<NeighborRecord> {
     })
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "macos"))]
 fn parse_bsd_route_line(line: &str) -> Option<RouteRecord> {
     let cols: Vec<&str> = line.split_whitespace().collect();
     if cols.len() < 4 || cols[0].contains(':') {
@@ -203,6 +211,7 @@ fn parse_bsd_route_line(line: &str) -> Option<RouteRecord> {
     })
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "macos"))]
 fn parse_bsd_destination(dest: &str) -> Option<Option<(Ipv4Addr, u8)>> {
     if dest == "default" {
         return Some(None);
@@ -230,6 +239,7 @@ fn parse_bsd_destination(dest: &str) -> Option<Option<(Ipv4Addr, u8)>> {
     Some(Some((Ipv4Addr::from(octets), prefix)))
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "macos"))]
 fn parse_bsd_gateway(token: &str) -> Option<Ipv4Addr> {
     let addr: Ipv4Addr = token.parse().ok()?;
     if addr.is_unspecified() {
@@ -239,6 +249,7 @@ fn parse_bsd_gateway(token: &str) -> Option<Ipv4Addr> {
     }
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "macos"))]
 fn parse_prefix(text: &str) -> Option<u8> {
     let prefix: u8 = text.parse().ok()?;
     if text == prefix.to_string() && prefix <= 32 {
@@ -248,6 +259,7 @@ fn parse_prefix(text: &str) -> Option<u8> {
     }
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "macos"))]
 fn strict_u8(part: &str) -> Option<u8> {
     if part.is_empty() || (part.len() > 1 && part.starts_with('0')) {
         return None;
@@ -256,6 +268,7 @@ fn strict_u8(part: &str) -> Option<u8> {
     Some(value)
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "linux"))]
 fn parse_proc_ip(hex: &str) -> Option<Ipv4Addr> {
     if hex.len() != 8 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
@@ -264,6 +277,7 @@ fn parse_proc_ip(hex: &str) -> Option<Ipv4Addr> {
     Some(Ipv4Addr::from(value.to_le_bytes()))
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "linux"))]
 fn parse_proc_mask(hex: &str) -> Option<u8> {
     let addr = parse_proc_ip(hex)?;
     let value = u32::from(addr);
@@ -273,6 +287,7 @@ fn parse_proc_mask(hex: &str) -> Option<u8> {
     u8::try_from(value.count_ones()).ok()
 }
 
+#[cfg(any(test, feature = "test-support", target_os = "linux", target_os = "macos"))]
 fn normalize_mac(raw: &str) -> Option<String> {
     let parts: Vec<&str> = raw.split(':').collect();
     if parts.len() != 6
