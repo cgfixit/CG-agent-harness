@@ -463,6 +463,14 @@ async fn local_chat_bm25_hit_keeps_honesty_and_stays_off_loop() {
         .await;
     assert_eq!(status, 400, "{loop_body}");
     assert_eq!(code(&loop_body), "ATTACHMENT_SURFACE_FORBIDDEN");
+    assert_eq!(loop_body["detail"]["details"]["live_pins"], 1, "{loop_body}");
+    assert!(
+        loop_body["detail"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("/session new"),
+        "{loop_body}"
+    );
 }
 
 #[tokio::test]
