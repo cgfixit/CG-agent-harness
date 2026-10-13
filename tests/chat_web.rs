@@ -899,6 +899,10 @@ async fn web_chat_sizes_a_tool_free_follow_up_without_the_tool_definitions() {
         .unwrap();
     let follow_up = requests.iter().find(|r| last(r)["role"] == "tool").unwrap();
     assert!(follow_up.get("tools").is_none(), "the last call carries no tools");
+    assert_eq!(
+        follow_up["tool_choice"], "none",
+        "historical calls must not enable more tool use"
+    );
     // What the web budget charged the tool call, and its estimate of the follow-up.
     let definitions = call["tools"].to_string().len() as u64;
     let charged = (call["messages"].to_string().len() as u64 + definitions) / 4 + 2048;
@@ -1451,4 +1455,31 @@ async fn window_warning_counts_the_largest_middle_round() {
     // one with a small second result and no definitions.
     assert!(projected["flow b"] + 2 >= projected["flow c"], "{projected:?}");
     task.abort();
+}
+
+#[tokio::test]
+async fn loop_reserves_final_synthesis_without_reporting_successful_reads_as_failures() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let (s, reads, base) = budget_server(budget_model(1, None, None, requests.clone()), 3).await;
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Summarize the fetched page", "web_mode":"fetch"}),
+    )
+    .await;
+    let message = format!("fetch the page {}", "x".repeat(4 * (5_000 - base) as usize));
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"loop":true,"message":message}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"], "Answer from the page");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    let events = body["web_tools"].as_array().unwrap();
+    assert!(events.iter().all(|e| e["ok"] == true), "{events:?}");
+    assert_eq!(events.last().unwrap()["code"], "WEB_TOOLS_WITHHELD");
+    let requests = requests.lock().unwrap();
+    let final_call = requests.last().unwrap();
+    assert!(final_call.get("tools").is_none());
+    assert_eq!(final_call["tool_choice"], "none");
 }

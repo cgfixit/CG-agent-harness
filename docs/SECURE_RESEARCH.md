@@ -296,9 +296,10 @@ model call. A tool call resends the prompt with its results, so tools are offere
 only while both calls, both replies and a minimal result (≥256 calibrated tokens)
 fit. A batch without that minimum per call runs no read; the model answers
 without tools. Results are cut to the room left, keeping that minimum per later
-call: pages keep their longest prefix, listings drop trailing results. Withheld
-tools report `WEB_TOKEN_BUDGET`. Chat starts with a focused contextual query,
-reuses duplicate searches, and stops when the evidence answers the question.
+call: pages keep prefixes, listings drop trailing results. Budget refusals report
+`WEB_TOKEN_BUDGET`; after successful reads, `WEB_TOOLS_WITHHELD` reserves synthesis
+with `tool_choice: none`. Chat reuses duplicate searches and stops when evidence
+answers the question.
 Reported usage sums all completed model calls; absent upstream usage stays marked
 unreported, never invented.
 `/loop stop` or the chat cancellation endpoint aborts the whole turn, including

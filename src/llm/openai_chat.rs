@@ -326,6 +326,10 @@ impl ChatClient {
             // The dispatcher accepts a bounded batch and checks each read's
             // authority. This permits multiple calls, not unbounded execution.
             payload["parallel_tool_calls"] = json!(true);
+        } else {
+            // Tool history can still induce calls when definitions are omitted.
+            // The final bounded synthesis must explicitly disable them.
+            payload["tool_choice"] = json!("none");
         }
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = json!(effort);

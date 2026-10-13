@@ -74,3 +74,10 @@ for (const [arg, mode, goal] of [['--web off use attachment only','off','use att
   if(mode===null) assert.equal(calls.length,0); else {assert.equal(calls[0].body.web_mode,mode);assert.equal(calls[0].body.goal,goal);}
 }
 console.log('Goal command persists explicit web modes and keeps the Unicode goal limit.');
+
+const notices=[];
+const noticeContext=vm.createContext({sys:text=>notices.push(text),renderSearchResults:()=>{throw Error('a budget notice is not a source result');}});
+vm.runInContext(html.slice(html.indexOf('function renderChatWebTools('),html.indexOf('function renderWebStatus(')),noticeContext);
+noticeContext.renderChatWebTools([{tool:'web',ok:true,code:'WEB_TOOLS_WITHHELD',message:'Final answer reserved.'}]);
+assert.equal(notices[0],'web: WEB_TOOLS_WITHHELD — Final answer reserved.');
+console.log('Final-answer budget notice renders without inventing a source result.');

@@ -317,8 +317,16 @@ async fn run_inner(
         }
         if !round_fits && remaining > 0 && !tools_withheld {
             tools_withheld = true;
-            events.push(json!({"tool":"web","ok":false,"code":"WEB_TOKEN_BUDGET",
-                "message":"web.total_tokens has no room for a tool round (this prompt twice, a result and two replies); web tools were not offered"}));
+            // Reserving synthesis after successful reads is normal completion,
+            // not a failed read. With no evidence it remains a budget refusal.
+            let have_evidence = !sources.is_empty() || !searches.is_empty();
+            events.push(json!({"tool":"web","ok":have_evidence,
+                "code":if have_evidence { "WEB_TOOLS_WITHHELD" } else { "WEB_TOKEN_BUDGET" },
+                "message":if have_evidence {
+                    "Remaining web budget reserves the final answer from gathered evidence; no further web tools were offered"
+                } else {
+                    "web.total_tokens has no room for a tool round (this prompt twice, a result and two replies); web tools were not offered"
+                }}));
         }
         if turn == 0 {
             initial_prompt_tools = round_fits;

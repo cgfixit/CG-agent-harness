@@ -1182,7 +1182,7 @@ function renderSearchResults(result) {
 }
 function renderChatWebTools(events) {
   for (const event of events || []) {
-    if (!event.ok) { sys(event.tool + ': ' + event.code + ' — ' + event.message); continue; }
+    if (!event.ok || event.code === 'WEB_TOOLS_WITHHELD') { sys(event.tool + ': ' + event.code + ' — ' + event.message); continue; }
     const result = event.result || {};
     if (result.results) sys(renderSearchResults(result));
     else sys(renderSearchResults({provider:event.tool,results:[{title:result.title || result.url,url:result.url}],notice:result.notice}), (result.source_chars || 0) + ' source characters');
