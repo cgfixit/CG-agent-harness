@@ -74,7 +74,7 @@ session timeouts.
 | GET | `/api/sessions/{session_id}` | Load one owned session |
 | GET | `/api/sessions/{session_id}/export` | Markdown export; also written 0o600 under home/exports |
 | POST | `/api/sessions/{session_id}/rename` | Rename |
-| POST | `/api/sessions/{session_id}/goal` | Set the session goal |
+| POST | `/api/sessions/{session_id}/goal` | Set goal and optional `web_mode`: `off`, `fetch`, `all` (default) |
 | GET, POST | `/api/sessions/{session_id}/goal-stage` | Goal staging status and transitions |
 | GET, POST | `/api/sessions/{session_id}/skills` | Skill selection for the session |
 | GET, POST | `/api/sessions/{session_id}/structured-facts` | Selected structured-memory facts (explicit include) |

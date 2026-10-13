@@ -127,6 +127,114 @@ async fn loop_advertises_only_permitted_web_tool_types_when_enabled() {
 }
 
 #[tokio::test]
+async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_before_reads() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let (r, seen) = (reads.clone(), observed.clone());
+    let fixture = Router::new()
+        .route("/page", get(move || { r.fetch_add(1, Ordering::SeqCst); async { "evidence" } }))
+        .route("/v1/chat/completions", post(move |Json(body):Json<Value>| {
+            seen.lock().unwrap().push(body.clone());
+            async move {
+                if body["messages"].as_array().unwrap().last().unwrap()["content"] != "malicious batch" {
+                    return Json(common::ok_reply("Complete. GOAL_DONE", 10, 3));
+                }
+                Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":[
+                    {"id":"allowed_first","type":"function","function":{"name":"web_fetch","arguments":json!({"url":"http://docs.example/page"}).to_string()}},
+                    {"id":"forbidden_second","type":"function","function":{"name":"web_search","arguments":json!({"query":"private goal must not leave"}).to_string()}}
+                ]}}],"usage":{"prompt_tokens":10,"completion_tokens":3}})) // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, fixture).await.unwrap();
+    });
+    let s = common::spawn_server(
+        &format!("http://{addr}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), addr)),
+            ..common::ServerOptions::default().with("web.chat_tool_calls", "3")
+        },
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled":true})).await;
+    s.post_json("/api/web/allow", json!({"urls":["http://docs.example/page"]}))
+        .await; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    for (mode, names) in [
+        ("off", vec![]),
+        ("fetch", vec!["web_fetch"]),
+        ("all", vec!["web_search", "web_fetch"]),
+    ] {
+        let (status, set) = s
+            .post_json(
+                &format!("/api/sessions/{sid}/goal"),
+                json!({"goal":"Read only the designated inputs", "web_mode":mode}),
+            )
+            .await;
+        assert_eq!(status, 200, "{set}");
+        assert_eq!(set["goal_web_mode"], mode);
+        let (_, loaded) = s.get_json(&format!("/api/sessions/{sid}")).await;
+        assert_eq!(loaded["goal_web_mode"], mode);
+        let (status, reply) = s
+            .post_json("/api/chat", json!({"session_id":sid,"message":"continue","loop":true}))
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        let last = observed.lock().unwrap().last().unwrap().clone();
+        let actual: Vec<_> = last["tools"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|t| t["function"]["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(actual, names);
+        let prompt = last["messages"][0]["content"].as_str().unwrap();
+        if mode == "fetch" {
+            assert!(!prompt.contains("- web_search:"));
+        }
+        if mode == "off" {
+            assert!(prompt.contains("no chat-callable web tools"));
+        }
+    }
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Read a page, never search", "web_mode":"fetch"}),
+    )
+    .await;
+    let (status, denied) = s
+        .post_json(
+            "/api/chat",
+            json!({"session_id":sid,"message":"malicious batch","loop":true}),
+        )
+        .await;
+    assert_eq!(status, 502, "{denied}");
+    assert_eq!(common::code(&denied), "WEB_TOOL_DENIED");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        0,
+        "a forbidden suffix prevents every read in the batch"
+    );
+    assert!(!s.state.generation_gate.is_held());
+    let (status, _) = s
+        .post_json(
+            &format!("/api/sessions/{sid}/goal"),
+            json!({"goal":"test", "web_mode":"unknown"}),
+        )
+        .await;
+    assert_eq!(status, 422);
+    let (_, cleared) = s
+        .post_json(
+            &format!("/api/sessions/{sid}/goal"),
+            json!({"goal":"", "web_mode":"off"}),
+        )
+        .await;
+    assert_eq!(cleared["goal_web_mode"], "all");
+    task.abort();
+}
+
+#[tokio::test]
 async fn chat_fetches_authorized_query_urls_and_retains_actual_tool_evidence() {
     check_fetch_evidence(false).await;
 }

@@ -966,7 +966,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: feature contracts folded into an INVARIANTS.md section table; 1491 words, rounded up to the next 100.
     // why: operator-approved raise (1508 words after the project-skills heading edit on main); set to 1510.
     // why: operator-approved headroom for research-job steps 8-12 (#415 review roadmap): ~45 words
-    // (gate list, /loop stays tool-free, no job-long gate), plus ~10%, rounded up to the next 50.
+    // (gate list, /loop excludes MCP, no job-long gate), plus ~10%, rounded up to the next 50.
     // why: the 2026-10-13 doc-sync cut it to 1441 words; 1490 keeps the ~50-word roadmap allowance above.
     ("AGENTS.md", Agent, 1490),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.

@@ -36,19 +36,17 @@ static URL_READ_DENIAL_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 });
 
 /// Names are derived from the definitions actually supplied to the model.
-pub fn chat_callable_names(web_on: bool) -> BTreeSet<String> {
-    if !web_on {
-        return BTreeSet::new();
-    }
-    super::chat_web::tools()
+pub fn chat_callable_names(mode: impl Into<super::sessions::GoalWebMode>) -> BTreeSet<String> {
+    super::chat_web::tools_for(mode.into())
         .iter()
         .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_owned))
         .collect()
 }
 
 /// Prompt block for this turn. Does not list console HTTP adapters.
-pub fn available_tools_markdown(web_on: bool) -> String {
-    let names = chat_callable_names(web_on);
+pub fn available_tools_markdown(mode: impl Into<super::sessions::GoalWebMode>) -> String {
+    let mode = mode.into();
+    let names = chat_callable_names(mode);
     let mut out = String::from(
         "## Harness capabilities (application contract)\n\
 You have no filesystem, shell, gh, account or policy-editing tools in this chat.",
@@ -61,7 +59,7 @@ You have no filesystem, shell, gh, account or policy-editing tools in this chat.
 When a request offers none, answer without them and claim no web result.",
         );
         out.push('\n');
-        for tool in super::chat_web::tools() {
+        for tool in super::chat_web::tools_for(mode) {
             let function = &tool["function"];
             if let (Some(name), Some(description)) = (function["name"].as_str(), function["description"].as_str()) {
                 out.push_str(&format!("\n- {name}: {description}"));

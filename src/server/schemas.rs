@@ -676,6 +676,8 @@ impl Validate for WebSearchRequest {
 pub struct GoalRequest {
     #[serde(default)]
     pub goal: String,
+    #[serde(default)]
+    pub web_mode: super::sessions::GoalWebMode,
 }
 
 impl Validate for GoalRequest {

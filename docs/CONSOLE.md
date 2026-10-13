@@ -48,7 +48,7 @@ Enter slash commands in chat. `/help` lists installed commands. Begin with
 
 ```text
 /session new Setup check
-/goal Explain this project's test strategy
+/goal --web off Explain the attached test strategy
 /goal
 ```
 
@@ -120,7 +120,7 @@ clear, session switching, rate limits, failures, token budgets and a
 too, but is only model advice.
 
 This loop does not edit files, run skills as programs, or perform coding checks.
-The goal persists; continuation counters and auto state are page state.
+Use `/goal --web off|fetch|all <text>` to restrict chat tools while that goal is set. Default `all`; `fetch` excludes search, `off` excludes web context and tools. URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
 Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
 an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task).
 

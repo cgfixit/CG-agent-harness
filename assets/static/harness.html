@@ -1962,7 +1962,7 @@ const COMMAND_MAN = {
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
   '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
-  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
+  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. Prefix --web off, --web fetch or --web all (default) to restrict this goal’s chat tools. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
   '/goal stage <branch>': {detail:'Turns the session goal into a staged coding request on that branch. It still needs /agent confirm <reason>.'},
   '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
@@ -3298,7 +3298,7 @@ async function runSlash(line, webCommand) {
           const shown = await api('/api/sessions/' + encodeURIComponent(currentSession));
           sessionGoal = typeof shown.goal === 'string' ? shown.goal : '';
           paintGoalLoop();
-          sys(sessionGoal ? ('current goal:\n' + sessionGoal) : 'no goal set');
+          sys(sessionGoal ? ('current goal (web: ' + (shown.goal_web_mode || 'all') + '):\n' + sessionGoal) : 'no goal set');
           break;
         }
         if (arg === 'clear') {
@@ -3310,21 +3310,29 @@ async function runSlash(line, webCommand) {
           sys('goal cleared');
           break;
         }
-        if (arg.length > MAX_GOAL_CHARS) {
+        let goalText = arg, goalWebMode = 'all';
+        if (rest[0] === '--web') {
+          if (!['off', 'fetch', 'all'].includes(rest[1]) || rest.length < 3) {
+            sys('usage: /goal --web off|fetch|all <text>'); break;
+          }
+          goalWebMode = rest[1];
+          goalText = arg.replace(/^--web\s+\S+\s+/, '');
+        }
+        if (Array.from(goalText).length > MAX_GOAL_CHARS) {
           sys('goal is too long; keep it under ' + MAX_GOAL_CHARS + ' characters');
           break;
         }
         if (!currentSession) {
-          const created = await api('/api/sessions', 'POST', { title: arg.slice(0, 40) });
+          const created = await api('/api/sessions', 'POST', { title: goalText.slice(0, 40) });
           currentSession = created.session_id;
           paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
         }
-        const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: arg });
+        const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: goalText, web_mode: goalWebMode });
         sessionGoal = set.goal || '';
         paintGoalLoop();
-        sys('goal set:\n' + sessionGoal);
+        sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal);
         await refreshSessions();
         break;
       }
@@ -3358,7 +3366,7 @@ async function runSlash(line, webCommand) {
           const status = await api('/api/status');
           if (staleReview()) break;
           if (status.provider !== 'ollama' && status.base_url === null) { sys('Select a local model before /loop; cloud loops are unavailable.'); break; }
-          sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); web tools ' + (status.chat_tools_available ? 'available within current URL permissions' : 'off') + '. /session unpin clears pins.');
+          sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); goal web mode ' + (loaded.goal_web_mode || 'all') + '; web tools ' + (status.chat_tools_available && loaded.goal_web_mode !== 'off' ? (loaded.goal_web_mode === 'fetch' ? 'fetch only within current URL permissions' : 'available within current URL permissions') : 'off') + '. /session unpin clears pins.');
         }
         if (!sessionGoal) { sys('set a goal first: /goal <what you want done>'); break; }
         if (sub) {
@@ -3510,7 +3518,7 @@ function replyHasGoalDone(text) {
 }
 
 /* One loop turn's instruction. It is model-agnostic, restates a bounded
-   slice of the goal next to the reply (small models lose a system-prompt
+   full goal next to the reply (small models lose a system-prompt
    goal behind long history) and asks for one new step, the usual cure for a
    7B-27B model restating its previous answer. */
 // Match the server goal limit: late constraints must reach the latest user turn.

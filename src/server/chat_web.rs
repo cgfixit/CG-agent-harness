@@ -14,6 +14,13 @@ use crate::common::tool_broker::assert_allowed;
 use crate::llm::openai_chat::{parse_chat_response, ChatMessage, ChatResult};
 use crate::server::tool_inventory::chat_callable_names;
 
+pub fn tools_for(mode: super::sessions::GoalWebMode) -> Vec<Value> {
+    tools()
+        .into_iter()
+        .filter(|tool| mode.allows(tool["function"]["name"].as_str().unwrap_or("")))
+        .collect()
+}
+
 pub fn tools() -> Vec<Value> {
     vec![
         json!({"type":"function","function":{"name":"web_search","description":"Search Google for current ranked links and snippets. Listings are not fetched destination pages. Use for explicit search or current-web questions. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Reuse evidence, avoid repeated queries, and stop once you can answer. Search again only for a specific unresolved gap. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
@@ -233,13 +240,14 @@ pub async fn run_stream(
     cap: u64,
     temperature: f64,
     token_ratio: f64,
+    web_mode: super::sessions::GoalWebMode,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = web.chat_turn.start(owner)?;
     tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
-        result = tokio::time::timeout(Duration::from_secs_f64(state.chat_timeout_sec(model).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, output)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.chat_timeout_sec(model).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, output)) =>
             result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
     }
 }
@@ -255,6 +263,7 @@ async fn run_inner(
     cap: u64,
     temperature: f64,
     token_ratio: f64,
+    web_mode: super::sessions::GoalWebMode,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
@@ -270,7 +279,7 @@ async fn run_inner(
     let mut reported = true;
     let mut initial_prompt_tokens = None;
     let mut budget_used = 0u64;
-    let definitions = tools();
+    let definitions = tools_for(web_mode);
     let definition_json = serde_json::to_string(&definitions)?;
     let definition_bytes = definition_json.len();
     let definition_tokens = super::compaction::estimate_tokens(&definition_json);
@@ -408,6 +417,12 @@ async fn run_inner(
                 .as_str()
                 .filter(|s| s.len() <= 4096)
                 .ok_or_else(|| error("WEB_TOOL_ARGUMENTS", "invalid tool arguments"))?;
+            if !web_mode.allows(call["function"]["name"].as_str().unwrap_or("")) {
+                return Err(error(
+                    "WEB_TOOL_DENIED",
+                    "model requested a tool excluded by the goal web mode",
+                ));
+            }
             match call["function"]["name"].as_str() {
                 Some("web_search") => {
                     serde_json::from_str::<SearchArgs>(args)
@@ -471,7 +486,7 @@ async fn run_inner(
                 .ok_or_else(|| error("WEB_TOOL_ARGUMENTS", "invalid tool arguments"))?;
             authorize_owner(state, owner)?;
             let argv = tool_argv(name, args);
-            assert_allowed(name, &argv, &chat_callable_names(true), &state.audit)
+            assert_allowed(name, &argv, &chat_callable_names(web_mode), &state.audit)
                 .map_err(|e| error("WEB_TOOL_DENIED", &e.message))?;
             let result = match name {
                 "web_search" => {

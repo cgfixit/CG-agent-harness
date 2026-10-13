@@ -77,6 +77,39 @@ pub struct AttachmentPin {
     pub id: String,
 }
 
+/// Per-goal restriction; never enables global web or grants URL permission.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GoalWebMode {
+    Off,
+    Fetch,
+    #[default]
+    All,
+}
+
+impl GoalWebMode {
+    pub fn enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    pub fn allows(self, name: &str) -> bool {
+        matches!(
+            (self, name),
+            (Self::All, "web_search" | "web_fetch") | (Self::Fetch, "web_fetch")
+        )
+    }
+}
+
+impl From<bool> for GoalWebMode {
+    fn from(enabled: bool) -> Self {
+        if enabled {
+            Self::All
+        } else {
+            Self::Off
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
     /// Zero/missing identifies legacy shared data; adoption is explicit.
@@ -104,6 +137,8 @@ pub struct Session {
     /// Operator /goal. Never returned in the metadata-only session inventory.
     #[serde(default)]
     pub goal: String,
+    #[serde(default)]
+    pub goal_web_mode: GoalWebMode,
     #[serde(default)]
     pub selected_skills: Vec<String>,
     /// Session output-style preset id. Default off. Never written to soul.md.
@@ -136,6 +171,16 @@ impl Session {
             "message_count": self.messages.len(),
             "tokens": self.tally.to_json(),
         })
+    }
+
+    pub fn chat_web_mode(&self, enabled: bool) -> GoalWebMode {
+        if !enabled {
+            GoalWebMode::Off
+        } else if self.goal.is_empty() {
+            GoalWebMode::All
+        } else {
+            self.goal_web_mode
+        }
     }
 
     pub fn pinned_ids_for(&self, owner: &str) -> Vec<String> {
@@ -439,6 +484,7 @@ impl OwnedSessionStore<'_> {
             tally: TokenTally::default(),
             token_calibration: None,
             goal: String::new(),
+            goal_web_mode: GoalWebMode::All,
             selected_skills: Vec::new(),
             style: None,
             selected_facts: Vec::new(),
@@ -597,6 +643,19 @@ impl OwnedSessionStore<'_> {
         if let Some(g) = goal {
             session.goal = g.trim().to_string();
         }
+        self.write(&session)?;
+        Ok(session)
+    }
+
+    pub fn set_goal(&self, session_id: &str, goal: &str, web_mode: GoalWebMode) -> Result<Session> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        session.goal = goal.trim().to_string();
+        session.goal_web_mode = if session.goal.is_empty() {
+            GoalWebMode::All
+        } else {
+            web_mode
+        };
         self.write(&session)?;
         Ok(session)
     }

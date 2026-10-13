@@ -389,6 +389,7 @@ pub async fn get_session(
     out["messages"] = json!(messages);
     out["prompt_history"] = json!(session.prompt_history);
     out["goal"] = json!(session.goal);
+    out["goal_web_mode"] = json!(session.goal_web_mode);
     out["style"] = json!(session.style);
     out["live_attachment_pins"] = json!(session
         .pinned_ids_for(&owner)
@@ -453,10 +454,11 @@ pub async fn session_goal(
     let session = state
         .store
         .for_owner(&owner)
-        .rename(&session_id, None, Some(&req.goal))
+        .set_goal(&session_id, &req.goal, req.web_mode)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let mut out = session.summary();
     out["goal"] = json!(session.goal);
+    out["goal_web_mode"] = json!(session.goal_web_mode);
     Ok(Json(out))
 }
 
@@ -616,7 +618,8 @@ async fn chat_inner(
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
     // Web tools need web on and a model that can take them (auto_tune may have
     // found it declares none, or that no web-chat prompt fits its window).
-    let chat_tools = settings.web_enabled && !state.chat_tools_unsupported(&model);
+    let chat_web_mode = session.chat_web_mode(settings.web_enabled && !state.chat_tools_unsupported(&model));
+    let chat_tools = chat_web_mode.enabled();
     let selected_skills = if cloud_selected {
         Vec::new()
     } else {
@@ -763,7 +766,7 @@ async fn chat_inner(
     let web_context = if cloud_selected {
         String::new()
     } else {
-        web.context_text(settings.web_enabled, &owner)
+        web.context_text(session.chat_web_mode(settings.web_enabled).enabled(), &owner)
     };
     let selections = req
         .selected_facts
@@ -824,7 +827,7 @@ async fn chat_inner(
             selected_facts_context: Some(&facts),
             memory_budget,
             memory_enabled: settings.memory_enabled,
-            chat_tools_enabled: chat_tools,
+            chat_web_mode,
             web_enabled: settings.web_enabled,
             attachment_fence: Some(attachment_fence.as_str()),
         })
@@ -840,7 +843,7 @@ async fn chat_inner(
     let ratio =
         crate::server::compaction::token_ratio(session.token_calibration.as_ref(), &state.chat.base_url, &model);
     let tool_tokens = if !cloud_selected && chat_tools {
-        crate::server::compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_web::tools()).unwrap())
+        crate::server::compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_web::tools_for(chat_web_mode)).unwrap())
     } else {
         0
     };
@@ -1060,6 +1063,7 @@ async fn chat_inner(
             max_tokens,
             temperature,
             ratio,
+            chat_web_mode,
             output,
         )
         .await
@@ -1089,7 +1093,7 @@ async fn chat_inner(
     // Ground against the tools the answering request offered: web chat withholds
     // them when no tool round fits, and withdraws them after a refused batch.
     let inventory = crate::server::tool_inventory::chat_callable_names(
-        !cloud_selected && chat_tools && reply.final_prompt_tools,
+        if !cloud_selected && reply.final_prompt_tools { chat_web_mode } else { crate::server::sessions::GoalWebMode::Off },
     );
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
