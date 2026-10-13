@@ -692,6 +692,76 @@ async fn cancelling_a_running_suggestion_releases_the_model_for_the_next_owner()
 }
 
 #[tokio::test]
+async fn native_shutdown_interrupts_generation_without_consuming_waiting_inputs() {
+    for prior_stop in ["none", "owner_cancel", "preemption"] {
+        let model = model().await;
+        model.delay.store(10_000, Ordering::SeqCst);
+        let s = spawn_server(&model.base, options("both")).await;
+        let store = s.state.structured_memory.as_ref().unwrap();
+        let first = suggest::enqueue(
+            &s.state,
+            "local",
+            Source::Chat,
+            Some(&stage(store, "local")),
+            "metric",
+            "reply",
+        );
+        for _ in 0..100 {
+            if !model.requests.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(model.requests.lock().unwrap().len(), 1);
+        let waiting = suggest::enqueue(
+            &s.state,
+            "user_bob",
+            Source::Chat,
+            Some(&stage(store, "user_bob")),
+            "metric",
+            "reply",
+        );
+        let run_id = first["run_id"].as_str().unwrap();
+        let expected = match prior_stop {
+            "owner_cancel" => {
+                store.cancel_consolidation_run("local", run_id).unwrap();
+                ("cancelled", Some("cancelled"))
+            }
+            "preemption" => {
+                assert!(suggest::preempt(&s.state));
+                ("cancelled", Some("preempted"))
+            }
+            _ => ("failed", Some("interrupted")),
+        };
+        // The native control path signals shutdown before aborting the client.
+        s.state.shutdown.cancel();
+        s.state.abort_chat();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while s.state.generation_gate.is_held() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("shutdown kept the model gate");
+        let ended = store.get_consolidation_run("local", run_id).unwrap();
+        assert_eq!(
+            (ended.state.as_str(), ended.error_class.as_deref()),
+            expected,
+            "{prior_stop}"
+        );
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let waiting = store
+            .get_consolidation_run("user_bob", waiting["run_id"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(waiting.state, "idle", "shutdown consumed waiting input");
+        assert_eq!(model.requests.lock().unwrap().len(), 1);
+        assert!(store.list_proposals("local").unwrap().is_empty());
+        assert!(store.list_proposals("user_bob").unwrap().is_empty());
+        assert!(store.list_facts("local").unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn chat_preempts_a_running_suggestion_which_requeues_and_finishes_later() {
     let model = model().await;
     model.delay.store(10_000, Ordering::SeqCst);

@@ -302,6 +302,7 @@ pub async fn build_app_with_sources(
         structured_gates: Mutex::new(structured_gates),
         web,
         chat_owner: web_research::ResearchState::default(),
+        shutdown: tokio_util::sync::CancellationToken::new(),
         mcp,
         home,
         cfg: cfg.clone(),

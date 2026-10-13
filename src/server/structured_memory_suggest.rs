@@ -379,7 +379,11 @@ async fn worker(state: Arc<AppState>) {
             .cfg
             .u64_or("structured_memory.suggestion_idle_ms", 2000)
             .clamp(10, 30000);
-        tokio::time::sleep(Duration::from_millis(idle)).await;
+        tokio::select! {
+            biased;
+            _ = state.shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(idle)) => {}
+        }
         let job = {
             let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
             let ttl = state
@@ -503,6 +507,9 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
             }
             _ = cancel.cancelled() => {
                 return Err(HarnessError::new(PREEMPTED, "a chat turn took the local model"));
+            }
+            _ = state.shutdown.cancelled() => {
+                return Err(HarnessError::new("interrupted", "the backend is shutting down"));
             }
             reply = state.chat.chat(SYSTEM_PROMPT, &messages, None, 1024, 0.0) => reply?,
         };

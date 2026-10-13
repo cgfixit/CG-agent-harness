@@ -155,8 +155,8 @@ or cloud egress; it uses temperature 0 and 1024 output tokens. Automatic
 Accepted inputs receive durable metadata-only `idle` receipts, then transition
 to `running`. Expiry, disabled gates, source clear, cancellation and inference
 errors retain distinct reasons.
-Reopen marks queued/preempted receipts `failed/input_lost_on_restart` and running
-receipts `failed/interrupted`; inputs are never replayed. Pending proposals persist.
+Reopen marks queued/preempted receipts `failed/input_lost_on_restart`. Native shutdown
+or reopen marks interrupted generation `failed/interrupted`; inputs are never replayed. Pending proposals persist.
 Completion replies and detached jobs retain episode/run IDs or refusal reasons.
 RAM status retains latest attempts for `suggestion_max_queue` owners; durable
 runs remain separately available. Visible status does not authorize mutations.

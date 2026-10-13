@@ -278,6 +278,7 @@ fn error_class(err: &HarnessError) -> &'static str {
         return "cancelled";
     }
     match err.code.as_str() {
+        "interrupted" => "interrupted",
         "STRUCTURED_MEMORY_SCHEMA" => "invalid_schema",
         "STRUCTURED_MEMORY_CAP" => "cap",
         "STRUCTURED_MEMORY_INJECTION" => "injection",
@@ -357,6 +358,9 @@ async fn generate_and_finish(
         biased;
         _ = store.wait_for_cancel(&run.id) => {
             return Err(HarnessError::new("STRUCTURED_MEMORY_CANCELLED", "cancelled").detail("cancelled", true));
+        }
+        _ = state.shutdown.cancelled() => {
+            return Err(HarnessError::new("interrupted", "the backend is shutting down"));
         }
         reply = state.chat.chat(SYSTEM_PROMPT, &messages, None, 1024, 0.0) => reply?,
     };
