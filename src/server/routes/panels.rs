@@ -62,6 +62,30 @@ pub async fn netconnect_panel(State(state): State<Arc<AppState>>) -> ApiResult<J
     Ok(Json(body))
 }
 
+/// Diagnostics tier: one TCP connect per configured target and port.
+///
+/// The query string is ignored and no method but GET is routed, so the
+/// browser supplies nothing: targets, ports and limits come from config. The
+/// dial loop runs inside this request future, so the server dropping the
+/// request stops it; the run deadline (at most 60 seconds) bounds it
+/// otherwise. A gate refusal is 409. A run cut short by the budget is 200
+/// with `ok: false`, `code: NETCONNECT_BUDGET`, and the partial results.
+pub async fn netconnect_diag(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    let cfg = crate::netconnect::NetconnectConfig::from_config(state.cfg.as_ref())
+        .map_err(|err| ApiError::from_err(StatusCode::BAD_REQUEST, &err))?;
+    let body = crate::netconnect::tools::call_diag(&cfg, &state.netconnect_rate, crate::netconnect::LiveConnector)
+        .await
+        .map_err(|err| {
+            let status = if err.is("NETCONNECT_DISABLED") || err.is("NETCONNECT_REFUSED") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            ApiError::from_err(status, &err)
+        })?;
+    Ok(Json(body))
+}
+
 pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(views::list_wired_skills(&state.home))
 }

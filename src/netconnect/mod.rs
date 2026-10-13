@@ -4,17 +4,20 @@
 //! flag are both the literal boolean `true`, and only inside an operator
 //! `allowed_cidrs` scope. Scope is never taken from local interfaces.
 //! Passive collection sends no packets. `passive_listen` is configuration
-//! only: joining a multicast group is not this mode.
+//! only: joining a multicast group is not this mode. Active tiers reach the
+//! network only through the budgeted [`Dialer`] in `connect.rs`.
 //!
 //! Later collectors should implement [`NeighborSource`], [`RouteSource`], and
 //! [`InterfaceSource`], then pass rows through [`collect_passive`]. Connect
-//! paths must call [`Scope::check_target`] on the final [`std::net::Ipv4Addr`]
-//! after resolution. [`sanitize_untrusted`] is the only treatment for a
+//! paths go through [`Dialer`], which calls [`Scope::check_target`] on the
+//! final [`std::net::Ipv4Addr`] before each dial; nothing here resolves a
+//! name. [`sanitize_untrusted`] is the only treatment for a
 //! device-supplied name; the result is not an argv element, a command, or a path.
 
 pub mod cli;
 mod collect;
 mod config;
+mod connect;
 mod parse;
 mod sanitize;
 mod scope;
@@ -27,5 +30,6 @@ pub use collect::{
     PassiveReport, RouteSource,
 };
 pub use config::{NetconnectConfig, Tier};
+pub use connect::{Budget, Connector, Dialer, LiveConnector, ProbeResult, RateBucket, Truncation};
 pub use sanitize::{sanitize_untrusted, UntrustedString};
 pub use scope::Scope;

@@ -764,10 +764,17 @@ from local interfaces. Entries are IPv4 CIDRs that lie fully inside RFC1918
 (10/8, 172.16/12, 192.168/16) or 127/8, with prefix length 16 through 32.
 Config load rejects IPv6, a wider prefix, 0.0.0.0/8, link-local
 169.254.0.0/16, CGNAT 100.64.0.0/10, multicast 224.0.0.0/4, 240.0.0.0/4, and
-255.255.255.255. `Scope::check_target` rechecks the final address before any
-later connect; hostnames are not targets. `status` serializes config and
-scope and loads no collector. `devices` and the panel device list send no
-packets. `passive_listen` is a flag only (joining multicast is
+255.255.255.255. Active tiers dial only IPv4 addresses that pass
+`Scope::check_target` at dial time, through one budgeted `Dialer`
+(`src/netconnect/connect.rs`, the only netconnect file that opens a socket)
+that never resolves names. A run stops at `host_cap` hosts, at
+`min(max_dials, rate_limit_per_min)` dials, when the shared per-minute bucket
+cannot refill before its deadline, and at that deadline (`connect_timeout_ms`
+per allowed dial, at most 60 s); a cut run returns partial results with
+`NETCONNECT_BUDGET`. `netconnect_diag` probes `diagnostics_targets` x
+`port_allowlist` from config, never from the caller. `status` serializes
+config and scope and loads no collector. `devices` and the panel device list
+send no packets. `passive_listen` is a flag only (joining multicast is
 not passive). Device strings are length-capped, control-stripped, marked
 untrusted, and never argv, commands or paths. `throughput` has no
 default endpoint; setting its flag or endpoint warns at load (internet egress
@@ -777,18 +784,19 @@ Outside tests, `src/netconnect` imports only `crate::common` and
 through `common::process::run`. A false master gate exits 4. Invalid
 scope exits 3. `netconnect_status` and `netconnect_devices` register only
 when `enabled` is literal true. A tier's tools register only when
-`tier_may_run` is true; this build registers none. A call whose tier may
+`tier_may_run` is true; this build registers only `netconnect_diag`. A call whose tier may
 not run returns `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`, not an empty
 success. `/net` keeps the exact aliases `/netconnect`, `/lan`, `/scan`,
 `/ports`, and `/speed` only when they collide with no existing slash root. Exact `status` and `devices` are read-only. A near-miss only suggests.
 `device` always refuses and is not a fuzzy match. `GET /api/netconnect` is
 the console panel on the existing Host and CSRF guards: GET only; browser
-input never becomes a command.
+input never becomes a command. `GET /api/netconnect/diag` uses the same guards.
 
 - Locked by: `src/netconnect` tests, `tests/netconnect_cli.rs`,
   `tests/netconnect_flags.rs`, `tests/netconnect_scope.rs`,
   `tests/netconnect_collectors.rs`, `tests/netconnect_untrusted.rs`,
   `tests/netconnect_workflow.rs`, `scripts/netconnect-syscall-proof.sh`,
   `tests/netconnect_syscall.rs`, `invariant_guard::server_side_never_references_agentic`,
+  `invariant_guard::netconnect_dials_only_through_the_budgeted_dialer`,
   `tests/panels.rs`, and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.

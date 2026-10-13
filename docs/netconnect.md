@@ -2,7 +2,7 @@
 
 Index: [README.md](../README.md). Gate contract: [INVARIANTS.md](../INVARIANTS.md#netconnect-is-fail-closed-and-lan-scoped). Console row: [CONSOLE.md](CONSOLE.md). Route: [API_ROUTES.md](API_ROUTES.md).
 
-Netconnect is fail-closed LAN observation. It ships passive. Every gate in `assets/config.default.yaml` is the boolean `false`, and `allowed_cidrs` is an empty list. `devices` and the enabled panel read local tables and set `packets_sent` to 0. `status` does not load a collector and does not print `packets_sent`. This build does not scan ports, probe hosts, measure throughput, or control a device.
+Netconnect is fail-closed LAN observation. It ships passive. Every gate in `assets/config.default.yaml` is the boolean `false`, and `allowed_cidrs` is an empty list. `devices` and the enabled panel read local tables and set `packets_sent` to 0. `status` does not load a collector and does not print `packets_sent`. The only active tier in this build is `diagnostics`: a budgeted TCP connect probe of configured targets (see [Diagnostics](#diagnostics)). It does not scan ports, measure throughput, or control a device.
 
 A tier can run only when `netconnect.enabled` and that tier's flag are both the unquoted boolean `true`, and `allowed_cidrs` is a non-empty list the validator accepted. Scope comes from that list. It is never copied from local interface addresses. `passive_listen` is a flag only: this mode does not join a multicast group.
 
@@ -50,7 +50,7 @@ A route is kept only when some allowed CIDR covers that route's entire prefix. A
 
 ## Other keys
 
-These values are checked at load and printed by `status`. No connect path in this build reads them. `invoke_tier` refuses before any dial.
+These values are checked at load and printed by `status`. `diag` enforces `host_cap`, `rate_limit_per_min`, `connect_timeout_ms`, and `max_dials`; nothing reads `read_timeout_ms` yet.
 
 | Key | Shipped value | Load rule |
 |---|---|---|
@@ -59,6 +59,7 @@ These values are checked at load and printed by `status`. No connect path in thi
 | `rate_limit_per_min` | `30` | Integer 1–10000. |
 | `connect_timeout_ms` | `1000` | Integer 100–60000. |
 | `read_timeout_ms` | `2000` | Integer 100–60000. |
+| `max_dials` | `256` | Integer 1–65536. Per-run dial ceiling; a run also stops at `rate_limit_per_min`. |
 | `diagnostics_targets` | `[]` | Up to 64 IPv4 addresses, no duplicates, each inside `allowed_cidrs`. Host names and IPv6 are rejected. A target with an empty scope fails load. |
 | `throughput_endpoint` | `null` | String or null. See endpoints below. |
 | `ha_endpoint` | `null` | Stored only. Home automation does not connect. |
@@ -71,15 +72,16 @@ If `throughput` is literal `true`, or `throughput_endpoint` is set, load adds th
 
 ## CLI
 
-The binary exposes two subcommands:
+The binary exposes three subcommands:
 
 ```text
 cgagentharness netconnect status
 cgagentharness netconnect devices
+cgagentharness netconnect diag
 cgagentharness netconnect --config /path/to/config.yaml status
 ```
 
-`--config` defaults to `config.yaml` in the harness home (`CGAGENTHARNESS_HOME`, otherwise `~/.CGagentHarness`). There is no other netconnect subcommand. A slash line is not a CLI argument.
+`--config` defaults to `config.yaml` in the harness home (`CGAGENTHARNESS_HOME`, otherwise `~/.CGagentHarness`). A slash line is not a CLI argument.
 
 JSON goes to stdout. Warnings, and the `message` on a non-zero exit, go to stderr as `netconnect: ...`.
 
@@ -88,7 +90,7 @@ JSON goes to stdout. Warnings, and the `message` on a non-zero exit, go to stder
 | 0 | `enabled` is literal `true` and the action finished. An empty scope can still exit 0. |
 | 2 | Collector I/O, an operating system without collectors, a panic, or any other code. Stderr includes `netconnect: internal error` after a panic. |
 | 3 | Config load failed: missing file, invalid YAML, `netconnect` not a mapping, a rejected CIDR, a bad limit, or a bad endpoint. Code `CONFIG_ERROR`. |
-| 4 | `enabled` is false. Code `NETCONNECT_DISABLED`, message `netconnect.enabled is false`. Both `status` and `devices` refuse before any collector runs. `NETCONNECT_REFUSED` uses this exit too. |
+| 4 | `enabled` is false. Code `NETCONNECT_DISABLED`, message `netconnect.enabled is false`. Every action refuses before any collector or dial runs. `NETCONNECT_REFUSED` and a budget-truncated `diag` (`NETCONNECT_BUDGET`) use this exit too. |
 
 `status` prints gates, scope, limits, endpoints, warnings, `scope_empty`,
 `active_tiers_refused`, and one row per tier. It does not load a collector. An
@@ -129,12 +131,13 @@ Exact lines do parse as dispatch:
 |---|---|---|
 | `/net status` and the same subcommand on any kept alias | `netconnect_status`. No collector. Exit 0 when `enabled` is true. | Opens the LAN panel with `GET /api/netconnect`. It does not call the status tool. |
 | `/net devices` and aliases | Passive tables through `netconnect_devices`. Exit 0 when `enabled` is true. | Same panel GET. It does not call the devices tool by name. |
-| `/net ports`, `/net diag`, `/net watch` | `invoke_tier` for `port_scan`, `diagnostics`, or `passive_listen`. Refuses when `tier_may_run` is false. When the tier may run, still refuses because that tier has no tool. Does not load collectors. Exit 4. | Prints `netconnect refusal: this console does not run active tiers or device control` without loading the panel. |
+| `/net diag` | `invoke_tier` for `diagnostics`. Never dials: refuses, and when the tier may run names the route and CLI that do. Exit 4. | Calls `GET /api/netconnect/diag` and prints one row per target and port. A refusal shows the server message. |
+| `/net ports`, `/net watch` | `invoke_tier` for `port_scan` or `passive_listen`. Refuses; no tool exists. Exit 4. | Prints `netconnect refusal: this console does not run active tiers or device control` without loading the panel. |
 | `/net device` | Always `NETCONNECT_REFUSED`, exit 4. No collector. | Same refusal, no panel load. |
 
 So a near-miss never executes. An exact `status` or `devices` in the console refreshes the read-only panel. It does not start a tier. When `enabled` is true, that panel read does load the three passive sources, including for `/net status`. The CLI `status` command and the `netconnect_status` tool do not.
 
-`ports`, `diag`, and `watch` check the matching tier and still do not connect. Supplying an address to `invoke_tier` rechecks it with `Scope::check_target` first. An address outside the scope is `NETCONNECT_REFUSED` (`address <ip> is outside netconnect scope`). A host name is not a target.
+The library evaluator's `ports`, `diag`, and `watch` check the matching tier and do not connect. Supplying an address to `invoke_tier` rechecks it with `Scope::check_target` first. An address outside the scope is `NETCONNECT_REFUSED` (`address <ip> is outside netconnect scope`). A host name is not a target.
 
 ## Panel
 
@@ -152,11 +155,11 @@ When `enabled` is false the handler returns HTTP 200 with empty neighbor, interf
 
 | Mode | Rows added to `/api/tools` |
 |---|---|
-| `enabled` false, missing, or quoted `"true"` | None. Wired count stays 69. |
-| `enabled` literal `true`, any tier flags, empty or non-empty scope | `netconnect_status` and `netconnect_devices` only. Wired count 71. |
-| Any tier with `tier_may_run` true | Still those two rows. `tools_for_tier` is empty for all seven tiers. |
+| `enabled` false, missing, or quoted `"true"` | None. Wired count stays 70. |
+| `enabled` literal `true`, any tier flags, empty or non-empty scope | `netconnect_status` and `netconnect_devices` only. Wired count 72. |
+| `diagnostics` with `tier_may_run` true | Adds `netconnect_diag` (`path: /api/netconnect/diag`). Wired count 73. Other tiers add nothing. |
 
-Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: true`, `registered: true`, `invoked: false`, `ready: null`, and `unavailable_reason: read-only; network names are untrusted data`. `netconnect_status` describes gates and scope and sends no packets. `netconnect_devices` describes in-scope neighbors and says network names are untrusted data, not arguments. Calling either tool while `enabled` is false returns `NETCONNECT_DISABLED`, not an empty success. An unknown netconnect tool name returns `NETCONNECT_REFUSED`.
+Each passive row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: true`, `registered: true`, `invoked: false`, `ready: null`, and `unavailable_reason: read-only; network names are untrusted data`. `netconnect_status` describes gates and scope and sends no packets. `netconnect_devices` describes in-scope neighbors and says network names are untrusted data, not arguments. Calling either tool while `enabled` is false returns `NETCONNECT_DISABLED`, not an empty success. An unknown netconnect tool name returns `NETCONNECT_REFUSED`.
 
 ## Security and trust boundaries
 
@@ -165,13 +168,14 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 - `status` and `netconnect_status` read config without loading collectors.
 - `devices`, `netconnect_devices`, and the enabled panel load each passive source
   once, then remove IPv6 and out-of-scope rows. Failed guards do not load them.
-- `packets_sent` is always 0. Linux `getifaddrs` can open a netlink socket inside
-  libc; this crate opens no packet, raw, UDP, or TCP socket. macOS uses two fixed
+- `packets_sent` is 0 for everything except `diag`, where it counts connect
+  attempts. Linux `getifaddrs` can open a netlink socket inside libc; outside
+  `connect.rs` this module opens no packet, raw, UDP, or TCP socket. macOS uses two fixed
   commands plus `getifaddrs`, without caller-supplied argv or privilege changes.
 - Device text is capped, stripped of controls, marked untrusted, and never used
   as argv, a path, or a fetched URL. The browser cannot supply a command.
-- A future connect path must recheck the final IPv4 address. This build refuses
-  after that check because no tier tool exists.
+- `diag` rechecks each final IPv4 address with `Scope::check_target` before its
+  dial and never resolves a name. Targets and ports come from config only.
 - Throughput is internet egress outside LAN scope. Passive commands ignore it.
   Endpoint errors omit the rejected value, but successful status prints it.
 - These restart-only keys must not contain secrets.
@@ -186,7 +190,9 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 | Exit 3, `diagnostics_targets[...] is outside allowed_cidrs` | Every target must already sit in `allowed_cidrs`. A host name is not a target. |
 | Exit 3, cannot read config file | `--config` or the home `config.yaml` is missing or unreadable. |
 | Exit 0, `scope_empty: true`, `active_tiers_refused: true` | The master gate and a tier flag are on, and the scope is empty. The tier is not runnable. `status` still succeeds. |
-| Exit 0, `runnable: true`, and a later call says `has no tool in this build` | The tier is armed inside a valid scope. This build still has no tool for it and does not connect. |
+| Exit 0, `runnable: true`, and a later call says `has no tool in this build` | The tier is armed inside a valid scope. Only `diagnostics` has a tool. |
+| `diag` exit 4, `NETCONNECT_BUDGET`, `truncated: true` | A limit stopped the run; `truncated_reason` names it. Raise that key or narrow the targets. |
+| `diag` refused, `needs non-empty diagnostics_targets and port_allowlist` | Configure both lists. |
 | Exit 2, `NETCONNECT_UNSUPPORTED` | `devices` on an OS other than Linux or macOS. `status` can still run. |
 | Exit 2, `NETCONNECT_IO`, `cannot read a local network table` | `/proc/net/arp`, `/proc/net/route`, or the macOS `arp`/`netstat` helper failed or timed out. |
 | stderr `netconnect throughput is configured...` | The throughput flag or endpoint is set. Passive commands do not call it. The warning is not a scan. |
@@ -202,16 +208,22 @@ Each row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: 
 
 ## Tiers in this build
 
-Active work for every tier is not implemented yet. The flags, scope check, and refusal path exist so a later change can fill one `tools_for_tier` arm. This build registers none.
+Only `diagnostics` is implemented. Other tiers keep the flag, scope check, and refusal path until a later change fills their `tools_for_tier` arm. Plan: [#339](https://github.com/cgfixit/CG-agent-harness/issues/339).
 
 | Tier | Config flag | Slash | Not implemented yet |
 |---|---|---|---|
 | Passive listen | `passive_listen` | `/net watch` | Joining a multicast group. The flag does not listen. |
 | Discovery | `discovery` | none | A discovery tool. `devices` remains the passive table read. |
 | Port scan | `port_scan` | `/net ports` | Any dial. `port_allowlist` is stored and printed only. |
-| Diagnostics | `diagnostics` | `/net diag` | Any probe. `diagnostics_targets` are validated and printed only. |
+| Diagnostics | `diagnostics` | `/net diag` | Implemented: TCP connect only, no ICMP, no reads. |
 | Throughput | `throughput` | none | Any measurement. The endpoint is internet egress and triggers a warning. |
 | Anomaly detection | `anomaly_detection` | none | A detector. |
 | Home automation | `home_automation` | `/net device` always refuses | Device control. `ha_endpoint` and `mqtt_endpoint` are stored and are not dialed. |
 
-`host_cap`, `rate_limit_per_min`, and the two timeouts are printed by `status` and are not enforced by a connect loop in this build, because that loop does not exist yet.
+## Diagnostics
+
+`cgagentharness netconnect diag`, guarded `GET /api/netconnect/diag`, and the console `/net diag` run `netconnect_diag`. It needs `enabled` and `diagnostics` as literal `true`, a non-empty scope, and non-empty `diagnostics_targets` and `port_allowlist`. The caller supplies nothing; the route ignores its query string and refuses with HTTP 409.
+
+Each target and port gets one TCP connect, in order, one at a time: `open`, `closed`, `timeout`, `unreachable`, or `refused_scope` (no packet sent). An open connection is closed at once. A run stops at `host_cap` distinct hosts, at `min(max_dials, rate_limit_per_min)` dials, when the per-minute bucket (shared by every server request) cannot refill before the deadline, or at the deadline: `connect_timeout_ms` per allowed dial, at most 60 seconds. A stopped run returns its partial `results` with `ok: false`, `code: NETCONNECT_BUDGET`, and `truncated_reason`. The route reports this as HTTP 200.
+
+The probe runs inside `serve`, not a child process; it stops when the server drops the request, and the deadline bounds it otherwise.

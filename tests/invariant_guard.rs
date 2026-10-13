@@ -289,6 +289,38 @@ fn server_side_never_references_agentic() {
 }
 
 #[test]
+fn netconnect_dials_only_through_the_budgeted_dialer() {
+    // Sockets and name lookups. Only connect.rs may open a socket, and
+    // nothing under src/netconnect may resolve a host name.
+    const SOCKETS: &[&str] = &["TcpStream", "TcpSocket", "UdpSocket", "socket2", "RawSocket"];
+    const LOOKUPS: &[&str] = &["lookup_host", "ToSocketAddrs", "to_socket_addrs", "getaddrinfo"];
+    for (path, text) in read_tree(&root().join("netconnect")) {
+        let dialer = path.replace('\\', "/").ends_with("netconnect/connect.rs");
+        for needle in LOOKUPS {
+            assert!(!text.contains(needle), "{path} resolves names via {needle:?}");
+        }
+        if !dialer {
+            for needle in SOCKETS {
+                assert!(
+                    !text.contains(needle),
+                    "{path} opens a socket via {needle:?}; dial through netconnect::Dialer"
+                );
+            }
+        }
+    }
+    let dialer = std::fs::read_to_string(root().join("netconnect").join("connect.rs")).unwrap();
+    assert!(!dialer.contains("UdpSocket"), "the diagnostics dialer is TCP only");
+    let body = &dialer[dialer.find("pub async fn probe_all").expect("probe_all exists")..];
+    let recheck = body.find("check_target").expect("probe_all rechecks scope");
+    let dial = body.find("self.connector.connect").expect("probe_all dials");
+    assert!(recheck < dial, "scope recheck must precede the dial");
+    assert!(
+        dialer.contains("SocketAddr::V4(addr)"),
+        "the live dial takes an IPv4 socket address"
+    );
+}
+
+#[test]
 fn only_registered_process_owners_construct_commands() {
     const OWNERS: &[&str] = &[
         "shim/mod.rs",

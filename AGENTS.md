@@ -21,12 +21,13 @@ When prose contradicts code, fix the prose in the same PR.
   `account`, `web` and `tls` CLI commands call the same protected service.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
   `src/shim` as a child process, never called in-process).
-- `cgagentharness netconnect status|devices` -> `src/netconnect`, passive and
-  read-only. Every netconnect gate ships false; empty `allowed_cidrs` refuses
-  armed tiers. `/net` (aliases `/netconnect`, `/lan`, `/scan`, `/ports`,
+- `cgagentharness netconnect status|devices|diag` -> `src/netconnect`. Every
+  netconnect gate ships false; empty `allowed_cidrs` refuses armed tiers. Only
+  `diag` dials, through the budgeted `Dialer` in `connect.rs` (the one file
+  that opens a socket). `/net` (aliases `/netconnect`, `/lan`, `/scan`, `/ports`,
   `/speed`, each dropped if it collides with an existing slash name) dispatches
-  `status`, `devices`, `ports`, `diag`, `watch`; the tier commands refuse unless
-  `tier_may_run` is true and never connect. `device` always refuses.
+  `status`, `devices`, `ports`, `diag`, `watch`; tier commands refuse unless
+  `tier_may_run` is true. `device` always refuses.
 - Exit codes are an API for the `agentic` and `netconnect` children: `0` ok,
   `2` failed, `3` env/config, `4` write refused. A non-zero child exit is HTTP
   200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer

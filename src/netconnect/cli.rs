@@ -1,8 +1,9 @@
-//! `cgagentharness netconnect status|devices`.
+//! `cgagentharness netconnect status|devices|diag`.
 //!
 //! Exit codes match the harness CLI API: 0 ok, 2 failed, 3 config, 4 gate
-//! refused. A false `netconnect.enabled` is a refusal, not a success.
-//! `devices` reads local tables and sends no packets.
+//! refused or dial budget hit. A false `netconnect.enabled` is a refusal, not
+//! a success. `status` and `devices` send no packets. `diag` is the one
+//! action that dials, through the same budgeted dialer as the server route.
 
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -16,8 +17,9 @@ use crate::common::home::Home;
 
 use super::collect::collect_passive;
 use super::config::{NetconnectConfig, Tier};
+use super::connect::{LiveConnector, RateBucket};
 use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
-use super::tools::tier_rows;
+use super::tools::{call_diag, tier_rows};
 
 pub const EXIT_OK: u8 = 0;
 pub const EXIT_FAIL: u8 = 2;
@@ -30,6 +32,9 @@ pub enum Action {
     Status,
     /// List in-scope interfaces, routes, and neighbors. Sends no packets.
     Devices,
+    /// TCP connect probe of diagnostics_targets x port_allowlist. Sends packets
+    /// only when the diagnostics tier may run, and only inside the dial budget.
+    Diag,
 }
 
 struct Outcome {
@@ -41,7 +46,7 @@ struct Outcome {
 pub fn exit_code_for(err: &HarnessError) -> u8 {
     match err.code.as_str() {
         "CONFIG_ERROR" | "HARNESS_CONFIG_ERROR" => EXIT_ENV,
-        "NETCONNECT_DISABLED" | "NETCONNECT_REFUSED" => EXIT_REFUSED,
+        "NETCONNECT_DISABLED" | "NETCONNECT_REFUSED" | "NETCONNECT_BUDGET" => EXIT_REFUSED,
         _ => EXIT_FAIL,
     }
 }
@@ -103,15 +108,30 @@ fn execute(config: Option<PathBuf>, action: Action) -> Outcome {
     let body = match action {
         Action::Status => Ok(status_body(&cfg)),
         Action::Devices => devices_body(&cfg),
+        Action::Diag => diag_body(&cfg),
     };
     match body {
         Ok(body) => Outcome {
-            code: EXIT_OK,
+            // A truncated diag run carries its partial results and code NETCONNECT_BUDGET.
+            code: match body.get("code").and_then(Value::as_str) {
+                Some(code) => exit_code_for(&HarnessError::new(code, "")),
+                None => EXIT_OK,
+            },
             warnings,
             body,
         },
         Err(err) => error_outcome(&err, warnings),
     }
+}
+
+/// One process is one run, so the rate bucket starts full here. The server
+/// shares one bucket across requests.
+fn diag_body(cfg: &NetconnectConfig) -> Result<Value, HarnessError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| HarnessError::new("NETCONNECT_IO", "cannot start the diagnostics runtime"))?;
+    runtime.block_on(call_diag(cfg, &RateBucket::new(), LiveConnector))
 }
 
 fn error_outcome(err: &HarnessError, warnings: Vec<String>) -> Outcome {
@@ -139,6 +159,7 @@ fn status_body(cfg: &NetconnectConfig) -> Value {
         "rate_limit_per_min": cfg.rate_limit_per_min,
         "connect_timeout_ms": cfg.connect_timeout_ms,
         "read_timeout_ms": cfg.read_timeout_ms,
+        "max_dials": cfg.max_dials,
         "diagnostics_targets": cfg.diagnostics_targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "throughput_endpoint": cfg.throughput_endpoint,
         "ha_endpoint": cfg.ha_endpoint,
@@ -183,7 +204,7 @@ mod tests {
     #[test]
     fn disabled_status_and_devices_refuse() {
         let (_dir, path) = write_config("netconnect:\n  enabled: false\n");
-        for action in [Action::Status, Action::Devices] {
+        for action in [Action::Status, Action::Devices, Action::Diag] {
             let outcome = execute(Some(path.clone()), action);
             assert_eq!(outcome.code, EXIT_REFUSED);
             assert_eq!(outcome.body["code"], "NETCONNECT_DISABLED");
@@ -248,6 +269,49 @@ mod tests {
             exit_code_for(&HarnessError::new("NETCONNECT_REFUSED", "out")),
             EXIT_REFUSED
         );
+        assert_eq!(
+            exit_code_for(&HarnessError::new("NETCONNECT_BUDGET", "cap")),
+            EXIT_REFUSED
+        );
         assert_eq!(exit_code_for(&HarnessError::new("NETCONNECT_IO", "read")), EXIT_FAIL);
+    }
+
+    #[test]
+    fn diag_probes_loopback_and_reports_budget_truncation() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let open = listener.local_addr().unwrap().port();
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let base = format!(
+            "netconnect:\n  enabled: true\n  diagnostics: true\n  allowed_cidrs: ['127.0.0.0/16']\n  \
+             diagnostics_targets: ['127.0.0.1']\n  port_allowlist: [{open}, {closed}]\n"
+        );
+        let (_dir, path) = write_config(&base);
+        let outcome = execute(Some(path), Action::Diag);
+        assert_eq!(outcome.code, EXIT_OK, "{}", outcome.body);
+        assert_eq!(outcome.body["dials"], 2);
+        assert_eq!(outcome.body["packets_sent"], 2);
+        assert_eq!(outcome.body["results"][0]["result"], "open");
+        assert_eq!(outcome.body["results"][1]["result"], "closed");
+        assert_eq!(outcome.body["truncated"], false);
+
+        let (_dir, path) = write_config(&format!("{base}  max_dials: 1\n"));
+        let outcome = execute(Some(path), Action::Diag);
+        assert_eq!(outcome.code, EXIT_REFUSED);
+        assert_eq!(outcome.body["code"], "NETCONNECT_BUDGET");
+        assert_eq!(outcome.body["truncated"], true);
+        assert_eq!(outcome.body["truncated_reason"], "max_dials");
+        assert_eq!(outcome.body["dials"], 1);
+        assert_eq!(outcome.body["results"].as_array().unwrap().len(), 1);
+
+        let (_dir, path) = write_config(&base.replace("diagnostics: true", "diagnostics: \"true\""));
+        let outcome = execute(Some(path), Action::Diag);
+        assert_eq!(outcome.code, EXIT_REFUSED);
+        assert_eq!(outcome.body["code"], "NETCONNECT_REFUSED");
+        assert!(outcome.body.get("dials").is_none());
+        drop(listener);
     }
 }
