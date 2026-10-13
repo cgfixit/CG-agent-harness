@@ -20,7 +20,8 @@ chat-browser job and `verify-local.sh`.
 - [`verify-local.sh`](verify-local.sh): full local verification: lint, tests, contract scripts, build, smoke.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`.
 - [`ci-docs-only.sh`](ci-docs-only.sh): classifies a diff as docs-only so `ci.yml` and `bundle.yml` skip compile jobs.
-- [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture; CI and skill-run only.
+- [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture; needs a live model, run by `e2e-macos.sh browser`.
+- [`e2e-macos.sh`](e2e-macos.sh): staged Apple Silicon e2e (preflight, build, contracts, smoke, browser, desktop) behind `e2e.yml`; also run by hand.
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
 - [`test-analytics.mjs`](test-analytics.mjs): analytics and spend helpers, logout clearing.
 - [`test-attachment-preview.mjs`](test-attachment-preview.mjs): preview reuses uploads and never leaks across sessions.

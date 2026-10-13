@@ -1,0 +1,4 @@
+# Custom label of the owner's self-hosted Apple Silicon runner (e2e.yml, m5 job).
+self-hosted-runner:
+  labels:
+    - cgah-m5

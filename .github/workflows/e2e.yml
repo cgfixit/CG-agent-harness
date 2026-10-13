@@ -1,0 +1,153 @@
+# End-to-end proof on Apple Silicon, manual only. Never runs on pull_request and
+# is not a required check: it builds release binaries, drives real Chrome, and
+# (on the self-hosted job) loads a 27B model.
+#
+# Every stage is scripts/e2e-macos.sh, so a local run of the same stage on an
+# M-series Mac means the same thing as the matching step here.
+#
+#   hosted   macos-latest, no model: preflight, release build, every contract
+#            script, chat browser acceptance in macOS Chrome, and the
+#            non-model half of scripts/smoke-ollama.sh (bind guard, headers,
+#            auth, subprocess exit codes, panels). A hosted runner has about
+#            7 GB and no usable GPU, so it cannot hold the model.
+#   desktop  optional: desktop.yml (universal .app, sidecar digest, bundle tests).
+#   m5       opt-in, self-hosted [self-hosted, macOS, ARM64, cgah-m5]: the same
+#            plus the live chat turn and scripts/browser-acceptance.mjs, which
+#            drives clone, plan, patch, verify, approve, push and a mock draft
+#            PR through the console in real Chrome with the local model. No
+#            other workflow runs that script. Sized for a 48 GB unified-memory
+#            Mac: qwen3.8:27b-mlx-cg is a 32768-token window on a 27B model.
+#
+# Self-hosted runner safety (this repository is public):
+#   - workflow_dispatch is the only trigger; a pull request can never reach m5.
+#   - m5 runs only when dispatched by the repository owner, from any ref the
+#     owner chose. Do not widen that condition.
+#   - The custom `cgah-m5` label keeps the job off any other self-hosted runner.
+#   - The job never installs toolchains or pulls models on the Mac by itself:
+#     preflight fails with the command to run, unless `create_model` is set.
+#   - All homes are disposable; the real ~/.CGagentHarness is never touched.
+name: e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      desktop:
+        description: Also run desktop.yml (universal .app build and verification)
+        type: boolean
+        default: true
+      m5:
+        description: Also run the live-model job on the self-hosted Apple Silicon runner
+        type: boolean
+        default: false
+      model:
+        description: Installed Ollama tag for the m5 job
+        type: string
+        default: qwen3.8:27b-mlx-cg
+      create_model:
+        description: m5 job may ollama create the model from scripts/qwen3.8-27b-mlx-cg.Modelfile
+        type: boolean
+        default: false
+
+permissions: {}
+
+# A second dispatch waits instead of cancelling a build or a model run.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  hosted:
+    name: hosted macOS (model-free)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      E2E_LIVE: "0"
+      E2E_DESKTOP: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # rustup is on every hosted runner; no third-party toolchain action.
+      - name: Rust 1.88 (rust-toolchain.toml)
+        run: |
+          rustup toolchain install 1.88 --profile minimal --component clippy,rustfmt
+          cargo --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Preflight
+        run: scripts/e2e-macos.sh preflight
+      - name: Build release binary
+        run: scripts/e2e-macos.sh build
+      - name: Contract scripts and chat browser acceptance
+        run: scripts/e2e-macos.sh contracts
+      - name: Smoke (every non-model check)
+        run: scripts/e2e-macos.sh smoke
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ failure() }}
+        with:
+          name: e2e-hosted-logs
+          path: ${{ runner.temp }}/e2e-out
+          if-no-files-found: ignore
+          retention-days: 7
+
+  desktop:
+    name: desktop bundle
+    if: ${{ inputs.desktop }}
+    uses: ./.github/workflows/desktop.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+
+  m5:
+    name: live model on Apple Silicon (self-hosted)
+    if: ${{ inputs.m5 && github.repository == 'cgfixit/CG-agent-harness' && github.actor == 'cgfixit' }}
+    runs-on: [self-hosted, macOS, ARM64, cgah-m5]
+    # Cold model load, a 27B planner turn, and the packaged-app build.
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      E2E_LIVE: "1"
+      E2E_DESKTOP: "1"
+      E2E_MODEL: ${{ inputs.model }}
+      E2E_CREATE: ${{ inputs.create_model && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Keep the ignored target/ and dist/ between runs: package-desktop.sh
+          # only refuses tracked or untracked-unignored changes.
+          clean: false
+      # A launchd runner service has a minimal PATH.
+      - name: Tool paths
+        run: |
+          {
+            echo "$HOME/.cargo/bin"
+            echo "/opt/homebrew/bin"
+            echo "/usr/local/bin"
+          } >> "$GITHUB_PATH"
+      - name: Preflight (host, memory, toolchains, Chrome, Ollama, model)
+        run: scripts/e2e-macos.sh preflight
+      - name: Build release binary
+        run: scripts/e2e-macos.sh build
+      - name: Contract scripts and chat browser acceptance
+        run: scripts/e2e-macos.sh contracts
+      - name: Smoke with the live model
+        run: scripts/e2e-macos.sh smoke
+      - name: Browser acceptance (planner, verify, approve, push, mock PR)
+        run: scripts/e2e-macos.sh browser
+      - name: Package, verify and test the .app
+        run: scripts/e2e-macos.sh desktop
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: e2e-m5-logs
+          path: ${{ runner.temp }}/e2e-out
+          if-no-files-found: ignore
+          retention-days: 7
