@@ -408,7 +408,7 @@ pub fn run(command: KeyCommand) -> anyhow::Result<()> {
     let store = KeyStore::open(&home, settings.max_keys)?;
     let audit = crate::common::audit::Audit::from_home(&home.root, &cfg);
     let valid = |confirm: bool, reason: &str| -> anyhow::Result<()> {
-        if !confirm || reason.trim().is_empty() || reason.chars().count() > 1000 {
+        if !confirm || crate::common::is_visibly_blank(reason) || reason.chars().count() > 1000 {
             anyhow::bail!("MCP_KEY_CONFIRM_REQUIRED: --confirm and a bounded --reason are required");
         }
         Ok(())

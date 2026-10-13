@@ -1,5 +1,4 @@
 # Same dependency policy as the backend, scoped to the shipped desktop architectures.
-# The only extra source is upstream Tauri, pinned to an immutable commit in Cargo.toml.
 [graph]
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 all-features = true
@@ -111,6 +110,5 @@ deny = [
 ]
 
 [sources]
-allow-git = ["https://github.com/tauri-apps/tauri"]
 unknown-registry = "deny"
 unknown-git = "deny"

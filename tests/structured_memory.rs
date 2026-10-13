@@ -408,6 +408,10 @@ async fn latest_completed_summary_attach_requires_confirmation_reason_and_valid_
             "STRUCTURED_MEMORY_CONTENT",
         ),
         (
+            json!({"summary":"Prefer concise answers.","reason":"\u{200B}","confirm":true}),
+            "STRUCTURED_MEMORY_CONTENT",
+        ),
+        (
             json!({"summary":" ","reason":"operator summary","confirm":true}),
             "STRUCTURED_MEMORY_CONTENT",
         ),
@@ -553,6 +557,35 @@ async fn session_clear_keeps_episodes_unless_explicit_cascade() {
     assert_eq!(status, 200, "{cascaded}");
     assert_eq!(cascaded["derived_episodes_deleted"], 1);
     assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 0);
+}
+
+#[tokio::test]
+async fn expired_episode_purge_route_requires_confirm_and_keeps_live_episodes() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let episode_id = stage_episode(&s).await;
+    let path = "/api/structured-memory/episodes/purge";
+    for body in [
+        json!({"reason":"ttl sweep"}),
+        json!({"reason":"ttl sweep","confirm":false}),
+    ] {
+        let (status, refused) = s.post_json(path, body).await;
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(code(&refused), "STRUCTURED_MEMORY_CONFIRM");
+    }
+    let (status, purged) = s.post_json(path, json!({"reason":"ttl sweep","confirm":true})).await;
+    assert_eq!(status, 200, "{purged}");
+    // The staged episode is inside its TTL, so the sweep removes nothing.
+    assert_eq!(purged["deleted"], 0);
+    let listed = s.get_json("/api/structured-memory/episodes").await.1;
+    assert_eq!(listed["count"], 1);
+    assert_eq!(listed["episodes"][0]["id"], episode_id);
+    assert!(s.audit_log().contains("structured_memory_episodes_purged"));
+
+    let off = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, refused) = off.post_json(path, json!({"reason":"ttl sweep","confirm":true})).await;
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(code(&refused), "STRUCTURED_MEMORY_DISABLED");
 }
 
 #[tokio::test]
@@ -702,6 +735,13 @@ async fn no_fact_is_injected_without_explicit_selection() {
 
 #[tokio::test]
 async fn selected_facts_are_revalidated_and_preview_matches_chat() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/structured_memory/explicit-recall-selection.json"
+    ))
+    .unwrap();
+    assert_eq!(fixture["name"], "explicit-recall-selection");
+    assert_eq!(fixture["gates"]["structured_memory.explicit_recall"], true);
+    assert_eq!(fixture["gates"]["structured_memory.episode_capture"], false);
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), recall()).await;
     let live = add_fact(&s, "Prefer metric units in examples.", "pref").await;
@@ -734,6 +774,8 @@ async fn selected_facts_are_revalidated_and_preview_matches_chat() {
         json!({"revision": update["revision"], "reason": "apply update", "confirm": true, "apply": true}),
     )
     .await;
+    // A well-formed id that names no fact.
+    let missing = "0".repeat(live["id"].as_str().unwrap().len());
     let session = s.post_json("/api/sessions", json!({})).await.1;
     let sid = session["session_id"].as_str().unwrap();
     let (status, selected) = s
@@ -743,7 +785,8 @@ async fn selected_facts_are_revalidated_and_preview_matches_chat() {
                 "facts":[
                     {"id": live["id"], "expected_revision": live["revision"]},
                     {"id": stale["id"], "expected_revision": stale["revision"]},
-                    {"id": inactive["id"], "expected_revision": inactive["revision"]}
+                    {"id": inactive["id"], "expected_revision": inactive["revision"]},
+                    {"id": missing, "expected_revision": live["revision"]}
                 ]
             }),
         )
@@ -757,8 +800,19 @@ async fn selected_facts_are_revalidated_and_preview_matches_chat() {
         .iter()
         .map(|d| d["reason"].as_str().unwrap())
         .collect();
-    assert!(dropped.contains(&"stale_revision"));
-    assert!(dropped.contains(&"inactive"));
+    // Every drop reason the fixture names is produced at assembly.
+    let revalidate = fixture["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["action"] == "revalidate_at_assembly")
+        .unwrap();
+    for reason in revalidate["drop"].as_array().unwrap() {
+        assert!(
+            dropped.contains(&reason.as_str().unwrap()),
+            "{reason} not in {dropped:?}"
+        );
+    }
 
     let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
     assert_eq!(status, 200, "{preview}");
