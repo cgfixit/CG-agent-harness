@@ -150,10 +150,10 @@ fn code_shape_rules_are_combinations() {
     );
     let scanner = Scanner::core();
     assert_eq!(
-        inspect_candidate_text(&scanner, "ignore previous instructions")[0].code,
+        inspect_candidate_text(scanner, "ignore previous instructions")[0].code,
         "candidate_injection_pattern"
     );
-    assert!(inspect_candidate_text(&scanner, "fn main() {}").is_empty());
+    assert!(inspect_candidate_text(scanner, "fn main() {}").is_empty());
 }
 
 // ---------------------------------------------------------------- the loop with a scripted proposer
