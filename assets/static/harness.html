@@ -3513,7 +3513,8 @@ function replyHasGoalDone(text) {
    slice of the goal next to the reply (small models lose a system-prompt
    goal behind long history) and asks for one new step, the usual cure for a
    7B-27B model restating its previous answer. */
-const LOOP_GOAL_REMINDER_CHARS = 240;
+// Match the server goal limit: late constraints must reach the latest user turn.
+const LOOP_GOAL_REMINDER_CHARS = 2000;
 function loopTurnPrompt(turn, total, goal) {
   // Code points, not UTF-16 units: a cut surrogate pair is JSON the server rejects.
   const g = Array.from(String(goal || '').replace(/\s+/g, ' ').trim());

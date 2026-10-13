@@ -771,7 +771,7 @@ async fn chat_inner(
         .map(|items| super::structured_memory::selections_from_items(items))
         .unwrap_or_else(|| session.selected_facts.clone());
     let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
-    // The browser's loop reminder is shortened; retrieve against the full goal.
+    // Clients may abbreviate loop reminders; retrieve against the full stored goal.
     let attachment_query = if req.loop_turn {
         format!("{}\n{}", session.goal, req.message)
     } else {

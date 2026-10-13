@@ -112,7 +112,7 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 ```
 
 `/loop 3` runs up to three follow-up turns toward the goal (default three,
-maximum five), each restating 240 goal characters. Manual mode pauses after each
+maximum five), each restating the full bounded goal. Manual mode pauses after each
 turn; `/loop` continues. `/loop auto` toggles automatic continuation, before
 starting or to resume. `/loop stop` cancels during generation or cooldown. Goal
 clear, session switching, rate limits, failures, token budgets and a

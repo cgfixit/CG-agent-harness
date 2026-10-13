@@ -21,10 +21,12 @@ for (const notDone of ['', 'I will write GOAL_DONE when finished.', '1. Write GO
 const prompt = loopTurnPrompt(2, 3, 'Write   a\nparser');
 assert.ok(prompt.startsWith('Loop turn 2 of 3. Session goal: Write a parser\n'), prompt);
 assert.ok(prompt.includes('GOAL_DONE on its own line') && !/27b/i.test(prompt), 'model-agnostic marker instruction');
-const long = loopTurnPrompt(1, 1, 'x'.repeat(2000));
-assert.ok(long.includes('x'.repeat(239) + '…') && !long.includes('x'.repeat(240)), 'goal reminder is bounded');
-const astral = loopTurnPrompt(1, 1, 'x'.repeat(238) + '😀😀 tail');
-assert.ok(astral.includes('x'.repeat(238) + '😀…'), astral);
+const fullGoal = 'x'.repeat(1930) + ' FINAL_CONSTRAINT: do not search the web; CHECKED_441';
+assert.ok(loopTurnPrompt(1, 1, fullGoal).includes(fullGoal), 'late constraints in every valid goal reach the latest user turn');
+const long = loopTurnPrompt(1, 1, 'x'.repeat(2001));
+assert.ok(long.includes('x'.repeat(1999) + '…') && !long.includes('x'.repeat(2000)), 'goal reminder is bounded by the server goal limit');
+const astral = loopTurnPrompt(1, 1, 'x'.repeat(1998) + '😀😀 tail');
+assert.ok(astral.includes('x'.repeat(1998) + '😀…'), astral);
 assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(astral), 'no lone surrogate reaches JSON');
 
 const answer = 'The parser reads tokens from the lexer, builds an AST for each statement, and reports the first syntax error with its line number and column.';
