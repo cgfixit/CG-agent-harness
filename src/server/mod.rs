@@ -326,6 +326,7 @@ pub async fn build_app_with_sources(
         ollama: state::OllamaControl::new(),
         tuning: std::sync::Mutex::new(None),
         netconnect_sources,
+        netconnect_rate: crate::netconnect::RateBucket::new(),
     });
     routes::persona::recover_on_startup(&state)
         .map_err(|e| HarnessError::harness_config(format!("{}: {}", e.code, e.message)))?;

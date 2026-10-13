@@ -1831,6 +1831,7 @@ const COMMANDS = [
   ['/memory save <text> :: <reason>', 'confirm an immediate private fact write'],
   ['/memory search <query>', 'search fact candidates without injecting them'],
   ['/model [list|use <name>|profile]', 'show, list or select a chat model, or profile the selected local model; planner selection is separate'],
+  ['/net diag', 'TCP connect probe of the configured diagnostics_targets and port_allowlist; needs the diagnostics tier; stops at the dial budget'],
   ['/net status|devices', 'status is scope and gates and loads no collector; devices lists passive neighbors; aliases /netconnect /lan /scan /ports /speed only suggest on a near-miss'],
   ['/prompt', 'preview the next chat system prompt (private)'],
   ['/registry', 'combined skill, tool and connector catalog'],
@@ -3379,6 +3380,17 @@ async function runSlash(line, webCommand) {
 
       case 'net': {
         const sub = rest[0] || '';
+        /* Fixed route, no query or body: targets, ports and limits come from
+           config. The server refuses (409) unless diagnostics may run. */
+        if (sub === 'diag') {
+          const d = await api('/api/netconnect/diag', 'GET', undefined, 70000);
+          const rows = (d.results || []).map(r => [String(r.address) + ':' + String(r.port),
+            String(r.result) + (r.rtt_ms == null ? '' : ' (' + String(r.rtt_ms) + ' ms)')]);
+          rows.push(['dials', String(d.dials)]);
+          if (d.truncated) rows.push(['truncated', String(d.message || d.truncated_reason)]);
+          sys(table(rows, ['target', 'result']));
+          break;
+        }
         // Refuse before loading the panel, so a refused command reads no table.
         if (sub !== 'status' && sub !== 'devices') {
           sys('netconnect refusal: this console does not run active tiers or device control');

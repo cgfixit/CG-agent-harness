@@ -138,7 +138,7 @@ Each command supports `--help`.
 | `cgagentharness web` | URL permissions, search, fetch, research. |
 | `cgagentharness tls` | Certificate inspection and renewal. |
 | `cgagentharness mcp-key` | Memory-gateway machine keys. |
-| `cgagentharness netconnect` | Gate `status` and passive `devices`. |
+| `cgagentharness netconnect` | Gate `status`, passive `devices`, and the budgeted `diag` TCP probe. |
 
 ## Configuration and verification
 
