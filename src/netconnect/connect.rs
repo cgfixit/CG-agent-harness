@@ -432,10 +432,10 @@ mod tests {
 
     #[tokio::test]
     async fn live_connector_reports_open_and_closed_on_loopback() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture listener is loopback only.
         let open = listener.local_addr().unwrap().port();
         let closed = {
-            let spare = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let spare = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); // DevSkim: ignore DS162092 because this spare port is bound on loopback only to find a closed one.
             spare.local_addr().unwrap().port()
         };
         let scope = Scope::parse(&["127.0.0.0/16".to_string()]).unwrap();

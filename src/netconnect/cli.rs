@@ -278,16 +278,16 @@ mod tests {
 
     #[test]
     fn diag_probes_loopback_and_reports_budget_truncation() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); // DevSkim: ignore DS162092 because this fixture listener is loopback only.
         let open = listener.local_addr().unwrap().port();
-        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        let closed = std::net::TcpListener::bind("127.0.0.1:0") // DevSkim: ignore DS162092 because this spare port is bound on loopback only to find a closed one.
             .unwrap()
             .local_addr()
             .unwrap()
             .port();
         let base = format!(
             "netconnect:\n  enabled: true\n  diagnostics: true\n  allowed_cidrs: ['127.0.0.0/16']\n  \
-             diagnostics_targets: ['127.0.0.1']\n  port_allowlist: [{open}, {closed}]\n"
+             diagnostics_targets: ['127.0.0.1']\n  port_allowlist: [{open}, {closed}]\n" // DevSkim: ignore DS162092 because the diag fixture must target the loopback listener it owns.
         );
         let (_dir, path) = write_config(&base);
         let outcome = execute(Some(path), Action::Diag);
