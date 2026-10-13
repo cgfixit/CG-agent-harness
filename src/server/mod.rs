@@ -216,6 +216,10 @@ pub async fn build_app_with_sources(
     )?;
     let spend_file = crate::llm::spend::spend_path(&home.root, &cfg);
     let mut cloud_chat = CloudChat::from_config(&cfg)?;
+    #[cfg(feature = "test-support")]
+    if cloud_chat.test_fixture_mode() {
+        audit.log(serde_json::json!({"event":"cloud_chat_test_fixture", "loopback_only":true}));
+    }
     cloud_chat.attach_spend(spend_file.clone());
     let runtime = config_reload::RuntimeLimits::load(&cfg, &backend, None)?;
     let rate_limiter = RateLimiter::new(runtime.api.max_requests, runtime.api.window_seconds);

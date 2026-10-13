@@ -19,6 +19,8 @@ const CLAUDE_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_TIMEOUT_SEC: f64 = 90.0;
 const DEFAULT_MAX_TOKENS: u64 = 4096;
+#[cfg(feature = "test-support")]
+const TEST_CLOUD_KEY: &str = "cgah-test-synthetic-cloud-key";
 /// Body bound for a paid cloud-provider reply; every cloud client uses it.
 pub const MAX_RESPONSE_BYTES: usize = 4_194_304;
 
@@ -83,6 +85,8 @@ pub struct CloudChat {
     inflight: Mutex<BTreeMap<String, CancellationToken>>,
     spend_file: Option<PathBuf>,
     spend_max_bytes: u64,
+    #[cfg(feature = "test-support")]
+    test_fixture: bool,
 }
 
 impl std::fmt::Debug for CloudChat {
@@ -121,6 +125,53 @@ fn provider_config(cfg: &AppConfig, provider: Provider, fallback_model: &str) ->
     })
 }
 
+/// Test-support binaries can exercise the real cloud request path without paid
+/// egress. Never accept a hostname, redirect, or operator credential here.
+#[cfg(feature = "test-support")]
+fn test_fixture_configs(
+    mut grok: ProviderConfig,
+    mut claude: ProviderConfig,
+    base: &str,
+) -> Result<(ProviderConfig, ProviderConfig)> {
+    let invalid =
+        || HarnessError::config("CGAH_TEST_CLOUD_BASE_URL requires a direct HTTP loopback origin with a nonzero port");
+    let url = url::Url::parse(base).map_err(|_| invalid())?;
+    let loopback = match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    };
+    if base.trim() != base
+        || url.scheme() != "http"
+        || !loopback
+        || url.port().is_none_or(|port| port == 0)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid());
+    }
+    for config in [&mut grok, &mut claude] {
+        if !config.api_key.is_empty() && config.api_key != TEST_CLOUD_KEY {
+            return Err(HarnessError::config(
+                "cloud fixtures require empty or synthetic provider credentials",
+            ));
+        }
+        config.api_key = TEST_CLOUD_KEY.into();
+        config.endpoint = format!(
+            "{}{}",
+            url.as_str(),
+            match config.provider {
+                Provider::Grok => "responses",
+                Provider::Claude => "messages",
+            }
+        );
+    }
+    Ok((grok, claude))
+}
+
 impl CloudChat {
     pub fn from_config(cfg: &AppConfig) -> Result<Self> {
         let timeout_sec = cfg.f64_or("models.cloud_chat.timeout_sec", DEFAULT_TIMEOUT_SEC);
@@ -150,6 +201,17 @@ impl CloudChat {
                     HarnessError::config("models.cloud_chat.count_timeout_sec must be from 0.1 to 10 seconds")
                 })?,
         };
+        let grok = provider_config(cfg, Provider::Grok, "grok-4.6")?;
+        let claude = provider_config(cfg, Provider::Claude, "claude-sonnet-5")?;
+        #[cfg(feature = "test-support")]
+        let (grok, claude, test_fixture) = match std::env::var("CGAH_TEST_CLOUD_BASE_URL") {
+            Ok(base) => {
+                let (grok, claude) = test_fixture_configs(grok, claude, &base)?;
+                (grok, claude, true)
+            }
+            Err(std::env::VarError::NotPresent) => (grok, claude, false),
+            Err(_) => return Err(HarnessError::config("CGAH_TEST_CLOUD_BASE_URL must be valid UTF-8")),
+        };
         Ok(Self {
             enabled: cfg.flag_is_true("models.cloud_chat.enabled"),
             timeout: Duration::from_secs_f64(timeout_sec),
@@ -157,8 +219,8 @@ impl CloudChat {
             count_timeout: Duration::from_secs_f64(count_seconds),
             max_usd_per_call,
             budget_on_heuristic: cfg.flag_is_true("models.cloud_chat.budget_on_heuristic"),
-            grok: provider_config(cfg, Provider::Grok, "grok-4.6")?,
-            claude: provider_config(cfg, Provider::Claude, "claude-sonnet-5")?,
+            grok,
+            claude,
             // Do not delegate paid credentials to ambient HTTP(S)_PROXY.
             client: reqwest::Client::builder()
                 .no_proxy()
@@ -170,7 +232,14 @@ impl CloudChat {
             inflight: Mutex::new(BTreeMap::new()),
             spend_file: None,
             spend_max_bytes: crate::common::bounded_log::limit(cfg),
+            #[cfg(feature = "test-support")]
+            test_fixture,
         })
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn test_fixture_mode(&self) -> bool {
+        self.test_fixture
     }
 
     pub fn attach_spend(&mut self, path: PathBuf) {
@@ -635,6 +704,59 @@ mod tests {
         chat.grok.api_key = "grok-test-key".into();
         chat.claude.api_key = "claude-test-key".into();
         chat
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn cloud_fixture_requires_loopback_origin_and_synthetic_credentials() {
+        let configs = || {
+            let config = |provider| ProviderConfig {
+                provider,
+                enabled: true,
+                model: "fixture".into(),
+                api_key: String::new(),
+                endpoint: String::new(),
+            };
+            (config(Provider::Grok), config(Provider::Claude))
+        };
+        for invalid in [
+            "https://127.0.0.1:8123",
+            "http://localhost:8123",
+            "http://example.invalid:8123",
+            "http://192.0.2.1:8123",
+            "http://[2001:db8::1]:8123",
+            "http://127.0.0.1",
+            "http://127.0.0.1:0",
+            "http://user@127.0.0.1:8123",
+            "http://:secret@127.0.0.1:8123",
+            "http://127.0.0.1:8123/v1",
+            "http://127.0.0.1:8123/?q=1",
+            "http://127.0.0.1:8123/#part",
+            " http://127.0.0.1:8123",
+        ] {
+            let (grok, claude) = configs();
+            assert!(test_fixture_configs(grok, claude, invalid).is_err(), "{invalid}");
+        }
+        for valid in ["http://127.0.0.1:8123", "http://[::1]:8123/"] {
+            let (grok, mut claude) = configs();
+            claude.api_key = TEST_CLOUD_KEY.into();
+            let (grok, claude) = test_fixture_configs(grok, claude, valid).unwrap();
+            assert_eq!(grok.endpoint, format!("{}/responses", valid.trim_end_matches('/')));
+            assert_eq!(claude.endpoint, format!("{}/messages", valid.trim_end_matches('/')));
+            assert_eq!(grok.api_key, TEST_CLOUD_KEY);
+            assert_eq!(claude.api_key, TEST_CLOUD_KEY);
+        }
+        for provider in [Provider::Grok, Provider::Claude] {
+            let (mut grok, mut claude) = configs();
+            match provider {
+                Provider::Grok => grok.api_key = "operator-key-must-never-leave".into(),
+                Provider::Claude => claude.api_key = "operator-key-must-never-leave".into(),
+            }
+            let error = test_fixture_configs(grok, claude, "http://127.0.0.1:8123")
+                .err()
+                .unwrap();
+            assert!(!error.to_string().contains("operator-key-must-never-leave"));
+        }
     }
 
     #[tokio::test]
