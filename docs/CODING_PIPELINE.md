@@ -345,11 +345,11 @@ and are not retried automatically. Reduce the task or adjust
 
 ## Offline Cargo verification
 
-The operator prepares dependencies; untrusted checks never fetch them. Rustup
-toolchains use their resolved sysroot; the preparation command runs from the
-selected repository, so its toolchain selection applies. Homebrew does not
-automatically honor rust-toolchain.toml. Provision required tools/components
-explicitly before preparing. No toolchain or model is installed by the harness.
+The operator prepares dependencies; untrusted checks never fetch them. Tool
+discovery runs from the filesystem root, outside the candidate. Select an
+installed compiler through `PATH` and, for rustup, `RUSTUP_TOOLCHAIN`; candidate
+toolchain files cannot select executables. Provision tools/components first.
+Preparation never installs a toolchain or model.
 
 Prepare once per lockfile and application home, as in
 [Run it from the console](#93-run-it-from-the-console). The offline default and

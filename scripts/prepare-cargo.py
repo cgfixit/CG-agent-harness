@@ -43,16 +43,20 @@ def main():
     if dest.exists():
         raise SystemExit("snapshot already exists; use it or choose a separate application home")
     env = dict(os.environ, RUSTUP_AUTO_INSTALL="0")
+    # Resolve tools outside the candidate (and the caller's cwd). A repository
+    # rust-toolchain path must never choose code to run before confinement.
+    # PATH and RUSTUP_TOOLCHAIN remain explicit operator-controlled selections.
+    tool_cwd = os.path.abspath(os.sep)
     executable = lambda name: name + (".exe" if os.name == "nt" else "")
     # Toolchain preparation is explicit: this probe cannot auto-install rustup tools.
-    sysroot = Path(subprocess.check_output(["rustc", "--print", "sysroot"], cwd=repo, env=env, text=True).strip()).resolve(strict=True)
+    sysroot = Path(subprocess.check_output(["rustc", "--print", "sysroot"], cwd=tool_cwd, env=env, text=True).strip()).resolve(strict=True)
     for tool in ("cargo", "rustc", "rustdoc"):
         if not (sysroot / "bin" / executable(tool)).is_file():
             raise SystemExit(f"missing {tool} in selected toolchain; provision it before preparation")
     sdk_root = linker = None
     if shutil.which("xcrun"):
-        sdk_root = str(Path(subprocess.check_output(["xcrun", "--show-sdk-path"], text=True).strip()).resolve(strict=True))
-        linker = str(Path(subprocess.check_output(["xcrun", "--find", "clang"], text=True).strip()).resolve(strict=True))
+        sdk_root = str(Path(subprocess.check_output(["xcrun", "--show-sdk-path"], cwd=tool_cwd, env=env, text=True).strip()).resolve(strict=True))
+        linker = str(Path(subprocess.check_output(["xcrun", "--find", "clang"], cwd=tool_cwd, env=env, text=True).strip()).resolve(strict=True))
     runtime_roots = set()
     if shutil.which("otool"):
         pending = [sysroot / "bin" / "cargo", sysroot / "bin" / "rustc", sysroot / "bin" / "rustdoc"]
@@ -62,7 +66,7 @@ def main():
             if binary in seen:
                 continue
             seen.add(binary)
-            output = subprocess.check_output(["otool", "-L", str(binary)], text=True)
+            output = subprocess.check_output(["otool", "-L", str(binary)], cwd=tool_cwd, env=env, text=True)
             for line in output.splitlines()[1:]:
                 name = line.strip().split(" (", 1)[0]
                 if name.startswith(("/opt/homebrew/", "/usr/local/")):
@@ -89,7 +93,7 @@ def main():
         (stage / "prepared.json").write_text(json.dumps({
             "lock_sha256": digest, "toolchain_root": str(sysroot),
             "runtime_roots": sorted(runtime_roots), "sdk_root": sdk_root, "linker": linker,
-            "rustc_version": subprocess.check_output([str(sysroot / "bin" / executable("rustc")), "--version"], text=True).strip(),
+            "rustc_version": subprocess.check_output([str(sysroot / "bin" / executable("rustc")), "--version"], cwd=tool_cwd, env=env, text=True).strip(),
         }, indent=2) + "\n")
         # Destination is new and remains outside the candidate clone.
         shutil.copytree(stage, dest)
