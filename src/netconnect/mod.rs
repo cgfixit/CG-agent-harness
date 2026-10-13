@@ -25,10 +25,9 @@ pub mod slash;
 mod sources;
 pub mod tools;
 
-pub use collect::{
-    collect_passive, FixtureInterfaces, FixtureNeighbors, FixtureRoutes, InterfaceSource, NeighborSource,
-    PassiveReport, RouteSource,
-};
+pub use collect::{collect_passive, InterfaceSource, NeighborSource, PassiveReport, RouteSource};
+#[cfg(any(test, feature = "test-support"))]
+pub use collect::{FixtureInterfaces, FixtureNeighbors, FixtureRoutes};
 pub use config::{NetconnectConfig, Tier};
 pub use connect::{Budget, Connector, Dialer, LiveConnector, ProbeResult, RateBucket, Truncation};
 pub use sanitize::{sanitize_untrusted, UntrustedString};
