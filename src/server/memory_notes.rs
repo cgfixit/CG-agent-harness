@@ -59,7 +59,7 @@ impl MemoryNotes {
         Self {
             dir: dir.to_path_buf(),
             path: dir.join("notes.json"),
-            scanner: Scanner::core(),
+            scanner: Scanner::core().clone(),
             lock: Mutex::new(()),
         }
     }

@@ -6,9 +6,6 @@
 # before enabling coding; master, deepagent and clone-write gates ship closed.
 
 app:
-  name: "cgagentharness"
-  env: "local"
-  mode: "hybrid"  # "offline" | "hybrid"
   agent_job_poll_ms: 1500  # browser job polling, clamped to 1–30 seconds
 
 models:
@@ -217,7 +214,7 @@ auth:
     absolute_timeout_sec: 604800
 
 logging:
-  level: "INFO"
+  # Log verbosity is RUST_LOG (default info), not a key here.
   # One structured tracing line per HTTP request (method, path, status,
   # latency, client). Never headers, bodies or query strings.
   request_log: true
@@ -243,7 +240,6 @@ logging:
 
 policy:
   prompt_filter:
-    enabled: true
     # Regex patterns compiled case-insensitively. Shared input filtering policy.
     banned_patterns:
       - 'ignore\s+(previous|all|prior)\s+instructions'
@@ -286,7 +282,6 @@ policy:
       - 'jailbreak|dan\s+mode|developer\s+mode'
       - 'decode\s+and\s+execute|base64.{0,40}execute|execute.{0,40}base64'
       - 'reveal\s+(your\s+)?(instructions|system\s+prompt)'
-    max_input_chars: 4000
   privacy:
     redact_emails: true
     redact_ips: true

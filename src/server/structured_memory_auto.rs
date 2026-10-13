@@ -37,6 +37,7 @@ impl AutoConsolidationControl {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn is_spawned(&self) -> bool {
         self.spawned.load(Ordering::SeqCst)
     }

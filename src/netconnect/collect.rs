@@ -12,10 +12,9 @@ use serde::Serialize;
 
 use crate::common::errors::Result;
 
-use super::parse::{
-    parse_bsd_arp, parse_bsd_netstat, parse_interface_lines, parse_proc_net_arp, parse_proc_net_route, InterfaceRecord,
-    NeighborRecord, RouteRecord,
-};
+#[cfg(any(test, feature = "test-support"))]
+use super::parse::{parse_bsd_arp, parse_bsd_netstat, parse_interface_lines, parse_proc_net_arp, parse_proc_net_route};
+use super::parse::{InterfaceRecord, NeighborRecord, RouteRecord};
 use super::sanitize::{sanitize_untrusted, UntrustedString};
 use super::scope::Scope;
 
@@ -52,11 +51,13 @@ impl<T: InterfaceSource + ?Sized> InterfaceSource for std::sync::Arc<T> {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct FixtureNeighbors {
     records: Vec<NeighborRecord>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FixtureNeighbors {
     pub fn proc_arp(text: &str) -> Self {
         Self {
@@ -71,17 +72,20 @@ impl FixtureNeighbors {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl NeighborSource for FixtureNeighbors {
     fn load(&self) -> Result<Vec<NeighborRecord>> {
         Ok(self.records.clone())
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct FixtureRoutes {
     records: Vec<RouteRecord>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FixtureRoutes {
     pub fn proc_route(text: &str) -> Self {
         Self {
@@ -96,17 +100,20 @@ impl FixtureRoutes {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl RouteSource for FixtureRoutes {
     fn load(&self) -> Result<Vec<RouteRecord>> {
         Ok(self.records.clone())
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct FixtureInterfaces {
     records: Vec<InterfaceRecord>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FixtureInterfaces {
     pub fn from_lines(text: &str) -> Self {
         Self {
@@ -115,6 +122,7 @@ impl FixtureInterfaces {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl InterfaceSource for FixtureInterfaces {
     fn load(&self) -> Result<Vec<InterfaceRecord>> {
         Ok(self.records.clone())
