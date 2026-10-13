@@ -32,7 +32,9 @@ Process map. These are the only edges - a new one changes this list and the code
   hidden, Unix-only `cgagentharness desktop` sidecar, whose pipe carries readiness and
   ownership, never API authority (`src/server/desktop.rs`). It also runs
   `python3 prepare-cargo.py` for `prepare_cargo` and, once natively confirmed,
-  `/usr/bin/open -- <url>`.
+  `/usr/bin/open -- <url>`. The console's fixed `/__desktop/open-web` navigation
+  requests native confirmation to run the integrity-checked `start-web.sh` in
+  Terminal, opening the owned origin. No renderer command, path or URL is accepted.
 - **Pipeline child:** hidden `cgagentharness agentic <action>`, a `shim::ACTIONS` entry.
 - **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` in the
   sandbox wrapper. Strict Linux mode puts the hidden `cgagentharness mcp-stdio-worker`

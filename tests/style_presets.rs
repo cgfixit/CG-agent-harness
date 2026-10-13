@@ -18,6 +18,7 @@ async fn every_builtin_style_reaches_chat_and_off_reverts_without_touching_defau
         ("concise", include_str!("../data/styles/concise.md")),
         ("design", include_str!("../data/styles/design.md")),
         ("research", include_str!("../data/styles/research.md")),
+        ("soul", include_str!("../data/styles/soul.md")),
         ("technical", include_str!("../data/styles/technical.md")),
     ] {
         let (status, set) = s
