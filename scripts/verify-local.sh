@@ -16,6 +16,7 @@ if command -v cargo-deny >/dev/null 2>&1; then echo "== deny"; cargo deny check;
 echo "== test"; GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" CGAGENTHARNESS_AGENTIC_WRITE_DISABLE="" cargo test --all-targets --locked
 echo "== contract scripts"
 python3 scripts/test-grok-acp-probe.py
+python3 scripts/test-prepare-cargo.py
 python3 scripts/test-release-plan.py
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" CGAH_TEST_BINARY=target/debug/cgagentharness python3 scripts/test-desktop-backend.py
 if command -v node >/dev/null 2>&1; then
