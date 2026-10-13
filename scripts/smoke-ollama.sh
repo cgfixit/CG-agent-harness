@@ -16,7 +16,8 @@ PORT="${PORT:-8791}"
 MODEL_URL="${MODEL_URL:-http://127.0.0.1:11434}"
 [ -x "$BIN" ] || { echo "build first: cargo build --release"; exit 1; }
 
-export CGAGENTHARNESS_HOME="$(mktemp -d)"
+CGAGENTHARNESS_HOME="$(mktemp -d)"
+export CGAGENTHARNESS_HOME
 export CGAGENTHARNESS_API_KEY=""
 export CGAGENTHARNESS_HARNESS_PORT="$PORT"
 echo "== home $CGAGENTHARNESS_HOME"
