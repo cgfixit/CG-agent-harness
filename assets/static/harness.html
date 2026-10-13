@@ -3923,7 +3923,7 @@ function looksLikeNlSearch(text) {
      break outside quotes followed by more words is a boundary. Typographic
      quotes (`“…”`, `‘…’`) are quoted terms like ASCII ones. A
      joiner (`and`, `or`, `plus`) directly between two quoted terms is the
-     scaffolding tokenize_unquoted drops (`'cgfixit' and 'Chris Grady'`),
+     scaffolding tokenize_unquoted drops (`'alice' and 'Bob Smith'`),
      not a follow-up clause. The mask covers the
      whole body, not only the suffix after the last term, so `"Rust" and
      compare it with "Go"` is caught by the `and` between the terms.

@@ -81,23 +81,136 @@ pub fn fs_equiv_path(path: &str) -> String {
         .join("/")
 }
 
-/// Recursively delete, clearing read-only bits git leaves on objects.
+/// Delete without following directory links. Unix unlink needs no file-mode
+/// repair; Windows read-only files are repaired only through confined handles.
 pub fn rmtree_best_effort(path: &Path) {
-    if !path.exists() {
-        return;
-    }
-    for entry in walkdir::WalkDir::new(path).contents_first(true).into_iter().flatten() {
-        let p = entry.path();
-        if let Ok(meta) = std::fs::symlink_metadata(p) {
-            let mut perms = meta.permissions();
-            if perms.readonly() {
-                #[allow(clippy::permissions_set_readonly_false)]
-                perms.set_readonly(false);
-                let _ = std::fs::set_permissions(p, perms);
+    #[cfg(not(windows))]
+    let _ = std::fs::remove_dir_all(path);
+    #[cfg(windows)]
+    {
+        if std::fs::remove_dir_all(path).is_ok() {
+            return;
+        }
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        };
+        let opened = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path);
+        if let Ok(root) = opened {
+            if root
+                .metadata()
+                .is_ok_and(|m| m.is_dir() && m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0)
+            {
+                clear_readonly_files(&cap_std::fs::Dir::from_std_file(root));
+                let _ = std::fs::remove_dir_all(path);
             }
         }
     }
-    let _ = std::fs::remove_dir_all(path);
+}
+
+#[cfg(windows)]
+fn clear_readonly_files(dir: &cap_std::fs::Dir) {
+    use cap_std::fs::OpenOptionsExt;
+    use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_WRITE_ATTRIBUTES,
+    };
+    let Ok(entries) = dir.entries() else { return };
+    for entry in entries.flatten() {
+        let mut options = cap_std::fs::OpenOptions::new();
+        options
+            .read(true)
+            .access_mode(FILE_GENERIC_READ | FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        let Ok(file) = dir.open_with(entry.file_name(), &options) else {
+            continue;
+        };
+        let file = file.into_std();
+        let Ok(meta) = file.metadata() else { continue };
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            continue;
+        }
+        if meta.is_dir() {
+            clear_readonly_files(&cap_std::fs::Dir::from_std_file(file));
+        } else if meta.is_file() && meta.permissions().readonly() {
+            // A hard link may share attributes with an object outside the clone.
+            let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+            // SAFETY: the file handle remains live and info is a valid out pointer.
+            if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, info.as_mut_ptr()) } == 0 {
+                continue;
+            }
+            // SAFETY: the successful call initialized the structure.
+            if unsafe { info.assume_init() }.nNumberOfLinks != 1 {
+                continue;
+            }
+            let mut perms = meta.permissions();
+            perms.set_readonly(false);
+            let _ = file.set_permissions(perms);
+        }
+    }
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+
+    fn readonly(path: &Path) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[test]
+    fn cleanup_removes_real_readonly_git_objects() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repo = temporary.path().join("clone");
+        std::fs::create_dir_all(repo.join(".git/objects")).unwrap();
+        let object = repo.join(".git/objects/fixture");
+        std::fs::write(&object, "object").unwrap();
+        readonly(&object);
+        rmtree_best_effort(&repo);
+        assert!(!repo.exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn cleanup_preserves_external_link_targets_and_permissions() {
+        let temporary = tempfile::tempdir().unwrap();
+        let outside = temporary.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let sentinel = outside.join("sentinel");
+        std::fs::write(&sentinel, "external fixture").unwrap();
+        let original = std::fs::metadata(&sentinel).unwrap().permissions();
+        readonly(&sentinel);
+        let before = std::fs::metadata(&sentinel).unwrap().permissions();
+        for root_link in [false, true] {
+            let root = temporary.path().join(if root_link { "root-link" } else { "clone" });
+            let link = if root_link {
+                root.clone()
+            } else {
+                std::fs::create_dir(&root).unwrap();
+                root.join("directory-link")
+            };
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_dir(&outside, &link).unwrap();
+            rmtree_best_effort(&root);
+            assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "external fixture");
+            assert_eq!(std::fs::metadata(&sentinel).unwrap().permissions(), before);
+        }
+        let linked = temporary.path().join("hard-linked-clone");
+        std::fs::create_dir(&linked).unwrap();
+        std::fs::hard_link(&sentinel, linked.join("object")).unwrap();
+        rmtree_best_effort(&linked);
+        assert_eq!(std::fs::metadata(&sentinel).unwrap().permissions(), before);
+        assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "external fixture");
+        std::fs::set_permissions(&sentinel, original).unwrap();
+    }
 }
 
 impl std::fmt::Debug for RepoWorkspace<'_> {

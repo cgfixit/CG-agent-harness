@@ -956,7 +956,7 @@ mod tests {
 
     #[test]
     fn bare_google_search_is_not_a_slash() {
-        let p = parse_line("search Google for the first 2 links for \"Chris Grady\"");
+        let p = parse_line("search Google for the first 2 links for \"Bob Smith\"");
         assert_eq!(p.kind, SlashKind::NotSlash);
         assert!(!p.dispatch);
     }
@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn combined_utterance_does_not_silent_run_web() {
         let p = parse_line(
-            "/memory consolidate insights from this session to episodic memory and search Google (serpapi) for the first 2 links for 'cgfixit' and 'Chris Grady'",
+            "/memory consolidate insights from this session to episodic memory and search Google (serpapi) for the first 2 links for 'alice' and 'Bob Smith'",
         );
         assert_eq!(p.command.as_deref(), Some("memory"));
         assert_eq!(p.sub.as_deref(), Some("consolidate"));

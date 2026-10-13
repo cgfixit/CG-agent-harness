@@ -8,6 +8,9 @@ decisions and the memory and goal routes. Speeds and the timeouts derived from
 them are checked against their ranges but never recorded, so a CPU container,
 a GitHub runner and an Apple-silicon Mac running the same models with the same
 OLLAMA_CONTEXT_LENGTH should write the same "compare" section.
+Any installed tag works, including a local derived tag passed via --models.
+The window check compares the tuning window to /api/ps context_length. It does
+not require 32768; shipped budgets stay sized from that reference.
 Exit 1 when any check fails; the JSON is written either way.
 `--compare a.json b.json ...` exits 1 if any run failed or the sections differ.
 """
