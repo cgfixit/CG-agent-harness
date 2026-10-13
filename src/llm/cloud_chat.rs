@@ -727,8 +727,8 @@ mod tests {
             "http://[2001:db8::1]:8123", // DevSkim: ignore DS137138 because this test asserts non-loopback rejection without connecting.
             "http://127.0.0.1", // DevSkim: ignore DS162092 because this test asserts missing-port rejection without connecting.
             "http://127.0.0.1:0", // DevSkim: ignore DS162092 because this test asserts zero-port rejection without connecting.
-            "http://user@127.0.0.1:8123", // DevSkim: ignore DS137138 DS162092 because this test asserts userinfo rejection without connecting.
-            "http://:secret@127.0.0.1:8123", // DevSkim: ignore DS137138 DS162092 because this test asserts password rejection without connecting.
+            "http://user@127.0.0.1:8123", // DevSkim: ignore DS137138,DS162092 because this test asserts userinfo rejection without connecting.
+            "http://:secret@127.0.0.1:8123", // DevSkim: ignore DS137138,DS162092 because this test asserts password rejection without connecting.
             "http://127.0.0.1:8123/v1", // DevSkim: ignore DS162092 because this test asserts path rejection without connecting.
             "http://127.0.0.1:8123/?q=1", // DevSkim: ignore DS162092 because this test asserts query rejection without connecting.
             "http://127.0.0.1:8123/#part", // DevSkim: ignore DS162092 because this test asserts fragment rejection without connecting.
