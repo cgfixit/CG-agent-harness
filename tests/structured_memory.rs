@@ -556,6 +556,35 @@ async fn session_clear_keeps_episodes_unless_explicit_cascade() {
 }
 
 #[tokio::test]
+async fn expired_episode_purge_route_requires_confirm_and_keeps_live_episodes() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let episode_id = stage_episode(&s).await;
+    let path = "/api/structured-memory/episodes/purge";
+    for body in [
+        json!({"reason":"ttl sweep"}),
+        json!({"reason":"ttl sweep","confirm":false}),
+    ] {
+        let (status, refused) = s.post_json(path, body).await;
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(code(&refused), "STRUCTURED_MEMORY_CONFIRM");
+    }
+    let (status, purged) = s.post_json(path, json!({"reason":"ttl sweep","confirm":true})).await;
+    assert_eq!(status, 200, "{purged}");
+    // The staged episode is inside its TTL, so the sweep removes nothing.
+    assert_eq!(purged["deleted"], 0);
+    let listed = s.get_json("/api/structured-memory/episodes").await.1;
+    assert_eq!(listed["count"], 1);
+    assert_eq!(listed["episodes"][0]["id"], episode_id);
+    assert!(s.audit_log().contains("structured_memory_episodes_purged"));
+
+    let off = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, refused) = off.post_json(path, json!({"reason":"ttl sweep","confirm":true})).await;
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(code(&refused), "STRUCTURED_MEMORY_DISABLED");
+}
+
+#[tokio::test]
 async fn export_is_escaped_owner_local_and_owner_purge_is_atomic_from_http() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), capture()).await;
