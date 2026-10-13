@@ -595,7 +595,7 @@ impl WebRuleRequest {
 
 fn valid_web_urls(url: &Option<String>, urls: &[String]) -> bool {
     (url.is_some() && urls.is_empty() || url.is_none() && !urls.is_empty())
-        && urls.len() <= super::web_policy::MAX_RULES
+        && urls.len() <= super::web_policy::MAX_BATCH_URLS
         && url.iter().chain(urls.iter()).all(|u| len_ok(u, 1, MAX_WEB_URL_LEN))
 }
 
@@ -641,7 +641,7 @@ impl Validate for WebResearchRequest {
     fn validate(&self) -> Vec<String> {
         if len_ok(&self.query, 1, MAX_WEB_QUERY_LEN)
             && self.group.as_deref().is_none_or(super::web_policy::valid_group)
-            && self.urls.len() <= super::web_policy::MAX_RULES
+            && self.urls.len() <= super::web_policy::MAX_BATCH_URLS
             && self.urls.iter().all(|u| len_ok(u, 1, MAX_WEB_URL_LEN))
             && self.engine.as_deref().is_none_or(|v| v == "pages")
             && (1..=10).contains(&self.count)
