@@ -15,10 +15,17 @@ edited; the release tag and bundled `Resources/COMMIT` identify the build.
 
 Both Bundle and release stage CLI artifacts through `scripts/package-release.sh`
 (release build, named artifact, sha256, extract-verify). Backend CI must pass before clean CLI packaging and the reusable universal
-macOS desktop build. Both packaging jobs and downloaded checksums must pass. The workflow rechecks the version, creates a draft with all
+macOS desktop build. Release CLI and desktop packaging neither restore nor save
+shared build caches. Both packaging jobs and downloaded checksums must pass. The workflow rechecks the version, creates a draft with all
 assets, and publishes it as a regular Latest release (`gh release edit --latest`).
 Existing releases and tags are never overwritten. Publication uses the event's
 exact source commit, so commits merged during a build wait for a later run.
+
+Publication targets the `release` environment. Configure its required reviewer
+as `cgfixit`, with self-approval allowed. This repository setting is separate
+from the workflow declaration; the declaration alone does not enforce review.
+With that protection configured, scheduled and manual publication wait for
+approval after builds complete.
 
 ## Change the timing
 

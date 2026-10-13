@@ -110,10 +110,12 @@ jobs:
     uses: ./.github/workflows/desktop.yml # zizmor: ignore[self-repository]
     with:
       artifact-name: release-cgagentharness-macos-universal-app
+      skip-cache: true
 
   publish:
     needs: [plan, build, desktop]
     runs-on: ubuntu-latest
+    environment: release
     timeout-minutes: 10
     permissions:
       contents: write
