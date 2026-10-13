@@ -414,7 +414,10 @@ pub async fn run_from(
     group: Option<&str>,
     starts: &[String],
 ) -> Result<Value> {
-    if question.trim().is_empty() || question.chars().count() > 200 || group.is_some_and(|g| !valid_group(g)) {
+    if question.trim().is_empty()
+        || question.chars().count() > super::schemas::MAX_WEB_RESEARCH_QUESTION_LEN
+        || group.is_some_and(|g| !valid_group(g))
+    {
         return Err(error("WEB_BAD_QUERY", "invalid research question or group"));
     }
     // The run keeps one model and one runtime-limit snapshot: a selection change
