@@ -141,6 +141,11 @@ confirm and reason. Generation has no tools, web, recalled facts, schema change,
 or cloud egress; it uses temperature 0 and 1024 output tokens. Automatic
 `consolidator-v2` still requires human semantic summaries.
 
+Chat suggestions retain their turn's local model; coding suggestions snapshot
+the selection at completion. Manual and idle consolidation use the current
+selection. Cloud selections use the configured local backend; memory never calls
+a cloud provider. Failed runs retain the attempted model.
+
 | Setting | Default | Clamp / meaning |
 |---|---|---|
 | `suggestion_max_input_chars` | 8000 | 256–32000 total, split equally between input/output; character-safe clipping |

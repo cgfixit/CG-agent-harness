@@ -2650,6 +2650,26 @@ impl StructuredMemoryStore {
         Ok(started)
     }
 
+    /// Record the attempted local model before generation, including failed calls.
+    pub fn set_consolidation_model(&self, owner: &str, id: &str, model_id: &str) -> Result<()> {
+        Self::require_owner(owner)?;
+        let model_id = self.clean_text(model_id, 200, true)?;
+        let changed = self
+            .lock()
+            .execute(
+                "UPDATE consolidation_runs SET model_id=?1 WHERE owner_id=?2 AND public_id=?3 AND state='running'",
+                params![model_id, owner, id],
+            )
+            .map_err(sql)?;
+        if changed == 0 {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_CHANGED",
+                "consolidation run is not running",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn cancel_consolidation_run(&self, owner: &str, id: &str) -> Result<ConsolidationRun> {
         Self::require_owner(owner)?;
         if !valid_public_id(id) {
