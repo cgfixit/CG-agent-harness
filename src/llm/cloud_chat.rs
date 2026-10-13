@@ -720,24 +720,27 @@ mod tests {
             (config(Provider::Grok), config(Provider::Claude))
         };
         for invalid in [
-            "https://127.0.0.1:8123",
-            "http://localhost:8123",
-            "http://example.invalid:8123",
-            "http://192.0.2.1:8123",
-            "http://[2001:db8::1]:8123",
-            "http://127.0.0.1",
-            "http://127.0.0.1:0",
-            "http://user@127.0.0.1:8123",
-            "http://:secret@127.0.0.1:8123",
-            "http://127.0.0.1:8123/v1",
-            "http://127.0.0.1:8123/?q=1",
-            "http://127.0.0.1:8123/#part",
-            " http://127.0.0.1:8123",
+            "https://127.0.0.1:8123", // DevSkim: ignore DS162092 because this test asserts rejection without connecting.
+            "http://localhost:8123", // DevSkim: ignore DS162092 because this test asserts hostname rejection without connecting.
+            "http://example.invalid:8123", // DevSkim: ignore DS137138 because this test asserts non-loopback rejection without connecting.
+            "http://192.0.2.1:8123", // DevSkim: ignore DS137138 because this test asserts non-loopback rejection without connecting.
+            "http://[2001:db8::1]:8123", // DevSkim: ignore DS137138 because this test asserts non-loopback rejection without connecting.
+            "http://127.0.0.1", // DevSkim: ignore DS162092 because this test asserts missing-port rejection without connecting.
+            "http://127.0.0.1:0", // DevSkim: ignore DS162092 because this test asserts zero-port rejection without connecting.
+            "http://user@127.0.0.1:8123", // DevSkim: ignore DS137138 DS162092 because this test asserts userinfo rejection without connecting.
+            "http://:secret@127.0.0.1:8123", // DevSkim: ignore DS137138 DS162092 because this test asserts password rejection without connecting.
+            "http://127.0.0.1:8123/v1", // DevSkim: ignore DS162092 because this test asserts path rejection without connecting.
+            "http://127.0.0.1:8123/?q=1", // DevSkim: ignore DS162092 because this test asserts query rejection without connecting.
+            "http://127.0.0.1:8123/#part", // DevSkim: ignore DS162092 because this test asserts fragment rejection without connecting.
+            " http://127.0.0.1:8123", // DevSkim: ignore DS162092 because this test asserts whitespace rejection without connecting.
         ] {
             let (grok, claude) = configs();
             assert!(test_fixture_configs(grok, claude, invalid).is_err(), "{invalid}");
         }
-        for valid in ["http://127.0.0.1:8123", "http://[::1]:8123/"] {
+        for valid in [
+            "http://127.0.0.1:8123", // DevSkim: ignore DS162092 because this test validates loopback HTTP without connecting.
+            "http://[::1]:8123/", // DevSkim: ignore DS137138 because this test validates loopback HTTP without connecting.
+        ] {
             let (grok, mut claude) = configs();
             claude.api_key = TEST_CLOUD_KEY.into();
             let (grok, claude) = test_fixture_configs(grok, claude, valid).unwrap();
@@ -752,7 +755,7 @@ mod tests {
                 Provider::Grok => grok.api_key = "operator-key-must-never-leave".into(),
                 Provider::Claude => claude.api_key = "operator-key-must-never-leave".into(),
             }
-            let error = test_fixture_configs(grok, claude, "http://127.0.0.1:8123")
+            let error = test_fixture_configs(grok, claude, "http://127.0.0.1:8123") // DevSkim: ignore DS162092 because this test asserts operator-credential rejection without connecting.
                 .err()
                 .unwrap();
             assert!(!error.to_string().contains("operator-key-must-never-leave"));
