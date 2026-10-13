@@ -1,6 +1,6 @@
 # scripts
 
-Operator and CI helpers. Verification: `verify-local.sh`, `check-pr-template.sh`,
+Operator and CI helpers. `start-web.sh [port]` starts the console on loopback (default 8790) and opens it in a browser. Verification: `verify-local.sh`, `check-pr-template.sh`,
 `ci-docs-only.sh`, `test-desktop-backend.py`, the `test-*.mjs` browser checks,
 `smoke-ollama.sh` (with `FINGERPRINT_OUT`, plus `live-ollama/` for a pinned
 Ollama and models, the live-model fingerprint CI compares).
