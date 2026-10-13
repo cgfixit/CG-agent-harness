@@ -434,7 +434,7 @@ fn resolve_command(cmd: &str) -> (Option<&'static str>, bool, u8) {
 
 fn known_subs(cmd: &str) -> &'static [&'static str] {
     match cmd {
-        "session" => &["new", "list", "use", "rename", "info"],
+        "session" => &["new", "list", "use", "rename", "info", "unpin"],
         "soul" => &[
             "edit", "propose", "history", "review", "apply", "reject", "on", "off", "status",
         ],
@@ -558,7 +558,7 @@ fn is_mutation(cmd: &str, sub: Option<&str>) -> bool {
         ("soul", Some("apply" | "reject" | "edit" | "propose")) => true,
         ("soul", Some("on" | "off")) => true,
         ("memory", Some("on" | "off" | "forget" | "clear" | "save" | "remember" | "add")) => true,
-        ("session", Some("new" | "rename" | "use")) => true,
+        ("session", Some("new" | "rename" | "use" | "unpin")) => true,
         ("goal" | "style" | "model" | "skill" | "loop" | "clear", _) => true,
         (
             "memory",

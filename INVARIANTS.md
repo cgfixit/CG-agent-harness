@@ -80,7 +80,10 @@ the error code. See `docs/MCP_CLIENT.md` and
 Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
 and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`
-and require `confirm: true`. MCP tools are not attached to `/loop`. `GET /api/mcp`
+and require `confirm: true`. MCP stays off `/loop`. Local loops reuse owned attachments
+and permitted web tools. Goal modes `off`/`fetch`/`all` restrict chat tools without granting
+URLs; token and cancellation bounds hold. Cloud loops remain refused. Owner-scoped
+unpinning excludes generation and retains blobs and messages. `GET /api/mcp`
 discloses declared server and tool names to authenticated accounts; declarations
 are shared. Calls and refusals are audited (`mcp_stdio_spawn`,
 `mcp_sse_call`, `mcp_refused`) without arguments or payloads. The mutation CSRF token
@@ -200,8 +203,8 @@ edits between an authorization check and an OS operation is claimed.
 Chat exposes only two read-only model tools while web is enabled: Google keyword
 search and permitted URL fetch. The dispatcher bounds calls, tokens, time and
 arguments and rechecks current account/URL permissions before reads and evidence
-delivery. It cannot mutate policy, credentials, accounts or repositories, and
-`/loop` exposes no tools. Search-provider snippets are listings, not fetched
+delivery. It cannot mutate policy, credentials, accounts or repositories, including
+local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
 configured SerpAPI key selects the fixed Google-results API transport, while no
 active key selects public Google. SerpAPI listings require enabled web and current

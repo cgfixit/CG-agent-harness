@@ -105,7 +105,7 @@ When prose contradicts code, fix the prose in the same PR.
   whitelist assertion together.
 - `/api/agent/run`, `/api/agent/jobs` and persisted schedules all go through
   `prepare_run`; never give one a path the others skip.
-- MCP tools never attach to `/loop`; `/loop` stays tool-free.
+- MCP tools never attach to `/loop`; permitted read-only web tools can.
 - Prefer a `#[cfg(test)] mod tests` unit test beside a pure parser or matcher
   over another integration test.
 - PRs are draft, one concern, on a driver-prefixed branch (`claude/`, `codex/`,

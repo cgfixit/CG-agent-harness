@@ -341,7 +341,10 @@ pub async fn preview(
         validate_content(&state, content)?;
     }
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    let web = state.web_snapshot().context_text(settings.web_enabled, &owner);
+    let web_enabled = session.as_ref().map_or(settings.web_enabled, |s| {
+        s.chat_web_mode(settings.web_enabled).enabled()
+    });
+    let web = state.web_snapshot().context_text(web_enabled, &owner);
     let selections = req
         .selected_facts
         .as_ref()
@@ -408,7 +411,9 @@ pub async fn preview(
         selected_facts_context: Some(&facts),
         memory_budget,
         memory_enabled: settings.memory_enabled,
-        chat_tools_enabled: settings.web_enabled,
+        chat_web_mode: session
+            .as_ref()
+            .map_or(settings.web_enabled.into(), |s| s.chat_web_mode(settings.web_enabled)),
         web_enabled: settings.web_enabled,
         attachment_fence: Some(attachment_fence.as_str()),
     };

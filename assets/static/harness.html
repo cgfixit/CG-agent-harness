@@ -1182,7 +1182,7 @@ function renderSearchResults(result) {
 }
 function renderChatWebTools(events) {
   for (const event of events || []) {
-    if (!event.ok) { sys(event.tool + ': ' + event.code + ' — ' + event.message); continue; }
+    if (!event.ok || event.code === 'WEB_TOOLS_WITHHELD') { sys(event.tool + ': ' + event.code + ' — ' + event.message); continue; }
     const result = event.result || {};
     if (result.results) sys(renderSearchResults(result));
     else sys(renderSearchResults({provider:event.tool,results:[{title:result.title || result.url,url:result.url}],notice:result.notice}), (result.source_chars || 0) + ' source characters');
@@ -1839,6 +1839,7 @@ const COMMANDS = [
   ['/session info', 'inspect the current session'],
   ['/session new [title]', 'start a fresh conversation'],
   ['/session rename <title>', 'rename the current session'],
+  ['/session unpin', 'clear this session’s attachment pins; keep uploaded files'],
   ['/session use <id>', 'restore a saved conversation'],
   ['/skill [status]|use <id...>|clear', 'inspect, replace or clear session prompt-skill selection'],
   ['/skill check:<profile>', 'select one fixed check for an already staged coding request'],
@@ -1961,12 +1962,12 @@ const COMMAND_MAN = {
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
   '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
-  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
+  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. Prefix --web off, --web fetch or --web all (default) to restrict this goal’s chat tools. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
   '/goal stage <branch>': {detail:'Turns the session goal into a staged coding request on that branch. It still needs /agent confirm <reason>.'},
   '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
   '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
-  '/loop [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Chat only: it never starts a coding run and has no tools.'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
+  '/loop [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
   '/memory [on|off|status]': {detail:'Alone or with status, shows the pinned notes, your structured fact and pending proposal counts, and every gate. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
   '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
   '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
@@ -1987,6 +1988,7 @@ const COMMAND_MAN = {
   '/registry': {detail:'Lists skills, tools and connectors together.'},
   '/session [list]': {detail:'Lists saved sessions with ids, titles, message and token counts.'},
   '/session info': {detail:'Shows the current session’s id, title, model, message count and tokens.'},
+  '/session unpin': {detail:'Stops continuation, clears this session’s attachment pins, and retains uploaded files. Existing messages remain. Cloud and coding-agent turns still reject live attachment pins.'},
   '/session new [title]': {detail:'Starts a fresh conversation. Shared persona, enabled notes and web context carry over; /prompt shows what is included.'},
   '/session rename <title>': {detail:'Renames the current session.'},
   '/session use <id>': {detail:'Restores a saved session and replays its messages. Ids come from /session list or the Sessions pane.'},
@@ -2468,7 +2470,17 @@ async function runSlash(line, webCommand) {
 
       case 'session': {
         const sub = rest[0] || 'list';
-        if (sub === 'new' || sub === 'use') {
+        if (sub === 'unpin') {
+          if (rest.length !== 1) { sys('usage: /session unpin'); break; }
+          if (!currentSession) { sys('no active session'); break; }
+          await requestLoopStop();
+          if (staleReview()) break;
+          const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/attachment-pins', 'DELETE');
+          if (staleReview()) break;
+          retryAttachmentIds = null;
+          if (attachInput) { attachInput.value = ''; paintAttach(); }
+          sys('Cleared ' + r.removed + ' attachment pin(s); uploaded files and existing messages remain.');
+        } else if (sub === 'new' || sub === 'use') {
           const revision = ++sessionRevision;
           sendBtn.disabled = true;
           abortInflightSearch(); if (inflightChat) await requestLoopStop(); else stopLoop();
@@ -3287,7 +3299,7 @@ async function runSlash(line, webCommand) {
           const shown = await api('/api/sessions/' + encodeURIComponent(currentSession));
           sessionGoal = typeof shown.goal === 'string' ? shown.goal : '';
           paintGoalLoop();
-          sys(sessionGoal ? ('current goal:\n' + sessionGoal) : 'no goal set');
+          sys(sessionGoal ? ('current goal (web: ' + (shown.goal_web_mode || 'all') + '):\n' + sessionGoal) : 'no goal set');
           break;
         }
         if (arg === 'clear') {
@@ -3299,21 +3311,29 @@ async function runSlash(line, webCommand) {
           sys('goal cleared');
           break;
         }
-        if (arg.length > MAX_GOAL_CHARS) {
+        let goalText = arg, goalWebMode = 'all';
+        if (rest[0] === '--web') {
+          if (!['off', 'fetch', 'all'].includes(rest[1]) || rest.length < 3) {
+            sys('usage: /goal --web off|fetch|all <text>'); break;
+          }
+          goalWebMode = rest[1];
+          goalText = arg.replace(/^--web\s+\S+\s+/, '');
+        }
+        if (Array.from(goalText).length > MAX_GOAL_CHARS) {
           sys('goal is too long; keep it under ' + MAX_GOAL_CHARS + ' characters');
           break;
         }
         if (!currentSession) {
-          const created = await api('/api/sessions', 'POST', { title: arg.slice(0, 40) });
+          const created = await api('/api/sessions', 'POST', { title: goalText.slice(0, 40) });
           currentSession = created.session_id;
           paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
         }
-        const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: arg });
+        const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: goalText, web_mode: goalWebMode });
         sessionGoal = set.goal || '';
         paintGoalLoop();
-        sys('goal set:\n' + sessionGoal);
+        sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal);
         await refreshSessions();
         break;
       }
@@ -3341,8 +3361,13 @@ async function runSlash(line, webCommand) {
            tab may have changed it since this page last read it. */
         if (currentSession) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
+          if (staleReview()) break;
           sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
           paintGoalLoop();
+          const status = await api('/api/status');
+          if (staleReview()) break;
+          if (status.provider !== 'ollama' && status.base_url === null) { sys('Select a local model before /loop; cloud loops are unavailable.'); break; }
+          sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); goal web mode ' + (loaded.goal_web_mode || 'all') + '; web tools ' + (status.chat_tools_available && loaded.goal_web_mode !== 'off' ? (loaded.goal_web_mode === 'fetch' ? 'fetch only within current URL permissions' : 'available within current URL permissions') : 'off') + '. /session unpin clears pins.');
         }
         if (!sessionGoal) { sys('set a goal first: /goal <what you want done>'); break; }
         if (sub) {
@@ -3495,16 +3520,17 @@ function replyHasGoalDone(text) {
 }
 
 /* One loop turn's instruction. It is model-agnostic, restates a bounded
-   slice of the goal next to the reply (small models lose a system-prompt
+   full goal next to the reply (small models lose a system-prompt
    goal behind long history) and asks for one new step, the usual cure for a
    7B-27B model restating its previous answer. */
-const LOOP_GOAL_REMINDER_CHARS = 240;
+// Match the server goal limit: late constraints must reach the latest user turn.
+const LOOP_GOAL_REMINDER_CHARS = 2000;
 function loopTurnPrompt(turn, total, goal) {
   // Code points, not UTF-16 units: a cut surrogate pair is JSON the server rejects.
   const g = Array.from(String(goal || '').replace(/\s+/g, ' ').trim());
   const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1).join('') + '…' : g.join('');
   return 'Loop turn ' + turn + ' of ' + total + '. Session goal: ' + reminder + '\n' +
-    'Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
+    'Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
     'Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. ' +
     'Stay in this chat; do not request a real-repo write.';
 }
@@ -3555,23 +3581,43 @@ async function runLoopTurns() {
   try {
     while (loopState === activeLoop && !loopState.stop && loopState.remaining > 0) {
       const turn = loopState.total - loopState.remaining + 1;
+      const turnSession = currentSession, turnRevision = sessionRevision;
       /* Restate the stored goal, not this page's copy: another tab may have
          changed or cleared it since the last turn. */
       try {
         const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
+        if (loopState !== activeLoop || turnRevision !== sessionRevision || turnSession !== currentSession) return;
         sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
         paintGoalLoop();
       } catch (_) { /* keep the last known goal; the turn reports its own failure */ }
-      if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
+      if (loopState !== activeLoop) return;
+      if (activeLoop.stop) { stopLoop('loop stop honored'); return; }
       if (!sessionGoal) { stopLoop('loop stopped — the session goal was cleared'); return; }
       const framed = loopTurnPrompt(turn, loopState.total, sessionGoal);
       /* A routed search started during the cooldown owns the gate, and so
          does the chat turn it may fall back to on a router failure; let both
          settle rather than starting a model turn that overlaps them. */
       while ((inflightSearch || inflightChat) && loopState === activeLoop && !loopState.stop) await sleepMs(250);
-      if (loopState !== activeLoop || loopState.stop) { stopLoop(loopState && loopState.stop ? 'loop stop honored' : ''); return; }
-      const reply = await sendChat(framed, true);
       if (loopState !== activeLoop) return;
+      if (activeLoop.stop) { stopLoop('loop stop honored'); return; }
+      let attachmentIds = retryAttachmentIds && retryAttachmentIds.session === currentSession ? retryAttachmentIds.ids : [];
+      const files = attachInput && attachInput.files ? Array.from(attachInput.files) : [];
+      if (files.length) {
+        const uploadSession = currentSession, uploadRevision = sessionRevision;
+        try {
+          sendBtn.disabled = true;
+          attachmentIds = await uploadChatAttachments(files);
+          if (uploadRevision !== sessionRevision || uploadSession !== currentSession || loopState !== activeLoop || activeLoop.stop) return;
+          retryAttachmentIds = {session: uploadSession, ids: attachmentIds};
+          attachInput.value = ''; paintAttach();
+        } catch (e) {
+          if (loopState === activeLoop && uploadRevision === sessionRevision && uploadSession === currentSession) { showError(e); stopLoop('loop stopped — attachment upload failed'); }
+          return;
+        } finally { if (uploadRevision === sessionRevision && uploadSession === currentSession) releaseSendGate(); }
+      }
+      const reply = await sendChat(framed, true, {attachment_ids: attachmentIds});
+      if (loopState !== activeLoop || turnRevision !== sessionRevision || turnSession !== currentSession) return;
+      if (reply !== null && retryAttachmentIds && retryAttachmentIds.session === turnSession) retryAttachmentIds = null;
       if (!loopState || loopState.stop) {
         stopLoop(loopState && loopState.stop ? 'loop stop honored' : '');
         return;
@@ -3585,6 +3631,7 @@ async function runLoopTurns() {
         sys('loop turn failed (' + loopState.failures + '/' + MAX_LOOP_FAILURES + ') — /loop to retry, /loop stop to abort');
         return;
       }
+      if (loopState.blockedTool) { stopLoop('loop stopped — ' + loopState.blockedTool + '; goal remains incomplete. Check /web status and the reported permission, provider or budget error before retrying /loop.'); return; }
       loopState.failures = 0;
       loopState.remaining -= 1;
       if (loopState.lastReply && repliesNearlyRepeat(loopState.lastReply, reply)) {
@@ -3637,7 +3684,7 @@ window.addEventListener('beforeunload', function () {
   fetch('/api/chat/cancel', { method: 'POST', headers: headers, keepalive: true, credentials: 'same-origin' }).catch(function () {});
 });
 
-async function finishChat(r) {
+async function finishChat(r, asLoop) {
   promptHistory.session = null;
   if (r && r.session_id) {
     /* A session the server just auto-created starts with style off; the
@@ -3656,6 +3703,8 @@ async function finishChat(r) {
     loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
   }
   renderChatWebTools(r && r.web_tools);
+  const failedTool = ((r && r.web_tools) || []).find(tool => tool.ok === false);
+  if (asLoop && loopState && failedTool) loopState.blockedTool = failedTool.code || 'WEB_TOOL_FAILED';
   agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
         ' tok · session total ' + (tally.total || 0));
   /* The server compared this turn with the window Ollama loaded (/api/ps);
@@ -3705,14 +3754,14 @@ async function sendChat(text, asLoop, extra) {
     body.retrieve = true;
     if (extra.retrieve_query) body.retrieve_query = extra.retrieve_query;
   }
-  if (!asLoop && extra && extra.attachment_ids && extra.attachment_ids.length) {
+  if (extra && extra.attachment_ids && extra.attachment_ids.length) {
     body.attachment_ids = extra.attachment_ids;
   }
   try {
     const r = await api('/api/chat', 'POST', body, undefined, onDelta);
     if (revision !== sessionRevision) return null;
     if (preview) { preview.remove(); preview = null; }
-    return finishChat(r);
+    return finishChat(r, asLoop);
   } catch (e) {
     if (revision !== sessionRevision) return null;
     if (e && e.name === 'AbortError') return null;
@@ -3726,7 +3775,7 @@ async function sendChat(text, asLoop, extra) {
         const retry = await api('/api/chat', 'POST', body, undefined, onDelta);
         if (revision !== sessionRevision) return null;
         if (preview) { preview.remove(); preview = null; }
-        return finishChat(retry);
+        return finishChat(retry, asLoop);
       } catch (e2) {
         if (revision !== sessionRevision) return null;
         if (e2 && e2.name === 'AbortError') return null;
@@ -3735,7 +3784,7 @@ async function sendChat(text, asLoop, extra) {
         return null;
       }
     }
-    if (asLoop && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT' || code === 'LOOP_IN_FLIGHT' || code === 'CHAT_BUSY' || code === 'ATTACHMENT_SURFACE_FORBIDDEN')) {
+    if (asLoop && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT' || code === 'LOOP_IN_FLIGHT' || code === 'CHAT_BUSY' || code === 'ATTACHMENT_SURFACE_FORBIDDEN' || code.startsWith('WEB_'))) {
       showError(e);
       stopLoop('loop stopped — ' + code);
       return null;

@@ -538,7 +538,7 @@ try {
  const retrieveReq=requests.filter(r=>r[1]==='/api/chat').at(-1)[2];
  assert.equal(retrieveReq.retrieve,true);assert.equal(retrieveReq.retrieve_query,'metric');assert.equal(retrieveReq.message,'metric');
  assert.ok(retrieveReq.session_id,'force-include chat keeps the current session');
- await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal:")'));
+ await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal (web: all):")'));
  let before=chatCount();await send('/loop 2');assert.equal(chatCount(),before+1);assert.equal(await evaluate('loopState.remaining'),1);
  await send('/loop');assert.equal(chatCount(),before+2);assert.equal(await evaluate('loopState'),null);
  mode='repeat';await send('/loop 3');await send('/loop');assert.equal(await evaluate('loopState'),null);

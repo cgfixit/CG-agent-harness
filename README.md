@@ -13,7 +13,7 @@ CG-Agent brings conversations, files, memory, and selected tools into one local 
 
 | Capability | What it provides | Starting state |
 |---|---|---|
-| **Local chat** | Streaming sessions, attachments, skills, prompt inspection, and bounded, tool-free goal continuation with `/loop`. | Loopback model service; Ollama by default. |
+| **Local chat** | Streaming sessions, attachments, skills, prompt inspection, and bounded goal continuation with owned attachments and permitted web tools through `/loop`. | Loopback model service; Ollama by default. |
 | **Memory** | Shared pinned notes plus account-private structured facts, recall, and proposed summaries or insights. | Capture, retrieval, and suggestions on; applying proposed facts requires review. |
 | **Web research** | Google listings, permitted page fetches, and research with request, time, byte, and token budgets. | Web tools on with an empty content allowlist; search results never authorize page reads. |
 | **Reviewed coding** | A planner/executor loop, isolated repository clones, checks, complete diff review, and separate Git decisions. | Disabled until configured for a selected repository. |
