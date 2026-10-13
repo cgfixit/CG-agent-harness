@@ -30,6 +30,7 @@ pub const MAX_READ_FILE_LEN: usize = 1024;
 pub const MAX_GOAL_LEN: usize = 2000;
 pub const MAX_WEB_URL_LEN: usize = super::web_policy::MAX_URL_BYTES;
 pub const MAX_WEB_QUERY_LEN: usize = 200;
+pub const MAX_WEB_RESEARCH_QUESTION_LEN: usize = 2000;
 pub const MAX_NOTE_LEN: usize = 500;
 pub const MAX_NOTE_ID_LEN: usize = 32;
 pub const MAX_STRUCTURED_FACT_CHARS: usize = 4000;
@@ -639,7 +640,7 @@ pub struct WebResearchRequest {
 }
 impl Validate for WebResearchRequest {
     fn validate(&self) -> Vec<String> {
-        if len_ok(&self.query, 1, MAX_WEB_QUERY_LEN)
+        if len_ok(&self.query, 1, MAX_WEB_RESEARCH_QUESTION_LEN)
             && self.group.as_deref().is_none_or(super::web_policy::valid_group)
             && self.urls.len() <= super::web_policy::MAX_BATCH_URLS
             && self.urls.iter().all(|u| len_ok(u, 1, MAX_WEB_URL_LEN))

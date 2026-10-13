@@ -89,11 +89,18 @@ pub(crate) fn initial_prompt_tokens(parsed: &Value) -> Option<u64> {
 /// inline. That text is not the answer: kept, it is shown as the reply, stored in
 /// session history and re-sent with every later prompt, and it hides a JSON or
 /// `GOAL_DONE` answer from its parser. Only a block that opens the reply and is
-/// closed is removed; anything else is returned unchanged.
+/// closed is removed. Some local templates omit the opening marker and emit
+/// the identical answer on both sides of a standalone closing marker; keep
+/// one copy only when equality proves no distinct text would be lost.
 pub fn strip_leading_reasoning(text: &str) -> &str {
     const OPEN: &str = "<think>";
     const CLOSE: &str = "</think>";
     let Some(rest) = text.trim_start().strip_prefix(OPEN) else {
+        if let Some((before, answer)) = text.split_once("\n</think>\n") {
+            if !before.trim().is_empty() && before.trim() == answer.trim() {
+                return answer.trim_start();
+            }
+        }
         return text;
     };
     match rest.find(CLOSE) {
@@ -529,5 +536,34 @@ mod tests {
         }
         assert_eq!(reply_json_text("no object here"), "no object here");
         assert_eq!(reply_json_text("} backwards {"), "} backwards {");
+    }
+
+    #[test]
+    fn identical_answers_around_a_bare_reasoning_close_keep_one_copy() {
+        // Observed from qwen3.8:27b-mlx-cg with reasoning_effort=none, both
+        // through native chat and directly through Ollama's compatible API.
+        for answer in [
+            "7",
+            "Cedar: 5/0. Alder: 2/1. Birch: 0/2.\n\nGOAL_DONE",
+            r#"{"supported":[]}"#,
+        ] {
+            let repeated = format!("{answer}\n</think>\n\n{answer}");
+            let parsed = parse_chat_response(&reply(&repeated), "local-model").unwrap();
+            assert_eq!(parsed.body_text, answer);
+            assert_eq!(reply_json_text(&repeated), answer);
+        }
+        for kept in [
+            "Planning is distinct.\n</think>\nThe answer.",
+            "7</think>7", // a literal inline delimiter is not this provider shape
+            "</think>\n7",
+            "\n</think>\n",                 // no complete answer to recover
+            "```text\n7\n</think>\n7\n```", // quoted example
+            "GOAL_DONE\n</think>\nStill working.",
+        ] {
+            assert_eq!(
+                parse_chat_response(&reply(kept), "local-model").unwrap().body_text,
+                kept
+            );
+        }
     }
 }
