@@ -15,7 +15,8 @@ ignore = [
     { id = "RUSTSEC-2026-0253", reason = "tantivy 0.26 StoreReader: LruCache<usize,_> get/put only, never pop; usize has no Drop; remove at tantivy>=0.27" },
     # Added 2026-10-12. RUSTSEC-2024-0449 (unmaintained, no safe upgrade) on unsafe-libyaml,
     # pulled only through serde_yaml_ng for config.yaml parsing of operator-owned files.
-    # Revisit by swapping to a maintained YAML crate; unused-ignored-advisory flags this once stale.
+    # Owner/removal condition: docs/DEPENDENCIES.md#retained-constraints (weekly watch).
+    # unused-ignored-advisory only flags an unmatched ignore, not an available replacement.
     { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained via serde_yaml_ng; no safe upgrade; parses operator-owned config only; replace YAML crate later" },
 ]
 
