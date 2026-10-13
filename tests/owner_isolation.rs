@@ -71,6 +71,24 @@ async fn accounts_cannot_read_mutate_search_export_or_schedule_foreign_sessions(
     )
     .await;
     let path = format!("/api/sessions/{id}");
+    assert_eq!(
+        request(&s, &bob, Method::DELETE, &format!("{path}/attachment-pins"), json!({}))
+            .await
+            .status(),
+        404
+    );
+    assert_eq!(
+        request(
+            &s,
+            &alice,
+            Method::DELETE,
+            &format!("{path}/attachment-pins"),
+            json!({})
+        )
+        .await
+        .status(),
+        200
+    );
     for suffix in ["", "/export", "/goal-stage"] {
         assert_eq!(
             request(&s, &bob, Method::GET, &format!("{path}{suffix}"), json!({}))

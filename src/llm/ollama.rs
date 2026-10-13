@@ -297,7 +297,7 @@ pub async fn snapshot(endpoint: &str, model: &str, key: &str, cfg: &AppConfig) -
     }))
 }
 
-pub async fn run_warmup(backend: &ResolvedLocalBackend, cfg: &AppConfig, audit: &Audit) {
+pub async fn run_warmup(backend: &ResolvedLocalBackend, model: &str, cfg: &AppConfig, audit: &Audit) {
     if !cfg.flag_is_true("models.local_llm.warmup.enabled") {
         return;
     }
@@ -309,13 +309,13 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, cfg: &AppConfig, audit: 
         audit.log(json!({"event":"ollama_warmup_degraded","reason":"endpoint"}));
         return;
     };
-    if !model_name_ok(&backend.model) {
+    if !model_name_ok(model) {
         audit.log(json!({"event":"ollama_warmup_degraded","reason":"model"}));
         return;
     }
     let keep_alive = clamped(cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
     let timeout = Duration::from_secs(clamped(cfg, "models.local_llm.warmup.timeout_sec", 30, 1, 120));
-    let payload = warmup_payload(&backend.model, keep_alive);
+    let payload = warmup_payload(model, keep_alive);
     debug_assert!(!payload.to_string().contains("num_ctx"));
     let result = async {
         let client = http_client(timeout)?;
@@ -334,12 +334,12 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, cfg: &AppConfig, audit: 
     .await;
     match result {
         Ok(()) => {
-            tracing::info!(model = backend.model.as_str(), "ollama keep_alive warmup ok");
-            audit.log(json!({"event":"ollama_warmup_ok","model":backend.model}));
+            tracing::info!(model = model, "ollama keep_alive warmup ok");
+            audit.log(json!({"event":"ollama_warmup_ok","model":model}));
         }
         Err(_) => {
-            tracing::warn!(model = backend.model.as_str(), "ollama keep_alive warmup degraded");
-            audit.log(json!({"event":"ollama_warmup_degraded","model":backend.model}));
+            tracing::warn!(model = model, "ollama keep_alive warmup degraded");
+            audit.log(json!({"event":"ollama_warmup_degraded","model":model}));
         }
     }
 }

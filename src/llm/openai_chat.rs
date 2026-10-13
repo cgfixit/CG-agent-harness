@@ -333,10 +333,20 @@ impl ChatClient {
             // The dispatcher accepts a bounded batch and checks each read's
             // authority. This permits multiple calls, not unbounded execution.
             payload["parallel_tool_calls"] = json!(true);
+        } else {
+            // Tool history can still induce calls when definitions are omitted.
+            // The final bounded synthesis must explicitly disable them.
+            payload["tool_choice"] = json!("none");
         }
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = json!(effort);
         }
+        // Some local servers replay historical tool calls at the end of an SSE
+        // synthesis even with tool_choice=none. Their complete JSON response
+        // correctly finishes with stop. Buffer only this tool-free final call;
+        // the caller still validates completion, authority and any returned calls
+        // before delivery, and cancellation/deadlines remain in send_payload.
+        let output = if tools.is_empty() { None } else { output };
         self.send_payload(payload, output, None).await
     }
 

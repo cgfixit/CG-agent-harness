@@ -3,7 +3,7 @@ mod common;
 use axum::{
     response::{
         sse::{Event, KeepAlive},
-        Sse,
+        IntoResponse, Sse,
     },
     Json, Router,
 };
@@ -63,39 +63,58 @@ async fn start(s: &TestServer, id: &str, message: &str) -> reqwest::Response {
 }
 
 #[tokio::test]
-async fn multiple_streamed_tools_reach_reads_and_keep_the_total_call_budget() {
+async fn multiple_streamed_tools_then_buffered_synthesis_keep_the_total_call_budget() {
     let reads = Arc::new(AtomicUsize::new(0));
     let read_counter = reads.clone();
     let fixture = Router::new()
-        .route("/docs/{page}", axum::routing::get(move || {
-            let reads=read_counter.clone();
-            async move { reads.fetch_add(1, Ordering::SeqCst); ([("content-type","text/plain")],"STREAMED_SOURCE") }
-        }))
-        .route("/v1/chat/completions", axum::routing::post(|Json(request):Json<Value>| async move {
-            assert_eq!(request["stream"],true);
-            let messages=request["messages"].as_array().unwrap();
-            let finished=messages.last().unwrap()["role"]=="tool";
-            let delta=if finished {
-                let results:Vec<_>=messages.iter().filter(|m|m["role"]=="tool").collect();
-                assert_eq!(results.len(),2);
-                for (i,result) in results.iter().enumerate() {
-                    assert_eq!(result["tool_call_id"],format!("call_{i}"));
-                    assert!(result["content"].as_str().unwrap().contains("STREAMED_SOURCE"));
+        .route(
+            "/docs/{page}",
+            axum::routing::get(move || {
+                let reads = read_counter.clone();
+                async move {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    ([("content-type", "text/plain")], "STREAMED_SOURCE")
                 }
-                json!({"content":"Both streamed reads succeeded."})
-            } else {
-                assert_eq!(request["parallel_tool_calls"],true);
-                let over=messages.last().unwrap()["content"]=="overlimit";
-                let calls:Vec<_>=(0..if over {4}else{2}).map(|index|json!({"index":index,"id":format!("call_{index}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{index}")}).to_string()}})).collect(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
-                json!({"tool_calls":calls})
-            };
-            let frames = vec![
-                json!({"choices":[{"index":0,"delta":delta,"finish_reason":if finished {"stop"} else {"tool_calls"}}]}).to_string(),
-                json!({"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}).to_string(),
-                "[DONE]".into(),
-            ];
-            Sse::new(futures_util::stream::iter(frames.into_iter().map(|frame|Ok::<_,std::convert::Infallible>(Event::default().data(frame)))))
-        }));
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(|Json(request): Json<Value>| async move {
+                let messages = request["messages"].as_array().unwrap();
+                let finished = messages.last().unwrap()["role"] == "tool";
+                if finished {
+                    assert_eq!(
+                        request["stream"], false,
+                        "final synthesis must avoid stale tool calls from local SSE servers"
+                    );
+                    assert_eq!(request["tool_choice"], "none");
+                    assert!(request.get("tools").is_none());
+                    let results: Vec<_> = messages.iter().filter(|m| m["role"] == "tool").collect();
+                    assert_eq!(results.len(), 2);
+                    for (i, result) in results.iter().enumerate() {
+                        assert_eq!(result["tool_call_id"], format!("call_{i}"));
+                        assert!(result["content"].as_str().unwrap().contains("STREAMED_SOURCE"));
+                    }
+                    return Json(ok_reply("Both streamed reads succeeded.", 10, 2)).into_response();
+                }
+                assert_eq!(request["stream"], true);
+                let delta = {
+                    assert_eq!(request["parallel_tool_calls"], true);
+                    let over = messages.last().unwrap()["content"] == "overlimit";
+                    let calls:Vec<_>=(0..if over {4}else{2}).map(|index|json!({"index":index,"id":format!("call_{index}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{index}")}).to_string()}})).collect(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                    json!({"tool_calls":calls})
+                };
+                let frames = vec![
+                    json!({"choices":[{"index":0,"delta":delta,"finish_reason":"tool_calls"}]}).to_string(),
+                    json!({"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}).to_string(),
+                    "[DONE]".into(),
+                ];
+                Sse::new(futures_util::stream::iter(frames.into_iter().map(|frame| {
+                    Ok::<_, std::convert::Infallible>(Event::default().data(frame))
+                })))
+                .into_response()
+            }),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -105,7 +124,7 @@ async fn multiple_streamed_tools_reach_reads_and_keep_the_total_call_budget() {
         &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
         ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..ServerOptions::default().with("web.chat_tool_calls", "3")
+            ..ServerOptions::default().with("web.chat_tool_calls", "2")
         },
     )
     .await;
