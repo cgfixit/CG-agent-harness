@@ -361,8 +361,10 @@ mod tests {
         let path = dir.path().join("auth.json");
         let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
         let mgr = AuthManager::open(&path, &cfg).unwrap();
-        let old_password = "old synthetic password";
-        let new_password = "new synthetic password";
+        // Minted per run so no literal reaches the password hasher.
+        let old_password = crate::common::random_urlsafe(24);
+        let new_password = crate::common::random_urlsafe(24);
+        let (old_password, new_password) = (old_password.as_str(), new_password.as_str());
         mgr.create_user("tester", old_password, "operator").unwrap();
         let old_session = mgr.login("tester", old_password).unwrap();
         let changed = mgr.change_password("tester", old_password, new_password).unwrap();
