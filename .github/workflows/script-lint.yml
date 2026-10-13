@@ -12,12 +12,14 @@ on:
       - "scripts/**"
       - ".githooks/**"
       - ".claude/hooks/**"
+      - ".claude/skills/**"
       - ".github/workflows/script-lint.yml"
   pull_request:
     paths:
       - "scripts/**"
       - ".githooks/**"
       - ".claude/hooks/**"
+      - ".claude/skills/**"
       - ".github/workflows/script-lint.yml"
   workflow_dispatch:
 
@@ -44,7 +46,9 @@ jobs:
       - name: shellcheck (pinned, from the official container image)
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(git ls-files -z -- 'scripts/*.sh' '.githooks/*' '.claude/hooks/*.sh' ':!:*.md')
+          # Git pathspec `*` also matches `/`, so 'scripts/*.sh' and
+          # '.claude/skills/*.sh' reach nested helpers (live-ollama/, skill dirs).
+          mapfile -d '' files < <(git ls-files -z -- 'scripts/*.sh' '.githooks/*' '.claude/hooks/*.sh' '.claude/skills/*.sh' ':!:*.md')
           test "${#files[@]}" -gt 0
           printf '%s\n' "${files[@]}"
           docker run --rm -v "${PWD}:/mnt:ro" -w /mnt \
