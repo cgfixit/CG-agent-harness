@@ -44,11 +44,16 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
   `lru` 0.16 dependency (locked at 0.16.4). The policy records its
   `StoreReader` call-pattern justification and removal condition, Tantivy 0.27
   or a fixed dependency path. Owner: `cgfixit`, reviewed during the weekly
-  maintenance pass and Cargo Dependabot PR review. Daily advisories check the
-  locked graph; they do not detect an available replacement for an ignored
-  advisory. When compatible Tantivy uses fixed `lru` (at least 0.18.2), update
+  maintenance pass and Cargo Dependabot PR review. When compatible Tantivy
+  uses fixed `lru` (at least 0.18.2), update
   the backend lockfile, remove this exception, and run both dependency policies
   plus affected retrieval checks. Desktop currently has no advisory exception.
+- Backend `RUSTSEC-2024-0449` waives unmaintained `unsafe-libyaml` via
+  `serde_yaml_ng`. Owner: `cgfixit`; review maintained, MSRV-compatible YAML
+  replacements weekly and on Cargo Dependabot PRs. Remove the waiver when
+  `unsafe-libyaml` leaves the backend lockfile, after both dependency policies
+  and configuration parsing checks pass. Unused-ignore warnings do not detect
+  available replacements.
 - Major-version updates to existing libraries are separate API migrations.
   Newer available versions alone do not make a valid lockfile stale or justify
   expanding this security feature into a framework/toolchain migration.
