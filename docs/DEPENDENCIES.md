@@ -35,11 +35,12 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
 - The backend license allowlist names only identifiers the locked graph uses.
   Add an identifier deliberately, with the crate that needs it, rather than
   keeping unused allowances that would admit a future dependency silently.
-- Desktop Tauri is pinned to 2.11.5. The immutable upstream `tauri-utils`
-  patch at `dd725f4b13c30a86b398ccc59eb498f151f461c5` replaces its unmaintained
+- Desktop Tauri is pinned to 2.12.0. The immutable upstream `tauri-utils`
+  patch at `dd725f4b13c30a86b398ccc59eb498f151f461c5` replaced its unmaintained
   rust-unic dependency path. The desktop policy allows only that upstream Git
-  source. Remove the patch only after a published
-  version provides the same dependency correction and passes native packaging.
+  source. Tauri 2.12.0 resolves published `tauri-utils` 2.10.1 (urlpattern 0.6),
+  so Cargo records the patch as `[[patch.unused]]`; remove the patch and Git
+  source once native packaging passes without them.
 - Backend `deny.toml` temporarily ignores `RUSTSEC-2026-0253` for Tantivy 0.26.2's
   `lru` 0.16 dependency (locked at 0.16.4). The policy records its
   `StoreReader` call-pattern justification and removal condition, Tantivy 0.27
