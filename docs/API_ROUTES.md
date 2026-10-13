@@ -53,7 +53,7 @@ session timeouts.
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
 | POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs. Concurrent bodies use `attachments.max_concurrent_uploads`, else 503. UUID blobs use `0600`. Local chat/loops retain 12 owner-scoped IDs for fenced BM25 context. Cloud and `/agent` refuse attachments (`ATTACHMENT_SURFACE_FORBIDDEN`). |
 | GET | `/api/notes-corpus` | List owned jailed `.md`/`.txt` metadata (ID, MIME, SHA prefix, bytes), without bodies or host paths. |
-| POST | `/api/notes-corpus` | Copy/classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` under `notes_corpus.*` caps; for local prompt retrieval. |
+| POST | `/api/notes-corpus` | Copy/classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` under `notes_corpus.*` caps; local prompt retrieval. |
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | DELETE | `/api/sessions/{session_id}/attachment-pins` | Owner-scoped unpin; keeps blobs/messages; refuses during generation. Session GET reports `live_attachment_pins`. |
