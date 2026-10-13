@@ -490,7 +490,7 @@ mod tests {
     fn run_reports_the_gate_exit_code_and_fuzzy_does_not_need_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
-        std::fs::write(
+        crate::common::config::AppConfig::write_private(
             &path,
             "netconnect:\n  enabled: true\n  allowed_cidrs: ['192.168.0.0/16']\n",
         )

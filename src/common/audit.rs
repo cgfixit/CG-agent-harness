@@ -62,16 +62,37 @@ const SECRET_LABEL: &str = "[REDACTED_SECRET]";
 /// redaction. The server and the agentic child each call this on their own
 /// environment, so no credential crosses the process boundary for it.
 pub fn known_secret_values(cfg: &AppConfig) -> Vec<String> {
-    super::mcp::SECRET_ENV
+    let mut values: Vec<String> = super::mcp::SECRET_ENV
         .iter()
         .filter_map(|name| std::env::var(name).ok())
         .chain(
             ["models.local_llm.api_key", "models.local_llm.fallback.api_key"]
                 .iter()
-                .map(|key| cfg.str_or(key, "")),
+                .filter_map(|key| cfg.secret(key).ok()),
         )
         .filter(|value| !value.trim().is_empty())
-        .collect()
+        .collect();
+    if let Some(serde_yaml_ng::Value::Sequence(servers)) = cfg.get("mcp.servers") {
+        for server in servers {
+            if let Some(value) = server.get("url").and_then(|v| v.as_str()) {
+                if let Ok(secret) = super::config::resolve_secret(value) {
+                    if let Ok(url) = url::Url::parse(&secret) {
+                        values.extend(url.query_pairs().map(|(_, value)| value.into_owned()));
+                        values.extend(url.password().map(str::to_owned));
+                    }
+                    values.push(secret);
+                }
+            }
+            if let Some(env) = server.get("env").and_then(|v| v.as_mapping()) {
+                for value in env.values().filter_map(|v| v.as_str()) {
+                    if let Ok(secret) = super::config::resolve_secret(value) {
+                        values.push(secret);
+                    }
+                }
+            }
+        }
+    }
+    values
 }
 
 /// Shortest loaded credential redacted by exact value. Shorter strings are
@@ -593,6 +614,23 @@ mod tests {
         );
         assert_eq!(redactors.redact("mail ops@example.com"), "mail [REDACTED_EMAIL]");
         assert!(matches!(redactors.redact("nothing here"), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn configured_environment_and_mcp_url_secrets_are_redacted() {
+        let name = "CGAH_AUDIT_REFERENCE_FIXTURE";
+        let secret = "synthetic-config-secret-304";
+        std::env::set_var(name, secret);
+        let cfg = AppConfig::from_str(
+            &format!("models:\n  local_llm:\n    api_key: env:{name}\nmcp:\n  servers:\n    - env: {{TOKEN: env:{name}}}\n      url: https://example.invalid/sse?token=synthetic-query-secret-304\n"),
+            Path::new("config.yaml"),
+        ).unwrap();
+        let redactors = Redactors::from_config(&cfg).with_literal_secrets(known_secret_values(&cfg));
+        std::env::remove_var(name);
+        assert_eq!(
+            redactors.redact("synthetic-config-secret-304 synthetic-query-secret-304"),
+            "[REDACTED_SECRET] [REDACTED_SECRET]"
+        );
     }
 
     #[test]

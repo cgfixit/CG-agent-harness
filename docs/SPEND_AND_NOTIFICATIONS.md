@@ -147,6 +147,11 @@ destination has its own bearer. Put them in the private file
 {"version":1,"tokens":{"build-alerts":"replace-with-a-destination-secret"}}
 ```
 
+This plaintext file is independent of `security.allow_plaintext_key_file`,
+which controls managed keys in `.env`. It is limited to 64 KiB and checked
+through the private credential reader: owner-only access, a single regular file,
+no symlink/reparse point, and no macOS extended ACL entries.
+
 The secret is printable non-space ASCII, at most 4096 bytes. It is held in
 process memory for the outbound `Authorization` header and compared by SHA-256
 on every attempt. Replacing one destination's secret revokes that destination's
@@ -165,7 +170,8 @@ stop. Other owners stay enabled. Turning the account back on does not restore
 those grants; edit the configuration and restart to do that deliberately.
 
 All settings require restart. Before each attempt or replay, the worker rereads
-the bounded regular config and rechecks the account, startup destination revision,
+the private config through the same 1 MiB reader as startup and rechecks the
+account, startup destination revision,
 subscription, grant, and credential. Disk changes can revoke startup authority,
 not add it. Destination changes or owner disablement, deletion, or demotion stop
 later attempts; an active request may finish. Malformed config refuses delivery.

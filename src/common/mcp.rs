@@ -91,7 +91,7 @@ pub fn validate_tool_name(name: &str) -> Result<String> {
     Ok(name.to_string())
 }
 
-fn blocked_env_key(key: &str) -> bool {
+pub(crate) fn blocked_env_key(key: &str) -> bool {
     SECRET_ENV
         .iter()
         .chain(HIJACK_ENV.iter())

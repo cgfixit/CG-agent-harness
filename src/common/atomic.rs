@@ -32,6 +32,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<()> 
     let mut staged = builder.tempfile_in(parent).map_err(|e| {
         HarnessError::new("IO_ERROR", format!("cannot stage file: {e}")).detail("path", path.display().to_string())
     })?;
+    #[cfg(target_os = "macos")]
+    if mode.is_some_and(|m| m & 0o077 == 0) {
+        use std::os::fd::AsRawFd;
+        super::credential_store::macos_acl::clear_inherited_acl(staged.as_file().as_raw_fd())
+            .map_err(|_| HarnessError::new("IO_ERROR", "cannot make staged file owner-private"))?;
+    }
     staged
         .write_all(bytes)
         .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot write staged file: {e}")))?;
@@ -75,6 +81,22 @@ pub fn write_json_atomic_mode(path: &Path, value: &serde_json::Value, mode: u32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn owner_private_staging_removes_inherited_acl_before_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(std::process::Command::new("/bin/chmod")
+            .args(["+a", "everyone allow read,file_inherit"])
+            .arg(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        let path = dir.path().join("config.yaml");
+        crate::common::config::AppConfig::write_private(&path, "secret: synthetic-private-fixture").unwrap();
+        let loaded = crate::common::config::AppConfig::load(&path).unwrap();
+        assert_eq!(loaded.str_or("secret", ""), "synthetic-private-fixture");
+    }
 
     #[test]
     fn replaces_content_in_place_and_leaves_no_staged_file_behind() {

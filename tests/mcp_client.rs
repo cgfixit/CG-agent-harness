@@ -125,7 +125,7 @@ impl McpServer {
             );
         }
         yaml = yaml.replacen("servers: []", &format!("servers:{servers_yaml}"), 1);
-        std::fs::write(home.config_path(), &yaml).unwrap();
+        cgagentharness::common::config::AppConfig::write_private(&home.config_path(), &yaml).unwrap();
         let cfg = cgagentharness::common::config::AppConfig::from_str(&yaml, &home.config_path()).unwrap();
         let mut app_opts = AppOptions::new(home);
         app_opts.config = Some(cfg);
