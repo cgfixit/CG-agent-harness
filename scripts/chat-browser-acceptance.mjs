@@ -42,7 +42,7 @@ const gatePayload=()=>({
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
  const body=data?JSON.parse(data):{}; const path=req.url; requests.push([req.method,path,body]);
- const reply=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
+ const reply=(value,status=200)=>{if(!res.headersSent)res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
  if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/static/')){res.end('');return;}
  // Browser dispatch contract fixture; actual grammar is covered by Rust slash tests.
@@ -150,6 +150,9 @@ const server=createServer(async(req,res)=>{
   const facts=memoryOwnerFixture?.facts||savedFacts;
   if(holdMemoryFacts){
    holdMemoryFacts=false;const snapshot=JSON.parse(JSON.stringify(facts));
+   // Match the real API's no-store headers before delaying the body. Otherwise
+   // Chromium serializes identical GETs behind its pending cache transaction.
+   res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.flushHeaders();
    releaseHeldMemoryFacts=()=>reply({owner_id:'user_fixture_owner',facts:snapshot,count:snapshot.length});memoryFactsHeld();return;
   }
   reply({owner_id:memoryOwnerFixture?.owner||'user_fixture_owner',facts,count:facts.length,search:false,retrieval:false,fts:false});return;
