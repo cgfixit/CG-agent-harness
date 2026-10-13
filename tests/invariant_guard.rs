@@ -4,6 +4,7 @@
 //! constants still agree. Also the repository's docs budget (#213).
 
 use std::path::Path;
+use syn::ext::IdentExt;
 
 /// Sources with comment lines removed: a doc comment is allowed to NAME the
 /// module on the far side of the boundary (that is how the duplicated
@@ -55,15 +56,15 @@ fn read_tree_raw(dir: &Path) -> Vec<(String, String)> {
 fn use_tree_idents(tree: &syn::UseTree, out: &mut Vec<String>) {
     match tree {
         syn::UseTree::Path(p) => {
-            out.push(p.ident.to_string());
+            out.push(p.ident.unraw().to_string());
             use_tree_idents(&p.tree, out);
         }
-        syn::UseTree::Name(n) => out.push(n.ident.to_string()),
+        syn::UseTree::Name(n) => out.push(n.ident.unraw().to_string()),
         syn::UseTree::Rename(r) => {
             // The real module first: the alias is what a later reader sees, but
             // the left side is what actually crossed the boundary.
-            out.push(r.ident.to_string());
-            out.push(r.rename.to_string());
+            out.push(r.ident.unraw().to_string());
+            out.push(r.rename.unraw().to_string());
         }
         syn::UseTree::Glob(_) => {}
         syn::UseTree::Group(g) => {
@@ -97,14 +98,174 @@ fn use_idents(path: &str, text: &str) -> Vec<String> {
 fn assert_no_use_crosses(dir: &Path, forbidden: &[&str]) {
     for (path, text) in read_tree_raw(dir) {
         let idents = use_idents(&path, &text);
+        let syntax = boundary_syntax(&path, &text);
         for name in forbidden {
             assert!(
-                !idents.iter().any(|i| i == name),
+                !idents.iter().chain(syntax.module_refs.iter()).any(|i| i == name),
                 "{path} imports {name:?} across the I6 boundary \
                  (a renamed or grouped `use` still crosses it)"
             );
         }
+        assert!(
+            !syntax.includes_code,
+            "{path}: include! bypasses the source boundary scan"
+        );
+        let relative = Path::new(&path)
+            .strip_prefix(root())
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        for target in syntax.module_paths {
+            assert!(
+                matches!(
+                    (relative.as_str(), target.as_str()),
+                    ("common/auth_store.rs", "auth_sqlite.rs")
+                        | ("common/credential_store.rs", "credential_file_writer.rs")
+                ),
+                "{path}: unregistered module path {target:?} bypasses the source boundary scan"
+            );
+        }
     }
+}
+
+#[derive(Default)]
+struct BoundarySyntax {
+    production_only: bool,
+    paths: Vec<String>,
+    module_refs: Vec<String>,
+    module_paths: Vec<String>,
+    includes_code: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for BoundarySyntax {
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        if self.production_only && test_only(&module.attrs) {
+            return;
+        }
+        syn::visit::visit_item_mod(self, module);
+    }
+
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        if self.production_only && test_only(&function.attrs) {
+            return;
+        }
+        syn::visit::visit_item_fn(self, function);
+    }
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        use_tree_idents(&item.tree, &mut self.paths);
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        self.paths
+            .extend(path.segments.iter().map(|s| s.ident.unraw().to_string()));
+        self.module_refs.extend(
+            path.segments
+                .iter()
+                .take(path.segments.len().saturating_sub(1))
+                .map(|s| s.ident.unraw().to_string()),
+        );
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+        if path_is(attr.path(), "path") {
+            let target = match &attr.meta {
+                syn::Meta::NameValue(value) => match &value.value {
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(value),
+                        ..
+                    }) => value.value(),
+                    _ => "<nonliteral>".into(),
+                },
+                _ => "<invalid>".into(),
+            };
+            self.module_paths.push(target);
+        } else if path_is(attr.path(), "cfg_attr") {
+            if let syn::Meta::List(list) = &attr.meta {
+                if list
+                    .tokens
+                    .to_string()
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .any(|word| word == "path")
+                {
+                    self.module_paths.push("<conditional module path>".into());
+                }
+            }
+        }
+        syn::visit::visit_attribute(self, attr);
+    }
+
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        self.includes_code |= node.path.segments.last().is_some_and(|s| s.ident.unraw() == "include");
+        let tokens = syn::buffer::TokenBuffer::new2(node.tokens.clone());
+        self.macro_tokens(tokens.begin());
+        syn::visit::visit_macro(self, node);
+    }
+}
+
+impl BoundarySyntax {
+    // syn deliberately does not parse macro bodies. Inspect token trees as code,
+    // excluding literal content (including doc text and include_str!/bytes! data).
+    fn macro_tokens(&mut self, mut cursor: syn::buffer::Cursor<'_>) {
+        while !cursor.eof() {
+            if let Some((ident, next)) = cursor.ident() {
+                let name = ident.unraw().to_string();
+                self.paths.push(name.clone());
+                self.module_refs.push(name.clone());
+                self.includes_code |= name == "include" && next.punct().is_some_and(|(p, _)| p.as_char() == '!');
+                cursor = next;
+            } else if let Some((punct, next)) = cursor.punct() {
+                if punct.as_char() == '#' {
+                    if let Some((body, _, _, _)) = next.any_group() {
+                        if let Ok(meta) = syn::parse2::<syn::Meta>(body.token_stream()) {
+                            if path_is(meta.path(), "path")
+                                || path_is(meta.path(), "cfg_attr")
+                                    && body
+                                        .token_stream()
+                                        .to_string()
+                                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                                        .any(|word| word == "path")
+                            {
+                                self.module_paths.push("<macro module path>".into());
+                            }
+                        }
+                    }
+                }
+                cursor = next;
+            } else if let Some((body, _, _, next)) = cursor.any_group() {
+                self.macro_tokens(body);
+                cursor = next;
+            } else {
+                cursor = cursor.token_tree().expect("nonempty token cursor").1;
+            }
+        }
+    }
+}
+
+fn path_is(path: &syn::Path, name: &str) -> bool {
+    path.get_ident().is_some_and(|ident| ident.unraw() == name)
+}
+
+fn boundary_syntax(path: &str, text: &str) -> BoundarySyntax {
+    scan_syntax(path, text, false)
+}
+
+fn test_only(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("test")
+            || attr.path().is_ident("cfg") && attr.parse_args::<syn::Path>().is_ok_and(|path| path.is_ident("test"))
+    })
+}
+
+fn scan_syntax(path: &str, text: &str, production_only: bool) -> BoundarySyntax {
+    let file = syn::parse_file(text).unwrap_or_else(|error| panic!("{path} does not parse: {error}"));
+    let mut visitor = BoundarySyntax {
+        production_only,
+        ..Default::default()
+    };
+    syn::visit::visit_file(&mut visitor, &file);
+    visitor
 }
 
 fn root() -> std::path::PathBuf {
@@ -128,17 +289,30 @@ fn server_side_never_references_agentic() {
 }
 
 #[test]
-fn only_the_shim_spawns_a_child_on_the_server_side() {
-    for sub in ["server", "llm"] {
-        for (path, text) in read_tree(&root().join(sub)) {
-            assert!(
-                !text.contains("process::Command"),
-                "{path} spawns a process; only src/shim may"
-            );
-            assert!(
-                !text.contains("Command::new"),
-                "{path} spawns a process; only src/shim may"
-            );
+fn only_registered_process_owners_construct_commands() {
+    const OWNERS: &[&str] = &[
+        "shim/mod.rs",
+        "common/process.rs",
+        "common/mcp.rs",
+        "common/mcp_worker.rs",
+        "common/windows_job.rs",
+    ];
+    for sub in ["server", "shim", "llm", "common", "netconnect"] {
+        for (path, text) in read_tree_raw(&root().join(sub)) {
+            let relative = Path::new(&path)
+                .strip_prefix(root())
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            // Native test probes may launch fixture tools; the production
+            // process owners remain the explicit list above.
+            let syntax = scan_syntax(&path, &text, true);
+            if syntax.paths.iter().any(|ident| ident == "Command") {
+                assert!(
+                    OWNERS.contains(&relative.as_str()),
+                    "{path}: process Command outside registered owners"
+                );
+            }
         }
     }
     let shim = std::fs::read_to_string(root().join("shim").join("mod.rs")).unwrap();
@@ -148,6 +322,95 @@ fn only_the_shim_spawns_a_child_on_the_server_side() {
         "the shim must invoke the hidden agentic subcommand"
     );
     assert!(shim.contains("kill_on_drop(true)"));
+}
+
+#[test]
+fn direct_paths_module_loading_and_command_aliases_are_scanned() {
+    let fixture = "#[cfg(test)] mod probe { use std::process::Command; fn f() { Command::new(\"x\"); } }";
+    assert!(!scan_syntax("test fixture", fixture, true)
+        .paths
+        .iter()
+        .any(|name| name == "Command"));
+    assert!(scan_syntax("production", &fixture.replace("#[cfg(test)]", ""), true)
+        .paths
+        .iter()
+        .any(|name| name == "Command"));
+    for code in [
+        "use crate :: r#agentic as pipeline;",
+        "use crate::{r#agentic as pipeline};",
+    ] {
+        assert!(use_idents("raw import", code).iter().any(|name| name == "agentic"));
+    }
+    for code in [
+        "fn f() { crate :: r#agentic :: run(); }",
+        "fn f() { dbg!(crate :: agentic :: run()); }",
+    ] {
+        assert!(boundary_syntax("path", code)
+            .module_refs
+            .iter()
+            .any(|name| name == "agentic"));
+    }
+    assert!(
+        boundary_syntax(
+            "macro include",
+            r#"macro_rules! load { () => { include!("outside.rs"); } }"#
+        )
+        .includes_code
+    );
+    assert!(
+        !boundary_syntax(
+            "macro data",
+            r#"macro_rules! data { () => { include_str!("outside.rs") } }"#
+        )
+        .includes_code
+    );
+    assert!(!boundary_syntax(
+        "macro path",
+        r#"macro_rules! load { () => { #[path="outside.rs"] mod other; } }"#
+    )
+    .module_paths
+    .is_empty());
+    assert!(
+        boundary_syntax("raw command", "fn f() { std :: process :: r#Command :: new(\"x\"); }")
+            .paths
+            .iter()
+            .any(|name| name == "Command")
+    );
+    assert!(boundary_syntax(
+        "macro command",
+        "macro_rules! spawn { () => { std :: process :: Command :: new(\"x\") } }"
+    )
+    .paths
+    .iter()
+    .any(|name| name == "Command"));
+    let direct = boundary_syntax("direct", "fn f() { crate :: agentic :: run(); }");
+    assert!(direct.paths.iter().any(|name| name == "agentic"));
+    let path = boundary_syntax("module", "#[path = \"../agentic/mod.rs\"] mod hidden;");
+    assert_eq!(path.module_paths, ["../agentic/mod.rs"]);
+    assert_eq!(
+        boundary_syntax("raw attribute", "#[r#path = \"../agentic/mod.rs\"] mod hidden;").module_paths,
+        ["../agentic/mod.rs"]
+    );
+    assert!(
+        boundary_syntax(
+            "conditional",
+            "#[cfg_attr(unix, path = \"../agentic/mod.rs\")] mod hidden;"
+        )
+        .module_paths
+        .len()
+            == 1
+    );
+    assert!(boundary_syntax("include", "include!(concat!(\"../agentic/\", \"mod.rs\"));").includes_code);
+    assert!(!boundary_syntax("data", "const X: &str = include_str!(\"readme.txt\");").includes_code);
+    assert!(use_idents("alias", "use std::{process::Command as Child};")
+        .iter()
+        .any(|name| name == "Command"));
+    assert!(
+        boundary_syntax("constructor", "fn f() { std :: process :: Command :: new(\"x\"); }")
+            .paths
+            .iter()
+            .any(|name| name == "Command")
+    );
 }
 
 #[test]
@@ -686,7 +949,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("INVARIANTS.md", Root, 6450),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     ("README.md", Root, 1500),
-    ("SECURITY.md", Root, 500),
+    ("SECURITY.md", Root, 490),
     ("docs/ANALYTICS.md", Guide, 900),
     ("docs/API_ROUTES.md", Guide, 2000),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
