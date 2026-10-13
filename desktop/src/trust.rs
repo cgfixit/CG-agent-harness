@@ -77,6 +77,9 @@ define_class!(
 unsafe fn accepts(trust: &SecTrust, expected: &[u8]) -> bool {
     // Evaluate only the supplied peer, with one explicit anchor and SSL host
     // policy. Pinning is in addition to platform validation, not a bypass.
+    // why: Apple deprecated SecTrustGetCertificateAtIndex (macOS 12) for
+    // SecTrustCopyCertificateChain; this single leaf lookup is kept until the
+    // objc2-security binding is migrated.
     #[allow(deprecated)]
     let Some(leaf) = (unsafe { trust.certificate_at_index(0) }) else {
         return false;
