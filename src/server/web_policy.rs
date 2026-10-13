@@ -15,8 +15,8 @@ pub const MAX_BATCH_URLS: usize = 32;
 /// Default and ceiling of the restart-only `web.max_rules` total rule cap.
 pub const DEFAULT_MAX_RULES: usize = 32;
 pub const MAX_RULES_CEILING: usize = 256;
-/// The policy file grows 2 KiB per allowed rule, never below the original 64 KiB.
-const POLICY_BYTES_PER_RULE: u64 = 2_048;
+/// The policy file grows 4 KiB per allowed rule, never below the original 64 KiB.
+const POLICY_BYTES_PER_RULE: u64 = 4_096;
 const MIN_POLICY_BYTES: u64 = 65_536;
 pub const MAX_URL_BYTES: usize = 2048;
 
@@ -588,9 +588,10 @@ mod tests {
     #[test]
     fn the_configured_rule_cap_bounds_the_policy_and_scales_its_byte_cap() {
         assert_eq!(max_policy_bytes(1), 65_536);
-        assert_eq!(max_policy_bytes(DEFAULT_MAX_RULES), 65_536);
-        assert_eq!(max_policy_bytes(100), 204_800);
-        assert_eq!(max_policy_bytes(MAX_RULES_CEILING), 524_288);
+        assert_eq!(max_policy_bytes(16), 65_536);
+        assert_eq!(max_policy_bytes(DEFAULT_MAX_RULES), 131_072);
+        assert_eq!(max_policy_bytes(100), 409_600);
+        assert_eq!(max_policy_bytes(MAX_RULES_CEILING), 1_048_576);
         let mut policy = Policy::empty();
         for i in 0..3 {
             policy
@@ -608,9 +609,9 @@ mod tests {
         let legacy = serde_json::to_vec(&rows).unwrap();
         assert_eq!(Policy::parse(&legacy, 3).unwrap().rules.len(), 3);
         assert!(Policy::parse(&legacy, 2).unwrap_err().message.contains("web.max_rules"));
-        // The byte cap follows the configured rule count, not a fixed 64 KiB.
+        // The byte cap follows the configured rule count above its 64 KiB floor.
         let padded = [bytes.as_slice(), &vec![b' '; 70_000]].concat();
-        assert!(Policy::parse(&padded, DEFAULT_MAX_RULES).is_err());
-        assert_eq!(Policy::parse(&padded, 100).unwrap().rules.len(), 3);
+        assert!(Policy::parse(&padded, 3).is_err());
+        assert_eq!(Policy::parse(&padded, DEFAULT_MAX_RULES).unwrap().rules.len(), 3);
     }
 }
