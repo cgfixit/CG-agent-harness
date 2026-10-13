@@ -284,6 +284,7 @@ async fn web_chat_charges_the_reply_reservation_once_against_the_web_budget() {
                 .with("models.local_llm.max_tokens", max_tokens),
         )
         .await;
+        s.seed_default_soul();
         if !web {
             s.post_json("/api/web", json!({"enabled":false})).await;
         }
@@ -305,6 +306,7 @@ async fn web_chat_charges_the_reply_reservation_once_against_the_web_budget() {
             .with("models.local_llm.max_tokens", "12952"),
     )
     .await;
+    s.seed_default_soul();
     let (status, body) = s.post_json("/api/chat", json!({"message":"x".repeat(400)})).await;
     assert_eq!(status, 422, "{body}");
     assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
@@ -672,6 +674,7 @@ async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
             .with("chat.compact_keep_messages", "2"),
     )
     .await;
+    s.seed_default_soul();
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
     let sid = created["session_id"].as_str().unwrap();
     let usage = cgagentharness::server::sessions::TokenTally::default();

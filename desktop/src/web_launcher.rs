@@ -73,18 +73,18 @@ mod tests {
 
     #[test]
     fn launch_signal_is_exact_and_owned() {
-        let origin = "https://127.0.0.1:54321";
+        let origin = "https://127.0.0.1:54321"; // DevSkim: ignore DS162092 because this synthetic origin is parsed, never dialed.
         assert!(requested(
             &format!("{origin}/__desktop/open-web").parse().unwrap(),
             origin
         ));
         for url in [
             "https://example.com/__desktop/open-web",
-            "https://127.0.0.1:54322/__desktop/open-web",
-            "https://user@127.0.0.1:54321/__desktop/open-web",
-            "https://127.0.0.1:54321/__desktop/open-web?command=x",
-            "https://127.0.0.1:54321/__desktop/open-web#x",
-            "https://127.0.0.1:54321/__desktop/open-web/",
+            "https://127.0.0.1:54322/__desktop/open-web", // DevSkim: ignore DS162092 because this synthetic origin is parsed, never dialed.
+            "https://user@127.0.0.1:54321/__desktop/open-web", // DevSkim: ignore DS162092 because this synthetic origin is parsed, never dialed.
+            "https://127.0.0.1:54321/__desktop/open-web?command=x", // DevSkim: ignore DS162092 because this synthetic origin is parsed, never dialed.
+            "https://127.0.0.1:54321/__desktop/open-web#x", // DevSkim: ignore DS162092 because this synthetic origin is parsed, never dialed.
+            "https://127.0.0.1:54321/__desktop/open-web/", // DevSkim: ignore DS162092 because this synthetic origin is parsed, never dialed.
         ] {
             assert!(!requested(&url.parse().unwrap(), origin), "{url}");
         }
@@ -92,6 +92,7 @@ mod tests {
 
     #[test]
     fn shell_paths_are_literal_data() {
+        let _serial = crate::instance::CHILD_PROCESS.lock().unwrap_or_else(|e| e.into_inner());
         let path = "/Applications/CG ' $HOME $(echo wrong) `echo wrong`.app/start-web.sh";
         let output = Command::new("/bin/bash")
             .args(["-c", &format!("printf %s {}", quoted(path))])

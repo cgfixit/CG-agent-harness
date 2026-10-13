@@ -17,7 +17,7 @@ if [ "${1:-}" = --desktop-url ]; then
   if [ "$desktop_port" -lt 1 ] || [ "$desktop_port" -gt 65535 ]; then
     echo 'start-web: invalid desktop port' >&2; exit 3
   fi
-  (exec 3<>"/dev/tcp/127.0.0.1/$desktop_port") 2>/dev/null || {
+  (exec 3<>"/dev/tcp/127.0.0.1/$desktop_port") 2>/dev/null || { # DevSkim: ignore DS162092 because the probe targets the owned loopback server only.
     echo 'start-web: desktop server is unavailable; reopen the app' >&2; exit 2;
   }
   echo "CGagentHarness console: $2/"
