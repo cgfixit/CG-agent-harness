@@ -67,6 +67,8 @@ pub async fn status(
     Json(json!({
         "version": crate::VERSION,
         "model": model,
+        "configured_model": state.cfg.str_or("models.local_llm.model", &state.backend.model),
+        "selection_overrides_config": model != state.cfg.str_or("models.local_llm.model", &state.backend.model).trim(),
         "provider": state.provider_for(&model),
         "api_key_optional": state.api_key_optional,
         "base_url": if cloud { Value::Null } else { json!(state.backend.base_url) },
@@ -461,6 +463,13 @@ pub async fn model_select(
     let snapshot = {
         let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
         s.selected_model = req.model.trim().to_string();
+        s.selected_model_config = Some(
+            state
+                .cfg
+                .str_or("models.local_llm.model", &state.backend.model)
+                .trim()
+                .to_string(),
+        );
         s.clone()
     };
     snapshot
