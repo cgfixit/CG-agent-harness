@@ -334,6 +334,12 @@ impl ChatClient {
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = json!(effort);
         }
+        // Some local servers replay historical tool calls at the end of an SSE
+        // synthesis even with tool_choice=none. Their complete JSON response
+        // correctly finishes with stop. Buffer only this tool-free final call;
+        // the caller still validates completion, authority and any returned calls
+        // before delivery, and cancellation/deadlines remain in send_payload.
+        let output = if tools.is_empty() { None } else { output };
         self.send_payload(payload, output, None).await
     }
 
