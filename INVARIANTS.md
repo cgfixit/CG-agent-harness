@@ -328,12 +328,14 @@ means exit 3.
 
 Cargo sources are prepared explicitly against a Cargo.lock digest before model
 execution. Verification uses the selected installed toolchain, vendored sources,
-`--frozen`, an empty Cargo home, and fresh build/temp directories. Seatbelt denies
-all network operations and file data reads outside candidate, prepared inputs,
-specific OS/SDK/runtime roots, and scratch. Candidate source and `.git` are
-read-only to checks; only owned scratch is writable. Shared compiler/source
-caches are never writable by checks. Tests that formerly wrote into the
-candidate must use the provided temporary directory.
+`--frozen`, an empty Cargo home, and fresh build/temp directories. Seatbelt uses
+deny-default with explicit grants for process execution/forking, same-sandbox
+signals/process inspection, metadata/sysctl reads, and file data/executable maps
+within candidate, prepared inputs, OS/SDK/runtime roots, and scratch. Mach lookup,
+Apple Events and LaunchServices are denied. Verification has no network grant;
+only owned scratch is writable. Candidate source, `.git` and shared caches stay
+read-only. Checks must use the provided temporary directory. MCP shares this
+profile with its explicitly declared write roots and optional unrestricted network.
 
 Metadata discovery remains allowed. Seatbelt is not a memory/disk quota, and the
 current process group implementation does not contain every escaped descendant.
