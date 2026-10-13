@@ -30,7 +30,7 @@ E2E_LIVE="${E2E_LIVE:-1}"
 E2E_DESKTOP="${E2E_DESKTOP:-1}"
 E2E_MODEL="${E2E_MODEL:-qwen3.8:27b-mlx-cg}"
 E2E_MIN_MEM_GB="${E2E_MIN_MEM_GB:-40}"
-MODEL_URL="${MODEL_URL:-http://127.0.0.1:11434}"
+MODEL_URL="${MODEL_URL:-http://127.0.0.1:11434}" # DevSkim: ignore DS162092 because this e2e reaches loopback only.
 SMOKE_PORT="${SMOKE_PORT:-8791}"
 FIXTURE_PORT="${FIXTURE_PORT:-8792}"
 E2E_OUT="${E2E_OUT:-${RUNNER_TEMP:+$RUNNER_TEMP/e2e-out}}"
@@ -45,7 +45,7 @@ mkdir -p "$E2E_OUT"
 
 die() { echo "e2e: $1" >&2; exit "${2:-2}"; }
 env_die() { die "$1" 3; }
-port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; } # DevSkim: ignore DS162092 because this e2e reaches loopback only.
 blank_keys() { env GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" CGAGENTHARNESS_AGENTIC_WRITE_DISABLE="" "$@"; }
 
 ensure_model() {
@@ -78,12 +78,12 @@ stage_preflight() {
   echo "chrome: $("$CHROME_BIN" --version)"
   local port
   for port in "$SMOKE_PORT" "$FIXTURE_PORT"; do
-    ! port_open "$port" || env_die "127.0.0.1:$port is in use; set SMOKE_PORT/FIXTURE_PORT"
+    ! port_open "$port" || env_die "127.0.0.1:$port is in use; set SMOKE_PORT/FIXTURE_PORT" # DevSkim: ignore DS162092 because this e2e reaches loopback only.
   done
   if [[ "$E2E_LIVE" == 1 ]]; then
     local gb=$(( $(sysctl -n hw.memsize) / 1073741824 ))
     (( gb >= E2E_MIN_MEM_GB )) || env_die "$gb GB unified memory is below E2E_MIN_MEM_GB=$E2E_MIN_MEM_GB"
-    case "$MODEL_URL" in http://127.0.0.1:* | http://localhost:*) ;; *) env_die "MODEL_URL must be loopback" ;; esac
+    case "$MODEL_URL" in http://127.0.0.1:* | http://localhost:*) ;; *) env_die "MODEL_URL must be loopback" ;; esac # DevSkim: ignore DS162092 because this e2e reaches loopback only.
     ensure_model
     echo "model: $E2E_MODEL at $MODEL_URL"
   fi
@@ -115,7 +115,7 @@ stage_smoke() {
     blank_keys env PORT="$SMOKE_PORT" MODEL_URL="$MODEL_URL" SMOKE_REQUIRE_MODEL=1 SMOKE_MODEL="$E2E_MODEL" scripts/smoke-ollama.sh
   else
     # Without a model server the script stops after every non-model check.
-    blank_keys env PORT="$SMOKE_PORT" MODEL_URL="http://127.0.0.1:9" scripts/smoke-ollama.sh
+    blank_keys env PORT="$SMOKE_PORT" MODEL_URL="http://127.0.0.1:9" scripts/smoke-ollama.sh # DevSkim: ignore DS162092 because this e2e reaches loopback only.
   fi
 }
 
@@ -138,7 +138,8 @@ stage_browser() {
   port_open "$FIXTURE_PORT" || die "fixture did not open port $FIXTURE_PORT"
   local home
   home="$(python3 -c 'import json,sys;print(json.loads(open(sys.argv[1]).readline())["home"])' "$info")"
-  CGAH_TEST_BASE_URL="http://127.0.0.1:$FIXTURE_PORT" CGAH_TEST_HOME="$home" CGAH_TEST_FIXTURE=disposable-arithmetic \
+  local fixture_url="http://127.0.0.1:$FIXTURE_PORT" # DevSkim: ignore DS162092 because this e2e reaches loopback only.
+  CGAH_TEST_BASE_URL="$fixture_url" CGAH_TEST_HOME="$home" CGAH_TEST_FIXTURE=disposable-arithmetic \
     CHROME_BIN="$CHROME_BIN" node --experimental-websocket scripts/browser-acceptance.mjs || status=$?
   return "$status"
 }
