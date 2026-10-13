@@ -104,7 +104,12 @@ fn argv_builder_validation_mirrors_ops_runner() {
     r.desc = Some("d".into());
     assert!(err(r.clone()).contains("reason"));
     r.reason = Some("  ".into());
-    assert!(err(r).contains("reason"));
+    assert!(err(r.clone()).contains("reason"));
+    // Invisible text is not a reason: zero-width space, BOM, word joiner, soft hyphen.
+    for invisible in ["\u{200B}", "\u{FEFF}", " \u{2060} ", "\u{00AD}\u{200D}"] {
+        r.reason = Some(invisible.into());
+        assert!(err(r.clone()).contains("reason"), "{invisible:?}");
+    }
     let mut r = OpsRequest::new("real-repo-run");
     r.instruction = Some("x".into());
     assert!(err(r.clone()).contains("checks"));

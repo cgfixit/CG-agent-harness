@@ -256,7 +256,7 @@ impl Validate for SessionClearRequest {
         if !self.confirm {
             bad.push("confirm".into());
         }
-        if !len_ok(self.reason.trim(), 1, MAX_REASON_LEN) {
+        if crate::common::is_visibly_blank(&self.reason) || !len_ok(self.reason.trim(), 1, MAX_REASON_LEN) {
             bad.push("reason".into());
         }
         bad

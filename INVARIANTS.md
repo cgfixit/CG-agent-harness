@@ -231,8 +231,9 @@ single elements or temp files, never as separate argv tokens.
 
 Repository mutation boundaries (proposal apply, approval commit, push) and
 PR execution reload `config.yaml` and require `agentic.enabled`, write mode,
-`writes_enabled`, `deepagent_github.enabled`, `allow_git_write_tools`, a nonblank
-human reason, and explicit confirmation. The emergency disable switch is AND-ed
+`writes_enabled`, `deepagent_github.enabled`, `allow_git_write_tools`, a visibly
+nonblank human reason (white space and format controls alone are blank), and
+explicit confirmation. The emergency disable switch is AND-ed
 with `EXECUTION_ENABLED`; it cannot arm writes. Missing/invalid config refuses.
 A changed repository, workspace root, protected scope, scanner setting, or budget
 requires a new invocation; no stale snapshot continues.

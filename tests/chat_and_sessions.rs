@@ -1201,6 +1201,7 @@ async fn clear_session_history_requires_intent_and_cannot_be_resurrected() {
         json!({"reason":"test"}),
         json!({"confirm":false,"reason":"test"}),
         json!({"confirm":true,"reason":" "}),
+        json!({"confirm":true,"reason":"\u{200B}\u{FEFF}"}),
         json!({"confirm":"true","reason":"test"}),
     ] {
         assert_eq!(s.post_json("/api/sessions/clear", body).await.0, 422);

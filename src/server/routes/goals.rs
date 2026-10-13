@@ -75,7 +75,7 @@ pub fn validate_binding_recurring(state: &AppState, req: &AgentRunRequest, owner
 
 fn validate_binding_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recurring: bool) -> ApiResult<()> {
     let Some(binding) = &req.goal_stage else { return Ok(()) };
-    if !req.confirm || req.reason.trim().is_empty() {
+    if !req.confirm || crate::common::is_visibly_blank(&req.reason) {
         return Err(ApiError::bad_request(
             "GOAL_CONFIRM",
             "Goal execution requires explicit confirmation and reason",
