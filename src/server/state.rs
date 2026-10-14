@@ -96,6 +96,8 @@ pub struct AppState {
     pub settings: Mutex<HarnessSettings>,
     pub store: SessionStore,
     pub chat_owner: super::web_research::ResearchState,
+    /// Native control shutdown/EOF, distinct from an owner's request cancellation.
+    pub shutdown: CancellationToken,
     pub attachments: AttachmentStore,
     pub notes_corpus: crate::server::notes_corpus::NotesCorpus,
     pub notes_ingest_permits: Arc<tokio::sync::Semaphore>,

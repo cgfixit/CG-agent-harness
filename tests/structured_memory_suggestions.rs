@@ -282,15 +282,33 @@ async fn invalid_summaries_do_not_consume_the_single_valid_summary_slot() {
 #[tokio::test]
 async fn default_quoted_invalid_and_capture_off_gates_do_not_enqueue_or_create_a_store() {
     let model = model().await;
-    for opts in [
-        ServerOptions::default(),
-        options("both").with("structured_memory.enabled", "false"),
-        options("both").with("structured_memory.episode_capture", "false"),
-        options("both").with("structured_memory.auto_suggest_chat", "\"true\""),
-        options("invalid"),
-        options("both").with("structured_memory.suggestion_mode", "true"),
-        options("both").with("structured_memory.suggestion_mode", "null"),
-        options("both").with("structured_memory.suggestion_mode", "[]"),
+    for (opts, reason) in [
+        (ServerOptions::default(), "store_closed"),
+        (
+            options("both").with("structured_memory.enabled", "false"),
+            "store_closed",
+        ),
+        (
+            options("both").with("structured_memory.episode_capture", "false"),
+            "capture_disabled",
+        ),
+        (
+            options("both").with("structured_memory.auto_suggest_chat", "\"true\""),
+            "source_disabled",
+        ),
+        (options("invalid"), "invalid_mode"),
+        (
+            options("both").with("structured_memory.suggestion_mode", "true"),
+            "invalid_mode",
+        ),
+        (
+            options("both").with("structured_memory.suggestion_mode", "null"),
+            "invalid_mode",
+        ),
+        (
+            options("both").with("structured_memory.suggestion_mode", "[]"),
+            "invalid_mode",
+        ),
     ] {
         let s = spawn_server(&model.base, opts).await;
         let before = s
@@ -300,7 +318,10 @@ async fn default_quoted_invalid_and_capture_off_gates_do_not_enqueue_or_create_a
             .map(|s| s.episode_count("local").unwrap());
         s.post_json("/api/memory", json!({"enabled":true})).await;
         let queued = suggest::enqueue(&s.state, "local", Source::Chat, None, "content", "response");
-        assert_eq!(queued["reason"], "disabled");
+        assert_eq!(queued["reason"], reason);
+        assert_eq!(suggest::status(&s.state, "local")["last_attempt"], queued);
+        assert!(suggest::status(&s.state, "user_bob")["last_attempt"].is_null());
+        assert!(!queued.to_string().contains("content"));
         assert_eq!(
             s.state
                 .structured_memory
@@ -339,28 +360,163 @@ async fn queue_is_bounded_expires_while_chat_owns_generation_and_rejects_injecti
         )["reason"],
         "injection_detected"
     );
-    assert_eq!(
-        suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply")["queued"],
-        true
-    );
+    let queued = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply");
+    assert_eq!(queued["queued"], true);
+    let run_id = queued["run_id"].as_str().unwrap();
+    assert_eq!(store.get_consolidation_run("local", run_id).unwrap().state, "idle");
     assert_eq!(
         suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply")["reason"],
         "queue_full"
     );
     settled(&s, "local").await;
     assert!(model.requests.lock().unwrap().is_empty());
-    assert!(store.list_consolidation_runs("local").unwrap().is_empty());
+    let run = store.get_consolidation_run("local", run_id).unwrap();
+    assert_eq!(
+        (run.state.as_str(), run.error_class.as_deref()),
+        ("failed", Some("queue_expired"))
+    );
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert!(store.list_facts("local").unwrap().is_empty());
     drop(gate);
+}
+
+#[tokio::test]
+async fn disabling_a_queued_source_records_why_without_calling_the_model() {
+    for (gate_name, reason) in [
+        ("auto_suggest_chat", "source_disabled"),
+        ("episode_capture", "capture_disabled"),
+    ] {
+        let model = model().await;
+        let s = spawn_server(&model.base, options("both")).await;
+        let store = s.state.structured_memory.as_ref().unwrap();
+        let id = stage(store, "local");
+        let gate = s.state.generation_gate.claim("chat").unwrap();
+        let queued = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply");
+        let (code, body) = s
+            .post_json(
+                "/api/structured-memory/gates",
+                json!({"gate":gate_name,"enabled":false}),
+            )
+            .await;
+        assert_eq!(code, 200, "{body}");
+        settled(&s, "local").await;
+        let run = store
+            .get_consolidation_run("local", queued["run_id"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            (run.state.as_str(), run.error_class.as_deref()),
+            ("failed", Some(reason))
+        );
+        assert!(model.requests.lock().unwrap().is_empty());
+        assert!(store.list_proposals("local").unwrap().is_empty());
+        drop(gate);
+    }
+}
+
+#[tokio::test]
+async fn skipped_attempt_metadata_is_bounded_by_owner_and_never_contains_input() {
+    let model = model().await;
+    let s = spawn_server(
+        &model.base,
+        options("both")
+            .with("structured_memory.auto_suggest_chat", "false")
+            .with("structured_memory.suggestion_max_queue", "2"),
+    )
+    .await;
+    for owner in ["user_alice", "user_bob", "user_carla"] {
+        let attempt = suggest::enqueue(
+            &s.state,
+            owner,
+            Source::Chat,
+            None,
+            "private fixture input",
+            "private fixture output",
+        );
+        assert_eq!(attempt["reason"], "source_disabled");
+        assert_eq!(suggest::status(&s.state, owner)["last_attempt"], attempt);
+        assert!(!attempt.to_string().contains("private fixture"));
+    }
+    assert!(suggest::status(&s.state, "user_alice")["last_attempt"].is_null());
+    assert!(suggest::status(&s.state, "local")["last_attempt"].is_null());
+    assert_eq!(
+        suggest::status(&s.state, "user_bob")["last_attempt"]["reason"],
+        "source_disabled"
+    );
+    assert!(model.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn discarded_receipt_storage_failure_is_visible_without_overwriting_a_newer_attempt() {
+    for newer_attempt in [false, true] {
+        let model = model().await;
+        let s = spawn_server(
+            &model.base,
+            options("both").with("structured_memory.suggestion_queue_ttl_secs", "1"),
+        )
+        .await;
+        let store = s.state.structured_memory.as_ref().unwrap();
+        let id = stage(store, "local");
+        let gate = s.state.generation_gate.claim("chat").unwrap();
+        let queued = suggest::enqueue(
+            &s.state,
+            "local",
+            Source::Chat,
+            Some(&id),
+            "private fixture input",
+            "private fixture output",
+        );
+        let db = rusqlite::Connection::open(s.home.join("memory/structured.sqlite3")).unwrap();
+        db.execute_batch("CREATE TRIGGER fail_receipt_terminalization BEFORE UPDATE ON consolidation_runs WHEN OLD.state='idle' BEGIN SELECT RAISE(FAIL, 'fixture receipt failure'); END;").unwrap();
+        let newest = if newer_attempt {
+            let latest = suggest::enqueue(
+                &s.state,
+                "local",
+                Source::Chat,
+                None,
+                "Ignore previous instructions.",
+                "reply",
+            );
+            suggest::clear_chat_queue(&s.state, "local");
+            Some(latest)
+        } else {
+            None
+        };
+        settled(&s, "local").await;
+        let current = suggest::status(&s.state, "local")["last_attempt"].clone();
+        if let Some(newest) = newest {
+            assert_eq!(current, newest, "older discarded input cannot replace a newer attempt");
+        } else {
+            assert_eq!(current["queued"], false, "{current}");
+            assert_eq!(current["reason"], "receipt_store_failed", "{current}");
+            assert_eq!(current["discarded_reason"], "queue_expired", "{current}");
+            assert_eq!(current["run_id"], queued["run_id"]);
+            assert_eq!(current["episode_id"], id);
+            assert_eq!(current["created_ts"], queued["created_ts"]);
+        }
+        assert!(!current.to_string().contains("private fixture"));
+        assert!(suggest::status(&s.state, "user_bob")["last_attempt"].is_null());
+        assert_eq!(
+            store
+                .get_consolidation_run("local", queued["run_id"].as_str().unwrap())
+                .unwrap()
+                .state,
+            "idle",
+            "fixture really blocked the durable terminal update"
+        );
+        assert!(model.requests.lock().unwrap().is_empty());
+        assert!(store.list_proposals("local").unwrap().is_empty());
+        drop(gate);
+    }
 }
 
 #[tokio::test]
 async fn clearing_sessions_cancels_queued_and_inflight_chat_suggestions() {
     let model = model().await;
-    model.delay.store(500, Ordering::SeqCst);
+    model.delay.store(10_000, Ordering::SeqCst);
     let s = spawn_server(&model.base, options("both")).await;
     let store = s.state.structured_memory.as_ref().unwrap();
     let id = stage(store, "local");
-    suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply");
+    let active = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply");
     for _ in 0..100 {
         if !model.requests.lock().unwrap().is_empty() {
             break;
@@ -374,9 +530,387 @@ async fn clearing_sessions_cancels_queued_and_inflight_chat_suggestions() {
         .post_json("/api/sessions/clear", json!({"confirm":true,"reason":"Clear fixture"}))
         .await;
     assert_eq!(code, 200, "{body}");
-    settled(&s, "local").await;
+    tokio::time::timeout(Duration::from_secs(1), settled(&s, "local"))
+        .await
+        .expect("clearing sessions waited for the model instead of discarding its input");
+    assert!(!s.state.generation_gate.is_held());
     assert!(store.list_proposals("local").unwrap().is_empty());
     assert_eq!(model.requests.lock().unwrap().len(), 1);
+    let active = store
+        .get_consolidation_run("local", active["run_id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        (active.state.as_str(), active.error_class.as_deref()),
+        ("cancelled", Some("source_cleared"))
+    );
+    let queued = store
+        .list_consolidation_runs("local")
+        .unwrap()
+        .into_iter()
+        .find(|r| r.episode_ids == vec![id2.clone()])
+        .unwrap();
+    assert_eq!(
+        (queued.state.as_str(), queued.error_class.as_deref()),
+        ("cancelled", Some("source_cleared"))
+    );
+}
+
+#[tokio::test]
+async fn clearing_sessions_preserves_coding_and_other_owners_active_suggestions() {
+    for (owner, source) in [("local", Source::Coding), ("user_bob", Source::Chat)] {
+        let model = model().await;
+        model.delay.store(200, Ordering::SeqCst);
+        let s = spawn_server(&model.base, options("both")).await;
+        let store = s.state.structured_memory.as_ref().unwrap();
+        let episode = stage(store, owner);
+        let active = suggest::enqueue(&s.state, owner, source, Some(&episode), "metric", "reply");
+        for _ in 0..100 {
+            if !model.requests.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(model.requests.lock().unwrap().len(), 1);
+        let (code, body) = s
+            .post_json(
+                "/api/sessions/clear",
+                json!({"confirm":true,"reason":"Clear local fixture"}),
+            )
+            .await;
+        assert_eq!(code, 200, "{body}");
+        settled(&s, owner).await;
+        let run = store
+            .get_consolidation_run(owner, active["run_id"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(run.state, "done");
+        assert_eq!(run.proposal_count, 2);
+        assert_eq!(
+            model.requests.lock().unwrap().len(),
+            1,
+            "unrelated suggestion was preempted and replayed"
+        );
+    }
+}
+
+#[tokio::test]
+async fn disabling_a_running_suggestion_records_its_specific_gate() {
+    for (gate, reason) in [
+        ("auto_suggest_chat", "source_disabled"),
+        ("episode_capture", "capture_disabled"),
+    ] {
+        let model = model().await;
+        model.delay.store(150, Ordering::SeqCst);
+        let s = spawn_server(&model.base, options("both")).await;
+        let store = s.state.structured_memory.as_ref().unwrap();
+        let episode = stage(store, "local");
+        let active = suggest::enqueue(&s.state, "local", Source::Chat, Some(&episode), "metric", "reply");
+        for _ in 0..100 {
+            if !model.requests.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(model.requests.lock().unwrap().len(), 1);
+        let (code, body) = s
+            .post_json("/api/structured-memory/gates", json!({"gate":gate,"enabled":false}))
+            .await;
+        assert_eq!(code, 200, "{body}");
+        settled(&s, "local").await;
+        let run = store
+            .get_consolidation_run("local", active["run_id"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            (run.state.as_str(), run.error_class.as_deref()),
+            ("failed", Some(reason))
+        );
+        assert!(store.list_proposals("local").unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn clearing_a_preempted_active_suggestion_records_lost_input_instead_of_a_resumable_run() {
+    let model = model().await;
+    model.delay.store(10_000, Ordering::SeqCst);
+    let s = spawn_server(&model.base, options("both")).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, "local");
+    let queued = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply");
+    for _ in 0..100 {
+        if !model.requests.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+    assert!(suggest::preempt(&s.state));
+    suggest::clear_chat_queue(&s.state, "local");
+    settled(&s, "local").await;
+    let run = store
+        .get_consolidation_run("local", queued["run_id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        (run.state.as_str(), run.error_class.as_deref()),
+        ("cancelled", Some("source_cleared"))
+    );
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn cancelling_a_queued_receipt_immediately_releases_only_its_owned_input_and_capacity() {
+    let model = model().await;
+    let s = spawn_server(
+        &model.base,
+        options("both")
+            .with("structured_memory.suggestion_idle_ms", "30000")
+            .with("structured_memory.suggestion_max_queue", "3"),
+    )
+    .await;
+    let _gate = s.state.generation_gate.claim("fixture").unwrap();
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let mut queued = Vec::new();
+    for (owner, source) in [
+        ("local", Source::Chat),
+        ("local", Source::Coding),
+        ("user_bob", Source::Chat),
+    ] {
+        let episode = stage(store, owner);
+        queued.push(suggest::enqueue(
+            &s.state,
+            owner,
+            source,
+            Some(&episode),
+            "metric",
+            "reply",
+        ));
+    }
+    let local_run = queued[0]["run_id"].as_str().unwrap();
+    let coding_run = queued[1]["run_id"].as_str().unwrap();
+    let foreign_run = queued[2]["run_id"].as_str().unwrap();
+    assert_eq!(suggest::status(&s.state, "local")["queued"], 2);
+    assert_eq!(suggest::status(&s.state, "user_bob")["queued"], 1);
+    let (code, _) = s
+        .post_json(
+            &format!("/api/structured-memory/consolidation/{foreign_run}/cancel"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 404);
+    assert_eq!(suggest::status(&s.state, "user_bob")["queued"], 1);
+    let replacement_episode = stage(store, "local");
+    let full = suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&replacement_episode),
+        "metric",
+        "reply",
+    );
+    assert_eq!(full["reason"], "queue_full");
+    let (code, cancelled) = s
+        .post_json(
+            &format!("/api/structured-memory/consolidation/{local_run}/cancel"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 200, "{cancelled}");
+    assert_eq!(cancelled["state"], "cancelled");
+    assert_eq!(cancelled["error_class"], "cancelled");
+    let (code, status) = s.get_json("/api/structured-memory").await;
+    assert_eq!(code, 200, "{status}");
+    assert_eq!(status["automatic_suggestions"]["queued"], 1, "{status}");
+    assert_eq!(suggest::status(&s.state, "user_bob")["queued"], 1);
+    assert_eq!(store.get_consolidation_run("local", coding_run).unwrap().state, "idle");
+    assert_eq!(
+        store.get_consolidation_run("user_bob", foreign_run).unwrap().state,
+        "idle"
+    );
+    let replacement = suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&replacement_episode),
+        "metric",
+        "reply",
+    );
+    assert_eq!(replacement["queued"], true, "{replacement}");
+    assert!(model.requests.lock().unwrap().is_empty());
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert!(store.list_facts("local").unwrap().is_empty());
+    s.state.shutdown.cancel();
+}
+
+#[tokio::test]
+async fn cancelling_a_queued_receipt_does_not_abort_another_owners_running_suggestion() {
+    let model = model().await;
+    model.delay.store(300, Ordering::SeqCst);
+    let s = spawn_server(&model.base, options("both")).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let foreign = stage(store, "user_bob");
+    let running = suggest::enqueue(&s.state, "user_bob", Source::Chat, Some(&foreign), "metric", "reply");
+    for _ in 0..100 {
+        if !model.requests.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+    let local = stage(store, "local");
+    let queued = suggest::enqueue(&s.state, "local", Source::Chat, Some(&local), "metric", "reply");
+    let run_id = queued["run_id"].as_str().unwrap();
+    assert_eq!(store.get_consolidation_run("local", run_id).unwrap().state, "idle");
+    let (code, cancelled) = s
+        .post_json(
+            &format!("/api/structured-memory/consolidation/{run_id}/cancel"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 200, "{cancelled}");
+    assert_eq!(cancelled["state"], "cancelled");
+    settled(&s, "local").await;
+    settled(&s, "user_bob").await;
+    assert_eq!(
+        store
+            .get_consolidation_run("user_bob", running["run_id"].as_str().unwrap())
+            .unwrap()
+            .state,
+        "done"
+    );
+    assert_eq!(store.list_proposals("user_bob").unwrap().len(), 2);
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn cancelling_a_running_suggestion_releases_the_model_for_the_next_owner() {
+    let model = model().await;
+    model.delay.store(10_000, Ordering::SeqCst);
+    let s = spawn_server(&model.base, options("both")).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let local = stage(store, "local");
+    let first = suggest::enqueue(&s.state, "local", Source::Chat, Some(&local), "metric", "reply");
+    for _ in 0..100 {
+        if !model.requests.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+    model.delay.store(300, Ordering::SeqCst);
+    let foreign = stage(store, "user_bob");
+    let second = suggest::enqueue(&s.state, "user_bob", Source::Chat, Some(&foreign), "metric", "reply");
+    let path = format!(
+        "/api/structured-memory/consolidation/{}/cancel",
+        first["run_id"].as_str().unwrap()
+    );
+    let (code, cancelled) = s.post_json(&path, json!({})).await;
+    assert_eq!(code, 200, "{cancelled}");
+    assert_eq!(cancelled["state"], "cancelled");
+    // This must release the ten-second call, rather than wait for its reply.
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while model.requests.lock().unwrap().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cancelled run kept the model gate");
+    assert_eq!(
+        store
+            .get_consolidation_run("user_bob", second["run_id"].as_str().unwrap())
+            .unwrap()
+            .state,
+        "running"
+    );
+    let (code, again) = s.post_json(&path, json!({})).await;
+    assert_eq!(code, 200, "{again}");
+    settled(&s, "user_bob").await;
+    assert_eq!(
+        store
+            .get_consolidation_run("user_bob", second["run_id"].as_str().unwrap())
+            .unwrap()
+            .state,
+        "done"
+    );
+    assert_eq!(
+        store
+            .get_consolidation_run("local", first["run_id"].as_str().unwrap())
+            .unwrap()
+            .state,
+        "cancelled"
+    );
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert_eq!(store.list_proposals("user_bob").unwrap().len(), 2);
+    assert_eq!(model.requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn native_shutdown_interrupts_generation_without_consuming_waiting_inputs() {
+    for prior_stop in ["none", "owner_cancel", "preemption"] {
+        let model = model().await;
+        model.delay.store(10_000, Ordering::SeqCst);
+        let s = spawn_server(&model.base, options("both")).await;
+        let store = s.state.structured_memory.as_ref().unwrap();
+        let first = suggest::enqueue(
+            &s.state,
+            "local",
+            Source::Chat,
+            Some(&stage(store, "local")),
+            "metric",
+            "reply",
+        );
+        for _ in 0..100 {
+            if !model.requests.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(model.requests.lock().unwrap().len(), 1);
+        let waiting = suggest::enqueue(
+            &s.state,
+            "user_bob",
+            Source::Chat,
+            Some(&stage(store, "user_bob")),
+            "metric",
+            "reply",
+        );
+        let run_id = first["run_id"].as_str().unwrap();
+        let expected = match prior_stop {
+            "owner_cancel" => {
+                store.cancel_consolidation_run("local", run_id).unwrap();
+                ("cancelled", Some("cancelled"))
+            }
+            "preemption" => {
+                assert!(suggest::preempt(&s.state));
+                ("cancelled", Some("preempted"))
+            }
+            _ => ("failed", Some("interrupted")),
+        };
+        // The native control path signals shutdown before aborting the client.
+        s.state.shutdown.cancel();
+        s.state.abort_chat();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while s.state.generation_gate.is_held() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("shutdown kept the model gate");
+        let ended = store.get_consolidation_run("local", run_id).unwrap();
+        assert_eq!(
+            (ended.state.as_str(), ended.error_class.as_deref()),
+            expected,
+            "{prior_stop}"
+        );
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let waiting = store
+            .get_consolidation_run("user_bob", waiting["run_id"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(waiting.state, "idle", "shutdown consumed waiting input");
+        assert_eq!(model.requests.lock().unwrap().len(), 1);
+        assert!(store.list_proposals("local").unwrap().is_empty());
+        assert!(store.list_proposals("user_bob").unwrap().is_empty());
+        assert!(store.list_facts("local").unwrap().is_empty());
+    }
 }
 
 #[tokio::test]
@@ -527,8 +1061,9 @@ async fn an_owner_cancel_stops_a_preempted_suggestion_from_resuming() {
         .await;
     assert_eq!(code, 200, "{cancelled}");
     assert_eq!(cancelled["error_class"], "cancelled", "{cancelled}");
+    assert_eq!(suggest::status(&s.state, "local")["queued"], 1);
 
-    // Settle across two slow idle waits: the cancelled job, then the second chat's.
+    // Only the second chat's queued input remains after the owner's cancel.
     let mut quiet = false;
     for _ in 0..1000 {
         let status = suggest::status(&s.state, "local");
@@ -599,7 +1134,7 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
     assert_eq!(code, 200, "{result}");
     assert_eq!(result["memory_suggestion"]["queued"], true, "{result}");
     settled(&s, "local").await;
-    let (code, job) = s.post_json("/api/agent/jobs", body).await;
+    let (code, job) = s.post_json("/api/agent/jobs", body.clone()).await;
     assert_eq!(code, 202, "{job}");
     for _ in 0..100 {
         let (_, status) = s
@@ -611,6 +1146,12 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     settled(&s, "local").await;
+    let completed = s
+        .get_json(&format!("/api/agent/jobs/{}", job["job_id"].as_str().unwrap()))
+        .await
+        .1;
+    assert_eq!(completed["status"], "finished", "{completed}");
+    assert_eq!(completed["result"]["memory_suggestion"]["queued"], true, "{completed}");
     let store = s.state.structured_memory.as_ref().unwrap();
     assert_eq!(store.list_pending_proposals("local").unwrap().len(), 2);
     assert!(store.list_facts("local").unwrap().is_empty());
@@ -630,6 +1171,81 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
         "run_not_successful"
     );
     assert_eq!(store.episode_count("local").unwrap(), before);
+
+    let (code, disabled) = s
+        .post_json(
+            "/api/structured-memory/gates",
+            json!({"gate":"auto_suggest_coding", "enabled":false}),
+        )
+        .await;
+    assert_eq!(code, 200, "{disabled}");
+    let (code, skipped_job) = s.post_json("/api/agent/jobs", body).await;
+    assert_eq!(code, 202, "{skipped_job}");
+    let path = format!("/api/agent/jobs/{}", skipped_job["job_id"].as_str().unwrap());
+    for _ in 0..100 {
+        if s.get_json(&path).await.1["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let skipped = s.get_json(&path).await.1;
+    assert_eq!(skipped["status"], "finished", "{skipped}");
+    assert_eq!(skipped["result"]["memory_suggestion"]["queued"], false, "{skipped}");
+    assert_eq!(
+        skipped["result"]["memory_suggestion"]["reason"], "source_disabled",
+        "{skipped}"
+    );
+    assert_eq!(store.episode_count("local").unwrap(), before);
+    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn unaccepted_coding_results_never_stage_completion_memory() {
+    let model = model().await;
+    let s = spawn_server(&model.base, options("insights")).await;
+    let other_owner = suggest::coding_completed(&s.state, "user_bob", "failed run", &json!({"ok":false}));
+    for status in [
+        "exhausted",
+        "failed",
+        "running",
+        "interrupted",
+        "approved",
+        "rejected",
+        "discarded",
+        "unknown",
+        "",
+        "missing",
+    ] {
+        let previous = suggest::coding_completed(&s.state, "local", "failed run", &json!({"ok":false}));
+        assert_eq!(previous["reason"], "run_not_successful");
+        let outcome = if status == "missing" {
+            json!({"ok":true})
+        } else {
+            json!({"ok":true,"parsed":{"status":status}})
+        };
+        let result = suggest::coding_completed(&s.state, "local", "Use metric units in examples.", &outcome);
+        assert_eq!(result["queued"], false, "{status}");
+        assert_eq!(result["reason"], "run_not_accepted", "{status}");
+        let (code, memory) = s.get_json("/api/structured-memory").await;
+        assert_eq!(code, 200, "{memory}");
+        let latest = &memory["automatic_suggestions"]["last_attempt"];
+        assert_eq!(latest["reason"], "run_not_accepted", "{status}: {memory}");
+        assert_eq!(*latest, result, "the panel sees the current completion outcome");
+        assert_eq!(latest["source"], "coding");
+        assert!(latest["episode_id"].is_null());
+        assert!(latest["run_id"].is_null());
+        assert!(latest["created_ts"].as_f64().is_some());
+        assert_eq!(memory["automatic_suggestions"]["queued"], 0);
+        assert_eq!(memory["automatic_suggestions"]["running"], false);
+        assert_eq!(suggest::status(&s.state, "user_bob")["last_attempt"], other_owner);
+    }
+    settled(&s, "local").await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    assert_eq!(store.episode_count("local").unwrap(), 0);
+    assert!(store.list_consolidation_runs("local").unwrap().is_empty());
+    assert!(store.list_proposals("local").unwrap().is_empty());
+    assert!(store.list_facts("local").unwrap().is_empty());
+    assert!(model.requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

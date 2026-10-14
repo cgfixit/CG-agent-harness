@@ -315,6 +315,30 @@ impl JobStore {
         }
     }
 
+    /// Annotate only an outcome that finish already persisted. Cancellation or
+    /// a failed completion write must not trigger completion-derived work.
+    pub fn annotate_completion(&self, job_id: &str, completed: impl FnOnce(&mut Value)) {
+        let mut jobs = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(job) = jobs.get_mut(job_id) else {
+            return;
+        };
+        if !matches!(job.status, FINISHED | FAILED) || job.error.is_some() {
+            return;
+        }
+        let Some(result) = job.result.as_mut() else {
+            return;
+        };
+        completed(result);
+        if self.persist(&jobs).is_err() {
+            if let Some(job) = jobs.get_mut(job_id) {
+                job.error = Some((
+                    500,
+                    json!({"detail":{"code":"JOB_METADATA_PERSIST_FAILED","message":"Completed result retained; memory receipt could not be saved in the job record. Inspect memory run history."}}),
+                ));
+            }
+        }
+    }
+
     pub fn get(&self, owner: &str, job_id: &str) -> Option<Value> {
         let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         g.get(job_id)
@@ -501,10 +525,35 @@ mod tests {
         let c = store.cancel("local", "c").unwrap();
         assert_eq!(c["status"], CANCELLED);
         // A late finish after cancel does not resurrect the job.
+        let mut completed = false;
         store.finish("c", Ok(json!({})));
+        store.annotate_completion("c", |_| completed = true);
+        assert!(!completed, "a cancelled job cannot enqueue completion suggestions");
         assert_eq!(store.get("local", "c").unwrap()["status"], CANCELLED);
         assert!(store.cancel("local", "nope").is_none());
         assert_eq!(store.list("local").len(), 3);
+    }
+
+    #[tokio::test]
+    async fn completion_annotations_require_a_durably_finished_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        let store = JobStore::open(&path).unwrap();
+        let id = "d".repeat(32);
+        store
+            .try_insert_running("local", &id, "real-repo-run", idle_handle())
+            .unwrap();
+        let mut completed = false;
+        store.annotate_completion(&id, |_| completed = true);
+        assert!(!completed, "running jobs have no completed outcome");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        store.finish(&id, Ok(json!({"ok":true})));
+        let failed = store.get("local", &id).unwrap();
+        assert_eq!(failed["error"]["detail"]["code"], "JOB_PERSIST_FAILED");
+        store.annotate_completion(&id, |_| completed = true);
+        assert!(!completed, "failed durable completion cannot enqueue memory work");
+        assert!(failed["result"]["memory_suggestion"].is_null());
     }
 
     #[tokio::test]

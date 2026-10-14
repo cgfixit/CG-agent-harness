@@ -207,6 +207,9 @@ fn start() -> anyhow::Result<()> {
                 }
             }
         }
+        // Memory must record the known shutdown cause before the shared model
+        // client reports its otherwise indistinguishable cancellation error.
+        state.shutdown.cancel();
         state.abort_chat();
         state.jobs.cancel_all_for_shutdown();
         server.abort();

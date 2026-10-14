@@ -1,4 +1,4 @@
-//! Opt-in completion suggestions. Bounded transient input, durable pending output only.
+//! Opt-in completion suggestions. RAM-only input; durable receipts and pending proposals.
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -70,6 +70,7 @@ struct Job {
     episode: String,
     source: Source,
     model: String,
+    run: String,
     input: String,
     output: String,
     created: Instant,
@@ -80,8 +81,11 @@ struct Queue {
     jobs: VecDeque<Job>,
     worker: bool,
     running_owner: Option<String>,
+    running_source: Option<Source>,
     running_chat_cancelled: bool,
     running_cancel: Option<CancellationToken>,
+    // Metadata only; bounded by the configured waiting queue capacity.
+    attempts: VecDeque<(String, Value)>,
 }
 
 #[derive(Default)]
@@ -94,19 +98,61 @@ fn mode(state: &AppState) -> &str {
     }
 }
 
-pub fn available(state: &AppState, source: Source) -> bool {
+fn unavailable_reason(state: &AppState, source: Source) -> Option<&'static str> {
     let gates = current_gates(state);
-    gates.resolve(
+    if state.structured_memory.is_none() {
+        return Some("store_closed");
+    }
+    if !capture_available(&state.cfg, true, &gates) {
+        return Some("capture_disabled");
+    }
+    if !gates.resolve(
         source.flag().trim_start_matches("structured_memory."),
         state.cfg.flag_is_true(source.flag()),
-    ) && matches!(mode(state), "summaries" | "insights" | "both")
-        && capture_available(&state.cfg, state.structured_memory.is_some(), &gates)
+    ) {
+        return Some("source_disabled");
+    }
+    if !matches!(mode(state), "summaries" | "insights" | "both") {
+        return Some("invalid_mode");
+    }
+    None
+}
+
+pub fn available(state: &AppState, source: Source) -> bool {
+    unavailable_reason(state, source).is_none()
+}
+
+fn attempt(
+    state: &AppState,
+    queue: &mut Queue,
+    owner: &str,
+    source: Source,
+    episode: Option<&str>,
+    mut result: Value,
+) -> Value {
+    result["source"] = json!(source.name());
+    result["episode_id"] = json!(episode);
+    result["created_ts"] = json!(crate::common::now_ts());
+    let max = state
+        .cfg
+        .u64_or("structured_memory.suggestion_max_queue", 8)
+        .clamp(1, 32) as usize;
+    queue.attempts.retain(|(id, _)| id != owner);
+    while queue.attempts.len() >= max {
+        queue.attempts.pop_front();
+    }
+    queue.attempts.push_back((owner.to_owned(), result.clone()));
+    result
 }
 
 pub fn status(state: &AppState, owner: &str) -> Value {
     let queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
     json!({
         "chat": available(state, Source::Chat), "coding": available(state, Source::Coding),
+        "chat_unavailable_reason": unavailable_reason(state, Source::Chat),
+        "coding_unavailable_reason": unavailable_reason(state, Source::Coding),
+        "last_attempt": queue.attempts.iter().find(|(id, _)| id == owner).map(|(_, value)| value),
+        "poll_interval_ms": state.cfg.u64_or("structured_memory.status_poll_ms", 30000).clamp(250, 30000),
         "mode": mode(state), "queued": queue.jobs.iter().filter(|j| j.owner == owner).count(),
         "running": queue.running_owner.as_deref() == Some(owner),
         "approval_required": true, "input_persistence": "bounded RAM only; lost on restart",
@@ -130,11 +176,27 @@ pub fn preempt(state: &AppState) -> bool {
     }
 }
 
+/// Drop bounded input immediately after the store accepts its owner's cancel.
+pub fn remove_cancelled_input(state: &AppState, owner: &str, run_id: &str) {
+    let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
+    queue.jobs.retain(|job| job.owner != owner || job.run != run_id);
+}
+
 pub fn clear_chat_queue(state: &AppState, owner: &str) {
     let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
-    queue.jobs.retain(|j| j.source != Source::Chat || j.owner != owner);
-    if queue.running_owner.as_deref() == Some(owner) {
+    let Queue { jobs, attempts, .. } = &mut *queue;
+    jobs.retain(|job| {
+        let keep = job.source != Source::Chat || job.owner != owner;
+        if !keep {
+            discard(state, job, "source_cleared", attempts);
+        }
+        keep
+    });
+    if queue.running_owner.as_deref() == Some(owner) && queue.running_source == Some(Source::Chat) {
         queue.running_chat_cancelled = true;
+        if let Some(cancel) = &queue.running_cancel {
+            cancel.cancel();
+        }
     }
 }
 
@@ -161,12 +223,27 @@ pub fn enqueue_for_model(
     output: &str,
     model: &str,
 ) -> Value {
-    if !available(state, source) {
-        return json!({"queued":false,"reason":"disabled"});
+    let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(reason) = unavailable_reason(state, source) {
+        return attempt(
+            state,
+            &mut queue,
+            owner,
+            source,
+            episode,
+            json!({"queued":false,"reason":reason}),
+        );
     }
     let scanner = Scanner::core();
     if scanner.count_matches(input) > 0 || scanner.count_matches(output) > 0 {
-        return json!({"queued":false,"reason":"injection_detected"});
+        return attempt(
+            state,
+            &mut queue,
+            owner,
+            source,
+            episode,
+            json!({"queued":false,"reason":"injection_detected"}),
+        );
     }
     let cap = state
         .cfg
@@ -175,7 +252,6 @@ pub fn enqueue_for_model(
     // Each side receives half the shared budget; never retain an unbounded transcript.
     let input = crate::common::clip_chars(&state.audit.redact(input), cap / 2);
     let output = crate::common::clip_chars(&state.audit.redact(output), cap / 2);
-    let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
     let max = state
         .cfg
         .u64_or("structured_memory.suggestion_max_queue", 8)
@@ -184,10 +260,17 @@ pub fn enqueue_for_model(
         state
             .audit
             .log(json!({"event":"memory_suggestion_skipped","owner_id":owner,"reason":"queue_full"}));
-        return json!({"queued":false,"reason":"queue_full"});
+        return attempt(
+            state,
+            &mut queue,
+            owner,
+            source,
+            episode,
+            json!({"queued":false,"reason":"queue_full"}),
+        );
     }
     let store = state.structured_memory.as_ref().expect("availability checked");
-    let episode = match (source, episode) {
+    let staged = match (source, episode) {
         (Source::Chat, Some(id)) => store.get_episode(owner, id),
         (Source::Coding, _) => store.stage_coding_episode(
             owner,
@@ -199,17 +282,59 @@ pub fn enqueue_for_model(
                 assistant_chars: output.chars().count(),
             },
         ),
-        _ => return json!({"queued":false,"reason":"episode_unavailable"}),
+        _ => {
+            return attempt(
+                state,
+                &mut queue,
+                owner,
+                source,
+                episode,
+                json!({"queued":false,"reason":"episode_unavailable"}),
+            )
+        }
     };
-    let episode = match episode {
+    let episode = match staged {
         Ok(episode) => episode.id,
-        Err(err) => return json!({"queued":false,"reason":err.code}),
+        Err(err) => {
+            return attempt(
+                state,
+                &mut queue,
+                owner,
+                source,
+                episode,
+                json!({"queued":false,"reason":err.code}),
+            )
+        }
     };
+    let run = match store.queue_suggestion_run(owner, std::slice::from_ref(&episode), VERSION) {
+        Ok(run) => run,
+        Err(err) => {
+            return attempt(
+                state,
+                &mut queue,
+                owner,
+                source,
+                Some(&episode),
+                json!({"queued":false,"reason":err.code}),
+            )
+        }
+    };
+    if run.state != "idle" || queue.jobs.iter().any(|job| job.run == run.id) {
+        return attempt(
+            state,
+            &mut queue,
+            owner,
+            source,
+            Some(&episode),
+            json!({"queued":false,"reason":"already_recorded","run_id":run.id}),
+        );
+    }
     queue.jobs.push_back(Job {
         owner: owner.into(),
         episode: episode.clone(),
         source,
         model: state.local_memory_model_for(model),
+        run: run.id.clone(),
         input,
         output,
         created: Instant::now(),
@@ -221,19 +346,66 @@ pub fn enqueue_for_model(
             worker(state).await;
         });
     }
-    json!({"queued":true,"episode_id":episode,"approval_required":true})
+    attempt(
+        state,
+        &mut queue,
+        owner,
+        source,
+        Some(&episode),
+        json!({"queued":true,"run_id":run.id,"approval_required":true}),
+    )
 }
 
 /// Both synchronous and detached routes use this projection after the shim returns.
 pub fn coding_completed(state: &Arc<AppState>, owner: &str, instruction: &str, result: &Value) -> Value {
     if result["ok"] != true {
-        return json!({"queued":false,"reason":"run_not_successful"});
+        let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
+        return attempt(
+            state,
+            &mut queue,
+            owner,
+            Source::Coding,
+            None,
+            json!({"queued":false,"reason":"run_not_successful"}),
+        );
     }
     let parsed = &result["parsed"];
+    // A normal child exit can also report exhausted, without an accepted change.
+    if parsed["status"] != "pending_decision" {
+        let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
+        return attempt(
+            state,
+            &mut queue,
+            owner,
+            Source::Coding,
+            None,
+            json!({"queued":false,"reason":"run_not_accepted"}),
+        );
+    }
     let evidence = json!({"repo":parsed["repo"],"status":parsed["status"],"run_id":parsed["run_id"],
         "changed_files":parsed["changed_files"],"pushed":parsed["pushed"],"pr_url":parsed["pr_url"],
         "commit_message":parsed["commit_message"]});
     enqueue(state, owner, Source::Coding, None, instruction, &evidence.to_string())
+}
+
+fn discard(state: &AppState, job: &Job, reason: &str, attempts: &mut VecDeque<(String, Value)>) {
+    let receipt_saved = state
+        .structured_memory
+        .as_ref()
+        .is_some_and(|store| store.fail_consolidation_run(&job.owner, &job.run, reason).is_ok());
+    if !receipt_saved {
+        // Retain the enqueue timestamp and source identity. An older job must
+        // never replace the owner's newer attempt, including a later skip.
+        if let Some((_, attempt)) = attempts
+            .iter_mut()
+            .find(|(owner, attempt)| owner == &job.owner && attempt["run_id"] == job.run)
+        {
+            attempt["queued"] = json!(false);
+            attempt["reason"] = json!("receipt_store_failed");
+            attempt["discarded_reason"] = json!(reason);
+        }
+    }
+    state.audit.log(json!({"event":"memory_suggestion_discarded","owner_id":job.owner,"episode_id":job.episode,"run_id":job.run,"reason":reason,"receipt_saved":receipt_saved}));
 }
 
 async fn worker(state: Arc<AppState>) {
@@ -242,17 +414,28 @@ async fn worker(state: Arc<AppState>) {
             .cfg
             .u64_or("structured_memory.suggestion_idle_ms", 2000)
             .clamp(10, 30000);
-        tokio::time::sleep(Duration::from_millis(idle)).await;
+        tokio::select! {
+            biased;
+            _ = state.shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(idle)) => {}
+        }
         let job = {
             let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
             let ttl = state
                 .cfg
                 .u64_or("structured_memory.suggestion_queue_ttl_secs", 300)
                 .clamp(1, 3600);
-            queue.jobs.retain(|job| {
-                let keep = job.created.elapsed() <= Duration::from_secs(ttl) && available(&state, job.source);
-                if !keep { state.audit.log(json!({"event":"memory_suggestion_skipped","owner_id":job.owner,"reason":"expired_or_disabled"})); }
-                keep
+            let Queue { jobs, attempts, .. } = &mut *queue;
+            jobs.retain(|job| {
+                let reason = if job.created.elapsed() > Duration::from_secs(ttl) {
+                    Some("queue_expired")
+                } else {
+                    unavailable_reason(&state, job.source)
+                };
+                if let Some(reason) = reason {
+                    discard(&state, job, reason, attempts);
+                }
+                reason.is_none()
             });
             if queue.jobs.is_empty() {
                 queue.worker = false;
@@ -264,6 +447,7 @@ async fn worker(state: Arc<AppState>) {
             let job = queue.jobs.pop_front().expect("nonempty queue");
             let cancel = CancellationToken::new();
             queue.running_owner = Some(job.owner.clone());
+            queue.running_source = Some(job.source);
             queue.running_chat_cancelled = false;
             queue.running_cancel = Some(cancel.clone());
             (job, gate, cancel)
@@ -273,27 +457,45 @@ async fn worker(state: Arc<AppState>) {
             .cfg
             .u64_or("structured_memory.suggestion_queue_ttl_secs", 300)
             .clamp(1, 3600);
-        let result = if !available(&state, job.source) || job.created.elapsed() > Duration::from_secs(ttl) {
-            Err(HarnessError::new(
-                "SUGGESTION_EXPIRED_OR_DISABLED",
-                "suggestion input discarded",
-            ))
+        let reason = if job.created.elapsed() > Duration::from_secs(ttl) {
+            Some("queue_expired")
+        } else {
+            unavailable_reason(&state, job.source)
+        };
+        let result = if let Some(reason) = reason {
+            Err(HarnessError::new(reason, "suggestion input discarded"))
         } else {
             generate(&state, &job, &cancel).await
         };
         let preempted = result.as_ref().is_err_and(|e| e.code == PREEMPTED);
+        let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(err) = &result {
+            if !preempted {
+                discard(&state, &job, &err.code, &mut queue.attempts);
+            }
+        }
         state
             .audit
             .log(json!({"event":"memory_suggestion_finished","owner_id":job.owner,
-            "episode_id":job.episode,"source":job.source.name(),"ok":result.is_ok(),
+            "episode_id":job.episode,"run_id":job.run,"source":job.source.name(),"ok":result.is_ok(),
             "error_class":result.err().map(|e|e.code)}));
-        let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
         // A preempted job runs again once the chat turn is done, unless the chat
-        // it came from was cleared meanwhile.
-        if preempted && !(job.source == Source::Chat && queue.running_chat_cancelled) {
-            queue.jobs.push_front(job);
+        // it came from was cleared or its owner cancelled the run meanwhile.
+        if preempted {
+            if state
+                .structured_memory
+                .as_ref()
+                .is_some_and(|store| store.is_cancel_requested(&job.run))
+            {
+                discard(&state, &job, "cancelled", &mut queue.attempts);
+            } else if job.source == Source::Chat && queue.running_chat_cancelled {
+                discard(&state, &job, "source_cleared", &mut queue.attempts);
+            } else {
+                queue.jobs.push_front(job);
+            }
         }
         queue.running_owner = None;
+        queue.running_source = None;
         queue.running_cancel = None;
         // Release the model before the next idle wait, with the queue settled.
         drop(gate);
@@ -315,7 +517,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
     let store = state.structured_memory.as_ref().expect("availability checked");
     store.get_episode(&job.owner, &job.episode)?;
     if chat_cleared(state, job) {
-        return Err(HarnessError::new("SUGGESTION_CANCELLED", "chat cleared"));
+        return Err(HarnessError::new("source_cleared", "chat cleared"));
     }
     let ids = [job.episode.clone()];
     let run = store.begin_suggestion_run(&job.owner, &ids, VERSION)?;
@@ -343,16 +545,22 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         let system = system_prompt(mode(state));
         let reply = tokio::select! {
             biased;
+            _ = store.wait_for_cancel(&run.id) => {
+                return Err(HarnessError::new("SUGGESTION_CANCELLED", "the owner cancelled this run"));
+            }
             _ = cancel.cancelled() => {
                 return Err(HarnessError::new(PREEMPTED, "a chat turn took the local model"));
             }
+            _ = state.shutdown.cancelled() => {
+                return Err(HarnessError::new("interrupted", "the backend is shutting down"));
+            }
             reply = state.chat.chat(&system, &messages, Some(&job.model), 1024, 0.0) => reply?,
         };
-        if chat_cleared(state, job) || !available(state, job.source) {
-            return Err(HarnessError::new(
-                "SUGGESTION_CANCELLED",
-                "suggestion disabled or source cleared",
-            ));
+        if chat_cleared(state, job) {
+            return Err(HarnessError::new("source_cleared", "chat cleared"));
+        }
+        if let Some(reason) = unavailable_reason(state, job.source) {
+            return Err(HarnessError::new(reason, "suggestion disabled"));
         }
         let mut parsed = parse_consolidator_output(&reply.body_text, store.limits().max_consolidation_candidates)?;
         let count = parsed.candidates.len();
@@ -386,7 +594,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         });
         let queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
         if job.source == Source::Chat && queue.running_chat_cancelled {
-            return Err(HarnessError::new("SUGGESTION_CANCELLED", "chat cleared"));
+            return Err(HarnessError::new("source_cleared", "chat cleared"));
         }
         store.finish_consolidation_run(
             &job.owner,
