@@ -124,7 +124,7 @@ app_path=$app_dir/$app_name
 
 # ---------------------------------------------------------------- inventory
 inventory() {
-  local missing=0 v want
+  local missing=0 v want tags
   say "macOS $(sw_vers -productVersion) on $(uname -m)"
   if xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p)"; else say 'Command Line Tools: MISSING'; missing=1; fi
   if have brew; then say "Homebrew: $(brew --version 2>/dev/null | head -n1)"; else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
@@ -156,7 +156,9 @@ inventory() {
       # Ollama stores an untagged name as :latest.
       case $model in *:*) want=$model ;; *) want=$model:latest ;; esac
       if ! ollama_up; then say "model $want: unknown (Ollama is not running)"; missing=1
-      elif curl --noproxy '*' --silent --fail --max-time 5 "$ollama_api/api/tags" | grep -Fq "\"name\":\"$want\""; then say "model $want: pulled"
+      # Read the whole reply first: grep -q in a pipe can end curl early, and pipefail would count that as a miss.
+      elif tags=$(curl --noproxy '*' --silent --fail --max-time 5 "$ollama_api/api/tags") \
+        && case $tags in *"\"name\":\"$want\""*) true ;; *) false ;; esac; then say "model $want: pulled"
       else say "model $want: not pulled"; missing=1; fi
     fi
     v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
@@ -329,11 +331,11 @@ else
     "$HOME/Applications")
       # The launcher tries /Applications first; name this copy when one is there too.
       if [ -d "/Applications/$app_name" ]; then
-        say "done. Next: CGAH_APP='$app_path' scripts/start-macos.sh (/Applications also has a copy, which the launcher would pick first)"
+        say "done. Next: CGAH_APP=$(printf %q "$app_path") scripts/start-macos.sh (/Applications also has a copy, which the launcher would pick first)"
       else
         say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).'
       fi ;;
-    *) say "done. Next: CGAH_APP='$app_path' scripts/start-macos.sh (the launcher searches only /Applications and ~/Applications)" ;;
+    *) say "done. Next: CGAH_APP=$(printf %q "$app_path") scripts/start-macos.sh (the launcher searches only /Applications and ~/Applications)" ;;
   esac
 fi
 say 'First sign-in is user admin; docs/INSTALL.md (First run) says where its first credential comes from. A new password is required next.'

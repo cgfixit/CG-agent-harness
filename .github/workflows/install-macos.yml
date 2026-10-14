@@ -34,7 +34,12 @@ jobs:
           persist-credentials: false
 
       - name: Inventory before install (missing items expected)
-        run: scripts/install-macos.sh --check --app-dir "$RUNNER_TEMP/Applications" || echo "check exited $?"
+        run: |
+          set +e
+          scripts/install-macos.sh --check --app-dir "$RUNNER_TEMP/Applications"
+          rc=$?
+          echo "check exited $rc"
+          test "$rc" = 1
 
       - name: Dry run prints the plan and changes nothing
         run: |
