@@ -144,6 +144,13 @@ fn no_marker_timestamp_last_passes_with_begin_comment() {
     assert_ok(&run_body("no-marker", &body));
 }
 
+/// The template asks for a 🤖 before the stamp; the plain stamp still passes.
+#[test]
+fn robot_prefixed_stamp_passes() {
+    let body = format!("{BEGIN}{}🤖 {STAMP}\n", valid_prefix());
+    assert_ok(&run_body("robot-stamp", &body));
+}
+
 /// (d) Stray text after the stamp, no marker. Fails on the previous checker too.
 #[test]
 fn stray_text_after_timestamp_without_marker_fails() {
@@ -266,7 +273,8 @@ fn workflow_strips_the_footer_before_the_stamp_check() {
         yml.contains("const body = cursorFooterAt === -1 ? rawBody : rawLines.slice(0, cursorFooterAt).join(\"\\n\");")
     );
     assert!(yml.contains("types: [opened, edited, synchronize, reopened, ready_for_review]"));
-    assert!(yml.contains("github.event.pull_request.state == 'open' && github.head_ref != 'main'"));
+    // A skipped required check passes, so neither job may carry a skip condition.
+    assert!(!yml.contains("github.head_ref != 'main'"));
     assert!(yml.contains("permissions: {}"));
     assert!(yml.contains("contents: read"));
     assert!(yml.contains("pull-requests: write"));
