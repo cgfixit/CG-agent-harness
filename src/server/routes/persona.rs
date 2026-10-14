@@ -360,6 +360,7 @@ pub async fn preview(
                 &state,
                 &owner,
                 memory_enabled,
+                false,
                 &selections,
                 crate::server::structured_memory::RetrievalIntent {
                     force,
@@ -462,7 +463,7 @@ pub async fn preview(
                 "facts_reserved": memory_budget.facts_reserved
             }
         },
-        "scope":"Next chat system prompt snapshot; not the coding planner. Persona, goal and selected facts never authorize execution."}),
+        "scope":"Local chat system prompt snapshot; cloud chat and the coding planner omit it. Persona, goal and selected facts never authorize execution."}),
     ))
 }
 
