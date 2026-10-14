@@ -112,8 +112,9 @@ if [ -z "$(app_backends)" ]; then
     for candidate in "/Applications/CG Agent Harness.app" "$HOME/Applications/CG Agent Harness.app"; do
       if [ -x "$candidate/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$candidate/Contents/MacOS/cgagentharness" ] \
         && codesign --verify --deep --strict "$candidate" >/dev/null 2>&1; then
-        app=$candidate
-        break
+        if [ -z "$app" ]; then app=$candidate; else
+          echo "start-macos: note: $candidate also exists; opening $app (set CGAH_APP to choose)" >&2
+        fi
       fi
     done
   fi

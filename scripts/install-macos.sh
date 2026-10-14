@@ -128,7 +128,9 @@ inventory() {
   say "macOS $(sw_vers -productVersion) on $(uname -m)"
   if xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p)"; else say 'Command Line Tools: MISSING'; missing=1; fi
   if have brew; then say "Homebrew: $(brew --version 2>/dev/null | head -n1)"; else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
-  if have rustup; then
+  if have rustup && ! rustup --version >/dev/null 2>&1; then
+    say "rustup: $(command -v rustup) does not run (remove it or fix PATH, then rerun)"; missing=1
+  elif have rustup; then
     say "rustup: $(command -v rustup)"
     if rustup run "$toolchain" rustc --version >/dev/null 2>&1; then
       say "Rust $toolchain: $(rustup run "$toolchain" rustc --version)"
@@ -199,6 +201,10 @@ if [ "$need_brew" = 1 ] && ! have brew; then
 fi
 
 # --------------------------------------------------------------------- 3. Rust
+# A rustup that is found but cannot run is not ours to replace: stop with its path.
+if have rustup && ! rustup --version >/dev/null 2>&1; then
+  [ "$dry" = 1 ] || die "rustup at $(command -v rustup) does not run (wrong architecture or a stale link); remove it or fix PATH, then rerun" 3
+fi
 if ! have rustup; then
   say "installing rustup (official installer; it adds $cargo_bin to your shell profile)"
   installer=$(mktemp)
@@ -259,7 +265,7 @@ fi
 # ----------------------------------------------------------------------- 5. gh
 if [ "$gh" = 1 ] && ! gh_ok; then
   # reinstall repairs a broken Homebrew gh; install covers a missing one.
-  if have gh; then run brew reinstall gh; else run brew install gh; fi
+  if brew list --formula gh >/dev/null 2>&1; then run brew reinstall gh; else run brew install gh; fi
 fi
 
 # ---------------------------------------------------- 6. standalone backend
@@ -319,7 +325,14 @@ if [ "$app" = 0 ]; then
   say 'done. Next: scripts/start-macos.sh --standalone (no app: runs the console server from this clone).'
 else
   case $app_dir in
-    /Applications | "$HOME/Applications") say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).' ;;
+    /Applications) say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).' ;;
+    "$HOME/Applications")
+      # The launcher tries /Applications first; name this copy when one is there too.
+      if [ -d "/Applications/$app_name" ]; then
+        say "done. Next: CGAH_APP='$app_path' scripts/start-macos.sh (/Applications also has a copy, which the launcher would pick first)"
+      else
+        say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).'
+      fi ;;
     *) say "done. Next: CGAH_APP='$app_path' scripts/start-macos.sh (the launcher searches only /Applications and ~/Applications)" ;;
   esac
 fi
