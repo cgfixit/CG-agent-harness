@@ -1251,13 +1251,14 @@ async fn chat_inner(
         })
         .await
     };
-    let memory_suggestion = crate::server::structured_memory_suggest::enqueue(
+    let memory_suggestion = crate::server::structured_memory_suggest::enqueue_for_model(
         &state,
         &owner,
         crate::server::structured_memory_suggest::Source::Chat,
         episode["id"].as_str(),
         &req.message,
         &reply.body_text,
+        &model,
     );
     Ok(Json(json!({
         "session_id": session.session_id,

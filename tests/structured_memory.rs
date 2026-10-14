@@ -1484,15 +1484,6 @@ fn auto_consolidation() -> ServerOptions {
         .with("structured_memory.auto_consolidation_idle_ms", "40")
 }
 
-fn retire_episode(s: &TestServer, id: &str) {
-    s.state
-        .structured_memory
-        .as_ref()
-        .unwrap()
-        .delete_episode("local", id, "retire after fixture outcome")
-        .unwrap();
-}
-
 fn stage_store_episode(s: &TestServer, owner: &str) -> String {
     use cgagentharness::server::structured_memory::EpisodeDraft;
     let store = s.state.structured_memory.as_ref().unwrap();
@@ -1645,12 +1636,12 @@ async fn auto_consolidation_creates_pending_proposals_only() {
 async fn auto_invalid_timeout_unavailable_and_cancel_are_truthful() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), auto_consolidation()).await;
-    let invalid_id = stage_store_episode(&s, "local");
+    let invalid_id = stage_store_episode(&s, "user_alice");
     model.set_reply(ok_reply("not-json", 3, 3));
     wait_until(
         || {
             store_of(&s)
-                .list_consolidation_runs("local")
+                .list_consolidation_runs("user_alice")
                 .unwrap()
                 .iter()
                 .any(|run| run.state == "failed" && run.error_class.as_deref() == Some("invalid_schema"))
@@ -1660,8 +1651,6 @@ async fn auto_invalid_timeout_unavailable_and_cancel_are_truthful() {
     .await;
     assert_eq!(s.get_json("/api/structured-memory").await.1["auto_consolidation"], true);
     assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
-    retire_episode(&s, &invalid_id);
-
     let timeout_id = stage_store_episode(&s, "local");
     model.set_reply(json!({
         "choices": [{"finish_reason": "length", "message": {"content": "partial"}}],
@@ -1678,8 +1667,6 @@ async fn auto_invalid_timeout_unavailable_and_cancel_are_truthful() {
         "timeout auto run",
     )
     .await;
-    retire_episode(&s, &timeout_id);
-
     let unavailable_id = stage_store_episode(&s, "local");
     model.set_reply(json!({"__status": 500}));
     wait_until(
@@ -1693,8 +1680,6 @@ async fn auto_invalid_timeout_unavailable_and_cancel_are_truthful() {
         "model_unavailable auto run",
     )
     .await;
-    retire_episode(&s, &unavailable_id);
-
     model.set_reply(ok_reply("pong", 1, 1));
     model.set_delay_ms(1500);
     let cancel_id = stage_store_episode(&s, "local");
@@ -1731,8 +1716,37 @@ async fn auto_invalid_timeout_unavailable_and_cancel_are_truthful() {
         "cancel persisted",
     )
     .await;
+    wait_until(|| !s.state.generation_gate.is_held(), "cancelled generation finishes").await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(
+        store_of(&s).get_consolidation_run("local", &run_id).unwrap().state,
+        "cancelled"
+    );
+    assert!(store_of(&s).next_auto_consolidation_batch().unwrap().is_none());
     assert_eq!(store_of(&s).list_proposals("local").unwrap().len(), 0);
-    retire_episode(&s, &cancel_id);
+    for (owner, id) in [
+        ("user_alice", invalid_id),
+        ("local", timeout_id),
+        ("local", unavailable_id),
+    ] {
+        assert_eq!(
+            store_of(&s).get_episode(owner, &id).unwrap().consolidation_state,
+            "none"
+        );
+    }
+
+    // A deliberate retry can recover the same cancelled run after review.
+    let (status, retried) = s
+        .post_json(
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids":[cancel_id]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{retried}");
+    assert_eq!(retried["id"], run_id);
+    assert_eq!(retried["state"], "done");
+    assert_eq!(store_of(&s).list_proposals("local").unwrap().len(), 1);
+    assert!(store_of(&s).list_facts("local").unwrap().is_empty());
 }
 
 #[tokio::test]

@@ -346,6 +346,8 @@ async fn generate_and_finish(
     if store.is_cancel_requested(&run.id) {
         return Err(HarnessError::new("STRUCTURED_MEMORY_CANCELLED", "cancelled").detail("cancelled", true));
     }
+    let model = state.local_memory_model();
+    store.set_consolidation_model(owner, &run.id, &model)?;
     let user = episode_prompt_payload(episodes);
     // Recalled facts must never appear in this payload (self-confirm fence).
     debug_assert!(!user.contains("\"facts\""));
@@ -357,7 +359,7 @@ async fn generate_and_finish(
                 role: "user".to_string(),
                 content: user,
             }],
-            None,
+            Some(&model),
             1024,
             0.0,
         )
