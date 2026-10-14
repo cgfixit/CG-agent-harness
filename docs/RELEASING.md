@@ -33,7 +33,8 @@ Edit `on.schedule` in `.github/workflows/release.yml` through a PR. Cron fields
 are minute, hour (UTC), day of month, month, day of week. For example,
 `17 8 * * 1` checks Mondays at 08:17 UTC.
 
-PR **Bundle** runs produce downloadable artifacts without publishing releases. To release after every merge instead of
+**Bundle** runs only on pushes to `main`, including merges, and produces downloadable
+artifacts without publishing releases. To release after every merge instead of
 the 12-hour check, replace the schedule with `push.branches: [main]` alongside the
 existing `push.tags`, and extend the planner's push handling to use the main
 version-selection path. Adding only the trigger fails because the planner accepts tag pushes only.
