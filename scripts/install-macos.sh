@@ -61,14 +61,35 @@ brew_ok() { have brew && brew --version >/dev/null 2>&1; }
 gh_ok() { have gh && gh --version >/dev/null 2>&1; }
 # The app's backend searches only these directories (desktop/src/backend.rs finder_path),
 # so a gh elsewhere (e.g. MacPorts' /opt/local/bin) is invisible to its coding pipeline.
-# Search those directories the way the app does, for a gh that runs.
-# Prints the first one, which is the copy the app uses.
-gh_app_visible() {
+# The backend resolves the first file named gh in that order (src/common/process.rs which),
+# whether or not it runs, so print exactly that one.
+gh_app_first() {
   local d
   for d in "$HOME/.cargo/bin" /opt/homebrew/bin /usr/local/bin /usr/bin /bin; do
-    if [ -x "$d/gh" ] && "$d/gh" --version >/dev/null 2>&1; then printf '%s\n' "$d/gh"; return 0; fi
+    if [ -f "$d/gh" ]; then printf '%s\n' "$d/gh"; return 0; fi
   done
   return 1
+}
+# The shipped agentic.gh_min_version; a home's own config.yaml may raise it.
+gh_min=$(sed -n 's/^ *gh_min_version: *"\([0-9][0-9.]*\)".*/\1/p' "$root/assets/config.default.yaml" 2>/dev/null | head -n1)
+gh_min=${gh_min:-2.40.0}
+# X.Y.Z >= X.Y.Z, numerically.
+ver_ge() {
+  local IFS=. i
+  local -a a b
+  read -r -a a <<<"$1"; read -r -a b <<<"$2"
+  for i in 0 1 2; do
+    [ "${a[i]:-0}" -gt "${b[i]:-0}" ] && return 0
+    [ "${a[i]:-0}" -lt "${b[i]:-0}" ] && return 1
+  done
+  return 0
+}
+# The version of the gh at $1, empty if it does not run.
+gh_version() { "$1" --version 2>/dev/null | sed -n 's/^gh version \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n1; }
+# The app's gh runs and meets the minimum. Prints its path.
+gh_app_visible() {
+  local p v
+  p=$(gh_app_first) && v=$(gh_version "$p") && [ -n "$v" ] && ver_ge "$v" "$gh_min" && printf '%s\n' "$p"
 }
 # rustup fails `run` for a component the toolchain lacks.
 lints_ok() {
@@ -119,7 +140,7 @@ app_ok() {
 ollama_bundle_ok() {
   local exe
   exe=$(defaults read "$1/Contents/Info" CFBundleExecutable 2>/dev/null) && [ -n "$exe" ] \
-    && [ -x "$1/Contents/MacOS/$exe" ] && codesign --verify "$1" >/dev/null 2>&1
+    && [ -x "$1/Contents/MacOS/$exe" ] && runs_here "$1/Contents/MacOS/$exe" && codesign --verify "$1" >/dev/null 2>&1
 }
 # The usable Ollama app bundle, if any.
 ollama_app() {
@@ -214,7 +235,7 @@ inventory() {
     if path_ollama_ok; then
       say "Ollama: $(ollama --version 2>&1 | sed -n 's/.*version is //p' | tail -n1)$([ -n "$(ollama_app)" ] || echo ' (CLI only; started with ollama serve)')"
     elif [ -n "$(ollama_app)" ]; then say 'Ollama: app installed, CLI not on PATH'
-    elif [ -n "$(ollama_app_broken)" ]; then say "Ollama: $(ollama_app_broken) is incomplete or fails codesign (a rerun reinstalls it)"; missing=1
+    elif [ -n "$(ollama_app_broken)" ]; then say "Ollama: $(ollama_app_broken) is incomplete, not built for this Mac, or fails codesign (a rerun reinstalls it)"; missing=1
     elif path_ollama_broken; then say "Ollama: $(command -v ollama) does not run (a rerun reinstalls Ollama)"; missing=1
     else say 'Ollama: MISSING'; missing=1; fi
     if ollama_up; then say "Ollama API: reachable at $ollama_api"; else say 'Ollama API: not running'; fi
@@ -237,6 +258,8 @@ inventory() {
   elif v=$(gh_app_visible); then
     say "GitHub CLI: $v ($("$v" --version 2>/dev/null | head -n1))"
     if have gh && ! gh_ok; then warn "gh on PATH ($(command -v gh)) does not run; the app uses $v"; fi
+  elif v=$(gh_app_first); then
+    say "GitHub CLI: the app uses $v, which $([ -n "$(gh_version "$v")" ] && echo "is $(gh_version "$v"), older than $gh_min" || echo 'does not run') (a rerun updates a Homebrew copy)"; missing=1
   elif gh_ok; then say "GitHub CLI: $(command -v gh) runs, but the app cannot see that directory (a rerun installs a Homebrew copy)"; missing=1
   elif have gh; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
   else say 'GitHub CLI: MISSING'; missing=1; fi
@@ -355,8 +378,14 @@ fi
 
 # ----------------------------------------------------------------------- 5. gh
 if [ "$gh" = 1 ] && ! gh_app_visible >/dev/null; then
-  # reinstall repairs a broken Homebrew gh; install covers a missing one.
-  if brew list --formula gh >/dev/null 2>&1; then run brew reinstall gh; else run brew install gh; fi
+  # upgrade fixes an old Homebrew gh, reinstall a broken one; install covers a missing one.
+  if ! brew list --formula gh >/dev/null 2>&1; then run brew install gh
+  elif v=$(gh_app_first) && [ -n "$(gh_version "$v")" ]; then run brew upgrade gh
+  else run brew reinstall gh; fi
+  # A copy Homebrew does not own can still come first in the app's search order.
+  if [ "$dry" = 0 ] && ! gh_app_visible >/dev/null; then
+    die "the app resolves gh to $(gh_app_first || echo nothing), which does not run or is older than $gh_min; remove or update that copy, then rerun" 3
+  fi
 fi
 
 # ---------------------------------------------------- 6. standalone backend
@@ -392,7 +421,7 @@ if [ "$app" = 1 ]; then
     if [ "$dry" = 0 ]; then
       [ -d "$work/unpacked/$app_name" ] || die "the archive has no $app_name"
       codesign --verify --deep --strict "$work/unpacked/$app_name" || die 'the app signature does not verify; nothing was installed'
-      sidecar_ok "$work/unpacked/$app_name" || die "the app's backend is not the one its shell was built for; nothing was installed"
+      app_ok "$work/unpacked/$app_name" || die "the downloaded app is incomplete, not built for this Mac, or its backend is not the one its shell was built for; nothing was installed"
     fi
     run mkdir -p "$app_dir"
     # Copy next to the destination first, so a failed copy never touches the

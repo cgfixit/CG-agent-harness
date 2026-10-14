@@ -79,7 +79,7 @@ detached() { nohup /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die 
 ollama_bundle_ok() {
   local exe
   exe=$(defaults read "$1/Contents/Info" CFBundleExecutable 2>/dev/null) && [ -n "$exe" ] \
-    && [ -x "$1/Contents/MacOS/$exe" ] && codesign --verify "$1" >/dev/null 2>&1
+    && [ -x "$1/Contents/MacOS/$exe" ] && runs_here "$1/Contents/MacOS/$exe" && codesign --verify "$1" >/dev/null 2>&1
 }
 # The Ollama CLI on PATH, else the one inside Ollama.app.
 ollama_cli() {
@@ -107,6 +107,11 @@ fi
 # App mode: pick and validate the bundle before Ollama is touched, so a launch
 # that must be refused has no side effects. Empty when a backend already runs.
 app=''
+# More than one backend (one per home) is ambiguous; refuse before touching Ollama.
+if [ "$mode" = app ] && [ "$(app_backends | grep -c .)" -gt 1 ]; then
+  echo 'start-macos: more than one app backend is running (one per home); use the globe button in the app you want' >&2
+  exit 3
+fi
 if [ "$mode" = app ] && [ -z "$(app_backends)" ]; then
   # A usable bundle: the same test as install-macos.sh's app_ok, including the
   # backend digest the shell was compiled with (checked without running either binary).
