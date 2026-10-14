@@ -90,7 +90,8 @@ for _ in $(seq 1 120); do
     exit 3
   fi
   if [ -n "$pids" ]; then
-    port=$(lsof -nP -a -p "$pids" -iTCP@"$loopback" -sTCP:LISTEN -Fn 2>/dev/null | sed -n "s/^n$loopback:\([0-9]*\)\$/\1/p" | head -n1)
+    # lsof exits 1 until the new backend listens; under pipefail that must not end the script.
+    port=$(lsof -nP -a -p "$pids" -iTCP@"$loopback" -sTCP:LISTEN -Fn 2>/dev/null | sed -n "s/^n$loopback:\([0-9]*\)\$/\1/p" | head -n1 || true)
     [ -z "$port" ] || break
   fi
   sleep 0.5
@@ -107,7 +108,7 @@ else
   # Browsers do not trust the home's generated certificate. Export only its
   # public half with the app's own backend; nothing is trusted unless asked.
   # Its argv is "<bundle>/Contents/MacOS/cgagentharness desktop" (app_backends matched it).
-  backend=$(ps -o command= -p "$pids")
+  backend=$(ps -o command= -p "$pids" || true)
   backend=${backend% desktop}
   pem=$(mktemp)
   trap 'rm -f "$pem"' EXIT
