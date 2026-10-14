@@ -6,7 +6,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 [docs/API_ROUTES.md](../../docs/API_ROUTES.md); console behavior:
 [docs/CONSOLE.md](../../docs/CONSOLE.md); contracts: [INVARIANTS.md](../../INVARIANTS.md).
 
-- [`agent_jobs.rs`](agent_jobs.rs): `JobStore` for detached `/api/agent/jobs` runs; the task holds the gates.
+- [`agent_jobs.rs`](agent_jobs.rs): `JobStore` for detached `/api/agent/jobs` runs; gated tasks retain memory-enqueue outcomes.
 - [`agent_policy.rs`](agent_policy.rs): check-profile name to fixed-argv table; `RUN_ID_PATTERN` duplicate of `run_store`.
 - [`agent_schedules.rs`](agent_schedules.rs): persisted recurring schedules, at-most-once per occurrence, through `prepare_run`.
 - [`attachment_index.rs`](attachment_index.rs): query-ranked passage fence over owner-verified attachments.
@@ -45,11 +45,11 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`sessions.rs`](sessions.rs): JSON `SessionStore`: owned sessions, messages, pins, token tallies, quarantine.
 - [`slash.rs`](slash.rs): suggest-don't-guess slash parser; exact commands dispatch, fuzzy ones only suggest.
 - [`state.rs`](state.rs): `AppState` shared by every handler, `OllamaControl`, concurrency tunables.
-- [`structured_memory.rs`](structured_memory.rs): SQLite store: facts, proposals, episodes, consolidation, gates, recall.
+- [`structured_memory.rs`](structured_memory.rs): SQLite facts, proposals, episodes, consolidation receipts, restart outcomes, gates and recall.
 - [`structured_memory_auto.rs`](structured_memory_auto.rs): idle auto-consolidation worker; proposals only.
 - [`structured_memory_consolidate.rs`](structured_memory_consolidate.rs): manual consolidator: episodes to pending proposals.
 - [`structured_memory_fts.rs`](structured_memory_fts.rs): safe FTS5 `MATCH` expression builder.
-- [`structured_memory_suggest.rs`](structured_memory_suggest.rs): opt-in post-completion suggestion queue; proposals only.
+- [`structured_memory_suggest.rs`](structured_memory_suggest.rs): RAM-only completion queue; owner-scoped attempt metadata and durable run outcomes; proposals only.
 - [`style.rs`](style.rs): output-style presets (`BUILTIN_IDS`) and overlays; never writes `soul.md`.
 - [`tool_inventory.rs`](tool_inventory.rs): chat-callable tool names for prompts and grounding capability claims.
 - [`transport.rs`](transport.rs): loopback TLS: PEM bundle generation, private material reads, listener scheme.

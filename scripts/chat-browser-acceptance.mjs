@@ -17,13 +17,16 @@ const headerState='["openAnalytics","openDeliveries","openSchedules"].filter(id=
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
 let memoryEnabled=false, structuredOpen=true;
 let suggestionRun=null;
+let automaticSuggestions=null, memoryOwnerFixture=null, holdMemoryHistory=false, memoryHistoryHeld=null, rejectHeldMemoryHistory=null;
+let holdMemoryFacts=false, memoryFactsHeld=null, releaseHeldMemoryFacts=null;
+let holdMemoryDecision=false, memoryDecisionHeld=null, releaseHeldMemoryDecision=null, rateLimitMemoryOnce=false, failMemoryOnce=false;
 let latestEpisode={id:'episode_labeled_latest',outcome:'completed',semantic_summary:null};
 const memoryProposals=[
  {id:'proposal_labeled_apply',revision:'revision_apply',action:'add',category:'pref',content:'Prefer metric units <script>throw new Error("unsafe")</script>',source_episode_ids:['episode_labeled_latest'],status:'pending'},
  {id:'proposal_labeled_reject',revision:'revision_reject',action:'add',category:'pref',content:'Prefer concise answers.',source_episode_ids:['episode_labeled_latest'],status:'pending'},
  {id:'proposal_labeled_old',revision:'revision_old',action:'add',content:'Already decided',status:'applied'}
 ];
-const savedFacts=[{id:'fact_labeled_saved',owner_id:'user_fixture_owner',revision:1,category:'insight',content:'Saved fact <script>throw new Error("unsafe fact")</script>',active:true}];
+const savedFacts=[{id:'fact_labeled_saved',owner_id:'user_fixture_owner',revision:1,content_digest:'fixture_saved_digest',category:'insight',content:'Saved fact <script>throw new Error("unsafe fact")</script>',active:true}];
 const structuredGates={episode_capture:false,explicit_recall:false,retrieval:false,auto_retrieval:false,consolidation:false,auto_consolidation:false,auto_suggest_chat:false,auto_suggest_coding:false};
 const ftsHit={id:'fact_labeled_alpha',revision:1,category:'pref',content:'Prefer metric units in examples.',active:true,score:1,provenance:'fts5',type:'untrusted_background_context'};
 const memoryPayload=()=>({
@@ -39,7 +42,7 @@ const gatePayload=()=>({
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
  const body=data?JSON.parse(data):{}; const path=req.url; requests.push([req.method,path,body]);
- const reply=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
+ const reply=(value,status=200)=>{if(!res.headersSent)res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
  if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/static/')){res.end('');return;}
  // Browser dispatch contract fixture; actual grammar is covered by Rust slash tests.
@@ -66,8 +69,9 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/auth/setup-status'){reply({needs_password:false,default_password:authFixture&&mustChange});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
-  signedIn=auditor||(body.username==='admin'&&body.password==='admin');
-  authUsername=auditor?'audit-fixture':'admin';authRole=auditor?'audit':'admin';
+  const secondOwner=body.username==='memory-second'&&body.password==='browser-memory-password';
+  signedIn=auditor||secondOwner||(body.username==='admin'&&body.password==='admin');
+  authUsername=auditor?'audit-fixture':secondOwner?'memory-second':'admin';authRole=auditor?'audit':'admin';
   if(auditor)mustChange=false;
   reply({username:authUsername,role:authRole,must_change_password:mustChange},signedIn?200:401);return;
  }
@@ -136,10 +140,22 @@ const server=createServer(async(req,res)=>{
   reply(memoryPayload());return;
  }
  if(path==='/api/memory/add'||path==='/api/memory/forget'||path==='/api/memory/clear'){reply(memoryPayload());return;}
- if(path==='/api/structured-memory'){reply({enabled:structuredOpen,fact_count:structuredOpen?savedFacts.length:0,pending_proposal_count:structuredOpen?memoryProposals.filter(p=>p.status==='pending').length:0,limits:{max_reason_chars:1000,max_facts_per_owner:64},config_drift:['structured_memory.retrieval','structured_memory.auto_retrieval']});return;}
+ if(path==='/api/structured-memory'){
+  if(rateLimitMemoryOnce){rateLimitMemoryOnce=false;res.setHeader('Retry-After','1');reply({detail:{code:'RATE_LIMIT',message:'Fixture rate limit',details:{retry_after_sec:1}}},429);return;}
+  if(failMemoryOnce){failMemoryOnce=false;reply({detail:{code:'UNAVAILABLE',message:'Fixture transient memory failure'}},503);return;}
+  reply({enabled:structuredOpen,fact_count:structuredOpen?(memoryOwnerFixture?.facts||savedFacts).length:0,pending_proposal_count:structuredOpen?(memoryOwnerFixture?.proposals||memoryProposals).filter(p=>p.status==='pending').length:0,limits:{max_reason_chars:1000,max_facts_per_owner:64},...(automaticSuggestions?{automatic_suggestions:automaticSuggestions}:{}),config_drift:['structured_memory.retrieval','structured_memory.auto_retrieval']});return;
+ }
  if(path==='/api/structured-memory/facts'&&req.method==='GET'){
   if(!structuredOpen){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured memory is disabled'}},409);return;}
-  reply({owner_id:'user_fixture_owner',facts:savedFacts,count:savedFacts.length,search:false,retrieval:false,fts:false});return;
+  const facts=memoryOwnerFixture?.facts||savedFacts;
+  if(holdMemoryFacts){
+   holdMemoryFacts=false;const snapshot=JSON.parse(JSON.stringify(facts));
+   // Match the real API's no-store headers before delaying the body. Otherwise
+   // Chromium serializes identical GETs behind its pending cache transaction.
+   res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.flushHeaders();
+   releaseHeldMemoryFacts=()=>reply({owner_id:'user_fixture_owner',facts:snapshot,count:snapshot.length});memoryFactsHeld();return;
+  }
+  reply({owner_id:memoryOwnerFixture?.owner||'user_fixture_owner',facts,count:facts.length,search:false,retrieval:false,fts:false});return;
  }
  if(path==='/api/structured-memory/facts'&&req.method==='POST'){
   if(!structuredOpen){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured memory is disabled'}},409);return;}
@@ -155,14 +171,19 @@ const server=createServer(async(req,res)=>{
   assert.equal(body.confirm,true);assert.ok(body.reason.trim());
   latestEpisode.semantic_summary=body.summary;reply(latestEpisode);return;
  }
- if(path==='/api/structured-memory/proposals?status=pending'){reply({proposals:memoryProposals.filter(p=>p.status==='pending')});return;}
+ if(path==='/api/structured-memory/proposals?status=pending'){reply({proposals:(memoryOwnerFixture?.proposals||memoryProposals).filter(p=>p.status==='pending')});return;}
  if(path.startsWith('/api/structured-memory/proposals/')){
   const proposal=memoryProposals.find(p=>p.id===path.split('/').at(-1));
   assert.equal(req.method,'POST');assert.equal(req.headers['x-cyclaw-csrf'],'fixture');
   assert.equal(body.confirm,true);assert.ok(body.reason.trim());assert.equal(body.revision,proposal.revision);
-  proposal.status=body.apply?'applied':'rejected';
-  if(body.apply&&proposal.action==='add')savedFacts.unshift({id:'fact_from_'+proposal.id,owner_id:'user_fixture_owner',revision:1,category:proposal.category,content:proposal.content,active:true});
-  reply(proposal);return;
+  const decide=()=>{
+   proposal.status=body.apply?'applied':'rejected';
+   if(body.apply&&proposal.action==='add')savedFacts.unshift({id:'fact_from_'+proposal.id,owner_id:'user_fixture_owner',revision:1,category:proposal.category,content:proposal.content,active:true});
+   if(body.apply&&proposal.action==='deactivate'){const index=savedFacts.findIndex(f=>f.id===proposal.target_fact_id);if(index>=0)savedFacts.splice(index,1);}
+   reply(proposal);
+  };
+  if(holdMemoryDecision){holdMemoryDecision=false;releaseHeldMemoryDecision=decide;memoryDecisionHeld();return;}
+  decide();return;
  }
  if(path==='/api/structured-memory/gates'){
   if(req.method==='POST'){
@@ -172,7 +193,15 @@ const server=createServer(async(req,res)=>{
   reply(gatePayload());return;
  }
  if(path==='/api/structured-memory/consolidation'||path.startsWith('/api/structured-memory/consolidation?')){
-  if(req.method==='GET'){reply({runs:suggestionRun?[suggestionRun]:[],count:suggestionRun?1:0});return;}
+  if(req.method==='GET'){
+   if(holdMemoryHistory){
+    holdMemoryHistory=false;
+    // The next owner's history read must not wait on a cached GET transaction.
+    res.writeHead(503,{'Content-Type':'application/json','Cache-Control':'no-store'});res.flushHeaders();
+    rejectHeldMemoryHistory=()=>reply({detail:{code:'FIXTURE_HISTORY_ERROR',message:'Old account history failed'}},503);memoryHistoryHeld();return;
+   }
+   reply({runs:suggestionRun?[suggestionRun]:[],count:suggestionRun?1:0});return;
+  }
   if(!structuredGates.consolidation){reply({detail:{code:'STRUCTURED_MEMORY_DISABLED',message:'structured consolidation is disabled; selected episodes are not summarized'}},409);return;}
   reply({id:'run_labeled_alpha',state:'done',proposal_count:0,candidate_count:0,rejected_count:0,auto:false});return;
  }
@@ -477,7 +506,7 @@ try {
  await send('/memory remember Prefer metric units. :: operator reviewed');
  assert.equal(memoryWrites(),beforeRemember);
  await send('/memory proposals');
- await until('document.getElementById("pane-memory").textContent.includes("store is closed")');
+ await until('document.getElementById("pane-memory").textContent.includes("Saved memory is unavailable")');
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory form").length'),0);
  const closedFactReads=factReads();
  await send('/memory facts');
@@ -487,37 +516,132 @@ try {
  await send('/memory proposals');
  await until('document.querySelectorAll("#pane-memory form").length === 2');
  await until('document.getElementById("pane-memory").textContent.includes("Saved facts (1)")');
- assert.equal(await evaluate('document.querySelectorAll("#pane-memory section form, #pane-memory section button").length'),0,'saved facts are listed read-only, outside the proposal forms');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts form, #pane-memory section.saved-facts button").length'),0,'saved facts are listed read-only, outside the proposal forms');
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0,'proposal and fact content must stay inert text');
+ // Completion polling must update outcomes alongside existing proposals without rebuilding review inputs.
+ automaticSuggestions={chat:true,coding:true,mode:'both',queued:1,running:false,poll_interval_ms:250,last_attempt:{source:'chat',created_ts:1,episode_id:'episode_polled',queued:true,run_id:'run_polled'}};
+ await evaluate('refreshMemoryProposals()');
+ await evaluate('window.keptMemoryInput=document.querySelector("#pane-memory form input");keptMemoryInput.value="Review still being written";keptMemoryInput.focus();document.querySelector("#pane-memory form details").open=true;window.keptFactDetail=document.querySelector("#pane-memory .saved-facts details");keptFactDetail.open=true');
+ const arrived={id:'proposal_polled',revision:'revision_polled',action:'add',category:'insight',content:'New proposal arrived after generation.',source_episode_ids:['episode_polled'],status:'pending'};
+ memoryProposals.push(arrived);
+ automaticSuggestions={...automaticSuggestions,queued:0};
+ suggestionRun={id:'run_polled',created_ts:1,episode_ids:['episode_polled'],model_id:'fixture-local-b',summarizer_version:'completion-suggestions-v1',state:'done',proposal_ids:['proposal_polled'],proposal_count:1,candidate_count:1,rejected_count:0};
+ await until('document.querySelectorAll("#pane-memory form").length === 3 && document.getElementById("pane-memory").textContent.includes("fixture-local-b")');
+ assert.equal(await evaluate('document.querySelector("#pane-memory form input")===keptMemoryInput && keptMemoryInput.value==="Review still being written" && document.activeElement===keptMemoryInput'),true,'automatic arrival preserves the actual input, typed reason and focus');
+ assert.equal(await evaluate('document.querySelector("#pane-memory form details").open && keptFactDetail.isConnected && keptFactDetail.open'),true,'unchanged proposal and saved-fact details stay expanded across polling');
+ await evaluate('clearTimeout(memoryRefreshTimer)');await until('!memoryRefreshBusy');await evaluate('clearTimeout(memoryRefreshTimer)');
+ automaticSuggestions={...automaticSuggestions,queued:1,poll_interval_ms:30000,last_attempt:{source:'chat',created_ts:2,queued:false,reason:'source_disabled'}};
+ suggestionRun={...suggestionRun,id:'newer_summary',created_ts:3,summarizer_version:'structured-memory-v1'};
+ await evaluate('refreshMemoryProposals()');
+ assert.equal(await evaluate('document.querySelector("#pane-memory .memory-latest").textContent'), 'Latest activity: Created 1 suggestion.','a newer summary result replaces the older completion skip, even if an older queue entry remains');
+ automaticSuggestions.last_attempt={source:'chat',created_ts:4,queued:false,reason:'source_disabled'};
+ await evaluate('refreshMemoryProposals()');
+ assert.ok(await evaluate('document.querySelector("#pane-memory .memory-latest").textContent.includes("Automatic suggestions are off")'),'a newer skipped completion stays correlated instead of displaying an old summary or unrelated queue');
+ automaticSuggestions=null;
+ await evaluate('clearTimeout(memoryRefreshTimer)');await until('!memoryRefreshBusy');await evaluate('clearTimeout(memoryRefreshTimer)');
+ arrived.status='rejected';suggestionRun=null;
+ await evaluate('refreshMemoryProposals();keptMemoryInput.value="";keptMemoryInput.blur()');
+ await until('document.querySelectorAll("#pane-memory form").length === 2 && !memoryRefreshBusy');
+ // A delayed facts snapshot must not overwrite a newer post-Apply read.
+ holdMemoryFacts=true;const factsRequestSeen=new Promise(resolve=>{memoryFactsHeld=resolve;});
+ await evaluate('window.oldFactsLoad=appendSavedFacts(document.getElementById("pane-memory"));true');
+ await Promise.race([factsRequestSeen,pause(5000).then(()=>{throw Error('facts fixture request not held');})]);
+ savedFacts.unshift({id:'fact_after_newer_read',revision:1,category:'insight',content:'NEWER_FACT_SNAPSHOT',active:true});
+ await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ releaseHeldMemoryFacts();await evaluate('window.oldFactsLoad');
+ assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("NEWER_FACT_SNAPSHOT")'),'an older facts response cannot erase a newer read');
+ savedFacts.shift();await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
  const decisions=()=>requests.filter(r=>r[0]==='POST'&&r[1].startsWith('/api/structured-memory/proposals/'));
  await evaluate('document.querySelector("#pane-memory form button").click()');
  assert.equal(decisions().length,0,'empty reason cannot apply');
  await evaluate('document.querySelector("#pane-memory form input").value=" ";document.querySelector("#pane-memory form button").click()');
  assert.equal(decisions().length,0,'whitespace reason cannot apply');
  await evaluate('document.querySelector("#pane-memory form input").value="Reviewed preference";document.querySelector("#pane-memory form button").click()');
- await until('document.getElementById("pane-memory").textContent.includes("Proposal applied.")');
- assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("/memory facts lists it")'),'Apply names where the fact went');
+ await until('document.getElementById("pane-memory").textContent.includes("Memory saved.")');
+ assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("Saved facts below")'),'Apply names where the fact went');
  await until('document.getElementById("pane-memory").textContent.includes("Saved facts (2)")');
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts").length'),1,'Apply re-lists saved facts in place');
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0,'an applied fact stays inert text');
  assert.equal(decisions().at(-1)[2].apply,true);
  await evaluate('document.querySelectorAll("#pane-memory form")[1].querySelector("input").value="Not durable";document.querySelectorAll("#pane-memory form")[1].querySelectorAll("button")[1].click()');
- await until('document.getElementById("pane-memory").textContent.includes("Proposal rejected.")');
+ await until('document.getElementById("pane-memory").textContent.includes("Suggestion dismissed.")');
  assert.equal(decisions().at(-1)[2].apply,false);
  assert.equal(chatCount(),beforeRememberChat);
- suggestionRun={summarizer_version:'completion-suggestions-v1',state:'done',proposal_count:0,candidate_count:0,rejected_count:0};
+ suggestionRun={id:'run_empty',created_ts:1,episode_ids:['episode_labeled_latest'],model_id:'fixture-local-b',proposal_ids:[],summarizer_version:'completion-suggestions-v1',state:'done',proposal_count:0,candidate_count:0,rejected_count:0};
  await evaluate('refreshMemoryProposals()');
- assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("model returned no candidates")'));
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory form").length'),0,'one refresh removes every adjacent decided proposal');
+ assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("No lasting details found")'));
  suggestionRun={...suggestionRun,state:'failed',error_class:'STRUCTURED_MEMORY_SCHEMA'};
  await evaluate('refreshMemoryProposals()');
  assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("STRUCTURED_MEMORY_SCHEMA")'));
  await evaluate('Promise.all([refreshMemoryProposals(),refreshMemoryProposals()])');
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts").length'),1,'overlapping refreshes leave one saved-facts section');
+ // A change/removal needs a readable target, including when the facts snapshot
+ // has not changed since the preceding refresh. Loading must preserve typing.
+ const originalTarget=savedFacts.find(f=>f.id==='fact_labeled_saved');
+ const targetProposals=[
+  {id:'proposal_target_update',revision:'target_update',action:'update',target_fact_id:originalTarget.id,expected_revision:originalTarget.revision,expected_digest:originalTarget.content_digest,content:'Updated preference',status:'pending'},
+  {id:'proposal_target_remove',revision:'target_remove',action:'deactivate',target_fact_id:originalTarget.id,expected_revision:originalTarget.revision,expected_digest:originalTarget.content_digest,content:null,status:'pending'},
+  {id:'proposal_target_missing',revision:'target_missing',action:'deactivate',target_fact_id:'fact_no_longer_active',expected_revision:1,expected_digest:'missing_digest',content:null,status:'pending'},
+ ];
+ memoryProposals.push(...targetProposals);
+ holdMemoryFacts=true;const targetReadSeen=new Promise(resolve=>{memoryFactsHeld=resolve;});
+ await evaluate('window.targetRefresh=refreshMemoryProposals();true');
+ await Promise.race([targetReadSeen,pause(5000).then(()=>{throw Error('target facts request not held');})]);
+ await evaluate('window.targetUpdate=document.querySelector(\'[data-proposal="proposal_target_update:target_update"]\');window.targetRemove=document.querySelector(\'[data-proposal="proposal_target_remove:target_remove"]\');window.targetMissing=document.querySelector(\'[data-proposal="proposal_target_missing:target_missing"]\');window.targetReason=targetUpdate.querySelector("input");targetReason.value="Keep the corrected preference";targetReason.focus();targetUpdate.querySelector("details").open=true');
+ assert.equal(await evaluate('[targetUpdate,targetRemove,targetMissing].every(form=>form.querySelector(".memory-save").disabled)'),true,'target-changing actions wait for the facts read');
+ releaseHeldMemoryFacts();await evaluate('window.targetRefresh');
+ assert.equal(await evaluate('targetUpdate.querySelector(".memory-save").textContent==="Update memory" && targetRemove.querySelector(".memory-save").textContent==="Remove memory"'),true,'supported update/deactivate actions have distinct approval labels');
+ assert.equal(await evaluate('[targetUpdate,targetRemove].every(form=>!form.querySelector(".memory-save").disabled && form.querySelector(".memory-target").textContent.includes("Saved fact <script>"))'),true,'the actual saved target is readable as inert text outside technical details');
+ assert.equal(await evaluate('targetMissing.querySelector(".memory-save").disabled && targetMissing.querySelector(".memory-target").textContent.includes("unavailable")'),true,'an absent target cannot be approved');
+ assert.equal(await evaluate('targetReason===targetUpdate.querySelector("input") && document.activeElement===targetReason && targetReason.value==="Keep the corrected preference" && targetUpdate.querySelector("details").open'),true,'loading target text preserves the reason node, focus and expanded details');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0);
+ for(const [field,changed] of [['revision',2],['content_digest','changed_digest']]){
+  const original=originalTarget[field];originalTarget[field]=changed;
+  await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+  assert.equal(await evaluate('[targetUpdate,targetRemove].every(form=>form.querySelector(".memory-save").disabled && !form.querySelectorAll("button")[1].disabled && form.querySelector(".memory-target").textContent.includes("changed since the suggestion"))'),true,'a stale '+field+' blocks changes while allowing dismissal');
+  assert.equal(await evaluate('targetReason===targetUpdate.querySelector("input") && document.activeElement===targetReason && targetReason.value==="Keep the corrected preference" && targetUpdate.querySelector("details").open'),true,'stale-target updates preserve the review in progress');
+  originalTarget[field]=original;
+ }
+ await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ assert.equal(await evaluate('[targetUpdate,targetRemove].every(form=>!form.querySelector(".memory-save").disabled)'),true,'only the exact proposal target revision and digest enable a change');
+ holdMemoryDecision=true;const decisionSeen=new Promise(resolve=>{memoryDecisionHeld=resolve;});
+ await evaluate('targetRemove.querySelector("input").value="No longer relevant";targetRemove.querySelector(".memory-save").click()');
+ await Promise.race([decisionSeen,pause(5000).then(()=>{throw Error('target decision not held');})]);
+ await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ assert.equal(await evaluate('Array.from(targetRemove.querySelectorAll("button")).every(button=>button.disabled)'),true,'a facts poll cannot unlock an in-flight decision');
+ releaseHeldMemoryDecision();await until('targetRemove.dataset.reviewState === "decided"');
+ await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ assert.equal(await evaluate('Array.from(targetRemove.querySelectorAll("button")).every(button=>button.disabled) && targetRemove.querySelector(".memory-target").textContent.includes("Saved fact <script>")'),true,'a completed removal stays locked and retains the text that was reviewed');
+ for(const proposal of targetProposals)proposal.status='rejected';
+ savedFacts.push(originalTarget);await evaluate('refreshMemoryProposals()');
+ // Failure before receiving the polling interval must still schedule a retry.
+ await evaluate('clearTimeout(statusTimer);clearTimeout(memoryRefreshTimer);statusBackoffMs=250');
+ failMemoryOnce=true;await evaluate('refreshMemoryProposals()');
+ assert.ok(await evaluate('document.querySelector("#pane-memory .memory-feedback").textContent.includes("Could not refresh")'));
+ const readsBeforeRetry=requests.filter(row=>row[1]==='/api/structured-memory').length;
+ for(let i=0;i<100&&requests.filter(row=>row[1]==='/api/structured-memory').length===readsBeforeRetry;i++)await pause(50);
+ assert.ok(requests.filter(row=>row[1]==='/api/structured-memory').length>readsBeforeRetry,'a transient first status failure retries without manual Refresh');
+ await until('!memoryRefreshBusy');
+ await evaluate('statusBackoffMs=STATUS_BASE_INTERVAL');
+ // One real 429 must silence both background loops until its Retry-After.
+ await evaluate('clearTimeout(statusTimer);clearTimeout(memoryRefreshTimer)');
+ rateLimitMemoryOnce=true;await evaluate('refreshMemoryProposals()');
+ assert.ok(await evaluate('apiRetryDelay()>0'));
+ const routeReads=path=>requests.filter(row=>row[1]===path).length;
+ const statusBeforeCooldown=routeReads('/api/status'),memoryBeforeCooldown=routeReads('/api/structured-memory');
+ await evaluate('statusBackoffMs=50;scheduleStatusRefresh();refreshStatus();refreshMemoryProposals();true');
+ await pause(400);
+ assert.equal(routeReads('/api/status'),statusBeforeCooldown,'status polling respects the memory request Retry-After');
+ assert.equal(routeReads('/api/structured-memory'),memoryBeforeCooldown,'memory polling does not retry early');
+ for(let i=0;i<100&&(routeReads('/api/status')===statusBeforeCooldown||routeReads('/api/structured-memory')===memoryBeforeCooldown);i++)await pause(50);
+ assert.ok(routeReads('/api/status')>statusBeforeCooldown&&routeReads('/api/structured-memory')>memoryBeforeCooldown,'both loops resume after the shared cooldown');
+ await until('!memoryRefreshBusy && statusBackoffMs === STATUS_BASE_INTERVAL');
  await evaluate('finishChat({reply:"synthetic reply",model:"mock",memory_suggestion:{queued:true}})');
- assert.ok(await evaluate('document.getElementById("stream").textContent.includes("queued, not yet a proposal")'));
+ assert.ok(await evaluate('document.getElementById("stream").textContent.includes("Checking this activity for useful memories")'));
  await evaluate('document.getElementById("stream").replaceChildren()');
  await evaluate('finishChat({reply:"second reply",model:"mock",memory_suggestion:{queued:true}})');
- assert.equal(await evaluate('document.getElementById("stream").textContent.includes("queued, not yet a proposal")'),false,'the queued note shows once per session, not after every turn');
+ assert.equal(await evaluate('document.getElementById("stream").textContent.includes("Checking this activity for useful memories")'),false,'the queued note shows once per session, not after every turn');
  await evaluate(`document.querySelector('[data-pane="commands"]').click()`);
  const beforeDisabledSearch=chatCount();
  await send('/memory search metric');
@@ -716,6 +840,27 @@ try {
  await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
  // The cleared SerpAPI row already reads "Saved: unset", so wait on this row's status (the <p> before its input).
  await until('document.getElementById("saved-DEEPAGENT_API_KEY")?.previousElementSibling?.textContent.startsWith("Saved: unset")');assert.equal(savedKey,'');
+ // A rejected history request from the previous account must not render its already-loaded proposals into the next account.
+ memoryOwnerFixture={owner:'user_prior',facts:[],proposals:[{id:'proposal_prior_owner',revision:'revision_prior',action:'add',category:'insight',content:'PRIVATE_PRIOR_OWNER_PROPOSAL',status:'pending'}]};
+ holdMemoryHistory=true;const historyRequestSeen=new Promise(resolve=>{memoryHistoryHeld=resolve;});
+ await evaluate('selectSideTab("memory");window.oldMemoryLoad=refreshMemoryProposals();true');
+ await Promise.race([historyRequestSeen,pause(5000).then(()=>{throw Error('history fixture request not held');})]);
+ await evaluate('document.getElementById("hAuthLogout").click()');
+ await until('!document.getElementById("hAuthLoginBox").hidden');
+ memoryOwnerFixture={owner:'user_next',facts:[{id:'fact_next_owner',revision:1,category:'insight',content:'NEXT_OWNER_FACT',active:true}],proposals:[{id:'proposal_next_owner',revision:'revision_next',action:'add',category:'insight',content:'NEXT_OWNER_PROPOSAL',status:'pending'}]};
+ await evaluate('document.getElementById("hAuthUser").value="memory-second";document.getElementById("hAuthPass").value="browser-memory-password";document.getElementById("hAuthLogin").click()');
+ await until('document.getElementById("hAuthLoginBox").hidden');
+ // Login must refresh the retained active pane without another tab click or slash command.
+ await until('document.getElementById("pane-memory").textContent.includes("NEXT_OWNER_PROPOSAL") && document.getElementById("pane-memory").textContent.includes("NEXT_OWNER_FACT")');
+ assert.equal(await evaluate('document.getElementById("pane-memory").classList.contains("active")'),true,'successful login reloads the retained Memory tab');
+ rejectHeldMemoryHistory();await evaluate('window.oldMemoryLoad');
+ assert.equal(await evaluate('document.getElementById("pane-memory").textContent.includes("PRIVATE_PRIOR_OWNER_PROPOSAL")'),false,'old-account history failure cannot reveal its captured proposals after account switch');
+ assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("NEXT_OWNER_PROPOSAL")'));
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory form").length'),1,'the current account keeps its own proposal after the rejected stale request');
+ await evaluate('document.getElementById("hAuthLogout").click()');
+ await until('!document.getElementById("hAuthLoginBox").hidden');memoryOwnerFixture=null;
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ await until('document.getElementById("hAuthLoginBox").hidden');
  // An expired session rejects logout (401); the Memory pane must still be cleared before anyone signs in again.
  await send('/memory facts');
  await until('document.getElementById("stream").innerText.includes("fact_labeled_saved")');
@@ -737,10 +882,13 @@ try {
  assert.equal(await evaluate('currentSession'),null,'a rejected logout drops the active session like a successful one');
  assert.equal(await evaluate('sessionGoal'),'');assert.equal(await evaluate('document.getElementById("input").value'),'');
  assert.equal(await evaluate('document.getElementById("sSession").textContent'),'none');
- logoutStatus=200;
+ logoutStatus=200;const factsBeforeRelogin=factReads();
  await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("hAuthLoginBox").hidden');
- assert.equal(await evaluate('document.getElementById("pane-memory").textContent.includes("Saved facts")'),false,'the next sign-in starts with an empty Memory pane');
+ // Logout cleared the old view above; successful login now reloads the retained
+ // Memory tab through the current account instead of leaving it empty.
+ await until('document.getElementById("pane-memory").textContent.includes("Saved facts (2)") && !memoryRefreshBusy');
+ assert.ok(factReads()>factsBeforeRelogin,'sign-in loads saved facts through a fresh owner-scoped read');
  await send('/agent run codex/logout Reviewed before logout');
  await evaluate('shownAgentDiffs.set("old", "diff"); reviewedSoulProposal={id:"old"}; reviewedPRBodies.set("old", "body"); prBodyTarget="old"');
  await evaluate('document.getElementById("hAuthLogout").click()');

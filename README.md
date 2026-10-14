@@ -3,7 +3,7 @@
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
-CG-Agent brings conversations, files, memory, and selected tools into one local workspace, and turns coding requests into checked, reviewable repository changes with separate approval to commit, push, or open a draft pull request.
+CG-Agent combines chat, files, memory and selected tools locally. Coding changes are checked and reviewed; committing, pushing and opening draft pull requests require separate approvals.
 
 ![CG Agent Harness console, signed in, with a local model reply and the Console, Model and Web status chips](docs/screenshots/console-chat-signed-in-2026-10-05.png)
 
@@ -21,6 +21,8 @@ CG-Agent brings conversations, files, memory, and selected tools into one local 
 | **Cloud chat** | Optional Grok or Claude. Sends only the new message, never local history, memory, skills, attachments, or web context. | Requires provider setup; unavailable for `/loop`. |
 | **MCP integrations** | Declared external tools and a separate read-only memory gateway with dedicated machine credentials. | Both disabled. |
 | **LAN observation** | Netconnect reads in-scope interfaces, routes, and neighbors from local tables. | Disabled with empty scope; no active scans, probes, or device control. |
+
+Open **Memory** to review your pending proposals after completed work; enter a reason to apply or dismiss. **Suggestion activity** explains missing proposals. [Setup](docs/INSTALL.md#memory-setup).
 
 Starting states describe fresh homes; upgrades keep existing choices. Only `/web research` produces checked quote references. See the [console guide](docs/CONSOLE.md#what-you-can-do).
 

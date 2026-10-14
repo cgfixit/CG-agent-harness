@@ -62,7 +62,8 @@ pub fn sync_worker(state: &Arc<AppState>) {
 }
 
 fn worker_available(state: &AppState) -> bool {
-    auto_consolidation_available(&state.cfg, state.structured_memory.is_some(), &current_gates(state))
+    !state.shutdown.is_cancelled()
+        && auto_consolidation_available(&state.cfg, state.structured_memory.is_some(), &current_gates(state))
 }
 
 fn start_if_needed(state: &Arc<AppState>) {
