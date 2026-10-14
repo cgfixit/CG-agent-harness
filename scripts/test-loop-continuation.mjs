@@ -67,13 +67,30 @@ console.log('Loop command preflight loads goal and starts the owned loop.');
 
 // Execute goal option parsing, persisted payload and invalid-mode refusal.
 const goalCase=html.slice(html.indexOf("      case 'goal': {"),html.indexOf("      case 'loop': {"));
-for (const [arg, mode, goal] of [['--web off use attachment only','off','use attachment only'],['--web fetch read supplied URL','fetch','read supplied URL'],['ordinary goal','all','ordinary goal'],['--web all '+ '界'.repeat(2000),'all','界'.repeat(2000)],['--web nope test',null,null]]) {
+for (const [arg, mode, goal] of [['--web off use attachment only','off','use attachment only'],['--web fetch read supplied URL','fetch','read supplied URL'],['ordinary goal',undefined,'ordinary goal'],['--web all '+ '界'.repeat(2000),'all','界'.repeat(2000)],['--web nope test',null,null]]) {
   const calls=[];
   const command=vm.createContext({arg,rest:arg.split(/\s+/),currentSession:'owned',sessionGoal:'',MAX_GOAL_CHARS:2000,api:async(path,method,body)=>{calls.push({path,body});return {goal:body.goal,goal_web_mode:body.web_mode};},paintGoalLoop(){},sys(){},refreshSessions:async()=>{}});
   await vm.runInContext('(async()=>{switch("goal"){'+goalCase+'}})()',command);
   if(mode===null) assert.equal(calls.length,0); else {assert.equal(calls[0].body.web_mode,mode);assert.equal(calls[0].body.goal,goal);}
 }
-console.log('Goal command persists explicit web modes and keeps the Unicode goal limit.');
+console.log('Goal command persists explicit web modes, omits the mode otherwise, and keeps the Unicode goal limit.');
+
+// /loop --web <mode> re-sets the stored goal with that mode before the first turn.
+{
+  const calls=[];
+  const command=vm.createContext({rest:['--web','all','2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,api:async(path,method,body)=>{calls.push({path,method,body});return path==='/api/status'?{provider:'ollama',chat_tools_available:true}:method==='POST'?{goal:body.goal,goal_web_mode:body.web_mode}:{goal:'stored goal',goal_web_mode:'fetch',live_attachment_pins:0};},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{command.ran=true;}});
+  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',command);
+  const set=calls.find(c=>c.method==='POST');
+  assert.equal(set.path,'/api/sessions/owned/goal');
+  assert.equal(set.body.goal,'stored goal');
+  assert.equal(set.body.web_mode,'all');
+  assert.equal(command.ran,true);
+  assert.equal(command.loopState.remaining,2);
+  const bad=vm.createContext({rest:['--web','nope'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,api:async()=>{throw Error('no request on a bad mode');},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{bad.ran=true;}});
+  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',bad);
+  assert.equal(bad.ran,false);
+  console.log('Loop --web persists the mode on the goal and refuses unknown modes.');
+}
 
 const notices=[];
 const noticeContext=vm.createContext({sys:text=>notices.push(text),renderSearchResults:()=>{throw Error('a budget notice is not a source result');}});

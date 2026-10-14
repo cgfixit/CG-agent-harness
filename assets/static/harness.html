@@ -72,6 +72,11 @@
     color: var(--accent-amber); letter-spacing: 1.5px; text-transform: uppercase;
   }
   .logo span { color: var(--text-muted); font-weight: 400; }
+  #desktopWeb { display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--text-secondary); background: var(--bg-tertiary); cursor: pointer; }
+  #desktopWeb:hover { color: var(--accent-amber); border-color: var(--accent-amber); }
+  #desktopWeb:focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
   .header-right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   .pill {
     font-family: var(--mono); font-size: var(--fs-micro); padding: 3px 10px;
@@ -566,6 +571,9 @@ dialog p { margin-bottom:12px; }
 <body>
   <header class="header">
     <div class="logo">CG Agent <span>/ harness</span></div>
+    <a id="desktopWeb" href="/__desktop/open-web" title="Open in browser via Terminal" aria-label="Open in browser via Terminal" hidden>
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 6h14M5 18h14"/></svg>
+    </a>
     <div class="header-right">
       <span id="harnessAuth">
         <span id="hAuthWho" role="status"></span>
@@ -1562,7 +1570,7 @@ document.addEventListener('visibilitychange', () => {
 });
 function paintSoul() {
   const v = $('sSoulV');
-  v.textContent = soulEnabled ? (soulStatus.loaded ? 'loaded' : (soulStatus.unavailable_reason || 'unverified')) : 'off';
+  v.textContent = soulEnabled ? (soulStatus.loaded ? 'loaded' : (soulStatus.unavailable_reason === 'missing' ? 'unset' : (soulStatus.unavailable_reason || 'unverified'))) : 'off';
   v.className = 'v ' + (soulEnabled ? 'on' : 'off');
 }
 function paintMemory() {
@@ -1815,7 +1823,7 @@ const COMMANDS = [
   ['/goal task', "inspect the goal's durable task linkage"],
   ['/harness', 'list retained harness optimizer runs; does not start one'],
   ['/help [topic|search words|all]', 'searchable guide, topics, safe command insertion and examples'],
-  ['/loop [n]|auto|stop', 'bounded chat continuation; auto toggles; stop also cancels streaming chat'],
+  ['/loop [--web off|fetch|all] [n]|auto|stop', 'bounded chat continuation; --web sets the goal web mode; auto toggles; stop also cancels streaming chat'],
   ['/memory [on|off|status]', 'show pinned notes plus structured fact and proposal counts, or toggle notes in chat'],
   ['/memory add <note>', 'save a literal pinned note'],
   ['/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off', 'administrator overrides for automatic structured-memory features'],
@@ -1962,12 +1970,12 @@ const COMMAND_MAN = {
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
   '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
-  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. Prefix --web off, --web fetch or --web all (default) to restrict this goal’s chat tools. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
+  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. Prefix --web off, --web fetch or --web all to set this goal’s chat tools; without it the configured web.goal_web_default applies (ships fetch). clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
   '/goal stage <branch>': {detail:'Turns the session goal into a staged coding request on that branch. It still needs /agent confirm <reason>.'},
   '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
   '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
-  '/loop [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
+  '/loop [--web off|fetch|all] [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships fetch: pages yes, search no).'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
   '/memory [on|off|status]': {detail:'Alone or with status, shows the pinned notes, your structured fact and pending proposal counts, and every gate. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
   '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
   '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
@@ -2029,7 +2037,7 @@ const WORTH_KNOWING = [
   {label:'/model list', insert:'/model list', hint:'Read-only: installed local tags, exactly as /model use takes them', key:'/model [list|use <name>|profile]'},
   {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [list|use <name>|profile]'},
   {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [list|use <name>|profile]'},
-  {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [n]|auto|stop'},
+  {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [--web off|fetch|all] [n]|auto|stop'},
   {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
 ];
 function commandRoot(syntax) { return '/' + syntax.slice(1).split(' ')[0]; }
@@ -2618,7 +2626,7 @@ async function runSlash(line, webCommand) {
               ' (system prompt only — soul.md itself is governed and untouched)');
         } else {
           const r = await api('/api/soul');
-          sys(JSON.stringify(r, null, 2));
+          sys(JSON.stringify({...r, unavailable_reason:r.unavailable_reason === 'missing' ? 'unset' : r.unavailable_reason}, null, 2));
         }
         break;
       }
@@ -3311,7 +3319,7 @@ async function runSlash(line, webCommand) {
           sys('goal cleared');
           break;
         }
-        let goalText = arg, goalWebMode = 'all';
+        let goalText = arg, goalWebMode = null;
         if (rest[0] === '--web') {
           if (!['off', 'fetch', 'all'].includes(rest[1]) || rest.length < 3) {
             sys('usage: /goal --web off|fetch|all <text>'); break;
@@ -3330,7 +3338,8 @@ async function runSlash(line, webCommand) {
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
         }
-        const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: goalText, web_mode: goalWebMode });
+        /* No --web: the server applies web.goal_web_default (ships fetch). */
+        const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', goalWebMode ? { goal: goalText, web_mode: goalWebMode } : { goal: goalText });
         sessionGoal = set.goal || '';
         paintGoalLoop();
         sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal);
@@ -3339,7 +3348,13 @@ async function runSlash(line, webCommand) {
       }
 
       case 'loop': {
-        const sub = rest[0] || '';
+        let loopArgs = rest, loopWebMode = null;
+        if (loopArgs[0] === '--web') {
+          if (!['off', 'fetch', 'all'].includes(loopArgs[1])) { sys('usage: /loop --web off|fetch|all [n]'); break; }
+          loopWebMode = loopArgs[1];
+          loopArgs = loopArgs.slice(2);
+        }
+        const sub = loopArgs[0] || '';
         if (sub === 'stop') {
           requestLoopStop('loop stopped');
           break;
@@ -3363,6 +3378,12 @@ async function runSlash(line, webCommand) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
           if (staleReview()) break;
           sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
+          if (loopWebMode && sessionGoal) {
+            /* Re-set the stored goal with the new mode; it persists like /goal --web. */
+            const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: sessionGoal, web_mode: loopWebMode });
+            if (staleReview()) break;
+            loaded.goal_web_mode = set.goal_web_mode || loopWebMode;
+          }
           paintGoalLoop();
           const status = await api('/api/status');
           if (staleReview()) break;
@@ -3373,7 +3394,7 @@ async function runSlash(line, webCommand) {
         if (sub) {
           const parsed = parseInt(sub, 10);
           if (!/^[1-9]\d*$/.test(sub) || parsed < 1) {
-            sys('usage: /loop [n] | /loop stop | /loop auto');
+            sys('usage: /loop [--web off|fetch|all] [n] | /loop stop | /loop auto');
             break;
           }
           const n = Math.min(parsed, MAX_LOOP_TURNS);
@@ -5035,7 +5056,7 @@ async function openSoulEditor(proposalOnly) {
   $('soulReason').value = ''; $('soulConfirm').checked = false;
   $('soulSave').hidden = proposalOnly;
   $('soulPropose').classList.toggle('primary', proposalOnly);
-  $('soulFeedback').textContent = 'revision: ' + soulDocument.revision + '\nMaximum ' + soulDocument.max_chars + ' characters. Preview before saving.';
+  $('soulFeedback').textContent = 'revision: ' + (soulDocument.revision === 'missing' ? 'unset' : soulDocument.revision) + '\nMaximum ' + soulDocument.max_chars + ' characters. Preview before saving.';
   $('soulEditor').showModal(); $('soulContent').focus();
 }
 $('soulClose').addEventListener('click', () => { $('soulEditor').close(); $('soulContent').value = ''; $('soulFeedback').textContent = ''; });

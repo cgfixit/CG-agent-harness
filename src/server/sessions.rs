@@ -100,6 +100,30 @@ impl GoalWebMode {
     }
 }
 
+impl GoalWebMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Fetch => "fetch",
+            Self::All => "all",
+        }
+    }
+}
+
+impl std::str::FromStr for GoalWebMode {
+    type Err = ();
+
+    /// Exact lowercase names only, matching the serde form.
+    fn from_str(s: &str) -> std::result::Result<Self, ()> {
+        match s {
+            "off" => Ok(Self::Off),
+            "fetch" => Ok(Self::Fetch),
+            "all" => Ok(Self::All),
+            _ => Err(()),
+        }
+    }
+}
+
 impl From<bool> for GoalWebMode {
     fn from(enabled: bool) -> Self {
         if enabled {
