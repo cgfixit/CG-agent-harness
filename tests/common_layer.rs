@@ -485,7 +485,7 @@ fn home_layout_seeds_config_registry_and_skills_once() {
     home.ensure_layout().unwrap();
     assert!(home.config_path().exists());
     let default_soul = cgagentharness::common::home::DEFAULT_SOUL;
-    assert_eq!(std::fs::read_to_string(home.soul_path()).unwrap(), default_soul);
+    assert!(!home.soul_path().exists(), "fresh homes leave the persona unset");
     assert!(
         default_soul.chars().count() <= home.load_config().unwrap().u64_or("personality.soul_max_chars", 8000) as usize
     );
