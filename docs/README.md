@@ -29,14 +29,16 @@ links resolve. Truth order for every claim is code, then
 
 ## Setup, models and recovery
 
-- [INSTALL.md](INSTALL.md): prerequisites (hardware, Xcode tools, Rust, Ollama,
-  optional GitHub CLI), getting the code, building the standalone backend or the
-  macOS app, and the first run. Covers where the home and optional credentials
+- [INSTALL.md](INSTALL.md): the automated macOS installer and launcher,
+  prerequisites (hardware, Xcode tools, Rust, Ollama, optional GitHub CLI),
+  getting the code, building the standalone backend or the macOS app, the first
+  run and browser access to the app's server. Covers where the home and optional credentials
   live, which settings take effect where, supported managed keys, retained jobs
   and runs, and update, backup, rollback and uninstall. Use it to take a fresh
   machine to a verified console.
   Owns: `src/main.rs`, `src/common/{home,config,credential_store}.rs`,
-  `src/server/env_keys.rs`, `scripts/verify-local.sh`, `.github/workflows/ci.yml`.
+  `src/server/env_keys.rs`, `scripts/verify-local.sh`, `scripts/{install,start}-macos.sh`,
+  `.github/workflows/ci.yml`.
   Tests: `tests/common_layer.rs`, `tests/contract_locks.rs`, `tests/windows_private_credentials.rs`.
 - [MODELS.md](MODELS.md): inventory the local Ollama install and select an
   installed tag for chat and web research. Explains the 32768-token window the
