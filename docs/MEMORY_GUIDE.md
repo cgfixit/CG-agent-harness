@@ -4,10 +4,10 @@ This how-to covers memory operations. [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.m
 defines gates, ownership, storage, limits, and automatic behavior. The command
 table is [CONSOLE.md §7.8](CONSOLE.md#78-slash-command-quick-reference).
 
-There are two memory systems: shared-home pinned notes and an account-private
-structured store. Neither uses embeddings, a vector database, or RAG fusion.
-The Harness can propose **summaries, durable insights, or both** from completed
-chat turns and coding runs. **Only Apply with a reason saves a canonical fact.**
+Memory has shared-home pinned notes and an account-private structured store,
+without embeddings or vector search.
+The Harness proposes **summaries, durable insights, or both** from completed
+chat turns and coding runs. **Only Save memory with a reason saves a fact.**
 Recalled text is untrusted background context and cannot authorize tools,
 coding, or network.
 
@@ -18,8 +18,7 @@ independently of these flags.
 
 ## What counts as memory
 
-Paths below are relative to the active Harness home (`CGAGENTHARNESS_HOME`,
-default `~/.CGagentHarness`).
+Paths are relative to `CGAGENTHARNESS_HOME` (default `~/.CGagentHarness`).
 
 | Kind | How it is saved / scope | How it is used later |
 |---|---|---|
@@ -27,7 +26,7 @@ default `~/.CGagentHarness`).
 | Pinned notes | `/memory add <literal text>` writes `memory/notes.json`; shared home | Included in the prompt while `/memory on`; see [Pinned notes](#pinned-notes). |
 | Persona / soul | `soul.md`; shared home; edit/save or reviewed `/soul apply <id> <reason>` | `/soul on\|off` controls prompt inclusion. Persona guidance is distinct from account-private facts. |
 | Canonical structured facts | Private `memory/structured.sqlite3`; `/memory save`, governed fact HTTP writes, or approved proposals | List with `/memory facts`; select for explicit recall or use separately gated facts-only retrieval. Saving does not itself enable prompt inclusion. |
-| Pending proposals | Same private SQLite store; a model or operator may propose | Memory panel shows content, action, category, sources and revision. Pending text is never recalled into chat. Apply/Reject requires a reason. |
+| Pending proposals | Same private SQLite store; a model or operator may propose | Memory cards show suggested text; details contain sources and revision. Pending text never enters chat. Saving or dismissing requires a reason. |
 | Episodes | Private bounded metadata from successful captured chat; coding metadata when coding suggestions are enabled; optional human `semantic_summary` | Provenance and consolidation input. Never injected into chat or indexed by FTS. Metadata is not a durable fact. |
 | Facts search index | Derived, contentless FTS5 index in the structured store | Lexical search over facts only; no episode search. |
 | Detached coding jobs / run records | Owner-scoped jobs; shared underlying pipeline run records | Evidence about a coding run, not automatically injected memory. The completion-suggestion hook only uses the initiating account's current completed run. |
@@ -113,24 +112,27 @@ or both according to `suggestion_mode`. Invalid modes, including non-string
 YAML values, disable suggestions. No setting approves proposals. Suggestions,
 human-summary consolidation, and retrieval are separate gates.
 
-After a chat turn or coding run, open **Memory** or `/memory proposals`, then use
-**Refresh proposals**. Review the action, category, content, source episode IDs,
-proposal ID, and repository scope. Model confidence does not establish
-correctness. Enter a reason and choose **Apply** or **Reject**. This confirms the
-displayed revision through the proposal-decide API. Blank reasons fail. Refresh
-after a stale-proposal error. A closed store has no decision controls.
+Open **Memory** or `/memory proposals`. The pane refreshes proposals,
+queue state and outcomes without clearing review reasons. Cards show full text
+and affected memories. Collapsed **Suggestion activity** and card details contain
+source IDs, models, counts, and failures. **Refresh** reloads manually.
 
-HTTP equivalent: review `GET /api/structured-memory/proposals/{id}`, then POST
-to that same path with `revision`, `confirm: true`, a nonblank `reason`, and
-`apply: true` (apply) or `apply: false` (reject), using `X-CyClaw-CSRF`. A model
-or operator suggests with `POST /api/structured-memory/proposals` (no
-`confirm`); direct add/deactivate also need `confirm: true` and `reason`. Verify
-with `GET /api/structured-memory/facts` and `/prompt`.
+Review content, action, sources, and repository scope; confidence is not proof.
+Enter a reason and choose **Save memory** or **Dismiss**. Both confirm the displayed
+revision; blank reasons fail. Refresh after a stale-revision error. Applied
+proposals appear under **Saved facts**; a closed store has no decision controls.
 
-Not every event produces a proposal. Suggestion failure does not fail the chat
-or run. For failures, inspect `automatic_suggestions`, consolidation state, and
-metadata audit events. Review existing proposals before generating more because
-pending capacity is per owner. See [completion suggestions](STRUCTURED_MEMORY.md#completion-suggestions).
+The HTTP equivalent is POST `/api/structured-memory/proposals/{id}` with
+`revision`, `confirm: true`, nonblank `reason`, and `apply: true|false`, using
+`X-CyClaw-CSRF`. Proposing needs no confirmation; direct fact writes require
+confirmation and a reason. Verify facts with `/memory facts` and `/prompt`.
+
+An empty result is valid. Inspect completion attempts and run history: gates, injection checks, queue limits, model/schema failures, filtering,
+and proposal capacity can prevent drafts without failing completed work. Review
+pending proposals to free capacity. Queued inputs remain RAM-only: expiry, clear,
+or restart can discard them. Receipts explain the loss; repeat relevant input
+or write a reviewed `/memory remember` summary. Old conversations are never
+replayed. See [completion suggestions](STRUCTURED_MEMORY.md#completion-suggestions).
 
 ## Save a fact manually
 
