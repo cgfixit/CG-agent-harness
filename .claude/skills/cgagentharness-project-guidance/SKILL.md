@@ -68,7 +68,7 @@ Core paths always require an invariant statement in the PR body when touched:
 | `cgagentharness-config-guard` | Before merging `assets/config.default.yaml` changes; when asked to check config |
 | `verification-specialist` | Adversarial independent verify of a *supplied* change (try to break it; no project mutation) |
 | `cgagentharness-runtime-invariant-check` | Report-only walkthrough of the runtime invariants before pushing a core-path PR |
-| `cgagentharness-verify-deps` / `dep-sync` | Report on / fix Cargo, toolchain, deny and CI drift against `origin/main` |
+| `dep-sync` | Fix (or, report-only, list) Cargo, toolchain, deny and CI drift against `origin/main` |
 | `run-cg-agent-harness`, `doc-sync`, `cgagentharness-otel-hardening` | Operator-only: ask the operator to type them |
 | `cgagentharness-optimize` | Focused improvement scans that may open a draft PR |
 

@@ -169,9 +169,8 @@ Read the relevant `SKILL.md` when its task applies:
   transplant CyClaw topology or defaults.
 - Codex only: `cgagentharness-release` (macOS packaging, release prep),
   `cgagentharness-verify` (isolated backend, desktop and local-model checks).
-- Claude only: `cgagentharness-verify-deps` and
-  `cgagentharness-runtime-invariant-check` (report only), `dep-sync` (fixes
-  dependency and CI drift against `origin/main`), `doc-sync` (rewrites stale
+- Claude only: `cgagentharness-runtime-invariant-check` (report only),
+  `dep-sync` (fixes dependency and CI drift against `origin/main`), `doc-sync` (rewrites stale
   docs), `run-cg-agent-harness` (fake-model console smoke),
   `cgagentharness-otel-hardening` (telemetry-kill contract).
 - Copilot only: `repo-optimize` (focused draft PRs from the default branch).
