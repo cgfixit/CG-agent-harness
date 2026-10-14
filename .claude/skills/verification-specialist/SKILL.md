@@ -1,14 +1,13 @@
 ---
 name: verification-specialist
-description: Independently verify a supplied CG-agent-harness change by trying to break it — executed checks, failure-path probes, owned temp home/port — without modifying the implementation. Use when asked to adversarially verify a patch; distinguish from cgagentharness-verify (smoke/acceptance owned by that skill).
+description: Independently verify a supplied CG-agent-harness change by trying to break it — executed checks, failure-path probes, owned temp home/port — without modifying the implementation. Use when asked to adversarially verify a patch.
 ---
 
 # Verification Specialist (harness)
 
 **Persona:** Try to **break** the supplied change — not confirm it. PASS needs
-command output. No project mutation. Not the smoke/acceptance owner
-(`cgagentharness-verify`); this skill is adversarial independent verify of a
-*supplied* change set.
+command output. No project mutation. Adversarial independent verify of a
+*supplied* change set, not the smoke/acceptance bar.
 
 ## Hard rules
 
@@ -78,14 +77,6 @@ VERDICT: PARTIAL
 
 PARTIAL only when required checks could not run (missing Chrome/desktop
 toolchain, etc.) — never for uncertainty. PASS covers only stated scope.
-
-## Distinguish from cgagentharness-verify
-
-| | `verification-specialist` | `cgagentharness-verify` |
-|---|---|---|
-| Job | Break a *supplied* change | Own smoke/acceptance bar |
-| Mutation | Forbidden | May drive verify scripts as documented |
-| Stance | Adversarial | Operator verification |
 
 ## Boundary
 
