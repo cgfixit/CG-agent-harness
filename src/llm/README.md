@@ -1,7 +1,6 @@
 # src/llm
 
-Model backends: local OpenAI-compatible servers and native Ollama, the explicit
-cloud client, model facts and the spend ledger. Docs:
+Model backends, inventory and spend. Docs:
 [MODELS.md](../../docs/MODELS.md), [SPEND_AND_NOTIFICATIONS.md](../../docs/SPEND_AND_NOTIFICATIONS.md).
 
 - [`backend.rs`](backend.rs): `resolve_local_backend` picks primary Ollama or the loopback fallback; reasoning effort.
@@ -13,6 +12,9 @@ cloud client, model facts and the spend ledger. Docs:
 - [`openai_stream.rs`](openai_stream.rs): bounded SSE decoder; partial text is provisional; `MAX_TOOL_CALLS` ceiling.
 - [`profile.rs`](profile.rs): per-model facts from `/api/show` and `/api/ps`, optional speed measurement.
 - [`spend.rs`](spend.rs): append-only `logs/spend.jsonl`; USD derived at read time; never stores prompts.
+
+Only `test-support` reads `CGAH_TEST_CLOUD_BASE_URL`: literal HTTP loopback
+origin/port, empty/`cgah-test-synthetic-cloud-key` provider keys; audited, normal gates unchanged.
 
 Tests: [tests/model_completion.rs](../../tests/model_completion.rs),
 [tests/model_readiness.rs](../../tests/model_readiness.rs),

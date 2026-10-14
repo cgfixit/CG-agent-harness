@@ -358,15 +358,15 @@ pub(crate) fn start_job(
         } = prepared;
         let outcome = agentic_call(&task_state, ops).await.map(|Json(v)| v);
         task_state.jobs.finish(&task_job, outcome);
+        task_state.jobs.annotate_completion(&task_job, |result| {
+            result["memory_suggestion"] = crate::server::structured_memory_suggest::coding_completed(
+                &task_state,
+                &task_owner,
+                &instruction,
+                result,
+            );
+        });
         if let Some(job) = task_state.jobs.get(&task_owner, &task_job) {
-            if job["status"] == crate::server::agent_jobs::FINISHED {
-                crate::server::structured_memory_suggest::coding_completed(
-                    &task_state,
-                    &task_owner,
-                    &instruction,
-                    &job["result"],
-                );
-            }
             if let Some(sid) = task_schedule {
                 let event = if job["status"] == crate::server::agent_jobs::FINISHED {
                     "agent_schedule_completed"

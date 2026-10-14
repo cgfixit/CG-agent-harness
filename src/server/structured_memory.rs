@@ -710,6 +710,7 @@ pub struct StructuredMemoryStore {
     health: Mutex<EpisodeHealth>,
     retrieval_health: Mutex<RetrievalHealth>,
     cancelled_runs: Mutex<BTreeSet<String>>,
+    cancellation_changed: tokio::sync::Notify,
 }
 
 impl std::fmt::Debug for StructuredMemoryStore {
@@ -778,6 +779,11 @@ fn migrate_schema(conn: &mut Connection) -> Result<()> {
 
 fn recover_interrupted_runs(conn: &Connection) -> Result<()> {
     let now = crate::common::now_ts();
+    conn.execute(
+        "UPDATE consolidation_runs SET state='failed', error_class='input_lost_on_restart', ended_ts=?1 WHERE state='idle' OR (state='cancelled' AND error_class=?2)",
+        params![now, PREEMPTED_CLASS],
+    )
+    .map_err(sql)?;
     conn.execute(
         "UPDATE consolidation_runs SET state='failed', error_class='interrupted', ended_ts=?1 WHERE state='running'",
         params![now],
@@ -1031,6 +1037,7 @@ impl StructuredMemoryStore {
                 ..RetrievalHealth::default()
             }),
             cancelled_runs: Mutex::new(BTreeSet::new()),
+            cancellation_changed: tokio::sync::Notify::new(),
         })
     }
 
@@ -2514,6 +2521,20 @@ impl StructuredMemoryStore {
             .contains(id)
     }
 
+    /// Wait for this run's cancellation, without consuming another run's
+    /// notification or missing a cancellation between the check and the wait.
+    pub async fn wait_for_cancel(&self, id: &str) {
+        loop {
+            let notified = self.cancellation_changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.is_cancel_requested(id) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     pub fn running_consolidation(&self, owner: &str) -> Result<Option<ConsolidationRun>> {
         Self::require_owner(owner)?;
         let conn = self.lock();
@@ -2574,6 +2595,31 @@ impl StructuredMemoryStore {
         self.begin_run(owner, episode_ids, summarizer_version, false)
     }
 
+    /// Persist only a receipt for RAM-only suggestion input. An idle receipt
+    /// does not reserve the model or make its episode eligible for consolidation.
+    pub fn queue_suggestion_run(
+        &self,
+        owner: &str,
+        episode_ids: &[String],
+        summarizer_version: &str,
+    ) -> Result<ConsolidationRun> {
+        Self::require_owner(owner)?;
+        let key = Self::consolidation_idempotency_key(owner, episode_ids, summarizer_version);
+        let conn = self.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO consolidation_runs(public_id,owner_id,state,episode_ids,summarizer_version,created_ts,idempotency_key,model_id,proposal_ids,proposal_count,candidate_count,rejected_count)
+             VALUES(?1,?2,'idle',?3,?4,?5,?6,'','[]',0,0,0)",
+            params![crate::common::random_hex(16), owner, encode_ids(episode_ids), summarizer_version, crate::common::now_ts(), key],
+        )
+        .map_err(sql)?;
+        conn.query_row(
+            &format!("{} WHERE owner_id=?1 AND idempotency_key=?2", Self::run_select()),
+            params![owner, key],
+            Self::map_run,
+        )
+        .map_err(sql)
+    }
+
     /// Start a suggestion's run, or resume it after a chat turn preempted it.
     /// Unlike an explicit consolidation, a suggestion never restarts a run its
     /// owner cancelled or one that failed: the stopped run is returned as is.
@@ -2613,7 +2659,10 @@ impl StructuredMemoryStore {
             if run.state == "done" {
                 return Ok(run);
             }
-            if preempted_only && run.state != "running" && run.error_class.as_deref() != Some(PREEMPTED_CLASS) {
+            if preempted_only
+                && !matches!(run.state.as_str(), "idle" | "running")
+                && run.error_class.as_deref() != Some(PREEMPTED_CLASS)
+            {
                 return Ok(run);
             }
             if run.state == "running" {
@@ -2624,7 +2673,7 @@ impl StructuredMemoryStore {
             }
             tx.execute(
                 "UPDATE consolidation_runs SET state='running', error_class=NULL, ended_ts=NULL, model_id='', proposal_ids='[]', proposal_count=0, candidate_count=0, rejected_count=0, created_ts=?1
-                 WHERE owner_id=?2 AND public_id=?3 AND state IN ('failed','cancelled')",
+                 WHERE owner_id=?2 AND public_id=?3 AND state IN ('idle','failed','cancelled')",
                 params![now, owner, run.id],
             )
             .map_err(sql)?;
@@ -2729,20 +2778,27 @@ impl StructuredMemoryStore {
                 )
                 .map_err(sql)?;
             tx.commit().map_err(sql)?;
+            self.cancelled_runs
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(id.to_string());
+            self.cancellation_changed.notify_waiters();
             return Ok(run);
         }
-        if current.state != "running" {
+        if !matches!(current.state.as_str(), "idle" | "running") {
             return Err(HarnessError::new(
                 "STRUCTURED_MEMORY_CHANGED",
                 "consolidation run is not running",
             ));
         }
         tx.execute(
-            "UPDATE consolidation_runs SET state='cancelled', error_class='cancelled', ended_ts=?1 WHERE owner_id=?2 AND public_id=?3 AND state='running'",
+            "UPDATE consolidation_runs SET state='cancelled', error_class='cancelled', ended_ts=?1 WHERE owner_id=?2 AND public_id=?3 AND state IN ('idle','running')",
             params![now, owner, id],
         )
         .map_err(sql)?;
-        Self::mark_episodes_state(&tx, owner, &current.episode_ids, "none")?;
+        if current.state == "running" {
+            Self::mark_episodes_state(&tx, owner, &current.episode_ids, "none")?;
+        }
         let run = tx
             .query_row(
                 &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
@@ -2755,13 +2811,17 @@ impl StructuredMemoryStore {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(id.to_string());
+        self.cancellation_changed.notify_waiters();
         Ok(run)
     }
 
     pub fn fail_consolidation_run(&self, owner: &str, id: &str, error_class: &str) -> Result<ConsolidationRun> {
         Self::require_owner(owner)?;
         let now = crate::common::now_ts();
-        let state = if matches!(error_class, "cancelled" | PREEMPTED_CLASS) {
+        let state = if matches!(
+            error_class,
+            "cancelled" | "source_cleared" | "SUGGESTION_CANCELLED" | PREEMPTED_CLASS
+        ) {
             "cancelled"
         } else {
             "failed"
@@ -2779,15 +2839,19 @@ impl StructuredMemoryStore {
             .optional()
             .map_err(sql)?
             .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_NOT_FOUND", "unknown consolidation run"))?;
-        if current.state != "running" {
+        if !matches!(current.state.as_str(), "idle" | "running")
+            && current.error_class.as_deref() != Some(PREEMPTED_CLASS)
+        {
             return Ok(current);
         }
         tx.execute(
-            "UPDATE consolidation_runs SET state=?1, error_class=?2, ended_ts=?3 WHERE owner_id=?4 AND public_id=?5 AND state='running'",
-            params![state, error_class, now, owner, id],
+            "UPDATE consolidation_runs SET state=?1, error_class=?2, ended_ts=?3 WHERE owner_id=?4 AND public_id=?5 AND (state IN ('idle','running') OR error_class=?6)",
+            params![state, error_class, now, owner, id, PREEMPTED_CLASS],
         )
         .map_err(sql)?;
-        Self::mark_episodes_state(&tx, owner, &current.episode_ids, "none")?;
+        if current.state == "running" {
+            Self::mark_episodes_state(&tx, owner, &current.episode_ids, "none")?;
+        }
         let run = tx
             .query_row(
                 &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
@@ -4652,6 +4716,7 @@ mod tests {
             (stopped.state.as_str(), stopped.error_class.as_deref()),
             ("cancelled", Some(PREEMPTED_CLASS))
         );
+        assert!(!store.is_cancel_requested(&run.id));
         // The requeued suggestion resumes the run a chat turn stopped.
         let resumed = store
             .begin_suggestion_run("user_alice", ids, SUMMARIZER_VERSION)
@@ -4669,6 +4734,7 @@ mod tests {
             (cancelled.state.as_str(), cancelled.error_class.as_deref()),
             ("cancelled", Some("cancelled"))
         );
+        assert!(store.is_cancel_requested(&run.id));
         let refused = store
             .begin_suggestion_run("user_alice", ids, SUMMARIZER_VERSION)
             .unwrap();
@@ -4678,6 +4744,7 @@ mod tests {
             .begin_consolidation_run("user_alice", ids, SUMMARIZER_VERSION)
             .unwrap();
         assert_eq!(rerun.state, "running");
+        assert!(!store.is_cancel_requested(&run.id));
     }
 
     #[test]
@@ -4739,6 +4806,154 @@ mod tests {
         assert_eq!(replay.state, "done");
         assert_eq!(store.list_proposals("user_alice").unwrap().len(), 1);
         assert!(store.get_consolidation_run("user_bob", &finished.id).is_err());
+    }
+
+    #[test]
+    fn reopening_records_lost_queued_and_preempted_suggestion_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("structured.sqlite3");
+        let mut runs = Vec::new();
+        {
+            let memory = StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
+            for (owner, state) in [
+                ("user_idle", "idle"),
+                ("user_preempted", "preempted"),
+                ("user_cancelled", "cancelled"),
+                ("user_running", "running"),
+            ] {
+                let episode = memory
+                    .stage_episode(
+                        owner,
+                        EpisodeDraft {
+                            model_id: "fixture",
+                            outcome: "completed",
+                            user_chars: 8,
+                            assistant_chars: 8,
+                            sensitivity: "normal",
+                        },
+                    )
+                    .unwrap();
+                let ids = std::slice::from_ref(&episode.id);
+                let run = memory
+                    .queue_suggestion_run(owner, ids, crate::server::structured_memory_suggest::VERSION)
+                    .unwrap();
+                assert_eq!(run.state, "idle");
+                if state != "idle" {
+                    memory
+                        .begin_suggestion_run(owner, ids, crate::server::structured_memory_suggest::VERSION)
+                        .unwrap();
+                }
+                if state == "preempted" {
+                    memory.fail_consolidation_run(owner, &run.id, PREEMPTED_CLASS).unwrap();
+                } else if state == "cancelled" {
+                    memory.cancel_consolidation_run(owner, &run.id).unwrap();
+                }
+                runs.push((owner, state, run.id));
+            }
+        }
+        let memory = StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
+        for (owner, prior, id) in runs {
+            let run = memory.get_consolidation_run(owner, &id).unwrap();
+            let expected = match prior {
+                "cancelled" => ("cancelled", Some("cancelled")),
+                "running" => ("failed", Some("interrupted")),
+                _ => ("failed", Some("input_lost_on_restart")),
+            };
+            assert_eq!((run.state.as_str(), run.error_class.as_deref()), expected);
+            assert!(memory.list_proposals(owner).unwrap().is_empty());
+            assert!(memory.list_facts(owner).unwrap().is_empty());
+            assert!(memory.get_consolidation_run("user_foreign", &id).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_waiters_match_the_run_and_observe_prior_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = store(dir.path());
+        let mut runs = Vec::new();
+        for owner in ["user_alice", "user_bob"] {
+            let episode = memory
+                .stage_episode(
+                    owner,
+                    EpisodeDraft {
+                        model_id: "fixture",
+                        outcome: "completed",
+                        user_chars: 8,
+                        assistant_chars: 8,
+                        sensitivity: "normal",
+                    },
+                )
+                .unwrap();
+            runs.push(
+                memory
+                    .queue_suggestion_run(owner, &[episode.id], crate::server::structured_memory_suggest::VERSION)
+                    .unwrap(),
+            );
+        }
+        let waiting = memory.wait_for_cancel(&runs[1].id);
+        tokio::pin!(waiting);
+        assert!(futures_util::poll!(waiting.as_mut()).is_pending());
+        memory.cancel_consolidation_run("user_alice", &runs[0].id).unwrap();
+        assert!(
+            futures_util::poll!(waiting.as_mut()).is_pending(),
+            "another owner's notification cannot cancel this run"
+        );
+        memory.cancel_consolidation_run("user_bob", &runs[1].id).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), memory.wait_for_cancel(&runs[0].id))
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn stopping_an_idle_receipt_preserves_an_episodes_completed_manual_consolidation() {
+        for cancel in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let memory = store(dir.path());
+            let episode = memory
+                .stage_episode(
+                    "local",
+                    EpisodeDraft {
+                        model_id: "fixture",
+                        outcome: "completed",
+                        user_chars: 8,
+                        assistant_chars: 8,
+                        sensitivity: "normal",
+                    },
+                )
+                .unwrap();
+            let ids = std::slice::from_ref(&episode.id);
+            let queued = memory
+                .queue_suggestion_run("local", ids, crate::server::structured_memory_suggest::VERSION)
+                .unwrap();
+            memory
+                .set_episode_summary("local", &episode.id, "Prefer metric units.", "operator summary")
+                .unwrap();
+            let manual = memory
+                .begin_consolidation_run("local", ids, SUMMARIZER_VERSION)
+                .unwrap();
+            memory
+                .finish_consolidation_run("local", &manual.id, "fixture", 0, 0, &[])
+                .unwrap();
+            assert_eq!(
+                memory.get_episode("local", &episode.id).unwrap().consolidation_state,
+                "done"
+            );
+            if cancel {
+                memory.cancel_consolidation_run("local", &queued.id).unwrap();
+            } else {
+                memory
+                    .fail_consolidation_run("local", &queued.id, "queue_expired")
+                    .unwrap();
+            }
+            assert_eq!(
+                memory.get_episode("local", &episode.id).unwrap().consolidation_state,
+                "done"
+            );
+            assert!(memory.next_auto_consolidation_batch().unwrap().is_none());
+        }
     }
 
     #[test]

@@ -6,7 +6,8 @@ placeholders `__CYCLAW_CSRF_TOKEN__` and `__CYCLAW_CSP_NONCE__` and the
 `src/server/headers.rs`).
 
 - [`harness.html`](harness.html): the single-page console (chat, panels, slash
-  commands, settings) with its inline script and styles.
+  commands, settings), including Memory outcome polling and retained proposal-review
+  forms, with inline script and styles.
 - [`auth_admin.js`](auth_admin.js): the sign-in, password and account-admin
   script loaded by the console.
 

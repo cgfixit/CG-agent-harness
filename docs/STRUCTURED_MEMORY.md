@@ -83,7 +83,7 @@ override.
 | `consolidation` | `/memory consolidation on\|off` | store | No selected-episode summarizer call (`/memory consolidate <id...>`). The completion-suggestion path may still create its own run records. |
 | `auto_consolidation` | `/memory auto-consolidate on\|off` | `consolidation` (AND) | No idle worker starts. Eligibility and bounds: [Consolidation](#consolidation). |
 | `auto_suggest_chat` | `/memory auto-suggest-chat on\|off` | store + `episode_capture` | Completed chat turns are not queued for suggestions. |
-| `auto_suggest_coding` | `/memory auto-suggest-coding on\|off` | store + `episode_capture` | Successful coding runs are not queued for suggestions. |
+| `auto_suggest_coding` | `/memory auto-suggest-coding on\|off` | store + `episode_capture` | Accepted coding runs are not queued for suggestions. |
 
 Consolidation is independent of capture, recall, retrieval, and `auto_retrieval`;
 `explicit_recall` is independent of `retrieval` and consolidation.
@@ -127,8 +127,8 @@ values disable suggestions.
 The `completion-suggestions-v1` worker reads only bounded redacted current
 completion evidence in RAM, using the initiating account captured by the chat or
 coding route. It does not scan shared archives or attach generated text as a
-human semantic summary. Successful synchronous and detached coding routes share
-the hook after the existing shim boundary; I6 is unchanged. Coding input is the
+human semantic summary. Synchronous and detached coding share the shim hook
+(I6): only `pending_decision` results qualify; exhausted runs do not. Coding input is the
 submitted instruction plus a projection of the child result (repository, status,
 run id, changed files, push/PR fields and commit message), not stdout/stderr,
 file bodies or tool logs. Metadata alone cannot prove a coding lesson or
@@ -153,21 +153,26 @@ a cloud provider. Failed runs retain the attempted model.
 | `suggestion_max_queue` | 8 | 1–32 waiting jobs globally, plus at most one active generation |
 | `suggestion_queue_ttl_secs` | 300 | 1–3600 seconds for waiting input; active inference uses the chat-client timeout |
 | `suggestion_idle_ms` | 2000 | 10–30000 ms between worker attempts |
+| `status_poll_ms` | 30000 | 250–30000 ms; halved while generating |
 | `min_consolidation_confidence` | 0.40 | 0–1, shared by both generators; supplied lower values drop, omitted confidence remains accepted |
 | `max_consolidation_candidates` | 8 | Existing candidate bound, also used for completion suggestions |
 | `max_proposals_per_owner` | 32 | Pending proposal capacity |
 
-Waiting input is lost on restart and is not backfilled; pending proposals persist.
-Scanner hits, queue limits, disabled capture, model errors, low confidence, and
-store quotas can prevent suggestions; empty output is valid. Failures do not fail
-the completed work. Session clear invalidates waiting and active chat suggestions.
-The worker waits for the generation gate. Chat preempts an active suggestion:
-the model call aborts, the run records `state=cancelled` and
-`error_class=preempted`, and the job returns to the queue front. An explicit
-owner cancellation ends the job instead. Cancellation
-requires an open store and matching owner, even with manual consolidation off.
-Redactors/scanners are bounded safeguards, not a guarantee that arbitrary secrets
-or hallucinations are detected; human review remains mandatory.
+Accepted inputs receive durable metadata-only `idle` receipts, then transition
+to `running`. Expiry, disabled gates, source clear, cancellation and inference
+errors retain distinct reasons.
+Reopen marks queued/preempted receipts `failed/input_lost_on_restart`. Native shutdown
+or reopen marks interrupted generation `failed/interrupted`; inputs are never replayed. Pending proposals persist.
+Completion replies and detached jobs retain episode/run IDs or refusal reasons.
+RAM status retains latest attempts for `suggestion_max_queue` owners; durable
+runs remain separately available. Visible status does not authorize mutations.
+
+Empty candidates and filtered results are valid; failures do not fail completed
+work. Chat preempts active suggestion inference, records `cancelled/preempted`,
+and requeues it. Owner cancellation immediately discards queued input; source clear ends
+it. Cancellation requires an open store and matching owner, even when manual
+consolidation is off. Redaction and scanning are bounded safeguards; human review
+remains mandatory.
 
 ## Ownership
 
@@ -213,10 +218,9 @@ Reuse persona review rules, not `soul-history/*.json`:
   revision + expected fact revision/digest, updates the FTS row, applies once,
   and writes non-content audit metadata.
 
-The console **Memory** tab (also `/memory proposals`) lists pending proposals
-from the existing list API with `?status=pending`, filtered in SQL before its
-128-row cap so decided history cannot hide pending work, then saved facts. Its **Apply** and
-**Reject** buttons send the displayed proposal revision to the existing
+The **Memory** tab (`/memory proposals`) lists pending proposals via
+`?status=pending`, filtered before its 128-row cap, then saved facts. **Save memory**
+and **Dismiss** send the displayed revision to the
 `POST /api/structured-memory/proposals/{id}` route; there is no separate decide
 endpoint or extra mutation rule.
 
@@ -326,7 +330,7 @@ when they carry memory content:
 | GET | `/api/structured-memory/consolidation` | n/a (this owner's run metadata) |
 | POST | `/api/structured-memory/consolidation` | start = suggest; selected episode IDs |
 | GET | `/api/structured-memory/consolidation/{id}` | n/a |
-| POST | `/api/structured-memory/consolidation/{id}/cancel` | abort in-flight generation |
+| POST | `/api/structured-memory/consolidation/{id}/cancel` | stop queued/running work |
 
 Existing `/api/memory*` routes are unchanged. `POST /api/sessions/clear`
 accepts optional `delete_derived_episodes`. `/api/chat` and
