@@ -6,7 +6,9 @@
 # SMOKE_MODEL is any installed tag (default: the first /v1/models id), including
 # a local derived tag such as qwen3.8:27b-mlx-cg. The first chat must answer
 # exactly "pong". The server sends reasoning_effort none when the provider is
-# ollama, for every tag. FINGERPRINT_MODELS, when set, is the fingerprint set
+# ollama, for every tag. SMOKE_EXACT_REPLY=0 (live-ollama.yml's tiny fixture
+# models) instead requires a non-empty reply from that model with completion
+# tokens and no <think> text, the bar scripts/live-ollama/fingerprint.py uses. FINGERPRINT_MODELS, when set, is the fingerprint set
 # (scripts/live-ollama/), not that derived tag.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -129,7 +131,15 @@ for attempt in $(seq 1 300); do
   sleep 2
 done
 echo "$REPLY" | tee /dev/stderr | grep -q '"reply"'; echo
-echo "$REPLY" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["usage"]["completion_tokens"]>=0;assert d["reply"].strip().lower().rstrip(".!")=="pong",d["reply"];print("model:",d["model"],"tokens:",d["tally"]["total"])'
+echo "$REPLY" | python3 -c '
+import json,sys
+d=json.load(sys.stdin);reply=d["reply"];model=sys.argv[1]
+if sys.argv[2]=="0":
+    # Greedy decoding still differs by backend: Metal says "péng!" where CPU says "pong".
+    assert reply.strip() and "<think" not in reply.lower() and d["model"]==model and d["usage"]["completion_tokens"]>0,d
+else:
+    assert d["usage"]["completion_tokens"]>=0;assert reply.strip().lower().rstrip(".!")=="pong",reply
+print("model:",d["model"],"tokens:",d["tally"]["total"])' "$MODEL" "${SMOKE_EXACT_REPLY:-1}"
 if [[ -n "${FINGERPRINT_OUT:-}" ]]; then
   echo "== fingerprint (${FINGERPRINT_MODELS:-$MODEL})"
   python3 scripts/live-ollama/fingerprint.py --base "$BASE" --cacert "$CERT" \
