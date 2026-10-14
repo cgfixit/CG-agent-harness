@@ -47,9 +47,11 @@ if [ "$ollama" = 1 ]; then
       launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
     fi
     say "starting Ollama (OLLAMA_CONTEXT_LENGTH=$(launchctl getenv OLLAMA_CONTEXT_LENGTH))"
-    open -a Ollama
+    # open waits while a first launch shows macOS's "downloaded from the
+    # internet" prompt. Never block on it or let it hold our output open.
+    open -a Ollama </dev/null >/dev/null 2>&1 &
     for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
-    ollama_up || echo 'start-macos: Ollama did not answer yet; chat waits for it (docs/MODELS.md)' >&2
+    ollama_up || echo 'start-macos: Ollama did not answer yet; answer any first-launch prompt, chat waits for it (docs/MODELS.md)' >&2
   else
     echo 'start-macos: Ollama is not installed; run scripts/install-macos.sh or point chat at another model (docs/MODELS.md)' >&2
   fi
@@ -75,7 +77,7 @@ if [ -z "$(app_backends)" ]; then
   fi
   [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: the app is not installed; run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
   say "opening $app"
-  open "$app"
+  open "$app" </dev/null >/dev/null 2>&1 &
 fi
 
 # The backend binds port 0 and tells only the app which port it got, so read

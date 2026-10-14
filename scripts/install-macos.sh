@@ -78,7 +78,7 @@ inventory() {
   local missing=0 v
   say "macOS $(sw_vers -productVersion) on $(uname -m)"
   if xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p)"; else say 'Command Line Tools: MISSING'; missing=1; fi
-  if have brew; then say "Homebrew: $(brew --version | head -n1)"; else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
+  if have brew; then say "Homebrew: $(brew --version 2>/dev/null | head -n1)"; else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
   if have rustup; then
     say "rustup: $(command -v rustup)"
     if rustup run "$toolchain" rustc --version >/dev/null 2>&1; then say "Rust $toolchain: $(rustup run "$toolchain" rustc --version)"; else say "Rust $toolchain: MISSING"; missing=1; fi
@@ -91,12 +91,12 @@ inventory() {
     if [ -x "$root/target/release/cgagentharness" ]; then say "backend: $root/target/release/cgagentharness"; else say 'backend: not built'; missing=1; fi
   fi
   if [ "$ollama" = 1 ]; then
-    if have ollama; then say "Ollama: $(ollama --version 2>/dev/null | tail -n1)"; elif [ -d /Applications/Ollama.app ]; then say 'Ollama: app installed, CLI not on PATH'; else say 'Ollama: MISSING'; missing=1; fi
+    if have ollama; then say "Ollama: $(ollama --version 2>&1 | sed -n 's/.*version is //p' | tail -n1)"; elif [ -d /Applications/Ollama.app ]; then say 'Ollama: app installed, CLI not on PATH'; else say 'Ollama: MISSING'; missing=1; fi
     if ollama_up; then say "Ollama API: reachable at $ollama_api"; else say 'Ollama API: not running'; fi
     v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
     say "OLLAMA_CONTEXT_LENGTH for GUI apps: ${v:-unset (scripts/start-macos.sh sets 32768)}"
   fi
-  if have gh; then say "GitHub CLI: $(gh --version | head -n1)"; elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
+  if have gh; then say "GitHub CLI: $(gh --version 2>/dev/null | head -n1)"; elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
     if [ -d "$app_path" ]; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; else say "app: not installed at $app_path"; missing=1; fi
   fi
@@ -159,10 +159,12 @@ if [ "$ollama" = 1 ]; then
       if [ -z "$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)" ]; then
         run launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
       fi
-      run open -a Ollama
+      # open waits on a first-launch prompt; the bounded wait below decides instead.
+      printf '+ open -a Ollama (in the background)\n'
+      if [ "$dry" = 0 ]; then open -a Ollama </dev/null >/dev/null 2>&1 & fi
       if [ "$dry" = 0 ]; then
         for _ in $(seq 1 60); do ollama_up && break; sleep 1; done
-        ollama_up || die "Ollama did not answer at $ollama_api; open it once from Applications and rerun"
+        ollama_up || die "Ollama did not answer at $ollama_api; open it once from Applications, answer any prompt, and rerun"
       fi
     fi
     run ollama pull "$model"

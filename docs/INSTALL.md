@@ -357,7 +357,9 @@ port, and a browser gets its own login. Three ways:
 `start-macos.sh` first opens Ollama if it is not answering, setting
 `OLLAMA_CONTEXT_LENGTH=32768` for GUI apps when it is unset (`launchctl` forgets
 it at logout, so rerun the script after login; quit and relaunch an Ollama that
-was already running without it). It opens the app if no app backend is running,
+was already running without it). Ollama's first launch asks you to confirm an
+app downloaded from the internet; the script waits 30 seconds, then continues.
+It opens the app if no app backend is running,
 reads the loopback port that backend listens on, and passes that origin to
 `start-web.sh --desktop-url`. It starts no second server; keep the app running.
 

@@ -44,6 +44,7 @@ jobs:
           test ! -e "$RUNNER_TEMP/Applications"
 
       - name: Install
+        timeout-minutes: 30
         run: scripts/install-macos.sh --app-dir "$RUNNER_TEMP/Applications"
 
       - name: Inventory after install
@@ -52,7 +53,10 @@ jobs:
       - name: Rerun keeps the installed app
         run: scripts/install-macos.sh --no-build --app-dir "$RUNNER_TEMP/Applications" | grep 'keeping '
 
+      # Every step that opens a GUI app is bounded: an unanswered macOS prompt
+      # must fail the step, not the 60-minute job.
       - name: App mode hands the app's own origin to start-web.sh
+        timeout-minutes: 6
         run: |
           set -euo pipefail
           export CGAH_APP="$RUNNER_TEMP/Applications/CG Agent Harness.app"
@@ -60,11 +64,12 @@ jobs:
           url=$(sed -n 's/^CGagentHarness console: //p' start.log)
           case $url in https://127.0.0.1:*/) ;; *) echo "unexpected console URL: $url"; exit 1 ;; esac # DevSkim: ignore DS162092 because the app console must be a loopback origin.
           "$CGAH_APP/Contents/MacOS/cgagentharness" tls certificate > app.pem
-          code=$(curl --silent --show-error --cacert app.pem -o /dev/null -w '%{http_code}' "${url}api/status")
+          code=$(curl --silent --show-error --max-time 15 --cacert app.pem -o /dev/null -w '%{http_code}' "${url}api/status")
           echo "verified TLS to the app backend; /api/status answered $code"
           test "$code" != 000
 
       - name: Standalone refuses while the app owns the default home
+        timeout-minutes: 3
         run: |
           set +e
           scripts/start-macos.sh --no-ollama --standalone 8791
@@ -72,6 +77,7 @@ jobs:
           test "$rc" = 3
 
       - name: Standalone mode on a separate home
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           home=$(mktemp -d)
@@ -80,11 +86,12 @@ jobs:
           for _ in $(seq 1 120); do grep -q '^CGagentHarness console:' standalone.log && break; sleep 0.5; done
           cat standalone.log
           CGAGENTHARNESS_HOME=$home target/release/cgagentharness tls certificate > standalone.pem
-          code=$(curl --silent --show-error --cacert standalone.pem -o /dev/null -w '%{http_code}' https://127.0.0.1:8791/api/status) # DevSkim: ignore DS162092 because the standalone console binds loopback only.
+          code=$(curl --silent --show-error --max-time 15 --cacert standalone.pem -o /dev/null -w '%{http_code}' https://127.0.0.1:8791/api/status) # DevSkim: ignore DS162092 because the standalone console binds loopback only.
           echo "standalone /api/status answered $code"
           kill "$server"
           test "$code" != 000
 
       - name: Quit the app
         if: always()
+        timeout-minutes: 2
         run: osascript -e 'quit app "CG Agent Harness"' || true
