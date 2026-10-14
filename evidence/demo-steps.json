@@ -1,0 +1,140 @@
+[
+ {
+  "input": "/session new hvac research",
+  "rows": []
+ },
+ {
+  "input": "/model use qwen3.827b-mlx-cg",
+  "rows": [
+   "sys: HARNESS chat model selected: qwen3.827b-mlx-cg via ollama; planner model remains: qwen3.8:27b-mlx (configured separately)",
+   "sys: HARNESS warning: qwen3.827b-mlx-cg is not an installed Ollama tag, so chat will fail. Did you mean /model use qwen3.8:27b-mlx-cg? /model list shows the tags.",
+   "sys: HARNESS auto_tune is measuring this model in the background (it loads the model); /model profile shows the applied limits."
+  ]
+ },
+ {
+  "input": "/model use qwen3.8:27b-mlx-cg",
+  "rows": [
+   "sys: HARNESS chat model selected: qwen3.8:27b-mlx-cg via ollama; planner model remains: qwen3.8:27b-mlx (configured separately)",
+   "sys: HARNESS auto_tune is measuring this model in the background (it loads the model); /model profile shows the applied limits."
+  ]
+ },
+ {
+  "input": "yoo",
+  "rows": [
+   "user: YOU yoo",
+   "agent: CG AGENT HARNESS fake reply to: yoo | tools=web_search,web_fetch qwen3.8:27b-mlx-cg · +100/10 tok · session total 110",
+   "sys: HARNESS Checking this activity for useful memories. Suggestions will appear in Memory for you to review; nothing is saved automatically."
+  ]
+ },
+ {
+  "input": "/goal find the best hvac repair service thats not too expensive (mid-tier) near cumming, georgia or zip code 30041",
+  "rows": [
+   "sys: HARNESS goal set (web: fetch): find the best hvac repair service thats not too expensive (mid-tier) near cumming, georgia or zip code 30041 web: fetch — while this goal is set, every chat turn in this session (typed or /loop) can read permitted URLs only; Google search is off. /goal --web all allows search; reads still need /web allow."
+  ]
+ },
+ {
+  "input": "/goal --web all",
+  "rows": [
+   "sys: HARNESS goal set (web: all): find the best hvac repair service thats not too expensive (mid-tier) near cumming, georgia or zip code 30041 web: all — while this goal is set, chat turns may search Google and read permitted URLs; reads still need /web allow."
+  ]
+ },
+ {
+  "input": "/loop auto",
+  "rows": [
+   "sys: HARNESS loop auto-continue is ON — nothing is running yet; type /loop or /loop <n> to start (needs a /goal). auto alone does not start a loop."
+  ]
+ },
+ {
+  "input": "use /web search and /web research to research goal and reply with detailed and unique, customized and citeable findings of the top 2-3 hvac repair vendors that have offices within 50 miles from 30041",
+  "rows": [
+   "user: YOU use /web search and /web research to research goal and reply with detailed and unique, customized and citeable findings of the top 2-3 hvac repair vendors that have offices within 50 miles from 30041",
+   "sys: HARNESS web_search: WEB_ALLOWLIST_EMPTY — no SerpAPI key is configured and no URL rule permits public Google; add a SerpAPI key in API Keys (no URL rule needed) or /web allow https://www.google.com/* No URL is permitted yet. An administrator grants sites with /web allow https://www.example.org/* (check one with /web check URL).",
+   "agent: CG AGENT HARNESS Web operation failed: WEB_ALLOWLIST_EMPTY — no SerpAPI key is configured and no URL rule permits public Google; add a SerpAPI key in API Keys (no URL rule needed) or /web allow https://www.google.com/*. No successful result was obtained. qwen3.8:27b-mlx-cg · +100/10 tok · session total 220"
+  ]
+ },
+ {
+  "input": "/web status",
+  "rows": [
+   "sys: HARNESS URL permissions and web on/off are shared by this home, not per session. Saved web context belongs to your account. Check an exact URL with /web check; every destination still needs permission. field value enabled yes permission rules 0 of 64 (web.max_rules) — see groups below; empty denies content reads (no policy file yet; the first /web allow creates it) keyword search public Google (ma"
+  ]
+ },
+ {
+  "input": "/web allow *.google.com google.com/* --group google",
+  "rows": [
+   "sys: HARNESS *.google.com permits only the root page https://*.google.com/; end a pattern with /* (for example https://*.example.org/*) to include every path.",
+   "sys: HARNESS URL permissions and web on/off are shared by this home, not per session. Saved web context belongs to your account. Check an exact URL with /web check; every destination still needs permission. field value enabled yes permission rules 2 of 64 (web.max_rules) — see groups below; empty denies content reads keyword search public Google (may require JavaScript/CAPTCHA) — needs /web allow https"
+  ]
+ },
+ {
+  "input": "/web allow https://www.google.com/* https://*.google.com/* --group google",
+  "rows": [
+   "sys: HARNESS URL permissions and web on/off are shared by this home, not per session. Saved web context belongs to your account. Check an exact URL with /web check; every destination still needs permission. field value enabled yes permission rules 4 of 64 (web.max_rules) — see groups below; empty denies content reads keyword search public Google (may require JavaScript/CAPTCHA) — needs /web allow https"
+  ]
+ },
+ {
+  "input": "paste \"/web check https://www.google.com/search?q=hvac\\n\"",
+  "rows": [
+   "sys: HARNESS URL permissions and web on/off are shared by this home, not per session. Saved web context belongs to your account. Check an exact URL with /web check; every destination still needs permission. field value enabled yes permission rules 4 of 64 (web.max_rules) — see groups below; empty denies content reads keyword search public Google (may require JavaScript/CAPTCHA) — needs /web allow https",
+   "sys: HARNESS exact URL permission matching rules https://www.google.com/search?q=hvac Permitted by URL policy 32576d59b19de836e072b9f921767c1b, fe99e638e276cd464b9cb16048790bf0 Policy check only. Fetch still checks current permission, public DNS, redirects and resource limits. www and apex hosts are distinct; no host is inferred."
+  ]
+ },
+ {
+  "input": "web check https://www.google.com",
+  "rows": [
+   "sys: HARNESS This starts like a command but has no leading /, so it was sent to the model as chat. To run the command instead: /web check https://www.google.com Suggestion only — click to edit, then explicitly send.",
+   "user: YOU web check https://www.google.com",
+   "agent: CG AGENT HARNESS fake reply to: web check https://www.google.com | tools=web_search,web_fetch qwen3.8:27b-mlx-cg · +100/10 tok · session total 330"
+  ]
+ },
+ {
+  "input": "clicked the suggestion, then Enter",
+  "rows": [
+   "agent: CG AGENT HARNESS fake reply to: web check https://www.google.com | tools=web_search,web_fetch qwen3.8:27b-mlx-cg · +100/10 tok · session total 330",
+   "sys: HARNESS exact URL permission matching rules https://www.google.com Permitted by URL policy ef4baa3887313395d639e53e10d96f2b, 32576d59b19de836e072b9f921767c1b, fe99e638e276cd464b9cb16048790bf0 Policy check only. Fetch still checks current permission, public DNS, redirects and resource limits. www and apex hosts are distinct; no host is inferred."
+  ]
+ },
+ {
+  "input": "/web search --count 5 mid-tier hvac repair near cumming ga 30041",
+  "rows": [
+   "err: ERROR That didn't work WEB_DNS: The host did not resolve to a usable public address. Check the exact host (www and apex are distinct)."
+  ]
+ },
+ {
+  "input": "/web research --url https://www.google.com/search?q=hvac+repair+cumming+ga+30041 top 2-3 mid-tier hvac repair vendors with offices within 50 miles of 30041; cite sources",
+  "rows": [
+   "sys: HARNESS research started; /web cancel stops your request",
+   "sys: HARNESS research answered by qwen3.8:27b-mlx-cg",
+   "sys: HARNESS Missing: No supporting passage was found within the permitted sources and run budget. Warnings: WEB_PLAN_INVALID",
+   "sys: HARNESS Sources and original extracts (0)",
+   "sys: HARNESS 0 pages read · 0 refused · 2 failed · 0 skipped · 0 unvisited Coverage details Bounded research; not an exhaustive site summary."
+  ]
+ },
+ {
+  "input": "/loop 2",
+  "rows": [
+   "sys: HARNESS Loop context: 0 live attachment pin(s); goal web mode all; web tools available within current URL permissions. /session unpin clears pins.",
+   "sys: HARNESS loop 2 turn(s) toward the session goal. Chat only — never starts a real-repo run.",
+   "user: YOU Loop turn 1 of 2. Session goal: find the best hvac repair service thats not too expensive (mid-tier) near cumming, georgia or zip code 30041 Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its ow",
+   "sys: HARNESS web_search: WEB_DNS — DNS lookup failed",
+   "agent: CG AGENT HARNESS Web operation failed: WEB_DNS — DNS lookup failed. No successful result was obtained. qwen3.8:27b-mlx-cg · +100/10 tok · session total 440",
+   "sys: HARNESS loop stopped — WEB_DNS; goal remains incomplete. Check /web status and the reported permission, provider or budget error before retrying /loop."
+  ]
+ },
+ {
+  "input": "/loop stop",
+  "rows": [
+   "sys: HARNESS loop stopped"
+  ]
+ },
+ {
+  "input": "ArrowUp x6",
+  "recalled": [
+   "/loop stop",
+   "/loop 2",
+   "/web research --url https://www.google.com/search?q=hvac+repair+cumming+ga+30041 top 2-3 mid-tier hvac repair vendors with offices within 50 miles of 30041; cite sources",
+   "/web search --count 5 mid-tier hvac repair near cumming ga 30041",
+   "/web check https://www.google.com",
+   "web check https://www.google.com"
+  ]
+ }
+]

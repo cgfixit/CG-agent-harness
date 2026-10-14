@@ -1,0 +1,96 @@
+{
+ "base": "http://127.0.0.1:8799",
+ "consoleErrors": [
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+  "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+  "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+  "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+  "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+  "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+  "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+ ],
+ "results": [
+  {
+   "id": "T01",
+   "area": "session",
+   "input": "/session new hvac",
+   "pass": true,
+   "evidence": "",
+   "ms": 1102
+  },
+  {
+   "id": "T02",
+   "area": "chat",
+   "input": "yoo",
+   "pass": true,
+   "evidence": "user: yoo\nagent: fake reply to: yoo | tools=web_search,web_fetch\nsys: Checking this activity for useful memories. Suggestions will appear in Memory for you to review; nothing is saved automatically.",
+   "ms": 1094
+  },
+  {
+   "id": "T03",
+   "area": "goal",
+   "input": "/goal find the best hvac repair service near cumming, georgia 30041",
+   "pass": true,
+   "evidence": "sys: goal set (web: fetch):\nfind the best hvac repair service thats not too expensive (mid-tier) near cumming, georgia or zip code 30041",
+   "ms": 1094
+  },
+  {
+   "id": "T04",
+   "area": "goal",
+   "input": "chat: use /web search and /web research …",
+   "pass": true,
+   "evidence": "user: use /web search and /web research to research goal and reply with findings\nagent: fake reply to: use /web search and /web research to research goal and reply with findings | tools=web_fetch",
+   "ms": 1091
+  },
+  {
+   "id": "T05",
+   "area": "web",
+   "input": "/web status",
+   "pass": true,
+   "evidence": "err: That didn't work\nWEB_POLICY_UNAVAILABLE: WEB_POLICY_UNAVAILABLE",
+   "ms": 1094
+  },
+  {
+   "id": "T06",
+   "area": "web",
+   "input": "/web allow *.google.com google.com/* --group google",
+   "pass": false,
+   "error": "The input was expected to not match the regular expression /wildcards require an explicit host/. Input:\n\n'sys: wildcards require an explicit host or /path/*; wildcard queries are refused\\n' +\n  '\\n' +\n  '/help web'\n",
+   "ms": 1096
+  },
+  {
+   "id": "T07",
+   "area": "web",
+   "input": "web allow /*.google.com google.com/* --group google (no slash)",
+   "pass": true,
+   "evidence": "user: web allow /*.google.com google.com/* --group google\nagent: fake reply to: web allow /*.google.com google.com/* --group google | tools=web_fetch",
+   "ms": 1092
+  },
+  {
+   "id": "T08",
+   "area": "input",
+   "input": "paste \"/web allow https://www.google.com/*\\n\" from a code block",
+   "pass": false,
+   "error": "The input was expected to not match the regular expression /paste refused/. Input:\n\n'sys: slash-command paste refused: use one line without control or invisible characters; nothing was dispatched'\n",
+   "ms": 488
+  },
+  {
+   "id": "T09",
+   "area": "web",
+   "input": "web check https://www.google.com (no slash)",
+   "pass": true,
+   "evidence": "user: web check https://www.google.com\nagent: fake reply to: web check https://www.google.com | tools=web_fetch",
+   "ms": 1093
+  },
+  {
+   "id": "T10",
+   "area": "history",
+   "input": "ArrowUp recalls every submitted line",
+   "pass": false,
+   "error": "refused slash command must be recallable: [\"web check https://www.google.com\",\"web allow /*.google.com google.com/* --group google\",\"use /web search and /web research to research goal and reply with findings\",\"yoo\",\"yoo\",\"yoo\"]",
+   "ms": 1584
+  }
+ ]
+}

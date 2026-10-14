@@ -1,0 +1,100 @@
+{
+ "base": "http://127.0.0.1:8799",
+ "consoleErrors": [
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+ ],
+ "results": [
+  {
+   "id": "T01",
+   "area": "session",
+   "input": "/session new hvac",
+   "pass": true,
+   "evidence": "sys: session created: ce605a0071af — hvac\nsys: Fresh conversation. Shared persona, enabled memory notes and web context remain; /prompt shows what is included.",
+   "ms": 1099
+  },
+  {
+   "id": "T02",
+   "area": "chat",
+   "input": "yoo",
+   "pass": true,
+   "evidence": "user: yoo\nagent: fake reply to: yoo | tools=web_search,web_fetch {meta: qwen3.8:27b-mlx-cg · +100/10 tok · session total 110}\nsys: Checking this activity for useful memories. Suggestions will appear in Memory for you to review; nothing is saved automatically.",
+   "ms": 1090
+  },
+  {
+   "id": "T03",
+   "area": "goal",
+   "input": "/goal find the best hvac repair service near cumming, georgia 30041",
+   "pass": true,
+   "evidence": "sys: goal set (web: fetch):\nfind the best hvac repair service thats not too expensive (mid-tier) near cumming, georgia or zip code 30041 {meta: web: fetch — while this goal is set, every chat turn in this session (typed or /loop) can read permitted URLs only; Google search is off. /goal --web all allows search; reads still need /web allow.}",
+   "ms": 1089
+  },
+  {
+   "id": "T04",
+   "area": "goal",
+   "input": "chat: use /web search and /web research …",
+   "pass": true,
+   "evidence": "user: use /web search and /web research to research goal and reply with findings\nagent: fake reply to: use /web search and /web research to research goal and reply with findings | tools=web_fetch {meta: qwen3.8:27b-mlx-cg · +100/10 tok · session total 220}",
+   "ms": 1092
+  },
+  {
+   "id": "T05",
+   "area": "web",
+   "input": "/web status",
+   "pass": true,
+   "evidence": "sys: URL permissions and web on/off are shared by this home, not per session. Saved web context belongs to your account. Check an exact URL with /web check; every destination still needs permission.\n\nfield\tvalue\nenabled\tyes\npermission rules\t0 of 64 (web.max_rules) — see groups below; empty denies content reads (no policy file yet; the first /web allow creates it)\nkeyword search\tpublic Google (may require JavaScript/CAPTCHA) — needs /web allow https://www.google.com/* or a SerpAPI key in API Keys\nweb calls per chat\t10 maximum; token and time limits also apply\ninjected\tno\ncontext stored\tno\nlast extract\tnone\ngroup\tpermitted pattern\tresearch starts\trule ID\nWeb syntax and examples",
+   "ms": 1097
+  },
+  {
+   "id": "T06",
+   "area": "web",
+   "input": "/web allow *.google.com google.com/* --group google",
+   "pass": true,
+   "evidence": "sys: *.google.com permits only the root page https://*.google.com/; end a pattern with /* (for example https://*.example.org/*) to include every path.\nsys: URL permissions and web on/off are shared by this home, not per session. Saved web context belongs to your account. Check an exact URL with /web check; every destination still needs permission.\n\nfield\tvalue\nenabled\tyes\npermission rules\t2 of 64 (web.max_rules) — see groups below; empty denies content reads\nkeyword search\tpublic Google (may require JavaScript/CAPTCHA) — needs /web allow https://www.google.com/* or a SerpAPI key in API Keys\nweb calls per chat\t10 maximum; token and time limits also apply\ninjected\tno\ncontext stored\tno\nlast extract\tnone\ngroup\tpermitted pattern\tresearch starts\trule ID\ngoogle\thttps://*.google.com/\tneeds --seed URL\tef4baa3887313395d639e53e10d96f2b\ngoogle\thttps://google.com/*\tliteral URL/path prefix\t911d771811a8a49ea4f56af469683bba\nWeb syntax and examples",
+   "ms": 1097
+  },
+  {
+   "id": "T07",
+   "area": "web",
+   "input": "web allow /*.google.com google.com/* --group google (no slash)",
+   "pass": true,
+   "evidence": "sys: This starts like a command but has no leading /, so it was sent to the model as chat. To run the command instead:\n\n/web allow /*.google.com google.com/* --group google {meta: Suggestion only — click to edit, then explicitly send.}\nuser: web allow /*.google.com google.com/* --group google\nagent: fake reply to: web allow /*.google.com google.com/* --group google | tools=web_fetch {meta: qwen3.8:27b-mlx-cg · +100/10 tok · session total 330}",
+   "ms": 1091
+  },
+  {
+   "id": "T08",
+   "area": "input",
+   "input": "paste \"/web allow https://www.google.com/*\\n\" from a code block",
+   "pass": true,
+   "evidence": {
+    "value": "/web allow https://www.google.com/*",
+    "added": []
+   },
+   "ms": 480
+  },
+  {
+   "id": "T09",
+   "area": "web",
+   "input": "web check https://www.google.com (no slash)",
+   "pass": true,
+   "evidence": "sys: This starts like a command but has no leading /, so it was sent to the model as chat. To run the command instead:\n\n/web check https://www.google.com {meta: Suggestion only — click to edit, then explicitly send.}\nuser: web check https://www.google.com\nagent: fake reply to: web check https://www.google.com | tools=web_fetch {meta: qwen3.8:27b-mlx-cg · +100/10 tok · session total 440}",
+   "ms": 1096
+  },
+  {
+   "id": "T10",
+   "area": "history",
+   "input": "ArrowUp recalls every submitted line",
+   "pass": true,
+   "evidence": [
+    "web check https://www.google.com",
+    "web allow /*.google.com google.com/* --group google",
+    "/web allow *.google.com google.com/* --group google",
+    "/web status",
+    "use /web search and /web research to research goal and reply with findings",
+    "/goal find the best hvac repair service thats not too expensive (mid-tier) near cumming, georgia or zip code 30041"
+   ],
+   "ms": 1584
+  }
+ ]
+}
