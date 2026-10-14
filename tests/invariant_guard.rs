@@ -926,7 +926,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
-    (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1400),
+    // why: operator-approved raise from 1400 to 1776 for the optimize skill rewrite. The file is 1277 words, so
+    // 499 are unused headroom; the Agent group cap, not this row, is the binding limit.
+    (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1776),
     // why: port of CyClaw's otel-hardening skill (telemetry-kill contract for a Rust tree); 1241 words, rounded up to the next 100.
     (".claude/skills/cgagentharness-otel-hardening/SKILL.md", Agent, 1300),
     (".claude/skills/cgagentharness-project-guidance/SKILL.md", Agent, 800),
