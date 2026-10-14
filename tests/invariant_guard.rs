@@ -1004,7 +1004,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     ("docs/GITHOOKS.md", Guide, 1350),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
-    ("docs/INSTALL.md", Guide, 4740),
+    // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
+    ("docs/INSTALL.md", Guide, 4650),
     ("docs/MCP_CLIENT.md", Guide, 890),
     ("docs/MCP_SERVER.md", Guide, 1030),
     // why: #244 folded MEMORY_SETUP.md and USER_MANUAL.md's memory sections in here.
