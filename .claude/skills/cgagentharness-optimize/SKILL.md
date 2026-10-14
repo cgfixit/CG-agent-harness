@@ -1,210 +1,147 @@
 ---
 name: cgagentharness-optimize
-description: Find and implement evidence-backed Rust, desktop, runtime, and CI improvements in CG-agent-harness, grouped into focused draft PRs when publication is requested. Use for project optimization or maintainability work, not unrelated CyClaw or RAG changes.
+description: Finds evidence-backed Rust, runtime, desktop and CI improvements in CG-agent-harness by running area-sharded read-only scans, verifying every finding against the code, and grouping survivors into focused draft PRs when publication is authorized. Use for an optimization or maintainability sweep of this repo, not for one already-known fix.
 ---
 
-# CG-agent-harness Optimize (Claude depth)
+# CG-agent-harness Optimize
 
-**Persona:** You are a modern systems engineer specializing in **Rust / axum /
-macOS desktop** harness work for **CG-agent-harness** (cgfixit/CG-agent-harness).
-You know the map: `cgagentharness serve` → `src/server` (loopback axum);
-`cgagentharness agentic <action>` → `src/agentic` via `src/shim` only (I6);
-exit codes `0/2/3/4`; home `~/.CGagentHarness` / `CGAGENTHARNESS_HOME`; write
-gates + clone jail + Seatbelt; console asset CSRF placeholders; optional native
-desktop packaging. You are **not** a Python RAG / LangGraph / soul / CyClaw
-triple-gate engineer — do not transplant those topologies here.
+Output is **verified findings**, not a list of suspicions. Zero verified findings
+is a complete result; never manufacture work. Human merges. Optional `ARGUMENTS`
+(an area, path or topic) restricts the sweep to that one shard.
 
-**Compressed twin:** `.codex/skills/cgagentharness-optimize/SKILL.md` — same
-intent, shorter runtime. Prefer this Claude file for deep playbooks; keep both
-consistent (evidence-first; I6 preserve; `scripts/check-pr-template.sh`).
-
-**What this skill does:** time-boxed scan of the default branch, group findings
-into **1–4 earned** PR-sized chunks (**guideline, not quota**; zero is valid),
-implement only when scope is authorized, open **draft** PRs only when
-publication is authorized. Human merges. Merge order: opened order unless a
-named dependency says otherwise; format per the PR template.
-
----
-
-## Run (agent path)
-
-### Step 0 — Bootstrap (manual; no committed bootstrap.sh)
-
-**FACT:** Unlike CyClaw-Optimize, this tree may not ship
-`.claude/skills/cgagentharness-optimize/bootstrap.sh`. Do **not** invent one as
-required. Manual bootstrap:
+## 0. Preflight
 
 ```bash
-git fetch origin main
-# optional working branch — do not force-reset a branch that already has commits
-git checkout -B codex/optimize-<topic> origin/main   # or claude/optimize-<topic>, grok/, kimi/, agent/
-git status -sb
-git log --oneline origin/main -8
-# inventory seeds
-find src tests scripts .github/workflows -type f | head -200
-ls assets src src/server src/agentic src/shim src/llm 2>/dev/null
+git fetch origin main && git status -sb && git log --oneline origin/main -8
+git switch -c claude/optimize-<topic> origin/main   # skip for a read-only sweep
 ```
 
-Omit branch creation for a read-only scan on the current branch. Never commit
-directly to `main`.
+Use the branch the session assigns if it names one. Never `checkout -B` over a
+branch that has commits; never commit to `main`.
 
-### Step 1 — Time-boxed read-only scan (~4 minutes)
+## 1. Shard and scan (read-only)
 
-Dispatch **one read-only** explore pass (~4 minutes). Do not edit. Sweep:
+One scan per shard, run in parallel. The `server-*` shards (about 25k lines) are
+**opt-in**: name one in `ARGUMENTS`. A full sweep reports them as not scanned.
 
-| Area | Look for |
-|---|---|
-| `src/agentic` | writer gates, jail, sandbox, digest binding, gh client, dead paths |
-| `src/server` | guards/headers order, routes/`REGISTERED_PATHS`, jobs/`prepare_run` lockstep, CSRF placeholders |
-| `src/shim` | ACTIONS whitelist, argv encoding (`--opt=value`), timeouts |
-| `src/llm` | loopback URLs, timeout/retry, no secret echo |
-| desktop / packaging scripts | lipo→sign→embed order (re-verify live docs), ad-hoc ≠ Developer ID, WKWebView ≠ HTTP |
-| `scripts/` | `verify-local.sh`, `smoke-ollama.sh`, `package-release.sh`, `check-pr-template.sh` |
-| `.github/workflows` | SHA pinning, `cancel-in-progress`, blank planner keys, no secret-requiring "optimizations" |
-| `tests/` | coverage gaps on hostile argv, write refuse (exit 4), jail, shipped gates; brittle fixtures |
+| Shard | Paths | Look for |
+|---|---|---|
+| agentic | `src/agentic` | writer gates, clone jail, sandbox, digest binding, gh client, process lifecycle, dead paths (`writer.rs`, `workspace.rs`, `executor/sandbox.rs` are core) |
+| edge | `src/shim`, `src/server/{guards,headers}.rs`, `routes/mod.rs`, `agent_policy`, the `prepare_run` path | guard order, `ACTIONS` vs CLI dispatch, argv encoding, shim timeouts vs child bounds, route drift, run/jobs/schedule lockstep |
+| io-build | `src/llm`, `src/common`, `src/netconnect`, `desktop/src`, `scripts/` | loopback validators, timeout and retry bounds, secret echo, bounded capture, packaging order and atomicity (re-check live docs before asserting) |
+| ci-tests | `.github/workflows`, `tests/` | coverage gaps (hostile argv, exit-4 refusal, jail, shipped gates), assertions that pass for the wrong reason, CI gaps not in the done-list below |
+| server-data | `src/server/{structured_memory*,memory_notes,notes_corpus,retrieval*,passage_index,compaction}.rs` | owner isolation, SQLite kept off async workers, bounded reads |
+| server-web | `src/server/{web_*,chat_web,attachment*,mcp*}.rs` | permission gates, pinned DNS, no proxy/redirect/retry, bounded fetch, secret echo |
+| server-chat | `src/server/{sessions,slash,prompts,notification*}.rs`, `routes/{core,panels,auth}.rs` | request limits, audit coverage, session export and search staying local |
 
-Return **6–10 distinct** findings with title, path+lines, one-line why, category
-(perf/security/auditability/maintainability/CI), effort (small/medium), and a
-suggested grouping into **only as many PR chunks as earn a PR**. Cite real code —
-do not invent. Keep reading after the 4-minute box to confirm each finding.
+Explore and Plan subagents do **not** inherit `CLAUDE.md`, so the brief must
+carry the repo's decisions. Each brief says:
 
-### Step 2 — Dedup against open PRs (before picking focus)
+> Scan ONLY `<paths>`. First read `AGENTS.md` Traps and the `INVARIANTS.md`
+> section for this area (AGENTS.md area table). Report at most 5 findings you
+> confirmed by reading the whole function or file, not grep hits. Zero is valid;
+> do not pad; a process note or question is never a finding. Per finding: title;
+> `path:lines`; trigger (concrete input or state); impact; `verify_with` (exact
+> command or test); `refuted_by` (the check you ran that could have killed it);
+> category (perf/security/auditability/maintainability/CI); effort.
 
-List open PRs (`gh pr list` or GitHub MCP). Drop candidates already covered.
-Parse payloads down to `number` + `title` only — raw PR JSON blows context.
+and appends these **tells of a false finding** (each was a real false positive):
 
-Skip CyClaw-product ideas (soul, RAG nodes, triple-gate, I1–I5) even if an open
-issue mentions them — wrong repo contract.
+- Restates a documented decision. Only a *new* bypass of the decision's test
+  counts. Examples: Linux `unshare --net` fallback, ad-hoc signing,
+  disposable-copy re-verify on approve, token passthrough to the child, Windows
+  guarantees weaker than Unix.
+- Flags deliberate duplication or lock-step pins: `RUN_ID_PATTERN`, timeout
+  pairs, route-count asserts, SHA literals in tests.
+- Treats a signal documented as weaker than its name as a defect
+  (`unslop.enabled`).
+- Sits behind an earlier gate and is unreachable today. Report as latent, naming
+  the gate.
+- Is style, file size, a newer dependency or a speculative speedup.
+- Is CI hardening already done: SHA-pinned actions, permissions, concurrency,
+  `timeout-minutes`, `persist-credentials: false`, zizmor/actionlint/shellcheck,
+  `cargo deny` on both crates, `--locked`, Dependabot. Re-report one only with a
+  command showing a current gap.
 
-### Step 3 — Select 1–4 earned chunks (guideline, not quota)
+**Stopping rule, not a time box.** Subagents expose no timeout (Anthropic
+documents `maxTurns`, depth and spend caps; prompt text only steers), so "~N
+minutes" cannot be enforced or measured. Stop a scan when its paths are read or
+it holds 5 confirmed findings. Trim to the top 5 yourself: in the trial below 3
+of 4 scanners exceeded a prompt-level "at most 5".
 
-Choose only chunks that clearly earn a reviewable PR. **One solid PR beats four
-thin ones; zero findings after dedup is a valid stop.** Each chunk = 1–2 major
-concepts or 3–5 minor tasks. Announce in one line each: section touched +
-leverage.
+## 2. Verify blind (separate agents)
 
-### Step 3.5 — Shared-file topology
+Pool findings, merge duplicates (same file, nearby lines), and give each
+verifier about 10 candidates with no scanner identity. It re-opens each cited
+line and tries to kill it. Fields: `matches_claim`, `real` (defect, risk,
+coverage gap or measured cost), `already_handled` (grep tests and CI),
+`intentional` (documented), `worth_a_pr`, `confidence`, `evidence` (`path:line`
+re-read or command run). **Keep** only matches, real, not handled, not
+intentional, worth a PR, confidence at least medium. A model rechecking its own
+claim without new evidence is unreliable, so evidence is mandatory.
 
-Build a **file → chunks** map. Hotspots: `.github/workflows/ci.yml`,
+*Why (one trial, 2026-10-14, two runs per control arm; a prior, not proof):*
+raising "~4 minutes" to "~5" left verified yield flat while files read rose
+about 30%. Unguided single-pass scans kept 69% of findings and swung 4/9 to 9/9
+between identical runs; sharded scans with tells and this gate kept 91%. Only 10
+of 48 findings came from more than one scan, so repeating a shard adds
+coverage, not confirmation.
+
+## 3. Dedup, select, topology
+
+List open PRs (`gh pr list` or the GitHub MCP tools; keep `number` and `title`
+only). Drop covered candidates and CyClaw-product ideas. Select 0-4 chunks that
+earn a PR; one solid chunk beats four thin ones. Rank by severity (correctness
+and security, then auditability, CI, performance, maintainability), then
+confidence, then effort. A chunk is 1-2 major concepts or 3-5 minor tasks.
+Announce each in one line: section touched, leverage.
+
+Map **file -> chunks**. Hotspots: `.github/workflows/ci.yml`,
 `assets/config.default.yaml`, `INVARIANTS.md`, `AGENTS.md`, `src/shim`,
-`REGISTERED_PATHS`, `deny.toml`. For shared files:
+`REGISTERED_PATHS`, `deny.toml`. For a shared file either consolidate into one
+PR, or sequence both on `main`: land the first, then
+`git rebase --onto origin/main <old-parent-tip>`. Never stack bases. Trial-merge
+each branch on fresh `origin/main` (`git merge --no-commit --no-ff`, then
+`--abort`) and fill `## Suggested merge order of open PRs` from the PR template.
 
-- **(A) Consolidate** shared edits into one PR, or
-- **(B) Sequence** both on `main` (never a stacked base): land the earlier,
-  then rebase the later with `git rebase --onto origin/main <old-parent-tip>`.
+## 4. Implement authorized scope only
 
-Trial-merge each branch on fresh `origin/main` (`git merge --no-commit --no-ff`,
-then `--abort`); when ≥2 chunks share a file, also build the merged tree. Write
-the hybrid `## Suggested merge order of open PRs` blocks from
-`.github/PULL_REQUEST_TEMPLATE.md`.
+Keep diffs minimal and one concern per PR. Reproduce first: run the finding's
+`verify_with` before editing, then show the same check passing. Core paths (`src/shim`, `guards.rs`,
+`headers.rs`, `writer.rs`, `sandbox.rs`, `workspace.rs`,
+`assets/config.default.yaml`) need an explicit invariant statement in the PR
+body, and the operator runs `/cgagentharness-invariant-guard` (operator-only).
+Config edits: `cgagentharness-config-guard`. Write-surface changes:
+`cgagentharness-write-policy-redteam`. Dependency or lock drift:
+`dep-sync`, not this skill.
 
-### Step 4 — Implement authorized scope only
+Publish only when authorized: draft PR, body from
+`.github/PULL_REQUEST_TEMPLATE.md`, then
+`scripts/check-pr-template.sh <body-file>`. Skill selection never authorizes
+push, merge or release, and never comment `@codex review` unasked.
 
-Work chunks in planned merge order. Cut from topology base (`origin/main` or
-parent). Keep diffs minimal. Core paths
-(`src/shim`, `guards.rs`, `headers.rs`, `writer.rs`, `sandbox.rs`,
-`workspace.rs`, `assets/config.default.yaml`) require an explicit invariant
-statement in the PR body.
-
-Publication / push / draft PR **only when authorized**. Until then: implement
-locally or stop after the plan. When publishing:
-
-```bash
-git add -p
-git commit -m "<type>: <what and why>"
-git push -u origin "<branch>"
-# draft PR; body from .github/PULL_REQUEST_TEMPLATE.md
-bash scripts/check-pr-template.sh
-```
-
-Driver-prefixed branches: `claude/`, `codex/`, `grok/`, `kimi/`, `agent/`.
-
-If nothing remains after scan/dedup: **confirm zero findings and stop** — do not
-manufacture work.
-
----
-
-## Verify (per chunk, before push)
+## 5. Verify each chunk
 
 ```bash
 cargo fmt --all -- --check
-CLIPPY="${CLIPPY:-cargo clippy}"   # macOS gotcha: CLIPPY=/opt/homebrew/bin/cargo-clippy
-$CLIPPY --all-targets --all-features -- -D warnings
-# Targeted only; CI runs the suite:
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --test <target>
-command -v cargo-deny > /dev/null && cargo deny check
+${CLIPPY:-cargo clippy} --all-targets --all-features --locked -- -D warnings
 ```
 
-Desktop/toolchain paths: run packaging or acceptance only when the chunk needs
-them; owned temp `CGAGENTHARNESS_HOME` + unique port for live smoke. Chrome
-chat-browser flakes → issue **#43**; do not hollow asserts.
+Then **run the changed code** (route, binary or function) against an owned temp
+`CGAGENTHARNESS_HOME` and a unique port. Only if nothing can run, one targeted
+test with keys blanked: `GROK_API_KEY= ANTHROPIC_API_KEY= DEEPAGENT_API_KEY=
+CGAGENTHARNESS_AGENTIC_WRITE_DISABLE= cargo test --locked --test <target>`
+(`invariant_guard` after structural or doc edits). Never the full suite locally;
+CI runs it. Run `cargo deny check` if installed: `verify-local.sh` skips it when
+missing, so its green run is not deny evidence. Performance claims need
+before/after numbers with conditions. After a `.md` edit run `wc -w` against its
+`DOCS_BUDGET` cap and lower the cap of any file that shrank.
 
----
+## 6. Report
 
-## Guardrails (harness INVARIANTS — do not violate)
-
-- **I6** — server never links/calls `crate::agentic`; only `src/shim` spawns
-  `current_exe() agentic <action>` with ACTIONS whitelist.
-- **Guard chain** — rate limit → same-origin → direct loopback/no proxy →
-  account/RBAC → mutation CSRF. Fresh auth/TLS are true; the optional harness key
-  grants no authority. Host/HTTP2 authority remains unambiguous loopback.
-- **Browser never supplies a command** — profile names + `--opt=value` / temp
-  files; hostile argv refused.
-- **Write gates** — shipped gates closed; `confirm` never defaulted; `reason`
-  required; kill switch AND-only; exit `4` = write refused.
-- **Clone jail** — landed-path judgment; capability reads; no TOCTOU reopen.
-- **Judged-before-land** / **approval binding** / **secrets redaction** /
-  **detached-run gates** (`prepare_run` lockstep for `/api/agent/run` and
-  `/api/agent/jobs`).
-- Never commit to `main`; draft PRs only; no license/secret-requiring workflow
-  "optimizations."
-- Skill selection ≠ push/merge/release authorization; preserve narrower operator
-  limits.
-- Do not weaken tests to green. Do not open shipped gates for convenience.
-
----
-
-## Gotchas (cite AGENTS / session traps)
-
-- Server import of `crate::agentic` → `invariant_guard` fails; keep duplication
-  that sync tests own (`RUN_ID_PATTERN`, timeouts, check profiles).
-- Quoted YAML `"true"` is **OFF** (`flag_is_true`).
-- CSRF names/placeholders are contractual — no branding rename.
-- CI blanks `GROK_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPAGENT_API_KEY`.
-- scrypt `n=2^17` + `[profile.dev.package."*"] opt-level=3` load-bearing.
-- **CLIPPY** path on some Macs: `/opt/homebrew/bin/cargo-clippy`.
-- Chrome acceptance flake class **#43** — fix starter / quarantine with
-  tracking; don't delete coverage.
-- Desktop: re-verify live packaging docs before asserting lipo/sign/embed;
-  never re-sign sidecar after digest embed; WKWebView ≠ HTTP proof.
-- Seatbelt permission noise ≠ product regression; reproduce with owned home +
-  unique port.
-- Shared listener on default port ≠ this bundle.
-- Draft PR + `scripts/check-pr-template.sh` + driver prefix required for
-  publication discipline.
-
----
-
-## Example scan shape (illustrative — re-scan; do not reuse blindly)
-
-1. **CI pinning / concurrency** — pin actions to SHAs; `cancel-in-progress`
-   where missing *(CI/security, small)*.
-2. **Hostile-argv / jobs lockstep gap** — extend matrix if a new field crossed
-   the shim without `--opt=value` *(security, small)*.
-3. **Writer refuse clarity** — assert exit 4 + gate name on a new path without
-   loosening confirm *(security, small)*.
-4. **Test-time / clippy doc** — document `CLIPPY=` in verify skill/README only
-   if prose drifted *(docs, small)*.
-
-Zero kept chunks after dedup is success.
-
-## Notes
-
-- Evidence-first (pair with `fable-protocol`).
-- Before core-path PRs: ask the operator to run `/cgagentharness-invariant-guard`
-  (manual-only, `disable-model-invocation: true`).
-- Config edits: `cgagentharness-config-guard`.
-- Write-surface hardening: `cgagentharness-write-policy-redteam`.
-- Never weaken harness invariants to match CyClaw product policy.
-- Independent adversarial verify of a supplied patch:
-  `verification-specialist` (not a substitute for `cgagentharness-verify` smoke).
+Shards scanned **and not scanned**; candidates -> killed (with the reason) ->
+kept; chunks with merge order; checks run and skipped. Do not restate
+`AGENTS.md` or `INVARIANTS.md`: truth order and traps live in `AGENTS.md`,
+contracts in `INVARIANTS.md`, session traps in `cgagentharness-gotchas`. Never
+weaken a test, gate or invariant for speed or tidiness; I6 and the closed write
+gates are not optimization targets. Never transplant CyClaw topology or defaults.
