@@ -160,15 +160,14 @@ target/release/cgagentharness
 
 ### 5.2 macOS app
 
-Choose a **published release** for its documented source version, a successful
-**main artifact** for newer merged features, or a **PR artifact** to test an
-unmerged change:
+Choose a **published release** for its documented source version or a successful
+**main artifact** for newer merged features. Bundle runs only after pushes to
+`main`; PRs do not produce Bundle artifacts:
 
 | Source | What to download | What it establishes |
 |---|---|---|
 | [Latest release](https://github.com/cgfixit/CG-agent-harness/releases/latest) | `CG-Agent-Harness-macos-universal.zip` and `SHA256SUMS` | Published release source identified in its notes |
 | Successful [Bundle run](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml) on `main` | `cg-agent-harness-macos-universal` Actions artifact | Merged source at that run's commit; may be newer than the published release |
-| Successful Bundle run for a PR | Same artifact name | Candidate source only; not evidence it is on main or released |
 | Successful [desktop workflow](https://github.com/cgfixit/CG-agent-harness/actions/workflows/desktop.yml) | `cg-agent-harness-macos-universal` for a standalone dispatch | Desktop build checks for its selected source |
 
 The macOS `cgagentharness-macos-arm64` CLI archive is a different deliverable;
@@ -621,7 +620,7 @@ tokens, fresh CSRF, and no replay.
 | Coding and chat regression tests | Revocation, exact edits, clone jail, reviewed trees, job cancellation, session and goal gates, loop budgets, and failed-chat claim release. See [`tests/`](../tests/). |
 | Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
 | [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and packaged backend, verify signatures, checksums, and extraction, then retain ZIP and checksums. |
-| [Bundle](../.github/workflows/bundle.yml) | Packages `linux-x86_64` and `macos-arm64` CLIs beside desktop, checksums and re-verifies each artifact, then tests loopback binding and exit-3 missing configuration. |
+| [Bundle](../.github/workflows/bundle.yml) | On pushes to `main` only: packages `linux-x86_64` and `macos-arm64` CLIs beside desktop, checksums and re-verifies each artifact, then tests loopback binding and exit-3 missing configuration. |
 | Workflow and source checks | CodeQL, DevSkim, Gitleaks secret scanning, PR-template/base-branch checks, the advisory review gate and a daily RustSec scan (`advisories.yml`) are separate workflows. Workflow changes additionally trigger actionlint/zizmor. The optional `live-ollama.yml` fingerprint runs the release binary against a pinned real Ollama on Linux and macOS. |
 | [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope, collector, and untrusted-string tests on Linux and macOS, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |
 | [Release](../.github/workflows/release.yml) | At 08:17 and 20:17 UTC, publishes the next patch only when `main` differs and its SHA has a successful Bundle. Backend CI, CLI packaging, desktop checks, and downloaded checksums still gate publication. Stable tags and manual preview/publish also work. See [release controls](RELEASING.md). |
