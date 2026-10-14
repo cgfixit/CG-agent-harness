@@ -7,7 +7,7 @@ name: PR template check
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions: {}
 
@@ -26,6 +26,8 @@ jobs:
   # blocked, not merely flagged.
   base-branch:
     name: base branch is main
+    # Gates open pull requests only; never a run on main itself.
+    if: github.event_name == 'pull_request' && github.event.pull_request.state == 'open' && github.head_ref != 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -44,6 +46,7 @@ jobs:
             if (!ok) core.setFailed(`PR base is '${base}'; must be main.`);
 
   check:
+    if: github.event_name == 'pull_request' && github.event.pull_request.state == 'open' && github.head_ref != 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
