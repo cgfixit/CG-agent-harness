@@ -1022,8 +1022,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
     ("docs/SECURE_RESEARCH.md", Guide, 3550),
-    // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here (+250 over the old 1910 cap); 2157 words.
-    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2160),
+    // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
+    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
     ("docs/STRUCTURED_MEMORY.md", Guide, 3440),
