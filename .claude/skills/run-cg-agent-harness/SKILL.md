@@ -6,10 +6,9 @@ disable-model-invocation: true
 
 # Run and verify the harness
 
-Fresh homes use HTTPS and restricted account bootstrap. Prefer the maintained
-public-backend and browser scripts over this directory's historical `driver.mjs`,
-which assumes HTTP/auth-off startup and is not current acceptance evidence.
-Do not apply those assumptions to a real home or use a key as a login substitute.
+Fresh homes use HTTPS and restricted account bootstrap. Use the maintained
+public-backend and browser scripts below. Never assume HTTP/auth-off startup on a
+real home or use a key as a login substitute.
 
 From the repository root, with the pinned toolchain and an isolated home:
 
