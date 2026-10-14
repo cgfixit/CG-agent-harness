@@ -49,6 +49,10 @@ run() {
   [ "$dry" = 1 ] || "$@"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+# rustup fails `run` for a component the toolchain lacks.
+lints_ok() {
+  rustup run "$toolchain" cargo-clippy --version >/dev/null 2>&1 && rustup run "$toolchain" rustfmt --version >/dev/null 2>&1
+}
 # --noproxy: an http_proxy/ALL_PROXY must never answer for a loopback service.
 ollama_up() { curl --noproxy '*' --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
 # A usable app: both executables present and the bundle signature verifies.
@@ -57,6 +61,16 @@ app_ok() {
   [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
     && codesign --verify --deep --strict "$1" >/dev/null 2>&1
 }
+# The Ollama app bundle, if one is installed.
+ollama_app() {
+  for a in /Applications/Ollama.app "$HOME/Applications/Ollama.app"; do
+    if [ -d "$a" ]; then printf '%s\n' "$a"; return; fi
+  done
+}
+# Run a server in its own session, so the Ctrl-C that stops a later
+# foreground command (start-web.sh) does not reach it. macOS has no setsid(1).
+# shellcheck disable=SC2016 # perl expands its own variables.
+detached() { nohup /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec $ARGV[0]: $!\n"' -- "$@"; }
 # The Ollama CLI on PATH, else the one inside Ollama.app (the cask links that same file).
 ollama_cli() {
   command -v ollama 2>/dev/null && return
@@ -95,7 +109,10 @@ inventory() {
   if have brew; then say "Homebrew: $(brew --version 2>/dev/null | head -n1)"; else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
   if have rustup; then
     say "rustup: $(command -v rustup)"
-    if rustup run "$toolchain" rustc --version >/dev/null 2>&1; then say "Rust $toolchain: $(rustup run "$toolchain" rustc --version)"; else say "Rust $toolchain: MISSING"; missing=1; fi
+    if rustup run "$toolchain" rustc --version >/dev/null 2>&1; then
+      say "Rust $toolchain: $(rustup run "$toolchain" rustc --version)"
+      lints_ok || { say "Rust $toolchain: clippy or rustfmt MISSING (the lint gate needs both)"; missing=1; }
+    else say "Rust $toolchain: MISSING"; missing=1; fi
   else
     say 'rustup: MISSING'; missing=1
   fi
@@ -105,7 +122,10 @@ inventory() {
     if [ -x "$root/target/release/cgagentharness" ]; then say "backend: $root/target/release/cgagentharness"; else say 'backend: not built'; missing=1; fi
   fi
   if [ "$ollama" = 1 ]; then
-    if have ollama; then say "Ollama: $(ollama --version 2>&1 | sed -n 's/.*version is //p' | tail -n1)"; elif [ -d /Applications/Ollama.app ]; then say 'Ollama: app installed, CLI not on PATH'; else say 'Ollama: MISSING'; missing=1; fi
+    if have ollama; then
+      say "Ollama: $(ollama --version 2>&1 | sed -n 's/.*version is //p' | tail -n1)$([ -n "$(ollama_app)" ] || echo ' (CLI only; started with ollama serve)')"
+    elif [ -n "$(ollama_app)" ]; then say 'Ollama: app installed, CLI not on PATH'
+    else say 'Ollama: MISSING'; missing=1; fi
     if ollama_up; then say "Ollama API: reachable at $ollama_api"; else say 'Ollama API: not running'; fi
     v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
     say "OLLAMA_CONTEXT_LENGTH for GUI apps: ${v:-unset (scripts/start-macos.sh sets 32768)}"
@@ -131,7 +151,7 @@ fi
 
 # ----------------------------------------------------------------- 2. Homebrew
 need_brew=0
-if [ "$ollama" = 1 ] && ! have ollama && [ ! -d /Applications/Ollama.app ]; then need_brew=1; fi
+if [ "$ollama" = 1 ] && ! have ollama && [ -z "$(ollama_app)" ]; then need_brew=1; fi
 if [ "$gh" = 1 ] && ! have gh; then need_brew=1; fi
 if [ "$need_brew" = 1 ] && ! have brew; then
   say 'installing Homebrew (official installer; it asks for your password)'
@@ -157,6 +177,9 @@ if ! have rustup; then
 fi
 if ! have rustup || ! rustup run "$toolchain" rustc --version >/dev/null 2>&1; then
   run rustup toolchain install "$toolchain" --profile minimal --component clippy --component rustfmt
+elif ! lints_ok; then
+  # An existing minimal toolchain can lack the components rust-toolchain.toml lists.
+  run rustup component add --toolchain "$toolchain" clippy rustfmt
 fi
 case $(command -v cargo || true) in
   "$HOME/.cargo/bin/cargo" | '') ;;
@@ -165,20 +188,30 @@ esac
 
 # ------------------------------------------------------------------- 4. Ollama
 if [ "$ollama" = 1 ]; then
-  if ! have ollama && [ ! -d /Applications/Ollama.app ]; then
+  # A CLI-only Ollama (no app) is kept; it is started with `ollama serve` below.
+  if ! have ollama && [ -z "$(ollama_app)" ]; then
     run brew install --cask ollama
   fi
   if [ -n "$model" ]; then
     if ! ollama_up; then
-      if [ -z "$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)" ]; then
-        run launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
+      ollama_app_path=$(ollama_app)
+      cli=$(ollama_cli || true)
+      if [ -z "$ollama_app_path" ] && [ -n "$cli" ]; then
+        # CLI-only install: no app to open, so run its server directly.
+        log=$HOME/Library/Logs/ollama-serve.log
+        printf '+ OLLAMA_CONTEXT_LENGTH=%s %s serve (in the background; log %s)\n' "${OLLAMA_CONTEXT_LENGTH:-32768}" "$cli" "$log"
+        if [ "$dry" = 0 ]; then OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768} detached "$cli" serve </dev/null >>"$log" 2>&1 & fi
+      else
+        if [ -z "$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)" ]; then
+          run launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
+        fi
+        # open waits on a first-launch prompt; the bounded wait below decides instead.
+        printf '+ open -a Ollama (in the background)\n'
+        if [ "$dry" = 0 ]; then open -a Ollama </dev/null >/dev/null 2>&1 & fi
       fi
-      # open waits on a first-launch prompt; the bounded wait below decides instead.
-      printf '+ open -a Ollama (in the background)\n'
-      if [ "$dry" = 0 ]; then open -a Ollama </dev/null >/dev/null 2>&1 & fi
       if [ "$dry" = 0 ]; then
         for _ in $(seq 1 60); do ollama_up && break; sleep 1; done
-        ollama_up || die "Ollama did not answer at $ollama_api; open it once from Applications, answer any prompt, and rerun"
+        ollama_up || die "Ollama did not answer at $ollama_api; open it once from Applications (or check ~/Library/Logs/ollama-serve.log), answer any prompt, and rerun"
       fi
     fi
     cli=$(ollama_cli || true)
@@ -241,8 +274,12 @@ if [ "$app" = 1 ]; then
   fi
 fi
 
-case $app_dir in
-  /Applications | "$HOME/Applications") say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).' ;;
-  *) say "done. Next: CGAH_APP='$app_path' scripts/start-macos.sh (the launcher searches only /Applications and ~/Applications)" ;;
-esac
+if [ "$app" = 0 ]; then
+  say 'done. Next: scripts/start-macos.sh --standalone (no app: runs the console server from this clone).'
+else
+  case $app_dir in
+    /Applications | "$HOME/Applications") say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).' ;;
+    *) say "done. Next: CGAH_APP='$app_path' scripts/start-macos.sh (the launcher searches only /Applications and ~/Applications)" ;;
+  esac
+fi
 say 'First sign-in is user admin; docs/INSTALL.md (First run) says where its first credential comes from. A new password is required next.'

@@ -61,6 +61,8 @@ jobs:
           set -euo pipefail
           export CGAH_APP="$RUNNER_TEMP/Applications/CG Agent Harness.app"
           scripts/start-macos.sh | tee start.log
+          # The certificate check ran against the home the backend holds.
+          grep -q '^==> browser trust: ' start.log
           url=$(sed -n 's/^CGagentHarness console: //p' start.log)
           case $url in https://127.0.0.1:*/) ;; *) echo "unexpected console URL: $url"; exit 1 ;; esac # DevSkim: ignore DS162092 because the app console must be a loopback origin.
           "$CGAH_APP/Contents/MacOS/cgagentharness" tls certificate > app.pem

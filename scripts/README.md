@@ -9,7 +9,7 @@ chat-browser job and `verify-local.sh`.
 ## Operator
 
 - [`install-macos.sh`](install-macos.sh): idempotent macOS installer: missing tools, backend build, checksummed release app; `--check`, `--dry-run`.
-- [`start-macos.sh`](start-macos.sh): opens Ollama and the app, then the app's own origin through `start-web.sh --desktop-url`; `--standalone`, `--trust-cert`.
+- [`start-macos.sh`](start-macos.sh): starts Ollama (app or `ollama serve`) and the app, then the app's own origin through `start-web.sh --desktop-url`; `--standalone`, `--trust-cert`.
 - [`start-web.sh`](start-web.sh): starts the console on loopback (default 8790) and opens a browser; bundled into the `.app`, so byte changes need a rebuild.
 - [`web-allowlist-bootstrap.sh`](web-allowlist-bootstrap.sh): grants a technical-docs web allowlist through `cgagentharness web allow` (admin login needed); extra lines from `CGAH_GRANTS_FILE`.
 - [`reset-macos.sh`](reset-macos.sh): dry-runs, or with `--yes` deletes, the harness home and Keychain entries.

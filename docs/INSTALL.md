@@ -29,7 +29,7 @@ touches the home directory and pulls a model only with `--model`.
 | `--check` | Lists what is present; exits 1 when something required is missing |
 | `--dry-run` | Prints every command a real run would make, changing nothing |
 | `--replace-app` | Replaces a working app; keeps the previous one in `~/Library/Caches/CG-agent-harness-installer/previous`. An incomplete or unsigned copy is replaced without it |
-| `--no-ollama`, `--no-build`, `--no-app`, `--app-dir DIR` | Skip a step or choose the app location; outside `/Applications` and `~/Applications`, start with `CGAH_APP` |
+| `--no-ollama`, `--no-build`, `--no-app`, `--app-dir DIR` | Skip a step or choose the app location; outside `/Applications` and `~/Applications`, start with `CGAH_APP`; after `--no-app`, with `--standalone` |
 
 The checksum proves the download is intact, not who built it: both files come
 from the same release page. A `curl` download carries no quarantine flag, so
@@ -354,11 +354,11 @@ port, and a browser gets its own login. Three ways:
 | `scripts/start-macos.sh` | Same `--desktop-url` hand-off from a clone; works with any app version |
 | `scripts/start-macos.sh --standalone [port]` | No app: `start-web.sh` builds if needed and runs `serve` on 8790 |
 
-`start-macos.sh` first opens Ollama if it is not answering, setting
-`OLLAMA_CONTEXT_LENGTH=32768` for GUI apps when it is unset (`launchctl` forgets
-it at logout, so rerun the script after login; quit and relaunch an Ollama that
-was already running without it). Ollama's first launch asks you to confirm an
-app downloaded from the internet; the script waits 30 seconds, then continues.
+`start-macos.sh` first starts Ollama if it is not answering: the app, or a
+CLI-only install's `ollama serve` (log `~/Library/Logs/ollama-serve.log`). It sets
+`OLLAMA_CONTEXT_LENGTH=32768` when unset (the app's `launchctl` value is
+lost at logout, so rerun the script after login; restart an Ollama started without it). Ollama's first launch asks you to confirm an
+app downloaded from the internet; the script waits 30 seconds.
 It opens the app if no app backend is running,
 reads the loopback port that backend listens on, and passes that origin to
 `start-web.sh --desktop-url`. It starts no second server; keep the app running.
@@ -368,8 +368,8 @@ server owns a home, and the second `serve` stops at the home lock.
 `--standalone` refuses early when another process holds the target home's lock.
 
 Browsers do not trust the home's generated certificate. `start-macos.sh` reports
-whether macOS trusts it; `--trust-cert` exports the public certificate with the
-app's backend and adds it to your login keychain for TLS after a password
+whether macOS trusts it; `--trust-cert` exports the public certificate of the
+home the app's backend holds and adds it to your login keychain for TLS after a password
 prompt. That certificate is a leaf for `localhost`, `127.0.0.1` and `::1`, not
 a CA. A renewed certificate needs `--trust-cert` again; remove the old one in
 Keychain Access. Firefox keeps its own store. Never click through a certificate warning;

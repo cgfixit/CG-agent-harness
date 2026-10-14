@@ -38,6 +38,17 @@ ollama_up() { curl --noproxy '*' --silent --fail --max-time 2 -o /dev/null "$oll
 # PIDs of this user's app backends. A translocated or copied app runs from
 # another path, so match the bundle layout, not one install location.
 app_backends() { pgrep -u "$(id -u)" -f "$sidecar" || true; }
+# Run a server in its own session, so the Ctrl-C that stops a later
+# foreground command (start-web.sh) does not reach it. macOS has no setsid(1).
+# shellcheck disable=SC2016 # perl expands its own variables.
+detached() { nohup /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec $ARGV[0]: $!\n"' -- "$@"; }
+# The Ollama CLI on PATH, else the one inside Ollama.app.
+ollama_cli() {
+  command -v ollama 2>/dev/null && return
+  for c in /Applications/Ollama.app/Contents/Resources/ollama "$HOME/Applications/Ollama.app/Contents/Resources/ollama"; do
+    if [ -x "$c" ]; then printf '%s\n' "$c"; return; fi
+  done
+}
 
 if [ "$ollama" = 1 ]; then
   if ollama_up; then
@@ -53,6 +64,13 @@ if [ "$ollama" = 1 ]; then
     open -a Ollama </dev/null >/dev/null 2>&1 &
     for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
     ollama_up || echo 'start-macos: Ollama did not answer yet; answer any first-launch prompt, chat waits for it (docs/MODELS.md)' >&2
+  elif cli=$(ollama_cli) && [ -n "$cli" ]; then
+    # CLI-only install (no app): run its server. An exported value wins.
+    log=$HOME/Library/Logs/ollama-serve.log
+    say "starting $cli serve (OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768}; log $log)"
+    OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-32768} detached "$cli" serve </dev/null >>"$log" 2>&1 &
+    for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
+    ollama_up || echo "start-macos: Ollama did not answer yet; see $log (docs/MODELS.md)" >&2
   else
     echo 'start-macos: Ollama is not installed; run scripts/install-macos.sh or point chat at another model (docs/MODELS.md)' >&2
   fi
@@ -114,9 +132,14 @@ else
   # Its argv is "<bundle>/Contents/MacOS/cgagentharness desktop" (app_backends matched it).
   backend=$(ps -o command= -p "$pids" || true)
   backend=${backend% desktop}
+  # A new process does not inherit the app's environment, so name the home
+  # that backend actually owns: the one whose .server.lock it holds open.
+  home=$(lsof -nP -a -p "$pids" -Fn 2>/dev/null | sed -n 's|^n\(/.*\)/\.server\.lock$|\1|p' | head -n1 || true)
   pem=$(mktemp)
   trap 'rm -f "$pem"' EXIT
-  if "$backend" tls certificate >"$pem" 2>/dev/null && [ -s "$pem" ]; then
+  if [ -z "$home" ]; then
+    echo "start-macos: cannot tell which home pid $pids owns; certificate trust not checked (docs/SECURE_RESEARCH.md)" >&2
+  elif CGAGENTHARNESS_HOME=$home "$backend" tls certificate >"$pem" 2>/dev/null && [ -s "$pem" ]; then
     if security verify-cert -c "$pem" -p ssl -s "$loopback" -L -q >/dev/null 2>&1; then
       say "browser trust: this home's certificate is trusted for $loopback"
     elif [ "$trust" = 1 ]; then
@@ -127,7 +150,7 @@ else
       say 'browser trust: not trusted yet; your browser will warn. Rerun with --trust-cert, or see docs/SECURE_RESEARCH.md#https-and-native-trust'
     fi
   else
-    echo 'start-macos: could not export the certificate (the app may use a non-default home); see docs/SECURE_RESEARCH.md' >&2
+    echo "start-macos: could not export the certificate of $home; see docs/SECURE_RESEARCH.md" >&2
   fi
 fi
 bash "$root/scripts/start-web.sh" --desktop-url "$origin"
