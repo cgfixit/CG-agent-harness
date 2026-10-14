@@ -108,15 +108,21 @@ fi
 # that must be refused has no side effects. Empty when a backend already runs.
 app=''
 if [ "$mode" = app ] && [ -z "$(app_backends)" ]; then
-  # A usable bundle: the same test as install-macos.sh's app_ok.
+  # A usable bundle: the same test as install-macos.sh's app_ok, including the
+  # backend digest the shell was compiled with (checked without running either binary).
+  sidecar_ok() {
+    local d
+    d=$(shasum -a 256 "$1/Contents/MacOS/cgagentharness" 2>/dev/null | awk '{print $1}') && [ ${#d} = 64 ] \
+      && LC_ALL=C grep -q -a -F "$d" "$1/Contents/MacOS/cg-agent-harness-desktop"
+  }
   app_ok() {
     [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
       && runs_here "$1/Contents/MacOS/cg-agent-harness-desktop" && runs_here "$1/Contents/MacOS/cgagentharness" \
-      && codesign --verify --deep --strict "$1" >/dev/null 2>&1
+      && sidecar_ok "$1" && codesign --verify --deep --strict "$1" >/dev/null 2>&1
   }
   app=${CGAH_APP:-}
   if [ -n "$app" ]; then
-    app_ok "$app" || { echo "start-macos: CGAH_APP=$app is not a complete, signed app for this Mac; reinstall it or unset CGAH_APP" >&2; exit 3; }
+    app_ok "$app" || { echo "start-macos: CGAH_APP=$app is not a complete, signed app for this Mac with a matching backend; reinstall it or unset CGAH_APP" >&2; exit 3; }
   else
     # Skip a partial or damaged copy.
     for candidate in "/Applications/CG Agent Harness.app" "$HOME/Applications/CG Agent Harness.app"; do

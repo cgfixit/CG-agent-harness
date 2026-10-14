@@ -98,12 +98,21 @@ runs_here() {
   esac
   return 1
 }
-# A usable app: both executables present, runnable on this Mac, and the bundle signature verifies.
-# A partial copy fails this, so a plain rerun repairs it.
+# The shell refuses a backend whose SHA-256 is not the one compiled into it
+# (desktop/src/backend.rs, CGAH_BACKEND_SHA256). That hex literal is in the shell's
+# bytes, so this checks the pair without running either binary.
+sidecar_ok() {
+  local d
+  d=$(shasum -a 256 "$1/Contents/MacOS/cgagentharness" 2>/dev/null | awk '{print $1}') && [ ${#d} = 64 ] \
+    && LC_ALL=C grep -q -a -F "$d" "$1/Contents/MacOS/cg-agent-harness-desktop"
+}
+# A usable app: both executables present, runnable on this Mac, the shell's embedded
+# backend digest matches, and the bundle signature verifies. A partial copy fails this,
+# so a plain rerun repairs it.
 app_ok() {
   [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
     && runs_here "$1/Contents/MacOS/cg-agent-harness-desktop" && runs_here "$1/Contents/MacOS/cgagentharness" \
-    && codesign --verify --deep --strict "$1" >/dev/null 2>&1
+    && sidecar_ok "$1" && codesign --verify --deep --strict "$1" >/dev/null 2>&1
 }
 # A launchable Ollama.app: Info.plist names an executable that is present,
 # and the bundle signature verifies. An interrupted copy fails this.
@@ -232,7 +241,7 @@ inventory() {
   elif have gh; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
   else say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
-    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -d "$app_path" ]; then say "app: $app_path is incomplete, not built for this Mac, or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
+    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -d "$app_path" ]; then say "app: $app_path is incomplete, not built for this Mac, has a mismatched backend, or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
   fi
   return "$missing"
 }
@@ -383,6 +392,7 @@ if [ "$app" = 1 ]; then
     if [ "$dry" = 0 ]; then
       [ -d "$work/unpacked/$app_name" ] || die "the archive has no $app_name"
       codesign --verify --deep --strict "$work/unpacked/$app_name" || die 'the app signature does not verify; nothing was installed'
+      sidecar_ok "$work/unpacked/$app_name" || die "the app's backend is not the one its shell was built for; nothing was installed"
     fi
     run mkdir -p "$app_dir"
     # Copy next to the destination first, so a failed copy never touches the
