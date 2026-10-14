@@ -69,7 +69,9 @@ jobs:
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""
           SMOKE_REQUIRE_MODEL: "1"
-          SMOKE_MODEL: "fp-qwen25-05b:q4km"
+          # The smoke wants exactly "pong": the 0.5B model gives it about half
+          # the time, the 1.5B one every time. The fingerprint still runs both.
+          SMOKE_MODEL: "fp-qwen25-15b:q4km"
           FINGERPRINT_MODELS: "fp-qwen25-05b:q4km,fp-qwen25-15b:q4km"
           RUNNER_OS_NAME: ${{ runner.os }}
         run: FINGERPRINT_OUT="$RUNNER_TEMP/fingerprint-$RUNNER_OS_NAME.json" scripts/smoke-ollama.sh
