@@ -593,32 +593,54 @@ Record those in the PR body.
 
 ## Tests and CI/CD
 
-The [verification commands above](#11-verify-your-setup) cover local gates,
-desktop packaging, Chrome, and Ollama. Additional focused commands are:
+[Verification commands](#11-verify-your-setup) cover local gates, desktop,
+Chrome and Ollama. Focused alternatives:
 
 ```bash
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
-cargo test --test invariant_guard          # fast I6 source scan
+cargo test --test invariant_guard
 ```
 
-Fixtures neutralize `GIT_CONFIG_GLOBAL` and set repository identity. Set
-`CGAH_TEST_BINARY` for another backend, including a bundle copy. The standard-library
-Python suite uses a loopback model fixture with no downloads or cloud inference.
-Its disposable HTTPS account verifies restart, history, goal, notes, selection,
-tokens, fresh CSRF, and no replay.
+Fixtures isolate `GIT_CONFIG_GLOBAL` and repository identity. `CGAH_TEST_BINARY`
+selects another backend, including a bundle. The standard-library Python suite
+uses a disposable HTTPS account and loopback model: restart, history, goals,
+notes, selection, tokens, CSRF and replay; no downloads or cloud inference.
 
 | Gate | Evidence and scope |
 |---|---|
-| [Backend CI](../.github/workflows/ci.yml) | On PRs, `main`, and reusable release calls: rustfmt, warning-denied Clippy, `cargo deny`, MSRV, I6 scan, Chrome commands, Linux/macOS/Windows tests, and real-repo smoke. Bundle owns release builds and CLI packaging; Release rebuilds before publication. |
-| Coding and chat regression tests | Revocation, exact edits, clone jail, reviewed trees, job cancellation, session and goal gates, loop budgets, and failed-chat claim release. See [`tests/`](../tests/). |
-| Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
-| [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and packaged backend, verify signatures, checksums, and extraction, then retain ZIP and checksums. |
-| [Bundle](../.github/workflows/bundle.yml) | On pushes to `main` only: packages `linux-x86_64` and `macos-arm64` CLIs beside desktop, checksums and re-verifies each artifact, then tests loopback binding and exit-3 missing configuration. |
-| Workflow and source checks | CodeQL, DevSkim, Gitleaks secret scanning, PR-template/base-branch checks, the advisory review gate and a daily RustSec scan (`advisories.yml`) are separate workflows. Workflow changes additionally trigger actionlint/zizmor. The optional `live-ollama.yml` fingerprint runs the release binary against a pinned real Ollama on Linux and macOS. |
-| [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope, collector, and untrusted-string tests on Linux and macOS, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |
-| [Release](../.github/workflows/release.yml) | At 08:17 and 20:17 UTC, publishes the next patch only when `main` differs and its SHA has a successful Bundle. Backend CI, CLI packaging, desktop checks, and downloaded checksums still gate publication. Stable tags and manual preview/publish also work. See [release controls](RELEASING.md). |
+| [Backend](../.github/workflows/ci.yml) | PR/main/release: fmt, Clippy, deny, MSRV, I6, Chrome, Linux/macOS/Windows tests and real-repo smoke. |
+| [Regressions](../tests/) | Revocation, exact edits, clone jail, reviewed trees, cancellation, session/goal gates, loop budgets and failed-chat claims. |
+| Native Cargo | macOS Seatbelt and fixed Cargo checks; Linux bubblewrap or weaker network-only `unshare`; Windows Job Object. |
+| [Desktop](../.github/workflows/desktop.yml) | Bundle/release/manual: universal app on Rust 1.90, policy and packaged-backend tests, signatures, checksums, extraction and ZIP retention. |
+| [Bundle](../.github/workflows/bundle.yml) | Main pushes only: CLI packages for Linux x86_64/macOS arm64, desktop, checksum/reverification, loopback and missing-config exit-3 smoke. |
+| Scanners | CodeQL, DevSkim, Gitleaks, PR-template/base checks, advisory review gate and daily RustSec. Workflows trigger actionlint/zizmor; optional live-ollama fingerprints pinned models on Linux/macOS. |
+| [Netconnect](../.github/workflows/netconnect.yml) | Path-filtered flags, scope, collectors and untrusted strings on Linux/macOS; Linux strace proves default status sends no packets. |
+| [Release](../.github/workflows/release.yml) | 08:17/20:17 UTC: next patch when main differs and Bundle passed. Backend CI, packaging, desktop and downloaded checksums gate publication; stable tags/manual preview also work. [Controls](RELEASING.md). |
 
-CI uses deterministic model fixtures and blanks cloud planner keys. Passing it
-does not prove real-model quality, complete native GUI behavior, or notarized
-distribution. Live Ollama smoke and native desktop checks recorded in PR bodies
-cover different evidence. Windows release legs remain parked.
+CI uses deterministic models and blank cloud keys; it does not prove real-model
+quality, native GUI behavior or notarization. PR evidence records live Ollama
+and native checks separately. Windows release legs remain parked.
+
+### Ordered batch merge
+
+After the workflow lands, open **Actions → Ordered batch merge → Run workflow**
+on `main`. Enter 1–20 distinct PR numbers in dependency order (`480,481,482`).
+Leave **execute** unchecked for a read-only preview; order is explicit.
+
+Execution requires `BATCH_MERGE_TOKEN`, a repository-scoped fine-grained PAT:
+Contents/Pull requests/Workflows write; Actions/Checks/Commit statuses/Administration
+read. This triggers fresh CI/Bundle, unlike the default Actions token. Configure
+classic main protection with required checks, strict up-to-date checks and
+administrator enforcement; ruleset-only protection is unsupported. No settings,
+secrets, draft status or bypass permissions are changed by the workflow.
+
+Mark PRs ready before checking **execute**. The queue captures heads, updates
+branches sequentially, waits for current-head CI/reviews, squash-merges, then
+waits for main CI/Bundle. Drafts, forks, conflicts, failed/cancelled/missing checks,
+unresolved reviews and unexpected head/base changes stop it. Skipped/neutral
+jobs require successful expected workflows; disabled governance is not a pass.
+
+One batch runs at a time. Timeout defaults to 300 minutes (maximum 330).
+Cancellation cannot undo an in-flight merge. Inspect progress, resolve blockers,
+and rerun the list; already-merged entries are skipped. Local preview:
+`GITHUB_REPOSITORY=owner/repo PR_LIST='480,481' python3 scripts/batch-merge.py`.

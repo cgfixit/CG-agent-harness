@@ -139,6 +139,8 @@ SKIP_LIVE=1 scripts/verify-local.sh
 
 CI adds invariant guards, browser acceptance, sandbox and MCP lifecycle, and security scanning; see [Tests and CI/CD](docs/INSTALL.md#tests-and-cicd) and [Actions](https://github.com/cgfixit/CG-agent-harness/actions).
 
+Maintainers can preview an [ordered PR batch](docs/INSTALL.md#ordered-batch-merge), then explicitly enable sequential merging after CI.
+
 **Identify builds by commit**, not the Cargo version `0.1.0`: check the app's `Contents/Resources/COMMIT`, workflow SHA, and release notes; `main` can be newer than published binaries.
 
 ## Documentation

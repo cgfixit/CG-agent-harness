@@ -1,0 +1,51 @@
+name: Ordered batch merge
+
+on:
+  workflow_dispatch:
+    inputs:
+      prs:
+        description: "PR numbers in dependency order, e.g. 480,481,482"
+        required: true
+        type: string
+      execute:
+        description: "Update branches and squash merge (false previews only)"
+        default: false
+        type: boolean
+      timeout_minutes:
+        description: "Total wait budget, 1–330 minutes; rerun the list to resume"
+        default: "300"
+        type: string
+
+permissions: {}
+
+# One writer for all lists. A second dispatch must never interrupt a merge.
+concurrency:
+  group: ordered-batch-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      checks: read
+      statuses: read
+    steps:
+      # Never execute PR code with the merge credential. This is the immutable
+      # main revision selected by the dispatch, even after the first merge.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Preview or execute ordered list
+        env:
+          GH_TOKEN: ${{ inputs.execute && secrets.BATCH_MERGE_TOKEN || github.token }}
+          BATCH_TOKEN_PRESENT: ${{ secrets.BATCH_MERGE_TOKEN != '' }}
+          PR_LIST: ${{ inputs.prs }}
+          EXECUTE: ${{ inputs.execute }}
+          TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+        run: python3 scripts/batch-merge.py

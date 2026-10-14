@@ -7,6 +7,7 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 
 ## Merge gates
 
+- [`batch-merge.yml`](batch-merge.yml): manual ordered squash queue; previews by default. [Setup](../../docs/INSTALL.md#ordered-batch-merge).
 - [`ci.yml`](ci.yml): push, PR and `workflow_call`: fmt, clippy, tests on Linux, macOS and Windows with planner keys blanked, the required `CGAH_REQUIRE_*` sandbox and lifecycle jobs, deny, invariant guard. Required.
 - [`pr-template-check.yml`](pr-template-check.yml): every PR open, edit and sync: PR-body template and base-is-main gate. Blocking.
 - [`review-gate.yml`](review-gate.yml): review and comment events: reports open threads and running Codex reviews. Advisory, never fails.
