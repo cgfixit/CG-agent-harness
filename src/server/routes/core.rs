@@ -459,10 +459,11 @@ pub async fn session_goal(
     ValidJson(req): ValidJson<GoalRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
+    let web_mode = req.web_mode.unwrap_or(state.runtime_limits().web.goal_web_default);
     let session = state
         .store
         .for_owner(&owner)
-        .set_goal(&session_id, &req.goal, req.web_mode)
+        .set_goal(&session_id, &req.goal, web_mode)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let mut out = session.summary();
     out["goal"] = json!(session.goal);
