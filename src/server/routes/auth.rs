@@ -429,9 +429,7 @@ pub async fn set_role(
     req: Request<Body>,
 ) -> ApiResult<Json<Value>> {
     let account = actor(&state, &req)?;
-    if account.role != ROLE_ADMIN {
-        return Err(denied());
-    }
+    require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthSetRoleRequest>::from_request(req, &()).await?;
     manager(&state)?
         .set_role(&username, &body.role)
@@ -445,9 +443,7 @@ pub async fn delete_user(
     req: Request<Body>,
 ) -> ApiResult<Json<Value>> {
     let account = actor(&state, &req)?;
-    if account.role != ROLE_ADMIN {
-        return Err(denied());
-    }
+    require_user_admin(&account)?;
     let manager = manager(&state)?;
     // Blobs go only once the account is actually gone: a refused deletion
     // (last enabled admin, persistence failure) must not lose user data.

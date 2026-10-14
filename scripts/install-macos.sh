@@ -185,7 +185,7 @@ major=$(sw_vers -productVersion | cut -d. -f1)
 [ "$major" -ge 12 ] || die "macOS 12 or newer is required (found $(sw_vers -productVersion))" 3
 # Homebrew's Ollama cask (ollama-app) requires macOS 14. Refuse before changing anything.
 # Same validity tests as the install step: a dead CLI or a partial app would need that cask too.
-if [ "$ollama" = 1 ] && [ "$major" -lt 14 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then
+if [ "$ollama" = 1 ] && [ "$check" = 0 ] && [ "$major" -lt 14 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then
   die "installing Ollama needs macOS 14 or newer (found $(sw_vers -productVersion)); rerun with --no-ollama and point chat at another model (docs/MODELS.md)" 3
 fi
 # --model opens Ollama.app unless the install is CLI-only. Refuse a non-loopback launchd value before changing anything.

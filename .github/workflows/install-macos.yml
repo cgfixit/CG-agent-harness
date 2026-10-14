@@ -10,8 +10,10 @@ on:
   pull_request:
     paths:
       - "scripts/install-macos.sh"
+      - "scripts/init.sh"
       - "scripts/start-macos.sh"
       - "scripts/start-web.sh"
+      - "scripts/web-allowlist-bootstrap.sh"
       - ".github/workflows/install-macos.yml"
   workflow_dispatch:
 
@@ -57,6 +59,28 @@ jobs:
 
       - name: Rerun keeps the installed app
         run: scripts/install-macos.sh --no-build --app-dir "$RUNNER_TEMP/Applications" | grep 'keeping '
+
+      - name: init.sh replaces the admin password, keeps it in Keychain and applies the allowlist
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications"
+          log=scripts/logs/install.log
+          grep -q 'admin password replaced and saved in your login keychain' "$log"
+          grep -q 'allowlist-bootstrap: done: 14 of' "$log"
+          if grep -qiE 'setup code [0-9a-z]{4}-' "$log"; then echo 'the install log holds a setup code'; exit 1; fi
+          home=$(cd "$HOME/.CGagentHarness" && pwd -P)
+          security find-generic-password -a admin -s "CGagentHarness admin ($home)" >/dev/null
+
+      - name: init.sh rerun detects the finished steps and opens the app (choice 1)
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          scripts/init.sh --yes --choice 1 --app-dir "$RUNNER_TEMP/Applications" | tee rerun.log
+          grep -q 'already installed; nothing to do' rerun.log
+          grep -q 'signed in with the admin password from your login keychain' rerun.log
+          grep -q 'allowlist-bootstrap: 0 new rule' rerun.log
+          grep -q '^CGagentHarness console: https://127.0.0.1:[0-9]*/$' rerun.log # DevSkim: ignore DS162092 because the app console must be a loopback origin.
 
       # Every step that opens a GUI app is bounded: an unanswered macOS prompt
       # must fail the step, not the 60-minute job.

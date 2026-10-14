@@ -86,7 +86,7 @@ loopback OpenAI-compatible service.
 
 ### Exact-model diagnostics and optional fallback
 
-Open **Harness → Setup and recovery** (Cmd-,), then **Check installed chat
+Open **Setup and recovery** (Cmd and +), then **Check installed chat
 and planner models**. Both use bounded `/models` inventories:
 
 | State | Meaning / next step |

@@ -69,6 +69,9 @@ jobs:
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""
           SMOKE_REQUIRE_MODEL: "1"
+          # The 0.5B fixture's greedy word differs by backend ("pong" on CPU,
+          # "péng!" on macOS Metal); check the round trip, not its obedience.
+          SMOKE_EXACT_REPLY: "0"
           SMOKE_MODEL: "fp-qwen25-05b:q4km"
           FINGERPRINT_MODELS: "fp-qwen25-05b:q4km,fp-qwen25-15b:q4km"
           RUNNER_OS_NAME: ${{ runner.os }}
