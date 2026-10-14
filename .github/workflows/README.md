@@ -31,4 +31,5 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 
 - [`netconnect.yml`](netconnect.yml): netconnect paths: flag, scope and strace no-packet proof.
 - [`live-ollama.yml`](live-ollama.yml): daily, manual and path-filtered PRs: real Ollama fingerprint on Linux and macOS against `scripts/live-ollama/baseline.json`; not required.
+- [`install-macos.yml`](install-macos.yml): installer/launcher PRs and manual: runs `install-macos.sh` and `start-macos.sh` end to end on `macos-latest`; not required.
 - [`copilot-setup-steps.yml`](copilot-setup-steps.yml): Copilot agent pre-step wiring `.githooks`; runs on edits to itself or manually.
