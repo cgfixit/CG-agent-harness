@@ -136,10 +136,16 @@ successful tests.
 
 The local model returns `session_summary` or `insight` candidates. Strict parsing,
 source membership, sensitivity checks, confidence, and existing bindings create
-pending proposals through idempotent runs. Facts change only after Apply with
+pending proposals through idempotent runs. Only validated candidates count toward
+the single-summary limit. Facts change only after Apply with
 confirm and reason. Generation has no tools, web, recalled facts, schema change,
 or cloud egress; it uses temperature 0 and 1024 output tokens. Automatic
 `consolidator-v2` still requires human semantic summaries.
+
+Chat suggestions retain their turn's local model; coding suggestions snapshot
+the selection at completion. Manual and idle consolidation use the current
+selection. Cloud selections use the configured local backend; memory never calls
+a cloud provider. Failed runs retain the attempted model.
 
 | Setting | Default | Clamp / meaning |
 |---|---|---|
@@ -248,7 +254,9 @@ set chat would send. Suggest still does not mutate canonical facts.
   a worse quality path because metadata cannot support durable facts. The v2
   prompt asks for no candidates from metadata alone. Auto-batching requires a
   non-NULL, nonblank semantic summary and an unexpired `none`/`pending` row;
-  owners with a running consolidation are skipped.
+  running owners and episodes from failed/cancelled current-version runs are
+  skipped. Those episodes require an explicit manual retry, including after restart;
+  completion-suggestion failures do not block human-summary consolidation.
 - **Suggestion quality.** `consolidator-v2` asks for durable preferences,
   identity, corrections, or standing constraints supported by semantic summaries.
   Temporary plans, jokes, tool/status dumps, errands, and unsupported guesses
@@ -273,7 +281,7 @@ set chat would send. Suggest still does not mutate canonical facts.
   returns the completed run and does not insert a second proposal batch.
   A completed v1 key does not suppress a v2 run on the same episode set.
   Interrupted `running` rows become `failed`/`interrupted` on reopen and may
-  be retried on the same key.
+  be retried manually on the same key.
 - Audit records run id, counts, state, and error class. It does not record
   episode summaries, proposal payloads, or raw model output.
 

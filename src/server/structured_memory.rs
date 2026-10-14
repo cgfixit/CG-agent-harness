@@ -1990,8 +1990,9 @@ impl StructuredMemoryStore {
             .map_err(sql)
     }
 
-    /// Unexpired, human-summarized episodes only. Skips owners that already
-    /// have a `running` consolidation row.
+    /// Unexpired, human-summarized episodes only. Skips running owners and
+    /// episodes whose current consolidator failed or was cancelled. Those
+    /// episodes remain available for an explicit manual retry.
     pub fn next_auto_consolidation_batch(&self) -> Result<Option<(String, Vec<String>)>> {
         let conn = self.lock();
         let now = crate::common::now_ts();
@@ -2005,10 +2006,16 @@ impl StructuredMemoryStore {
                      SELECT 1 FROM consolidation_runs r
                      WHERE r.owner_id=e.owner_id AND r.state='running'
                    )
+                   AND NOT EXISTS (
+                     SELECT 1 FROM consolidation_runs r
+                     WHERE r.owner_id=e.owner_id AND r.summarizer_version=?2
+                       AND r.state IN ('failed','cancelled')
+                       AND instr(r.episode_ids, e.public_id) > 0
+                   )
                  GROUP BY e.owner_id
                  ORDER BY e.owner_id
                  LIMIT 1",
-                params![now],
+                params![now, SUMMARIZER_VERSION],
                 |r| r.get(0),
             )
             .optional()
@@ -2018,17 +2025,28 @@ impl StructuredMemoryStore {
         };
         let mut stmt = conn
             .prepare(
-                "SELECT public_id FROM episodes
-                 WHERE owner_id=?1 AND consolidation_state IN ('none','pending')
-                   AND semantic_summary IS NOT NULL AND length(trim(semantic_summary)) >= 1
-                   AND expires_ts > ?3
-                 ORDER BY created_ts ASC, public_id ASC
+                "SELECT e.public_id FROM episodes e
+                 WHERE e.owner_id=?1 AND e.consolidation_state IN ('none','pending')
+                   AND e.semantic_summary IS NOT NULL AND length(trim(e.semantic_summary)) >= 1
+                   AND e.expires_ts > ?3
+                   AND NOT EXISTS (
+                     SELECT 1 FROM consolidation_runs r
+                     WHERE r.owner_id=e.owner_id AND r.summarizer_version=?4
+                       AND r.state IN ('failed','cancelled')
+                       AND instr(r.episode_ids, e.public_id) > 0
+                   )
+                 ORDER BY e.created_ts ASC, e.public_id ASC
                  LIMIT ?2",
             )
             .map_err(sql)?;
         let ids = stmt
             .query_map(
-                params![owner, self.limits.max_consolidation_episodes as i64, now],
+                params![
+                    owner,
+                    self.limits.max_consolidation_episodes as i64,
+                    now,
+                    SUMMARIZER_VERSION
+                ],
                 |r| r.get(0),
             )
             .map_err(sql)?
@@ -2648,6 +2666,26 @@ impl StructuredMemoryStore {
             .map_err(sql)?;
         tx.commit().map_err(sql)?;
         Ok(started)
+    }
+
+    /// Record the attempted local model before generation, including failed calls.
+    pub fn set_consolidation_model(&self, owner: &str, id: &str, model_id: &str) -> Result<()> {
+        Self::require_owner(owner)?;
+        let model_id = self.clean_text(model_id, 200, true)?;
+        let changed = self
+            .lock()
+            .execute(
+                "UPDATE consolidation_runs SET model_id=?1 WHERE owner_id=?2 AND public_id=?3 AND state='running'",
+                params![model_id, owner, id],
+            )
+            .map_err(sql)?;
+        if changed == 0 {
+            return Err(HarnessError::new(
+                "STRUCTURED_MEMORY_CHANGED",
+                "consolidation run is not running",
+            ));
+        }
+        Ok(())
     }
 
     pub fn cancel_consolidation_run(&self, owner: &str, id: &str) -> Result<ConsolidationRun> {
@@ -3800,6 +3838,84 @@ mod tests {
         let next = store.next_auto_consolidation_batch().unwrap().unwrap();
         assert_eq!(next.0, "user_bob");
         assert!(!next.1.contains(&alice.id));
+        let suggestion = store
+            .begin_suggestion_run(
+                "user_bob",
+                std::slice::from_ref(&bob.id),
+                crate::server::structured_memory_suggest::VERSION,
+            )
+            .unwrap();
+        store
+            .fail_consolidation_run("user_bob", &suggestion.id, "invalid_schema")
+            .unwrap();
+        assert_eq!(
+            store.next_auto_consolidation_batch().unwrap().unwrap(),
+            next,
+            "a completion suggestion failure does not block human-summary consolidation"
+        );
+    }
+
+    #[test]
+    fn auto_batch_does_not_retry_terminal_runs_or_starve_other_owners() {
+        for terminal in ["failed", "cancelled"] {
+            let dir = tempfile::tempdir().unwrap();
+            let memory = store(dir.path());
+            let stage = |owner| {
+                let episode = memory
+                    .stage_episode(
+                        owner,
+                        EpisodeDraft {
+                            model_id: "local-test-model",
+                            outcome: "completed",
+                            user_chars: 8,
+                            assistant_chars: 8,
+                            sensitivity: "normal",
+                        },
+                    )
+                    .unwrap();
+                memory
+                    .set_episode_summary(owner, &episode.id, "Prefer metric units.", "operator summary")
+                    .unwrap();
+                episode.id
+            };
+            let alice = stage("user_alice");
+            let bob = stage("user_bob");
+            let run = memory
+                .begin_consolidation_run("user_alice", std::slice::from_ref(&alice), SUMMARIZER_VERSION)
+                .unwrap();
+            if terminal == "cancelled" {
+                memory.cancel_consolidation_run("user_alice", &run.id).unwrap();
+            } else {
+                memory
+                    .fail_consolidation_run("user_alice", &run.id, "invalid_schema")
+                    .unwrap();
+            }
+            assert_eq!(
+                memory.next_auto_consolidation_batch().unwrap(),
+                Some(("user_bob".into(), vec![bob.clone()])),
+                "{terminal} run must not occupy the next automatic batch"
+            );
+            let fresh = stage("user_alice");
+            assert_eq!(
+                memory.next_auto_consolidation_batch().unwrap(),
+                Some(("user_alice".into(), vec![fresh.clone()])),
+                "new evidence must not reintroduce the stopped episode"
+            );
+            drop(memory);
+            let memory = store(dir.path());
+            assert_eq!(
+                memory.next_auto_consolidation_batch().unwrap(),
+                Some(("user_alice".into(), vec![fresh])),
+                "terminal automatic work stays stopped after restart"
+            );
+            let retried = memory
+                .begin_consolidation_run("user_alice", std::slice::from_ref(&alice), SUMMARIZER_VERSION)
+                .unwrap();
+            assert_eq!(retried.id, run.id);
+            assert_eq!(retried.state, "running", "an explicit retry remains available");
+            assert!(memory.list_proposals("user_alice").unwrap().is_empty());
+            assert!(memory.list_facts("user_alice").unwrap().is_empty());
+        }
     }
 
     #[test]
