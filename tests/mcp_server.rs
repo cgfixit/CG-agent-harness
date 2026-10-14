@@ -493,11 +493,19 @@ async fn slow_body_holds_bounded_permit_times_out_and_recovers() {
         .unwrap()
         .unwrap();
     assert!(String::from_utf8_lossy(&response).contains("MCP_TIMEOUT"));
-    assert_eq!(
-        call(&g, &alice, "tools/list", json!({})).await.0,
-        200,
-        "timed-out body releases request authority"
-    );
+    // The permit is dropped before the timeout response is sent, so a busy answer (429) here is a leak
+    // and fails at once. The recovery call has the same one-second budget as the slow body and runs
+    // key authentication on a blocking thread; a loaded runner may time that new request out (408),
+    // which says nothing about the permit. Retry only that case, and bound the retries.
+    let mut status = 0;
+    for _ in 0..3 {
+        status = call(&g, &alice, "tools/list", json!({})).await.0;
+        assert_ne!(status, 429, "timed-out body must release request authority");
+        if status != 408 {
+            break;
+        }
+    }
+    assert_eq!(status, 200, "service recovers after a timed-out body");
 }
 #[tokio::test]
 async fn global_rate_limits_invalid_credentials_and_disabled_store_refuses() {
