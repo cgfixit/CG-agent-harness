@@ -56,6 +56,7 @@ struct Job {
     owner: String,
     episode: String,
     source: Source,
+    model: String,
     input: String,
     output: String,
     created: Instant,
@@ -133,6 +134,20 @@ pub fn enqueue(
     input: &str,
     output: &str,
 ) -> Value {
+    enqueue_for_model(state, owner, source, episode, input, output, &state.current_model())
+}
+
+/// Chat supplies its captured request model, including a per-turn override.
+/// Later selection changes must not redirect already completed evidence.
+pub fn enqueue_for_model(
+    state: &Arc<AppState>,
+    owner: &str,
+    source: Source,
+    episode: Option<&str>,
+    input: &str,
+    output: &str,
+    model: &str,
+) -> Value {
     if !available(state, source) {
         return json!({"queued":false,"reason":"disabled"});
     }
@@ -181,6 +196,7 @@ pub fn enqueue(
         owner: owner.into(),
         episode: episode.clone(),
         source,
+        model: state.local_memory_model_for(model),
         input,
         output,
         created: Instant::now(),
@@ -301,6 +317,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         _ => return Ok(()),
     }
     let result = async {
+        store.set_consolidation_model(&job.owner, &run.id, &job.model)?;
         let payload = json!({"source":job.source.name(),"episode_id":job.episode,"mode":mode(state),
             "input":job.input,"output":job.output})
         .to_string();
@@ -315,7 +332,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
             _ = cancel.cancelled() => {
                 return Err(HarnessError::new(PREEMPTED, "a chat turn took the local model"));
             }
-            reply = state.chat.chat(SYSTEM_PROMPT, &messages, None, 1024, 0.0) => reply?,
+            reply = state.chat.chat(SYSTEM_PROMPT, &messages, Some(&job.model), 1024, 0.0) => reply?,
         };
         if chat_cleared(state, job) || !available(state, job.source) {
             return Err(HarnessError::new(
