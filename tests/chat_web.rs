@@ -644,6 +644,7 @@ async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
         .with("web.total_tokens", "25000"),
     )
     .await;
+    s.seed_default_soul();
     assert_eq!(
         s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
             .await

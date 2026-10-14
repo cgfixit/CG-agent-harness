@@ -16,11 +16,10 @@ the server or the shim.
   Console-side process creation is restricted to `shim/mod.rs`, `common/process.rs`,
   `common/mcp.rs`, `common/mcp_worker.rs` and `common/windows_job.rs`; shared
   runners preserve I6.
-- Why a process, not a module: a SIGKILL'd child can leak a clone, but it cannot
-  corrupt the server's memory or bypass its guard chain; the exit-code contract
-  (0 ok / 2 failed / 3 env_config / 4 write_refused) is the whole interface.
+- A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
+  guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.
 
-Process map. These are the only edges - a new one changes this list and the code together.
+Process edges; update this map when adding one.
 
 - **Renderer:** the console (`assets/static/harness.html`, `/static/auth_admin.js`)
   in a browser or desktop webview, and the setup window (`desktop/ui/`). It never
@@ -32,7 +31,9 @@ Process map. These are the only edges - a new one changes this list and the code
   hidden, Unix-only `cgagentharness desktop` sidecar, whose pipe carries readiness and
   ownership, never API authority (`src/server/desktop.rs`). It also runs
   `python3 prepare-cargo.py` for `prepare_cargo` and, once natively confirmed,
-  `/usr/bin/open -- <url>`.
+  `/usr/bin/open -- <url>`. The console's fixed `/__desktop/open-web` navigation
+  requests native confirmation to run the integrity-checked `start-web.sh` in
+  Terminal, opening the owned origin. No renderer command, path or URL is accepted.
 - **Pipeline child:** hidden `cgagentharness agentic <action>`, a `shim::ACTIONS` entry.
 - **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` in the
   sandbox wrapper. Strict Linux mode puts the hidden `cgagentharness mcp-stdio-worker`
