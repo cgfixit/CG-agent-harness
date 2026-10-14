@@ -1,8 +1,7 @@
 # Install and first run
 
-This guide covers prerequisites, build, first run, credentials, and verification.
-See the [index](../README.md), [model setup](MODELS.md), and
-[accounts](SECURE_RESEARCH.md#accounts-and-roles).
+For model and account details, see [Models](MODELS.md) and
+[Accounts](SECURE_RESEARCH.md#accounts-and-roles).
 
 ## 2. Prerequisites
 
@@ -222,11 +221,10 @@ successful build do not prove native interaction acceptance; see
 
 ## 6. First run
 
-Fresh homes enable account login, role permissions, HTTPS and web
-fetch/search/research automatically; no harness API key or configuration edit
-is required for those features. Web starts with an empty URL allowlist, so an
-administrator must grant sources through `/web allow` before content reads. For
-the app, open it from Finder. For the standalone path, start the server:
+Fresh homes enable login, role permissions, HTTPS and web fetch/search/research
+without a harness API key or configuration edit. The content allowlist starts
+empty; administrators grant sources through `/web allow`. Open the app from
+Finder, or start the standalone server:
 
 ```bash
 ./target/release/cgagentharness serve
@@ -244,10 +242,9 @@ The standalone server prints its address, for example:
 CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarness)
 ```
 
-On first run either path seeds the application home. If the configured loopback
-service already has the shipped `qwen3.8:27b-mlx` tag, chat needs no model-config
-edit. Use `/model list` to inspect available tags and `/model use <exact-tag>` to
-select another installed chat model. The harness never downloads a missing tag.
+First run seeds the application home. Chat uses the configured loopback service's
+`qwen3.8:27b-mlx` tag by default. Inspect installed tags with `/model list` and
+select one with `/model use <exact-tag>`. The harness never downloads missing tags.
 
 To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
 `serve` with Ctrl-C. Merge the exact installed tag into the active home's
@@ -277,15 +274,35 @@ For the standalone server, leave its terminal open and visit:
 https://127.0.0.1:8790/
 ```
 
-The native app verifies its owned local certificate. External browsers need
-explicit operator-controlled trust or an operator certificate already trusted by
-the browser; see the secure setup guide. After login and password replacement,
-leave the optional metadata key field empty and send a message. Replies
-[stream](CONSOLE.md#streaming-chat-and-cancellation) and `/loop stop` aborts the
-turn; time to first token depends on the selected local model.
+The app verifies its owned certificate. External browsers require
+operator-controlled trust or an operator certificate trusted by the browser;
+see [secure setup](SECURE_RESEARCH.md). After login and password replacement,
+leave the optional metadata key empty and send a message. Replies
+[stream](CONSOLE.md#streaming-chat-and-cancellation); `/loop stop` aborts the turn.
+Time to first token depends on the model.
 
-If the browser page hangs and never responds, double-check that Ollama ([model setup](MODELS.md)) is still
-available at its configured local endpoint.
+If replies stall, check that [Ollama](MODELS.md) is available at its configured endpoint.
+
+### Memory setup
+
+Run `/memory` to inspect gates. Fresh homes enable capture, suggestions and
+retrieval; upgrades preserve settings. To open a disabled store, set `enabled: true`
+under `structured_memory` in `config.yaml` and restart. Administrators can then
+enable `/memory capture on`, `/memory auto-suggest-chat on` and
+`/memory auto-suggest-coding on`.
+
+Select an installed local tag with `/model use <exact-tag>`, including 9B models.
+Under `structured_memory`, set `suggestion_mode: summaries` for summaries or `both`
+for summaries and useful details; restart after editing. Empty results can be valid.
+
+After completed work, open **Memory** for pending proposals. Review each and enter
+a reason to save, update, deactivate or dismiss; generation never changes saved
+facts. **Suggestion activity** explains empty, skipped, failed or interrupted work.
+Restart preserves proposals, but queued inputs are lost.
+
+`/memory search <query>` only finds facts; `/memory retrieve <query>` includes
+matches in that chat. Automatic retrieval separately requires `retrieval` and
+`auto_retrieval`; inspect `/prompt`. See [Memory](MEMORY_GUIDE.md) for gates and recovery.
 
 ## 8. Persistence, optional keys and recovery
 
@@ -386,9 +403,8 @@ on first run. Common operator settings follow:
 | `web.model_tokens` | 1024 | Maximum synthesis completion, clamped 256–2048 |
 | `web.total_tokens` | 28000 | Planning and synthesis budget, 2048–128000 (32000 without a larger measured window); sized for a **verified** 32768-token Ollama window ([model setup](MODELS.md)). Keep 16000 if `/api/ps` shows a smaller `context_length` |
 
-`assets/config.default.yaml` is seed-only. Existing homes keep their seeded
-`config.yaml` until you edit it. Missing settings use their documented runtime
-fallbacks; existing explicit settings remain authoritative. Restart after edits.
+Upgrades preserve `config.yaml`; missing settings use documented fallbacks.
+Explicit settings win. Restart after edits.
 
 Quoted YAML strings such as `"true"` never arm a gate. See [coding pipeline](CODING_PIPELINE.md) for the
 coding-pipeline gates and [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md)
@@ -539,17 +555,15 @@ test_home="$(mktemp -d)"
 CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 ```
 
-The disposable home avoids the app's home lock. The script runs formatting, warning-denied Clippy, tests with planner
-keys blanked, CI contract scripts, and a release build. It passes `--locked` to
-Cargo without setting `CARGO_NET_OFFLINE`, so a stale lockfile fails instead of
-changing. It runs cargo-deny only when installed; record a skip and run that gate
-separately. An outer sandbox can block nested Seatbelt. Run native acceptance
-from the operator terminal without weakening the profile.
+The disposable home avoids the app's lock. The script runs formatting,
+warning-denied Clippy, tests with planner keys blanked, CI contracts and a release
+build. Cargo uses `--locked`, not offline mode. Missing cargo-deny is a skip;
+run it separately. An outer sandbox can block nested Seatbelt; use the operator
+terminal without weakening the profile.
 
 For dependency acceptance, run `cargo build --locked` and `cargo deny check` in
-both the root and `desktop/` with their pinned toolchains. [Dependency
-maintenance](DEPENDENCIES.md) covers updates, pins, features, and drift. Newer
-releases do not make a lockfile invalid; blind updates can exceed the MSRV.
+the root and `desktop/` with their pinned toolchains. [Dependency
+maintenance](DEPENDENCIES.md) covers updates and MSRV constraints.
 
 For the existing live chat smoke, set the exact installed tag explicitly:
 
@@ -585,21 +599,14 @@ The script uses an isolated profile and mock APIs. Set `CHROME_BIN` for another
 installation. It checks the console and CSP, not model behavior or WKWebView.
 The fixture needs no new app build or model download.
 
-Run these after [packaging](INSTALL.md#52-macos-app). The shell embeds the signed
-sidecar hash, so do not replace or re-sign only the backend. The app bundle,
-unlike the CLI archive, includes the offline helper and desktop docs. Build and
-HTTP evidence do not prove native window, chooser, clipboard, or quit behavior.
-Record those in the PR body.
+Run desktop checks after [packaging](INSTALL.md#52-macos-app). Build and HTTP
+checks do not prove native window, chooser, clipboard or quit behavior; record
+those separately in the PR body.
 
 ## Tests and CI/CD
 
-The [verification commands above](#11-verify-your-setup) cover local gates,
-desktop packaging, Chrome, and Ollama. Additional focused commands are:
-
-```bash
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
-cargo test --test invariant_guard          # fast I6 source scan
-```
+Use [focused local checks](#11-verify-your-setup) for changed behavior; CI runs
+all targets with provider keys blanked.
 
 Fixtures neutralize `GIT_CONFIG_GLOBAL` and set repository identity. Set
 `CGAH_TEST_BINARY` for another backend, including a bundle copy. The standard-library
