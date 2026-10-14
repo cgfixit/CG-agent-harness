@@ -355,8 +355,8 @@ open_server() {
   done
   port_open "$port" || { warn "the backend did not listen on $port"; return 1; }
   # Plain HTTP answers 200 only on a legacy-HTTP home; a TLS listener gives no HTTP reply.
-  code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/status" || true) # DevSkim: ignore DS137138 because this only classifies a loopback listener.
-  if [ "$code" = 200 ]; then origin="http://127.0.0.1:$port"; else origin="https://127.0.0.1:$port"; fi # DevSkim: ignore DS137138 because a legacy-HTTP home serves plain HTTP on loopback.
+  code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/status" || true) # DevSkim: ignore DS137138,DS162092 because this only classifies a loopback listener.
+  if [ "$code" = 200 ]; then origin="http://127.0.0.1:$port"; else origin="https://127.0.0.1:$port"; fi # DevSkim: ignore DS137138,DS162092 because a legacy-HTTP home serves plain HTTP on loopback.
   say "started a private setup server at $origin"
 }
 close_server() {
