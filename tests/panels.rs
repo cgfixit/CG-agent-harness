@@ -700,12 +700,28 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
     let (status, body) = s.open_get("/api/auth/setup-status").await;
     assert_eq!(status, 200);
     assert_eq!(body["needs_password"], false);
-    assert_eq!(body["default_password"], true);
+    assert_eq!(body["setup_code"], true);
     assert_eq!(s.open_get("/api/auth/whoami").await.0, 401);
-    let resp = s
+    let shipped = s
         .client
         .post(s.url("/api/auth/login"))
         .json(&json!({"username":"admin","password":"admin"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        shipped.status().as_u16(),
+        401,
+        "the formerly shipped password is refused"
+    );
+    let setup_code = std::fs::read_to_string(s.home.join("setup-code"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let resp = s
+        .client
+        .post(s.url("/api/auth/login"))
+        .json(&json!({"username":"admin","password":setup_code}))
         .send()
         .await
         .unwrap();
@@ -722,12 +738,13 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         .post(s.url("/api/auth/password"))
         .header("cookie", &cookie)
         .header(CSRF_HEADER, &s.csrf)
-        .json(&json!({"current_password":"admin","password":"first-admin-password"}))
+        .json(&json!({"current_password":setup_code,"password":"first-admin-password"}))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
-    assert_eq!(s.open_get("/api/auth/setup-status").await.1["default_password"], false);
+    assert_eq!(s.open_get("/api/auth/setup-status").await.1["setup_code"], false);
+    assert!(!s.home.join("setup-code").exists());
     let cookie = resp.headers()["set-cookie"].to_str().unwrap().to_string();
     assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
     let session = cookie.split(';').next().unwrap().to_string();

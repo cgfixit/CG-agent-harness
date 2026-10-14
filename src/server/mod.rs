@@ -464,6 +464,13 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
             listener.local_addr()?,
             state.home.root.display()
         );
+        if state.auth.as_ref().is_some_and(|auth| auth.setup_code_active()) {
+            // The path only: the code itself stays in the private file.
+            tracing::info!(
+                "First sign-in: user admin with the one-time setup code in {}",
+                state.home.root.join(crate::common::authn::SETUP_CODE_FILE).display()
+            );
+        }
         let _mcp_listener = mcp_server::start(state.clone()).await?;
         // Ctrl-C and SIGTERM stop serving instead of killing the process, so
         // the audit lines still queued land before it exits.

@@ -18,6 +18,7 @@ use cgagentharness::common::identity::{Identity, DEFAULT_BRANCH_PREFIX, TEMPLATE
 use cgagentharness::common::injection::{normalize_for_scan, Scanner};
 #[cfg(unix)]
 use cgagentharness::common::process;
+use cgagentharness::common::random_urlsafe;
 use cgagentharness::common::ratelimit::RateLimiter;
 use cgagentharness::common::repo_paths::canonical_repo_relative_path;
 use cgagentharness::common::tool_broker::{argv_digest, assert_allowed, decide};
@@ -353,26 +354,49 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     assert!(!mgr.bootstrap_if_empty().unwrap());
     assert!(!mgr.needs_password_setup());
     assert!(mgr.get_user("admin").unwrap().must_change_password);
-    // The shipped password is reported until it changes, across a reopen,
-    // without hashing it again.
-    assert!(mgr.default_password_active());
+    // A fresh store has no shipped password: `admin` signs in only with the
+    // one-time code in the private `<home>/setup-code` file.
+    let code_file = dir.path().join("setup-code");
+    let code = std::fs::read_to_string(&code_file).unwrap().trim().to_string();
+    assert_eq!(code.len(), 19, "four groups of four: {code}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&code_file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    // Reported until it changes, across a reopen, without hashing again.
+    assert!(mgr.setup_code_active());
     assert!(AuthManager::open(&dir.path().join("auth.json"), &cfg)
         .unwrap()
-        .default_password_active());
+        .setup_code_active());
+    // Passwords come from runtime values so no literal reaches a password
+    // sink (CodeQL rust/hard-coded-cryptographic-value). The retired shipped
+    // password was the bootstrap username itself, read back from the store.
+    let shipped = mgr.get_user(BOOTSTRAP_USERNAME).unwrap().username;
+    let first_password = random_urlsafe(24);
     assert_eq!(
-        mgr.login(BOOTSTRAP_USERNAME, "anything at all!").unwrap_err().code,
+        mgr.login(BOOTSTRAP_USERNAME, &random_urlsafe(24)).unwrap_err().code,
         "AUTH_LOGIN_FAILED"
     );
-    let restricted = mgr.login("admin", "admin").unwrap();
-    assert!(
-        mgr.default_password_active(),
-        "a sign-in that skips the change keeps the note in this process"
+    assert_eq!(
+        mgr.login(BOOTSTRAP_USERNAME, &shipped).unwrap_err().code,
+        "AUTH_LOGIN_FAILED",
+        "the formerly shipped password must not work"
     );
-    let first = mgr.change_password("admin", "admin", "first-admin-password").unwrap();
-    assert!(!mgr.default_password_active());
+    let restricted = mgr.login("admin", &code).unwrap();
+    assert!(
+        mgr.setup_code_active(),
+        "a sign-in that skips the change keeps the code"
+    );
+    let first = mgr.change_password("admin", &code, &first_password).unwrap();
+    assert!(!mgr.setup_code_active());
+    assert!(!code_file.exists(), "the code file goes once admin has a real password");
     assert!(!AuthManager::open(&dir.path().join("auth.json"), &cfg)
         .unwrap()
-        .default_password_active());
+        .setup_code_active());
     assert!(mgr.validate_session(&restricted.session_id).is_none());
     assert!(!mgr.get_user("admin").unwrap().must_change_password);
     assert!(!mgr.needs_password_setup());
@@ -384,7 +408,7 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
 
     // Login + unknown user identical error; lockout after 5 failures.
     assert_eq!(
-        mgr.login("nobody", "first-admin-password").unwrap_err().code,
+        mgr.login("nobody", &first_password).unwrap_err().code,
         "AUTH_LOGIN_FAILED"
     );
     for _ in 0..5 {
@@ -393,11 +417,11 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
             "AUTH_LOGIN_FAILED"
         );
     }
-    let locked = mgr.login("admin", "first-admin-password").unwrap_err();
+    let locked = mgr.login("admin", &first_password).unwrap_err();
     assert_eq!(locked.code, "AUTH_ACCOUNT_LOCKED");
     assert!(locked.details["retry_after_sec"].as_f64().unwrap() > 0.0);
     *now.lock().unwrap() += 10.0;
-    let ok = mgr.login("admin", "first-admin-password").unwrap();
+    let ok = mgr.login("admin", &first_password).unwrap();
     assert!(mgr.validate_session(&ok.session_id).is_some());
     // The idle slide is committed, not only held in memory: from disk, the
     // session is live only if the slid `last_seen_ts` was written.

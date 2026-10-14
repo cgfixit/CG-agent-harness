@@ -10,6 +10,8 @@ import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
+// The mock's fresh-home admin signs in with a one-time setup code, as the real store does.
+const FIXTURE_SETUP_CODE='fx2a-b3cd-e4fg-h5jk';
 let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 let automationFixture=null; // null keeps the unknown-path {} reply for the header feature probes
@@ -66,16 +68,16 @@ const server=createServer(async(req,res)=>{
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
  if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
- if(path==='/api/auth/setup-status'){reply({needs_password:false,default_password:authFixture&&mustChange});return;}
+ if(path==='/api/auth/setup-status'){reply({needs_password:false,setup_code:authFixture&&mustChange});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
   const secondOwner=body.username==='memory-second'&&body.password==='browser-memory-password';
-  signedIn=auditor||secondOwner||(body.username==='admin'&&body.password==='admin');
+  signedIn=auditor||secondOwner||(body.username==='admin'&&body.password===FIXTURE_SETUP_CODE);
   authUsername=auditor?'audit-fixture':secondOwner?'memory-second':'admin';authRole=auditor?'audit':'admin';
   if(auditor)mustChange=false;
   reply({username:authUsername,role:authRole,must_change_password:mustChange},signedIn?200:401);return;
  }
- if(path==='/api/auth/password'){assert.equal(body.current_password,'admin');assert.ok(body.password.length>=12);mustChange=false;reply({changed:true});return;}
+ if(path==='/api/auth/password'){assert.equal(body.current_password,FIXTURE_SETUP_CODE);assert.ok(body.password.length>=12);mustChange=false;reply({changed:true});return;}
  if(path==='/api/auth/logout'){if(logoutStatus!==200){reply({detail:{code:'AUTH_REQUIRED',message:'session expired'}},logoutStatus);return;}signedIn=false;reply({logged_out:true});return;}
  if(path==='/api/keys'){
   if(!signedIn || mustChange || authRole!=='admin'){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
@@ -797,19 +799,19 @@ try {
  await until('!document.getElementById("hAuthLoginBox").hidden');
  assert.equal(await evaluate(headerState),'','signed-out consoles show no header automation buttons');
  assert.equal(requests.slice(signedOutMark).some(r=>['/api/notifications','/api/tools'].includes(r[1])),false,'signed-out consoles send no feature probes');
- assert.equal(await evaluate('document.getElementById("hAuthHint")?.hidden'),false,'show the fresh-install note while the shipped password is active');
- assert.match(await evaluate('document.getElementById("hAuthHint").innerText'),/username and password are both admin/);
+ assert.equal(await evaluate('document.getElementById("hAuthHint")?.hidden'),false,'show the fresh-install note while the setup code is active');
+ assert.match(await evaluate('document.getElementById("hAuthHint").innerText'),/sign in as admin with the setup code/);
  assert.ok(await evaluate('document.getElementById("signInScreen").contains(document.getElementById("hAuthHint"))'),'the note lives on the sign-in card');
  assert.equal(await evaluate('document.querySelector(".main").offsetParent'),null,'signed out, the console is not drawn');
  assert.equal(await evaluate('document.querySelector("label[for=hAuthUser]").textContent'),'Username');
  await until('document.getElementById("sProvider").textContent === "sign in"');
  assert.equal(await evaluate('document.querySelector("[data-pane=registry]")'),null);
- await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("passwordDialog").open');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'hide bootstrap guidance after login');
  assert.equal(await evaluate(headerState),'','a pending password replacement shows no header automation buttons');
  assert.match(await evaluate('document.getElementById("passwordHelp").innerText'),/Replace the initial admin password/);
- await evaluate('document.getElementById("passwordCurrent").value="admin";document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
+ await evaluate('document.getElementById("passwordCurrent").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');assert.equal(mustChange,false);
  await until(headerState+'==="openAnalytics,openDeliveries,openSchedules"');
  assert.match(await evaluate('document.getElementById("openDeliveries").title'),/metadata-only.*coding job finishes/);
@@ -859,7 +861,7 @@ try {
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory form").length'),1,'the current account keeps its own proposal after the rejected stale request');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');memoryOwnerFixture=null;
- await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("hAuthLoginBox").hidden');
  // An expired session rejects logout (401); the Memory pane must still be cleared before anyone signs in again.
  await send('/memory facts');
@@ -883,7 +885,7 @@ try {
  assert.equal(await evaluate('sessionGoal'),'');assert.equal(await evaluate('document.getElementById("input").value'),'');
  assert.equal(await evaluate('document.getElementById("sSession").textContent'),'none');
  logoutStatus=200;const factsBeforeRelogin=factReads();
- await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("hAuthLoginBox").hidden');
  // Logout cleared the old view above; successful login now reloads the retained
  // Memory tab through the current account instead of leaving it empty.
@@ -897,7 +899,7 @@ try {
  assert.equal(await evaluate('pendingAgentRun'),null);assert.equal(await evaluate('shownAgentDiffs.size'),0);
  assert.equal(await evaluate('reviewedSoulProposal'),null);assert.equal(await evaluate('reviewedPRBodies.size'),0);
  assert.equal(await evaluate('prBodyTarget'),'');
- assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'no admin/admin note after the password changed');
+ assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'no setup-code note after the password changed');
  assert.equal(await evaluate('document.getElementById("signInScreen").hidden'),false,'logout returns to the sign-in card');
  // Authentication succeeds for an auditor even though the server denies operational sessions.
  await evaluate('document.getElementById("hAuthUser").value="audit-fixture";document.getElementById("hAuthPass").value="browser-auditor-password";document.getElementById("hAuthLogin").click()');
