@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI path classifier for the `changes` job in ci.yml and bundle.yml.
+# CI path classifier for the `changes` job in ci.yml.
 #
 # Reads `git diff --no-renames --name-only` output on stdin. Exits 0 only when
 # every path is documentation that no build, test or package step reads, so a
