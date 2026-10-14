@@ -924,14 +924,14 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
     (".claude/skills/README.md", Agent, 240),
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
-    (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
+    (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 1500),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
     // why: operator-approved raise from 1400 to 1776 for the optimize skill rewrite. The file is 1277 words, so
     // 499 are unused headroom; the Agent group cap, not this row, is the binding limit.
     (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1776),
     // why: port of CyClaw's otel-hardening skill (telemetry-kill contract for a Rust tree); 1241 words, rounded up to the next 100.
     (".claude/skills/cgagentharness-otel-hardening/SKILL.md", Agent, 1300),
-    (".claude/skills/cgagentharness-project-guidance/SKILL.md", Agent, 800),
+    (".claude/skills/cgagentharness-project-guidance/SKILL.md", Agent, 710),
     (
         ".claude/skills/cgagentharness-runtime-invariant-check/SKILL.md",
         Agent,
@@ -943,11 +943,11 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
         Agent,
         800,
     ),
-    (".claude/skills/dep-sync/SKILL.md", Agent, 800),
+    (".claude/skills/dep-sync/SKILL.md", Agent, 770),
     (".claude/skills/doc-sync/SKILL.md", Agent, 800),
-    (".claude/skills/fable-protocol/SKILL.md", Agent, 2400),
+    (".claude/skills/fable-protocol/SKILL.md", Agent, 790),
     (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 400),
-    (".claude/skills/verification-specialist/SKILL.md", Agent, 600),
+    (".claude/skills/verification-specialist/SKILL.md", Agent, 540),
     (".codex/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
     (".codex/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".codex/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
@@ -1068,7 +1068,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // owning-code map put Guide at 47,658 and the .claude/skills and workflows indexes put Agent at 23,299; each rounded
 // up to the next 500 under the slack rule.
 // why: operator-approved (2026-10-14) macOS installer docs put Guide at 48,597 words; rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 49_000), (Evidence, 500), (Agent, 23_500)];
+// why: the skills review trimmed fable-protocol and gotchas; Agent is 21322 words, rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 49_000), (Evidence, 500), (Agent, 21_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

@@ -163,8 +163,8 @@ Read the relevant `SKILL.md` when its task applies:
 - `cgagentharness-write-policy-redteam`: attack write gates, confirm+reason,
   clone jail and shim argv.
 - `verification-specialist`: break a *supplied* change without modifying the tree.
-- `cgagentharness-gotchas`: session-tested traps (CI flakes, YAML `"true"`,
-  Seatbelt noise, toolchain fights).
+- `cgagentharness-gotchas`: session-tested traps (CI flakes, Seatbelt noise,
+  toolchain fights, review timing).
 - `cgagentharness-optimize`: evidence-backed Rust/runtime/CI improvements; never
   transplant CyClaw topology or defaults.
 - Codex only: `cgagentharness-release` (macOS packaging, release prep),
