@@ -48,7 +48,7 @@ code fallback.
 | `web.stale_seconds` | 60–31,536,000 |
 | `web.chat_tool_calls` | 1–10 |
 
-`web.concurrency` is **restart-only** because it sizes shared fetch permits.
+`web.concurrency` is **restart-only** because it sizes shared fetch permits, and so is `web.goal_web_default`.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved
 rule count refuses the policy until it is raised and extras are denied.
 TLS, authentication, credentials, `security.allow_plaintext_key_file` (default

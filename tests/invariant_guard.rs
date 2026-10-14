@@ -984,18 +984,20 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved headroom for research-job steps 8-12 (#415 review roadmap): ~310 words
     // (job runtime ~120, unit chain ~90, report unit ~50, /research slash rules ~35, unslop note ~15),
     // plus ~10%, rounded up to the next 50. Lower it to the reported size once those land.
-    ("INVARIANTS.md", Root, 6440),
+    // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
+    ("INVARIANTS.md", Root, 6540),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     ("README.md", Root, 1450),
     ("SECURITY.md", Root, 490),
     ("docs/ANALYTICS.md", Guide, 680),
-    ("docs/API_ROUTES.md", Guide, 1730),
+    // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
+    ("docs/API_ROUTES.md", Guide, 1830),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     ("docs/CODING_PIPELINE.md", Guide, 3510),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
-    ("docs/CONSOLE.md", Guide, 5820),
+    ("docs/CONSOLE.md", Guide, 5807),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2480),
