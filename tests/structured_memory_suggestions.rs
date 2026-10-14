@@ -221,6 +221,65 @@ async fn each_mode_filters_the_other_category_and_inputs_are_bounded_and_redacte
 }
 
 #[tokio::test]
+async fn invalid_summaries_do_not_consume_the_single_valid_summary_slot() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), options("summaries")).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    for (index, invalid_fields) in [
+        json!({"action":"update"}),
+        json!({"target_fact_id":"a".repeat(32)}),
+        json!({"content":"Email fixture@example.test"}),
+        json!({"content":""}),
+        json!({"confidence":0.2}),
+        json!({"sensitivity":"reject"}),
+        json!({"source_refs":["f".repeat(32)]}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = stage(store, "local");
+        let valid_content = format!("Completed preference discussion {index}.");
+        let candidate = json!({
+            "action":"add", "category":"session_summary", "content":valid_content,
+            "confidence":0.9, "sensitivity":"normal", "source_refs":[id]
+        });
+        let mut invalid = candidate.clone();
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .extend(invalid_fields.as_object().unwrap().clone());
+        model.set_reply(ok_reply(
+            &json!({"candidates":[invalid, candidate, candidate]}).to_string(),
+            10,
+            20,
+        ));
+        suggest::enqueue(
+            &s.state,
+            "local",
+            Source::Chat,
+            Some(&id),
+            "I prefer metric units.",
+            "Acknowledged.",
+        );
+        settled(&s, "local").await;
+        let proposals = store.list_pending_proposals("local").unwrap();
+        assert_eq!(proposals.len(), index + 1, "invalid fields: {invalid_fields}");
+        assert!(proposals.iter().any(|p| p.content.as_deref() == Some(&valid_content)));
+        let run = store
+            .list_consolidation_runs("local")
+            .unwrap()
+            .into_iter()
+            .find(|r| r.episode_ids == vec![id.clone()])
+            .unwrap();
+        assert_eq!(run.state, "done");
+        assert_eq!(run.candidate_count, 3);
+        assert_eq!(run.proposal_count, 1);
+        assert_eq!(run.rejected_count, 2);
+    }
+    assert!(store.list_facts("local").unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn default_quoted_invalid_and_capture_off_gates_do_not_enqueue_or_create_a_store() {
     let model = model().await;
     for opts in [
