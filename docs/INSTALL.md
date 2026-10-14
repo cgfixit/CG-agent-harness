@@ -3,9 +3,47 @@
 For model and account details, see [Models](MODELS.md) and
 [Accounts](SECURE_RESEARCH.md#accounts-and-roles).
 
+## 1. Quick start: automated macOS install
+
+On macOS 12 or newer, two scripts do sections 2–7 from a fresh Mac. Run them as
+your user, not with `sudo`:
+
+```bash
+xcode-select --install     # once; finish the dialog (git comes with it)
+git clone https://github.com/cgfixit/CG-agent-harness.git
+cd CG-agent-harness
+scripts/install-macos.sh   # add --model <tag> to pull a model, --with-gh for coding
+scripts/start-macos.sh     # opens the app, then its console in your browser
+```
+
+[`install-macos.sh`](../scripts/install-macos.sh) keeps every tool that already
+works and installs only what is missing, in order: Command Line Tools; Homebrew,
+only when Ollama or `gh` must be installed; rustup with the pinned Rust; Ollama;
+optional `gh`. It then builds the standalone backend and downloads the latest
+release app, checks it against that release's `SHA256SUMS` and `codesign`, and
+copies it to `/Applications` (`~/Applications` when that is not writable). It never
+touches the home directory and pulls a model only with `--model`.
+
+| Option | Effect |
+|---|---|
+| `--check` | Lists what is present; exits 1 when something required is missing |
+| `--dry-run` | Prints every command a real run would make, changing nothing |
+| `--replace-app` | Replaces an installed app; keeps the previous one in `~/Library/Caches/CG-agent-harness-installer/previous` |
+| `--no-ollama`, `--no-build`, `--no-app`, `--app-dir DIR` | Skip a step or choose the app location |
+
+The checksum proves the download is intact, not who built it: both files come
+from the same release page. A `curl` download carries no quarantine flag, so
+Gatekeeper does not prompt; compare `Resources/COMMIT` with the release notes as
+in [5.2](#52-macos-app). Quit the app with Cmd-Q before `--replace-app`.
+
+[`start-macos.sh`](../scripts/start-macos.sh) is the everyday launcher, described
+in [section 7](#7-open-the-console-in-a-browser).
+
 ## 2. Prerequisites
 
-Install only what your path needs. Preserve working tools and models.
+Install only what your path needs. Preserve working tools and models. These are
+the manual steps that [`install-macos.sh`](#1-quick-start-automated-macos-install)
+automates.
 
 ### 2.1 Hardware and macOS
 
@@ -303,6 +341,37 @@ Restart preserves proposals, but queued inputs are lost.
 `/memory search <query>` only finds facts; `/memory retrieve <query>` includes
 matches in that chat. Automatic retrieval separately requires `retrieval` and
 `auto_retrieval`; inspect `/prompt`. See [Memory](MEMORY_GUIDE.md) for gates and recovery.
+
+## 7. Open the console in a browser
+
+A browser can use the same server the app owns. This is a supported path, not
+a workaround: the app's backend serves the same guarded console on its loopback
+port, and a browser gets its own login. Three ways:
+
+| Way | What runs |
+|---|---|
+| Globe beside **CG Agent / harness** (apps built after `v0.1.48`) | After native confirmation, the bundled `start-web.sh --desktop-url` opens the app's exact origin |
+| `scripts/start-macos.sh` | Same `--desktop-url` hand-off from a clone; works with any app version |
+| `scripts/start-macos.sh --standalone [port]` | No app: `start-web.sh` builds if needed and runs `serve` on 8790 |
+
+`start-macos.sh` first opens Ollama if it is not answering, setting
+`OLLAMA_CONTEXT_LENGTH=32768` for GUI apps when it is unset (`launchctl` forgets
+it at logout, so rerun the script after login; quit and relaunch an Ollama that
+was already running without it). It opens the app if no app backend is running,
+reads the loopback port that backend listens on, and passes that origin to
+`start-web.sh --desktop-url`. It starts no second server; keep the app running.
+
+Running plain `scripts/start-web.sh` while the app is open fails by design: one
+server owns a home, and the second `serve` stops at the home lock.
+`--standalone` refuses early unless `CGAGENTHARNESS_HOME` names a different home.
+
+Browsers do not trust the home's generated certificate. `start-macos.sh` reports
+whether macOS trusts it; `--trust-cert` exports the public certificate with the
+app's backend and adds it to your login keychain for TLS after a password
+prompt. That certificate is a leaf for `localhost`, `127.0.0.1` and `::1`, not
+a CA. A renewed certificate needs `--trust-cert` again; remove the old one in
+Keychain Access. Firefox keeps its own store. Never click through a certificate warning;
+see [HTTPS and native trust](SECURE_RESEARCH.md#https-and-native-trust).
 
 ## 8. Persistence, optional keys and recovery
 

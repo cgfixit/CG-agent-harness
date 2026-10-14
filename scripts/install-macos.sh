@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# Install everything CGagentHarness needs on macOS 12+, from a fresh clone.
+# Idempotent: tools that already work are kept, never upgraded or replaced.
+#   scripts/install-macos.sh               # install missing tools, build, fetch the app
+#   scripts/install-macos.sh --check       # inventory only; exit 1 if something required is missing
+#   scripts/install-macos.sh --dry-run     # print every change instead of making it
+# Options:
+#   --model TAG      also `ollama pull TAG` (a multi-GB download; nothing is pulled by default)
+#   --with-gh        install GitHub CLI (the coding pipeline needs it; chat does not)
+#   --no-ollama      skip Ollama            --no-build     skip the standalone backend build
+#   --no-app         skip the release app   --replace-app  replace an installed app with the latest release
+#   --app-dir DIR    app destination (default /Applications, or ~/Applications when not writable)
+# Then run scripts/start-macos.sh. Full guide: docs/INSTALL.md.
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+app_name='CG Agent Harness.app'
+release=https://github.com/cgfixit/CG-agent-harness/releases/latest/download
+ollama_api=http://127.0.0.1:11434 # DevSkim: ignore DS137138,DS162092 because Ollama's default endpoint is plain HTTP on loopback.
+
+check=0 dry=0 model='' gh=0 ollama=1 build=1 app=1 replace=0 app_dir=''
+usage() { sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    --check) check=1 ;;
+    --dry-run) dry=1 ;;
+    --model) [ "$#" -ge 2 ] && [ -n "$2" ] || { echo 'install-macos: --model needs a tag' >&2; exit 3; }; model=$2; shift ;;
+    --with-gh) gh=1 ;;
+    --no-ollama) ollama=0 ;;
+    --no-build) build=0 ;;
+    --no-app) app=0 ;;
+    --replace-app) replace=1 ;;
+    --app-dir) [ "$#" -ge 2 ] && [ -n "$2" ] || { echo 'install-macos: --app-dir needs a directory' >&2; exit 3; }; app_dir=$2; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) echo "install-macos: unknown option: $1 (see --help)" >&2; exit 3 ;;
+  esac
+  shift
+done
+[ "$ollama" = 1 ] || [ -z "$model" ] || { echo 'install-macos: --model needs Ollama; drop --no-ollama' >&2; exit 3; }
+[ "$app" = 1 ] || [ "$replace" = 0 ] || { echo 'install-macos: --replace-app conflicts with --no-app' >&2; exit 3; }
+case $model in *[!A-Za-z0-9._:/-]*) echo "install-macos: invalid model tag: $model" >&2; exit 3 ;; esac
+
+say() { printf '==> %s\n' "$*"; }
+warn() { printf 'install-macos: warning: %s\n' "$*" >&2; }
+die() { printf 'install-macos: %s\n' "$1" >&2; exit "${2:-2}"; }
+# Every change goes through run, so --dry-run prints exactly what a real run does.
+run() {
+  printf '+ %s\n' "$*"
+  [ "$dry" = 1 ] || "$@"
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+ollama_up() { curl --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
+
+[ "$(uname -s)" = Darwin ] || die 'macOS only; Linux builds follow docs/INSTALL.md by hand' 3
+[ "$(id -u)" != 0 ] || die 'run as your user, not root; the installers ask for a password when they need one' 3
+major=$(sw_vers -productVersion | cut -d. -f1)
+[ "$major" -ge 12 ] || die "macOS 12 or newer is required (found $(sw_vers -productVersion))" 3
+toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$root/rust-toolchain.toml")
+[ -n "$toolchain" ] || die 'cannot read the pinned toolchain from rust-toolchain.toml'
+
+# Prefer rustup's proxies and an existing Homebrew even when this shell has not
+# loaded their PATH lines yet. Homebrew's own cargo would ignore rust-toolchain.toml.
+PATH=$HOME/.cargo/bin:$PATH
+for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+  if ! have brew && [ -x "$brew" ]; then eval "$("$brew" shellenv)"; fi
+done
+export PATH
+
+if [ -z "$app_dir" ]; then
+  app_dir=/Applications
+  [ -w "$app_dir" ] || app_dir=$HOME/Applications
+fi
+case $app_dir in /*) ;; *) die "--app-dir must be absolute: $app_dir" 3 ;; esac
+app_path=$app_dir/$app_name
+
+# ---------------------------------------------------------------- inventory
+inventory() {
+  local missing=0 v
+  say "macOS $(sw_vers -productVersion) on $(uname -m)"
+  if xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p)"; else say 'Command Line Tools: MISSING'; missing=1; fi
+  if have brew; then say "Homebrew: $(brew --version | head -n1)"; else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
+  if have rustup; then
+    say "rustup: $(command -v rustup)"
+    if rustup run "$toolchain" rustc --version >/dev/null 2>&1; then say "Rust $toolchain: $(rustup run "$toolchain" rustc --version)"; else say "Rust $toolchain: MISSING"; missing=1; fi
+  else
+    say 'rustup: MISSING'; missing=1
+  fi
+  v=$(command -v cargo || true)
+  case $v in "$HOME/.cargo/bin/cargo" | '') ;; *) warn "cargo on PATH is $v, not rustup's; it ignores rust-toolchain.toml" ;; esac
+  if [ "$build" = 1 ]; then
+    if [ -x "$root/target/release/cgagentharness" ]; then say "backend: $root/target/release/cgagentharness"; else say 'backend: not built'; missing=1; fi
+  fi
+  if [ "$ollama" = 1 ]; then
+    if have ollama; then say "Ollama: $(ollama --version 2>/dev/null | tail -n1)"; elif [ -d /Applications/Ollama.app ]; then say 'Ollama: app installed, CLI not on PATH'; else say 'Ollama: MISSING'; missing=1; fi
+    if ollama_up; then say "Ollama API: reachable at $ollama_api"; else say 'Ollama API: not running'; fi
+    v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
+    say "OLLAMA_CONTEXT_LENGTH for GUI apps: ${v:-unset (scripts/start-macos.sh sets 32768)}"
+  fi
+  if have gh; then say "GitHub CLI: $(gh --version | head -n1)"; elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
+  if [ "$app" = 1 ]; then
+    if [ -d "$app_path" ]; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; else say "app: not installed at $app_path"; missing=1; fi
+  fi
+  return "$missing"
+}
+
+if [ "$check" = 1 ]; then
+  if inventory; then say 'everything required is present'; exit 0; fi
+  say 'something required is missing; run scripts/install-macos.sh'
+  exit 1
+fi
+
+# ------------------------------------------------------------- 1. Xcode CLT
+if ! xcode-select -p >/dev/null 2>&1; then
+  run xcode-select --install
+  [ "$dry" = 1 ] || die 'finish the Command Line Tools dialog, then rerun this script' 3
+fi
+
+# ----------------------------------------------------------------- 2. Homebrew
+need_brew=0
+if [ "$ollama" = 1 ] && ! have ollama && [ ! -d /Applications/Ollama.app ]; then need_brew=1; fi
+if [ "$gh" = 1 ] && ! have gh; then need_brew=1; fi
+if [ "$need_brew" = 1 ] && ! have brew; then
+  say 'installing Homebrew (official installer; it asks for your password)'
+  installer=$(mktemp)
+  run curl --fail --location --silent --show-error -o "$installer" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh
+  run /bin/bash "$installer"
+  rm -f "$installer"
+  for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [ -x "$brew" ]; then eval "$("$brew" shellenv)"; break; fi
+  done
+  [ "$dry" = 1 ] || have brew || die 'Homebrew did not install; see https://brew.sh'
+  say 'add Homebrew to new shells: follow the "Next steps" the installer printed'
+fi
+
+# --------------------------------------------------------------------- 3. Rust
+if ! have rustup; then
+  say 'installing rustup (official installer; it adds ~/.cargo/bin to your shell profile)'
+  installer=$(mktemp)
+  run curl --proto '=https' --tlsv1.2 --fail --silent --show-error -o "$installer" https://sh.rustup.rs
+  run sh "$installer" -y --profile minimal --default-toolchain none
+  rm -f "$installer"
+fi
+if ! have rustup || ! rustup run "$toolchain" rustc --version >/dev/null 2>&1; then
+  run rustup toolchain install "$toolchain" --profile minimal --component clippy --component rustfmt
+fi
+case $(command -v cargo || true) in
+  "$HOME/.cargo/bin/cargo" | '') ;;
+  *) warn "cargo on PATH is $(command -v cargo), not rustup's; this script builds with ~/.cargo/bin/cargo" ;;
+esac
+
+# ------------------------------------------------------------------- 4. Ollama
+if [ "$ollama" = 1 ]; then
+  if ! have ollama && [ ! -d /Applications/Ollama.app ]; then
+    run brew install --cask ollama
+  fi
+  if [ -n "$model" ]; then
+    if ! ollama_up; then
+      if [ -z "$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)" ]; then
+        run launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
+      fi
+      run open -a Ollama
+      if [ "$dry" = 0 ]; then
+        for _ in $(seq 1 60); do ollama_up && break; sleep 1; done
+        ollama_up || die "Ollama did not answer at $ollama_api; open it once from Applications and rerun"
+      fi
+    fi
+    run ollama pull "$model"
+  fi
+fi
+
+# ----------------------------------------------------------------------- 5. gh
+if [ "$gh" = 1 ] && ! have gh; then
+  run brew install gh
+fi
+
+# ---------------------------------------------------- 6. standalone backend
+if [ "$build" = 1 ]; then
+  say "building the backend with Rust $toolchain (first build compiles every dependency)"
+  (cd "$root" && run "$HOME/.cargo/bin/cargo" build --release --locked)
+fi
+
+# ---------------------------------------------------------------- 7. the app
+if [ "$app" = 1 ]; then
+  if [ -d "$app_path" ] && [ "$replace" = 0 ]; then
+    say "keeping $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown)); --replace-app updates it"
+  else
+    if pgrep -u "$(id -u)" -f '/Contents/MacOS/cgagentharness desktop$' >/dev/null 2>&1; then
+      die 'the app is running; quit it with Cmd-Q (wait for work to stop), then rerun'
+    fi
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    say "downloading the latest release app into $work"
+    run curl --fail --location --silent --show-error -o "$work/app.zip" "$release/CG-Agent-Harness-macos-universal.zip"
+    run curl --fail --location --silent --show-error -o "$work/SHA256SUMS" "$release/SHA256SUMS"
+    if [ "$dry" = 0 ]; then
+      # Integrity, not authorship: the checksum comes from the same release page.
+      want=$(awk '$2 == "CG-Agent-Harness-macos-universal.zip" || $2 == "*CG-Agent-Harness-macos-universal.zip" {print $1; exit}' "$work/SHA256SUMS")
+      got=$(shasum -a 256 "$work/app.zip" | awk '{print $1}')
+      [ -n "$want" ] && [ "$want" = "$got" ] || die 'checksum mismatch: the download is incomplete or modified; nothing was installed'
+      say "checksum ok ($got)"
+    fi
+    run ditto -x -k "$work/app.zip" "$work/unpacked"
+    if [ "$dry" = 0 ]; then
+      [ -d "$work/unpacked/$app_name" ] || die "the archive has no $app_name"
+      codesign --verify --deep --strict "$work/unpacked/$app_name" || die 'the app signature does not verify; nothing was installed'
+    fi
+    run mkdir -p "$app_dir"
+    if [ -d "$app_path" ]; then
+      # Keep one previous copy for rollback; the home directory is never touched.
+      backup=$HOME/Library/Caches/CG-agent-harness-installer/previous
+      run rm -rf "$backup"
+      run mkdir -p "$backup"
+      run mv "$app_path" "$backup/"
+      say "previous app kept at $backup/$app_name"
+    fi
+    run ditto "$work/unpacked/$app_name" "$app_path"
+    [ "$dry" = 1 ] || say "installed $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"
+  fi
+fi
+
+say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).'
+say 'First sign-in on a fresh home is admin / admin, then a new password. Guide: docs/INSTALL.md'
