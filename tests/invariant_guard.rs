@@ -1069,11 +1069,26 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // up to the next 500 under the slack rule.
 // why: operator-approved (2026-10-14) macOS installer docs put Guide at 48,597 words; rounded up to the next 500.
 // why: the skills review trimmed fable-protocol and gotchas; Agent is 21322 words, rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 49_000), (Evidence, 500), (Agent, 21_500)];
+// why: operator-approved (2026-10-14) Guide cap of 60,000 (Guide at 48,665) so docs/INSTALL.md can reach its
+// 7,500-word row; DOCS_GROUP_SLACK_OVERRIDES lets this one group sit that far above its words.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 60_000), (Evidence, 500), (Agent, 21_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
 const DOCS_GROUP_SLACK: usize = 1_000;
+
+/// Groups the operator allowed to sit further above their words than
+/// `DOCS_GROUP_SLACK`; every other group keeps the default.
+// why: operator-approved (2026-10-14) Guide headroom for the 60,000 cap; 12,000 covers 60,000 - 48,665.
+const DOCS_GROUP_SLACK_OVERRIDES: &[(Kind, usize)] = &[(Guide, 12_000)];
+
+/// The slack a group cap may keep above its words before it must be lowered.
+fn group_slack(kind: Kind) -> usize {
+    DOCS_GROUP_SLACK_OVERRIDES
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map_or(DOCS_GROUP_SLACK, |&(_, slack)| slack)
+}
 
 /// Word cap for a folder `README.md` with no `DOCS_BUDGET` row: an index of
 /// what the folder holds and where the full doc lives, never a second copy.
@@ -1175,7 +1190,7 @@ fn docs_budget_violations(
                 "{kind:?} docs total {total} words, over the group cap of {cap}. Cut or link rather than \
                  restate; raising the cap needs a `// why:`."
             ));
-        } else if cap - total >= DOCS_GROUP_SLACK {
+        } else if cap - total >= group_slack(kind) {
             out.push(format!(
                 "{kind:?} docs total {total} words, {} under the group cap of {cap}; lower it to {} so the \
                  cut stays cut.",
@@ -1410,10 +1425,17 @@ fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
         "DOCS_BUDGET lists docs/B.md, which does not exist",
     );
     // A cut locks in: a group cap left far above its words fails until lowered.
+    let root_budget: &[(&str, Kind, usize)] = &[("docs/A.md", Root, 100), ("docs/B.md", Root, 100)];
     expect(
-        docs_budget_violations(&md(&[("docs/A.md", 10), ("docs/B.md", 10)]), budget, &[(Guide, 1_500)]),
+        docs_budget_violations(
+            &md(&[("docs/A.md", 10), ("docs/B.md", 10)]),
+            root_budget,
+            &[(Root, 1_500)],
+        ),
         "lower it to 500",
     );
+    // An operator-approved override keeps that group's headroom.
+    assert!(docs_budget_violations(&md(&[("docs/A.md", 10), ("docs/B.md", 10)]), budget, &[(Guide, 1_500)]).is_empty());
     expect(
         docs_budget_violations(
             &md(&[("docs/A.md", 1), ("docs/B.md", 1)]),
