@@ -42,6 +42,13 @@ app_backends() { pgrep -u "$(id -u)" -f "$sidecar" || true; }
 # foreground command (start-web.sh) does not reach it. macOS has no setsid(1).
 # shellcheck disable=SC2016 # perl expands its own variables.
 detached() { nohup /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec $ARGV[0]: $!\n"' -- "$@"; }
+# A launchable Ollama.app: Info.plist names an executable that is present,
+# and the bundle signature verifies. An interrupted copy fails this.
+ollama_bundle_ok() {
+  local exe
+  exe=$(defaults read "$1/Contents/Info" CFBundleExecutable 2>/dev/null) && [ -n "$exe" ] \
+    && [ -x "$1/Contents/MacOS/$exe" ] && codesign --verify "$1" >/dev/null 2>&1
+}
 # The Ollama CLI on PATH, else the one inside Ollama.app.
 ollama_cli() {
   command -v ollama 2>/dev/null && return
@@ -53,7 +60,7 @@ ollama_cli() {
 if [ "$ollama" = 1 ]; then
   if ollama_up; then
     say "Ollama is running at $ollama_api (its context window was fixed when it started)"
-  elif [ -d /Applications/Ollama.app ] || [ -d "$HOME/Applications/Ollama.app" ]; then
+  elif ollama_bundle_ok /Applications/Ollama.app || ollama_bundle_ok "$HOME/Applications/Ollama.app"; then
     # GUI apps read launchctl's environment. Keep a value the operator chose.
     if [ -z "$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)" ]; then
       launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
@@ -72,7 +79,7 @@ if [ "$ollama" = 1 ]; then
     for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
     ollama_up || echo "start-macos: Ollama did not answer yet; see $log (docs/MODELS.md)" >&2
   else
-    echo 'start-macos: Ollama is not installed; run scripts/install-macos.sh or point chat at another model (docs/MODELS.md)' >&2
+    echo 'start-macos: Ollama is not installed (or its app is incomplete); run scripts/install-macos.sh or point chat at another model (docs/MODELS.md)' >&2
   fi
 fi
 

@@ -61,10 +61,23 @@ app_ok() {
   [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
     && codesign --verify --deep --strict "$1" >/dev/null 2>&1
 }
-# The Ollama app bundle, if one is installed.
+# A launchable Ollama.app: Info.plist names an executable that is present,
+# and the bundle signature verifies. An interrupted copy fails this.
+ollama_bundle_ok() {
+  local exe
+  exe=$(defaults read "$1/Contents/Info" CFBundleExecutable 2>/dev/null) && [ -n "$exe" ] \
+    && [ -x "$1/Contents/MacOS/$exe" ] && codesign --verify "$1" >/dev/null 2>&1
+}
+# The usable Ollama app bundle, if any.
 ollama_app() {
   for a in /Applications/Ollama.app "$HOME/Applications/Ollama.app"; do
-    if [ -d "$a" ]; then printf '%s\n' "$a"; return; fi
+    if [ -d "$a" ] && ollama_bundle_ok "$a"; then printf '%s\n' "$a"; return; fi
+  done
+}
+# An Ollama.app directory that is not usable (a partial copy).
+ollama_app_broken() {
+  for a in /Applications/Ollama.app "$HOME/Applications/Ollama.app"; do
+    if [ -d "$a" ] && ! ollama_bundle_ok "$a"; then printf '%s\n' "$a"; return; fi
   done
 }
 # Run a server in its own session, so the Ctrl-C that stops a later
@@ -125,6 +138,7 @@ inventory() {
     if have ollama; then
       say "Ollama: $(ollama --version 2>&1 | sed -n 's/.*version is //p' | tail -n1)$([ -n "$(ollama_app)" ] || echo ' (CLI only; started with ollama serve)')"
     elif [ -n "$(ollama_app)" ]; then say 'Ollama: app installed, CLI not on PATH'
+    elif [ -n "$(ollama_app_broken)" ]; then say "Ollama: $(ollama_app_broken) is incomplete or fails codesign (a rerun reinstalls it)"; missing=1
     else say 'Ollama: MISSING'; missing=1; fi
     if ollama_up; then say "Ollama API: reachable at $ollama_api"; else say 'Ollama API: not running'; fi
     v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
@@ -190,7 +204,8 @@ esac
 if [ "$ollama" = 1 ]; then
   # A CLI-only Ollama (no app) is kept; it is started with `ollama serve` below.
   if ! have ollama && [ -z "$(ollama_app)" ]; then
-    run brew install --cask ollama
+    # --force replaces a partial Ollama.app that would block the cask.
+    if [ -n "$(ollama_app_broken)" ]; then run brew install --cask --force ollama; else run brew install --cask ollama; fi
   fi
   if [ -n "$model" ]; then
     if ! ollama_up; then
