@@ -136,7 +136,8 @@ fi
 if ! have rustup; then
   say 'installing rustup (official installer; it adds ~/.cargo/bin to your shell profile)'
   installer=$(mktemp)
-  run curl --proto '=https' --tlsv1.2 --fail --silent --show-error -o "$installer" https://sh.rustup.rs
+  # rustup's documented flags: HTTPS only, TLS 1.2 or newer. A floor, not a pin.
+  run curl --proto '=https' --tlsv1.2 --fail --silent --show-error -o "$installer" https://sh.rustup.rs # DevSkim: ignore DS440000,DS440020 because --tlsv1.2 sets a minimum TLS version.
   run sh "$installer" -y --profile minimal --default-toolchain none
   rm -f "$installer"
 fi

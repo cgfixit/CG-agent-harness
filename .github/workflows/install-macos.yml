@@ -58,7 +58,7 @@ jobs:
           export CGAH_APP="$RUNNER_TEMP/Applications/CG Agent Harness.app"
           scripts/start-macos.sh | tee start.log
           url=$(sed -n 's/^CGagentHarness console: //p' start.log)
-          case $url in https://127.0.0.1:*/) ;; *) echo "unexpected console URL: $url"; exit 1 ;; esac
+          case $url in https://127.0.0.1:*/) ;; *) echo "unexpected console URL: $url"; exit 1 ;; esac # DevSkim: ignore DS162092 because the app console must be a loopback origin.
           "$CGAH_APP/Contents/MacOS/cgagentharness" tls certificate > app.pem
           code=$(curl --silent --show-error --cacert app.pem -o /dev/null -w '%{http_code}' "${url}api/status")
           echo "verified TLS to the app backend; /api/status answered $code"
@@ -80,7 +80,7 @@ jobs:
           for _ in $(seq 1 120); do grep -q '^CGagentHarness console:' standalone.log && break; sleep 0.5; done
           cat standalone.log
           CGAGENTHARNESS_HOME=$home target/release/cgagentharness tls certificate > standalone.pem
-          code=$(curl --silent --show-error --cacert standalone.pem -o /dev/null -w '%{http_code}' https://127.0.0.1:8791/api/status)
+          code=$(curl --silent --show-error --cacert standalone.pem -o /dev/null -w '%{http_code}' https://127.0.0.1:8791/api/status) # DevSkim: ignore DS162092 because the standalone console binds loopback only.
           echo "standalone /api/status answered $code"
           kill "$server"
           test "$code" != 000
