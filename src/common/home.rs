@@ -10,7 +10,7 @@
 //!   .env               legacy managed keys; migration input, or the store only
 //!                      when security.allow_plaintext_key_file is literal true
 //!   auth.sqlite3       users + hashed sessions; legacy auth.json is migration input
-//!   soul.md            seeded default, editable operator persona
+//!   soul.md            optional operator persona (unset on fresh homes)
 //!   styles/<name>.md   optional operator overlay for output-style presets
 //!   sessions/          one JSON per chat session
 //!   skills/<name>/SKILL.md
@@ -183,7 +183,6 @@ impl Home {
             if std::fs::symlink_metadata(&policy).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
                 write_json_atomic(&policy, &serde_json::json!({"version": 1, "rules": []}))?;
             }
-            self.seed_default_soul()?;
             // Atomic: a truncated seed that still parses would read as a legacy
             // home with no `auth`/`tls` section, and exists() never re-seeds it.
             AppConfig::write_private(&self.config_path(), AppConfig::embedded_default())?;
@@ -196,24 +195,6 @@ impl Home {
             )?;
         }
         self.seed_skills();
-        Ok(())
-    }
-
-    /// Seed only during fresh-home initialization; never replace an existing path.
-    fn seed_default_soul(&self) -> Result<()> {
-        use std::io::Write;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        match options.open(self.soul_path()) {
-            Ok(mut file) => file.write_all(DEFAULT_SOUL.as_bytes())?,
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(err) => return Err(err.into()),
-        }
         Ok(())
     }
 
