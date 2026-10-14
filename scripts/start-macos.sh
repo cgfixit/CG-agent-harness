@@ -58,6 +58,20 @@ ollama_cli() {
   done
 }
 
+if [ "$mode" = standalone ]; then
+  # One server owns a home: its owner keeps <home>/.server.lock open. Ask who
+  # holds the target home's lock instead of guessing from the environment, so
+  # an app on a custom home neither blocks nor slips past this check. Checked
+  # before Ollama is touched, so a refusal has no side effects.
+  home=${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}
+  holder=$(lsof -t -- "$home/.server.lock" 2>/dev/null | head -n1 || true)
+  if [ -n "$holder" ]; then
+    echo "start-macos: $home is already owned by pid $holder ($(ps -o command= -p "$holder" 2>/dev/null || echo unknown))." >&2
+    echo 'Use app mode (no --standalone) for the app, quit that owner, or set CGAGENTHARNESS_HOME to another absolute home.' >&2
+    exit 3
+  fi
+fi
+
 if [ "$ollama" = 1 ]; then
   if ollama_up; then
     say "Ollama is running at $ollama_api (its context window was fixed when it started)"
@@ -88,31 +102,22 @@ if [ "$ollama" = 1 ]; then
 fi
 
 if [ "$mode" = standalone ]; then
-  # One server owns a home: its owner keeps <home>/.server.lock open. Ask who
-  # holds the target home's lock instead of guessing from the environment, so
-  # an app on a custom home neither blocks nor slips past this check.
-  home=${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}
-  holder=$(lsof -t -- "$home/.server.lock" 2>/dev/null | head -n1 || true)
-  if [ -n "$holder" ]; then
-    echo "start-macos: $home is already owned by pid $holder ($(ps -o command= -p "$holder" 2>/dev/null || echo unknown))." >&2
-    echo 'Use app mode (no --standalone) for the app, quit that owner, or set CGAGENTHARNESS_HOME to another absolute home.' >&2
-    exit 3
-  fi
   exec bash "$root/scripts/start-web.sh" ${port_arg:+"$port_arg"}
 fi
 
 if [ -z "$(app_backends)" ]; then
   app=${CGAH_APP:-}
   if [ -z "$app" ]; then
-    # Skip a partial copy: both executables must be present.
+    # Skip a partial or damaged copy: the same test as install-macos.sh's app_ok.
     for candidate in "/Applications/CG Agent Harness.app" "$HOME/Applications/CG Agent Harness.app"; do
-      if [ -x "$candidate/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$candidate/Contents/MacOS/cgagentharness" ]; then
+      if [ -x "$candidate/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$candidate/Contents/MacOS/cgagentharness" ] \
+        && codesign --verify --deep --strict "$candidate" >/dev/null 2>&1; then
         app=$candidate
         break
       fi
     done
   fi
-  [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: no complete app found (a partial copy is skipped); run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
+  [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: no complete app found (a partial or unsigned copy is skipped); run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
   say "opening $app"
   open "$app" </dev/null >/dev/null 2>&1 &
 fi

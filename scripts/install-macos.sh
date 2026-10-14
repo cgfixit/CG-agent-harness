@@ -49,6 +49,8 @@ run() {
   [ "$dry" = 1 ] || "$@"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+# A GitHub CLI that runs (not a stale link or a wrong-arch binary).
+gh_ok() { have gh && gh --version >/dev/null 2>&1; }
 # rustup fails `run` for a component the toolchain lacks.
 lints_ok() {
   rustup run "$toolchain" cargo-clippy --version >/dev/null 2>&1 && rustup run "$toolchain" rustfmt --version >/dev/null 2>&1
@@ -122,7 +124,7 @@ app_path=$app_dir/$app_name
 
 # ---------------------------------------------------------------- inventory
 inventory() {
-  local missing=0 v
+  local missing=0 v want
   say "macOS $(sw_vers -productVersion) on $(uname -m)"
   if xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p)"; else say 'Command Line Tools: MISSING'; missing=1; fi
   if have brew; then say "Homebrew: $(brew --version 2>/dev/null | head -n1)"; else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
@@ -148,10 +150,19 @@ inventory() {
     elif path_ollama_broken; then say "Ollama: $(command -v ollama) does not run (a rerun reinstalls Ollama)"; missing=1
     else say 'Ollama: MISSING'; missing=1; fi
     if ollama_up; then say "Ollama API: reachable at $ollama_api"; else say 'Ollama API: not running'; fi
+    if [ -n "$model" ]; then
+      # Ollama stores an untagged name as :latest.
+      case $model in *:*) want=$model ;; *) want=$model:latest ;; esac
+      if ! ollama_up; then say "model $want: unknown (Ollama is not running)"; missing=1
+      elif curl --noproxy '*' --silent --fail --max-time 5 "$ollama_api/api/tags" | grep -Fq "\"name\":\"$want\""; then say "model $want: pulled"
+      else say "model $want: not pulled"; missing=1; fi
+    fi
     v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
     say "OLLAMA_CONTEXT_LENGTH for GUI apps: ${v:-unset (scripts/start-macos.sh sets 32768)}"
   fi
-  if have gh; then say "GitHub CLI: $(gh --version 2>/dev/null | head -n1)"; elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
+  if gh_ok; then say "GitHub CLI: $(gh --version 2>/dev/null | head -n1)"
+  elif have gh && [ "$gh" = 1 ]; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
+  elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
     if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -d "$app_path" ]; then say "app: $app_path is incomplete or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
   fi
@@ -173,7 +184,7 @@ fi
 # ----------------------------------------------------------------- 2. Homebrew
 need_brew=0
 if [ "$ollama" = 1 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then need_brew=1; fi
-if [ "$gh" = 1 ] && ! have gh; then need_brew=1; fi
+if [ "$gh" = 1 ] && ! gh_ok; then need_brew=1; fi
 if [ "$need_brew" = 1 ] && ! have brew; then
   say 'installing Homebrew (official installer; it asks for your password)'
   installer=$(mktemp)
@@ -246,8 +257,9 @@ if [ "$ollama" = 1 ]; then
 fi
 
 # ----------------------------------------------------------------------- 5. gh
-if [ "$gh" = 1 ] && ! have gh; then
-  run brew install gh
+if [ "$gh" = 1 ] && ! gh_ok; then
+  # reinstall repairs a broken Homebrew gh; install covers a missing one.
+  if have gh; then run brew reinstall gh; else run brew install gh; fi
 fi
 
 # ---------------------------------------------------- 6. standalone backend
