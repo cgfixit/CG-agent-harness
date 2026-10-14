@@ -1030,7 +1030,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/screenshots/README.md", Evidence, 200),
     // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
     // each is its size plus about 10%, rounded up to the next 10.
-    ("scripts/README.md", Guide, 500),
+    ("scripts/README.md", Guide, 480),
     ("src/agentic/README.md", Guide, 350),
     ("src/common/README.md", Guide, 400),
     ("src/netconnect/README.md", Guide, 190),

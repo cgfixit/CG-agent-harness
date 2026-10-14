@@ -619,24 +619,23 @@ and native checks separately. Windows release legs remain parked.
 
 ### Ordered batch merge
 
-After the workflow lands, open **Actions → Ordered batch merge → Run workflow**
-on `main`. Enter 1–20 distinct PR numbers in dependency order (`480,481,482`).
-Leave **execute** unchecked for a read-only preview; order is explicit.
+Open **Actions → Ordered batch merge → Run workflow**, on `main`. Enter 1–20
+PR numbers in dependency order (`480,481,482`). Unchecked **execute** previews only.
 
 Execution requires `BATCH_MERGE_TOKEN`, a repository-scoped fine-grained PAT:
 Contents/Pull requests/Workflows write; Actions/Checks/Commit statuses/Administration
-read. This triggers fresh CI/Bundle, unlike the default Actions token. Configure
+read. This triggers CI/Bundle. Configure
 classic main protection with required checks, strict up-to-date checks and
 administrator enforcement; ruleset-only protection is unsupported. No settings,
 secrets, draft status or bypass permissions are changed by the workflow.
 
-Mark PRs ready before checking **execute**. The queue captures heads, updates
+Mark PRs ready before **execute**. The queue captures heads, updates
 branches sequentially, waits for current-head CI/reviews, squash-merges, then
 waits for main CI/Bundle. Drafts, forks, conflicts, failed/cancelled/missing checks,
 unresolved reviews and unexpected head/base changes stop it. Skipped/neutral
 jobs require successful expected workflows; disabled governance is not a pass.
 
-One batch runs at a time. Timeout defaults to 300 minutes (maximum 330).
-Cancellation cannot undo an in-flight merge. Inspect progress, resolve blockers,
-and rerun the list; already-merged entries are skipped. Local preview:
+One batch runs at a time; timeout is 300 minutes (maximum 330).
+Cancellation cannot undo merges. Resolve blockers and rerun; merged entries are
+skipped. Preview:
 `GITHUB_REPOSITORY=owner/repo PR_LIST='480,481' python3 scripts/batch-merge.py`.

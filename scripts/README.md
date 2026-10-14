@@ -1,14 +1,11 @@
 # scripts
 
-Operator and CI helpers. Only `verify-local.sh`, `check-pr-template.sh` and
-`python3 test-desktop-backend.py` are pre-approved for Claude in
-[.claude/settings.json](../.claude/settings.json). The `test-*.mjs` files are
-Node `vm` contract tests over slices of `harness.html`, run by the `ci.yml`
-chat-browser job and `verify-local.sh`.
+Claude's pre-approved commands: [.claude/settings.json](../.claude/settings.json).
+`test-*.mjs` runs console `vm` contracts through backend CI and `verify-local.sh`.
 
 ## Operator
 
-- [`batch-merge.py`](batch-merge.py): ordered CI-gated PR queue; [setup](../docs/INSTALL.md#ordered-batch-merge). `test-batch-merge.py` exercises stop/resume boundaries.
+- [`batch-merge.py`](batch-merge.py): ordered PR queue; [setup](../docs/INSTALL.md#ordered-batch-merge). `test-batch-merge.py` exercises stop/resume boundaries.
 - [`start-web.sh`](start-web.sh): starts the console on loopback (default 8790) and opens a browser.
 - [`web-allowlist-bootstrap.sh`](web-allowlist-bootstrap.sh): grants a technical-docs web allowlist through `cgagentharness web allow` (admin login needed); extra lines from `CGAH_GRANTS_FILE`.
 - [`reset-macos.sh`](reset-macos.sh): dry-runs, or with `--yes` deletes, the harness home and Keychain entries.
