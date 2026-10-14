@@ -40,6 +40,51 @@ page). `curl` downloads skip Gatekeeper's quarantine prompt; compare
 [`start-macos.sh`](../scripts/start-macos.sh) is the everyday launcher, described
 in [section 7](#7-open-the-console-in-a-browser).
 
+### Step by step in Terminal
+
+Open **Terminal** (Applications → Utilities); on Apple Silicon leave its **Open
+using Rosetta** unchecked. Run every command from the clone, as your user.
+
+1. **Developer tools:** `xcode-select --install`, then finish the dialog. A rerun
+   only reports that they are installed.
+2. **Code:** `git clone https://github.com/cgfixit/CG-agent-harness.git && cd CG-agent-harness`.
+3. **Inventory:** `scripts/install-macos.sh --check` prints one line per tool and
+   exits 1 while something required is missing. It changes nothing.
+4. **Preview:** `scripts/install-macos.sh --dry-run --model <tag>` prints every
+   command the install would run. Pick the tag in [Models](MODELS.md); omit
+   `--model` to pull later (models are multi-GB). Add `--with-gh` for coding.
+5. **Install:** the same command without `--dry-run`. The Homebrew and rustup
+   installers may ask for your password and print "Next steps"; run those lines,
+   then open a new Terminal window so `brew` and `cargo` are on `PATH`. The first
+   backend build takes several minutes.
+6. **Confirm:** `scripts/install-macos.sh --check` ends with
+   `everything required is present`.
+7. **Start:** `scripts/start-macos.sh --trust-cert` starts Ollama with a
+   32768-token window, opens the app, and opens its console in your browser.
+   `--trust-cert` asks for your password once so the browser trusts this home's
+   certificate. Note the printed `CGagentHarness console: https://127.0.0.1:<port>/`.
+8. **Sign in:** user `admin` with the one-time setup code from the app's
+   **Setup and recovery** (also `cat ~/.CGagentHarness/setup-code`), then choose a
+   new password. The browser needs its own sign-in.
+9. **Optional web allowlist:** with that console origin, sign the CLI in and grant
+   the technical-docs starter list:
+
+   ```bash
+   url=https://127.0.0.1:<port>          # the origin printed in step 7
+   target/release/cgagentharness account --url "$url" login admin
+   CGAH_BIN=target/release/cgagentharness CGAH_URL="$url" scripts/web-allowlist-bootstrap.sh
+   ```
+
+10. **Every day:** `scripts/start-macos.sh` (without the app:
+    `scripts/start-macos.sh --standalone`, port 8790, where the CLI needs no `--url`).
+11. **Update:** quit the app (Cmd-Q), `git pull --ff-only`, then
+    `scripts/install-macos.sh --replace-app`.
+12. **Uninstall:** see [update, backup, rollback and uninstall](#update-backup-rollback-and-uninstall).
+
+If `start-macos.sh` reports no usable app, rerun step 5. If it reports the home is
+already owned, quit that owner or use app mode. More fixes:
+[Troubleshooting](TROUBLESHOOTING.md).
+
 ## 2. Prerequisites
 
 Install only what your path needs. Preserve working tools and models. These are
@@ -265,8 +310,8 @@ Fresh homes enable login, role permissions, HTTPS and web fetch/search/research
 without a harness API key or configuration edit. The content allowlist starts
 empty; administrators grant sources through `/web allow`, or grant a starter list
 of technical references with
-[`web-allowlist-bootstrap.sh`](../scripts/web-allowlist-bootstrap.sh) after
-`cgagentharness account login admin`. Open the app from
+[`web-allowlist-bootstrap.sh`](../scripts/web-allowlist-bootstrap.sh)
+([step 9](#step-by-step-in-terminal)). Open the app from
 Finder, or start the standalone server:
 
 ```bash

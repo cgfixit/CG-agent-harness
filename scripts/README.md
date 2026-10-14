@@ -8,6 +8,9 @@ chat-browser job and `verify-local.sh`.
 
 ## Operator
 
+New Mac: follow the [Terminal walkthrough](../docs/INSTALL.md#step-by-step-in-terminal); once
+signed in, [CONSOLE.md](../docs/CONSOLE.md) is the user guide.
+
 - [`install-macos.sh`](install-macos.sh): idempotent macOS installer: missing tools, backend build, checksummed release app; `--check`, `--dry-run`.
 - [`start-macos.sh`](start-macos.sh): starts Ollama (app or `ollama serve`) and the app, then the app's own origin through `start-web.sh --desktop-url`; `--standalone`, `--trust-cert`, `--no-ollama`.
 - [`start-web.sh`](start-web.sh): starts the console on loopback (default 8790) and opens a browser; bundled into the `.app`, so byte changes need a rebuild.
@@ -43,7 +46,7 @@ chat-browser job and `verify-local.sh`.
 - [`package-desktop.sh`](package-desktop.sh): builds the macOS `.app` with sidecar on Apple Silicon.
 - [`package-release.sh`](package-release.sh): stages, optionally codesigns, archives and checksums the CLI binary.
 - [`verify-desktop-bundle.sh`](verify-desktop-bundle.sh): verifies `.app` codesign, plist, architectures, system-only linkage.
-- [`release-plan.py`](release-plan.py): read-only release planner via `gh api`; fails closed ([RELEASING.md](../docs/RELEASING.md)).
+- [`release-plan.py`](release-plan.py): read-only release planner via `gh api`; fails closed; run by hand, previews `main` ([RELEASING.md](../docs/RELEASING.md)).
 - [`prepare-cargo.py`](prepare-cargo.py): offline-by-default Cargo source and toolchain preparation; bundled into the `.app`.
 - [`desktop-icon.swift`](desktop-icon.swift): regenerates the app icon set by hand; no automated caller.
 
