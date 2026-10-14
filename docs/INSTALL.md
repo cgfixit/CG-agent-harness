@@ -23,7 +23,7 @@ works and installs only what is missing, in order: Command Line Tools; Homebrew
 (only for Ollama or `gh`); rustup with the pinned Rust; Ollama; optional `gh`. It then builds the standalone backend and downloads the latest
 release app, checks it against that release's `SHA256SUMS` and `codesign`, and
 copies it to `/Applications` (`~/Applications` when that is not writable). It never
-touches the home directory and pulls a model only with `--model`.
+touches the harness home (`~/.CGagentHarness`) and pulls a model only with `--model`.
 
 | Option | Effect |
 |---|---|
@@ -134,8 +134,9 @@ brew install --cask ollama
 
 Launch Ollama, then verify `ollama list` and the endpoint in [model setup](MODELS.md).
 If the CLI is unavailable, follow the
-[Ollama quickstart](https://docs.ollama.com/quickstart). The harness does not
-install Ollama or download a model automatically.
+[Ollama quickstart](https://docs.ollama.com/quickstart). The server never installs
+Ollama or downloads a model; `install-macos.sh` installs Ollama unless
+`--no-ollama` and pulls a model only with `--model`.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 `OLLAMA_CONTEXT_LENGTH=32768` is set **before** the Ollama process starts.
@@ -262,7 +263,10 @@ successful build do not prove native interaction acceptance; see
 
 Fresh homes enable login, role permissions, HTTPS and web fetch/search/research
 without a harness API key or configuration edit. The content allowlist starts
-empty; administrators grant sources through `/web allow`. Open the app from
+empty; administrators grant sources through `/web allow`, or grant a starter list
+of technical references with
+[`web-allowlist-bootstrap.sh`](../scripts/web-allowlist-bootstrap.sh) after
+`cgagentharness account login admin`. Open the app from
 Finder, or start the standalone server:
 
 ```bash
@@ -568,7 +572,18 @@ defaults, model selection, persona, or skills. Merge new fields instead of
 replacing `config.yaml` with `assets/config.default.yaml`. An older binary may
 not understand newer state, so inspect compatibility and restore its matching
 backup. Never delete a live owner's lock. To uninstall, quit and remove the app;
-home deletion is a separate destructive action.
+home deletion is a separate destructive action ([desktop uninstall](DESKTOP.md#update-recovery-and-uninstall)).
+What the scripts leave behind, all optional to remove:
+
+| Left by | Item | Remove with |
+|---|---|---|
+| `install-macos.sh --replace-app` | Previous app in `~/Library/Caches/CG-agent-harness-installer/previous` | `rm -rf` that directory |
+| `start-macos.sh --trust-cert` | "CG Agent Harness local portal" certificate trusted in the login keychain | Keychain Access |
+| `start-macos.sh` | `OLLAMA_CONTEXT_LENGTH` for GUI apps until logout; `~/Library/Logs/ollama-serve.log` | `launchctl unsetenv OLLAMA_CONTEXT_LENGTH`; `rm` the log |
+| The harness | Home and its Keychain credentials | `scripts/reset-macos.sh` (dry run), then `--yes` after a backup |
+
+Homebrew, rustup, Ollama, models and `gh` are general tools; the installer
+never removes them.
 
 To test a candidate without using your normal home, launch it explicitly with a
 new absolute temporary home (adjust the app path):
