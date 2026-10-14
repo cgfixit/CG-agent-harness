@@ -103,8 +103,10 @@ finish() {
   close_server
   # Back to the terminal; the logger sees end of input, writes its last line and exits.
   exec 1>&3 2>&4
-  (sleep 5; kill "$logger" 2>/dev/null) &
+  (sleep 5; kill "$logger" 2>/dev/null) </dev/null >/dev/null 2>&1 3>&- 4>&- &
+  local watchdog=$!
   wait "$logger" 2>/dev/null
+  kill "$watchdog" 2>/dev/null
   rm -rf "$private"
   exit "$rc"
 }
@@ -203,7 +205,10 @@ find_app() {
   app_path=''
   return 1
 }
-start_macos() { CGAH_APP=${app_dir:+$app_path} bash "$root/scripts/start-macos.sh" "$@"; }
+# 3>&- 4>&-: fds 3 and 4 hold the original terminal (or a CI step's pipe). A
+# child that outlives init.sh, such as the app or Ollama started by open, must
+# not inherit them, or whoever reads that pipe waits for it.
+start_macos() { CGAH_APP=${app_dir:+$app_path} bash "$root/scripts/start-macos.sh" "$@" 3>&- 4>&-; }
 cli() { CGAGENTHARNESS_HOME=$home "$bin" "$@"; }
 # The reply (no secrets) says whether admin still has to replace its first password.
 # Every failure counts toward the lockout cap below (five lock the account).
@@ -348,7 +353,7 @@ open_server() {
   fi
   port=$(free_port 8790) || { warn 'no free loopback port in 8790-8889'; return 1; }
   # Its output can name the setup code file; keep it out of the log.
-  CGAGENTHARNESS_HOME=$home "$bin" serve --port "$port" >"$private/serve.out" 2>&1 &
+  CGAGENTHARNESS_HOME=$home "$bin" serve --port "$port" >"$private/serve.out" 2>&1 3>&- 4>&- &
   server_pid=$!
   for _ in $(seq 1 120); do
     kill -0 "$server_pid" 2>/dev/null || { server_pid=''; warn 'the backend stopped during startup:'; grep -v -i 'setup code' "$private/serve.out" | tail -n 5; return 1; }
