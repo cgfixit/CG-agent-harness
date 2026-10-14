@@ -6,7 +6,7 @@
 #   scripts/start-macos.sh                       # app mode (default)
 #   scripts/start-macos.sh --standalone [port]   # no app: start-web.sh runs `serve` itself
 #   scripts/start-macos.sh --trust-cert          # app mode, and trust the home's certificate in your login keychain
-#   scripts/start-macos.sh --no-ollama ...       # leave Ollama alone
+#   scripts/start-macos.sh --no-ollama ...       # leave Ollama alone (chat uses LM Studio, another port or a remote model)
 # Env: CGAH_APP  app bundle (default /Applications, then ~/Applications)
 # Run scripts/install-macos.sh first. Full guide: docs/INSTALL.md.
 set -euo pipefail
@@ -16,19 +16,20 @@ loopback=127.0.0.1 # DevSkim: ignore DS162092 because the app and Ollama listen 
 ollama_api=http://$loopback:11434 # DevSkim: ignore DS137138 because Ollama's default endpoint is plain HTTP on loopback.
 sidecar='/Contents/MacOS/cgagentharness desktop$'
 
-mode=app ollama=1 trust=0
+mode=app ollama=1 trust=0 port_arg=''
+# Options may come before or after the port; anything else is refused.
 while [ "$#" -gt 0 ]; do
   case $1 in
     --standalone) mode=standalone ;;
     --no-ollama) ollama=0 ;;
     --trust-cert) trust=1 ;;
     -h | --help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    --*) echo "start-macos: unknown option: $1" >&2; exit 3 ;;
-    *) break ;;
+    -*) echo "start-macos: unknown option: $1" >&2; exit 3 ;;
+    *) [ -z "$port_arg" ] || { echo "start-macos: unexpected argument: $1" >&2; exit 3; }; port_arg=$1 ;;
   esac
   shift
 done
-[ "$mode" = standalone ] || [ "$#" -eq 0 ] || { echo 'start-macos: a port is only valid with --standalone' >&2; exit 3; }
+[ "$mode" = standalone ] || [ -z "$port_arg" ] || { echo 'start-macos: a port is only valid with --standalone' >&2; exit 3; }
 [ "$mode" = app ] || [ "$trust" = 0 ] || { echo 'start-macos: --trust-cert needs app mode (the server must be running)' >&2; exit 3; }
 [ "$(uname -s)" = Darwin ] || { echo 'start-macos: macOS only; elsewhere run scripts/start-web.sh' >&2; exit 3; }
 
@@ -94,7 +95,7 @@ if [ "$mode" = standalone ]; then
     echo 'Use app mode (no --standalone) for the app, quit that owner, or set CGAGENTHARNESS_HOME to another absolute home.' >&2
     exit 3
   fi
-  exec bash "$root/scripts/start-web.sh" "$@"
+  exec bash "$root/scripts/start-web.sh" ${port_arg:+"$port_arg"}
 fi
 
 if [ -z "$(app_backends)" ]; then

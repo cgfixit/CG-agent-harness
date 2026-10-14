@@ -101,7 +101,9 @@ toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$root/rust-toolchain.toml")
 
 # Prefer rustup's proxies and an existing Homebrew even when this shell has not
 # loaded their PATH lines yet. Homebrew's own cargo would ignore rust-toolchain.toml.
-PATH=$HOME/.cargo/bin:$PATH
+# rustup installs its proxies under $CARGO_HOME/bin (default ~/.cargo/bin).
+cargo_bin=${CARGO_HOME:-$HOME/.cargo}/bin
+PATH=$cargo_bin:$PATH
 for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
   if ! have brew && [ -x "$brew" ]; then eval "$("$brew" shellenv)"; fi
 done
@@ -130,7 +132,7 @@ inventory() {
     say 'rustup: MISSING'; missing=1
   fi
   v=$(command -v cargo || true)
-  case $v in "$HOME/.cargo/bin/cargo" | '') ;; *) warn "cargo on PATH is $v, not rustup's; it ignores rust-toolchain.toml" ;; esac
+  case $v in "$cargo_bin/cargo" | '') ;; *) warn "cargo on PATH is $v, not rustup's; it ignores rust-toolchain.toml" ;; esac
   if [ "$build" = 1 ]; then
     if [ -x "$root/target/release/cgagentharness" ]; then say "backend: $root/target/release/cgagentharness"; else say 'backend: not built'; missing=1; fi
   fi
@@ -182,7 +184,7 @@ fi
 
 # --------------------------------------------------------------------- 3. Rust
 if ! have rustup; then
-  say 'installing rustup (official installer; it adds ~/.cargo/bin to your shell profile)'
+  say "installing rustup (official installer; it adds $cargo_bin to your shell profile)"
   installer=$(mktemp)
   # rustup's documented flags: HTTPS only, TLS 1.2 or newer. A floor, not a pin.
   run curl --proto '=https' --tlsv1.2 --fail --silent --show-error -o "$installer" https://sh.rustup.rs # DevSkim: ignore DS440001,DS440016 because --tlsv1.2 sets a minimum TLS version.
@@ -196,8 +198,8 @@ elif ! lints_ok; then
   run rustup component add --toolchain "$toolchain" clippy rustfmt
 fi
 case $(command -v cargo || true) in
-  "$HOME/.cargo/bin/cargo" | '') ;;
-  *) warn "cargo on PATH is $(command -v cargo), not rustup's; this script builds with ~/.cargo/bin/cargo" ;;
+  "$cargo_bin/cargo" | '') ;;
+  *) warn "cargo on PATH is $(command -v cargo), not rustup's; this script builds through rustup" ;;
 esac
 
 # ------------------------------------------------------------------- 4. Ollama
@@ -276,6 +278,11 @@ if [ "$app" = 1 ]; then
       codesign --verify --deep --strict "$work/unpacked/$app_name" || die 'the app signature does not verify; nothing was installed'
     fi
     run mkdir -p "$app_dir"
+    # Copy next to the destination first, so a failed copy never touches the
+    # working app; the swap below is two renames.
+    staged=$app_dir/.$app_name.partial
+    run rm -rf "$staged"
+    run ditto "$work/unpacked/$app_name" "$staged" || die "copying the app failed; $app_path is unchanged (rerun to retry)"
     if [ -d "$app_path" ]; then
       # Keep one previous copy for rollback; the home directory is never touched.
       backup=$HOME/Library/Caches/CG-agent-harness-installer/previous
@@ -284,7 +291,7 @@ if [ "$app" = 1 ]; then
       run mv "$app_path" "$backup/"
       say "previous app kept at $backup/$app_name"
     fi
-    run ditto "$work/unpacked/$app_name" "$app_path"
+    run mv "$staged" "$app_path"
     [ "$dry" = 1 ] || say "installed $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"
   fi
 fi

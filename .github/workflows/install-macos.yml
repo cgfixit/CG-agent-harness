@@ -68,7 +68,7 @@ jobs:
           "$CGAH_APP/Contents/MacOS/cgagentharness" tls certificate > app.pem
           code=$(curl --silent --show-error --max-time 15 --cacert app.pem -o /dev/null -w '%{http_code}' "${url}api/status")
           echo "verified TLS to the app backend; /api/status answered $code"
-          test "$code" != 000
+          test "$code" = 200
 
       - name: Standalone refuses while the app owns the default home
         timeout-minutes: 3
@@ -91,7 +91,7 @@ jobs:
           code=$(curl --silent --show-error --max-time 15 --cacert standalone.pem -o /dev/null -w '%{http_code}' https://127.0.0.1:8791/api/status) # DevSkim: ignore DS162092 because the standalone console binds loopback only.
           echo "standalone /api/status answered $code"
           kill "$server"
-          test "$code" != 000
+          test "$code" = 200
 
       - name: Quit the app
         if: always()
