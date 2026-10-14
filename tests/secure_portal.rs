@@ -74,7 +74,11 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     .with("api.rate_limit.max_requests", "1000")
     .with("web.response_bytes", "4096");
     let server = spawn_server(&model.base_url(), options).await;
-    let bootstrap = login(&server, "admin", "admin").await;
+    let setup_code = std::fs::read_to_string(server.home.join("setup-code"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let bootstrap = login(&server, "admin", &setup_code).await;
     assert_eq!(
         request(&server, &bootstrap, Method::GET, "/api/analytics/summary", json!({}))
             .await
@@ -92,7 +96,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
         &bootstrap,
         Method::POST,
         "/api/auth/password",
-        json!({"current_password":"admin", "password":"reload-fixture-password"}),
+        json!({"current_password":setup_code, "password":"reload-fixture-password"}),
     )
     .await;
     assert_eq!(changed.status(), 200);
@@ -511,10 +515,14 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             .unwrap();
         assert_eq!(response.status(), 401, "unprotected API {path}");
     }
+    let setup_code = std::fs::read_to_string(server.home.join("setup-code"))
+        .unwrap()
+        .trim()
+        .to_string();
     let response = server
         .client
         .post(server.url("/api/auth/login"))
-        .json(&json!({"username":"admin","password":"admin"}))
+        .json(&json!({"username":"admin","password":setup_code}))
         .send()
         .await
         .unwrap();
@@ -534,7 +542,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             "AUTH_PASSWORD_CHANGE_REQUIRED"
         );
     }
-    let body = json!({"current_password":"admin","password":"replacement-admin-password"});
+    let body = json!({"current_password":setup_code,"password":"replacement-admin-password"});
     assert_eq!(
         server
             .client
@@ -577,7 +585,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             &bootstrap,
             Method::POST,
             "/api/auth/password",
-            json!({"current_password":"admin","password":"short"})
+            json!({"current_password":setup_code,"password":"short"})
         )
         .await
         .status(),

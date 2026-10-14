@@ -105,7 +105,9 @@ Every API request passes rate limiting, exact same-origin checks and direct
 loopback validation. Operational reads and writes additionally require an enabled
 account and its server-side role permissions. Mutations retain the existing CSRF
 header/token; only minimal status/static/login/setup surfaces are public. A fresh
-admin/admin account can only replace its password, inspect its identity or log out.
+`admin`, whose first password is a one-time setup code in the owner-only
+`<home>/setup-code` file (never a shipped password, never page content), can only
+replace its password, inspect its identity or log out.
 The replacement revokes old sessions. The last enabled administrator is protected.
 
 SQLite is authoritative after transactional legacy migration; corrupt, empty or

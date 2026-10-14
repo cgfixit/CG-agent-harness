@@ -77,7 +77,12 @@ done
 port_open "$port" || { echo "start-web: server did not open port $port" >&2; exit 2; }
 
 echo "CGagentHarness console: $url"
-[ "$scheme" = https ] && echo "First visit: trust the local certificate (docs/SECURE_RESEARCH.md); sign in admin / admin on a fresh home."
+[ "$scheme" = https ] && echo "First visit: trust the local certificate (docs/SECURE_RESEARCH.md)."
+# Only the owner's terminal sees this; the private file disappears once the
+# admin password is replaced.
+if [ -r "$home/setup-code" ]; then
+  echo "First sign-in: user admin, setup code $(cat "$home/setup-code"); you then choose a new password."
+fi
 
 if [ -z "${NO_OPEN:-}" ]; then
   for opener in xdg-open open wslview; do

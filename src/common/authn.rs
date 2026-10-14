@@ -106,9 +106,31 @@ fn random_salt() -> [u8; SALT_BYTES] {
     rand::thread_rng().gen()
 }
 
-/// The sole short-password exception: fresh restricted bootstrap credentials.
-pub(super) fn hash_bootstrap_password() -> Result<String> {
-    hash_unchecked("admin", &random_salt())
+/// File in the home that holds the one-time first sign-in code. It exists only
+/// while `admin` still has that code as its password.
+pub const SETUP_CODE_FILE: &str = "setup-code";
+
+/// A one-time setup code: 16 characters from a 31-symbol alphabet without
+/// look-alikes (about 79 bits), grouped by four for reading aloud. It replaces
+/// the shipped `admin` password, which anyone on the machine could know.
+pub fn new_setup_code() -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"23456789abcdefghjkmnpqrstuvwxyz";
+    let mut rng = rand::thread_rng();
+    let mut code = String::with_capacity(19);
+    for i in 0..16 {
+        if i > 0 && i % 4 == 0 {
+            code.push('-');
+        }
+        code.push(ALPHABET[rng.gen_range(0..ALPHABET.len())] as char);
+    }
+    code
+}
+
+/// The sole password-policy exception: the restricted bootstrap credential,
+/// which must be replaced before the account can do anything else.
+pub(super) fn hash_bootstrap_password(code: &str) -> Result<String> {
+    hash_unchecked(code, &random_salt())
 }
 
 pub(super) fn valid_password_record(record: &str) -> bool {

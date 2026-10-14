@@ -129,6 +129,15 @@ fn desktop_status(state: tauri::State<'_, Desktop>) -> Status {
     }
 }
 
+/// The backend's one-time first sign-in code, shown only in this native window,
+/// never in page content. The file exists only until `admin` has a real password.
+fn setup_code(home: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(home.join("setup-code")).ok()?;
+    let code = text.trim();
+    (code.len() <= 32 && !code.is_empty() && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        .then(|| code.to_string())
+}
+
 fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), String> {
     let state = app.state::<Desktop>();
     if !state.instance_owned {
@@ -203,7 +212,12 @@ fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), 
             window
                 .navigate(origin.parse().map_err(|_| "Invalid origin.")?)
                 .map_err(|_| "Cannot navigate to owned backend.")?;
-            owner.message = "Backend ready. Sign in to the harness. Fresh homes use admin / admin with an immediate password change.".into();
+            owner.message = match setup_code(&home) {
+                Some(code) => format!(
+                    "Backend ready. First sign-in: user admin, setup code {code}. You then choose a new password."
+                ),
+                None => "Backend ready. Sign in to the harness.".into(),
+            };
             let tools: Vec<_> = ["git", "gh", "cargo", "rustc", "python3", "xcrun"]
                 .into_iter()
                 .map(|name| {

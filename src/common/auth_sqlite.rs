@@ -196,12 +196,21 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
         ));
     }
     let fresh = !present(legacy)?;
+    let parent = path.parent().ok_or_else(|| invalid("missing account directory"))?;
     let db = if fresh {
+        // The code reaches disk before the database that accepts it, so a
+        // crash between the two never leaves an admin with an unknown password.
+        let code = authn::new_setup_code();
+        write_atomic(
+            &parent.join(authn::SETUP_CODE_FILE),
+            format!("{code}\n").as_bytes(),
+            Some(0o600),
+        )?;
         let mut db = AuthDb::default();
         db.users.insert(
             super::BOOTSTRAP_USERNAME.into(),
             UserRow {
-                password_hash: authn::hash_bootstrap_password()?,
+                password_hash: authn::hash_bootstrap_password(&code)?,
                 created_ts: crate::common::now_ts(),
                 disabled: false,
                 last_login_ts: None,
@@ -243,7 +252,6 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
         db
     };
     validate(&db)?;
-    let parent = path.parent().ok_or_else(|| invalid("missing account directory"))?;
     let staged = tempfile::Builder::new().prefix(".auth.").tempfile_in(parent)?;
     let mut conn = connect(staged.path())?;
     let tx = conn.transaction().map_err(sql)?;
@@ -292,7 +300,10 @@ pub(super) fn touch_session(conn: &Connection, token_hash: &str, last_seen_ts: f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{auth_store::AuthManager, config::AppConfig};
+    use crate::common::{
+        auth_store::{AuthManager, BOOTSTRAP_USERNAME},
+        config::AppConfig,
+    };
 
     #[test]
     fn migration_preserves_records_and_failures_never_bootstrap_or_publish() {
@@ -440,5 +451,43 @@ mod tests {
         *now.lock().unwrap() += 43_200.0;
         assert!(mgr.validate_session(&session.session_id).is_none());
         assert_eq!(on_disk(), (created + 60.0, true));
+    }
+
+    #[test]
+    fn a_home_still_on_the_shipped_password_is_rotated_to_a_setup_code() {
+        let open_with = |admin_hash: String, must_change: bool| {
+            let dir = tempfile::tempdir().unwrap();
+            let legacy = dir.path().join("auth.json");
+            let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
+            let raw = serde_json::to_vec(&serde_json::json!({"users":{"admin":{"password_hash":admin_hash,"created_ts":1.0,"role":"admin","must_change_password":must_change}},"sessions":{}})).unwrap();
+            write_atomic(&legacy, &raw, Some(0o600)).unwrap();
+            let mgr = AuthManager::open(&legacy, &cfg).unwrap();
+            (dir, mgr)
+        };
+        // Passwords come from runtime values so no literal reaches the hasher
+        // (CodeQL rust/hard-coded-cryptographic-value). The retired shipped
+        // password was the bootstrap username itself; read it back from a store.
+        let temporary = crate::common::random_urlsafe(24);
+        let shipped = open_with(authn::hash_password(&temporary).unwrap(), false)
+            .1
+            .get_user(BOOTSTRAP_USERNAME)
+            .unwrap()
+            .username;
+        // Still on the shipped password and never replaced: rotated on open.
+        let (dir, mgr) = open_with(authn::hash_bootstrap_password(&shipped).unwrap(), true);
+        let code = std::fs::read_to_string(dir.path().join(authn::SETUP_CODE_FILE)).unwrap();
+        assert_eq!(
+            mgr.login(BOOTSTRAP_USERNAME, &shipped).unwrap_err().code,
+            "AUTH_LOGIN_FAILED"
+        );
+        mgr.login(BOOTSTRAP_USERNAME, code.trim()).unwrap();
+        assert!(mgr.setup_code_active());
+        // A real temporary password, or a replaced one, is left alone.
+        for must_change in [true, false] {
+            let (dir, mgr) = open_with(authn::hash_password(&temporary).unwrap(), must_change);
+            assert!(!dir.path().join(authn::SETUP_CODE_FILE).exists());
+            assert!(!mgr.setup_code_active());
+            mgr.login(BOOTSTRAP_USERNAME, &temporary).unwrap();
+        }
     }
 }

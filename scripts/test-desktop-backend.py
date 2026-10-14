@@ -54,6 +54,13 @@ def await_headless(child, http, base):
     return None
 
 
+def fixture_passwords(home):
+    """The fixture password, then a fresh home's one-time setup code. There is
+    no shipped password to fall back to."""
+    code = Path(home) / 'setup-code'
+    return ('desktop-fixture-password',) + ((code.read_text().strip(),) if code.is_file() else ())
+
+
 def serve_expecting_refusal(home):
     """Run `serve` on a fresh port until the port is actually ours.
 
@@ -133,6 +140,7 @@ class Sidecar:
         env = {k: v for k, v in os.environ.items() if k not in (
             "CGAGENTHARNESS_API_KEY", "GROK_API_KEY", "ANTHROPIC_API_KEY", "DEEPAGENT_API_KEY")}
         env["CGAGENTHARNESS_HOME"] = str(home)
+        self.home = Path(home)
         self.process = subprocess.Popen([str(BIN), "desktop"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd="/", env=env)
         self.challenge = secrets.token_hex(32)
@@ -188,7 +196,7 @@ class Sidecar:
         html = self.request('/')[1]
         csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
         headers = {'X-CyClaw-CSRF': csrf, 'Origin': self.base}
-        for password in ('desktop-fixture-password', 'admin'):
+        for password in fixture_passwords(self.home):
             status, body, response_headers = self.request('/api/auth/login', headers, {'username':'admin','password':password})
             if status == 200:
                 headers['Cookie'] = response_headers['Set-Cookie'].split(';')[0]
@@ -323,7 +331,7 @@ class DesktopBoundary(unittest.TestCase):
                             with response: return response.status, response.read(), response.headers
                         headers={'X-CyClaw-CSRF':csrf,'Origin':base}
                         self.assertEqual(request('/api/keys',{**headers,'Authorization':'Bearer '+(override or file_key)})[0],401)
-                        for password in ('desktop-fixture-password','admin'):
+                        for password in fixture_passwords(self.home):
                             status,body,reply=request('/api/auth/login',headers,{'username':'admin','password':password})
                             if status==200: break
                         self.assertEqual(status,200)
@@ -376,7 +384,7 @@ class DesktopBoundary(unittest.TestCase):
                 csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
                 headers = {'X-CyClaw-CSRF': csrf, 'Origin': base}
                 status, body, reply = None, None, None
-                for password in ('desktop-fixture-password', 'admin'):
+                for password in fixture_passwords(self.home):
                     req = urllib.request.Request(base + '/api/auth/login', headers={**headers, 'Content-Type': 'application/json'},
                         data=json.dumps({'username': 'admin', 'password': password}).encode())
                     try:

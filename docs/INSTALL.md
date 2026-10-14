@@ -271,8 +271,9 @@ Finder, or start the standalone server:
 
 Existing settings are preserved on upgrade. Merge `auth.enabled: true` and
 `tls.enabled: true` into the active configuration to adopt the new boundaries.
-On a fresh account store the sign-in screen shows `admin` / `admin`; signing in
-opens password replacement, required before portal use. See
+A fresh home's `admin` signs in with the one-time setup code in private
+`<home>/setup-code` (the app's Setup window and `start-web.sh` show it); password
+replacement is then required before portal use. See
 [TLS trust, migration and recovery](SECURE_RESEARCH.md).
 
 The standalone server prints its address, for example:
