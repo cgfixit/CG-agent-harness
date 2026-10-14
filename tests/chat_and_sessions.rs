@@ -284,6 +284,7 @@ async fn web_chat_charges_the_reply_reservation_once_against_the_web_budget() {
                 .with("models.local_llm.max_tokens", max_tokens),
         )
         .await;
+        s.seed_default_soul();
         if !web {
             s.post_json("/api/web", json!({"enabled":false})).await;
         }
@@ -305,6 +306,7 @@ async fn web_chat_charges_the_reply_reservation_once_against_the_web_budget() {
             .with("models.local_llm.max_tokens", "12952"),
     )
     .await;
+    s.seed_default_soul();
     let (status, body) = s.post_json("/api/chat", json!({"message":"x".repeat(400)})).await;
     assert_eq!(status, 422, "{body}");
     assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
@@ -672,6 +674,7 @@ async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
             .with("chat.compact_keep_messages", "2"),
     )
     .await;
+    s.seed_default_soul();
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
     let sid = created["session_id"].as_str().unwrap();
     let usage = cgagentharness::server::sessions::TokenTally::default();
@@ -1023,7 +1026,8 @@ async fn skill_identity_and_soul_status_match_the_actual_prompt() {
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let (_, fresh) = s.open_get("/api/soul").await;
     assert_eq!(fresh["enabled"], true);
-    assert_eq!(fresh["loaded"], true);
+    assert_eq!(fresh["loaded"], false);
+    assert_eq!(fresh["unavailable_reason"], "missing");
     assert_eq!(fresh["truncated"], false);
     let skills = s.home.join("skills");
     std::fs::create_dir_all(skills.join("custom")).unwrap();
@@ -1105,7 +1109,7 @@ async fn soul_prompt_read_cannot_escape_the_home_through_a_symlink() {
     let outside = tempfile::tempdir().unwrap();
     let secret = outside.path().join("outside.md");
     std::fs::write(&secret, "OUTSIDE_HOME_MARKER").unwrap();
-    std::fs::remove_file(s.home.join("soul.md")).unwrap();
+    assert!(!s.home.join("soul.md").exists());
     std::os::unix::fs::symlink(&secret, s.home.join("soul.md")).unwrap();
     let (_, status) = s.open_get("/api/soul").await;
     assert_eq!(status["loaded"], false);

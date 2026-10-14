@@ -677,8 +677,9 @@ impl Validate for WebSearchRequest {
 pub struct GoalRequest {
     #[serde(default)]
     pub goal: String,
+    /// Omitted means the configured `web.goal_web_default`.
     #[serde(default)]
-    pub web_mode: super::sessions::GoalWebMode,
+    pub web_mode: Option<super::sessions::GoalWebMode>,
 }
 
 impl Validate for GoalRequest {

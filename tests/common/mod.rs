@@ -291,6 +291,12 @@ impl TestServer {
         self.state.audit.flush();
         std::fs::read_to_string(self.state.audit.path()).unwrap_or_default()
     }
+
+    /// Install the shipped persona, which fresh homes no longer seed. Prompt-budget
+    /// tests size their fixtures against a system prompt that carries it.
+    pub fn seed_default_soul(&self) {
+        std::fs::write(self.home.join("soul.md"), cgagentharness::common::home::DEFAULT_SOUL).unwrap();
+    }
 }
 
 /// Take the audit file's lease under `home`, retrying while a writer holds it

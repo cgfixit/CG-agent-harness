@@ -50,6 +50,7 @@ tls/
 soul-history/
 harness.json
 soul.md
+!/data/styles/soul.md
 soul-pending-apply.json
 auth.json
 auth.sqlite3
