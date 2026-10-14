@@ -214,7 +214,12 @@ impl Pattern {
             )
         };
         let raw = raw.trim();
-        let (scheme, rest) = raw.split_once("://").ok_or_else(bad)?;
+        let (scheme, rest) = raw.split_once("://").ok_or_else(|| {
+            error(
+                "WEB_BAD_URL",
+                "missing scheme: URL patterns start with https:// (e.g. https://*.example.org/* or https://www.example.org/*)",
+            )
+        })?;
         let subdomains = rest.starts_with("*.");
         let rest = rest.strip_prefix("*.").unwrap_or(rest);
         let subtree = rest.ends_with("/*");

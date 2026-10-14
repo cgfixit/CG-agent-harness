@@ -211,7 +211,16 @@ impl WebTool {
         // Provider listings require web/account authority, not page-content permission.
         // Public Google is a page fetch and retains the original URL policy checks.
         let policy = if key.is_empty() {
-            Some(self.require_enabled(enabled)?)
+            Some(self.require_enabled(enabled).map_err(|e| {
+                if e.code == "WEB_ALLOWLIST_EMPTY" {
+                    error(
+                        "WEB_ALLOWLIST_EMPTY",
+                        "no SerpAPI key is configured and no URL rule permits public Google; add a SerpAPI key in API Keys (no URL rule needed) or /web allow https://www.google.com/*",
+                    )
+                } else {
+                    e
+                }
+            })?)
         } else {
             None
         };

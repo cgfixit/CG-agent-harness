@@ -213,9 +213,10 @@ Stop the server before manual edits; otherwise use serialized atomic API/CLI mut
 | `https://example.com/docs/*` | `/docs/` and descendants, excluding `/docs` |
 | `https://example.com/*` | Paths and query strings on that exact HTTPS origin, including `/` |
 | `https://*.example.com/docs/*` | Explicit subdomains below the named domain; apex excluded |
+| `https://*.example.com` | Each subdomain's `/` only; add `/*` for paths |
 | `https://example.com/article?q=one` | Exact query identity/order; no arbitrary parameters |
 
-Default ports normalize; schemes never downgrade. Fragments are stripped. IDNA
+Console `/web` adds only `https://` to scheme-less operands. Default ports normalize; schemes never downgrade. Fragments are stripped. IDNA
 and hostname case normalize; trailing-dot hosts, credentials, alternate IP
 spellings, dot segments, encoded path separators/dots/nested escapes, malformed escapes
 and ambiguous authorities are refused. Encoded punctuation/space in query data
