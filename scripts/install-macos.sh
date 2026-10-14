@@ -62,10 +62,11 @@ gh_ok() { have gh && gh --version >/dev/null 2>&1; }
 # The app's backend searches only these directories (desktop/src/backend.rs finder_path),
 # so a gh elsewhere (e.g. MacPorts' /opt/local/bin) is invisible to its coding pipeline.
 # Search those directories the way the app does, for a gh that runs.
+# Prints the first one, which is the copy the app uses.
 gh_app_visible() {
   local d
   for d in "$HOME/.cargo/bin" /opt/homebrew/bin /usr/local/bin /usr/bin /bin; do
-    if [ -x "$d/gh" ] && "$d/gh" --version >/dev/null 2>&1; then return 0; fi
+    if [ -x "$d/gh" ] && "$d/gh" --version >/dev/null 2>&1; then printf '%s\n' "$d/gh"; return 0; fi
   done
   return 1
 }
@@ -73,14 +74,25 @@ gh_app_visible() {
 lints_ok() {
   rustup run "$toolchain" cargo-clippy --version >/dev/null 2>&1 && rustup run "$toolchain" rustfmt --version >/dev/null 2>&1
 }
+# Ollama.app reads launchctl's environment, not ours. Only an unset or default loopback OLLAMA_HOST there is safe to open.
+launchd_ollama_host_ok() {
+  local h
+  h=$(launchctl getenv OLLAMA_HOST 2>/dev/null || true)
+  case ${h#http://} in '' | 127.0.0.1 | 127.0.0.1:11434 | localhost | localhost:11434) return 0 ;; esac
+  return 1
+}
 # --noproxy: an http_proxy/ALL_PROXY must never answer for a loopback service.
 ollama_up() { curl --noproxy '*' --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
 # The host can run it: the Mach-O has the host's slice (Apple silicon also runs
 # x86_64 through Rosetta). `file` ships with macOS; lipo needs the Command Line Tools.
+# A shell translated by Rosetta reports x86_64 from uname; sysctl.proc_translated=1 means Apple silicon.
+host_arch() {
+  if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then echo arm64; else uname -m; fi
+}
 runs_here() {
   local info
   info=$(file -b "$1" 2>/dev/null) || return 1
-  case $(uname -m) in
+  case $(host_arch) in
     arm64) case $info in *arm64* | *x86_64*) return 0 ;; esac ;;
     *) case $info in *x86_64*) return 0 ;; esac ;;
   esac
@@ -137,6 +149,11 @@ major=$(sw_vers -productVersion | cut -d. -f1)
 if [ "$ollama" = 1 ] && [ "$major" -lt 14 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then
   die "installing Ollama needs macOS 14 or newer (found $(sw_vers -productVersion)); rerun with --no-ollama and point chat at another model (docs/MODELS.md)" 3
 fi
+# --model opens Ollama.app unless the install is CLI-only. Refuse a non-loopback launchd value before changing anything.
+if [ "$ollama" = 1 ] && [ -n "$model" ] && [ "$check" = 0 ] && ! launchd_ollama_host_ok && ! ollama_up \
+  && ! { path_ollama_ok && [ -z "$(ollama_app)" ]; }; then
+  die "launchctl's OLLAMA_HOST is $(launchctl getenv OLLAMA_HOST), so Ollama.app would listen there, not only on loopback; run 'launchctl unsetenv OLLAMA_HOST', or start Ollama yourself and rerun" 3
+fi
 toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$root/rust-toolchain.toml")
 [ -n "$toolchain" ] || die 'cannot read the pinned toolchain from rust-toolchain.toml'
 
@@ -161,7 +178,7 @@ app_path=$app_dir/$app_name
 # ---------------------------------------------------------------- inventory
 inventory() {
   local missing=0 v want tags
-  say "macOS $(sw_vers -productVersion) on $(uname -m)"
+  say "macOS $(sw_vers -productVersion) on $(host_arch)"
   if clt_ok; then say "Command Line Tools: $(xcode-select -p)"
   elif xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p) is selected but its compiler does not run"; missing=1
   else say 'Command Line Tools: MISSING'; missing=1; fi
@@ -203,11 +220,17 @@ inventory() {
     fi
     v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
     say "OLLAMA_CONTEXT_LENGTH for GUI apps: ${v:-unset (scripts/start-macos.sh sets 32768)}"
+    launchd_ollama_host_ok || say "OLLAMA_HOST for GUI apps: $(launchctl getenv OLLAMA_HOST) (not loopback; these scripts will not open Ollama.app)"
   fi
-  if gh_ok && { [ "$gh" = 0 ] || gh_app_visible; }; then say "GitHub CLI: $(gh --version 2>/dev/null | head -n1)"
+  if [ "$gh" = 0 ]; then
+    if gh_ok; then say "GitHub CLI: $(gh --version 2>/dev/null | head -n1)"; fi
+  # --with-gh: what counts is the copy the app's backend finds, not the shell's first gh.
+  elif v=$(gh_app_visible); then
+    say "GitHub CLI: $v ($("$v" --version 2>/dev/null | head -n1))"
+    if have gh && ! gh_ok; then warn "gh on PATH ($(command -v gh)) does not run; the app uses $v"; fi
   elif gh_ok; then say "GitHub CLI: $(command -v gh) runs, but the app cannot see that directory (a rerun installs a Homebrew copy)"; missing=1
-  elif have gh && [ "$gh" = 1 ]; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
-  elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
+  elif have gh; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
+  else say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
     if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -d "$app_path" ]; then say "app: $app_path is incomplete, not built for this Mac, or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
   fi
@@ -241,7 +264,7 @@ fi
 # ----------------------------------------------------------------- 2. Homebrew
 need_brew=0
 if [ "$ollama" = 1 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then need_brew=1; fi
-if [ "$gh" = 1 ] && ! { gh_ok && gh_app_visible; }; then need_brew=1; fi
+if [ "$gh" = 1 ] && ! gh_app_visible >/dev/null; then need_brew=1; fi
 # A brew that is found but cannot run is not ours to replace: stop with its path.
 if [ "$need_brew" = 1 ] && have brew && ! brew_ok; then
   [ "$dry" = 1 ] || die "brew at $(command -v brew) does not run (wrong architecture or a stale link); remove it or fix PATH, then rerun" 3
@@ -322,7 +345,7 @@ if [ "$ollama" = 1 ]; then
 fi
 
 # ----------------------------------------------------------------------- 5. gh
-if [ "$gh" = 1 ] && ! { gh_ok && gh_app_visible; }; then
+if [ "$gh" = 1 ] && ! gh_app_visible >/dev/null; then
   # reinstall repairs a broken Homebrew gh; install covers a missing one.
   if brew list --formula gh >/dev/null 2>&1; then run brew reinstall gh; else run brew install gh; fi
 fi

@@ -45,13 +45,24 @@ fi
 say() { printf '==> %s\n' "$*"; }
 # The host can run it: the Mach-O has the host's slice (Apple silicon also runs
 # x86_64 through Rosetta). `file` ships with macOS; lipo needs the Command Line Tools.
+# A shell translated by Rosetta reports x86_64 from uname; sysctl.proc_translated=1 means Apple silicon.
+host_arch() {
+  if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then echo arm64; else uname -m; fi
+}
 runs_here() {
   local info
   info=$(file -b "$1" 2>/dev/null) || return 1
-  case $(uname -m) in
+  case $(host_arch) in
     arm64) case $info in *arm64* | *x86_64*) return 0 ;; esac ;;
     *) case $info in *x86_64*) return 0 ;; esac ;;
   esac
+  return 1
+}
+# Ollama.app reads launchctl's environment, not ours. Only an unset or default loopback OLLAMA_HOST there is safe to open.
+launchd_ollama_host_ok() {
+  local h
+  h=$(launchctl getenv OLLAMA_HOST 2>/dev/null || true)
+  case ${h#http://} in '' | 127.0.0.1 | 127.0.0.1:11434 | localhost | localhost:11434) return 0 ;; esac
   return 1
 }
 # --noproxy: an http_proxy/ALL_PROXY must never answer for a loopback service.
@@ -125,6 +136,7 @@ if [ "$ollama" = 1 ]; then
   elif ollama_app=$(for a in /Applications/Ollama.app "$HOME/Applications/Ollama.app"; do
     if ollama_bundle_ok "$a"; then printf '%s\n' "$a"; break; fi
   done) && [ -n "$ollama_app" ]; then
+    launchd_ollama_host_ok || { echo "start-macos: launchctl's OLLAMA_HOST is $(launchctl getenv OLLAMA_HOST), so Ollama.app would listen there, not only on loopback; run 'launchctl unsetenv OLLAMA_HOST', or start Ollama yourself (or pass --no-ollama)" >&2; exit 3; }
     # GUI apps read launchctl's environment. Keep a value the operator chose.
     if [ -z "$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)" ]; then
       launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
