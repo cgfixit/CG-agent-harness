@@ -122,16 +122,17 @@ impl std::fmt::Debug for AuthManager {
 impl AuthManager {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
         let (mut connection, mut db, fresh) = sqlite::open(path)?;
-        // Homes created before setup codes shipped `admin` / `admin`. While that
-        // account still must replace its password and `admin` still verifies,
+        // Homes created before setup codes shipped `admin` / `admin`: the
+        // bootstrap account's password was its own username. While that account
+        // still must replace its password and its username still verifies,
         // anyone on this machine could take it, so rotate it to a setup code.
         // One scrypt check, only in that state.
         if !fresh {
-            let shipped = db.users.get(BOOTSTRAP_USERNAME).is_some_and(|u| {
+            let shipped = db.users.get_key_value(BOOTSTRAP_USERNAME).is_some_and(|(name, u)| {
                 !u.disabled
                     && u.must_change_password
                     && !authn::is_pending_password_record(&u.password_hash)
-                    && authn::verify_password(BOOTSTRAP_USERNAME, &u.password_hash).0
+                    && authn::verify_password(name, &u.password_hash).0
             });
             if shipped {
                 let code = authn::new_setup_code();
