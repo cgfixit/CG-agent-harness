@@ -946,7 +946,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".claude/skills/dep-sync/SKILL.md", Agent, 770),
     (".claude/skills/doc-sync/SKILL.md", Agent, 800),
     (".claude/skills/fable-protocol/SKILL.md", Agent, 790),
-    (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 400),
+    (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 300),
     (".claude/skills/verification-specialist/SKILL.md", Agent, 540),
     (".codex/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
     (".codex/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),

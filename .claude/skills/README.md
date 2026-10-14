@@ -34,6 +34,6 @@ are marked.
 - [`fable-protocol/`](fable-protocol/SKILL.md): evidence-first reasoning before
   costly code, security or CI claims.
 - [`run-cg-agent-harness/`](run-cg-agent-harness/SKILL.md): **operator-only,
-  Claude-only.** Fake-model console smoke run; ships `driver.mjs`.
+  Claude-only.** Fake-model console smoke run via `scripts/`.
 - [`verification-specialist/`](verification-specialist/SKILL.md): try to break a
   supplied change without modifying the tree.
