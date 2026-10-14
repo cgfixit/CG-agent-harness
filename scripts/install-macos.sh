@@ -245,4 +245,4 @@ case $app_dir in
   /Applications | "$HOME/Applications") say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).' ;;
   *) say "done. Next: CGAH_APP='$app_path' scripts/start-macos.sh (the launcher searches only /Applications and ~/Applications)" ;;
 esac
-say 'First sign-in on a fresh home is admin / admin, then a new password. Guide: docs/INSTALL.md'
+say 'First sign-in is user admin; docs/INSTALL.md (First run) says where its first credential comes from. A new password is required next.'
