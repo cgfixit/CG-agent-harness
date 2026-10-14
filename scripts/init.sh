@@ -225,7 +225,9 @@ kc_put() {
   security delete-generic-password -a admin -s "$kc_service" >/dev/null 2>&1
   return 1
 }
-generate_password() { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 24 || true; }
+# Finite input: with SIGPIPE ignored (CI runners, some launchers), BSD tr keeps
+# reading an endless /dev/urandom after head exits, and this never returns.
+generate_password() { head -c 1024 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' 2>/dev/null | head -c 24 || true; }
 
 # -------------------------------------------------------------------- steps
 step_preflight() {
