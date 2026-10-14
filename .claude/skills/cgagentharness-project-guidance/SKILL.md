@@ -34,7 +34,7 @@ you touch the behavior.
 | Sync vs detached agent | `/api/agent/run` and `/api/agent/jobs` both via `prepare_run` |
 
 This is **not** CyClaw. Harness has its own persona and structured-memory
-surfaces; no external-corpus RAG, LangGraph I1–I5, or CyClaw triple-gate topology. Defer CyClaw policy questions to Advisor. Preserve harness posture:
+surfaces; no external-corpus RAG, LangGraph I1–I5, or CyClaw triple-gate topology. Preserve harness posture:
 I6 isolation, guard chain, write gates, clone jail, judged-before-land,
 approval binding, secrets redaction, detached-run gates.
 
@@ -49,14 +49,14 @@ approval binding, secrets redaction, detached-run gates.
 | Config defaults / gates | `assets/config.default.yaml`, `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
 | Routes / console listing | `src/server/routes/mod.rs` (`REGISTERED_PATHS`), `views.rs` |
 | Install / local verify | `scripts/verify-local.sh`, `scripts/smoke-ollama.sh`, `README.md`, `docs/INSTALL.md`, `docs/MODELS.md` |
-| Packaging / release | `scripts/package-release.sh`, release workflow docs, `cgagentharness-release` |
+| Packaging / release | `scripts/package-release.sh`, `docs/RELEASING.md`, `docs/DESKTOP.md` |
 
 Core paths always require an invariant statement in the PR body when touched:
 `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`,
 `src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`,
 `src/agentic/workspace.rs`, `assets/config.default.yaml`.
 
-## 4. When to load which `.codex` skill
+## 4. Which skill to load
 
 | Skill | Load when |
 |---|---|
@@ -67,14 +67,13 @@ Core paths always require an invariant statement in the PR body when touched:
 | `cgagentharness-write-policy-redteam` | Hardening or changing writer, write gates, git approval, shim argv encoding, or clone jail |
 | `cgagentharness-config-guard` | Before merging `assets/config.default.yaml` changes; when asked to check config |
 | `verification-specialist` | Adversarial independent verify of a *supplied* change (try to break it; no project mutation) |
-| `cgagentharness-verify` | Running or extending the local/CI smoke/acceptance bar (distinct from verification-specialist) |
-| `cgagentharness-release` | Packaging, signing, checksum embed, release artifacts |
+| `cgagentharness-runtime-invariant-check` | Report-only walkthrough of the runtime invariants before pushing a core-path PR |
+| `cgagentharness-verify-deps` / `dep-sync` | Report on / fix Cargo, toolchain, deny and CI drift against `origin/main` |
+| `run-cg-agent-harness`, `doc-sync`, `cgagentharness-otel-hardening` | Operator-only: ask the operator to type them |
 | `cgagentharness-optimize` | Focused improvement scans that may open a draft PR |
 
-Claude deep playbook twins: `.claude/skills/fable-protocol/SKILL.md` (evidence
-handoff) and `.claude/skills/cgagentharness-optimize/SKILL.md` (optimize
-playbook). Codex `fable-protocol` / `cgagentharness-optimize` are the compressed
-runtimes.
+`cgagentharness-verify` and `cgagentharness-release` exist only under
+`.codex/skills/`; Claude Code has no copy.
 
 ## 5. Quality bar (do not invent a lower one)
 
@@ -96,7 +95,5 @@ complete.
 
 ## 7. STOP
 
-Sources refreshed for this task. Proceed to the task-specific skill (verify,
-verification-specialist, release, optimize, invariant-guard, config-guard,
-write-policy-redteam, gotchas, or fable-protocol) or to the requested
-engineering work — without expanding scope.
+Sources refreshed for this task. Proceed to the task-specific skill in section 4 or to the
+requested engineering work, without expanding scope.

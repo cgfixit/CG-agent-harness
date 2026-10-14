@@ -11,7 +11,7 @@ are marked.
 - [`cgagentharness-config-guard/`](cgagentharness-config-guard/SKILL.md): static
   fail-closed check of `assets/config.default.yaml` (gates, `confirm`, loopback).
 - [`cgagentharness-gotchas/`](cgagentharness-gotchas/SKILL.md): session-tested
-  traps: CI flakes, YAML `"true"`, Seatbelt noise, toolchain fights.
+  traps: CI flakes, Seatbelt noise, toolchain fights, review and release timing.
 - [`cgagentharness-invariant-guard/`](cgagentharness-invariant-guard/SKILL.md):
   **operator-only.** "Do the invariants still hold?" gate for core-path diffs.
 - [`cgagentharness-optimize/`](cgagentharness-optimize/SKILL.md): evidence-backed
