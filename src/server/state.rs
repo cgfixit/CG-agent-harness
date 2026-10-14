@@ -514,6 +514,19 @@ impl AppState {
         self.provider_for(&self.current_model())
     }
 
+    /// Memory generation stays on the local client even when chat selects cloud.
+    pub fn local_memory_model_for(&self, selected: &str) -> String {
+        if selected.trim().is_empty() || self.cloud_chat.is_cloud_selection(selected) {
+            self.backend.model.clone()
+        } else {
+            selected.to_string()
+        }
+    }
+
+    pub fn local_memory_model(&self) -> String {
+        self.local_memory_model_for(&self.current_model())
+    }
+
     pub fn provider_for(&self, model: &str) -> String {
         self.cloud_chat
             .provider_name(model)

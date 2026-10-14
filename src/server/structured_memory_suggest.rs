@@ -56,6 +56,7 @@ struct Job {
     owner: String,
     episode: String,
     source: Source,
+    model: String,
     run: String,
     input: String,
     output: String,
@@ -195,6 +196,20 @@ pub fn enqueue(
     input: &str,
     output: &str,
 ) -> Value {
+    enqueue_for_model(state, owner, source, episode, input, output, &state.current_model())
+}
+
+/// Chat supplies its captured request model, including a per-turn override.
+/// Later selection changes must not redirect already completed evidence.
+pub fn enqueue_for_model(
+    state: &Arc<AppState>,
+    owner: &str,
+    source: Source,
+    episode: Option<&str>,
+    input: &str,
+    output: &str,
+    model: &str,
+) -> Value {
     let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(reason) = unavailable_reason(state, source) {
         return attempt(
@@ -305,6 +320,7 @@ pub fn enqueue(
         owner: owner.into(),
         episode: episode.clone(),
         source,
+        model: state.local_memory_model_for(model),
         run: run.id.clone(),
         input,
         output,
@@ -503,6 +519,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         _ => return Ok(()),
     }
     let result = async {
+        store.set_consolidation_model(&job.owner, &run.id, &job.model)?;
         let payload = json!({"source":job.source.name(),"episode_id":job.episode,"mode":mode(state),
             "input":job.input,"output":job.output})
         .to_string();
@@ -523,7 +540,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
             _ = state.shutdown.cancelled() => {
                 return Err(HarnessError::new("interrupted", "the backend is shutting down"));
             }
-            reply = state.chat.chat(SYSTEM_PROMPT, &messages, None, 1024, 0.0) => reply?,
+            reply = state.chat.chat(SYSTEM_PROMPT, &messages, Some(&job.model), 1024, 0.0) => reply?,
         };
         if chat_cleared(state, job) {
             return Err(HarnessError::new("source_cleared", "chat cleared"));
@@ -533,16 +550,11 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         }
         let mut parsed = parse_consolidator_output(&reply.body_text, store.limits().max_consolidation_candidates)?;
         let count = parsed.candidates.len();
-        let mut summaries = 0;
         parsed.candidates.retain(|c| {
-            let category_ok = match (mode(state), c.category.as_deref()) {
-                ("summaries" | "both", Some("session_summary")) => {
-                    summaries += 1;
-                    summaries == 1
-                }
-                ("insights" | "both", Some("insight")) => true,
-                _ => false,
-            };
+            let category_ok = matches!(
+                (mode(state), c.category.as_deref()),
+                ("summaries" | "both", Some("session_summary")) | ("insights" | "both", Some("insight"))
+            );
             category_ok
                 && c.action == "add"
                 && c.target_fact_id.is_none()
@@ -550,7 +562,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
                     .as_ref()
                     .is_some_and(|s| state.audit.redact(s) == *s && !s.contains("[REDACTED_"))
         });
-        let (bound, rejected) = bind_candidates(
+        let (mut bound, _) = bind_candidates(
             &parsed,
             &ids,
             &store.list_facts(&job.owner)?,
@@ -558,6 +570,14 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
             store.limits().max_category_chars,
             store.limits().min_consolidation_confidence,
         );
+        // Only a valid candidate consumes the single-summary allowance.
+        let mut has_summary = false;
+        bound.retain(|candidate| {
+            if candidate.category.as_deref() != Some("session_summary") {
+                return true;
+            }
+            !std::mem::replace(&mut has_summary, true)
+        });
         let queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
         if job.source == Source::Chat && queue.running_chat_cancelled {
             return Err(HarnessError::new("source_cleared", "chat cleared"));
@@ -567,7 +587,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
             &run.id,
             &reply.model,
             count,
-            count - parsed.candidates.len() + rejected,
+            count - bound.len(),
             &drafts_from_bound(&bound),
         )?;
         drop(queue);
