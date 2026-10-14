@@ -42,6 +42,7 @@ file runs unskipped somewhere. CI expectations: [docs/INSTALL.md](../docs/INSTAL
 - [`structured_memory.rs`](structured_memory.rs): gates, facts, proposals, episodes, explicit recall, FTS retrieval, consolidation workers.
 - [`structured_memory_phase7.rs`](structured_memory_phase7.rs): fixture-model evaluation meets documented baselines (`fixtures/structured_memory/phase7`).
 - [`structured_memory_suggestions.rs`](structured_memory_suggestions.rs): automatic drafts stay owner-scoped pending proposals; chat preempts them.
+- [`structured_memory_model.rs`](structured_memory_model.rs): selected local models, captured turn models, cloud fallback, and failed-attempt provenance.
 
 ## MCP
 
