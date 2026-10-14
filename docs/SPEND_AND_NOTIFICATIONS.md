@@ -1,4 +1,4 @@
-# Spend and completion notifications
+# Spend, analytics and completion notifications
 
 Retained spend, Analytics and optional completion webhooks use the existing
 [installation](INSTALL.md), [account](SECURE_RESEARCH.md#accounts-and-roles)
@@ -11,25 +11,17 @@ the Cargo package version does not identify these capabilities.
 `GET /api/notifications` and version-2 envelopes identify the notification
 interface.
 
-[Analytics](ANALYTICS.md) combines this ledger summary with session/coding
-metrics, preserving completeness and pricing semantics.
-
 ## Read spend without mistaking missing data for zero
 
 The header's **session · tokens** is the selected session's persisted prompt
-plus completion tally. New sessions start at zero; reopening restores their
-tally even after restart. `/tokens` shows its breakdown. Unavailable tallies
-display `—`, not zero. Analytics and `/status` retain all-session aggregates.
+plus completion tally. New sessions start at zero; reopening restores the tally
+even after restart. `/tokens` shows its breakdown. Unavailable tallies display
+`—`, not zero. Analytics and `/status` hold all-session aggregates.
 
 Session tallies count committed chat exchanges, including web-tool rounds and
 successful compaction. They are not billing records. Failed-after-billing calls
 and independent research or coding operations can enter the ledger without a
 saved exchange. Switching sessions does not change the ledger.
-
-Open **Analytics** → **Tokens and cost**, then **Refresh** to read the same rollup
-as `GET /api/spend/summary`. Each page has at most 25 provider, model, and day
-groups. Closing the view, pressing Escape, or logging out clears page state without deleting the
-ledger. Older responses without completeness fields appear as unknown.
 
 The active home stores `logs/spend.jsonl` and its previous rotation,
 `logs/spend.jsonl.1`. Rows contain provider, model, timestamps, reported token
@@ -38,15 +30,11 @@ ledger is not a per-account invoice. Files rotate at 8 MiB by default; the
 summary reader refuses files above 16 MiB.
 
 The summary exposes `coverage: "retained_generations"`, `complete`, `files` and
-`skipped_rows`. File statuses mean:
+`skipped_rows`; each file's status is:
 
-| Status | Interpretation |
-|---|---|
-| `read` | The file was read; malformed rows are counted separately |
-| `missing` | That generation does not exist; missing previous generation is normal |
-| `unreadable` | The file could not be read |
-| `too_large` | The file exceeds the bounded summary read limit |
-| `invalid_utf8` | The file cannot be interpreted as UTF-8 |
+- `read`: summarized; malformed rows are counted separately.
+- `missing`: that generation does not exist; a missing previous generation is normal.
+- `unreadable`, `too_large` or `invalid_utf8`: not summarized.
 
 `complete: false` means retained evidence was skipped, including malformed rows,
 unreadable/oversized/invalid files, or a missing current file with a previous
@@ -56,25 +44,75 @@ coverage or an atomic snapshot across rotation.** Ledger writes are best-effort.
 
 Local inference is unpriced. Missing token counts, unknown models or unavailable
 rates are unknown, never zero USD. Grok provider-reported cost ticks take
-precedence when present; otherwise supported models use the bundled rate table.
-Rates older than 30 days are marked stale. A displayed USD subtotal covers only
-priced evidence; consult the provider's own billing records for reconciliation.
+precedence; otherwise supported models use the bundled rate table, and rates
+older than 30 days are marked stale. A USD subtotal covers only priced evidence;
+reconcile against the provider's own billing.
+
+## Analytics: sessions, tokens and coding runs
+
+After sign-in, choose **Analytics** or `/analytics`. The overview shows retained
+session tokens, readable sessions and coding runs; `+` marks a truncated list. Administrators who replaced the bootstrap password and operators can read
+it; auditors cannot. Sessions are owner-filtered; spend and coding-run records
+are portal-wide. Explicit legacy auth-disabled homes keep local access semantics.
+**Refresh** rereads; **Close**, Escape or an account change clears filters,
+sorting and cache.
+
+- **Tokens and cost:** the ledger rollup (`GET /api/spend/summary`) in pages of
+  at most 25 provider/model/day groups, plus **Estimate draft**; closing or
+  logout clears page state, not the ledger. Responses without completeness
+  fields appear as unknown.
+- **Sessions:** titles, message and exchange counts, input/output/total tokens
+  and UTC creation dates; sort by tokens (default), creation date or title. Bars
+  show the latest 14 recorded `created_ts` dates, not activity; unknown dates
+  are counted separately.
+- **Code:** run outcomes, iteration totals, per-run reject codes, and
+  changed-file occurrences summed across runs (a file in two runs counts twice;
+  not unique-file or line analytics). Missing metrics show **Unknown**;
+  disabled or failed coding reads show **Unavailable**.
+
+Arrow keys, Home and End switch sections; each keeps its own filter (over
+displayed values, including session IDs) and pages of at most 25 rows. Charts
+cover all retained records. Run listing scans at most 4,097
+directory entries and returns at most 128 records; a truncated listing is
+partial and its totals cover only listed records. Session and ledger totals
+have different retention rules and are never added.
+
+Opening Analytics starts no inference, repository edit, verification, push or PR;
+only **Estimate draft** sends a token-counting request. Run listing can reconcile stale
+`running` records to `interrupted`. Analytics adds no polling, cloud calls,
+chart dependencies or CSP permissions; user labels render as text.
+
+`GET /api/analytics/summary` uses the same account, role, same-origin, rate and
+CSRF (`X-CyClaw-CSRF`) guards as `GET /api/spend/summary`. It returns `spend`
+(the unchanged summary), `sessions.sessions` (no messages, goals or prompts),
+`status`, `session_days`, `sessions_without_created_date` and `code` (`runs`,
+`truncated`, `outcomes`; rows add `iterations`, `changed_file_count` and
+`reject_code`, never file names, diffs or source; or a typed `error`). A
+coding-source failure keeps spend and session data; a snapshot-task failure
+returns `ANALYTICS_UNAVAILABLE`. The composition is best-effort, not a
+transaction across files.
+
+On an older backend answering 404 for the aggregate, the dialog reads
+`/api/spend/summary`, `/api/sessions`, `/api/status` and `/api/agent/runs` in
+parallel; other aggregate failures do not fall back, per-source errors stay
+visible, and an authentication or permission refusal clears all sections.
+CLI-backed requests keep a 130-second client deadline, past the shim's 120.
 
 ## Estimate a cloud draft and configure a per-call cap
 
 Select `grok` or `claude` with `/model use`, type without sending, then choose
 **Analytics → Tokens and cost → Estimate draft**. It reports model, estimate
-source, reserved output, dated rate and cap decision. Local inference stays
-unpriced. Closing/logout clears estimates; edits require re-estimation. The
+source, reserved output, dated rate and cap decision; local inference stays
+unpriced. Closing or logout clears estimates, and edits need re-estimation. The
 build must expose `POST /api/spend/predict`.
 
 Claude sends the generation model and message body to its fixed
-`messages/count_tokens` endpoint. The two-second default deadline covers headers
+[`messages/count_tokens`](https://platform.claude.com/docs/en/build-with-claude/token-counting) endpoint. The two-second default deadline covers headers
 and body; errors, malformed responses, or oversized responses use the labelled fallback.
-Grok uses rounded-up UTF-8 bytes divided by four without a counting call.
-**Bytes/4 can undercount CJK.** The local Qwen calibration is not a cloud
-estimator. Neither history, attachments, memory, skills nor web context is sent.
-Provider credentials and enabled provider configuration are still required.
+Grok uses rounded-up UTF-8 bytes divided by four without a counting call, which
+**can undercount CJK**. The local Qwen calibration is not a cloud estimator.
+History, attachments, memory, skills and web context are not sent. Provider
+credentials and enabled provider configuration are still required.
 
 Merge into `models.cloud_chat` in the active home's YAML and restart:
 
@@ -97,14 +135,12 @@ A stale rate is shown as stale, not automatically refreshed. Estimates are not
 a guaranteed bill ceiling or a monthly spending limit.
 
 Every cloud chat rechecks immediately before generation. A refusal returns
-`CLOUD_CHAT_BUDGET` (HTTP 422); change the message/cap deliberately before retrying.
-Counting and refusal do not append ledger rows. The authenticated, CSRF-guarded
-API accepts `{"message":"your draft","model":"grok"}`; omitting `model` uses
+`CLOUD_CHAT_BUDGET` (HTTP 422); change the message or cap deliberately before
+retrying. Counting and refusal append no ledger rows. The authenticated,
+CSRF-guarded API accepts `{"message":"your draft","model":"grok"}`; omitting `model` uses
 the current selection. Messages must be nonblank and at most 32,768 characters.
 It shares the generation gate and returns `CHAT_BUSY` during another model
 operation. Audit entries contain estimate metadata, never draft text or keys.
-
-Provider contract: [Claude token counting](https://platform.claude.com/docs/en/build-with-claude/token-counting).
 
 ## Configure a completion webhook
 
@@ -129,13 +165,13 @@ notifications:
   private_url_allowlist: []
 ```
 
-Replace the example values before enabling. There are at most eight destinations;
-IDs are unique, 1–64 ASCII letters/digits/underscores/hyphens. Subscriptions are
-explicit and limited to terminal job states. Each destination's rate is 1–120
-batches/minute. A legacy global `webhook_url` must be migrated deliberately; the
-backend refuses an enabled nonempty legacy URL instead of assigning its authority
-to an arbitrary account. Only the local operator configures grants; portal accounts can inspect/replay
-their own retained deliveries, never choose another owner or grant destinations.
+Replace the example values before enabling. At most eight destinations; IDs are
+unique, 1–64 ASCII letters/digits/underscores/hyphens. Subscriptions are explicit
+and limited to terminal job states; each destination's rate is 1–120
+batches/minute. The backend refuses an enabled nonempty legacy global
+`webhook_url` rather than assign its authority to an arbitrary account; migrate
+it deliberately. Only the local operator configures grants; portal accounts can
+inspect and replay their own retained deliveries.
 
 Quoted `"true"` never enables the master gate. For `use_bearer: true`, each
 destination has its own bearer. Put them in the private file
@@ -162,25 +198,24 @@ Credentials are absent from the outbox, status responses, event payloads and
 content-free delivery audit records.
 
 Disabling or deleting an account cancels that owner's schedules and records the
-owner in `data/notifications/revoked-owners.json`. That owner's destinations
-stop. Other owners stay enabled. Turning the account back on does not restore
-those grants; edit the configuration and restart to do that deliberately.
+owner in `data/notifications/revoked-owners.json`; that owner's destinations stop
+and other owners stay enabled. Re-enabling the account does not restore the
+grants; edit the configuration and restart to do that deliberately.
 
 All settings require restart. Before each attempt or replay, the worker rereads
 the private config through the same 1 MiB reader as startup and rechecks the
-account, startup destination revision,
-subscription, grant, and credential. Disk changes can revoke startup authority,
-not add it. Destination changes or owner disablement, deletion, or demotion stop
-later attempts; an active request may finish. Malformed config refuses delivery.
-This creates only outbound requests, with no listener.
+account, startup destination revision, subscription, grant, and credential. Disk
+changes can revoke startup authority, not add it. Destination changes or owner
+disablement, deletion, or demotion stop later attempts; an active request may
+finish. Malformed config refuses delivery. There is no listener, only outbound
+requests.
 
-Public receivers require HTTPS. Loopback, RFC1918, and IPv6 unique-local receivers
-need an exact URL in `notifications.private_url_allowlist`, which accepts eight.
-Granted private receivers may use HTTP, though HTTPS is recommended for bearer
-confidentiality. Public HTTP, link-local, and mapped IPv6
-are refused. Each attempt validates and pins at most 32 DNS answers. Proxies,
-connection reuse, implicit retries, and redirects are disabled. Audit omits
-receiver bodies and URLs.
+Public receivers require HTTPS. Loopback, RFC1918 and IPv6 unique-local receivers
+need an exact URL in `notifications.private_url_allowlist` (eight entries) and
+may use HTTP, though HTTPS protects the bearer. Public HTTP, link-local and
+mapped IPv6 are refused. Each attempt validates and pins at most 32 DNS answers;
+proxies, connection reuse, implicit retries and redirects are disabled. Audit
+omits receiver bodies and URLs.
 
 | Setting | Default | Accepted range |
 |---|---:|---:|
@@ -230,30 +265,30 @@ IDs suppressing retained duplicates. First enablement can therefore deliver
 recent retained jobs for the owner and selected subscriptions.
 
 Delivery is **at least once with finite retries and retention**. A timeout or
-crash after acceptance may resend. A crash on the last attempt can leave an
+crash after acceptance may resend, and a crash on the last attempt can leave an
 exhausted row with unknown receipt; inspect the receiver before replay. File data
-and Unix directory ordering are synced, but power-loss behavior still depends on
-storage. Run one backend per home.
+and Unix directory ordering are synced, but power loss still depends on storage.
+Run one backend per home.
 
 HTTP 2xx completes delivery. HTTP 429, 5xx, DNS and transport/timeouts may retry;
 other statuses fail. Attempts, backoff, jitter, rate and payload size (64 KiB) are
 bounded. Expired rows are pruned. Under capacity pressure the oldest terminal row
 can be evicted; if all rows are pending, new deliveries are refused and audited.
-Reconciliation can resend an evicted terminal record still present in retained
-jobs; the stable delivery ID lets the receiver deduplicate it. Outbox write failures
-and overflow never change a job result. Bounded retention cannot guarantee delivery
-of every lifetime job.
+Reconciliation can resend an evicted terminal record still in retained jobs; the
+stable delivery ID lets the receiver deduplicate it. Outbox write failures and
+overflow never change a job result, and bounded retention cannot guarantee
+delivery of every lifetime job.
 
 ## Inspect and replay without rerunning a job
 
 Open **Job webhooks** and **Refresh status**; the header button appears only while
-notifications are enabled. The panel lists only the acting owner's
-destinations and retained metadata, with state, attempts, replays and coarse result
-codes. It exposes no destination URL, token or job result. A failed/delivered row
-can be replayed with a reason and explicit checkbox; current authority and finite
-replay/retention limits still apply. Pending, revoked, expired and evicted deliveries
-cannot be replayed. A revoked destination revision needs a new deliberate grant,
-not a replay bypass.
+notifications are enabled. The panel lists only the acting owner's destinations
+and retained metadata (state, attempts, replays, coarse result codes), never a
+destination URL, token or job result. A failed or delivered row can be replayed
+with a reason and explicit checkbox; current authority and finite replay and
+retention limits still apply. Pending, revoked, expired and evicted deliveries
+cannot be replayed, and a revoked destination revision needs a new deliberate
+grant.
 
 The guarded APIs are `GET /api/notifications` and
 `POST /api/notifications/{delivery_id}/replay` with `{"reason":"…","confirm":true}`.

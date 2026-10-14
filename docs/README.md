@@ -9,7 +9,7 @@ and the task needs it; `learning/` is never read unless the operator asks.
 ## Start here
 
 - **New operator, fresh machine:** [INSTALL.md](INSTALL.md), then
-  [MODELS.md](MODELS.md), [CONSOLE.md](CONSOLE.md) and [USER_MANUAL.md](USER_MANUAL.md).
+  [MODELS.md](MODELS.md) and [CONSOLE.md](CONSOLE.md).
   Keep [TROUBLESHOOTING.md](TROUBLESHOOTING.md) open.
 - **Turning on an optional feature** (each ships off): [MEMORY_GUIDE.md](MEMORY_GUIDE.md),
   [CODING_PIPELINE.md](CODING_PIPELINE.md), [MCP_CLIENT.md](MCP_CLIENT.md),
@@ -60,32 +60,25 @@ links resolve. Truth order for every claim is code, then
   Sessions and bounded continuation (`/goal`, `/loop`), transcript search and
   export, soul and persona editing, runtime skills, response styles, tool and
   connector visibility, text and DOCX attachments, streaming and cancellation,
-  and local history compaction. Holds the slash-command quick reference.
+  and local history compaction. Holds the slash-command quick reference and
+  keyboard, zoom and screen-reader behavior.
   Owns: `assets/static/harness.html`, `src/server/{slash,sessions,prompts,
   compaction,attachments,style,routes/core}.rs`. Tests: `tests/chat_and_sessions.rs`,
   `tests/chat_stream.rs`, `tests/chat_attachments.rs`, `tests/persona_controls.rs`,
-  the `scripts/test-*.mjs` contract tests.
-- [USER_MANUAL.md](USER_MANUAL.md): short orientation for operators. Explains
-  which staged reviews logout and session changes discard, keyboard, zoom and
-  screen-reader behavior, and where spend, notifications, limit reload, memory
-  and analytics live. Links the deeper guides rather than repeating them.
-  Owns: `assets/static/harness.html` review and accessibility behavior.
-  Tests: `scripts/test-review-reset.mjs`, `scripts/test-header-buttons.mjs`.
-- [ANALYTICS.md](ANALYTICS.md): the **Analytics** view and `/analytics`.
-  Describes the tokens-and-cost, sessions and coding-run sections, who may read
-  them by role, owner filtering, and the API and compatibility notes. Use it to
-  audit usage without mistaking missing data for zero.
-  Owns: `/api/analytics/summary` in `src/server/routes/core.rs`, `src/llm/spend.rs`.
-  Tests: `tests/analytics.rs`, `scripts/test-analytics.mjs`.
+  `scripts/test-review-reset.mjs`, `scripts/test-header-buttons.mjs`, the other
+  `scripts/test-*.mjs` contract tests.
 - [SPEND_AND_NOTIFICATIONS.md](SPEND_AND_NOTIFICATIONS.md): the retained spend
-  ledger, cloud-draft estimates with a per-call cap, and completion webhooks.
+  ledger, the **Analytics** view and `/analytics` (tokens and cost, sessions and
+  coding runs by role, with API and compatibility notes), cloud-draft estimates
+  with a per-call cap, and completion webhooks.
   Covers build requirements, reading partial ledgers, configuring a destination,
   the durable outbox and recovery, and inspecting or replaying deliveries without
   rerunning a job. Use it for cost control and job notifications.
   Owns: `src/llm/spend.rs`, `src/server/{notifications,notification_outbox}.rs`,
-  `src/server/routes/notifications.rs`. Tests: `tests/spend_ledger.rs`,
-  `tests/notifications.rs`, `scripts/test-spend-dashboard.mjs`,
-  `scripts/test-delivery-review.mjs`.
+  `src/server/routes/notifications.rs`, `/api/analytics/summary` in
+  `src/server/routes/core.rs`. Tests: `tests/spend_ledger.rs`, `tests/analytics.rs`,
+  `tests/notifications.rs`, `scripts/test-analytics.mjs`,
+  `scripts/test-spend-dashboard.mjs`, `scripts/test-delivery-review.mjs`.
 
 ## Memory
 

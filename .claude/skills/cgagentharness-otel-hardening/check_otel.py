@@ -516,11 +516,11 @@ INVENTORY: tuple[dict[str, object], ...] = (
     },
     {
         "name": "local stores and logs", "category": 4, "controls": {},
-        "url": "docs/ANALYTICS.md",
+        "url": "docs/SPEND_AND_NOTIFICATIONS.md",
         "versions": "rusqlite (bundled), tantivy 0.26, keyring 3.6.3 (OS store; Linux Secret Service "
                     "over D-Bus is local IPC), tracing-subscriber 0.3 (stderr + env-filter), audit and "
                     "spend JSONL",
-        "enforcement": "no exporter crate in either lock graph (T5); `docs/ANALYTICS.md` is the local "
+        "enforcement": "no exporter crate in either lock graph (T5); `docs/SPEND_AND_NOTIFICATIONS.md` is the local "
                        "spend/usage rollup, not vendor analytics",
         "scope": "process-local", "reviewed": "2026-10-03",
         "evidence": "T5 lock scan clean on 2026-10-03",

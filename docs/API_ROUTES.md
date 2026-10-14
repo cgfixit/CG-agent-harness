@@ -23,7 +23,7 @@ check-profile names and run IDs, never browser-supplied commands.
 | GET | `/api/registry` | Skill/persona registry listing |
 | GET | `/api/audit` | Audit events (any role) |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |
-| GET | `/api/analytics/summary` | Owned sessions plus shared spend/coding analytics (`/analytics`; [details](ANALYTICS.md)) |
+| GET | `/api/analytics/summary` | Owned sessions plus shared spend/coding analytics (`/analytics`; [details](SPEND_AND_NOTIFICATIONS.md#analytics-sessions-tokens-and-coding-runs)) |
 | POST | `/api/config/reload` | Reload the non-secret limits allowlist (administrator, CSRF-guarded; see [CONFIG_RELOAD.md](CONFIG_RELOAD.md)) |
 
 ## Accounts and sessions
