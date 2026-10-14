@@ -230,9 +230,13 @@ else
   elif CGAGENTHARNESS_HOME=$home "$backend" tls certificate >"$pem" 2>/dev/null && [ -s "$pem" ]; then
     if security verify-cert -c "$pem" -p ssl -s "$loopback" -L -q >/dev/null 2>&1; then
       say "browser trust: this home's certificate is trusted for $loopback"
+    elif [ "$trust" = 1 ] && openssl x509 -in "$pem" -noout -text 2>/dev/null | grep -q 'CA:TRUE'; then
+      # An operator-supplied tls.cert_file can be a CA; trusting it would cover other hosts.
+      echo "start-macos: this home's certificate is a CA certificate (tls.cert_file); not trusting it from here (docs/SECURE_RESEARCH.md#https-and-native-trust)" >&2
     elif [ "$trust" = 1 ]; then
-      say "trusting this home's certificate for TLS in your login keychain (macOS asks for your password)"
-      security add-trusted-cert -r trustRoot -p ssl -k "$HOME/Library/Keychains/login.keychain-db" "$pem" \
+      say "trusting this home's certificate for TLS to $loopback in your login keychain (macOS asks for your password)"
+      # -s limits the SSL trust setting to the loopback host the console is served on.
+      security add-trusted-cert -r trustRoot -p ssl -s "$loopback" -k "$HOME/Library/Keychains/login.keychain-db" "$pem" \
         || echo "start-macos: the certificate was not trusted; the browser will warn" >&2
     else
       say 'browser trust: not trusted yet; your browser will warn. Rerun with --trust-cert, or see docs/SECURE_RESEARCH.md#https-and-native-trust'

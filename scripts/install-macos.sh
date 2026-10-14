@@ -70,9 +70,6 @@ gh_app_first() {
   done
   return 1
 }
-# The shipped agentic.gh_min_version; a home's own config.yaml may raise it.
-gh_min=$(sed -n 's/^ *gh_min_version: *"\([0-9][0-9.]*\)".*/\1/p' "$root/assets/config.default.yaml" 2>/dev/null | head -n1)
-gh_min=${gh_min:-2.40.0}
 # X.Y.Z >= X.Y.Z, numerically.
 ver_ge() {
   local IFS=. i
@@ -84,6 +81,14 @@ ver_ge() {
   done
   return 0
 }
+# agentic.gh_min_version from a config file, quoted or not.
+gh_min_of() { sed -n 's/^ *gh_min_version: *"\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"\{0,1\} *$/\1/p' "$1" 2>/dev/null | head -n1 || true; }
+# The shipped minimum, or the home's own config.yaml value when that is higher
+# (the pipeline enforces the home's value).
+gh_min=$(gh_min_of "$root/assets/config.default.yaml")
+gh_min=${gh_min:-2.40.0}
+v=$(gh_min_of "${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}/config.yaml")
+if [ -n "$v" ] && ! ver_ge "$gh_min" "$v"; then gh_min=$v; fi
 # The version of the gh at $1, empty if it does not run.
 gh_version() { "$1" --version 2>/dev/null | sed -n 's/^gh version \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n1; }
 # The app's gh runs and meets the minimum. Prints its path.
@@ -300,6 +305,11 @@ if [ "$gh" = 1 ] && ! gh_app_visible >/dev/null; then need_brew=1; fi
 # A brew that is found but cannot run is not ours to replace: stop with its path.
 if [ "$need_brew" = 1 ] && have brew && ! brew_ok; then
   [ "$dry" = 1 ] || die "brew at $(command -v brew) does not run (wrong architecture or a stale link); remove it or fix PATH, then rerun" 3
+fi
+# Homebrew's installer aborts unless /usr/bin/uname -m is arm64: an Intel Mac, or a Rosetta shell.
+if [ "$need_brew" = 1 ] && ! have brew && [ "$(uname -m)" != arm64 ]; then
+  [ "$(host_arch)" != arm64 ] || die 'this shell runs under Rosetta, and Homebrew installs only from a native shell; open a Terminal without "Open using Rosetta" and rerun' 3
+  die 'Homebrew installs only on Apple silicon; install Ollama from https://ollama.com/download (and gh from https://cli.github.com for --with-gh) yourself and rerun, or rerun with --no-ollama' 3
 fi
 if [ "$need_brew" = 1 ] && ! have brew; then
   say 'installing Homebrew (official installer; it asks for your password)'

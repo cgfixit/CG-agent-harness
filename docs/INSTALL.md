@@ -5,8 +5,10 @@ For model and account details, see [Models](MODELS.md) and
 
 ## 1. Quick start: automated macOS install
 
-On macOS 12+ (14+ to install Ollama), two scripts do sections 2–7 on a fresh Mac. Run them as
-your user, not with `sudo`:
+On macOS 12+, two scripts do sections 2–7 on a fresh Mac. Installing Ollama needs
+macOS 14+, and Homebrew installs only on Apple Silicon: on an Intel Mac
+without it, install Ollama (and `gh`) yourself or pass `--no-ollama`. Run them as
+your user (no `sudo`):
 
 ```bash
 xcode-select --install     # once; finish the dialog (git comes with it)
@@ -26,14 +28,14 @@ touches the home directory and pulls a model only with `--model`.
 | Option | Effect |
 |---|---|
 | `--check` | Lists what is present; exits 1 when something required is missing |
-| `--dry-run` | Prints every command a real run would make, changing nothing |
+| `--dry-run` | Prints every command, changing nothing |
 | `--replace-app` | Replaces a working app; keeps the previous one in `~/Library/Caches/CG-agent-harness-installer/previous`. An incomplete or unsigned copy is replaced without it |
 | `--no-ollama`, `--no-build`, `--no-app`, `--app-dir DIR` | Skip a step or choose the app location; outside `/Applications` and `~/Applications`, start with `CGAH_APP`; after `--no-app`, with `--standalone` |
 
-The checksum proves the download is intact, not who built it: both files come
-from the same release page. A `curl` download carries no quarantine flag, so
-Gatekeeper does not prompt; compare `Resources/COMMIT` with the release notes as
-in [5.2](#52-macos-app). Quit the app with Cmd-Q before `--replace-app`.
+The checksum proves integrity, not authorship (both files share one release
+page). `curl` downloads skip Gatekeeper's quarantine prompt; compare
+`Resources/COMMIT` with the release notes ([5.2](#52-macos-app)). Quit the app
+(Cmd-Q) before `--replace-app`.
 
 [`start-macos.sh`](../scripts/start-macos.sh) is the everyday launcher, described
 in [section 7](#7-open-the-console-in-a-browser).
