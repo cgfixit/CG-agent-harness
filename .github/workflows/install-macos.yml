@@ -1,0 +1,104 @@
+# Run the macOS installer and launcher end to end on a fresh macos-latest runner:
+# inventory, dry run, real install (Rust, Ollama, backend build, checksummed
+# release app), idempotent rerun, app-mode browser hand-off, the standalone
+# home-lock refusal, and standalone mode on a separate home.
+# Path-filtered and manual only; not a merge gate. No secrets, no model pull.
+# --trust-cert is not exercised: it needs an interactive keychain password.
+name: macOS install
+
+on:
+  pull_request:
+    paths:
+      - "scripts/install-macos.sh"
+      - "scripts/start-macos.sh"
+      - "scripts/start-web.sh"
+      - ".github/workflows/install-macos.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: install-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  install:
+    name: install-macos.sh and start-macos.sh (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Inventory before install (missing items expected)
+        run: |
+          set +e
+          scripts/install-macos.sh --check --app-dir "$RUNNER_TEMP/Applications"
+          rc=$?
+          echo "check exited $rc"
+          test "$rc" = 1
+
+      - name: Dry run prints the plan and changes nothing
+        run: |
+          set -euo pipefail
+          scripts/install-macos.sh --dry-run --with-gh --model qwen3:0.6b --app-dir "$RUNNER_TEMP/Applications" | tee dry.log
+          grep -q '^+ ollama pull qwen3:0.6b$' dry.log
+          test ! -e "$RUNNER_TEMP/Applications"
+
+      - name: Install
+        timeout-minutes: 30
+        run: scripts/install-macos.sh --app-dir "$RUNNER_TEMP/Applications"
+
+      - name: Inventory after install
+        run: scripts/install-macos.sh --check --app-dir "$RUNNER_TEMP/Applications"
+
+      - name: Rerun keeps the installed app
+        run: scripts/install-macos.sh --no-build --app-dir "$RUNNER_TEMP/Applications" | grep 'keeping '
+
+      # Every step that opens a GUI app is bounded: an unanswered macOS prompt
+      # must fail the step, not the 60-minute job.
+      - name: App mode hands the app's own origin to start-web.sh
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          export CGAH_APP="$RUNNER_TEMP/Applications/CG Agent Harness.app"
+          scripts/start-macos.sh | tee start.log
+          # The certificate check ran against the home the backend holds.
+          grep -q '^==> browser trust: ' start.log
+          url=$(sed -n 's/^CGagentHarness console: //p' start.log)
+          case $url in https://127.0.0.1:*/) ;; *) echo "unexpected console URL: $url"; exit 1 ;; esac # DevSkim: ignore DS162092 because the app console must be a loopback origin.
+          "$CGAH_APP/Contents/MacOS/cgagentharness" tls certificate > app.pem
+          code=$(curl --silent --show-error --max-time 15 --cacert app.pem -o /dev/null -w '%{http_code}' "${url}api/status")
+          echo "verified TLS to the app backend; /api/status answered $code"
+          test "$code" = 200
+
+      - name: Standalone refuses while the app owns the default home
+        timeout-minutes: 3
+        run: |
+          set +e
+          scripts/start-macos.sh --no-ollama --standalone 8791
+          rc=$?
+          test "$rc" = 3
+
+      - name: Standalone mode on a separate home
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          home=$(mktemp -d)
+          CGAGENTHARNESS_HOME=$home NO_OPEN=1 scripts/start-macos.sh --no-ollama --standalone 8791 > standalone.log 2>&1 &
+          server=$!
+          for _ in $(seq 1 120); do grep -q '^CGagentHarness console:' standalone.log && break; sleep 0.5; done
+          cat standalone.log
+          CGAGENTHARNESS_HOME=$home target/release/cgagentharness tls certificate > standalone.pem
+          code=$(curl --silent --show-error --max-time 15 --cacert standalone.pem -o /dev/null -w '%{http_code}' https://127.0.0.1:8791/api/status) # DevSkim: ignore DS162092 because the standalone console binds loopback only.
+          echo "standalone /api/status answered $code"
+          kill "$server"
+          test "$code" = 200
+
+      - name: Quit the app
+        if: always()
+        timeout-minutes: 2
+        run: osascript -e 'quit app "CG Agent Harness"' || true
