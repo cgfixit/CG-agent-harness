@@ -611,7 +611,7 @@ dialog p { margin-bottom:12px; }
       <input id="hAuthPass" name="password" type="password" autocomplete="current-password" maxlength="1024">
       <p id="hAuthError" class="signin-error" role="alert"></p>
       <button id="hAuthLogin" type="submit">Sign in</button>
-      <p id="hAuthHint" class="signin-hint" hidden>First run: the username and password are both <strong>admin</strong>. You'll set a new password next.</p>
+      <p id="hAuthHint" class="signin-hint" hidden>First run: sign in as <strong>admin</strong> with the setup code. The app's Setup window (Cmd-,) shows it; for a terminal server it is in the <code>setup-code</code> file in the harness home. You'll set a new password next.</p>
     </form>
     <form id="hAuthSetup" aria-labelledby="setupTitle" hidden>
       <h1 id="setupTitle">Set the administrator password</h1>
@@ -4706,14 +4706,14 @@ function resetAccountView() {
 /* mode is 'login', 'setup' or null (signed in, or authentication disabled).
    The default-credentials note shows only while the server reports that the
    shipped admin password is still in effect. */
-function showSignIn(mode, defaultPassword) {
+function showSignIn(mode, setupCode) {
   const out = mode === 'login' || mode === 'setup';
   const wasOut = document.body.classList.contains('signed-out');
   document.body.classList.toggle('signed-out', out);
   $('signInScreen').hidden = !out;
   hAuthLoginBox.hidden = mode !== 'login';
   hAuthSetup.hidden = mode !== 'setup';
-  $('hAuthHint').hidden = !(mode === 'login' && defaultPassword === true);
+  $('hAuthHint').hidden = !(mode === 'login' && setupCode === true);
   /* Clearing also disconnects any Memory listing still in flight, so it
      stops. The first probe has shown nothing yet, so it resets nothing. */
   if (out && !wasOut && !document.documentElement.classList.contains('auth-pending')) resetAccountView();
@@ -4791,7 +4791,7 @@ async function refreshHarnessAuth() {
     window.__cyclawRole = null;
     if (who) who.textContent = '';
     setHarnessLogoutVisible(false);
-    showSignIn(status.needs_password ? 'setup' : 'login', status.default_password);
+    showSignIn(status.needs_password ? 'setup' : 'login', status.setup_code);
   } catch (e) {
     /* Keep the last UI, except on the first probe: there is no last UI yet,
        and revealing the console would show it as usable. */

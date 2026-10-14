@@ -9,8 +9,8 @@ checks need their configured tools. Native acceptance evidence lives in PR bodie
 1. Unzip the universal archive and move **CG Agent Harness.app** to Applications
    (or a directory you own). Quit an existing copy before replacing it.
 2. Open it from Finder or the Dock. The app installs no login item or service.
-3. Fresh homes enable HTTPS, accounts, roles and web controls. The sign-in
-   screen shows `admin` / `admin`.
+3. Fresh homes enable HTTPS, accounts, roles and web controls. Sign in as
+   `admin` with the setup code from **Setup and recovery**.
    Signing in opens password replacement; closing it does not unlock the portal.
    Replace the password with at least 12 characters.
    The native webview verifies its owned certificate without system trust changes.

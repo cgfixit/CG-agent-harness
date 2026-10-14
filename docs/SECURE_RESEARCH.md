@@ -1,7 +1,5 @@
 # Accounts, HTTPS and permitted web research
 
-> default login before pw reset needs to be more limited and other things i overlook 
-
 Fresh homes enable HTTPS, role authentication, and web operations. Web content
 needs an explicit URL grant, and the allowlist starts empty.
 Upgrades preserve `config.yaml`; missing legacy auth or TLS switches remain off.
@@ -30,8 +28,9 @@ A stale harness key neither blocks a valid account nor grants access.
 
 ### First login and passwords
 
-Only a fresh account store creates `admin` / `admin`. Its password uses the
-normal scrypt hash with a bootstrap exception. Sign in and replace it with at
+A fresh store's `admin` password is a random one-time code in owner-only
+`<home>/setup-code`, deleted once replaced; other local accounts cannot claim
+it. Homes still on `admin` / `admin` rotate at startup. Sign in and replace it with at
 least 12 characters. Until then, the account can inspect its identity, change
 its password, or log out, but cannot use chat, research, coding, administration,
 or keys. Replacement checks the current password and CSRF token, then invalidates
@@ -89,7 +88,7 @@ its existing setup flow. Corrupt, empty, unsafe, or unsupported initialized stor
 refuse startup; no automatic reset occurs. Failed writes do not publish successful
 in-memory account changes. Stop the server before an operator-controlled backup
 or recovery; preserve the database and initialization marker together, and do
-not delete them to recreate `admin` / `admin`.
+not delete them to recreate `admin`.
 
 Each scrypt derivation uses about 128 MiB. `auth.max_concurrent_operations`
 (default 2, range 1–4) bounds login and password work; extra attempts wait.
