@@ -5,7 +5,7 @@ For model and account details, see [Models](MODELS.md) and
 
 ## 1. Quick start: automated macOS install
 
-On macOS 12 or newer, two scripts do sections 2–7 from a fresh Mac. Run them as
+On macOS 12+ (14+ to install Ollama), two scripts do sections 2–7 on a fresh Mac. Run them as
 your user, not with `sudo`:
 
 ```bash
@@ -17,9 +17,8 @@ scripts/start-macos.sh     # opens the app, then its console in your browser
 ```
 
 [`install-macos.sh`](../scripts/install-macos.sh) keeps every tool that already
-works and installs only what is missing, in order: Command Line Tools; Homebrew,
-only when Ollama or `gh` must be installed; rustup with the pinned Rust; Ollama;
-optional `gh`. It then builds the standalone backend and downloads the latest
+works and installs only what is missing, in order: Command Line Tools; Homebrew
+(only for Ollama or `gh`); rustup with the pinned Rust; Ollama; optional `gh`. It then builds the standalone backend and downloads the latest
 release app, checks it against that release's `SHA256SUMS` and `codesign`, and
 copies it to `/Applications` (`~/Applications` when that is not writable). It never
 touches the home directory and pulls a model only with `--model`.

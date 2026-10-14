@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install everything CGagentHarness needs on macOS 12+, from a fresh clone.
+# Install everything CGagentHarness needs on macOS 12+ (14+ to install Ollama), from a fresh clone.
 # Idempotent: tools that already work are kept, never upgraded or replaced.
 #   scripts/install-macos.sh               # install missing tools, build, fetch the app
 #   scripts/install-macos.sh --check       # inventory only; exit 1 if something required is missing
@@ -50,6 +50,8 @@ run() {
   [ "$dry" = 1 ] || "$@"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+# Command Line Tools that work: a selected directory whose compiler runs.
+clt_ok() { xcode-select -p >/dev/null 2>&1 && xcrun clang --version >/dev/null 2>&1; }
 # A Homebrew that runs (not a stale link or a wrong-arch binary).
 brew_ok() { have brew && brew --version >/dev/null 2>&1; }
 # A GitHub CLI that runs (not a stale link or a wrong-arch binary).
@@ -105,6 +107,10 @@ ollama_cli() {
 [ "$(id -u)" != 0 ] || die 'run as your user, not root; the installers ask for a password when they need one' 3
 major=$(sw_vers -productVersion | cut -d. -f1)
 [ "$major" -ge 12 ] || die "macOS 12 or newer is required (found $(sw_vers -productVersion))" 3
+# Homebrew's Ollama cask (ollama-app) requires macOS 14. Refuse before changing anything.
+if [ "$ollama" = 1 ] && [ "$major" -lt 14 ] && ! have ollama && [ ! -d /Applications/Ollama.app ] && [ ! -d "$HOME/Applications/Ollama.app" ]; then
+  die "installing Ollama needs macOS 14 or newer (found $(sw_vers -productVersion)); rerun with --no-ollama and point chat at another model (docs/MODELS.md)" 3
+fi
 toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$root/rust-toolchain.toml")
 [ -n "$toolchain" ] || die 'cannot read the pinned toolchain from rust-toolchain.toml'
 
@@ -130,7 +136,9 @@ app_path=$app_dir/$app_name
 inventory() {
   local missing=0 v want tags
   say "macOS $(sw_vers -productVersion) on $(uname -m)"
-  if xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p)"; else say 'Command Line Tools: MISSING'; missing=1; fi
+  if clt_ok; then say "Command Line Tools: $(xcode-select -p)"
+  elif xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p) is selected but its compiler does not run"; missing=1
+  else say 'Command Line Tools: MISSING'; missing=1; fi
   if brew_ok; then say "Homebrew: $(brew --version 2>/dev/null | head -n1)"
   elif have brew; then say "Homebrew: $(command -v brew) does not run (remove it or fix PATH; needed only to install Ollama or gh)"
   else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
@@ -186,9 +194,14 @@ if [ "$check" = 1 ]; then
 fi
 
 # ------------------------------------------------------------- 1. Xcode CLT
-if ! xcode-select -p >/dev/null 2>&1; then
-  run xcode-select --install
-  [ "$dry" = 1 ] || die 'finish the Command Line Tools dialog, then rerun this script' 3
+if ! clt_ok; then
+  if xcode-select -p >/dev/null 2>&1; then
+    # Selected but broken (often after an OS update): --install refuses an existing copy.
+    [ "$dry" = 1 ] || die "Command Line Tools at $(xcode-select -p) are selected but clang does not run; reinstall them (sudo rm -rf \"$(xcode-select -p)\" && xcode-select --install), then rerun" 3
+  else
+    run xcode-select --install
+    [ "$dry" = 1 ] || die 'finish the Command Line Tools dialog, then rerun this script' 3
+  fi
 fi
 
 # ----------------------------------------------------------------- 2. Homebrew
