@@ -3,7 +3,7 @@
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
-CG-Agent combines chat, files, memory and selected tools locally. Coding changes are checked and reviewed; committing, pushing and opening draft pull requests require separate approvals.
+CG-Agent combines chat, files, memory and selected tools locally. 
 
 ![CG Agent Harness console, signed in, with a local model reply and the Console, Model and Web status chips](docs/screenshots/console-chat-signed-in-2026-10-05.png)
 
