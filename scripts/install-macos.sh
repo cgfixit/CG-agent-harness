@@ -108,7 +108,8 @@ ollama_cli() {
 major=$(sw_vers -productVersion | cut -d. -f1)
 [ "$major" -ge 12 ] || die "macOS 12 or newer is required (found $(sw_vers -productVersion))" 3
 # Homebrew's Ollama cask (ollama-app) requires macOS 14. Refuse before changing anything.
-if [ "$ollama" = 1 ] && [ "$major" -lt 14 ] && ! have ollama && [ ! -d /Applications/Ollama.app ] && [ ! -d "$HOME/Applications/Ollama.app" ]; then
+# Same validity tests as the install step: a dead CLI or a partial app would need that cask too.
+if [ "$ollama" = 1 ] && [ "$major" -lt 14 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then
   die "installing Ollama needs macOS 14 or newer (found $(sw_vers -productVersion)); rerun with --no-ollama and point chat at another model (docs/MODELS.md)" 3
 fi
 toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$root/rust-toolchain.toml")
@@ -196,8 +197,15 @@ fi
 # ------------------------------------------------------------- 1. Xcode CLT
 if ! clt_ok; then
   if xcode-select -p >/dev/null 2>&1; then
-    # Selected but broken (often after an OS update): --install refuses an existing copy.
-    [ "$dry" = 1 ] || die "Command Line Tools at $(xcode-select -p) are selected but clang does not run; reinstall them (sudo rm -rf \"$(xcode-select -p)\" && xcode-select --install), then rerun" 3
+    # Selected but broken: --install refuses an existing copy. Only the standalone
+    # Command Line Tools may be removed; a selected Xcode.app is never deleted.
+    devdir=$(xcode-select -p)
+    if [ "$devdir" = /Library/Developer/CommandLineTools ]; then
+      fix="sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install"
+    else
+      fix="accept Xcode's license with 'sudo xcodebuild -license accept', or select the Command Line Tools with 'sudo xcode-select --switch /Library/Developer/CommandLineTools'"
+    fi
+    [ "$dry" = 1 ] || die "the developer tools at $devdir are selected but clang does not run; $fix, then rerun" 3
   else
     run xcode-select --install
     [ "$dry" = 1 ] || die 'finish the Command Line Tools dialog, then rerun this script' 3
