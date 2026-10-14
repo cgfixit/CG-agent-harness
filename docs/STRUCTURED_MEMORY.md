@@ -253,7 +253,9 @@ set chat would send. Suggest still does not mutate canonical facts.
   a worse quality path because metadata cannot support durable facts. The v2
   prompt asks for no candidates from metadata alone. Auto-batching requires a
   non-NULL, nonblank semantic summary and an unexpired `none`/`pending` row;
-  owners with a running consolidation are skipped.
+  running owners and episodes from failed/cancelled current-version runs are
+  skipped. Those episodes require an explicit manual retry, including after restart;
+  completion-suggestion failures do not block human-summary consolidation.
 - **Suggestion quality.** `consolidator-v2` asks for durable preferences,
   identity, corrections, or standing constraints supported by semantic summaries.
   Temporary plans, jokes, tool/status dumps, errands, and unsupported guesses
@@ -278,7 +280,7 @@ set chat would send. Suggest still does not mutate canonical facts.
   returns the completed run and does not insert a second proposal batch.
   A completed v1 key does not suppress a v2 run on the same episode set.
   Interrupted `running` rows become `failed`/`interrupted` on reopen and may
-  be retried on the same key.
+  be retried manually on the same key.
 - Audit records run id, counts, state, and error class. It does not record
   episode summaries, proposal payloads, or raw model output.
 
