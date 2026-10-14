@@ -168,7 +168,11 @@ def checks_ready(rollup):
         if check["__typename"] == "CheckRun":
             if check["status"] != "COMPLETED":
                 ready = False
-            elif check["conclusion"] not in ("SUCCESS", "SKIPPED", "NEUTRAL"):
+            elif check["conclusion"] == "NEUTRAL":
+                # CodeQL uses neutral while a required analysis configuration
+                # is missing. A successful upload workflow alone is not enough.
+                ready = False
+            elif check["conclusion"] not in ("SUCCESS", "SKIPPED"):
                 raise Stop(
                     f"Check did not pass: {check['name']} ({check['conclusion']})"
                 )

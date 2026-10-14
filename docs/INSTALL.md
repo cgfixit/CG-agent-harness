@@ -627,13 +627,13 @@ Contents/Pull requests/Workflows write; Actions/Checks/Commit statuses/Administr
 read. This triggers CI/Bundle. Configure
 classic main protection with required checks, strict up-to-date checks and
 administrator enforcement; ruleset-only protection is unsupported. No settings,
-secrets, draft status or bypass permissions are changed by the workflow.
+secrets, draft status or bypass permissions are changed.
 
 Mark PRs ready before **execute**. The queue captures heads, updates
 branches sequentially, waits for current-head CI/reviews, squash-merges, then
 waits for main CI/Bundle. Drafts, forks, conflicts, failed/cancelled/missing checks,
-unresolved reviews and unexpected head/base changes stop it. Skipped/neutral
-jobs require successful expected workflows; disabled governance is not a pass.
+unresolved reviews and unexpected head/base changes stop it. Neutral checks wait;
+skipped jobs require successful expected workflows. Disabled governance never passes.
 
 One batch runs at a time; timeout is 300 minutes (maximum 330).
 Cancellation cannot undo merges. Resolve blockers and rerun; merged entries are

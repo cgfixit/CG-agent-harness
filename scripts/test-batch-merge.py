@@ -228,6 +228,7 @@ class BatchTests(unittest.TestCase):
         value["contexts"]["nodes"][0]["status"] = "QUEUED"
         self.assertFalse(batch.checks_ready(value))
         self.assertTrue(batch.checks_ready(rollup("SKIPPED")))
+        self.assertFalse(batch.checks_ready(rollup("NEUTRAL")))
 
     def test_inputs_reject_duplicates_shell_text_and_empty(self):
         self.assertEqual(batch.numbers("#2, 1"), [2, 1])
