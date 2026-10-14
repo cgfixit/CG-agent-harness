@@ -8,6 +8,7 @@ const $ = id => { if (!nodes.has(id)) nodes.set(id, {textContent:'',style:{},dat
 let session = {tokens:{total:0}}, fail = false;
 const ctx = vm.createContext({$, Number, currentSession:'new', sessionRevision:0,
   statusTimer:null, statusBackoffMs:15000, STATUS_BASE_INTERVAL:15000, STATUS_MAX_INTERVAL:120000,
+  apiRetryDelay:()=>0,
   apiKeyInput:null, window:{}, soulEnabled:false, soulStatus:{}, memoryEnabled:false,
   paintSoul(){}, paintMemory(){}, paintStyle(){}, refreshStyle:async()=>{}, scheduleStatusRefresh(){},
   api:async path => {
