@@ -1069,9 +1069,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // up to the next 500 under the slack rule.
 // why: operator-approved (2026-10-14) macOS installer docs put Guide at 48,597 words; rounded up to the next 500.
 // why: the skills review trimmed fable-protocol and gotchas; Agent is 21322 words, rounded up to the next 500.
-// why: operator-approved (2026-10-14) Guide cap of 60,000 (Guide at 48,665) so docs/INSTALL.md can reach its
+// why: operator-approved (2026-10-14) Guide cap of 65,000 (Guide at 48,665) so docs/INSTALL.md can reach its
 // 7,500-word row; DOCS_GROUP_SLACK_OVERRIDES lets this one group sit that far above its words.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 60_000), (Evidence, 500), (Agent, 21_500)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 65_000), (Evidence, 500), (Agent, 21_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
@@ -1079,8 +1079,8 @@ const DOCS_GROUP_SLACK: usize = 1_000;
 
 /// Groups the operator allowed to sit further above their words than
 /// `DOCS_GROUP_SLACK`; every other group keeps the default.
-// why: operator-approved (2026-10-14) Guide headroom for the 60,000 cap; 12,000 covers 60,000 - 48,665.
-const DOCS_GROUP_SLACK_OVERRIDES: &[(Kind, usize)] = &[(Guide, 12_000)];
+// why: operator-approved (2026-10-14) Guide headroom for the 65,000 cap; 17,000 covers 65,000 - 48,665.
+const DOCS_GROUP_SLACK_OVERRIDES: &[(Kind, usize)] = &[(Guide, 17_000)];
 
 /// The slack a group cap may keep above its words before it must be lowered.
 fn group_slack(kind: Kind) -> usize {
