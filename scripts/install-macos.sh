@@ -49,7 +49,21 @@ run() {
   [ "$dry" = 1 ] || "$@"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
-ollama_up() { curl --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
+# --noproxy: an http_proxy/ALL_PROXY must never answer for a loopback service.
+ollama_up() { curl --noproxy '*' --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
+# A usable app: both executables present and the bundle signature verifies.
+# A partial copy fails this, so a plain rerun repairs it.
+app_ok() {
+  [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
+    && codesign --verify --deep --strict "$1" >/dev/null 2>&1
+}
+# The Ollama CLI on PATH, else the one inside Ollama.app (the cask links that same file).
+ollama_cli() {
+  command -v ollama 2>/dev/null && return
+  for c in /Applications/Ollama.app/Contents/Resources/ollama "$HOME/Applications/Ollama.app/Contents/Resources/ollama"; do
+    if [ -x "$c" ]; then printf '%s\n' "$c"; return; fi
+  done
+}
 
 [ "$(uname -s)" = Darwin ] || die 'macOS only; Linux builds follow docs/INSTALL.md by hand' 3
 [ "$(id -u)" != 0 ] || die 'run as your user, not root; the installers ask for a password when they need one' 3
@@ -98,7 +112,7 @@ inventory() {
   fi
   if have gh; then say "GitHub CLI: $(gh --version 2>/dev/null | head -n1)"; elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
-    if [ -d "$app_path" ]; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; else say "app: not installed at $app_path"; missing=1; fi
+    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -d "$app_path" ]; then say "app: $app_path is incomplete or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
   fi
   return "$missing"
 }
@@ -167,7 +181,10 @@ if [ "$ollama" = 1 ]; then
         ollama_up || die "Ollama did not answer at $ollama_api; open it once from Applications, answer any prompt, and rerun"
       fi
     fi
-    run ollama pull "$model"
+    cli=$(ollama_cli || true)
+    if [ -z "$cli" ] && [ "$dry" = 1 ]; then cli=ollama; fi
+    [ -n "$cli" ] || die 'no Ollama CLI found (not on PATH, not inside Ollama.app); reinstall Ollama, then rerun with --model'
+    run "$cli" pull "$model"
   fi
 fi
 
@@ -179,15 +196,18 @@ fi
 # ---------------------------------------------------- 6. standalone backend
 if [ "$build" = 1 ]; then
   say "building the backend with Rust $toolchain (first build compiles every dependency)"
-  (cd "$root" && run "$HOME/.cargo/bin/cargo" build --release --locked)
+  # Through rustup, wherever it lives (~/.cargo, Homebrew, a custom CARGO_HOME).
+  (cd "$root" && run rustup run "$toolchain" cargo build --release --locked)
 fi
 
 # ---------------------------------------------------------------- 7. the app
 if [ "$app" = 1 ]; then
-  if [ -d "$app_path" ] && [ "$replace" = 0 ]; then
+  if [ "$replace" = 0 ] && app_ok "$app_path"; then
     say "keeping $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown)); --replace-app updates it"
   else
-    if pgrep -u "$(id -u)" -f '/Contents/MacOS/cgagentharness desktop$' >/dev/null 2>&1; then
+    [ ! -d "$app_path" ] || [ "$replace" = 1 ] || say "$app_path is incomplete or fails codesign; replacing it"
+    # The shell can stay open on its recovery screen with no backend child.
+    if pgrep -u "$(id -u)" -f '/Contents/MacOS/(cgagentharness desktop$|cg-agent-harness-desktop( |$))' >/dev/null 2>&1; then
       die 'the app is running; quit it with Cmd-Q (wait for work to stop), then rerun'
     fi
     work=$(mktemp -d)
@@ -221,5 +241,8 @@ if [ "$app" = 1 ]; then
   fi
 fi
 
-say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).'
+case $app_dir in
+  /Applications | "$HOME/Applications") say 'done. Next: scripts/start-macos.sh (opens the app and its console in your browser).' ;;
+  *) say "done. Next: CGAH_APP='$app_path' scripts/start-macos.sh (the launcher searches only /Applications and ~/Applications)" ;;
+esac
 say 'First sign-in on a fresh home is admin / admin, then a new password. Guide: docs/INSTALL.md'

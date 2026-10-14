@@ -28,8 +28,8 @@ touches the home directory and pulls a model only with `--model`.
 |---|---|
 | `--check` | Lists what is present; exits 1 when something required is missing |
 | `--dry-run` | Prints every command a real run would make, changing nothing |
-| `--replace-app` | Replaces an installed app; keeps the previous one in `~/Library/Caches/CG-agent-harness-installer/previous` |
-| `--no-ollama`, `--no-build`, `--no-app`, `--app-dir DIR` | Skip a step or choose the app location |
+| `--replace-app` | Replaces a working app; keeps the previous one in `~/Library/Caches/CG-agent-harness-installer/previous`. An incomplete or unsigned copy is replaced without it |
+| `--no-ollama`, `--no-build`, `--no-app`, `--app-dir DIR` | Skip a step or choose the app location; outside `/Applications` and `~/Applications`, start with `CGAH_APP` |
 
 The checksum proves the download is intact, not who built it: both files come
 from the same release page. A `curl` download carries no quarantine flag, so
@@ -365,7 +365,7 @@ reads the loopback port that backend listens on, and passes that origin to
 
 Running plain `scripts/start-web.sh` while the app is open fails by design: one
 server owns a home, and the second `serve` stops at the home lock.
-`--standalone` refuses early unless `CGAGENTHARNESS_HOME` names a different home.
+`--standalone` refuses early when another process holds the target home's lock.
 
 Browsers do not trust the home's generated certificate. `start-macos.sh` reports
 whether macOS trusts it; `--trust-cert` exports the public certificate with the

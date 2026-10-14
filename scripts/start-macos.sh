@@ -33,7 +33,8 @@ done
 [ "$(uname -s)" = Darwin ] || { echo 'start-macos: macOS only; elsewhere run scripts/start-web.sh' >&2; exit 3; }
 
 say() { printf '==> %s\n' "$*"; }
-ollama_up() { curl --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
+# --noproxy: an http_proxy/ALL_PROXY must never answer for a loopback service.
+ollama_up() { curl --noproxy '*' --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
 # PIDs of this user's app backends. A translocated or copied app runs from
 # another path, so match the bundle layout, not one install location.
 app_backends() { pgrep -u "$(id -u)" -f "$sidecar" || true; }
@@ -58,11 +59,14 @@ if [ "$ollama" = 1 ]; then
 fi
 
 if [ "$mode" = standalone ]; then
-  # One server owns a home. The app always owns the default home, so a second
-  # server there would only fail on the home lock after starting.
-  if [ -n "$(app_backends)" ] && [ -z "${CGAGENTHARNESS_HOME:-}" ]; then
-    echo 'start-macos: the app is running and owns ~/.CGagentHarness. Use app mode (no --standalone),' >&2
-    echo 'quit the app with Cmd-Q, or set CGAGENTHARNESS_HOME to a different absolute home.' >&2
+  # One server owns a home: its owner keeps <home>/.server.lock open. Ask who
+  # holds the target home's lock instead of guessing from the environment, so
+  # an app on a custom home neither blocks nor slips past this check.
+  home=${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}
+  holder=$(lsof -t -- "$home/.server.lock" 2>/dev/null | head -n1 || true)
+  if [ -n "$holder" ]; then
+    echo "start-macos: $home is already owned by pid $holder ($(ps -o command= -p "$holder" 2>/dev/null || echo unknown))." >&2
+    echo 'Use app mode (no --standalone) for the app, quit that owner, or set CGAGENTHARNESS_HOME to another absolute home.' >&2
     exit 3
   fi
   exec bash "$root/scripts/start-web.sh" "$@"
@@ -101,7 +105,7 @@ done
 # A plain-HTTP request succeeds only on an explicit legacy-HTTP home; a TLS
 # listener drops it. Probing HTTPS instead would need a TLS 1.3 client, which
 # the LibreSSL curl on macOS 12 is not.
-if curl --silent --max-time 3 -o /dev/null "http://$loopback:$port/"; then # DevSkim: ignore DS137138 because this only detects a legacy-HTTP home on loopback.
+if curl --noproxy '*' --silent --max-time 3 -o /dev/null "http://$loopback:$port/"; then # DevSkim: ignore DS137138 because this only detects a legacy-HTTP home on loopback.
   origin=http://$loopback:$port # DevSkim: ignore DS137138 because an explicit legacy-HTTP home serves plain HTTP on loopback.
 else
   origin=https://$loopback:$port
