@@ -596,10 +596,11 @@ Record those in the PR body.
 Use [focused local checks](#11-verify-your-setup) for changed behavior; CI runs
 all targets with provider keys blanked.
 
-Fixtures isolate `GIT_CONFIG_GLOBAL` and repository identity. `CGAH_TEST_BINARY`
-selects another backend, including a bundle. The standard-library Python suite
-uses a disposable HTTPS account and loopback model: restart, history, goals,
-notes, selection, tokens, CSRF and replay; no downloads or cloud inference.
+Fixtures neutralize `GIT_CONFIG_GLOBAL` and set repository identity. Set
+`CGAH_TEST_BINARY` for another backend, including a bundle copy. The standard-library
+Python suite uses a loopback model fixture with no downloads or cloud inference.
+Its disposable HTTPS account verifies restart, history, goal, notes, selection,
+tokens, fresh CSRF, and no replay.
 
 | Gate | Evidence and scope |
 |---|---|
