@@ -1,5 +1,7 @@
 # Accounts, HTTPS and permitted web research
 
+> default login before pw reset needs to be more limited and other things i overlook 
+
 Fresh homes enable HTTPS, role authentication, and web operations. Web content
 needs an explicit URL grant, and the allowlist starts empty.
 Upgrades preserve `config.yaml`; missing legacy auth or TLS switches remain off.
