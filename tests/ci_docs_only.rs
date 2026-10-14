@@ -1,9 +1,9 @@
 //! Lock `scripts/ci-docs-only.sh` and the workflow steps that feed it.
 //!
-//! Both `changes` jobs pipe `git diff --no-renames --name-only` into the
-//! script. Exit 0 is docs-only (`code=false`). Exit 1 runs the compile and
-//! package jobs. The shell starts at `code=true` and assigns `code=false`
-//! only when that pipeline succeeds.
+//! The backend CI `changes` job pipes `git diff --no-renames --name-only`
+//! into the script. Exit 0 is docs-only (`code=false`); exit 1 runs validation.
+//! The shell starts at `code=true` and assigns `code=false` only when that
+//! pipeline succeeds. Bundle runs on main pushes without this classifier.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -143,42 +143,41 @@ fn a_docs_glob_in_package_desktop_runs_everything() {
 }
 
 #[test]
-fn workflow_changes_jobs_keep_no_renames_and_fail_closed() {
-    for name in ["ci.yml", "bundle.yml"] {
-        let text = std::fs::read_to_string(repo_root().join(".github/workflows").join(name)).expect(name);
-        let doc: Value = serde_yaml_ng::from_str(&text).unwrap_or_else(|err| panic!("{name} yaml: {err}"));
-        let jobs = doc.get("jobs").unwrap_or_else(|| panic!("{name} jobs"));
-        let changes = jobs.get("changes").unwrap_or_else(|| panic!("{name} changes"));
-        let output = changes
-            .get("outputs")
-            .and_then(|outputs| outputs.get("code"))
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("{name} changes output"));
-        assert_eq!(output, "${{ steps.classify.outputs.code }}", "{name}");
+fn ci_changes_job_keeps_no_renames_and_fail_closed() {
+    let name = "ci.yml";
+    let text = std::fs::read_to_string(repo_root().join(".github/workflows").join(name)).expect(name);
+    let doc: Value = serde_yaml_ng::from_str(&text).unwrap_or_else(|err| panic!("{name} yaml: {err}"));
+    let jobs = doc.get("jobs").unwrap_or_else(|| panic!("{name} jobs"));
+    let changes = jobs.get("changes").unwrap_or_else(|| panic!("{name} changes"));
+    let output = changes
+        .get("outputs")
+        .and_then(|outputs| outputs.get("code"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("{name} changes output"));
+    assert_eq!(output, "${{ steps.classify.outputs.code }}", "{name}");
 
-        let steps = changes
-            .get("steps")
-            .and_then(Value::as_sequence)
-            .unwrap_or_else(|| panic!("{name} steps"));
-        let run = steps
-            .iter()
-            .find(|step| step.get("id").and_then(Value::as_str) == Some("classify"))
-            .and_then(|step| step.get("run"))
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("{name} classify step"));
-        assert_fail_closed(name, run);
+    let steps = changes
+        .get("steps")
+        .and_then(Value::as_sequence)
+        .unwrap_or_else(|| panic!("{name} steps"));
+    let run = steps
+        .iter()
+        .find(|step| step.get("id").and_then(Value::as_str) == Some("classify"))
+        .and_then(|step| step.get("run"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("{name} classify step"));
+    assert_fail_closed(name, run);
 
-        let jobs_map = jobs.as_mapping().unwrap_or_else(|| panic!("{name} jobs map"));
-        for (job_name, job) in jobs_map {
-            if !needs_changes(job) {
-                continue;
-            }
-            let gate = job.get("if").and_then(Value::as_str).unwrap_or("");
-            assert!(
-                gate.contains("needs.changes.outputs.code != 'false'"),
-                "{name} job {job_name:?} must run unless classify set code=false, got {gate:?}"
-            );
+    let jobs_map = jobs.as_mapping().unwrap_or_else(|| panic!("{name} jobs map"));
+    for (job_name, job) in jobs_map {
+        if !needs_changes(job) {
+            continue;
         }
+        let gate = job.get("if").and_then(Value::as_str).unwrap_or("");
+        assert!(
+            gate.contains("needs.changes.outputs.code != 'false'"),
+            "{name} job {job_name:?} must run unless classify set code=false, got {gate:?}"
+        );
     }
 }
 
