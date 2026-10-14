@@ -142,11 +142,11 @@ bounded attachment metadata without bodies or filenames.
 
 ### 7.2 Default soul, effective prompt and persona editing
 
-**Fresh homes seed the bundled CG Agent persona and enable the soul toggle.**
-The bundled response contract asks for plain text in short paragraphs and uses
-Markdown only when requested. It guides the model but does not rewrite output.
-Existing homes, custom files and deliberate deletions are preserved. Missing soul
-means no persona file loaded; the base general-chat prompt still operates.
+**Fresh homes leave the global persona unset.** The soul toggle remains available;
+without `soul.md`, no persona is loaded and the interface displays **unset**.
+Existing files and deliberate deletions are preserved. Select `/style soul` for
+concise evidence-first communication without creating a global persona. The
+original reference remains in `assets/soul.default.md`.
 Planning and coding use the same public shipped communication guidance, beneath
 their governed output contracts. Private local persona edits are not implicitly
 sent to a cloud coding provider. The two seeded coding skills are

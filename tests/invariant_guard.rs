@@ -997,7 +997,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/CONFIG_RELOAD.md", Guide, 600),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
-    ("docs/CONSOLE.md", Guide, 5820),
+    ("docs/CONSOLE.md", Guide, 5807),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2480),

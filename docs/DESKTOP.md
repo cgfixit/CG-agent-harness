@@ -1,10 +1,8 @@
 # CG Agent Harness for macOS
 
-The universal macOS app (Apple Silicon and Intel) opens the console in a native
-WKWebView and owns its bundled Rust backend. Ordinary launch needs no Terminal,
-external browser, frontend server, Rust, or Python. Coding checks still need their
-configured tools. Native acceptance evidence lives in PR bodies, not in a
-standing checklist.
+The universal macOS app opens the console in WKWebView and owns its bundled Rust
+backend. Ordinary launch needs no Terminal, browser, Rust, or Python. Coding
+checks need their configured tools. Native acceptance evidence lives in PR bodies.
 
 ## Install and launch
 
@@ -104,12 +102,18 @@ inherited stdin/stdout and certificate-pinned HTTPS readiness. The backend binds
 port zero before reporting its address, so it cannot adopt an existing listener.
 The endpoint applies account, origin, CSRF, and rate checks.
 
-The WebView reaches the shell through four Tauri commands in `desktop/src/main.rs`:
+The setup window reaches the shell through four Tauri commands in `desktop/src/main.rs`:
 `desktop_status`, `retry_backend`, `check_models`, and `prepare_cargo`. They accept
 no command line; the backend HTTP API remains the operational surface.
 Explicit legacy HTTP configuration is preserved. A readiness
 challenge provides no operator API authority. `serve --port …` and worker CLI
 behavior remain available independently.
+
+The globe beside **CG Agent / harness** requests native confirmation, then runs
+bundled `start-web.sh` in Terminal to open the owned server in the default browser.
+It starts no second server: keep the app running. The browser needs its own login
+and local-certificate trust. The script and paths come from the shell, never page
+content. Ordinary browser consoles hide this button.
 
 An OS-held home lock prevents concurrent desktop and headless server writers on
 Unix. A private, user/home-scoped Unix socket only focuses an existing desktop;
