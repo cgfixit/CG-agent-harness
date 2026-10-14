@@ -493,17 +493,21 @@ async fn slow_body_holds_bounded_permit_times_out_and_recovers() {
         .unwrap()
         .unwrap();
     assert!(String::from_utf8_lossy(&response).contains("MCP_TIMEOUT"));
-    // The permit is dropped before the timeout response is sent, so a busy answer (429) here is a leak
-    // and fails at once. The recovery call has the same one-second budget as the slow body and runs
-    // key authentication on a blocking thread; a loaded runner may time that new request out (408),
-    // which says nothing about the permit. Retry only that case, and bound the retries.
-    let mut status = 0;
-    for _ in 0..3 {
+    // The slow body's permit is dropped before its timeout response is sent, so a busy answer (429) on the
+    // first recovery call is a leak and fails at once. That call has the same one-second budget and runs
+    // key authentication on a blocking thread; a loaded runner may time it out (408). A timed-out
+    // blocking task cannot be cancelled and keeps the permit until it returns, so after a 408 a later
+    // 429 is that task, not the slow body. Wait it out, bounded by a deadline.
+    let mut status = call(&g, &alice, "tools/list", json!({})).await.0;
+    assert_ne!(status, 429, "timed-out body must release request authority");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while status == 408 || status == 429 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "service did not recover after a timed-out request (last status {status})"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
         status = call(&g, &alice, "tools/list", json!({})).await.0;
-        assert_ne!(status, 429, "timed-out body must release request authority");
-        if status != 408 {
-            break;
-        }
     }
     assert_eq!(status, 200, "service recovers after a timed-out body");
 }
