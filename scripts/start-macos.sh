@@ -106,12 +106,18 @@ if [ "$mode" = standalone ]; then
 fi
 
 if [ -z "$(app_backends)" ]; then
+  # A usable bundle: the same test as install-macos.sh's app_ok.
+  app_ok() {
+    [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
+      && codesign --verify --deep --strict "$1" >/dev/null 2>&1
+  }
   app=${CGAH_APP:-}
-  if [ -z "$app" ]; then
-    # Skip a partial or damaged copy: the same test as install-macos.sh's app_ok.
+  if [ -n "$app" ]; then
+    app_ok "$app" || { echo "start-macos: CGAH_APP=$app is not a complete, signed app; reinstall it or unset CGAH_APP" >&2; exit 3; }
+  else
+    # Skip a partial or damaged copy.
     for candidate in "/Applications/CG Agent Harness.app" "$HOME/Applications/CG Agent Harness.app"; do
-      if [ -x "$candidate/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$candidate/Contents/MacOS/cgagentharness" ] \
-        && codesign --verify --deep --strict "$candidate" >/dev/null 2>&1; then
+      if app_ok "$candidate"; then
         if [ -z "$app" ]; then app=$candidate; else
           echo "start-macos: note: $candidate also exists; opening $app (set CGAH_APP to choose)" >&2
         fi

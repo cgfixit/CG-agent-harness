@@ -311,13 +311,16 @@ if [ "$app" = 1 ]; then
     staged=$app_dir/.$app_name.partial
     run rm -rf "$staged"
     run ditto "$work/unpacked/$app_name" "$staged" || die "copying the app failed; $app_path is unchanged (rerun to retry)"
-    if [ -d "$app_path" ]; then
-      # Keep one previous copy for rollback; the home directory is never touched.
-      backup=$HOME/Library/Caches/CG-agent-harness-installer/previous
+    backup=$HOME/Library/Caches/CG-agent-harness-installer/previous
+    if app_ok "$app_path"; then
+      # Keep one previous working copy for rollback; the home directory is never touched.
       run rm -rf "$backup"
       run mkdir -p "$backup"
       run mv "$app_path" "$backup/"
       say "previous app kept at $backup/$app_name"
+    elif [ -d "$app_path" ]; then
+      # A broken copy is discarded, so it never displaces a working backup.
+      run rm -rf "$app_path"
     fi
     run mv "$staged" "$app_path"
     [ "$dry" = 1 ] || say "installed $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"
