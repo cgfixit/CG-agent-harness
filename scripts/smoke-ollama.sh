@@ -74,8 +74,10 @@ test "$(curl_local -s -o /dev/null -w '%{http_code}' "$BASE/api/status" -H 'Host
 test "$(curl_local -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/soul" -H "X-CyClaw-CSRF: $CSRF" -H 'Origin: http://evil.example' -H 'Content-Type: application/json' -d '{"enabled":true}')" = 403
 
 echo "== account login and forced password replacement"
-printf '%s\n' admin | "$BIN" account --url "$BASE" login admin >/dev/null
-printf '%s\n' admin smoke-fixture-password | "$BIN" account --url "$BASE" password >/dev/null
+# A fresh home has no shipped password: admin's first credential is its one-time setup code.
+SETUP_CODE=$(cat "$CGAGENTHARNESS_HOME/setup-code")
+printf '%s\n' "$SETUP_CODE" | "$BIN" account --url "$BASE" login admin >/dev/null
+printf '%s\n' "$SETUP_CODE" smoke-fixture-password | "$BIN" account --url "$BASE" password >/dev/null
 COOKIE_FILE="$CGAGENTHARNESS_HOME/smoke.cookies"
 python3 - "$CGAGENTHARNESS_HOME/cli-session.json" "$COOKIE_FILE" <<'PYCOOKIE'
 import json,os,sys
