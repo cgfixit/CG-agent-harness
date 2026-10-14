@@ -123,6 +123,7 @@ if [ "$mode" = app ] && [ -z "$(app_backends)" ]; then
   app_ok() {
     [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
       && runs_here "$1/Contents/MacOS/cg-agent-harness-desktop" && runs_here "$1/Contents/MacOS/cgagentharness" \
+      && [ "$(defaults read "$1/Contents/Info" CFBundleExecutable 2>/dev/null)" = cg-agent-harness-desktop ] \
       && sidecar_ok "$1" && codesign --verify --deep --strict "$1" >/dev/null 2>&1
   }
   app=${CGAH_APP:-}

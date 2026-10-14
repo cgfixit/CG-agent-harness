@@ -81,8 +81,10 @@ ver_ge() {
   done
   return 0
 }
-# agentic.gh_min_version from a config file, quoted or not.
-gh_min_of() { sed -n 's/^ *gh_min_version: *"\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"\{0,1\} *$/\1/p' "$1" 2>/dev/null | head -n1 || true; }
+# agentic.gh_min_version from a config file: plain, single- or double-quoted, with an optional trailing comment.
+gh_min_of() {
+  sed -n "s/^ *gh_min_version: *[\"']\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)[\"']\{0,1\} *\(#.*\)\{0,1\}\$/\1/p" "$1" 2>/dev/null | head -n1 || true
+}
 # The shipped minimum, or the home's own config.yaml value when that is higher
 # (the pipeline enforces the home's value).
 gh_min=$(gh_min_of "$root/assets/config.default.yaml")
@@ -132,12 +134,14 @@ sidecar_ok() {
   d=$(shasum -a 256 "$1/Contents/MacOS/cgagentharness" 2>/dev/null | awk '{print $1}') && [ ${#d} = 64 ] \
     && LC_ALL=C grep -q -a -F "$d" "$1/Contents/MacOS/cg-agent-harness-desktop"
 }
-# A usable app: both executables present, runnable on this Mac, the shell's embedded
-# backend digest matches, and the bundle signature verifies. A partial copy fails this,
+# A usable app: both executables present, runnable on this Mac, Info.plist launches the
+# shell (open follows CFBundleExecutable), the shell's embedded backend digest matches,
+# and the bundle signature verifies. A partial copy fails this,
 # so a plain rerun repairs it.
 app_ok() {
   [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
     && runs_here "$1/Contents/MacOS/cg-agent-harness-desktop" && runs_here "$1/Contents/MacOS/cgagentharness" \
+    && [ "$(defaults read "$1/Contents/Info" CFBundleExecutable 2>/dev/null)" = cg-agent-harness-desktop ] \
     && sidecar_ok "$1" && codesign --verify --deep --strict "$1" >/dev/null 2>&1
 }
 # A launchable Ollama.app: Info.plist names an executable that is present,
@@ -269,7 +273,7 @@ inventory() {
   elif have gh; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
   else say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
-    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -d "$app_path" ]; then say "app: $app_path is incomplete, not built for this Mac, has a mismatched backend, or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
+    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -e "$app_path" ] || [ -L "$app_path" ]; then say "app: $app_path is incomplete, not built for this Mac, has a mismatched backend, or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
   fi
   return "$missing"
 }
@@ -446,8 +450,8 @@ if [ "$app" = 1 ]; then
       run mkdir -p "$backup"
       run mv "$app_path" "$backup/"
       say "previous app kept at $backup/$app_name"
-    elif [ -d "$app_path" ]; then
-      # A broken copy is discarded, so it never displaces a working backup.
+    elif [ -e "$app_path" ] || [ -L "$app_path" ]; then
+      # A broken copy, or any other file in its place, is discarded, so it never displaces a working backup.
       run rm -rf "$app_path"
     fi
     run mv "$staged" "$app_path"
