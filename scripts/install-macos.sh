@@ -24,13 +24,14 @@ while [ "$#" -gt 0 ]; do
   case $1 in
     --check) check=1 ;;
     --dry-run) dry=1 ;;
-    --model) [ "$#" -ge 2 ] && [ -n "$2" ] || { echo 'install-macos: --model needs a tag' >&2; exit 3; }; model=$2; shift ;;
+    # A value never starts with "-": `--model --dry-run` must not swallow --dry-run.
+    --model) [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || { echo 'install-macos: --model needs a tag' >&2; exit 3; }; model=$2; shift ;;
     --with-gh) gh=1 ;;
     --no-ollama) ollama=0 ;;
     --no-build) build=0 ;;
     --no-app) app=0 ;;
     --replace-app) replace=1 ;;
-    --app-dir) [ "$#" -ge 2 ] && [ -n "$2" ] || { echo 'install-macos: --app-dir needs a directory' >&2; exit 3; }; app_dir=$2; shift ;;
+    --app-dir) [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || { echo 'install-macos: --app-dir needs a directory' >&2; exit 3; }; app_dir=$2; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "install-macos: unknown option: $1 (see --help)" >&2; exit 3 ;;
   esac
