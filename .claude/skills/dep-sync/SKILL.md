@@ -3,8 +3,7 @@ name: dep-sync
 description: |
   Actively fix dependency, build, and deploy drift for CG-Agent-Harness by
   comparing the current branch's Cargo manifests/locks, toolchain pin, deny
-  policy, and CI/release/packaging config against the latest origin/main (or
-  the active branch's upstream) and applying the needed updates. Unlike
+  policy, and CI/release/packaging config against the latest origin/main and applying the needed updates. Unlike
   cgagentharness-verify-deps (which only reports), this skill performs the
   sync, then re-verifies. Use when a branch has fallen behind main's dependency/toolchain
   state, after a security advisory lands on main, or whenever asked to "sync
@@ -24,15 +23,14 @@ This skill WRITES fixes. If you only want a drift report with no changes, use
 
 ```bash
 git fetch origin main
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 BASE=origin/main
-git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null && BASE=@{u}
 git diff --stat HEAD..."$BASE" -- Cargo.toml Cargo.lock rust-toolchain.toml \
   deny.toml desktop/Cargo.toml desktop/Cargo.lock .github/workflows/ \
   scripts/package-desktop.sh
 ```
 
-`HEAD...$BASE` lists what the base changed since the merge-base, which is what
+The base is always `origin/main`: a feature branch's own upstream
+(`origin/<branch>`) would make the diff falsely empty. `HEAD...$BASE` lists what the base changed since the merge-base, which is what
 this branch is missing (`$BASE...HEAD` would show the branch's own edits). If
 the diff is empty, the branch is already current on dependency/build/deploy
 files: say so and stop; do not manufacture an update. If the branch is behind,
