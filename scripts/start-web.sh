@@ -1,10 +1,30 @@
 #!/usr/bin/env bash
 # Start the CGagentHarness console on loopback and open it in a browser.
 # Usage: scripts/start-web.sh [port]
+#        scripts/start-web.sh --desktop-url http[s]://127.0.0.1:port
 # Env:   CGAGENTHARNESS_HOME  state directory (default ~/.CGagentHarness)
 #        CGAH_BIN             backend binary (default target/release/cgagentharness)
 #        NO_OPEN=1            start the server without opening a browser
 set -euo pipefail
+
+# The native app already owns its home/server. Open only the exact loopback
+# origin supplied by the shell; never compete for the same home lock or stop it.
+if [ "${1:-}" = --desktop-url ]; then
+  if [ "$#" -ne 2 ] || [[ ! "$2" =~ ^https?://127\.0\.0\.1:([0-9]{1,5})$ ]]; then
+    echo 'start-web: expected an owned desktop loopback URL' >&2; exit 3
+  fi
+  desktop_port=${BASH_REMATCH[1]}
+  if [ "$desktop_port" -lt 1 ] || [ "$desktop_port" -gt 65535 ]; then
+    echo 'start-web: invalid desktop port' >&2; exit 3
+  fi
+  (exec 3<>"/dev/tcp/127.0.0.1/$desktop_port") 2>/dev/null || { # DevSkim: ignore DS162092 because the probe targets the owned loopback server only.
+    echo 'start-web: desktop server is unavailable; reopen the app' >&2; exit 2;
+  }
+  echo "CGagentHarness console: $2/"
+  echo 'This server is owned by the app. Keep the app running; sign in separately in the browser.'
+  /usr/bin/open -- "$2/"
+  exit 0
+fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 bin=${CGAH_BIN:-$root/target/release/cgagentharness}

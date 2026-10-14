@@ -1,6 +1,7 @@
 mod backend;
 mod instance;
 mod trust;
+mod web_launcher;
 
 use backend::Backend;
 use serde::Serialize;
@@ -84,6 +85,36 @@ fn external_link(app: &tauri::AppHandle, url: tauri::Url) {
         });
 }
 
+fn open_web_console(app: &tauri::AppHandle) {
+    if app.state::<Desktop>().external_dialog.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let handle = app.clone();
+    app.dialog()
+        .message("Run the bundled web launcher in Terminal and open this app's console in your default browser? Keep the app running. The browser requires its own sign-in and may ask you to trust the local certificate.")
+        .title("Open web console?")
+        .buttons(MessageDialogButtons::OkCancelCustom("Open Terminal and browser".into(), "Cancel".into()))
+        .show(move |approved| {
+            if !approved {
+                handle.state::<Desktop>().external_dialog.store(false, Ordering::SeqCst);
+                return;
+            }
+            tauri::async_runtime::spawn_blocking(move || {
+                let result = (|| {
+                    let state = handle.state::<Desktop>();
+                    let mut owner = state.owner.lock().map_err(|_| "Desktop owner unavailable.")?;
+                    let backend = owner.backend.as_mut().ok_or("Start the app's backend first.")?;
+                    backend.status()?;
+                    web_launcher::open(&backend::home()?, &backend.origin)
+                })();
+                handle.state::<Desktop>().external_dialog.store(false, Ordering::SeqCst);
+                if let Err(message) = result {
+                    handle.dialog().message(message).title("Cannot open web console").show(|_| {});
+                }
+            });
+        });
+}
+
 #[tauri::command]
 fn desktop_status(state: tauri::State<'_, Desktop>) -> Status {
     match state.owner.try_lock() {
@@ -142,8 +173,12 @@ fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), 
             .incognito(true)
             .inner_size(1150.0, 820.0)
             .min_inner_size(700.0, 480.0)
+            .initialization_script("document.addEventListener('DOMContentLoaded', () => { const button = document.getElementById('desktopWeb'); if (button) button.hidden = false; });")
             .on_navigation(move |url| {
-                if url.as_str() == "about:blank" || backend::allowed_navigation(url, &allowed) {
+                if web_launcher::requested(url, &allowed) {
+                    open_web_console(&navigation_app);
+                    false
+                } else if url.as_str() == "about:blank" || backend::allowed_navigation(url, &allowed) {
                     true
                 } else {
                     external_link(&navigation_app, url.clone());
