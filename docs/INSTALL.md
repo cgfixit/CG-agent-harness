@@ -269,11 +269,11 @@ Finder, or start the standalone server:
 ./target/release/cgagentharness serve
 ```
 
-Existing settings are preserved on upgrade. Merge `auth.enabled: true` and
-`tls.enabled: true` into the active configuration to adopt the new boundaries.
-A fresh home's `admin` signs in with the one-time setup code in private
-`<home>/setup-code` (the app's Setup window and `start-web.sh` show it); password
-replacement is then required before portal use. See
+Upgrades keep existing settings; to adopt the boundaries, merge
+`auth.enabled: true` and `tls.enabled: true` into the active configuration.
+A fresh home's `admin` signs in once with the code in private
+`<home>/setup-code` (the app and `start-web.sh` show it), then must replace the
+password. See
 [TLS trust, migration and recovery](SECURE_RESEARCH.md).
 
 The standalone server prints its address, for example:
