@@ -17,6 +17,9 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 app_name='CG Agent Harness.app'
 release=https://github.com/cgfixit/CG-agent-harness/releases/latest/download
 ollama_api=http://127.0.0.1:11434 # DevSkim: ignore DS137138,DS162092 because Ollama's default endpoint is plain HTTP on loopback.
+# Every ollama command (serve, pull) uses the loopback endpoint probed above,
+# never an inherited OLLAMA_HOST such as 0.0.0.0 or another server.
+export OLLAMA_HOST=127.0.0.1:11434 # DevSkim: ignore DS162092 because Ollama must stay on loopback.
 
 check=0 dry=0 model='' gh=0 ollama=1 build=1 app=1 replace=0 app_dir=''
 usage() { sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }

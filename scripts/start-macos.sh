@@ -14,6 +14,9 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 loopback=127.0.0.1 # DevSkim: ignore DS162092 because the app and Ollama listen on loopback only.
 ollama_api=http://$loopback:11434 # DevSkim: ignore DS137138 because Ollama's default endpoint is plain HTTP on loopback.
+# Every ollama command talks to (or serves on) the loopback endpoint probed above,
+# never an inherited OLLAMA_HOST such as 0.0.0.0.
+export OLLAMA_HOST=$loopback:11434
 sidecar='/Contents/MacOS/cgagentharness desktop$'
 
 mode=app ollama=1 trust=0 port_arg=''
@@ -90,6 +93,32 @@ if [ "$mode" = standalone ]; then
   fi
 fi
 
+# App mode: pick and validate the bundle before Ollama is touched, so a launch
+# that must be refused has no side effects. Empty when a backend already runs.
+app=''
+if [ "$mode" = app ] && [ -z "$(app_backends)" ]; then
+  # A usable bundle: the same test as install-macos.sh's app_ok.
+  app_ok() {
+    [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
+      && runs_here "$1/Contents/MacOS/cg-agent-harness-desktop" && runs_here "$1/Contents/MacOS/cgagentharness" \
+      && codesign --verify --deep --strict "$1" >/dev/null 2>&1
+  }
+  app=${CGAH_APP:-}
+  if [ -n "$app" ]; then
+    app_ok "$app" || { echo "start-macos: CGAH_APP=$app is not a complete, signed app for this Mac; reinstall it or unset CGAH_APP" >&2; exit 3; }
+  else
+    # Skip a partial or damaged copy.
+    for candidate in "/Applications/CG Agent Harness.app" "$HOME/Applications/CG Agent Harness.app"; do
+      if app_ok "$candidate"; then
+        if [ -z "$app" ]; then app=$candidate; else
+          echo "start-macos: note: $candidate also exists; opening $app (set CGAH_APP to choose)" >&2
+        fi
+      fi
+    done
+  fi
+  [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: no usable app found (a partial, unsigned or wrong-architecture copy is skipped); run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
+fi
+
 if [ "$ollama" = 1 ]; then
   if ollama_up; then
     say "Ollama is running at $ollama_api (its context window was fixed when it started)"
@@ -123,27 +152,7 @@ if [ "$mode" = standalone ]; then
   exec bash "$root/scripts/start-web.sh" ${port_arg:+"$port_arg"}
 fi
 
-if [ -z "$(app_backends)" ]; then
-  # A usable bundle: the same test as install-macos.sh's app_ok.
-  app_ok() {
-    [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
-      && runs_here "$1/Contents/MacOS/cg-agent-harness-desktop" && runs_here "$1/Contents/MacOS/cgagentharness" \
-      && codesign --verify --deep --strict "$1" >/dev/null 2>&1
-  }
-  app=${CGAH_APP:-}
-  if [ -n "$app" ]; then
-    app_ok "$app" || { echo "start-macos: CGAH_APP=$app is not a complete, signed app for this Mac; reinstall it or unset CGAH_APP" >&2; exit 3; }
-  else
-    # Skip a partial or damaged copy.
-    for candidate in "/Applications/CG Agent Harness.app" "$HOME/Applications/CG Agent Harness.app"; do
-      if app_ok "$candidate"; then
-        if [ -z "$app" ]; then app=$candidate; else
-          echo "start-macos: note: $candidate also exists; opening $app (set CGAH_APP to choose)" >&2
-        fi
-      fi
-    done
-  fi
-  [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: no usable app found (a partial, unsigned or wrong-architecture copy is skipped); run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
+if [ -n "$app" ]; then
   say "opening $app"
   open "$app" </dev/null >/dev/null 2>&1 &
 fi
