@@ -84,11 +84,15 @@ ollama_app_broken() {
 # foreground command (start-web.sh) does not reach it. macOS has no setsid(1).
 # shellcheck disable=SC2016 # perl expands its own variables.
 detached() { nohup /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die "exec $ARGV[0]: $!\n"' -- "$@"; }
-# The Ollama CLI on PATH, else the one inside Ollama.app (the cask links that same file).
+# An `ollama` on PATH that actually runs (not a stale link or a wrong-arch binary).
+path_ollama_ok() { have ollama && ollama --help >/dev/null 2>&1; }
+# An `ollama` on PATH that does not run.
+path_ollama_broken() { have ollama && ! ollama --help >/dev/null 2>&1; }
+# A runnable Ollama CLI: the one on PATH, else the one inside Ollama.app (the cask links that same file).
 ollama_cli() {
-  command -v ollama 2>/dev/null && return
+  if path_ollama_ok; then command -v ollama; return; fi
   for c in /Applications/Ollama.app/Contents/Resources/ollama "$HOME/Applications/Ollama.app/Contents/Resources/ollama"; do
-    if [ -x "$c" ]; then printf '%s\n' "$c"; return; fi
+    if [ -x "$c" ] && "$c" --help >/dev/null 2>&1; then printf '%s\n' "$c"; return; fi
   done
 }
 
@@ -137,10 +141,11 @@ inventory() {
     if [ -x "$root/target/release/cgagentharness" ]; then say "backend: $root/target/release/cgagentharness"; else say 'backend: not built'; missing=1; fi
   fi
   if [ "$ollama" = 1 ]; then
-    if have ollama; then
+    if path_ollama_ok; then
       say "Ollama: $(ollama --version 2>&1 | sed -n 's/.*version is //p' | tail -n1)$([ -n "$(ollama_app)" ] || echo ' (CLI only; started with ollama serve)')"
     elif [ -n "$(ollama_app)" ]; then say 'Ollama: app installed, CLI not on PATH'
     elif [ -n "$(ollama_app_broken)" ]; then say "Ollama: $(ollama_app_broken) is incomplete or fails codesign (a rerun reinstalls it)"; missing=1
+    elif path_ollama_broken; then say "Ollama: $(command -v ollama) does not run (a rerun reinstalls Ollama)"; missing=1
     else say 'Ollama: MISSING'; missing=1; fi
     if ollama_up; then say "Ollama API: reachable at $ollama_api"; else say 'Ollama API: not running'; fi
     v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
@@ -167,7 +172,7 @@ fi
 
 # ----------------------------------------------------------------- 2. Homebrew
 need_brew=0
-if [ "$ollama" = 1 ] && ! have ollama && [ -z "$(ollama_app)" ]; then need_brew=1; fi
+if [ "$ollama" = 1 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then need_brew=1; fi
 if [ "$gh" = 1 ] && ! have gh; then need_brew=1; fi
 if [ "$need_brew" = 1 ] && ! have brew; then
   say 'installing Homebrew (official installer; it asks for your password)'
@@ -205,9 +210,9 @@ esac
 # ------------------------------------------------------------------- 4. Ollama
 if [ "$ollama" = 1 ]; then
   # A CLI-only Ollama (no app) is kept; it is started with `ollama serve` below.
-  if ! have ollama && [ -z "$(ollama_app)" ]; then
-    # --force replaces a partial Ollama.app that would block the cask.
-    if [ -n "$(ollama_app_broken)" ]; then run brew install --cask --force ollama; else run brew install --cask ollama; fi
+  if ! path_ollama_ok && [ -z "$(ollama_app)" ]; then
+    # --force replaces a partial Ollama.app or a dead `ollama` link that would block the cask.
+    if [ -n "$(ollama_app_broken)" ] || path_ollama_broken; then run brew install --cask --force ollama; else run brew install --cask ollama; fi
   fi
   if [ -n "$model" ]; then
     if ! ollama_up; then
@@ -223,8 +228,10 @@ if [ "$ollama" = 1 ]; then
           run launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
         fi
         # open waits on a first-launch prompt; the bounded wait below decides instead.
-        printf '+ open -a Ollama (in the background)\n'
-        if [ "$dry" = 0 ]; then open -a Ollama </dev/null >/dev/null 2>&1 & fi
+        # Open the validated bundle, not whichever copy LaunchServices picks.
+        [ -n "$ollama_app_path" ] || [ "$dry" = 1 ] || die 'no usable Ollama.app or CLI after install; reinstall Ollama, then rerun with --model'
+        printf '+ open %s (in the background)\n' "${ollama_app_path:-Ollama.app}"
+        if [ "$dry" = 0 ]; then open "$ollama_app_path" </dev/null >/dev/null 2>&1 & fi
       fi
       if [ "$dry" = 0 ]; then
         for _ in $(seq 1 60); do ollama_up && break; sleep 1; done

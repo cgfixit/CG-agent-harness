@@ -61,7 +61,9 @@ ollama_cli() {
 if [ "$ollama" = 1 ]; then
   if ollama_up; then
     say "Ollama is running at $ollama_api (its context window was fixed when it started)"
-  elif ollama_bundle_ok /Applications/Ollama.app || ollama_bundle_ok "$HOME/Applications/Ollama.app"; then
+  elif ollama_app=$(for a in /Applications/Ollama.app "$HOME/Applications/Ollama.app"; do
+    if ollama_bundle_ok "$a"; then printf '%s\n' "$a"; break; fi
+  done) && [ -n "$ollama_app" ]; then
     # GUI apps read launchctl's environment. Keep a value the operator chose.
     if [ -z "$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)" ]; then
       launchctl setenv OLLAMA_CONTEXT_LENGTH 32768
@@ -69,7 +71,8 @@ if [ "$ollama" = 1 ]; then
     say "starting Ollama (OLLAMA_CONTEXT_LENGTH=$(launchctl getenv OLLAMA_CONTEXT_LENGTH))"
     # open waits while a first launch shows macOS's "downloaded from the
     # internet" prompt. Never block on it or let it hold our output open.
-    open -a Ollama </dev/null >/dev/null 2>&1 &
+    # Open the bundle that passed validation, not whichever copy LaunchServices picks.
+    open "$ollama_app" </dev/null >/dev/null 2>&1 &
     for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
     ollama_up || echo 'start-macos: Ollama did not answer yet; answer any first-launch prompt, chat waits for it (docs/MODELS.md)' >&2
   elif cli=$(ollama_cli) && [ -n "$cli" ]; then
@@ -101,18 +104,29 @@ fi
 if [ -z "$(app_backends)" ]; then
   app=${CGAH_APP:-}
   if [ -z "$app" ]; then
+    # Skip a partial copy: both executables must be present.
     for candidate in "/Applications/CG Agent Harness.app" "$HOME/Applications/CG Agent Harness.app"; do
-      if [ -d "$candidate" ]; then app=$candidate; break; fi
+      if [ -x "$candidate/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$candidate/Contents/MacOS/cgagentharness" ]; then
+        app=$candidate
+        break
+      fi
     done
   fi
-  [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: the app is not installed; run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
+  [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: no complete app found (a partial copy is skipped); run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
   say "opening $app"
   open "$app" </dev/null >/dev/null 2>&1 &
 fi
 
 # The backend binds port 0 and tells only the app which port it got, so read
-# the listening socket of the app's own backend process.
-port='' pids=''
+# the listening sockets of the app's own backend process. It may also hold the
+# private MCP gateway's port (mcp.server.enabled), so classify each listener
+# with one plain-HTTP request to /api/status:
+#   200  the console on an explicit legacy-HTTP home
+#   000  no HTTP reply: a TLS listener, which only the console can be
+#   else the MCP gateway (always plain HTTP; it refuses this path)
+# Probing HTTPS instead would need a TLS 1.3 client, which the LibreSSL curl
+# on macOS 12 is not.
+port='' scheme='' pids=''
 for _ in $(seq 1 120); do
   pids=$(app_backends)
   if [ "$(printf '%s\n' "$pids" | grep -c .)" -gt 1 ]; then
@@ -121,17 +135,20 @@ for _ in $(seq 1 120); do
   fi
   if [ -n "$pids" ]; then
     # lsof exits 1 until the new backend listens; under pipefail that must not end the script.
-    port=$(lsof -nP -a -p "$pids" -iTCP@"$loopback" -sTCP:LISTEN -Fn 2>/dev/null | sed -n "s/^n$loopback:\([0-9]*\)\$/\1/p" | head -n1 || true)
+    for p in $(lsof -nP -a -p "$pids" -iTCP@"$loopback" -sTCP:LISTEN -Fn 2>/dev/null | sed -n "s/^n$loopback:\([0-9]*\)\$/\1/p" || true); do
+      code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://$loopback:$p/api/status" || true) # DevSkim: ignore DS137138 because this only classifies loopback listeners.
+      case $code in
+        200) port=$p scheme=http; break ;;
+        000) port=$p scheme=https; break ;;
+      esac
+    done
     [ -z "$port" ] || break
   fi
   sleep 0.5
 done
 [ -n "$port" ] || { echo 'start-macos: the app backend did not start listening; open Harness → Setup and recovery in the app' >&2; exit 2; }
 
-# A plain-HTTP request succeeds only on an explicit legacy-HTTP home; a TLS
-# listener drops it. Probing HTTPS instead would need a TLS 1.3 client, which
-# the LibreSSL curl on macOS 12 is not.
-if curl --noproxy '*' --silent --max-time 3 -o /dev/null "http://$loopback:$port/"; then # DevSkim: ignore DS137138 because this only detects a legacy-HTTP home on loopback.
+if [ "$scheme" = http ]; then
   origin=http://$loopback:$port # DevSkim: ignore DS137138 because an explicit legacy-HTTP home serves plain HTTP on loopback.
 else
   origin=https://$loopback:$port
