@@ -213,7 +213,7 @@ for _ in $(seq 1 120); do
   fi
   sleep 0.5
 done
-[ -n "$port" ] || { echo 'start-macos: the app backend did not start listening; open Harness → Setup and recovery in the app' >&2; exit 2; }
+[ -n "$port" ] || { echo 'start-macos: the app backend did not start listening; open Harness → Setup and recovery (Cmd and +) in the app' >&2; exit 2; }
 
 if [ "$scheme" = http ]; then
   origin=http://$loopback:$port # DevSkim: ignore DS137138 because an explicit legacy-HTTP home serves plain HTTP on loopback.

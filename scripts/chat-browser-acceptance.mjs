@@ -810,7 +810,14 @@ try {
  await until('document.getElementById("passwordDialog").open');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'hide bootstrap guidance after login');
  assert.equal(await evaluate(headerState),'','a pending password replacement shows no header automation buttons');
- assert.match(await evaluate('document.getElementById("passwordHelp").innerText'),/Replace the initial admin password/);
+ assert.match(await evaluate('document.getElementById("passwordHelp").innerText'),/Replace the setup code/);
+ // Closing the required dialog lands on the lock card, never on the console; the card reopens it.
+ await evaluate('document.getElementById("passwordClose").click()');
+ await until('!document.getElementById("passwordDialog").open && !document.getElementById("passwordLockScreen").hidden');
+ assert.equal(await evaluate('document.querySelector(".main").offsetParent'),null,'a closed password dialog does not reveal the console');
+ assert.equal(await evaluate('document.body.textContent.includes('+JSON.stringify(FIXTURE_SETUP_CODE)+')'),false,'the lock card never shows the setup code');
+ await evaluate('document.getElementById("passwordLockOpen").click()');
+ await until('document.getElementById("passwordDialog").open');
  await evaluate('document.getElementById("passwordCurrent").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');assert.equal(mustChange,false);
  await until(headerState+'==="openAnalytics,openDeliveries,openSchedules"');

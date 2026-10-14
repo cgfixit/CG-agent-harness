@@ -52,7 +52,8 @@ cd CG-agent-harness && scripts/init.sh    # or: bash scripts/init.sh
 It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped when
 `--check` passes), adds Homebrew and Rust to your login shell's profile
 (`~/.zprofile` for zsh, `~/.bash_profile` or `~/.profile` for bash), replaces
-admin's first password and saves it in your login keychain as **CG Agent Harness
+admin's one-time setup code (it reads the code itself; in the app, **Cmd and +**
+shows it) with a new password and saves that in your login keychain as **CG Agent Harness
 admin password**, and grants the web allowlist. It then asks what to open:
 **1** the app, **2** the console in your browser (served from that Terminal until
 Ctrl-C, or the open app's console), **3** both, **0** nothing. A failed step offers retry,
@@ -92,9 +93,15 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
    32768-token window, opens the app, and opens its console in your browser.
    `--trust-cert` asks for your password once so the browser trusts this home's
    certificate. Note the printed `CGagentHarness console: https://127.0.0.1:<port>/`.
-8. **Sign in:** user `admin` with the one-time setup code from the app's
-   **Setup and recovery** (also `cat ~/.CGagentHarness/setup-code`), then choose a
-   new password. The browser needs its own sign-in.
+8. **Sign in:** user `admin` with the one-time setup code. To find it, put the
+   app window or the browser's console (`harness.html`) in focus and press
+   **Cmd and +** (technically Cmd, Shift and =). The app opens **Harness → Setup
+   and recovery**, which shows the code; the browser's sign-in card says where
+   the code is (the `setup-code` file in the harness home, read with
+   `cat ~/.CGagentHarness/setup-code`). Then choose a new password of at least 12
+   characters. Until you do, that session can only change its password or log
+   out: closing the password dialog leaves a lock card, and the CLI and API
+   answer `AUTH_PASSWORD_CHANGE_REQUIRED`. The browser needs its own sign-in.
 9. **Optional web allowlist:** with that console origin, sign the CLI in and grant
    the technical-docs starter list:
 
@@ -350,8 +357,9 @@ Finder, or start the standalone server:
 Upgrades keep existing settings; to adopt the boundaries, merge
 `auth.enabled: true` and `tls.enabled: true` into the active configuration.
 A fresh home's `admin` signs in once with the code in private
-`<home>/setup-code` (the app and `start-web.sh` show it), then must replace the
-password. See
+`<home>/setup-code` (the app's **Cmd and +** window and `start-web.sh` show it),
+then must replace the password. No MCP machine key can be minted for an account
+that has not. See
 [TLS trust, migration and recovery](SECURE_RESEARCH.md).
 
 The standalone server prints its address, for example:
@@ -384,7 +392,7 @@ Fresh homes seed the bundled default `soul.md`; [soul](CONSOLE.md#72-default-sou
 and existing-home behavior.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
-(Cmd-,) shows its owned endpoint and model/tool diagnostics. Use **Check installed
+(**Cmd and +**, that is Cmd, Shift and =) shows the setup code and its owned endpoint and model/tool diagnostics. Use **Check installed
 chat and planner models** to check configured tag availability without downloading.
 For the standalone server, leave its terminal open and visit:
 
