@@ -353,26 +353,44 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     assert!(!mgr.bootstrap_if_empty().unwrap());
     assert!(!mgr.needs_password_setup());
     assert!(mgr.get_user("admin").unwrap().must_change_password);
-    // The shipped password is reported until it changes, across a reopen,
-    // without hashing it again.
-    assert!(mgr.default_password_active());
+    // A fresh store has no shipped password: `admin` signs in only with the
+    // one-time code in the private `<home>/setup-code` file.
+    let code_file = dir.path().join("setup-code");
+    let code = std::fs::read_to_string(&code_file).unwrap().trim().to_string();
+    assert_eq!(code.len(), 19, "four groups of four: {code}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&code_file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    // Reported until it changes, across a reopen, without hashing again.
+    assert!(mgr.setup_code_active());
     assert!(AuthManager::open(&dir.path().join("auth.json"), &cfg)
         .unwrap()
-        .default_password_active());
+        .setup_code_active());
     assert_eq!(
         mgr.login(BOOTSTRAP_USERNAME, "anything at all!").unwrap_err().code,
         "AUTH_LOGIN_FAILED"
     );
-    let restricted = mgr.login("admin", "admin").unwrap();
-    assert!(
-        mgr.default_password_active(),
-        "a sign-in that skips the change keeps the note in this process"
+    assert_eq!(
+        mgr.login("admin", "admin").unwrap_err().code,
+        "AUTH_LOGIN_FAILED",
+        "the formerly shipped password must not work"
     );
-    let first = mgr.change_password("admin", "admin", "first-admin-password").unwrap();
-    assert!(!mgr.default_password_active());
+    let restricted = mgr.login("admin", &code).unwrap();
+    assert!(
+        mgr.setup_code_active(),
+        "a sign-in that skips the change keeps the code"
+    );
+    let first = mgr.change_password("admin", &code, "first-admin-password").unwrap();
+    assert!(!mgr.setup_code_active());
+    assert!(!code_file.exists(), "the code file goes once admin has a real password");
     assert!(!AuthManager::open(&dir.path().join("auth.json"), &cfg)
         .unwrap()
-        .default_password_active());
+        .setup_code_active());
     assert!(mgr.validate_session(&restricted.session_id).is_none());
     assert!(!mgr.get_user("admin").unwrap().must_change_password);
     assert!(!mgr.needs_password_setup());

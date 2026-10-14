@@ -110,10 +110,6 @@ pub struct AuthManager {
     absolute_timeout_sec: f64,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
     fresh_bootstrap: std::sync::atomic::AtomicBool,
-    /// The `admin` hash record a fresh store was created with. Any password
-    /// write mints a new salt, so a stored record that still equals this one
-    /// is still the shipped password.
-    default_password_record: Option<String>,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
 
@@ -125,25 +121,38 @@ impl std::fmt::Debug for AuthManager {
 
 impl AuthManager {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
-        let (connection, db, fresh) = sqlite::open(path)?;
-        // Only a store created by this open holds the shipped password for
-        // certain. An existing home is never re-checked against it, so after a
-        // restart the note stays hidden even if the password is unchanged.
-        let default_password_record = if fresh {
-            db.users
-                .get(BOOTSTRAP_USERNAME)
-                .filter(|u| u.must_change_password && !authn::is_pending_password_record(&u.password_hash))
-                .map(|u| u.password_hash.clone())
-        } else {
-            None
-        };
+        let (mut connection, mut db, fresh) = sqlite::open(path)?;
+        // Homes created before setup codes shipped `admin` / `admin`. While that
+        // account still must replace its password and `admin` still verifies,
+        // anyone on this machine could take it, so rotate it to a setup code.
+        // One scrypt check, only in that state.
+        if !fresh {
+            let shipped = db.users.get(BOOTSTRAP_USERNAME).is_some_and(|u| {
+                !u.disabled
+                    && u.must_change_password
+                    && !authn::is_pending_password_record(&u.password_hash)
+                    && authn::verify_password(BOOTSTRAP_USERNAME, &u.password_hash).0
+            });
+            if shipped {
+                let code = authn::new_setup_code();
+                super::atomic::write_atomic(&setup_code_path(path), format!("{code}\n").as_bytes(), Some(0o600))?;
+                let mut rotated = db.clone();
+                if let Some(u) = rotated.users.get_mut(BOOTSTRAP_USERNAME) {
+                    u.password_hash = authn::hash_bootstrap_password(&code)?;
+                    u.failed_count = 0;
+                    u.locked_until_ts = None;
+                }
+                revoke_sessions_for(&mut rotated, BOOTSTRAP_USERNAME);
+                sqlite::persist(&mut connection, &rotated)?;
+                db = rotated;
+            }
+        }
         let mgr = Self {
             path: path.to_path_buf(),
             idle_timeout_sec: cfg.f64_or("auth.session.idle_timeout_sec", DEFAULT_IDLE_TIMEOUT_SEC),
             absolute_timeout_sec: cfg.f64_or("auth.session.absolute_timeout_sec", DEFAULT_ABSOLUTE_TIMEOUT_SEC),
             state: Mutex::new((connection, db)),
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
-            default_password_record,
             clock: Box::new(super::now_ts),
         };
         // Warm the timing-equalization dummy before any login can arrive.
@@ -207,24 +216,22 @@ impl AuthManager {
             .unwrap_or(false)
     }
 
-    /// True while the enabled `admin` account still has the shipped password
-    /// and must replace it. The sign-in screen shows the default-credentials
-    /// note only then. It answers from memory and never hashes, so the public
-    /// setup-status route stays cheap.
-    pub fn default_password_active(&self) -> bool {
+    /// True while the enabled `admin` account still signs in with its setup
+    /// code: it must replace its password and the private code file exists.
+    /// The sign-in screen then names the code, never shows it. Answers without
+    /// hashing, so the public setup-status route stays cheap.
+    pub fn setup_code_active(&self) -> bool {
         let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         stored.1.users.get(BOOTSTRAP_USERNAME).is_some_and(|u| {
-            // An `admin` that must change its password and has never signed in
-            // still holds the shipped one: every other password write either
-            // clears `must_change_password` or follows a successful sign-in.
-            // That survives restarts. Within this process, the hash recorded
-            // at fresh creation also covers a sign-in that skipped the change.
-            !u.disabled
-                && u.must_change_password
-                && !authn::is_pending_password_record(&u.password_hash)
-                && (u.last_login_ts.is_none()
-                    || self.default_password_record.as_deref() == Some(u.password_hash.as_str()))
-        })
+            !u.disabled && u.must_change_password && !authn::is_pending_password_record(&u.password_hash)
+        }) && setup_code_path(&self.path).is_file()
+    }
+
+    /// The code file outlives its use only until `admin` gets a real password.
+    fn forget_setup_code(&self, username: &str) {
+        if username == BOOTSTRAP_USERNAME {
+            let _ = std::fs::remove_file(setup_code_path(&self.path));
+        }
     }
 
     pub fn bootstrap_set_password(&self, password: &str) -> Result<LoginResult> {
@@ -248,6 +255,7 @@ impl AuthManager {
         revoke_sessions_for(&mut db, BOOTSTRAP_USERNAME);
         let result = self.create_session(&mut db, BOOTSTRAP_USERNAME, now)?;
         self.persist(&mut stored, &db)?;
+        self.forget_setup_code(BOOTSTRAP_USERNAME);
         Ok(result)
     }
 
@@ -401,7 +409,9 @@ impl AuthManager {
         u.failed_count = 0;
         u.locked_until_ts = None;
         revoke_sessions_for(&mut db, &canonical);
-        self.persist(&mut stored, &db)
+        self.persist(&mut stored, &db)?;
+        self.forget_setup_code(&canonical);
+        Ok(())
     }
 
     pub fn change_password(&self, username: &str, current: &str, password: &str) -> Result<LoginResult> {
@@ -424,6 +434,7 @@ impl AuthManager {
         revoke_sessions_for(&mut db, &canonical);
         let result = self.create_session(&mut db, &canonical, now)?;
         self.persist(&mut stored, &db)?;
+        self.forget_setup_code(&canonical);
         Ok(result)
     }
 
@@ -547,6 +558,14 @@ impl AuthManager {
         }
         Ok(hit)
     }
+}
+
+/// `<home>/setup-code`, beside the account store.
+fn setup_code_path(store: &Path) -> PathBuf {
+    store
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(authn::SETUP_CODE_FILE)
 }
 
 fn count_enabled_admins(db: &AuthDb) -> usize {

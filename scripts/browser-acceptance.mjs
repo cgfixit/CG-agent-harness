@@ -30,9 +30,11 @@ try {
  const send=async command=>{await until('!document.getElementById("send").disabled');await evaluate('document.getElementById("input").value='+JSON.stringify(command)+';onSend()');await until('!document.getElementById("send").disabled');};
  await call('Page.enable');await call('Network.enable');await call('Page.navigate',{url:base+'/'});await until('!!document.getElementById("apiKey")');
  await until('!document.getElementById("hAuthLoginBox").hidden');
- await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="admin";document.getElementById("hAuthLogin").click()');
+ // A fresh home has no shipped password: sign in with its one-time setup code.
+ const setupCode=(await readFile(join(home,'setup-code'),'utf8')).trim();
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value='+JSON.stringify(setupCode)+';document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("passwordDialog").open');
- await evaluate('document.getElementById("passwordCurrent").value="admin";document.getElementById("passwordNew").value="arithmetic-fixture-password";document.getElementById("passwordConfirm").value="arithmetic-fixture-password";document.getElementById("passwordForm").requestSubmit()');
+ await evaluate('document.getElementById("passwordCurrent").value='+JSON.stringify(setupCode)+';document.getElementById("passwordNew").value="arithmetic-fixture-password";document.getElementById("passwordConfirm").value="arithmetic-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');
  assert.equal(await evaluate('api("/api/status").then(s=>s.home)'),home);
  assert.equal(await evaluate('fetch("/api/agent/jobs").then(r=>r.status)'),403);

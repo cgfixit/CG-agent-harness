@@ -94,14 +94,14 @@ probes = []; auth.whoami = reply(401);
 await context.refreshHarnessAuth(); await settle();
 assert.deepEqual(shown(), []);
 assert.deepEqual(probes, [], 'signed-out consoles send no feature probes');
-// Signed out, the sign-in card replaces the console; the default-password note needs the server's word.
+// Signed out, the sign-in card replaces the console; the setup-code note needs the server's word.
 assert.ok(page.body.classList.contains('signed-out'));
 assert.equal(node('hAuthLoginBox').hidden, false);
-assert.equal(node('hAuthHint').hidden, true, 'no note unless setup-status reports default_password');
-auth.setup = reply(200, {needs_password:false, default_password:true});
+assert.equal(node('hAuthHint').hidden, true, 'no note unless setup-status reports setup_code');
+auth.setup = reply(200, {needs_password:false, setup_code:true});
 await context.refreshHarnessAuth(); await settle();
 assert.equal(node('hAuthHint').hidden, false, 'note shown while the shipped password is active');
-auth.setup = reply(200, {needs_password:false, default_password:false});
+auth.setup = reply(200, {needs_password:false, setup_code:false});
 await context.refreshHarnessAuth(); await settle();
 assert.equal(node('hAuthHint').hidden, true, 'note hidden once it changed');
 assert.ok(!page.documentElement.classList.contains('auth-pending'));
@@ -162,4 +162,4 @@ vm.runInContext("currentSession = 'second-session'", context);
 auth.logout = reply(401); auth.whoami = () => { throw new TypeError('Failed to fetch'); };
 await node('hAuthLogout').listeners.click(); await settle();
 assert.equal(context.currentSession, null, 'a 401 logout resets even when the probe fails');
-console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card and default-password note passed');
+console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card and setup-code note passed');
