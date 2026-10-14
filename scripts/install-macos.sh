@@ -72,10 +72,22 @@ lints_ok() {
 }
 # --noproxy: an http_proxy/ALL_PROXY must never answer for a loopback service.
 ollama_up() { curl --noproxy '*' --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
-# A usable app: both executables present and the bundle signature verifies.
+# The host can run it: the Mach-O has the host's slice (Apple silicon also runs
+# x86_64 through Rosetta). `file` ships with macOS; lipo needs the Command Line Tools.
+runs_here() {
+  local info
+  info=$(file -b "$1" 2>/dev/null) || return 1
+  case $(uname -m) in
+    arm64) case $info in *arm64* | *x86_64*) return 0 ;; esac ;;
+    *) case $info in *x86_64*) return 0 ;; esac ;;
+  esac
+  return 1
+}
+# A usable app: both executables present, runnable on this Mac, and the bundle signature verifies.
 # A partial copy fails this, so a plain rerun repairs it.
 app_ok() {
   [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
+    && runs_here "$1/Contents/MacOS/cg-agent-harness-desktop" && runs_here "$1/Contents/MacOS/cgagentharness" \
     && codesign --verify --deep --strict "$1" >/dev/null 2>&1
 }
 # A launchable Ollama.app: Info.plist names an executable that is present,
@@ -194,7 +206,7 @@ inventory() {
   elif have gh && [ "$gh" = 1 ]; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
   elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
-    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -d "$app_path" ]; then say "app: $app_path is incomplete or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
+    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -d "$app_path" ]; then say "app: $app_path is incomplete, not built for this Mac, or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
   fi
   return "$missing"
 }

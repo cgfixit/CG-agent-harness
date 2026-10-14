@@ -30,10 +30,27 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ "$mode" = standalone ] || [ -z "$port_arg" ] || { echo 'start-macos: a port is only valid with --standalone' >&2; exit 3; }
+# Same port rules as start-web.sh, checked before anything starts.
+if [ "$mode" = standalone ]; then
+  p=${port_arg:-${PORT:-8790}}
+  case $p in '' | *[!0-9]*) echo "start-macos: port must be a number: $p" >&2; exit 3 ;; esac
+  [ "$p" -ge 1024 ] && [ "$p" -le 65535 ] || { echo "start-macos: port must be 1024-65535: $p" >&2; exit 3; }
+fi
 [ "$mode" = app ] || [ "$trust" = 0 ] || { echo 'start-macos: --trust-cert needs app mode (the server must be running)' >&2; exit 3; }
 [ "$(uname -s)" = Darwin ] || { echo 'start-macos: macOS only; elsewhere run scripts/start-web.sh' >&2; exit 3; }
 
 say() { printf '==> %s\n' "$*"; }
+# The host can run it: the Mach-O has the host's slice (Apple silicon also runs
+# x86_64 through Rosetta). `file` ships with macOS; lipo needs the Command Line Tools.
+runs_here() {
+  local info
+  info=$(file -b "$1" 2>/dev/null) || return 1
+  case $(uname -m) in
+    arm64) case $info in *arm64* | *x86_64*) return 0 ;; esac ;;
+    *) case $info in *x86_64*) return 0 ;; esac ;;
+  esac
+  return 1
+}
 # --noproxy: an http_proxy/ALL_PROXY must never answer for a loopback service.
 ollama_up() { curl --noproxy '*' --silent --fail --max-time 2 -o /dev/null "$ollama_api/api/version"; }
 # PIDs of this user's app backends. A translocated or copied app runs from
@@ -110,11 +127,12 @@ if [ -z "$(app_backends)" ]; then
   # A usable bundle: the same test as install-macos.sh's app_ok.
   app_ok() {
     [ -x "$1/Contents/MacOS/cg-agent-harness-desktop" ] && [ -x "$1/Contents/MacOS/cgagentharness" ] \
+      && runs_here "$1/Contents/MacOS/cg-agent-harness-desktop" && runs_here "$1/Contents/MacOS/cgagentharness" \
       && codesign --verify --deep --strict "$1" >/dev/null 2>&1
   }
   app=${CGAH_APP:-}
   if [ -n "$app" ]; then
-    app_ok "$app" || { echo "start-macos: CGAH_APP=$app is not a complete, signed app; reinstall it or unset CGAH_APP" >&2; exit 3; }
+    app_ok "$app" || { echo "start-macos: CGAH_APP=$app is not a complete, signed app for this Mac; reinstall it or unset CGAH_APP" >&2; exit 3; }
   else
     # Skip a partial or damaged copy.
     for candidate in "/Applications/CG Agent Harness.app" "$HOME/Applications/CG Agent Harness.app"; do
@@ -125,7 +143,7 @@ if [ -z "$(app_backends)" ]; then
       fi
     done
   fi
-  [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: no complete app found (a partial or unsigned copy is skipped); run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
+  [ -n "$app" ] && [ -d "$app" ] || { echo 'start-macos: no usable app found (a partial, unsigned or wrong-architecture copy is skipped); run scripts/install-macos.sh or set CGAH_APP' >&2; exit 3; }
   say "opening $app"
   open "$app" </dev/null >/dev/null 2>&1 &
 fi
