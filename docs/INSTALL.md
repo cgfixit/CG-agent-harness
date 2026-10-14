@@ -593,13 +593,8 @@ Record those in the PR body.
 
 ## Tests and CI/CD
 
-[Verification commands](#11-verify-your-setup) cover local gates, desktop,
-Chrome and Ollama. Focused alternatives:
-
-```bash
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --all-targets
-cargo test --test invariant_guard
-```
+Use [focused local checks](#11-verify-your-setup) for changed behavior; CI runs
+all targets with provider keys blanked.
 
 Fixtures isolate `GIT_CONFIG_GLOBAL` and repository identity. `CGAH_TEST_BINARY`
 selects another backend, including a bundle. The standard-library Python suite

@@ -8,6 +8,7 @@ chat-browser job and `verify-local.sh`.
 
 ## Operator
 
+- [`batch-merge.py`](batch-merge.py): ordered CI-gated PR queue; [setup](../docs/INSTALL.md#ordered-batch-merge). `test-batch-merge.py` exercises stop/resume boundaries.
 - [`start-web.sh`](start-web.sh): starts the console on loopback (default 8790) and opens a browser.
 - [`web-allowlist-bootstrap.sh`](web-allowlist-bootstrap.sh): grants a technical-docs web allowlist through `cgagentharness web allow` (admin login needed); extra lines from `CGAH_GRANTS_FILE`.
 - [`reset-macos.sh`](reset-macos.sh): dry-runs, or with `--yes` deletes, the harness home and Keychain entries.
@@ -19,8 +20,7 @@ chat-browser job and `verify-local.sh`.
 
 - [`verify-local.sh`](verify-local.sh): full local verification: lint, tests, contract scripts, build, smoke.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`.
-- [`ci-docs-only.sh`](ci-docs-only.sh): classifies docs-only PRs for backend compile skipping.
-- [`batch-merge.py`](batch-merge.py): ordered CI-gated PR queue; [setup](../docs/INSTALL.md#ordered-batch-merge). `test-batch-merge.py` exercises stop/resume boundaries.
+- [`ci-docs-only.sh`](ci-docs-only.sh): classifies a diff as docs-only so `ci.yml` and `bundle.yml` skip compile jobs.
 - [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture; CI and skill-run only.
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
 - [`test-analytics.mjs`](test-analytics.mjs): analytics and spend helpers, logout clearing.
