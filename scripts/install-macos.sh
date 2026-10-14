@@ -50,6 +50,8 @@ run() {
   [ "$dry" = 1 ] || "$@"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+# A Homebrew that runs (not a stale link or a wrong-arch binary).
+brew_ok() { have brew && brew --version >/dev/null 2>&1; }
 # A GitHub CLI that runs (not a stale link or a wrong-arch binary).
 gh_ok() { have gh && gh --version >/dev/null 2>&1; }
 # rustup fails `run` for a component the toolchain lacks.
@@ -112,7 +114,8 @@ toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$root/rust-toolchain.toml")
 cargo_bin=${CARGO_HOME:-$HOME/.cargo}/bin
 PATH=$cargo_bin:$PATH
 for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-  if ! have brew && [ -x "$brew" ]; then eval "$("$brew" shellenv)"; fi
+  # A working standard install wins over a missing or broken brew on PATH.
+  if ! brew_ok && [ -x "$brew" ] && "$brew" --version >/dev/null 2>&1; then eval "$("$brew" shellenv)"; fi
 done
 export PATH
 
@@ -128,7 +131,9 @@ inventory() {
   local missing=0 v want tags
   say "macOS $(sw_vers -productVersion) on $(uname -m)"
   if xcode-select -p >/dev/null 2>&1; then say "Command Line Tools: $(xcode-select -p)"; else say 'Command Line Tools: MISSING'; missing=1; fi
-  if have brew; then say "Homebrew: $(brew --version 2>/dev/null | head -n1)"; else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
+  if brew_ok; then say "Homebrew: $(brew --version 2>/dev/null | head -n1)"
+  elif have brew; then say "Homebrew: $(command -v brew) does not run (remove it or fix PATH; needed only to install Ollama or gh)"
+  else say 'Homebrew: not installed (needed only to install Ollama or gh)'; fi
   if have rustup && ! rustup --version >/dev/null 2>&1; then
     say "rustup: $(command -v rustup) does not run (remove it or fix PATH, then rerun)"; missing=1
   elif have rustup; then
@@ -190,6 +195,10 @@ fi
 need_brew=0
 if [ "$ollama" = 1 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then need_brew=1; fi
 if [ "$gh" = 1 ] && ! gh_ok; then need_brew=1; fi
+# A brew that is found but cannot run is not ours to replace: stop with its path.
+if [ "$need_brew" = 1 ] && have brew && ! brew_ok; then
+  [ "$dry" = 1 ] || die "brew at $(command -v brew) does not run (wrong architecture or a stale link); remove it or fix PATH, then rerun" 3
+fi
 if [ "$need_brew" = 1 ] && ! have brew; then
   say 'installing Homebrew (official installer; it asks for your password)'
   installer=$(mktemp)
@@ -199,7 +208,7 @@ if [ "$need_brew" = 1 ] && ! have brew; then
   for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
     if [ -x "$brew" ]; then eval "$("$brew" shellenv)"; break; fi
   done
-  [ "$dry" = 1 ] || have brew || die 'Homebrew did not install; see https://brew.sh'
+  [ "$dry" = 1 ] || brew_ok || die 'Homebrew did not install; see https://brew.sh'
   say 'add Homebrew to new shells: follow the "Next steps" the installer printed'
 fi
 

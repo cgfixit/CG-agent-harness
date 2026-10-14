@@ -52,9 +52,10 @@ ollama_bundle_ok() {
 }
 # The Ollama CLI on PATH, else the one inside Ollama.app.
 ollama_cli() {
-  command -v ollama 2>/dev/null && return
-  for c in /Applications/Ollama.app/Contents/Resources/ollama "$HOME/Applications/Ollama.app/Contents/Resources/ollama"; do
-    if [ -x "$c" ]; then printf '%s\n' "$c"; return; fi
+  local c
+  # Only a CLI that runs (not a stale link or a wrong-arch binary); --help needs no server.
+  for c in "$(command -v ollama 2>/dev/null || true)" /Applications/Ollama.app/Contents/Resources/ollama "$HOME/Applications/Ollama.app/Contents/Resources/ollama"; do
+    if [ -n "$c" ] && [ -x "$c" ] && "$c" --help >/dev/null 2>&1; then printf '%s\n' "$c"; return; fi
   done
 }
 
