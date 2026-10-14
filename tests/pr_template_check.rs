@@ -265,7 +265,8 @@ fn workflow_strips_the_footer_before_the_stamp_check() {
     assert!(
         yml.contains("const body = cursorFooterAt === -1 ? rawBody : rawLines.slice(0, cursorFooterAt).join(\"\\n\");")
     );
-    assert!(yml.contains("types: [opened, edited, synchronize, reopened]"));
+    assert!(yml.contains("types: [opened, edited, synchronize, reopened, ready_for_review]"));
+    assert!(yml.contains("github.event.pull_request.state == 'open' && github.head_ref != 'main'"));
     assert!(yml.contains("permissions: {}"));
     assert!(yml.contains("contents: read"));
     assert!(yml.contains("pull-requests: write"));

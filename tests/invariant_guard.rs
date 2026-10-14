@@ -957,8 +957,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".codex/skills/cgagentharness-write-policy-redteam/SKILL.md", Agent, 800),
     (".codex/skills/fable-protocol/SKILL.md", Agent, 500),
     (".codex/skills/verification-specialist/SKILL.md", Agent, 600),
-    // why: evidence guidance, merge order, and the ELI5 footer counted 1614 words, rounded up to the next 100.
-    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 1700),
+    // why: operator-approved (2026-10-14) raise to 2200 after the change-type, merge-order and ELI5 guidance grew it to 2162 words.
+    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 2200),
     (".github/skills/repo-optimize/SKILL.md", Agent, 200),
     // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
     (".github/workflows/README.md", Agent, 300),

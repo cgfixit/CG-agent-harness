@@ -170,5 +170,5 @@ Write for the operator: plain but technical, nothing glossed. Cover the whole br
 - **What could still go wrong**, and the exact signal that would show it (a log line, a test, an audit field).
 - Be blunt about anything you did not run or could not check.
 
-Last updated: YYYY-MM-DD HH:MM [default or account specific Github time zone]
+Last updated: YYYY-MM-DD HH:MM ET
 
