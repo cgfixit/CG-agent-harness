@@ -108,7 +108,7 @@ const server=createServer(async(req,res)=>{
   const session={session_id:String(++sequence).padStart(12,'0'),goal:'',messages:[],title:'fixture',tokens:{total:0}};sessions.set(session.session_id,session);reply(session,201);return;
  }
  const match=path.match(/^\/api\/sessions\/([^/]+)(\/goal)?$/);
- if(match){const s=sessions.get(match[1]);if(match[2])s.goal=body.goal;reply(s);return;}
+ if(match){const s=sessions.get(match[1]);if(match[2]){s.goal=body.goal;s.goal_web_mode=s.goal?(body.web_mode??'fetch'):'all';}reply(s);return;}
  if(path.match(/^\/api\/sessions\/[^/]+\/goal-stage$/)){
   const session=sessions.get(path.split('/')[3]);
   if(req.method==='POST')session.stage={stage_id:'a'.repeat(32),goal:session.goal,request:{instruction:session.goal,branch:body.branch,commit_message:'Fixture goal',checks:null,read_files:[],max_iterations:1,goal_stage:{session_id:session.session_id,stage_id:'a'.repeat(32)}}};
@@ -316,7 +316,7 @@ try {
  await call('Page.enable');await call('Runtime.enable');
  await afterLoad(()=>call('Page.navigate',{url:base}));
  await until('typeof onSend === "function"');
- await until('document.getElementById("sSoulV").textContent === "missing"');
+ await until('document.getElementById("sSoulV").textContent === "unset"');
  await until('document.getElementById("hAuthWho").textContent.includes("authentication disabled")');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'disabled-auth homes must not advertise a login');
  // Header: Analytics once the account state is known; automation only when its probe reports it enabled.
@@ -662,7 +662,7 @@ try {
  const retrieveReq=requests.filter(r=>r[1]==='/api/chat').at(-1)[2];
  assert.equal(retrieveReq.retrieve,true);assert.equal(retrieveReq.retrieve_query,'metric');assert.equal(retrieveReq.message,'metric');
  assert.ok(retrieveReq.session_id,'force-include chat keeps the current session');
- await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal (web: all):")'));
+ await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal (web: fetch):")'));
  let before=chatCount();await send('/loop 2');assert.equal(chatCount(),before+1);assert.equal(await evaluate('loopState.remaining'),1);
  await send('/loop');assert.equal(chatCount(),before+2);assert.equal(await evaluate('loopState'),null);
  mode='repeat';await send('/loop 3');await send('/loop');assert.equal(await evaluate('loopState'),null);
@@ -917,7 +917,7 @@ try {
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','missing persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }

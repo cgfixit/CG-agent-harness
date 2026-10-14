@@ -8,6 +8,7 @@ Operators can overlay their own under the home's `styles/` folder.
 - [`concise.md`](concise.md): short answers, minimal preamble.
 - [`design.md`](design.md): design and architecture discussion framing.
 - [`research.md`](research.md): sourced, evidence-first research replies.
+- [`soul.md`](soul.md): concise evidence discipline and candid voice from the original persona.
 - [`technical.md`](technical.md): precise technical register with concrete references.
 
 Related: [docs/CONSOLE.md](../../docs/CONSOLE.md) (`/style`),
