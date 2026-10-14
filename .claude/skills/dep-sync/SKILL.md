@@ -3,9 +3,8 @@ name: dep-sync
 description: |
   Actively fix dependency, build, and deploy drift for CG-Agent-Harness by
   comparing the current branch's Cargo manifests/locks, toolchain pin, deny
-  policy, and CI/release/packaging config against the latest origin/main and applying the needed updates. Unlike
-  cgagentharness-verify-deps (which only reports), this skill performs the
-  sync, then re-verifies. Use when a branch has fallen behind main's dependency/toolchain
+  policy, and CI/release/packaging config against the latest origin/main and applying the needed updates, then
+  re-verifying. Use when a branch has fallen behind main's dependency/toolchain
   state, after a security advisory lands on main, or whenever asked to "sync
   deps" / "fix dependency drift".
 compatibility: |
@@ -16,8 +15,8 @@ compatibility: |
 
 # dep-sync — fix dependency/build/deploy drift against origin
 
-This skill WRITES fixes. If you only want a drift report with no changes, use
-`cgagentharness-verify-deps` instead.
+This skill WRITES fixes. For a report only, run steps 1, 2 and 4 with no edits
+and record commands, exit codes and advisory freshness.
 
 ## 1. Establish the comparison base
 
@@ -92,6 +91,8 @@ For CI/build/deploy YAML, port origin/main's exact toolchain version strings
 and job structure rather than re-deriving them; copy-diff, don't paraphrase.
 
 ## 4. Re-verify
+
+Inspect new Cargo features and each new `unsafe` block's safety argument.
 
 ```bash
 cargo build --all-targets --locked

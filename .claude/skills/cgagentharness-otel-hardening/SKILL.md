@@ -1,6 +1,6 @@
 ---
 name: cgagentharness-otel-hardening
-description: Statically re-verify CG-agent-harness's telemetry-kill contract — the per-spawn-site child environments (gh, git, sandboxed checks, MCP servers, desktop sidecar), the telemetry-free Cargo lock graphs, and a category-1-5 egress classification of every crate, binary and launcher — then sweep vendor docs. Use when asked to audit telemetry or phone-home leaks, after bumping a network crate, or when adding a dependency, spawn site or launcher. Not for the sandbox, write gates or dependency pins (invariant-guard, write-policy-redteam, verify-deps).
+description: Statically re-verify CG-agent-harness's telemetry-kill contract — the per-spawn-site child environments (gh, git, sandboxed checks, MCP servers, desktop sidecar), the telemetry-free Cargo lock graphs, and a category-1-5 egress classification of every crate, binary and launcher — then sweep vendor docs. Use when asked to audit telemetry or phone-home leaks, after bumping a network crate, or when adding a dependency, spawn site or launcher. Not for the sandbox, write gates or dependency pins (invariant-guard, write-policy-redteam, dep-sync).
 disable-model-invocation: true
 ---
 

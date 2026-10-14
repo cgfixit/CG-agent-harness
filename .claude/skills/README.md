@@ -23,8 +23,6 @@ are marked.
   read order and skill routing; load first.
 - [`cgagentharness-runtime-invariant-check/`](cgagentharness-runtime-invariant-check/SKILL.md):
   Claude-only, report-only walkthrough of I6, guard chain, CSRF and write gates.
-- [`cgagentharness-verify-deps/`](cgagentharness-verify-deps/SKILL.md):
-  Claude-only, report-only check of locks, `cargo deny`, toolchain pins.
 - [`cgagentharness-write-policy-redteam/`](cgagentharness-write-policy-redteam/SKILL.md):
   attack write gates, `confirm`+`reason`, clone jail and shim argv.
 - [`dep-sync/`](dep-sync/SKILL.md): Claude-only. Fixes dependency, toolchain,
