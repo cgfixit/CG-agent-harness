@@ -937,7 +937,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
         Agent,
         500,
     ),
-    (".claude/skills/cgagentharness-verify-deps/SKILL.md", Agent, 400),
     (
         ".claude/skills/cgagentharness-write-policy-redteam/SKILL.md",
         Agent,
