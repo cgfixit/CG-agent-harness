@@ -1008,7 +1008,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
-    ("docs/INSTALL.md", Guide, 5250),
+    // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
+    ("docs/INSTALL.md", Guide, 7500),
     ("docs/MCP_CLIENT.md", Guide, 890),
     ("docs/MCP_SERVER.md", Guide, 1030),
     // why: #244 folded MEMORY_SETUP.md and USER_MANUAL.md's memory sections in here.
