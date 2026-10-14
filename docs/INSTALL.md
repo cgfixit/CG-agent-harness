@@ -40,6 +40,35 @@ page). `curl` downloads skip Gatekeeper's quarantine prompt; compare
 [`start-macos.sh`](../scripts/start-macos.sh) is the everyday launcher, described
 in [section 7](#7-open-the-console-in-a-browser).
 
+### One command: `init.sh`
+
+On an Apple Silicon Mac, [`scripts/init.sh`](../scripts/init.sh) runs the steps
+below in order from a fresh clone or download, from zsh or bash:
+
+```bash
+cd CG-agent-harness && scripts/init.sh    # or: bash scripts/init.sh
+```
+
+It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped when
+`--check` passes), adds Homebrew and Rust to your login shell's profile
+(`~/.zprofile` for zsh, `~/.bash_profile` or `~/.profile` for bash), replaces
+admin's first password and saves it in your login keychain as **CG Agent Harness
+admin password**, and grants the web allowlist. It then asks what to open:
+**1** the app, **2** the console in your browser (served from that Terminal until
+Ctrl-C, or the open app's console), **3** both, **0** nothing. A failed step offers retry,
+skip or quit. A rerun skips finished steps and signs in with the saved password.
+
+| Option | Effect |
+|---|---|
+| `--yes` | Asks nothing; generates the admin password (Keychain only) |
+| `--choice 0`–`3` | What opens at the end |
+| `--model TAG`, `--with-gh`, `--no-ollama`, `--app-dir DIR` | Passed to `install-macos.sh` |
+| `--trust-cert`, `--no-profile`, `--no-allowlist` | Trust the console certificate (choices 2 and 3 with the app); skip the profile or allowlist |
+
+Each line is logged with a time to `scripts/logs/install.log` (private, ignored by
+git); passwords and setup codes never are. Read the saved password with
+`security find-generic-password -a admin -s 'CGagentHarness admin (<home>)' -w`.
+
 ### Step by step in Terminal
 
 Open **Terminal** (Applications → Utilities); on Apple Silicon leave its **Open
@@ -626,6 +655,7 @@ What the scripts leave behind, all optional to remove:
 | `start-macos.sh --trust-cert` | "CG Agent Harness local portal" certificate trusted in the login keychain | Keychain Access |
 | `start-macos.sh` | `OLLAMA_CONTEXT_LENGTH` for GUI apps until logout; `~/Library/Logs/ollama-serve.log` | `launchctl unsetenv OLLAMA_CONTEXT_LENGTH`; `rm` the log |
 | The harness | Home and its Keychain credentials | `scripts/reset-macos.sh` (dry run), then `--yes` after a backup |
+| `init.sh` | "CG Agent Harness admin password" in the login keychain; marked lines in your shell profile; `scripts/logs/` | `reset-macos.sh --yes`; delete the lines under `# Added by CG-agent-harness`; `rm -rf scripts/logs` |
 
 Homebrew, rustup, Ollama, models and `gh` are general tools; the installer
 never removes them.

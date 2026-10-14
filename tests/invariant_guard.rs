@@ -1035,8 +1035,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
     // each is its size plus about 10%, rounded up to the next 10.
     // why: operator-approved (2026-10-14) install-macos.sh and start-macos.sh lines, then the operator-requested
-    // Terminal-walkthrough and user-guide links; 531 words plus about 2%, rounded up to the next 10.
-    ("scripts/README.md", Guide, 550),
+    // Terminal-walkthrough, user-guide and init.sh lines; 564 words plus about 2%, rounded up to the next 10.
+    ("scripts/README.md", Guide, 580),
     ("src/agentic/README.md", Guide, 350),
     ("src/common/README.md", Guide, 400),
     ("src/netconnect/README.md", Guide, 190),
