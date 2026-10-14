@@ -52,6 +52,8 @@ Passing checks never authorize publication; scheduled jobs use the same controls
 
 A **home** is the application's state directory: `~/.CGagentHarness`, overridden with `CGAGENTHARNESS_HOME`. Run one app or standalone server per home.
 
+**macOS, from scratch:** after `xcode-select --install` and a clone, `scripts/install-macos.sh` installs what is missing (Rust, Ollama, the release app) and builds the backend; `scripts/start-macos.sh` opens the app and its console in your browser. See [automated install](docs/INSTALL.md#1-quick-start-automated-macos-install) and [browser access](docs/INSTALL.md#7-open-the-console-in-a-browser). The steps below are the manual path.
+
 ### 1. Prepare a local model
 
 Pick an installed model that fits your hardware (`ollama list`); the default `qwen3.8:27b-mlx` is not bundled or required.

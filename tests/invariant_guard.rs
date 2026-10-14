@@ -989,7 +989,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
     ("INVARIANTS.md", Root, 6540),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
-    ("README.md", Root, 1450),
+    // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
+    ("README.md", Root, 1500),
     ("SECURITY.md", Root, 490),
     ("docs/ANALYTICS.md", Guide, 680),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
@@ -1007,7 +1008,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/GITHOOKS.md", Guide, 1350),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
-    ("docs/INSTALL.md", Guide, 4650),
+    // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
+    ("docs/INSTALL.md", Guide, 5250),
     ("docs/MCP_CLIENT.md", Guide, 890),
     ("docs/MCP_SERVER.md", Guide, 1030),
     // why: #244 folded MEMORY_SETUP.md and USER_MANUAL.md's memory sections in here.
@@ -1033,7 +1035,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/screenshots/README.md", Evidence, 200),
     // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
     // each is its size plus about 10%, rounded up to the next 10.
-    ("scripts/README.md", Guide, 500),
+    // why: operator-approved (2026-10-14) install-macos.sh and start-macos.sh lines; 507 words plus about 2%, rounded up to the next 10.
+    ("scripts/README.md", Guide, 520),
     ("src/agentic/README.md", Guide, 350),
     ("src/common/README.md", Guide, 400),
     ("src/netconnect/README.md", Guide, 190),
@@ -1064,8 +1067,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-requested per-file folder indexes (src, tests, scripts, desktop, assets, data) and the docs/README.md
 // owning-code map put Guide at 47,658 and the .claude/skills and workflows indexes put Agent at 23,299; each rounded
 // up to the next 500 under the slack rule.
+// why: operator-approved (2026-10-14) macOS installer docs put Guide at 48,597 words; rounded up to the next 500.
 // why: the skills review trimmed fable-protocol and gotchas; Agent is 21322 words, rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 48_000), (Evidence, 500), (Agent, 21_500)];
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 49_000), (Evidence, 500), (Agent, 21_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
