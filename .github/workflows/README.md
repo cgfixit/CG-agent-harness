@@ -13,7 +13,7 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 
 ## Packaging
 
-- [`bundle.yml`](bundle.yml): push and PR to `main`, manual: packages the CLI tarball and calls `desktop.yml`; docs-only skips.
+- [`bundle.yml`](bundle.yml): pushes to `main` only: packages the CLI tarball and calls `desktop.yml`; PRs run validation without packaging.
 - [`desktop.yml`](desktop.yml): `workflow_call` from bundle and release, or manual: builds, verifies and deny-checks the macOS `.app`.
 - [`release.yml`](release.yml): `v*` tag, twice-daily cron, manual: plan, verify via `ci.yml`, build, desktop, publish.
 
