@@ -991,7 +991,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     ("README.md", Root, 1500),
     ("SECURITY.md", Root, 490),
-    ("docs/ANALYTICS.md", Guide, 680),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     ("docs/API_ROUTES.md", Guide, 1830),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
@@ -1011,24 +1010,24 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/INSTALL.md", Guide, 5250),
     ("docs/MCP_CLIENT.md", Guide, 890),
     ("docs/MCP_SERVER.md", Guide, 1030),
-    // why: #244 folded MEMORY_SETUP.md and USER_MANUAL.md's memory sections in here.
+    // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
     ("docs/MEMORY_GUIDE.md", Guide, 1750),
     // why: #237 documented refused truncated cloud replies.
     ("docs/MODELS.md", Guide, 970),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1160),
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
     // why: operator-requested reading paths plus an owning-code and tests line per doc; size plus about 5%, rounded up to the next 50.
-    ("docs/README.md", Guide, 1650),
+    ("docs/README.md", Guide, 1500),
     ("docs/RELEASING.md", Guide, 700),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
     ("docs/SECURE_RESEARCH.md", Guide, 3550),
-    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 1910),
+    // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here (+250 over the old 1910 cap); 2157 words.
+    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2160),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
     ("docs/STRUCTURED_MEMORY.md", Guide, 3440),
     ("docs/TROUBLESHOOTING.md", Guide, 1300),
-    ("docs/USER_MANUAL.md", Guide, 500),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     ("docs/netconnect.md", Guide, 3300),
     ("docs/screenshots/README.md", Evidence, 200),
@@ -1068,7 +1067,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // up to the next 500 under the slack rule.
 // why: operator-approved (2026-10-14) macOS installer docs put Guide at 48,597 words; rounded up to the next 500.
 // why: the skills review trimmed fable-protocol and gotchas; Agent is 21322 words, rounded up to the next 500.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 49_000), (Evidence, 500), (Agent, 21_500)];
+// why: folding ANALYTICS.md and USER_MANUAL.md into other docs cut Guide to 47,827 words; rounded up to the next 500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 48_000), (Evidence, 500), (Agent, 21_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

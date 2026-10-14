@@ -135,7 +135,7 @@ not runtime `/api/skills` plugins.
 
 ## 9. The docs audit agent can cite lines that do not exist
 
-- **Symptom:** A drift report says "USER_MANUAL.md line 15 says sessions are
+- **Symptom:** A drift report says "CONSOLE.md line 15 says sessions are
   written to `sessions/*.json`"; the file has no such line. Applying the edit
   blindly fails, or worse, inserts prose at a guessed location.
 - **Wrong fix:** Trust a subagent's line numbers or quoted text as evidence.

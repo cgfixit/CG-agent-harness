@@ -22,10 +22,13 @@ persona, or reply never authorizes commands, commits, pushes, or publication.
 | Accounts and API Keys | Signed out, only a sign-in card shows; fresh `admin` uses a one-time setup code, then must replace it. Administrator, Portal operator and Auditor permissions are enforced on API reads and writes. Administrators manage masked saved/active credentials in API Keys. |
 | Coding loop | Stage a task and files or plan, then confirm an isolated run that proposes bounded edits, runs fixed sandboxed checks, and feeds results into later attempts. |
 | Review and publication | Inspect retained run status and diffs, approve the reviewed tree for a local commit, then separately push and publish a draft PR with a reviewed repository template. |
-| Analytics | After sign-in, Analytics or `/analytics` opens filterable, paged Tokens, Sessions, and Code sections; sessions also sort. Completeness warnings persist. [Interpretation and API](ANALYTICS.md). |
-| Spend | Analytics' Tokens and cost tab: read-only retained provider/model/day usage, available USD, completeness warnings, pagination and **Estimate draft**. [Build requirements and interpretation](SPEND_AND_NOTIFICATIONS.md). |
+| Analytics and spend | After sign-in, Analytics or `/analytics` opens filterable, paged Tokens and cost, Sessions and Code sections: read-only retained usage, available USD, completeness warnings and **Estimate draft**. [Interpretation and API](SPEND_AND_NOTIFICATIONS.md#analytics-sessions-tokens-and-coding-runs). |
 | Completion webhooks | Metadata-only notifications for terminal detached jobs, off until configured; the **Job webhooks** button shows only then. Delivery grants no job or repository authority. [Setup](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook). |
 | Recovery | Rediscover retained jobs and runs after reopening. Worker leases distinguish active work from interrupted runs; reopening does not automatically resume work or replay a publication. |
+
+Text follows browser zoom. In the sidebar tab list, arrow keys, Home and End move
+and Enter or Space opens a tab. The conversation is a polite live log, marked
+busy while a reply streams.
 
 ## 7. Chat, soul, skills and goals
 
@@ -393,7 +396,7 @@ confirmation and persistence.
 | Command family | Supported use |
 |---|---|
 | `/agent [help]` | Inspect coding commands; full workflow below |
-| `/analytics` | Open retained session, token and coding-run [analytics](ANALYTICS.md); no inference or repository operation |
+| `/analytics` | Open retained session, token and coding-run [analytics](SPEND_AND_NOTIFICATIONS.md#analytics-sessions-tokens-and-coding-runs); no inference or repository operation |
 | `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields; [persistence](INSTALL.md#8-persistence-optional-keys-and-recovery) |
 | `/clear` | Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain |
 | `/connectors` | Connector catalog; does not activate connectors |
