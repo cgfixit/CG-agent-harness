@@ -56,6 +56,16 @@ clt_ok() { xcode-select -p >/dev/null 2>&1 && xcrun clang --version >/dev/null 2
 brew_ok() { have brew && brew --version >/dev/null 2>&1; }
 # A GitHub CLI that runs (not a stale link or a wrong-arch binary).
 gh_ok() { have gh && gh --version >/dev/null 2>&1; }
+# The app's backend searches only these directories (desktop/src/backend.rs finder_path),
+# so a gh elsewhere (e.g. MacPorts' /opt/local/bin) is invisible to its coding pipeline.
+# Search those directories the way the app does, for a gh that runs.
+gh_app_visible() {
+  local d
+  for d in "$HOME/.cargo/bin" /opt/homebrew/bin /usr/local/bin /usr/bin /bin; do
+    if [ -x "$d/gh" ] && "$d/gh" --version >/dev/null 2>&1; then return 0; fi
+  done
+  return 1
+}
 # rustup fails `run` for a component the toolchain lacks.
 lints_ok() {
   rustup run "$toolchain" cargo-clippy --version >/dev/null 2>&1 && rustup run "$toolchain" rustfmt --version >/dev/null 2>&1
@@ -179,7 +189,8 @@ inventory() {
     v=$(launchctl getenv OLLAMA_CONTEXT_LENGTH 2>/dev/null || true)
     say "OLLAMA_CONTEXT_LENGTH for GUI apps: ${v:-unset (scripts/start-macos.sh sets 32768)}"
   fi
-  if gh_ok; then say "GitHub CLI: $(gh --version 2>/dev/null | head -n1)"
+  if gh_ok && { [ "$gh" = 0 ] || gh_app_visible; }; then say "GitHub CLI: $(gh --version 2>/dev/null | head -n1)"
+  elif gh_ok; then say "GitHub CLI: $(command -v gh) runs, but the app cannot see that directory (a rerun installs a Homebrew copy)"; missing=1
   elif have gh && [ "$gh" = 1 ]; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
   elif [ "$gh" = 1 ]; then say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
@@ -215,7 +226,7 @@ fi
 # ----------------------------------------------------------------- 2. Homebrew
 need_brew=0
 if [ "$ollama" = 1 ] && ! path_ollama_ok && [ -z "$(ollama_app)" ]; then need_brew=1; fi
-if [ "$gh" = 1 ] && ! gh_ok; then need_brew=1; fi
+if [ "$gh" = 1 ] && ! { gh_ok && gh_app_visible; }; then need_brew=1; fi
 # A brew that is found but cannot run is not ours to replace: stop with its path.
 if [ "$need_brew" = 1 ] && have brew && ! brew_ok; then
   [ "$dry" = 1 ] || die "brew at $(command -v brew) does not run (wrong architecture or a stale link); remove it or fix PATH, then rerun" 3
@@ -296,7 +307,7 @@ if [ "$ollama" = 1 ]; then
 fi
 
 # ----------------------------------------------------------------------- 5. gh
-if [ "$gh" = 1 ] && ! gh_ok; then
+if [ "$gh" = 1 ] && ! { gh_ok && gh_app_visible; }; then
   # reinstall repairs a broken Homebrew gh; install covers a missing one.
   if brew list --formula gh >/dev/null 2>&1; then run brew reinstall gh; else run brew install gh; fi
 fi
