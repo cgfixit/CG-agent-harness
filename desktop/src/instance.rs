@@ -88,11 +88,17 @@ impl Drop for Instance {
     }
 }
 
+/// Held by tests that spawn a child while another test owns an instance lock: a child
+/// keeps the lock's open file description until it execs, so the lock would look held.
+#[cfg(test)]
+pub(crate) static CHILD_PROCESS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn ownership_is_home_scoped_and_second_instance_only_requests_focus() {
+        let _serial = CHILD_PROCESS.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let first = Instance::acquire(&dir.path().join("one")).unwrap().unwrap();
         assert!(Instance::acquire(&dir.path().join("one")).unwrap().is_none());
