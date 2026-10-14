@@ -85,6 +85,8 @@ pub async fn agent_checks(State(state): State<Arc<AppState>>) -> Json<Value> {
         "default_profile": crate::server::agent_policy::DEFAULT_CHECK_PROFILE,
         "poll_interval_ms": state.cfg.u64_or("app.agent_job_poll_ms", 1500).clamp(1000, 30000),
         "planner_model": state.cfg.str_or("agentic.deepagent_github.model", ""),
+        // Read-only: lets the console refuse a branch at /agent run instead of at confirm.
+        "branch_prefixes": crate::common::identity::identity().map(|i| i.allowed_prefixes.clone()).unwrap_or_default(),
         "capabilities": {"jobs": true, "streaming": false, "job_recovery": "durable_interrupted", "descendant_stop_guaranteed": false},
     }))
 }

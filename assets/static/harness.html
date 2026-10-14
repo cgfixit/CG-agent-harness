@@ -850,20 +850,87 @@ let suggestionNoticeSession = null; // Session that already showed the one-time 
 let currentSession = null;   // session_id string or null
 let promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
 
+/* Every submitted line is recallable, whatever happened to it: chat turns,
+   slash commands, and lines that were refused or failed. A `set` command keeps
+   only its first three words, so an /api set value never enters history. */
+/* A command copied with its inline-code backticks or quotes, reduced to the
+   bare line: "`/api set K v`" -> "/api set K v", "/ api" -> "/api". */
+function bareCommand(text) {
+  return text.trim().replace(/^[`'"“‘]+/, '').replace(/[`'"”’]+$/, '').trim().replace(/^\/+\s*/, '/');
+}
+/* /api, slashed or quoted (or a slashless "api set"), may carry a credential. */
+function isApiCredentialLine(text) {
+  const line = bareCommand(text);
+  return /^\/api/i.test(line) || /^api\s*(set|clear)\b/i.test(line);
+}
+function historyLine(text) {
+  const line = bareCommand(text);
+  const words = line.split(/\s+/);
+  const root = words[0].replace(/^\//, '').toLowerCase();
+  /* Keep only the root, set|clear and an UPPER_CASE key name; a value, or a
+     token typed where the key name belongs, is dropped. */
+  if (isApiCredentialLine(text)) {
+    const kept = [words[0]];
+    if (['set', 'clear'].includes((words[1] || '').toLowerCase())) {
+      kept.push(words[1]);
+      if (/^[A-Z][A-Z0-9]*_[A-Z0-9_]*$/.test(words[2] || '')) kept.push(words[2]);
+    }
+    return kept.join(' ');
+  }
+  return stripUrlCredentials(line.startsWith('/') && (words[1] || '').toLowerCase() === 'set' && !COMMANDS.some(([syntax]) => syntax.startsWith('/' + root + ' '))
+    ? words.slice(0, 3).join(' ') : text.trim());
+}
+/* https://user:pass@host -> https://host, so a refused line keeps no password. */
+function stripUrlCredentials(line) {
+  return line.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\/\s?#@]*@/gi, '$1');
+}
+/* Lines typed before a session existed join the session the console then
+   creates (by /goal, /style, /skill or the first chat turn), in order. */
+function adoptPendingHistory(sessionId) {
+  if (promptHistory.session !== null || !sessionId) return;
+  const pending = promptHistory.prompts.slice();
+  Object.assign(promptHistory, {session:sessionId, fetched:true});
+  for (const text of pending) promptSaves = promptSaves.then(() => api('/api/sessions/' + encodeURIComponent(sessionId) + '/prompt-history', 'POST', { text }))
+    .catch(() => { /* recall is a convenience */ });
+}
+let promptSaves = Promise.resolve();
+/* The topic after <prefix>/ — mirrors TOPIC in src/common/identity.rs. */
+const BRANCH_TOPIC = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$/;
+let busyNoticeTurn = undefined; // set once the busy gate has been explained; cleared when it opens
+function rememberPrompt(text) {
+  const line = historyLine(text);
+  if (!line) return;
+  if (promptHistory.session !== currentSession) {
+    promptHistory = {session:currentSession, prompts:[], index:0, draft:'', loading:false};
+  }
+  /* Before the first ArrowUp the list is fetched from the session, which
+     already holds this line once the POST below lands. */
+  if (promptHistory.fetched || !currentSession) {
+    if (promptHistory.prompts[promptHistory.prompts.length - 1] !== line) promptHistory.prompts.push(line);
+    promptHistory.prompts = promptHistory.prompts.slice(-50);
+  }
+  promptHistory.index = promptHistory.prompts.length; promptHistory.draft = '';
+  const session = currentSession;
+  /* Saves run in order, and a first ArrowUp waits for them (recallPrompt). */
+  if (session) promptSaves = promptSaves.then(() => api('/api/sessions/' + encodeURIComponent(session) + '/prompt-history', 'POST', { text: line }))
+    .catch(() => { /* recall is a convenience; the line itself was already handled */ });
+}
+
 async function recallPrompt(direction) {
-  if (!currentSession || sendBtn.disabled) return;
   if (promptHistory.session !== currentSession) {
     promptHistory = {session:currentSession, prompts:[], index:0, draft:input.value, loading:false};
   }
   const history = promptHistory;
   if (history.loading || (direction > 0 && history.index === history.prompts.length)) return;
-  if (!history.prompts.length) {
+  if (!history.fetched && currentSession) {
     history.loading = true;
     const revision = sessionRevision, draft = input.value;
     try {
+      await promptSaves;
       const session = await api('/api/sessions/' + encodeURIComponent(history.session));
       if (revision !== sessionRevision || history !== promptHistory || history.session !== currentSession || input.value !== draft) return;
       history.prompts = (session.prompt_history || (session.messages || []).filter(m => m.role === 'user').map(m => m.content)).slice(-50);
+      history.fetched = true;
       history.index = history.prompts.length;
     } catch (error) { sys('Prompt history unavailable: ' + error.message); return; }
     finally { history.loading = false; }
@@ -947,6 +1014,7 @@ function abortInflightSearch() {
    the gate under a model turn that began afterwards (or vice versa). */
 function releaseSendGate() {
   if (inflightChat || inflightSearch) return;
+  busyNoticeTurn = undefined;
   sendBtn.disabled = false;
   input.focus();
 }
@@ -1021,6 +1089,7 @@ function errorCopy(e, raw) {
   if (code === 'AUTH_PERMISSION_DENIED') return { title: "Your account can't do this", action: 'Ask an administrator, or sign in with an account that has this permission.' };
   if (code === 'CSRF_TOKEN_INVALID' || code === 'CROSS_ORIGIN_BLOCKED' || code === 'CROSS_SITE_BLOCKED') return { title: 'This page is out of date for the harness', action: 'Reload the page from the harness address, then retry.' };
   if (code === 'WEB_DISABLED') return { title: 'Web tools are off', action: 'An administrator can turn them on with /web on.' };
+  if (code === 'WEB_TOOL_DENIED') return { title: 'The model asked for a web tool this turn does not offer', action: '/goal shows the goal web mode; /goal --web all allows Google search.' };
   if (code === 'CLOUD_CHAT_BUDGET') return { title: 'The cloud chat budget is used up', action: 'Switch to a local model with /model use <tag>, or raise the budget in config.yaml.' };
   return { title: "That didn't work", action: '' };
 }
@@ -1212,13 +1281,20 @@ function renderSearchResults(result) {
 }
 function renderChatWebTools(events) {
   for (const event of events || []) {
-    if (!event.ok || event.code === 'WEB_TOOLS_WITHHELD') { sys(event.tool + ': ' + event.code + ' — ' + event.message); continue; }
+    if (!event.ok || event.code === 'WEB_TOOLS_WITHHELD') { sys(event.tool + ': ' + event.code + ' — ' + event.message, WEB_TOOL_NEXT_STEP[event.code]); continue; }
     const result = event.result || {};
     if (result.results) sys(renderSearchResults(result));
     else sys(renderSearchResults({provider:event.tool,results:[{title:result.title || result.url,url:result.url}],notice:result.notice}), (result.source_chars || 0) + ' source characters');
   }
 }
 
+/* The next step for a refused model web read; the model cannot grant itself access. */
+const WEB_TOOL_NEXT_STEP = {
+  WEB_ALLOWLIST_EMPTY: 'No URL is permitted yet. An administrator grants sites with /web allow https://www.example.org/* (check one with /web check URL).',
+  WEB_HOST_DENIED: 'That URL is outside the permitted patterns. /web status lists them; an administrator can add one with /web allow.',
+  WEB_GOOGLE_PERMISSION: 'Keyless Google search needs /web allow https://www.google.com/*, or add a SerpAPI key in API Keys.',
+  WEB_TOKEN_BUDGET: 'The turn ran out of web token budget (web.total_tokens); ask a narrower question or start a new session.',
+};
 function renderWebStatus(data) {
   const box = document.createElement('div');
   const intro = document.createElement('p');
@@ -1226,8 +1302,10 @@ function renderWebStatus(data) {
   box.appendChild(intro);
   const rows = [
     ['enabled', data.enabled ? 'yes' : 'no (fail-closed)'],
-    ['permission rules', (data.allowlist || []).length + (Number.isInteger(data.max_allow) ? ' of ' + data.max_allow + ' (web.max_rules)' : '') + ' — see groups below; empty denies content reads'],
-    ['keyword search', data.search_provider || 'Google; /web pages for permitted-page passages'],
+    ['permission rules', (data.allowlist || []).length + (Number.isInteger(data.max_allow) ? ' of ' + data.max_allow + ' (web.max_rules)' : '') + ' — see groups below; empty denies content reads' + (data.policy_missing ? ' (no policy file yet; the first /web allow creates it)' : '')],
+    ['keyword search', (data.search_provider || 'Google; /web pages for permitted-page passages') + (/serpapi/i.test(data.search_provider || '')
+      ? ' — /web search needs no URL rule; reading a listed page does'
+      : ' — needs /web allow https://www.google.com/* or a SerpAPI key in API Keys')],
     ['web calls per chat', Number.isInteger(data.limits?.chat_tool_calls) ? data.limits.chat_tool_calls + ' maximum; token and time limits also apply' : 'unknown'],
     ['injected', data.injected ? 'yes' : 'no'],
     ['context stored', data.context_stored ? 'yes' : 'no'],
@@ -1534,7 +1612,8 @@ async function refreshReadiness(s) {
   } else {
     const rules = Array.isArray(web.allowlist) ? web.allowlist.length : 0;
     if (rules) paintChip('hWeb', 'ok', rules + (rules === 1 ? ' URL rule' : ' URL rules'), 'Search is on; pages matching the permitted URL rules can be read.');
-    else paintChip('hWeb', 'warn', 'search only', 'Search is on, but no page URLs are permitted yet. Grant one with /web allow <url>.');
+    else if (/serpapi/i.test(web.search_provider || '')) paintChip('hWeb', 'warn', 'search only', 'Search is on, but no page URLs are permitted yet. Grant one with /web allow <url>.');
+    else paintChip('hWeb', 'warn', 'not configured', 'No URL rules and no SerpAPI key: search and page reads both need setup. Add a SerpAPI key in API Keys, or /web allow https://www.google.com/* and the sites to read.');
   }
 }
 
@@ -1844,7 +1923,7 @@ const COMMANDS = [
   ['/clear', 'clear visible output, staged reviews and chat continuation; saved sessions remain'],
   ['/connectors', 'connector catalog'],
   ['/github', 'read-only agentic GitHub status'],
-  ['/goal [text]|clear', 'show, set or clear the session goal'],
+  ['/goal [--web off|fetch|all] [text]|clear', 'show, set or clear the session goal'],
   ['/goal stage <branch>', 'explicitly stage the goal as a coding request'],
   ['/goal task', "inspect the goal's durable task linkage"],
   ['/harness', 'list retained harness optimizer runs; does not start one'],
@@ -1886,7 +1965,7 @@ const COMMANDS = [
   ['/status', 'server status'],
   ['/style [<name>|off]', 'show or select a session output style; soul.md is unchanged'],
   ['/tokens', 'current session token tally'],
-  ['/tools [all|help|<name>]', 'registered runtime tools as a diagram; all includes the catalog'],
+  ['/tools [all|help|mcp|<name>]', 'registered runtime tools as a diagram; all includes the catalog'],
   ['/users', 'administer local harness accounts'],
   ['/web [status|help]', 'show shared-home rules, groups and your account-selected context'],
   ['/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]', 'administrator: atomically grant exact URLs or explicit wildcards; repeat --seed for each seed'],
@@ -1906,12 +1985,39 @@ const COMMANDS = [
 const HELP_TOPICS = {
   chat: {title:'Chat & models', roots:['model','style','prompt','tokens','loop','clear'], note:'Type normally to chat. Slash commands are operator actions; printing one in a model response does not run it.', examples:['/model','/style concise','/prompt','/loop stop']},
   session: {title:'Sessions & goals', roots:['session','goal'], note:'Saved sessions belong to your account. /clear resets the visible conversation, not saved session files. Staging a goal does not authorize execution.', examples:['/session new Research notes','/session list','/session info','/goal Compare backup approaches']},
-  web: {title:'Web research', roots:['web'], note:'Allowlist and on/off are shared-home settings; only an administrator changes them. Saved selections are account-private. Exact URLs do not include other pages. A path wildcard https://www.veeam.com/* includes that host’s paths; *.example.org excludes the apex. No www rewriting, private addresses or redirects. Search listings never grant permission. Research follows only permitted links within page, time and byte limits; coverage is not exhaustive.', examples:['/web status','/web check https://www.veeam.com/','/web allow https://www.veeam.com/* https://example.org/* --group vendors','/web allow https://*.example.org/* --group docs --seed https://docs.example.org/','/web research --group vendors Compare the backup approaches','/web research --url https://www.veeam.com/ Summarize products and permitted internal links','/web fetch https://www.veeam.com/ https://example.org/','/web search --count 3 backup security']},
+  web: {title:'Web research', roots:['web'], note:'Allowlist and on/off are shared-home settings; only an administrator changes them. Saved selections are account-private. Exact URLs do not include other pages. A path wildcard https://www.veeam.com/* includes that host’s paths; https://*.example.org/* covers subdomain paths, not the apex; without /* a pattern is one page. https:// may be omitted. /web search needs no URL rule with a SerpAPI key; keyless Google needs https://www.google.com/*. No www rewriting, private addresses or redirects. Search listings never grant permission. Research follows only permitted links within page, time and byte limits; coverage is not exhaustive.', examples:['/web status','/web check https://www.veeam.com/','/web allow https://www.veeam.com/* https://example.org/* --group vendors','/web allow https://*.example.org/* --group docs --seed https://docs.example.org/','/web research --group vendors Compare the backup approaches','/web research --url https://www.veeam.com/ Summarize products and permitted internal links','/web fetch https://www.veeam.com/ https://example.org/','/web search --count 3 backup security']},
   memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory facts','/memory search backup preferences','/memory proposals','/soul status']},
   agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
   tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
   settings: {title:'Status & administration', roots:['status','analytics','api','users','help'], note:'Credentials belong in the API Keys password fields, not chat history. Administrator controls remain role- and CSRF-guarded.', examples:['/status','/analytics','/users','/help all']},
 };
+/* `web check https://…` or `memory facts` typed without the leading / goes to
+   the model as chat; a non-executing button offers the command form. Built from
+   COMMANDS: a root plus one of its literal subcommand words. */
+const SLASHLESS_PLACEHOLDERS = new Set(['text','title','topic','words','name','query','note','reason','sentence','question','instruction','branch','value','key']);
+let slashlessPairs = null;
+function slashlessCommand(text) {
+  if (!slashlessPairs) {
+    slashlessPairs = new Set();
+    for (const [syntax] of COMMANDS) {
+      const [root, ...tokens] = syntax.slice(1).split(' ');
+      for (let i = 0; i < tokens.length; i++) {
+        /* `[--web off|fetch|all]`: a flag's values are not subcommands, and a
+           later token is a subcommand only after an alternative list. */
+        if (/^\[?--/.test(tokens[i])) { i++; continue; }
+        if (i > 0 && !/[[|]/.test(tokens[0]) && !/^\[?--/.test(tokens[0])) break;
+        for (const word of tokens[i].replace(/<[^>]*>/g, '').replace(/[[\]]/g, '').split('|')) {
+          if (/^[a-z][a-z-]+$/.test(word) && !SLASHLESS_PLACEHOLDERS.has(word)) slashlessPairs.add(root + ' ' + word);
+        }
+      }
+    }
+  }
+  /* A command copied with its inline-code backticks: `/web status`. */
+  const quoted = text.trim().match(/^[`'"“](\/[^`'"”]+)[`'"”]$/);
+  if (quoted) return COMMANDS.some(([syntax]) => syntax.split(' ')[0] === quoted[1].split(/\s+/)[0].toLowerCase()) ? quoted[1].trim() : null;
+  const words = text.trim().split(/\s+/);
+  return words.length >= 2 && slashlessPairs.has(words[0].toLowerCase() + ' ' + words[1].toLowerCase()) ? '/' + text.trim() : null;
+}
 function commandPrefix(syntax) {
   return syntax.split(' ').filter((word,index,all) => index === 0 || all.slice(1,index+1).every(w => /^[a-z-]+$/.test(w))).join(' ') + ' ';
 }
@@ -1965,6 +2071,7 @@ const FLAG_MEANINGS = {
   '--url': 'a starting URL for research; repeat the flag for each one',
   '--count': 'how many Google results to return, 1 to 10',
   '--engine': 'google for web listings, pages for search inside permitted pages',
+  '--web': 'the goal’s chat web tools: off, fetch (permitted URLs only) or all (adds Google search); persists on the goal',
 };
 /* Keyed by the exact COMMANDS syntax. detail: what the command does when it
    runs. notes: caveats worth a line. args: per-command placeholder meanings
@@ -1987,7 +2094,7 @@ const COMMAND_MAN = {
   '/agent push <run-id> <reason>': {detail:'Pushes the approved commit. The server ships with pushing disabled, so the request is refused until an operator enables it in the configuration.'},
   '/agent read <repo-relative-path[#Lx-Ly]>|clear': {detail:'Declares a file the planner may read, up to ' + MAX_AGENT_READ_FILES + ' paths per request. A path already declared is reported, not duplicated. clear drops every declared path. Needs a staged request.'},
   '/agent reject <run-id>': {detail:'Rejects a pending run. Nothing is committed.'},
-  '/agent run <branch> <instruction>': {detail:'Stages a coding request and shows the server’s default check and planner model. Nothing executes: refine it with plan, read, checks, iterations, pr or issue, then authorize it with /agent confirm <reason>.', examples:['/agent run fix/login-timeout Return 408 instead of hanging when the upstream times out']},
+  '/agent run <branch> <instruction>': {detail:'Stages a coding request and shows the server’s default check and planner model. Nothing executes: refine it with plan, read, checks, iterations, pr or issue, then authorize it with /agent confirm <reason>.', examples:['/agent run agent/login-timeout Return 408 instead of hanging when the upstream times out']},
   '/agent runs': {detail:'Lists retained runs with status and recovery notes, reconciling interrupted ownership. The list is bounded; older records stay on disk.'},
   '/agent status <run-id>': {detail:'Shows one run and its complete diff.'},
   '/agent stop [job-id]': {detail:'Asks the server to cancel a job. Without an id, it uses the job this page last watched. Work the job already spawned may survive; inspect the run before further writes.'},
@@ -1996,7 +2103,7 @@ const COMMAND_MAN = {
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
   '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
-  '/goal [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. Prefix --web off, --web fetch or --web all to set this goal’s chat tools; without it the configured web.goal_web_default applies (ships fetch). clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
+  '/goal [--web off|fetch|all] [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. Prefix --web off, --web fetch or --web all to set the chat web tools of every turn in this session while the goal is set; without it the configured web.goal_web_default applies (ships fetch: permitted pages, no Google search). --web with no text changes only the mode of the stored goal. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
   '/goal stage <branch>': {detail:'Turns the session goal into a staged coding request on that branch. It still needs /agent confirm <reason>.'},
   '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
@@ -2037,13 +2144,13 @@ const COMMAND_MAN = {
   '/status': {detail:'Shows version, model, provider, soul, style, memory, sessions, tokens, home, goal and loop state. Signed-out and audit accounts see a reduced view.'},
   '/style [<name>|off]': {detail:'Shows or sets this session’s output style. The whole remainder is the name, so extra words are refused rather than ignored. soul.md is unchanged.', args:{name:'a style name from the status-bar menu'}},
   '/tokens': {detail:'Shows this session’s prompt, completion and total tokens, and the exchange count.'},
-  '/tools [all|help|<name>]': {detail:'Draws the registered runtime tools. all includes unwired rows; mcp shows external MCP grants; a name draws one tool; help lists these forms.', examples:['/tools mcp']},
+  '/tools [all|help|mcp|<name>]': {detail:'Draws the registered runtime tools. all includes unwired rows; mcp shows external MCP grants; a name draws one tool; help lists these forms.', examples:['/tools mcp']},
   '/users': {detail:'Opens the Users pane for local accounts. Administrator only.'},
   '/web [status|help]': {detail:'Shows web state: on or off, URL rules, groups and your selected context. help opens the web topic of this guide.'},
   '/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]': {detail:'Grants URL patterns in one step, optionally into a named group with seed URLs. An exact URL covers only that page; https://host/* covers that host’s paths; *.example.org excludes the apex. Search listings never grant access.'},
   '/web cancel': {detail:'Cancels your running research request.'},
   '/web check <URL> [URL ...] [--group name]': {detail:'Reports whether each exact URL is permitted and by which rule. Nothing is fetched, resolved or granted.'},
-  '/web deny <id-or-pattern>': {detail:'Removes one URL permission rule. Administrator only.'},
+  '/web deny <id-or-pattern>': {detail:'Removes a rule by ID (one rule), or by pattern (that pattern in every group). A pattern without https:// gets it added. Administrator only.'},
   '/web fetch <URL> [URL ...] [--group name]': {detail:'Fetches exact permitted URLs and shows a 2,000-character preview of each with coverage. Patterns and prose are refused.'},
   '/web forget': {detail:'Clears the web extract you selected for chat.'},
   '/web inject': {detail:'Selects your last fetch or page-search extract for later chat; /prompt previews it. It does not summarize, and it does not select a research answer.'},
@@ -2410,9 +2517,9 @@ function showAgentRecord(rec) {
   // checkout (allow_git_write_tools / EXECUTION_ENABLED) — the prompt is the
   // honest next step, not a promise it will succeed.
   else if (rec.status === 'approved' && !rec.pushed)
-    sys('committed locally — push it to origin with:  /agent push ' + rec.run_id);
+    sys('committed locally — push it to origin with:  /agent push ' + rec.run_id + ' <reason>');
   else if (rec.status === 'approved' && rec.pushed && !rec.pr_url)
-    sys('pushed — open a draft PR with:  /agent publish ' + rec.run_id + ' <why>');
+    sys('pushed — review the PR body with /agent pr-body ' + rec.run_id + ', then open a draft PR with:  /agent publish ' + rec.run_id + ' <reason>');
   // An approved run keeps its clone on disk on purpose (push/publish need
   // it), and nothing reclaims it automatically -- so say so once the run has
   // nowhere left to go, rather than leaking a clone per run silently.
@@ -2482,6 +2589,14 @@ $('sessionClearConfirm').addEventListener('click', async () => {
 });
 
 /* ── slash commands ── */
+/* A goal's web mode scopes every chat turn while the goal is set; say what it
+   allows and how to change it, so a missing web_search is not a mystery. */
+function goalWebNote(mode) {
+  if (mode === 'off') return 'web: off — while this goal is set, every chat turn in this session (typed or /loop) gets no web tools or saved web context. /goal --web all switches it.';
+  if (mode === 'fetch') return 'web: fetch — while this goal is set, every chat turn in this session (typed or /loop) can read permitted URLs only; Google search is off. /goal --web all allows search; reads still need /web allow.';
+  return 'web: all — while this goal is set, chat turns may search Google and read permitted URLs; reads still need /web allow.';
+}
+
 async function runSlash(line, webCommand) {
   if (sessionClearing) return;
   const parts = line.slice(1).split(/\s+/).filter(Boolean);
@@ -2517,6 +2632,8 @@ async function runSlash(line, webCommand) {
           if (attachInput) { attachInput.value = ''; paintAttach(); }
           sys('Cleared ' + r.removed + ' attachment pin(s); uploaded files and existing messages remain.');
         } else if (sub === 'new' || sub === 'use') {
+          if (sub === 'use' && rest.length !== 2) { sys('usage: /session use <id> — ids are in /session list or the Sessions pane'); break; }
+          const wasSessionless = !currentSession;
           const revision = ++sessionRevision;
           sendBtn.disabled = true;
           abortInflightSearch(); if (inflightChat) await requestLoopStop(); else stopLoop();
@@ -2526,9 +2643,14 @@ async function runSlash(line, webCommand) {
               : await api('/api/sessions/' + encodeURIComponent(rest[1] || ''));
             if (revision !== sessionRevision) break;
             clearTranscript();
+            /* Lines typed before any session join the one now opened. */
+            if (wasSessionless && sub === 'new') adoptPendingHistory(s.session_id);
+            else {
+              if (wasSessionless) adoptPendingHistory(s.session_id);
+              promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
+            }
             currentSession = s.session_id;
             paintSessionTokens(s.tokens);
-            promptHistory.session = null; promptHistory.prompts = [];
             sessionGoal = typeof s.goal === 'string' ? s.goal : '';
             loopAuto = false;
             paintGoalLoop();
@@ -2557,6 +2679,7 @@ async function runSlash(line, webCommand) {
             if (revision === sessionRevision) sendBtn.disabled = false;
           }
         } else if (sub === 'rename') {
+          if (rest.length < 2) { sys('usage: /session rename <title>'); break; }
           if (!currentSession) { sys('no active session'); break; }
           const s = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/rename', 'POST', { title: rest.slice(1).join(' ') });
           sys('renamed to: ' + s.title);
@@ -2565,11 +2688,13 @@ async function runSlash(line, webCommand) {
           const s = await api('/api/sessions/' + encodeURIComponent(currentSession));
           sys(table([['id', s.session_id], ['title', s.title], ['model', s.model],
                      ['messages', String(s.message_count)], ['tokens', String(s.tokens.total)]]));
-        } else {
+        } else if (sub === 'list') {
           const data = await api('/api/sessions');
           sys(table(data.sessions.map(s =>
             [s.session_id, s.title, String(s.message_count), String(s.tokens.total)]),
             ['id', 'title', 'msgs', 'tokens']));
+        } else {
+          sys('usage: /session [list|info|new [title]|rename <title>|use <id>|unpin]');
         }
         $('sSession').textContent = currentSession || 'none';
         await refreshSessions();
@@ -2581,7 +2706,15 @@ async function runSlash(line, webCommand) {
         sys(previewStyleLine(r) + '\n' + r.scope + '\n\n' + r.prompt); break;
       }
       case 'style': {
-        if (!currentSession) { sys('no active session'); break; }
+        if (!currentSession && !rest.length) { sys('style off — no session yet; /style <name> starts one'); break; }
+        if (!currentSession) {
+          const created = await api('/api/sessions', 'POST', {});
+          adoptPendingHistory(created.session_id);
+          currentSession = created.session_id;
+          paintSessionTokens(created.tokens);
+          $('sSession').textContent = currentSession;
+          currentStyle = 'off'; currentStyleIssue = null; paintStyle();
+        }
         /* The whole remainder is the id: `/style off please` or `/style
            concise typo` is refused by the server instead of silently acting
            on the first token. */
@@ -2605,7 +2738,8 @@ async function runSlash(line, webCommand) {
           applyStyleState(r); paintStyle();
           sys(!r.style ? 'style off'
             : !r.loaded ? 'style ' + r.style + ' is selected but ' + styleIssueText(r.unavailable_reason || 'unavailable')
-            : 'style ' + r.style + (r.origin ? ' (' + r.origin + ')' : '') + (r.truncated ? ' — ' + styleIssueText('truncated') : ''));
+            : 'style ' + r.style + (r.origin ? ' (' + r.origin + ')' : '') + (r.truncated ? ' — ' + styleIssueText('truncated') : ''),
+            Array.isArray(r.styles) && r.styles.length ? 'available: ' + r.styles.map(x => x.id).join(', ') + ', off' : undefined);
           break;
         }
         const write = styleWriteChain.catch(() => {}).then(() => api('/api/style', 'POST', { session_id: styleSession, name: name }));
@@ -2634,7 +2768,8 @@ async function runSlash(line, webCommand) {
         if (sub === 'edit' || sub === 'propose') { await openSoulEditor(sub === 'propose'); break; }
         if (sub === 'history') { const r = await api('/api/soul/document'); sys(table(r.versions.map(v => [v]), ['backup revision'])); break; }
         if (sub === 'review') {
-          const r = await api('/api/soul/proposals/' + encodeURIComponent(rest[1] || ''));
+          if (!rest[1]) { sys('usage: /soul review <id> — use the proposal id printed after Propose in the persona editor (/soul propose)'); break; }
+          const r = await api('/api/soul/proposals/' + encodeURIComponent(rest[1]));
           if (staleReview()) break;
           reviewedSoulProposal = r; sys(JSON.stringify(r, null, 2)); break;
         }
@@ -2725,7 +2860,7 @@ async function runSlash(line, webCommand) {
             ['state', r && r.state],
             ['proposals', String(r && r.proposal_count != null ? r.proposal_count : 0)],
             ['facts written', 'no (pending proposals only)'],
-            ['auto', 'off']
+            ['started by', 'this command (manual)']
           ]));
         } else if (sub === 'search') {
           const q = rest.slice(1).join(' ').trim();
@@ -2733,11 +2868,14 @@ async function runSlash(line, webCommand) {
           const r = await api('/api/structured-memory/search?q=' + encodeURIComponent(q));
           const hits = r && Array.isArray(r.hits) ? r.hits : [];
           sys(table([['hits', String(r && r.count != null ? r.count : hits.length)], ['fts', r && r.fts ? 'on' : 'off'], ['injected', 'no (search is not inject)']]));
-          if (hits.length) sys(table(hits.map(h => [h.id || '', String(h.revision != null ? h.revision : ''), h.category || '', String(h.score != null ? h.score : '')]), ['id', 'rev', 'category', 'score']));
+          const clip = text => { const chars = Array.from(String(text || '')); return chars.length > 240 ? chars.slice(0, 240).join('') + '…' : chars.join(''); };
+          if (hits.length) sys(table(hits.map(h => [h.id || '', String(h.revision != null ? h.revision : ''), h.category || '', String(h.score != null ? h.score : ''), clip(h.content)]), ['id', 'rev', 'category', 'score', 'fact']));
         } else if (sub === 'retrieve') {
           const q = rest.slice(1).join(' ').trim();
           if (!q) { sys('usage: /memory retrieve <query>'); break; }
-          await sendChat(q, { retrieve: true, retrieve_query: q });
+          /* Natural-language matching (question words dropped, any term), not
+             the API's all-terms retrieve_query: "which units do I prefer". */
+          await sendChat(q, { retrieve: true });
         } else if (sub === 'add') {
           const text = rest.slice(1).join(' ').trim();
           if (!text) { sys('usage: /memory add <note>'); break; }
@@ -2752,7 +2890,7 @@ async function runSlash(line, webCommand) {
           sys('forgot ' + (r.forgotten || nid) + ' (' + String(r.count) + ' left)');
         } else if (sub === 'clear') {
           const r = await api('/api/memory/clear', 'POST');
-          sys('memory notes cleared (' + String(r.count) + ')');
+          sys('memory notes cleared; ' + String(r.count) + ' remain');
         } else if (!sub || sub === 'status') {
           const r = await api('/api/memory');
           memoryEnabled = !!r.enabled; paintMemory();
@@ -2782,8 +2920,10 @@ async function runSlash(line, webCommand) {
             ['auto_suggest_chat', (r.structured_memory && r.structured_memory.auto_suggest_chat) ? 'on' : 'off'],
             ['auto_suggest_coding', (r.structured_memory && r.structured_memory.auto_suggest_coding) ? 'on' : 'off'],
           ]));
-          const drift = store && Array.isArray(store.config_drift) ? store.config_drift : [];
-          if (drift.length) {
+          const drift = (store && Array.isArray(store.config_drift) ? store.config_drift : []).filter(k => /^structured_memory\./.test(k));
+          if (drift.includes('structured_memory.enabled')) {
+            sys('config.yaml omits structured_memory.enabled, so the structured store is closed. Set structured_memory.enabled: true in config.yaml and restart; /memory gate commands cannot open the store.');
+          } else if (drift.length) {
             sys('config.yaml omits ' + String(drift.length) + ' setting(s) that ship on, so they read as off: ' +
                 drift.slice(0, 8).join(', ') + (drift.length > 8 ? ', …' : '') +
                 '. Add them to config.yaml (see the shipped default) or set the gates with the /memory commands.');
@@ -2809,12 +2949,14 @@ async function runSlash(line, webCommand) {
           // `env_file` is the GET-only spelling. Reading the wrong one here
           // printed "-> undefined" on every successful save.
           sys('saved: ' + r.written.join(', ') + '  ->  ' + r.path);
-          sys('Saved credentials load after restart; explicit environment values override them. Harness metadata does not grant account access.');
+          sys(r.restart_required === false ? 'Saved; it applies now (/web status shows the search provider). An explicit environment value still wins.'
+            : 'Saved credentials load after restart; explicit environment values override them. Harness metadata does not grant account access.');
           for (const warning of r.credential_warnings || []) sys(warning);
           await renderKeys(r.keys);
         } else if (rest[0] === 'clear' && rest[1]) {
           const r = await api('/api/keys', 'POST', {clear: [rest[1].toUpperCase()]});
-          sys('Cleared saved value. Restart required; an explicit environment value still takes precedence.'); renderKeys(r.keys);
+          sys(r.restart_required === false ? 'Cleared saved value; it applies now. An explicit environment value still takes precedence.'
+            : 'Cleared saved value. Restart required; an explicit environment value still takes precedence.'); renderKeys(r.keys);
         } else if (rest[0] === 'set' || rest[0] === 'clear') {
           sys('usage: /api set <KEY> <value> or /api clear <KEY>; prefer API Keys for secret entry');
         } else {
@@ -2827,10 +2969,19 @@ async function runSlash(line, webCommand) {
       }
 
       case 'model': {
-        if (rest[0] === 'use' && rest[1]) {
-          const r = await api('/api/model', 'POST', { model: rest.slice(1).join(' ') });
+        if (rest[0] === 'use' && rest.length !== 2) { sys('usage: /model use <exact-installed-tag> — /model list shows the tags'); break; }
+        if (rest[0] === 'use') {
+          const r = await api('/api/model', 'POST', { model: rest[1] });
           const planner = await api('/api/agent/checks');
           sys('chat model selected: ' + r.model + ' via ' + r.provider + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
+          if (r.provider === 'ollama') {
+            const inv = await api('/api/ollama/inventory').catch(() => null);
+            const tags = inv && Array.isArray(inv.models) ? inv.models.map(m => m.name) : [];
+            if (tags.length && !tags.includes(r.model)) {
+              const near = tags.map(t => [t, t.replace(/[:.]/g, '') === r.model.replace(/[:.]/g, '') ? 0 : 1]).sort((a, b) => a[1] - b[1])[0];
+              sys('warning: ' + r.model + ' is not an installed Ollama tag, so chat will fail. ' + (near && near[1] === 0 ? 'Did you mean /model use ' + near[0] + '? ' : '') + '/model list shows the tags.');
+            }
+          }
           if (r.tuning === 'pending') sys('auto_tune is measuring this model in the background (it loads the model); /model profile shows the applied limits.');
           await refreshStatus();
         } else if (rest[0] === 'list') {
@@ -2917,7 +3068,7 @@ async function runSlash(line, webCommand) {
         if (cmd === 'registry')
           sys(table(reg.skills.map(s => [s.name, s.source]), ['skill', 'source']));
         if (cmd === 'registry')
-          sys(table(reg.tools.map(t => [t.name, t.description]), ['tool', 'description']));
+          sys(reg.tools.length ? table(reg.tools.map(t => [t.name, t.description]), ['tool', 'description']) : 'tools: none registered here; /tools lists runtime tools');
         if (cmd === 'connectors' || cmd === 'registry')
           sys(table(reg.connectors.map(c => [c.name, c.kind, c.auth]), ['connector', 'kind', 'auth']));
         break;
@@ -2932,9 +3083,9 @@ async function runSlash(line, webCommand) {
           pendingAgentRun.checks = [r.profile]; showPendingAgentRun();
           sys('Fixed check selected; nothing executed. /agent confirm <reason> uses existing authorization and sandbox limits.'); break;
         }
-        if (!['use','clear','status'].includes(action)) { sys('usage: /skill use <id...> | clear | status | check:<profile>'); break; }
+        if (!['use','clear','status'].includes(action) || (action === 'use' && rest.length < 2)) { sys('usage: /skill use <id...> | clear | status | check:<profile> — /skills all lists ids'); break; }
         if (!currentSession) {
-          const created = await api('/api/sessions', 'POST', {}); currentSession = created.session_id;
+          const created = await api('/api/sessions', 'POST', {}); adoptPendingHistory(created.session_id); currentSession = created.session_id;
           paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
@@ -3014,16 +3165,12 @@ async function runSlash(line, webCommand) {
           webCommand = parsed.web;
         }
         const sub = webCommand.action, body = webCommand.body;
-        if (sub === 'on' || sub === 'off') {
-          sys(renderWebStatus(await api('/api/web', 'POST', body)));
-          break;
-        }
-        if (sub === 'allow') {
-          sys(renderWebStatus(await api('/api/web/allow', 'POST', body)));
-          break;
-        }
-        if (sub === 'deny') {
-          sys(renderWebStatus(await api('/api/web/deny', 'POST', body)));
+        if (sub === 'on' || sub === 'off' || sub === 'allow' || sub === 'deny') {
+          /* Literal paths keep each route visible to the console contract readers. */
+          const changed = sub === 'allow' ? await api('/api/web/allow', 'POST', body)
+            : sub === 'deny' ? await api('/api/web/deny', 'POST', body) : await api('/api/web', 'POST', body);
+          sys(renderWebStatus(changed));
+          if (lastStatus) refreshReadiness(lastStatus);
           break;
         }
         if (sub === 'check') {
@@ -3126,10 +3273,15 @@ async function runSlash(line, webCommand) {
           const capabilities = await api('/api/agent/checks');
           if (staleReview()) break;
           if (!capabilities.capabilities || !capabilities.capabilities.jobs || !capabilities.default_profile) { sys('server does not advertise the required job workflow'); break; }
+          const prefixes = Array.isArray(capabilities.branch_prefixes) ? capabilities.branch_prefixes : [];
+          if (prefixes.length && !prefixes.some(p => branch.startsWith(p + '/') && BRANCH_TOPIC.test(branch.slice(p.length + 1)))) {
+            sys('branch must be <prefix>/<topic> with prefix ' + prefixes.map(p => p + '/').join(', ') + ' — for example /agent run ' + prefixes[0] + '/' + (branch.split('/').pop() || 'topic') + ' ' + instruction);
+            break;
+          }
           pendingAgentRun = {
             branch: branch,
             instruction: instruction,
-            commit_message: instruction.slice(0, 72),
+            commit_message: Array.from(instruction).slice(0, 72).join(''),
             checks: null,
             plan: null,
             read_files: [],
@@ -3219,6 +3371,7 @@ async function runSlash(line, webCommand) {
           }
         } else if (sub === 'runs') {
           const result = agentRecord(await api('/api/agent/runs'));
+          if (!result) break;
           sys(table(result.runs.map(r => [r.run_id, r.status, r.error || '']), ['run', 'status', 'recovery']));
           if (result.truncated) sys('Showing a bounded set of retained runs. Older records remain on disk.');
           sys('Use /agent status <id> to inspect, and /agent discard <id> for interrupted or decided work. Unknown running ownership cannot be discarded.');
@@ -3318,6 +3471,13 @@ async function runSlash(line, webCommand) {
         if (rest[0] === 'stage') {
           if (!currentSession || !sessionGoal) { sys('Set /goal <text> first.'); break; }
           if (!rest[1]) { sys('usage: /goal stage <branch> — name the branch the coding run should use'); break; }
+          const stageCaps = await api('/api/agent/checks');
+          if (staleReview()) break;
+          const stagePrefixes = Array.isArray(stageCaps.branch_prefixes) ? stageCaps.branch_prefixes : [];
+          if (stagePrefixes.length && !stagePrefixes.some(p => rest[1].startsWith(p + '/') && BRANCH_TOPIC.test(rest[1].slice(p.length + 1)))) {
+            sys('branch must be <prefix>/<topic> with prefix ' + stagePrefixes.map(p => p + '/').join(', ') + ' — for example /goal stage ' + stagePrefixes[0] + '/' + (rest[1].split('/').pop() || 'topic'));
+            break;
+          }
           const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage', 'POST', {branch:rest[1] || ''});
           if (staleReview()) break;
           pendingAgentRun = r.request; showPendingAgentRun(); sys(r.next); break;
@@ -3335,7 +3495,7 @@ async function runSlash(line, webCommand) {
           const shown = await api('/api/sessions/' + encodeURIComponent(currentSession));
           sessionGoal = typeof shown.goal === 'string' ? shown.goal : '';
           paintGoalLoop();
-          sys(sessionGoal ? ('current goal (web: ' + (shown.goal_web_mode || 'all') + '):\n' + sessionGoal) : 'no goal set');
+          sys(sessionGoal ? ('current goal (web: ' + (shown.goal_web_mode || 'all') + '):\n' + sessionGoal) : 'no goal set', sessionGoal ? goalWebNote(shown.goal_web_mode) : undefined);
           break;
         }
         if (arg === 'clear') {
@@ -3349,18 +3509,27 @@ async function runSlash(line, webCommand) {
         }
         let goalText = arg, goalWebMode = null;
         if (rest[0] === '--web') {
-          if (!['off', 'fetch', 'all'].includes(rest[1]) || rest.length < 3) {
-            sys('usage: /goal --web off|fetch|all <text>'); break;
+          if (!['off', 'fetch', 'all'].includes(rest[1])) {
+            sys('usage: /goal --web off|fetch|all [text]'); break;
           }
           goalWebMode = rest[1];
-          goalText = arg.replace(/^--web\s+\S+\s+/, '');
+          goalText = arg.replace(/^--web\s+\S+\s*/, '');
+          if (!goalText) {
+            /* Only the mode changes; the stored goal text stays as it is. */
+            if (!currentSession) { sys('set a goal first: /goal --web ' + goalWebMode + ' <what you want done>'); break; }
+            const shown = await api('/api/sessions/' + encodeURIComponent(currentSession));
+            if (staleReview()) break;
+            if (!shown.goal) { sys('set a goal first: /goal --web ' + goalWebMode + ' <what you want done>'); break; }
+            goalText = shown.goal;
+          }
         }
         if (Array.from(goalText).length > MAX_GOAL_CHARS) {
           sys('goal is too long; keep it under ' + MAX_GOAL_CHARS + ' characters');
           break;
         }
         if (!currentSession) {
-          const created = await api('/api/sessions', 'POST', { title: goalText.slice(0, 40) });
+          const created = await api('/api/sessions', 'POST', { title: Array.from(goalText).slice(0, 40).join('') });
+          adoptPendingHistory(created.session_id);
           currentSession = created.session_id;
           paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
@@ -3370,7 +3539,7 @@ async function runSlash(line, webCommand) {
         const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', goalWebMode ? { goal: goalText, web_mode: goalWebMode } : { goal: goalText });
         sessionGoal = set.goal || '';
         paintGoalLoop();
-        sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal);
+        sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal, goalWebNote(set.goal_web_mode));
         await refreshSessions();
         break;
       }
@@ -3391,9 +3560,10 @@ async function runSlash(line, webCommand) {
           loopAuto = !loopAuto;
           if (loopState) loopState.auto = loopAuto;
           paintGoalLoop();
-          sys('loop auto-continue is ' + (loopAuto
-            ? 'ON (continues until GOAL_DONE, stall, budget, or rate limit; still chat-only)'
-            : 'OFF (one turn, then wait)'));
+          sys('loop auto-continue is ' + (!loopAuto ? 'OFF (one turn, then wait)'
+            : loopState && loopState.running ? 'ON (continues until GOAL_DONE, stall, budget, or rate limit; still chat-only)'
+            : loopState && loopState.remaining > 0 ? 'ON — type /loop to run the remaining ' + loopState.remaining + ' turn(s)'
+            : 'ON — nothing is running yet; type /loop or /loop <n> to start (needs a /goal). auto alone does not start a loop.'));
           break;
         }
         if (loopState && loopState.running) {
@@ -3539,7 +3709,7 @@ async function runSlash(line, webCommand) {
       }
       case 'clear':
         clearTranscript();
-        loopState = null;
+        loopState = null; loopAuto = false;
         paintGoalLoop();
         break;
 
@@ -3680,7 +3850,7 @@ async function runLoopTurns() {
         sys('loop turn failed (' + loopState.failures + '/' + MAX_LOOP_FAILURES + ') — /loop to retry, /loop stop to abort');
         return;
       }
-      if (loopState.blockedTool) { stopLoop('loop stopped — ' + loopState.blockedTool + '; goal remains incomplete. Check /web status and the reported permission, provider or budget error before retrying /loop.'); return; }
+      if (loopState.blockedTool) { stopLoop('loop stopped — ' + loopState.blockedTool + '; goal remains incomplete. Check /web status and the reported permission, provider or budget error before retrying /loop.' + (WEB_TOOL_NEXT_STEP[loopState.blockedTool] ? ' ' + WEB_TOOL_NEXT_STEP[loopState.blockedTool] : '')); return; }
       loopState.failures = 0;
       loopState.remaining -= 1;
       if (loopState.lastReply && repliesNearlyRepeat(loopState.lastReply, reply)) {
@@ -3733,8 +3903,20 @@ window.addEventListener('beforeunload', function () {
   fetch('/api/chat/cancel', { method: 'POST', headers: headers, keepalive: true, credentials: 'same-origin' }).catch(function () {});
 });
 
+/* Say which saved facts reached this turn's prompt, or why retrieval did not
+   run, so automatic recall is visible rather than assumed. */
+function showRetrievedFacts(facts) {
+  if (!facts) return;
+  const injected = Array.isArray(facts.injected) ? facts.injected : [];
+  if (facts.retrieval_error) sys('memory retrieval failed (' + facts.retrieval_error + '); no retrieved facts were included');
+  else if (injected.length) sys('memory: included ' + injected.length + ' saved fact(s): ' + injected.map(f => f.id + (f.source === 'fts' ? ' (matched)' : ' (selected)')).join(', '), '/memory facts lists them; /prompt previews the next prompt');
+  else if (facts.retrieve) sys(facts.retrieval ? 'memory retrieve: no saved fact matched' : 'memory retrieve: retrieval is off (/memory retrieval on as administrator)');
+}
+
 async function finishChat(r, asLoop) {
-  promptHistory.session = null;
+  /* Lines typed before the server auto-created this session stay recallable
+     in it; otherwise the next ArrowUp re-reads the saved list. */
+  if (r && r.session_id && !currentSession) adoptPendingHistory(r.session_id);
   if (r && r.session_id) {
     /* A session the server just auto-created starts with style off; the
        status bar must not keep showing a cleared session's preset. */
@@ -3760,6 +3942,7 @@ async function finishChat(r, asLoop) {
      an oversized prompt loses its oldest text silently, system prompt first. */
   if (r && r.context_window && r.context_window.message) sys(r.context_window.message);
   showMemoryAttempt(r && r.memory_suggestion, true);
+  showRetrievedFacts(r && r.structured_facts);
   if ($('pane-memory').classList.contains('active')) refreshMemoryProposals();
   await refreshStatus();
   await refreshSessions();
@@ -3944,6 +4127,7 @@ async function onSend() {
   if (!text) return;
   if (sendBtn.disabled) {
     if (isLoopStopCommand(text)) {
+      rememberPrompt(text);
       input.value = '';
       /* A routed natural-language search may hold the gate: abort that
          request first (sendMaybeNlSearch reports "search cancelled" and
@@ -3957,11 +4141,24 @@ async function onSend() {
       if (inflightChat || loopState || !hadSearch) {
         requestLoopStop('loop stop requested — aborting the in-flight turn');
       }
+    } else if (/^\/loop\s+auto$/i.test(text) && !SLASH_REFUSED_CHARS.test(text)) {
+      /* Only flips page flags: let this turn finish, then stop or continue. */
+      rememberPrompt(text); input.value = '';
+      await runSlashMaybeFuzzy(text);
+    } else if (busyNoticeTurn === undefined) {
+      busyNoticeTurn = inflightChat;
+      sys('still working on the current request; your line stays in the box. Press Enter again when it finishes, or /loop stop to abort a reply.');
     }
     return;
   }
   input.value = '';
+  busyNoticeTurn = undefined;
+  rememberPrompt(text);
   if (text.startsWith('/')) { await runSlashMaybeFuzzy(rawText); return; }
+  if (isApiCredentialLine(text)) {
+    sys('not sent: this looks like an /api command (without its leading / or wrapped in quotes), and the line may hold a credential, so it did not go to the model. Use the API Keys pane, or retype it as /api set <KEY> <value>.');
+    return;
+  }
   const files = attachInput && attachInput.files ? Array.from(attachInput.files) : [];
   if (files.length) {
     /* An attached file grounds a model turn; a line with attachments is
@@ -4006,6 +4203,14 @@ async function onSend() {
     if (outcome !== null || retryRevision !== sessionRevision || retry.session !== currentSession) retryAttachmentIds = null;
     else restoreUnsentPrompt(text);
     return;
+  }
+  const command = slashlessCommand(text);
+  if (command) {
+    const box = document.createElement('div'), note = document.createElement('p');
+    note.textContent = command.startsWith('/' + text.trim().split(/\s+/)[0]) ? 'This starts like a command but has no leading /, so it was sent to the model as chat. To run the command instead:'
+      : 'This is a command wrapped in quotes or backticks, so it was sent to the model as chat. To run the command instead:';
+    box.append(note, commandButton(command));
+    sys(box, 'Suggestion only — click to edit, then explicitly send.');
   }
   await sendMaybeNlSearch(text);
 }
@@ -4228,12 +4433,30 @@ sendBtn.addEventListener('click', onSend);
 // A single-line input strips newlines during paste, before the parser sees
 // them. Refuse ambiguous slash-command pastes before the browser normalizes them.
 input.addEventListener('paste', e => {
-  const pasted = e.clipboardData && e.clipboardData.getData('text/plain');
-  if (!pasted) return;
+  const raw = e.clipboardData && e.clipboardData.getData('text/plain');
+  if (!raw) return;
+  /* A line copied from a reply's code block carries its line break (and
+     sometimes indentation); that edge whitespace is not a second line. */
+  const atStart = !input.value.slice(0, input.selectionStart).trim();
+  const pasted = raw.replace(atStart ? /^[ \t\r\n]+/ : /^[\r\n]+/, '').replace(/[ \t\r\n]+$/, '');
   const proposed = input.value.slice(0, input.selectionStart) + pasted + input.value.slice(input.selectionEnd);
   if (/^\s*\//.test(proposed) && SLASH_REFUSED_CHARS.test(proposed)) {
     e.preventDefault();
     sys('slash-command paste refused: use one line without control or invisible characters; nothing was dispatched');
+  } else if (pasted !== raw && /^\s*\//.test(proposed)) {
+    e.preventDefault();
+    input.setRangeText(pasted, input.selectionStart, input.selectionEnd, 'end');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+});
+input.addEventListener('drop', e => {
+  const raw = e.dataTransfer && e.dataTransfer.getData('text/plain');
+  if (!raw) return;
+  const dropped = raw.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+  const proposed = input.value + dropped;
+  if (/^\s*\//.test(proposed) && SLASH_REFUSED_CHARS.test(proposed)) {
+    e.preventDefault();
+    sys('slash-command drop refused: use one line without control or invisible characters; nothing was dispatched');
   }
 });
 input.addEventListener('input', () => {
@@ -5029,7 +5252,7 @@ function memoryRecovery(reason) {
   return 'The suggestion could not finish. Check the local model and storage, then try again. Technical details are in Suggestion activity.';
 }
 function showMemoryAttempt(attempt, chat) {
-  if (!attempt) return;
+  if (!attempt || attempt.reason === 'loop_turn') return;
   if (attempt.queued) {
     if (!chat || suggestionNoticeSession !== currentSession) {
       if (chat) suggestionNoticeSession = currentSession;
