@@ -416,7 +416,9 @@ try {
 
  await send('/agent run codex/parser-fixture Keep this test request staged');
  assert.ok(await evaluate('!!pendingAgentRun'),'exercise parser refusals with an executable request staged');
- const mutationRequests=()=>requests.filter(r=>r[0]==='POST'&&r[1]!=='/api/slash/parse');
+ // Saving a typed line for ArrowUp recall is not command dispatch.
+ const historySave=r=>r[1].endsWith('/prompt-history');
+ const mutationRequests=()=>requests.filter(r=>r[0]==='POST'&&r[1]!=='/api/slash/parse'&&!historySave(r));
  const beforeParserRefusals=mutationRequests().length;
  for(const response of ['suggest','error','invalid']){
   slashMode=response;
@@ -425,13 +427,16 @@ try {
   assert.ok(await evaluate('!!pendingAgentRun'),'declining a command must preserve the staged request');
  }
  assert.ok(await evaluate('document.querySelector("#stream .msg:last-child").textContent.includes("command not dispatched")'));
+ assert.ok(requests.some(r=>historySave(r)&&r[2].text==='/agent confirm --help')||await evaluate('promptHistory.prompts.includes("/agent confirm --help")'),'a refused command stays recallable');
  slashMode='suggest';
  await evaluate('runSlashMaybeFuzzy("/memory clear\\n")');
  assert.equal(requests.filter(r=>r[1]==='/api/slash/parse').at(-1)[2].line,'/memory clear\n','slash wrapper must preserve command boundaries');
- for(const pasted of ['/memory\n clear','/memory clear\n','/memory\tclear','/web allow https://example.org/*\n/web on','/agent\nconfirm operator-approved','/api\tclear GROK_API_KEY','/session\u2028new','/agent push\ufeffabc --dry-run','\ufeff/model list','/memory save a\u202eb :: why','/session rename a\u200bb']) {
+ for(const pasted of ['/memory\n clear','/memory\tclear','/web allow https://example.org/*\n/web on','/agent\nconfirm operator-approved','/api\tclear GROK_API_KEY','/session\u2028new','/agent push\ufeffabc --dry-run','\ufeff/model list','/memory save a\u202eb :: why','/session rename a\u200bb']) {
   assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain",'+JSON.stringify(pasted)+');return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'ambiguous slash-command paste must be prevented before native input normalization');
  }
  assert.equal(await evaluate('(()=>{input.value="/memory ";input.setSelectionRange(8,8);const data=new DataTransfer();data.setData("text/plain","clear\\n");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),false,'partial paste must consider existing command text');
+ // A line copied from a reply's code block keeps its command, minus the edge line break.
+ assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain","\\n/memory clear\\n");input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));return input.value;})()'),'/memory clear','edge line breaks are trimmed, not refused');
  assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain","/agent cancel");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),true,'exact single-line paste remains available');
  slashMode='dispatch';await send('/agent cancel');
 
@@ -469,7 +474,7 @@ try {
   assert.ok(readout.includes('omits 2 setting(s) that ship on')&&readout.includes('structured_memory.auto_retrieval'),line+' warns about config drift');
  }
  const factReads=()=>requests.filter(r=>r[0]==='GET'&&r[1]==='/api/structured-memory/facts').length;
- const nonParsePosts=()=>requests.filter(r=>r[0]==='POST'&&r[1]!=='/api/slash/parse').length;
+ const nonParsePosts=()=>requests.filter(r=>r[0]==='POST'&&r[1]!=='/api/slash/parse'&&!historySave(r)).length;
  const beforeFactsWrites=nonParsePosts();
  await evaluate('document.getElementById("stream").replaceChildren()');
  await send('/memory facts');
@@ -662,7 +667,7 @@ try {
  await send('/memory retrieve metric');
  assert.equal(chatCount(),beforeRetrieve+1);
  const retrieveReq=requests.filter(r=>r[1]==='/api/chat').at(-1)[2];
- assert.equal(retrieveReq.retrieve,true);assert.equal(retrieveReq.retrieve_query,'metric');assert.equal(retrieveReq.message,'metric');
+ assert.equal(retrieveReq.retrieve,true);assert.equal(retrieveReq.retrieve_query,undefined,'natural-language matching, not all-terms');assert.equal(retrieveReq.message,'metric');
  assert.ok(retrieveReq.session_id,'force-include chat keeps the current session');
  await send('/goal');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("current goal (web: fetch):")'));
  let before=chatCount();await send('/loop 2');assert.equal(chatCount(),before+1);assert.equal(await evaluate('loopState.remaining'),1);
@@ -810,7 +815,14 @@ try {
  await until('document.getElementById("passwordDialog").open');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'hide bootstrap guidance after login');
  assert.equal(await evaluate(headerState),'','a pending password replacement shows no header automation buttons');
- assert.match(await evaluate('document.getElementById("passwordHelp").innerText'),/Replace the initial admin password/);
+ assert.match(await evaluate('document.getElementById("passwordHelp").innerText'),/Replace the setup code/);
+ // Closing the required dialog lands on the lock card, never on the console; the card reopens it.
+ await evaluate('document.getElementById("passwordClose").click()');
+ await until('!document.getElementById("passwordDialog").open && !document.getElementById("passwordLockScreen").hidden');
+ assert.equal(await evaluate('document.querySelector(".main").offsetParent'),null,'a closed password dialog does not reveal the console');
+ assert.equal(await evaluate('document.body.textContent.includes('+JSON.stringify(FIXTURE_SETUP_CODE)+')'),false,'the lock card never shows the setup code');
+ await evaluate('document.getElementById("passwordLockOpen").click()');
+ await until('document.getElementById("passwordDialog").open');
  await evaluate('document.getElementById("passwordCurrent").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');assert.equal(mustChange,false);
  await until(headerState+'==="openAnalytics,openDeliveries,openSchedules"');
@@ -839,6 +851,8 @@ try {
  assert.equal(requests.filter(r=>r[1]==='/api/slash/parse').at(-1)[2].line,'/API  set DEEPAGENT_API_KEY slash-secret-value-4321');
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("slash-secret-value-4321")'),false);
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("normalized: /api set")'),false);
+ assert.equal(requests.some(r=>historySave(r)&&JSON.stringify(r[2]).includes('slash-secret-value-4321')),false,'history never saves an /api set value');
+ assert.equal(await evaluate('promptHistory.prompts.some(p=>p.includes("slash-secret-value-4321"))'),false);
  await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
  // The cleared SerpAPI row already reads "Saved: unset", so wait on this row's status (the <p> before its input).
  await until('document.getElementById("saved-DEEPAGENT_API_KEY")?.previousElementSibling?.textContent.startsWith("Saved: unset")');assert.equal(savedKey,'');

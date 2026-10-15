@@ -1,6 +1,7 @@
 //! Lock `scripts/start-web.sh`: argument refusals exit 3 before anything
 //! starts, and the printed URL follows the home's TLS gate (only a literal
-//! `enabled: true` under `tls:`, or no config at all, is HTTPS). A fake
+//! `enabled: true` under `tls:`, or no config at all, is HTTPS; a config
+//! without that key is HTTP, as `transport.rs` serves it). A fake
 //! backend stands in for the real binary, so no server or browser runs.
 #![cfg(unix)]
 
@@ -110,8 +111,11 @@ fn url_scheme_follows_only_a_literal_tls_true() {
         (Some("tls:\n  enabled: true\n"), "https"),
         (Some("tls:\n  enabled: false\n"), "http"),
         (Some("tls:\n  enabled: \"true\"\n"), "http"),
-        // A later top-level section ends the tls block.
-        (Some("tls:\n  cert: x\nweb:\n  enabled: false\n"), "https"),
+        // A later top-level section ends the tls block: web's `enabled: true`
+        // is not tls's, so a tls block without the key stays HTTP.
+        (Some("tls:\n  cert: x\nweb:\n  enabled: true\n"), "http"),
+        // A home seeded before TLS has no tls block; the server serves HTTP.
+        (Some("web:\n  enabled: true\n"), "http"),
     ] {
         let dir = tempfile::tempdir().unwrap();
         if let Some(config) = config {

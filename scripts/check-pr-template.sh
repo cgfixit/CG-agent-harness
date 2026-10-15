@@ -112,8 +112,8 @@ else
   fi
 fi
 last_nonempty="$(printf '%s\n' "$body_unix" | sed -e 's/[[:space:]]*$//' | awk 'NF { line = $0 } END { print line }')"
-filled_stamp='^Last updated: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} ET$'
-placeholder_stamp='^Last updated: YYYY-MM-DD HH:MM ET$'
+filled_stamp='^(🤖 )?Last updated: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} ET$'
+placeholder_stamp='^(🤖 )?Last updated: YYYY-MM-DD HH:MM ET$'
 stamp_ok=0
 if grep -Eq "$filled_stamp" <<<"$last_nonempty"; then
   stamp_ok=1

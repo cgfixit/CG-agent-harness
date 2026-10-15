@@ -468,8 +468,18 @@ impl WebTool {
         Ok(page)
     }
 
+    /// A home with no policy file yet has no rules: reads still refuse (as an
+    /// empty allowlist) and only a validated admin grant creates the file. An
+    /// unreadable or invalid file is still an error and is never reset.
+    fn policy_or_empty(&self) -> Result<(Policy, bool)> {
+        match std::fs::symlink_metadata(self.allow_path()) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((Policy::empty(), true)),
+            _ => Ok((self.policy()?, false)),
+        }
+    }
+
     pub fn status(&self, enabled: bool, owner: &str) -> Result<Value> {
-        let policy = self.policy()?;
+        let (policy, missing) = self.policy_or_empty()?;
         let stored = self.read_page(&self.context_path(owner), None).is_ok();
         Ok(
             json!({"enabled": enabled, "allowlist": policy.rules.iter().map(|r| &r.pattern).collect::<Vec<_>>(),
@@ -477,7 +487,8 @@ impl WebTool {
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
             "search_provider": if self.search_key()?.is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
             "injected": enabled && stored, "context_stored": stored,
-            "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules}),
+            "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules,
+            "policy_missing": missing}),
         )
     }
 
@@ -571,12 +582,15 @@ impl WebTool {
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
         let mut policy = self.policy()?;
         let pattern = Rule::new(raw, "default", &[]).ok().map(|r| r.pattern);
-        if pattern.is_none() && !policy.rules.iter().any(|r| r.id == raw) {
-            return Err(error("WEB_BAD_URL", "use a rule ID or pattern"));
-        }
+        let before = policy.rules.len();
         policy
             .rules
             .retain(|r| r.id != raw && pattern.as_ref().is_none_or(|p| r.pattern != *p));
+        // Removing nothing is not a success: a stale ID or a near-miss pattern
+        // (www vs apex, missing /*) would otherwise look revoked.
+        if policy.rules.len() == before {
+            return Err(error("WEB_RULE_UNKNOWN", "no rule has that ID or pattern"));
+        }
         self.save_policy(&policy)?;
         self.status(enabled, "")
     }
@@ -624,7 +638,7 @@ impl WebTool {
         if !enabled {
             return Err(error("WEB_DISABLED", "web access is disabled"));
         }
-        let policy = self.policy()?;
+        let (policy, _) = self.policy_or_empty()?;
         if policy.rules.is_empty() {
             return Err(error("WEB_ALLOWLIST_EMPTY", "empty URL policy refuses all web access"));
         }

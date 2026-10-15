@@ -40,13 +40,17 @@ if [ -n "$HOME_DIR" ]; then
   HOME_DIR="$REAL"
 fi
 
-# Keychain service: "CGagentHarness (<home>)". The harness canonicalizes the home
-# (credential_store.rs for_home) and falls back to the path as given, so check both.
+# Keychain services: "CGagentHarness (<home>)" for managed keys, and
+# "CGagentHarness admin (<home>)" for the admin password scripts/init.sh saves.
+# The harness canonicalizes the home (credential_store.rs for_home) and falls
+# back to the path as given, so check both.
 command -v security >/dev/null || { echo "refusing: security tool not found" >&2; exit 2; }
 GIVEN="${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}"
-SERVICES="CGagentHarness (${HOME_DIR:-$GIVEN})"
+SERVICES="CGagentHarness (${HOME_DIR:-$GIVEN})
+CGagentHarness admin (${HOME_DIR:-$GIVEN})"
 [ -z "$HOME_DIR" ] || [ "$GIVEN" = "$HOME_DIR" ] || SERVICES="$SERVICES
-CGagentHarness ($GIVEN)"
+CGagentHarness ($GIVEN)
+CGagentHarness admin ($GIVEN)"
 COUNT=0
 FOUND=""
 while IFS= read -r SERVICE; do

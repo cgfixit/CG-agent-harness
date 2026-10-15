@@ -108,6 +108,30 @@ fn derived_timeout(speed: &Value, prompt_tokens: u64, reply_tokens: u64, tool_ro
     padded_seconds(speed, prompt_tokens, written, MIN_TIMEOUT_SEC, MAX_TIMEOUT_SEC)
 }
 
+/// How long a web-enabled chat turn may take: one model call's deadline
+/// (`per_call`, the measured chat timeout) plus an allowance for up to
+/// `limits.chat_tool_calls` tool rounds, each a page read at
+/// `web.request_seconds`, its evidence prefilled and a tool call decoded at the
+/// measured speed, held to twice the per-call deadline. Every model call still
+/// keeps its own per-request deadline; this only stops a turn of several rounds
+/// from being cut by a deadline sized for one call. Without a speed sample the
+/// allowance is one more per-call deadline.
+pub fn web_turn_deadline_sec(per_call: f64, speed: Option<&Value>, limits: &Limits) -> f64 {
+    let rounds = limits.chat_tool_calls as f64;
+    let per_round = speed.and_then(|speed| {
+        let prefill = speed["prefill_tps"].as_f64().filter(|v| *v > 0.0)?;
+        let decode = speed["decode_tps"].as_f64().filter(|v| *v > 0.0)?;
+        Some(
+            limits.request_seconds as f64 + limits.evidence_tokens as f64 / prefill + TOOL_ROUND_TOKENS as f64 / decode,
+        )
+    });
+    let allowance = match per_round {
+        Some(seconds) => (rounds * seconds * TIMEOUT_SAFETY).min(per_call),
+        None => per_call,
+    };
+    per_call + allowance
+}
+
 /// `/web research`'s answer call at the measured speed: the evidence plus the
 /// answer instructions read, one `web.model_tokens` reply written; doubled,
 /// rounded up to 30 s, kept in 60–1800 (`web.synthesis_seconds` allows 10–1800).
@@ -500,6 +524,24 @@ mod tests {
         let cfg = shipped().expect("embedded default parses");
         let web = Limits::load(&cfg).expect("shipped web limits are valid");
         propose(&profile, None, &cfg, &web, &backend(Some("none")))
+    }
+
+    #[test]
+    fn a_web_turn_gets_the_call_deadline_plus_a_measured_round_allowance() {
+        let cfg = shipped().expect("embedded default parses");
+        let limits = Limits::load(&cfg).expect("shipped web limits are valid");
+        // Measured on the operator's 27B MLX tag: 414 tok/s prefill, 27.3 tok/s decode.
+        let speed = json!({"prefill_tps": 414.0, "decode_tps": 27.3, "load_seconds": 1.9});
+        // Ten rounds of a page read (8 s), 6000 evidence tokens prefilled (14.5 s)
+        // and a 128-token tool call decoded (4.7 s), doubled: about 544 s on top.
+        let deadline = web_turn_deadline_sec(540.0, Some(&speed), &limits);
+        assert!((1_080.0..=1_084.0).contains(&deadline), "{deadline}");
+        // The allowance never exceeds one more per-call deadline.
+        let slow = json!({"prefill_tps": 10.0, "decode_tps": 1.0});
+        assert_eq!(web_turn_deadline_sec(300.0, Some(&slow), &limits), 600.0);
+        // Without a sample (untuned, or no rates) the allowance is one more deadline.
+        assert_eq!(web_turn_deadline_sec(720.0, None, &limits), 1_440.0);
+        assert_eq!(web_turn_deadline_sec(720.0, Some(&json!({})), &limits), 1_440.0);
     }
 
     fn loaded(window: u64) -> Value {

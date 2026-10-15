@@ -110,21 +110,46 @@ fn random_salt() -> [u8; SALT_BYTES] {
 /// while `admin` still has that code as its password.
 pub const SETUP_CODE_FILE: &str = "setup-code";
 
+const SETUP_CODE_ALPHABET: &[u8] = b"23456789abcdefghjkmnpqrstuvwxyz";
+const SETUP_CODE_LEN: usize = 16;
+
+fn group_setup_code(symbols: impl Iterator<Item = char>) -> String {
+    let mut code = String::with_capacity(SETUP_CODE_LEN + 3);
+    for (i, c) in symbols.enumerate() {
+        if i > 0 && i % 4 == 0 {
+            code.push('-');
+        }
+        code.push(c);
+    }
+    code
+}
+
 /// A one-time setup code: 16 characters from a 31-symbol alphabet without
 /// look-alikes (about 79 bits), grouped by four for reading aloud. It replaces
 /// the shipped `admin` password, which anyone on the machine could know.
 pub fn new_setup_code() -> String {
     use rand::Rng;
-    const ALPHABET: &[u8] = b"23456789abcdefghjkmnpqrstuvwxyz";
     let mut rng = rand::thread_rng();
-    let mut code = String::with_capacity(19);
-    for i in 0..16 {
-        if i > 0 && i % 4 == 0 {
-            code.push('-');
-        }
-        code.push(ALPHABET[rng.gen_range(0..ALPHABET.len())] as char);
-    }
-    code
+    group_setup_code(
+        (0..SETUP_CODE_LEN).map(|_| SETUP_CODE_ALPHABET[rng.gen_range(0..SETUP_CODE_ALPHABET.len())] as char),
+    )
+}
+
+/// The canonical form of a typed or pasted setup code: case, spaces, dashes
+/// and a trailing period copied from a sentence are dropped, then the symbols
+/// are regrouped. `None` when the input is not code-shaped. Normalizing only
+/// formatting keeps all 79 bits.
+pub fn normalize_setup_code(input: &str) -> Option<String> {
+    let symbols: Vec<char> = input
+        .chars()
+        .filter(|c| !(c.is_whitespace() || matches!(c, '-' | '.' | ',')))
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    (symbols.len() == SETUP_CODE_LEN
+        && symbols
+            .iter()
+            .all(|c| c.is_ascii() && SETUP_CODE_ALPHABET.contains(&(*c as u8))))
+    .then(|| group_setup_code(symbols.into_iter()))
 }
 
 /// The sole password-policy exception: the restricted bootstrap credential,
@@ -226,4 +251,37 @@ pub fn new_csrf_token() -> String {
 /// `hash_password` / `verify_password`, which apply the scrypt cost policy.
 pub fn hash_token(token: &str) -> String {
     super::sha256_hex(token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_code_normalization_drops_formatting_only() {
+        let code = new_setup_code();
+        assert_eq!(normalize_setup_code(&code).as_deref(), Some(code.as_str()));
+        for typed in [
+            "h65j-t389-ewfw-xa7r.",
+            " H65J-T389-EWFW-XA7R ",
+            "h65jt389ewfwxa7r",
+            "h65j t389 ewfw xa7r\n",
+        ] {
+            assert_eq!(
+                normalize_setup_code(typed).as_deref(),
+                Some("h65j-t389-ewfw-xa7r"),
+                "{typed:?}"
+            );
+        }
+        // Wrong length, look-alikes outside the alphabet, and other text stay raw.
+        for typed in [
+            "h65j-t389-ewfw-xa7",
+            "h65j-t389-ewfw-xa7rr",
+            "h65j-t389-ewfw-xa71",
+            "admin",
+            "",
+        ] {
+            assert_eq!(normalize_setup_code(typed), None, "{typed:?}");
+        }
+    }
 }

@@ -8,21 +8,27 @@ chat-browser job and `verify-local.sh`.
 
 ## Operator
 
+New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or follow the
+[Terminal walkthrough](../docs/INSTALL.md#step-by-step-in-terminal); once signed in,
+[CONSOLE.md](../docs/CONSOLE.md) is the user guide.
+
+- [`init.sh`](init.sh): Apple Silicon first-time setup from zsh or bash: installer, shell PATH, admin password into Keychain, allowlist, then opens app, browser or both; log in `logs/install.log`.
 - [`install-macos.sh`](install-macos.sh): idempotent macOS installer: missing tools, backend build, checksummed release app; `--check`, `--dry-run`.
-- [`start-macos.sh`](start-macos.sh): starts Ollama (app or `ollama serve`) and the app, then the app's own origin through `start-web.sh --desktop-url`; `--standalone`, `--trust-cert`.
+- [`start-macos.sh`](start-macos.sh): starts Ollama (app or `ollama serve`) and the app, then the app's own origin through `start-web.sh --desktop-url`; `--standalone`, `--trust-cert`, `--no-ollama`, `--no-browser`.
 - [`start-web.sh`](start-web.sh): starts the console on loopback (default 8790) and opens a browser; bundled into the `.app`, so byte changes need a rebuild.
 - [`web-allowlist-bootstrap.sh`](web-allowlist-bootstrap.sh): grants a technical-docs web allowlist through `cgagentharness web allow` (admin login needed); extra lines from `CGAH_GRANTS_FILE`.
 - [`reset-macos.sh`](reset-macos.sh): dry-runs, or with `--yes` deletes, the harness home and Keychain entries.
 - [`smoke-ollama.sh`](smoke-ollama.sh): live smoke of the release binary against local Ollama; optional `FINGERPRINT_OUT`.
 - [`qwen3.8-27b-mlx-cg.Modelfile`](qwen3.8-27b-mlx-cg.Modelfile): `ollama create` recipe pinning `num_ctx` 32768 ([MODELS.md](../docs/MODELS.md)).
 - [`live-ollama/`](live-ollama/): pinned Ollama, two checksummed models, baseline and fingerprint for `live-ollama.yml`.
+- [`bakeoff/`](bakeoff/): operator bench; `bakeoff_harness.py --self-test` is the `ci.yml` product gate against its fake Ollama.
 
 ## Verification and CI
 
 - [`verify-local.sh`](verify-local.sh): full local verification: lint, tests, contract scripts, build, smoke.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`.
 - [`ci-docs-only.sh`](ci-docs-only.sh): classifies a diff as docs-only so `ci.yml` and `bundle.yml` skip compile jobs.
-- [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture; CI and skill-run only.
+- [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (CI, skill runs).
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
 - [`test-analytics.mjs`](test-analytics.mjs): analytics and spend helpers, logout clearing.
 - [`test-attachment-preview.mjs`](test-attachment-preview.mjs): preview reuses uploads and never leaks across sessions.
@@ -43,7 +49,7 @@ chat-browser job and `verify-local.sh`.
 - [`package-desktop.sh`](package-desktop.sh): builds the macOS `.app` with sidecar on Apple Silicon.
 - [`package-release.sh`](package-release.sh): stages, optionally codesigns, archives and checksums the CLI binary.
 - [`verify-desktop-bundle.sh`](verify-desktop-bundle.sh): verifies `.app` codesign, plist, architectures, system-only linkage.
-- [`release-plan.py`](release-plan.py): read-only release planner via `gh api`; fails closed ([RELEASING.md](../docs/RELEASING.md)).
+- [`release-plan.py`](release-plan.py): read-only release planner via `gh api`; fails closed; run by hand, previews `main` ([RELEASING.md](../docs/RELEASING.md)).
 - [`prepare-cargo.py`](prepare-cargo.py): offline-by-default Cargo source and toolchain preparation; bundled into the `.app`.
 - [`desktop-icon.swift`](desktop-icon.swift): regenerates the app icon set by hand; no automated caller.
 

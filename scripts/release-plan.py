@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
-"""Read-only release planning; fail closed on API errors and version collisions."""
+"""Read-only release planning; fail closed on API errors and version collisions.
+
+release.yml runs this with the GitHub Actions environment. Run by hand outside
+Actions, it previews the next release of main exactly like a manual dispatch
+with publish=false: `python3 scripts/release-plan.py` (needs `gh auth login`).
+Set GITHUB_EVENT_NAME=schedule to see what the next scheduled run would decide.
+Nothing here ever publishes.
+"""
 import json
 import os
 import re
 import subprocess
+import sys
 from urllib.parse import quote
+
+# Outside Actions only; inside Actions a missing variable is an error.
+LOCAL_PREVIEW = {"GITHUB_REPOSITORY": "cgfixit/CG-agent-harness",
+                 "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main"}
 
 
 def api(path):
@@ -68,15 +80,28 @@ def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bu
             "should_release": str(ready).lower()}
 
 
+def setting(name):
+    value = os.environ.get(name)
+    if value:
+        return value
+    if os.environ.get("GITHUB_ACTIONS") == "true" or name not in LOCAL_PREVIEW:
+        raise SystemExit(f"release-plan: {name} is not set")
+    return LOCAL_PREVIEW[name]
+
+
 def main():
-    repo = os.environ["GITHUB_REPOSITORY"]
-    sha = os.environ["GITHUB_SHA"]
+    repo = setting("GITHUB_REPOSITORY")
     prefix = f"repos/{repo}"
+    if os.environ.get("GITHUB_SHA") or os.environ.get("GITHUB_ACTIONS") == "true":
+        sha = setting("GITHUB_SHA")
+    else:
+        sha = api(f"{prefix}/commits/{quote(setting('GITHUB_REF').removeprefix('refs/heads/'), safe='')}")["sha"]
+        print(f"release-plan: local preview of {repo} at {sha} (nothing is published)", file=sys.stderr)
     latest = api(f"{prefix}/releases/latest")
     latest_tree = api(f"{prefix}/commits/{quote(latest['tag_name'], safe='')}")["commit"]["tree"]["sha"]
     tree = api(f"{prefix}/commits/{sha}")["commit"]["tree"]["sha"]
-    if os.environ["GITHUB_EVENT_NAME"] == "push":
-        tag_commit = api(f"{prefix}/commits/{quote(os.environ['GITHUB_REF'], safe='')}")
+    if setting("GITHUB_EVENT_NAME") == "push":
+        tag_commit = api(f"{prefix}/commits/{quote(setting('GITHUB_REF'), safe='')}")
         if tag_commit["sha"] != sha:
             raise ValueError("Tag moved away from the verified source commit")
         reachable = on_main(api(f"{prefix}/compare/main...{sha}"))
@@ -93,12 +118,12 @@ def main():
             if len(batch) < 100:
                 return values
             page += 1
-    event = os.environ["GITHUB_EVENT_NAME"]
+    event = setting("GITHUB_EVENT_NAME")
     bundle_ok = True
     if event in ("schedule", "workflow_dispatch"):
         runs = api(f"{prefix}/actions/workflows/bundle.yml/runs?head_sha={sha}&status=success&per_page=10")
         bundle_ok = bundle_succeeded(runs, sha)
-    result = plan(event, os.environ["GITHUB_REF"],
+    result = plan(event, setting("GITHUB_REF"),
                   os.environ.get("PUBLISH", "false"), sha, tree, latest, latest_tree,
                   {t["name"] for t in pages("tags")},
                   {r["tag_name"] for r in pages("releases")},
@@ -114,4 +139,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except FileNotFoundError:
+        raise SystemExit("release-plan: needs the GitHub CLI (gh) on PATH, signed in with `gh auth login`")
+    except subprocess.CalledProcessError:
+        raise SystemExit("release-plan: a `gh api` call failed (see its message above; check `gh auth status`)")
