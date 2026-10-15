@@ -1828,7 +1828,13 @@ async fn chat_wins_auto_contention_and_disable_stops_new_claims() {
     let stage = async {
         wait_until(|| s.state.generation_gate.is_held(), "chat holds generation gate").await;
         assert_eq!(s.state.generation_gate.owner(), "chat");
-        stage_store_episode(&s, "local")
+        let blocked = stage_store_episode(&s, "local");
+        // Arm the consolidator reply while chat still holds the gate. The mock
+        // reads its reply when it answers, so this chat gets it too, but the
+        // worker can no longer claim the episode with "pong" in the gap after
+        // the gate drops; an automatic run that fails is never retried.
+        model.set_reply(consolidator_reply(&blocked, "Staged while chat held the gate"));
+        blocked
     };
     let (chat_result, blocked) = tokio::join!(chat, stage);
     assert_eq!(chat_result.0, 200, "{}", chat_result.1);
@@ -1837,7 +1843,6 @@ async fn chat_wins_auto_contention_and_disable_stops_new_claims() {
     // Let the worker consolidate the episode staged while chat held the gate.
     // Otherwise it keeps re-claiming the gate for it, and the second chat can
     // lose that race and get CHAT_BUSY instead of holding the gate.
-    model.set_reply(consolidator_reply(&blocked, "Staged while chat held the gate"));
     wait_until(
         || {
             store_of(&s).get_episode("local", &blocked).unwrap().consolidation_state == "done"
