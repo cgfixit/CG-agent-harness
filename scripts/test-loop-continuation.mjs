@@ -7,8 +7,8 @@ const start = html.indexOf('/* ── chat ── */');
 const end = html.indexOf('function sleepMs(', start);
 assert.ok(start !== -1 && end > start, 'loop helpers are present in the console');
 const ctx = vm.createContext({});
-vm.runInContext(html.slice(start, end) + ';this.api={replyHasGoalDone,loopTurnPrompt,repliesNearlyRepeat};', ctx);
-const {replyHasGoalDone, loopTurnPrompt, repliesNearlyRepeat} = ctx.api;
+vm.runInContext(html.slice(start, end) + ';this.api={replyHasGoalDone,loopTurnPrompt,repliesNearlyRepeat,loopBlockingWebCode};', ctx);
+const {replyHasGoalDone, loopTurnPrompt, repliesNearlyRepeat, loopBlockingWebCode} = ctx.api;
 
 for (const done of ['GOAL_DONE', '**GOAL_DONE**', '`GOAL_DONE`', '## GOAL_DONE', 'GOAL_DONE.', '> GOAL_DONE',
   '- GOAL_DONE', '__GOAL_DONE__', 'Summary.\n\n**GOAL_DONE**\n', '1. GOAL_DONE', '3) **GOAL_DONE**']) {
@@ -37,11 +37,23 @@ assert.equal(repliesNearlyRepeat(answer, 'Next, add error recovery: skip to the 
 assert.equal(repliesNearlyRepeat('Step 1 done.', 'Step 2 done.'), false, 'short replies compare word for word');
 console.log('loop continuation: GOAL_DONE decorations, bounded model-agnostic prompt and near-repeat stall passed');
 
+// Only a refusal that repeats on every turn stops an unattended loop; one read's failure does not.
+const page = {tool:'web_fetch', ok:true, result:{url:'https://docs.example/a', text:'x'}};
+assert.equal(loopBlockingWebCode([page, {tool:'web_fetch', ok:false, code:'WEB_HOST_DENIED', message:'denied'}]), null, 'one denied URL beside a read');
+assert.equal(loopBlockingWebCode([{tool:'web_fetch', ok:false, code:'WEB_DNS', message:'DNS lookup failed'}]), null, 'an unreachable URL with no other read');
+assert.equal(loopBlockingWebCode([{tool:'web_fetch', ok:false, code:'WEB_TOKEN_BUDGET', message:'no room left for this result'}, page]), null, 'one result that did not fit');
+assert.equal(loopBlockingWebCode([{tool:'web', ok:false, code:'WEB_TOKEN_BUDGET', message:'no room for a tool round'}]), 'WEB_TOKEN_BUDGET', 'a round the budget refused outright');
+assert.equal(loopBlockingWebCode([{tool:'web', ok:true, code:'WEB_TOOLS_WITHHELD', message:'final answer reserved'}]), null, 'reserving the answer is not a failure');
+assert.equal(loopBlockingWebCode([page, {tool:'web_search', ok:false, code:'WEB_ALLOWLIST_EMPTY', message:'no URL permitted'}]), 'WEB_ALLOWLIST_EMPTY');
+assert.equal(loopBlockingWebCode([{tool:'web_search', ok:false, code:'WEB_GOOGLE_PERMISSION', message:'search needs a key'}]), 'WEB_GOOGLE_PERMISSION');
+assert.equal(loopBlockingWebCode([]), null); assert.equal(loopBlockingWebCode(null), null);
+console.log('Loop web-tool stop policy: per-read failures continue, repeating refusals stop.');
+
 // Exercise asynchronous session ownership in the shipped loop runner.
 const source=html.slice(html.indexOf('async function runLoopTurns()'),html.indexOf('function requestLoopStop('));
 function fixture() {
  let resolve, reject, started; const reached=new Promise(a=>{started=a;}); const upload=new Promise((a,b)=>{resolve=a;reject=b;});
- const ctx=vm.createContext({loopState:{remaining:1,total:1},currentSession:'old',sessionRevision:1,sessionGoal:'old goal',paintGoalLoop(){},api:async()=>({goal:'old goal'}),loopTurnPrompt:()=>'',inflightSearch:null,inflightChat:null,retryAttachmentIds:null,attachInput:{files:['file']},sendBtn:{disabled:false},uploadChatAttachments:()=>{started();return upload;},releaseSendGate(){ctx.releases++;},releases:0,showError(){ctx.errors++;},errors:0,stopLoop(){ctx.loopState=null;},paintAttach(){},sendChat:async()=>'',sleepMs:async()=>{}});
+ const ctx=vm.createContext({MAX_LOOP_FAILURES:2,loopState:{remaining:1,total:1},currentSession:'old',sessionRevision:1,sessionGoal:'old goal',paintGoalLoop(){},api:async()=>({goal:'old goal'}),loopTurnPrompt:()=>'',inflightSearch:null,inflightChat:null,retryAttachmentIds:null,attachInput:{files:['file']},sendBtn:{disabled:false},uploadChatAttachments:()=>{started();return upload;},releaseSendGate(){ctx.releases++;},releases:0,showError(){ctx.errors++;},errors:0,stopLoop(){ctx.loopState=null;},paintAttach(){},sendChat:async()=>'',sleepMs:async()=>{}});
  vm.runInContext(source,ctx);
  return {ctx,resolve,reject,reached};
 }
@@ -55,6 +67,30 @@ for(const fail of [false,true]){
  assert.equal(ctx.loopState,fresh);assert.equal(ctx.retryAttachmentIds.ids[0],'new-file');assert.equal(ctx.releases,0);assert.equal(ctx.errors,0);
 }
 console.log('Old loop upload success/failure preserves the new session and loop.');
+
+// A turn that fails without a verdict (timeout, truncated reply, network error) is retried by an
+// unattended loop up to MAX_LOOP_FAILURES; an attended loop hands the retry to the operator; a
+// refusal that already stopped the loop inside sendChat is never retried.
+function retryFixture(auto, sendChat) {
+ const box={MAX_LOOP_FAILURES:2,LOOP_COOLDOWN_MS:0,MAX_LOOP_TOTAL_COMPLETION_TOKENS:12000,WEB_TOOL_NEXT_STEP:{},loopState:{remaining:1,total:1,auto,failures:0,completionTokens:0,lastReply:''},currentSession:'s',sessionRevision:1,sessionGoal:'goal',paintGoalLoop(){},api:async()=>({goal:'goal'}),loopTurnPrompt:()=>'turn',inflightSearch:null,inflightChat:null,retryAttachmentIds:null,attachInput:{files:[]},sendBtn:{disabled:false},releaseSendGate(){},showError(){},paintAttach(){},sends:0,notices:[],stops:[],sleepMs:async()=>{},repliesNearlyRepeat:()=>false,replyHasGoalDone:()=>false};
+ box.sendChat=async()=>{box.sends++;return sendChat(box);};
+ box.sys=m=>{box.notices.push(m);};
+ box.stopLoop=r=>{box.stops.push(r);box.loopState=null;};
+ const ctx=vm.createContext(box); vm.runInContext(source,ctx); return ctx;
+}
+{
+ const once=retryFixture(true,box=>box.sends===1?null:'Progress on the goal.'); await once.runLoopTurns();
+ assert.equal(once.sends,2,'auto retries the failed turn'); assert.ok(once.notices.some(n=>n.includes('retrying this turn')),once.notices.join('|'));
+ assert.deepEqual(once.stops,['loop budget exhausted (1 turn(s))']);
+ const twice=retryFixture(true,()=>null); await twice.runLoopTurns();
+ assert.equal(twice.sends,2,'auto gives up after MAX_LOOP_FAILURES failures'); assert.match(twice.stops[0],/^loop aborted — 2 consecutive chat failures/);
+ const attended=retryFixture(false,()=>null); await attended.runLoopTurns();
+ assert.equal(attended.sends,1,'an attended loop does not retry by itself'); assert.deepEqual(attended.stops,[]); assert.equal(attended.loopState.failures,1);
+ assert.ok(attended.notices.at(-1).includes('/loop to retry'),attended.notices.join('|'));
+ const refused=retryFixture(true,box=>{box.stopLoop('loop stopped — WEB_TOOL_DENIED');return null;}); await refused.runLoopTurns();
+ assert.equal(refused.sends,1,'a refusal that stopped the loop is not retried'); assert.deepEqual(refused.stops,['loop stopped — WEB_TOOL_DENIED']);
+}
+console.log('Unattended loop retries a verdict-less turn up to MAX_LOOP_FAILURES; attended and refused loops do not.');
 
 // Execute the actual slash branch too: preflight must use its own session guard.
 const loopCase=html.slice(html.indexOf("      case 'loop': {"),html.indexOf("      case 'tokens': {"));
