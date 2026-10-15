@@ -159,9 +159,14 @@ pub async fn select(
             ),
             _ => {
                 let suggestion = suggest_builtin(name);
+                let available = list_catalog(&state.home.root)
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 let message = match suggestion {
-                    Some(s) => format!("Unknown style '{name}'; closest built-in is '{s}'"),
-                    None => format!("Unknown style '{name}'"),
+                    Some(s) => format!("Unknown style '{name}'; closest built-in is '{s}'. Available: {available}, off"),
+                    None => format!("Unknown style '{name}'. Available: {available}, off"),
                 };
                 ("STYLE_UNKNOWN", message, suggestion)
             }

@@ -280,6 +280,22 @@ impl Validate for RenameRequest {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptHistoryRequest {
+    pub text: String,
+}
+
+impl Validate for PromptHistoryRequest {
+    fn validate(&self) -> Vec<String> {
+        if len_ok(&self.text, 1, MAX_MESSAGE_LEN) && !self.text.trim().is_empty() {
+            vec![]
+        } else {
+            vec!["text".into()]
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToggleRequest {

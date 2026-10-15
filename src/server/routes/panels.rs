@@ -98,14 +98,15 @@ fn web_err(e: &HarnessError) -> ApiError {
             StatusCode::CONFLICT
         }
         "WEB_PERMISSION_DENIED" => StatusCode::FORBIDDEN,
+        "WEB_RULE_UNKNOWN" => StatusCode::NOT_FOUND,
         "WEB_FETCH_FAILED" | "WEB_DNS" | "WEB_CLEAR_FAILED" => StatusCode::BAD_GATEWAY,
         _ => StatusCode::BAD_REQUEST,
     };
     // Fixed public guidance only; upstream exception bodies never reach the UI.
     let message = match e.code.as_str() {
-        "WEB_BAD_URL" => "Use an exact HTTP(S) URL for fetch/check, not a wildcard or prose. Use /web research --url URL <question> for permitted internal links; /help web shows examples.",
+        "WEB_BAD_URL" => "Use an exact HTTP(S) URL for fetch/check, not a wildcard or prose; /web allow takes patterns such as https://www.example.org/* or https://*.example.org/*. Use /web research --url URL <question> for permitted internal links; /help web shows examples.",
         "WEB_HOST_DENIED" => "This exact URL is outside the current shared-home allowlist. Run /web check URL; www and apex hosts are distinct. Only an administrator can grant a matching rule.",
-        "WEB_ALLOWLIST_EMPTY" => "No content URLs are permitted. An administrator must add an exact URL or explicit wildcard using /web allow.",
+        "WEB_ALLOWLIST_EMPTY" => "No content URLs are permitted. An administrator must add an exact URL or explicit wildcard using /web allow, e.g. /web allow https://www.example.org/*. For /web search, a SerpAPI key in API Keys needs no URL rule; public Google needs https://www.google.com/*.",
         "WEB_GROUP_UNKNOWN" => "Unknown source group. /web status lists groups; add rules with /web allow PATTERN --group NAME.",
         "WEB_POLICY_INVALID" => "Invalid URL rule, group or seed, or a saved policy over web.max_rules. Each seed must be inside a requested rule; the entire grant was refused. After lowering web.max_rules, raise it again and restart, then /web deny extra rules.",
         "WEB_ALLOWLIST_FULL" => "The shared allowlist is at its rule cap (web.max_rules, restart-only); the entire grant was refused. Remove unused rules with /web deny, or raise web.max_rules in config.yaml and restart.",
@@ -117,6 +118,15 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_SEARCH_KEY_REJECTED" => "The configured SerpAPI key was rejected. Check API Keys; no public fallback was attempted.",
         "WEB_SEARCH_QUOTA" => "SerpAPI quota or rate limit reached. No public fallback was attempted.",
         "WEB_SEARCH_PROVIDER" => "The configured search provider failed. No public fallback was attempted.",
+        "WEB_RULE_UNKNOWN" => "No rule has that ID or pattern, so nothing was removed. /web status lists rule IDs and patterns; www and apex hosts, and patterns with and without /*, are different rules.",
+        "WEB_NO_LAST" => "No saved extract yet. Run /web fetch URL or /web pages <query> first, then /web inject.",
+        "WEB_DNS" => "The host did not resolve to a usable public address. Check the exact host (www and apex are distinct).",
+        "WEB_FETCH_FAILED" => "The page could not be fetched (connection, TLS or HTTP error). Nothing was saved.",
+        "WEB_TIMEOUT" => "The read did not finish within web.request_seconds. Nothing was saved; retry or pick a smaller page.",
+        "WEB_REDIRECT_REFUSED" => "The site redirected, and redirects are refused. Allow and fetch the final URL directly.",
+        "WEB_POLICY_UNAVAILABLE" => "The shared URL policy file is missing or unreadable, so web reads are refused. An administrator's /web allow creates it; an unreadable file is never reset.",
+        "WEB_POLICY_CHANGED" => "The URL policy changed during this request; nothing was delivered. Retry.",
+        "WEB_BAD_QUERY" => "The query, result count or --group was refused. Use 1–200 characters with searchable words (research: 1–2,000), --count 1–10 and a group /web status lists.",
         crate::server::state::WINDOW_CHANGED => "The local model's loaded window changed or could not be read; nothing was sent. Check that Ollama is running, then run the research again.",
         _ => &e.code,
     };

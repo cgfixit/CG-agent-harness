@@ -83,16 +83,14 @@ Deletion is not secure erasure. Backups, model-service copies, and text loaded i
 other clients remain; close or refresh those clients separately.
 
 In the composer, Up recalls older prompts and Down moves forward or restores the
-draft. The active session's local JSON log retains the latest 50 persisted
-prompts across restart. Legacy logs seed the list from user messages, and
-compaction does not erase it. Session switches and logout reset navigation. The
-browser stores nothing persistently. Failed submissions and unsaved slash
-commands do not enter prompt history.
+draft. Every submitted line enters history, refused commands included; `/api`
+keeps only its key name and `/loop` turns are skipped. The session log keeps the
+latest 50 across restart; legacy logs seed it from user messages and compaction
+keeps it. Session switches and logout reset navigation; the browser stores nothing.
 
 The session store retains at most 500 messages per conversation. Local prompt
 history uses that retained window; [compaction](#local-history-compaction) reduces
-overflow against the configured token budget while preserving the goal and recent messages. There is
-no separate 20-message/8,000-character history clip. Stored token totals can
+overflow against the configured token budget while preserving the goal and recent messages. Stored token totals can
 therefore exceed the compacted context sent to the model.
 
 Runtime `sessions/` directories, named `.CGagentHarness/` homes and dotenv files
@@ -116,14 +114,14 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 
 `/loop 3` runs up to three follow-up turns toward the goal (default three,
 maximum five), each restating the full bounded goal. Manual mode pauses after each
-turn; `/loop` continues. `/loop auto` toggles automatic continuation, before
-starting or to resume. `/loop stop` cancels during generation or cooldown. Goal
+turn; `/loop` continues. `/loop auto` only toggles automatic continuation; it
+starts nothing. `/loop stop` cancels during generation or cooldown. Goal
 clear, session switching, rate limits, failures, token budgets and a
 90%-identical reply stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
 This loop does not edit files, run skills as programs, or perform coding checks.
-Use `/goal --web off|fetch|all <text>` or `/loop --web off|fetch|all [n]` to set the goal's chat tools; without a flag the goal takes `web.goal_web_default` (ships `fetch`, restart-only). `fetch` excludes search, `off` excludes web context and tools. URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
+`--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `fetch`, restart-only). `fetch` excludes search, `off` excludes web context and tools. URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
 Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
 an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task).
 
@@ -401,11 +399,11 @@ confirmation and persistence.
 | `/clear` | Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain |
 | `/connectors` | Connector catalog; does not activate connectors |
 | `/github` | Read-only agentic GitHub status |
-| `/goal`, `/goal <text>`, `/goal clear` | Inspect, set or clear the saved session goal |
+| `/goal`, `/goal [--web off\|fetch\|all] [text]`, `/goal clear` | Inspect, set or clear the saved session goal and its web mode |
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
 | `/harness` | List retained optimizer runs; does not start optimization |
 | `/help [topic\|search words\|all]` | Searchable topic guide, full command catalog and insertable examples |
-| `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
+| `/loop [--web off\|fetch\|all] [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
 | `/memory`, `status`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_GUIDE.md#pinned-notes) |
 | `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
 | `/memory consolidate <episode-id> [episode-id ...]` | Selected-episode consolidation into pending proposals; does not apply facts |
