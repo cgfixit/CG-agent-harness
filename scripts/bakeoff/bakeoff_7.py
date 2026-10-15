@@ -1820,7 +1820,7 @@ class ModelRun:
         rt["ctx_source"] = {"PASS tag": "tag", "env (not tag)": "env", "default (not tag)": "default"}.get(c["verdict"], "request-forced")
         if self.req_ctx and c["override_honored"] is False:
             self.notes.append("runner ignored a num_ctx override; request-forced cells may not have the window they asked for")
-        rng = random.Random(7)
+        rng = random.Random(7)  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
         try:
             self.cpt = calibrate_cpt(m, None if (n0 or 0) >= 8192 else self.target, rng) or 3.6
         except Exception as e:
@@ -1964,7 +1964,7 @@ class ModelRun:
 
     def context(self):
         rt, m = self.rt, self.model
-        rng = random.Random(11)
+        rng = random.Random(11)  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
         window = self.window()
         limit = window - 48 - 512
         plan = [("2k", 2000, 0.5), ("8k", 8000, 0.5), ("16k", 16000, 0.5)]

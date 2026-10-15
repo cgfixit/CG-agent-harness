@@ -370,7 +370,7 @@ class HLane:
             p = c["params"]
             row.update(ctx_contract=c["verdict"], ctx_no_numctx=c["ctx_no_numctx"],
                        show_params=" ".join(f"{k}={p[k]}" for k in ("num_ctx", "temperature", "top_p", "top_k") if k in p) or "none")
-            self.cpt = core.calibrate_cpt(m, None if (c["ctx_no_numctx"] or 0) >= 8192 else TARGET, random.Random(3)) or 3.6
+            self.cpt = core.calibrate_cpt(m, None if (c["ctx_no_numctx"] or 0) >= 8192 else TARGET, random.Random(3)) or 3.6  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
         except Exception as e:
             self.cpt = 3.6
             self.notes.append(f"direct contract read failed: {e}")
@@ -536,7 +536,7 @@ class HLane:
         window = self.window or TARGET
 
         def fn(i):
-            rng = random.Random(500 + i)
+            rng = random.Random(500 + i)  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
             vault, code = rng.randint(10, 99), f"ONYX-{rng.randint(1000, 9999)}"
             turns = [self.turn(f"Remember this for later in our chat: the rotation code for vault K-{vault} is {code}. Reply only OK.")]
             sid = turns[0]["data"].get("session_id")
