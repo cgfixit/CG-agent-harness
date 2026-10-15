@@ -8,9 +8,9 @@
         "compact_prompt_tokens": 6000,
         "declared_tools": true,
         "in_force": {
-          "limit_source": "web.total_tokens",
+          "limit_source": "chat.compact_prompt_tokens",
           "prompt_cap": 7500,
-          "prompt_limit": 5976,
+          "prompt_limit": 6000,
           "web_total_ceiling": 7000,
           "web_total_tokens": 7000
         },
