@@ -1127,6 +1127,13 @@ const LARGE_FILES: &[&str] = &[
 
 const LARGE_FILE_BYTES: u64 = 1024 * 1024;
 
+/// A demo video under `docs/screenshots/` may reach [`VIDEO_FILE_BYTES`]
+/// without a `LARGE_FILES` row; every other file keeps the 1 MiB cap.
+// why: the operator approved 8 MiB for screen-recorded demos (2026-10-15); a
+// smooth 30 fps console recording runs several MB.
+const VIDEO_FILE_BYTES: u64 = 8 * 1024 * 1024;
+const VIDEO_EXTENSIONS: &[&str] = &[".mp4", ".webm", ".mov"];
+
 /// Words as the budget counts them: whitespace-separated runs, like `wc -w`.
 fn word_count(text: &str) -> usize {
     text.split_whitespace().count()
@@ -1223,7 +1230,12 @@ fn tree_violations(
                 "{path} is a PDF under docs/; link to it instead of committing it."
             ));
         }
-        if *bytes > LARGE_FILE_BYTES && !large_files.contains(&path.as_str()) {
+        let video = lower.starts_with("docs/screenshots/") && VIDEO_EXTENSIONS.iter().any(|e| lower.ends_with(e));
+        if video && *bytes > VIDEO_FILE_BYTES && !large_files.contains(&path.as_str()) {
+            out.push(format!(
+                "{path} is {bytes} bytes, over the 8 MiB demo-video cap; shorten or re-encode it."
+            ));
+        } else if !video && *bytes > LARGE_FILE_BYTES && !large_files.contains(&path.as_str()) {
             out.push(format!(
                 "{path} is {bytes} bytes, over 1 MiB; a large file needs a LARGE_FILES row and a `// why:`."
             ));
@@ -1459,6 +1471,35 @@ fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
     );
     expect(
         tree_violations(&sized(&[("assets/big.bin", LARGE_FILE_BYTES + 1)]), &[], &[], &[]),
+        "over 1 MiB",
+    );
+    assert!(tree_violations(
+        &sized(&[("docs/screenshots/demos/a.mp4", VIDEO_FILE_BYTES)]),
+        &[],
+        &[],
+        &[]
+    )
+    .is_empty());
+    expect(
+        tree_violations(
+            &sized(&[("docs/screenshots/demos/a.MP4", VIDEO_FILE_BYTES + 1)]),
+            &[],
+            &[],
+            &[],
+        ),
+        "over the 8 MiB demo-video cap",
+    );
+    expect(
+        tree_violations(
+            &sized(&[("docs/screenshots/a.png", LARGE_FILE_BYTES + 1)]),
+            &[],
+            &[],
+            &[],
+        ),
+        "over 1 MiB",
+    );
+    expect(
+        tree_violations(&sized(&[("assets/demo.mp4", LARGE_FILE_BYTES + 1)]), &[], &[], &[]),
         "over 1 MiB",
     );
     expect(
