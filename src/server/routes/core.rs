@@ -924,6 +924,7 @@ async fn chat_inner(
             web_chat.then_some(web.limits.total_tokens),
             reservation,
             crate::server::compaction::calibrated_tokens(tool_tokens, ratio),
+            crate::server::compaction::calibrated_tokens(crate::server::web_search::MIN_EVIDENCE_TOKENS, ratio),
             reply_setting,
         );
         turn_prompt_limit = threshold;

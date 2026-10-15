@@ -77,6 +77,7 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
         web_chat.then_some(web_total),
         compaction::reply_reservation(&state.backend, state.chat_max_tokens(&model)),
         tool_tokens,
+        crate::server::web_search::MIN_EVIDENCE_TOKENS,
         "models.local_llm.max_tokens",
     );
     value["in_force"] = json!({

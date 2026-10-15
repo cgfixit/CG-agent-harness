@@ -501,47 +501,40 @@ resurrect a job the operator killed.
 
 ## Local chat compaction preserves goal and the first user turn
 
-The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a Qwen/CJK tokenizer.
+The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a tokenizer.
 Successful local exchanges persist an observed/estimated prompt-token ratio
-with the session, scoped to the requested model and backend URL. It starts at
-1, stays within 1–3, responds immediately to increases and smooths decreases
-with a half-weight EMA. Missing, zero or non-integer prompt usage leaves the
-previous calibration unchanged. Web turns use the first model call's usage,
-never their aggregate; summary usage and cloud replies do not train this ratio.
-The send
-window is stored prompt history (user and assistant turns, persist cap
-`MAX_MESSAGES`). There is no 20-turn or 8000-char clip. Compaction owns
-overflow. The effective trigger is
+with the session, scoped to model and backend URL: it starts at 1, stays within
+1–3, rises immediately and decays by a half-weight EMA. Missing, zero or non-integer prompt usage leaves calibration unchanged. Web turns calibrate on the first model call's usage, never their aggregate;
+summary and cloud usage never train it.
+The send window is stored prompt history (user and assistant turns, persist
+cap `MAX_MESSAGES`); no 20-turn or 8000-char clip; compaction owns overflow.
+The effective trigger is
 `max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
 calibrated_tool_definition_tokens)`, capped at 30000 (scaled to an `auto_tune`-verified
 window). Web-enabled chat tightens the trigger
-toward `web.total_tokens - effective_reply_reservation` (the projection already
-carries one reservation, so a web prompt keeps room for two replies) and never
-below that floor; the web dispatcher independently offers tools only while the
-prompt fits with both replies and a minimal result, runs a batch only when each
-call's minimal result fits, and cuts a result to the room left.
-Startup and reload warn when fewer than 4096 input tokens would remain.
-Ollama with explicit `reasoning_effort: "none"` reserves the reply ceiling
-once; every other setting or backend reserves it twice in startup validation,
-compaction and web dispatch.
+toward `web.total_tokens - minimal tool result` (the projection carries the reservation and definitions, so every admitted
+prompt fits a round)
+and never below that floor; the web dispatcher charges each call's prompt once,
+offers tools only while the prompt, definitions, a minimal result and one reply
+fit, runs a batch only when each result's minimum fits, cuts a result to the
+room left, and returns a failed read to the model as its result (a batch that
+fails entirely ends the turn or, after evidence, the tool rounds). A web turn's
+deadline adds a measured tool-round allowance, at most doubling the chat timeout.
+Startup and reload warn below 4096 remaining input tokens. Ollama with explicit `reasoning_effort: "none"` reserves the reply ceiling
+once; anything else reserves it twice in validation, compaction and dispatch.
 Startup and reload reject `models.local_llm.max_tokens` or
 `api.harness_loop_rate_limit.max_tokens` above 25904 (single reservation) or
-12952 (doubled). This is a conservative harness margin, not provider accounting.
-The incoming user paste is never compacted. The server builds a candidate
-summary with one local-model call (`compaction.summary_max_tokens`, default
-768, clamped 128–2048). Input stays within 24000 characters and the calibrated
-summary-call budget. Ordinary middle turns are clipped to 800 characters;
-prior `[session-compacted]` summaries are reserved intact before selecting
-recent ordinary turns. If the summaries alone cannot fit, compaction fails
-without clipping them or rewriting history.
+12952 (doubled): a conservative harness margin, not provider accounting.
+The incoming user paste is never compacted. The server builds a candidate summary with one local-model call
+(`compaction.summary_max_tokens`, default 768, clamped 128–2048). Input stays within 24000 characters and the calibrated summary budget. Ordinary middle turns are clipped to 800 characters; prior `[session-compacted]`
+summaries stay intact ahead of recent turns. If the summaries alone cannot fit,
+compaction fails without clipping them.
 A failed, empty, timed-out or aborted summary, or a prompt compaction cannot
-bring below the trigger, leaves the session unrewritten; the latter refuses the
-turn. Otherwise the summary is persisted atomically with the next
-successful exchange, alongside calibration, using `write_json_atomic_mode` at `0o600`. The system prompt is
-composed each turn and is never stored in `messages`. `Session.goal` and the
-first user message are preserved. The audits `chat_session_compacted`,
-`chat_prompt_too_large` (projected sizes only) and `chat_busy` store no
-message bodies.
+bring below the trigger, leaves the session unrewritten; the latter refuses the turn. Otherwise the summary persists atomically with the next successful exchange,
+with calibration, via `write_json_atomic_mode` at `0o600`. The system prompt is
+composed each turn, never stored in `messages`; `Session.goal` and the first
+user message are preserved. The audits `chat_session_compacted`, `chat_prompt_too_large` (projected sizes)
+and `chat_busy` store no bodies.
 
 - Locked by: `src/server/compaction.rs`,
   `src/server/sessions.rs::record_exchange_inner`,
