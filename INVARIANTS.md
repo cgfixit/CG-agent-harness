@@ -107,7 +107,8 @@ account and its server-side role permissions. Mutations retain the existing CSRF
 header/token; only minimal status/static/login/setup surfaces are public. A fresh
 `admin`, whose first password is a one-time setup code in the owner-only
 `<home>/setup-code` file (never a shipped password, never page content), can only
-replace its password, inspect its identity or log out.
+replace its password, inspect its identity or log out, from the console (dialog
+open or dismissed), HTTP clients and the CLI alike.
 The replacement revokes old sessions. The last enabled administrator is protected.
 
 SQLite is authoritative after transactional legacy migration; corrupt, empty or
@@ -750,7 +751,8 @@ notes, spend, sessions or coding tools are published. I6 remains unchanged.
 Machine credentials use their own STRICT schema/version/initialized marker and
 private no-follow database. Only hashes of random 256-bit secrets persist; keys
 are not users or cookie sessions. The CLI mints/revokes with explicit confirm and
-reason using local filesystem authority. Table/rate/concurrency/body/result/time
+reason using local filesystem authority, never for an owner that is missing,
+disabled or still on its setup code. Table/rate/concurrency/body/result/time
 ceilings are finite; revocation is rechecked before reads. In-flight reads may
 finish. Disabling or deleting an account sets `disabled=1` on that owner's
 machine keys and retires that owner's schedules and completion notifications.

@@ -542,6 +542,47 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             "AUTH_PASSWORD_CHANGE_REQUIRED"
         );
     }
+    // The bootstrap scope holds for every API client, not only the console: a
+    // plain client with the session cookie and no Origin, CSRF token or bearer
+    // key may only read whoami, replace the password or log out.
+    for path in cgagentharness::server::routes::registered_paths() {
+        if !path.starts_with("/api/")
+            || matches!(
+                path.as_str(),
+                "/api/status"
+                    | "/api/auth/setup-status"
+                    | "/api/auth/login"
+                    | "/api/auth/bootstrap-password"
+                    | "/api/auth/whoami"
+                    | "/api/auth/password"
+                    | "/api/auth/logout"
+            )
+        {
+            continue;
+        }
+        let path = path
+            .replace("{username}", "admin")
+            .replace("{session_id}", &"0".repeat(12))
+            .replace("{run_id}", &"0".repeat(32))
+            .replace("{job_id}", &"0".repeat(32))
+            .replace("{id}", &"0".repeat(64));
+        for method in [Method::GET, Method::POST, Method::DELETE] {
+            let response = server
+                .client
+                .request(method.clone(), server.url(&path))
+                .header("cookie", &bootstrap)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 403, "{method} {path}");
+            assert_eq!(
+                code(&response.json::<Value>().await.unwrap()),
+                "AUTH_PASSWORD_CHANGE_REQUIRED",
+                "{method} {path}"
+            );
+        }
+    }
     let body = json!({"current_password":setup_code,"password":"replacement-admin-password"});
     assert_eq!(
         server
@@ -885,4 +926,95 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
     let result = cli(&server, &["web", "--url", &server.base, "status"], "").await;
     assert!(!result.status.success());
     content.abort();
+}
+
+#[tokio::test]
+async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine_key() {
+    let model = start_mock_model().await;
+    let options = ServerOptions {
+        api_key: Some(String::new()),
+        ..Default::default()
+    }
+    .with("auth.enabled", "true")
+    .with("tls.enabled", "true")
+    .with("security.api_key_optional", "false")
+    .with("api.rate_limit.max_requests", "1000");
+    let server = spawn_server(&model.base_url(), options).await;
+    let stderr = |out: &std::process::Output| String::from_utf8_lossy(&out.stderr).into_owned();
+    // The machine-key store opens only in an owner-only home.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&server.home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let setup_code = std::fs::read_to_string(server.home.join("setup-code"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let admin_id = server.state.auth.as_ref().unwrap().get_user("admin").unwrap().user_id;
+    let mint = [
+        "mcp-key",
+        "create",
+        "--owner",
+        &admin_id,
+        "--label",
+        "bootstrap",
+        "--confirm",
+        "--reason",
+        "fixture",
+    ];
+    // Local file authority still refuses a machine key to an owner that has
+    // not replaced its setup code.
+    let refused = cli(&server, &mint, "").await;
+    assert!(!refused.status.success());
+    assert!(
+        stderr(&refused).contains("MCP_KEY_OWNER_REFUSED"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(!String::from_utf8_lossy(&refused.stdout).contains("token"));
+
+    let result = cli(
+        &server,
+        &["account", "--url", &server.base, "login", "admin"],
+        &format!("{setup_code}\n"),
+    )
+    .await;
+    assert!(result.status.success(), "{}", stderr(&result));
+    let result = cli(&server, &["account", "--url", &server.base, "whoami"], "").await;
+    assert!(result.status.success(), "{}", stderr(&result));
+    for args in [
+        &["web", "--url", &server.base, "status"][..],
+        &[
+            "web",
+            "--url",
+            &server.base,
+            "allow",
+            "https://example.com/reference",
+            "--group",
+            "cli",
+        ][..],
+    ] {
+        let result = cli(&server, args, "").await;
+        assert!(!result.status.success(), "{args:?}");
+        assert!(
+            stderr(&result).contains("AUTH_PASSWORD_CHANGE_REQUIRED"),
+            "{args:?}: {}",
+            stderr(&result)
+        );
+    }
+    let result = cli(
+        &server,
+        &["account", "--url", &server.base, "password"],
+        &format!("{setup_code}\nreplacement-cli-password\n"),
+    )
+    .await;
+    assert!(result.status.success(), "{}", stderr(&result));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains("replacement-cli-password"));
+    let result = cli(&server, &["web", "--url", &server.base, "status"], "").await;
+    assert!(result.status.success(), "{}", stderr(&result));
+    let minted = cli(&server, &mint, "").await;
+    assert!(minted.status.success(), "{}", stderr(&minted));
+    let result = cli(&server, &["account", "--url", &server.base, "logout"], "").await;
+    assert!(result.status.success());
 }

@@ -378,8 +378,11 @@ fn main() {
                 .on_navigation(|url| url.scheme() == "tauri" && url.host_str() == Some("localhost"))
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny).devtools(false).build()?;
             let menu = tauri::menu::Menu::default(app.handle())?;
+            // Cmd and "+" (Shift and =) brings back the setup window, which shows
+            // the one-time setup code. Keep the physical form: Tauri drops an
+            // accelerator it cannot parse, and "CmdOrCtrl++" is one of those.
             let recovery = tauri::menu::Submenu::with_items(app, "Harness", true, &[
-                &tauri::menu::MenuItem::with_id(app, "setup", "Setup and recovery", true, Some("CmdOrCtrl+,"))?
+                &tauri::menu::MenuItem::with_id(app, "setup", "Setup and recovery", true, Some("CmdOrCtrl+Shift+Equal"))?
             ])?;
             menu.append(&recovery)?; app.set_menu(menu)?;
             app.on_menu_event(|app, event| { if event.id().as_ref() == "setup" { show(app, "setup"); } });

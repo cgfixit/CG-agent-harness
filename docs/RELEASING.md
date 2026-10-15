@@ -77,3 +77,6 @@ zizmor .github/workflows
 ```
 
 Planner tests also run in the workflow-lint PR check and before release planning.
+Outside Actions, `python3 scripts/release-plan.py` previews the next release of
+`main` read-only, as a manual run with `publish=false` (needs `gh auth login`);
+`GITHUB_EVENT_NAME=schedule` shows what the next scheduled run would decide.
