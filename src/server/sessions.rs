@@ -248,7 +248,13 @@ pub fn redacted_prompt(text: &str) -> String {
     let lower = line.to_ascii_lowercase();
     let set_or_clear =
         |w: Option<&&str>| w.is_some_and(|w| w.eq_ignore_ascii_case("set") || w.eq_ignore_ascii_case("clear"));
-    if lower.starts_with("/api") || (lower.starts_with("api") && set_or_clear(words.get(1))) {
+    // A slashless line counts only with a key name (every managed key has an
+    // underscore) or a token-like word (12+ characters with a digit), as the
+    // console's isApiCredentialLine does: "API set up …" is chat.
+    let credential_like =
+        |w: &&str| w.contains('_') || (w.chars().count() >= 12 && w.chars().any(|c| c.is_ascii_digit()));
+    let slashless = lower.starts_with("api") && set_or_clear(words.get(1)) && words.iter().skip(2).any(credential_like);
+    if lower.starts_with("/api") || slashless {
         let mut kept = vec![words[0]];
         if set_or_clear(words.get(1)) {
             kept.push(words[1]);
@@ -1246,6 +1252,8 @@ mod prompt_history_tests {
             ("`/api set GH_TOKEN ghp_x`", "/api set GH_TOKEN"),
             ("/ api set fake-token-not-a-key-name", "/api set"),
             ("api set SERPAPI_API_KEY k", "api set SERPAPI_API_KEY"),
+            ("api set xai-1234567890abcdef", "api set"),
+            ("API set up for webhooks: how?", "API set up for webhooks: how?"),
             ("API gateway vs service mesh?", "API gateway vs service mesh?"),
             (
                 "/web fetch https://admin:hunter2@intranet.example.com/x",

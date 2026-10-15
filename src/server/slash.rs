@@ -682,11 +682,18 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         };
     }
     if (cmd, sub) == ("goal", None) {
-        // `--web=all` or `-web all` would otherwise be stored as goal text.
-        let flag = args
-            .first()
-            .map(|a| a.trim_start_matches(['-', '–', '—']).to_ascii_lowercase());
-        if flag.is_some_and(|f| f.starts_with("web")) && !matches!(args, ["--web", "off" | "fetch" | "all", ..]) {
+        // `--web=all`, `-web all` or `web all` would otherwise be stored as goal
+        // text. Only a dashed word or a bare `web <mode>` is a flag attempt, so
+        // goal text such as "website redesign" still dispatches.
+        let flag = args.first().and_then(|a| {
+            let bare = a.trim_start_matches(['-', '–', '—']);
+            (bare.len() < a.len()).then(|| bare.to_ascii_lowercase())
+        });
+        let bare_mode = matches!(args, [w, m, ..] if w.eq_ignore_ascii_case("web")
+            && ["off", "fetch", "all"].iter().any(|x| m.eq_ignore_ascii_case(x)));
+        if (bare_mode || flag.is_some_and(|f| f.starts_with("web")))
+            && !matches!(args, ["--web", "off" | "fetch" | "all", ..])
+        {
             return Some("usage: /goal --web off|fetch|all [text] (a space, not =); not dispatched");
         }
     }
@@ -914,10 +921,18 @@ mod tests {
             "/goal --web=all find hvac",
             "/goal -web all find hvac",
             "/goal --web bogus find hvac",
+            "/goal web all find hvac",
         ] {
             assert!(!parse_line(line).dispatch, "{line}");
         }
-        assert!(parse_line("/goal --web all find hvac").dispatch);
+        for line in [
+            "/goal --web all find hvac",
+            "/goal website redesign plan",
+            "/goal Webinar series for hvac techs",
+            "/goal web design for the shop",
+        ] {
+            assert!(parse_line(line).dispatch, "{line}");
+        }
         assert!(parse_line("/goal Stage the rollout").notice.unwrap().contains("reword"));
         let p = parse_line("/session delete 3f9a1c2b");
         assert!(
