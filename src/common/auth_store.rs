@@ -228,6 +228,18 @@ impl AuthManager {
         }) && setup_code_path(&self.path).is_file()
     }
 
+    /// What to verify for `username`: while `admin` still signs in with its
+    /// setup code, a code-shaped entry is checked in canonical form, so a
+    /// pasted trailing period or capitals do not reject the right code.
+    fn credential<'a>(username: &str, row: &UserRow, password: &'a str) -> std::borrow::Cow<'a, str> {
+        if username == BOOTSTRAP_USERNAME && row.must_change_password {
+            if let Some(code) = authn::normalize_setup_code(password) {
+                return code.into();
+            }
+        }
+        password.into()
+    }
+
     /// The code file outlives its use only until `admin` gets a real password.
     fn forget_setup_code(&self, username: &str) {
         if username == BOOTSTRAP_USERNAME {
@@ -425,7 +437,8 @@ impl AuthManager {
             .users
             .get_mut(&canonical)
             .ok_or_else(HarnessError::auth_login_failed)?;
-        if user.disabled || !authn::verify_password(current, &user.password_hash).0 {
+        if user.disabled || !authn::verify_password(&Self::credential(&canonical, user, current), &user.password_hash).0
+        {
             return Err(HarnessError::auth_login_failed());
         }
         user.password_hash = record;
@@ -483,7 +496,8 @@ impl AuthManager {
             let retry_after = (row.locked_until_ts.unwrap_or(now) - now).max(0.0);
             return Err(HarnessError::auth_locked(retry_after, &canonical));
         }
-        let (ok, needs_rehash) = authn::verify_password(password, &row.password_hash);
+        let (ok, needs_rehash) =
+            authn::verify_password(&Self::credential(&canonical, &row, password), &row.password_hash);
         if row.disabled || !ok {
             let new_count = row.failed_count.saturating_add(1);
             if let Some(u) = db.users.get_mut(&canonical) {
