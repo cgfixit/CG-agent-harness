@@ -8,7 +8,7 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 ## Merge gates
 
 - [`ci.yml`](ci.yml): push, PR and `workflow_call`: fmt, clippy, tests on Linux, macOS and Windows with planner keys blanked, the required `CGAH_REQUIRE_*` sandbox and lifecycle jobs, deny, invariant guard. Required.
-- [`pr-template-check.yml`](pr-template-check.yml): open PRs only (open, edit, sync, ready for review), never main: PR-body template and base-is-main gate. Blocking.
+- [`pr-template-check.yml`](pr-template-check.yml): PRs only (open, edit, sync, reopen, ready for review), never pushes to main: PR-body template and base-is-main gate. Blocking.
 - [`review-gate.yml`](review-gate.yml): review and comment events: reports open threads and running Codex reviews. Advisory, never fails.
 
 ## Packaging
