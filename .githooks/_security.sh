@@ -76,6 +76,10 @@ SEC_PROTECTED_AGENT_GLOBS=( '.mcp.json' 'mcp.json' 'mcp_manifest.json' '.claude/
 # New files above this size are refused (binary blobs are where scanners
 # cannot look). 0 disables.
 SEC_MAX_NEW_FILE_KB=2048
+# A new file matching SEC_VIDEO_GLOBS may reach SEC_MAX_NEW_VIDEO_KB instead
+# (a repo's own demo recordings). 0 keeps SEC_MAX_NEW_FILE_KB for them too.
+SEC_MAX_NEW_VIDEO_KB=0
+SEC_VIDEO_GLOBS=()
 
 # Paths that must stay ignored; probed with `git check-ignore`. A probe that
 # is no longer ignored means .gitignore lost a rule.
@@ -516,13 +520,17 @@ sec__check_identity() {
 
 # New files over SEC_MAX_NEW_FILE_KB in the index.
 sec__check_new_sizes() {
-  local rc=0 f size
+  local rc=0 f size limit
   [[ "$SEC_MAX_NEW_FILE_KB" -gt 0 ]] || return 0
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     size="$(git cat-file -s ":$f" 2>/dev/null || echo 0)"
-    if [[ "$size" -gt $((SEC_MAX_NEW_FILE_KB * 1024)) ]]; then
-      sec__say "security gate: new file over ${SEC_MAX_NEW_FILE_KB} KiB: $f ($((size / 1024)) KiB)" \
+    limit="$SEC_MAX_NEW_FILE_KB"
+    if [[ "$SEC_MAX_NEW_VIDEO_KB" -gt 0 ]] && sec__match_any "$f" ${SEC_VIDEO_GLOBS[@]+"${SEC_VIDEO_GLOBS[@]}"}; then
+      limit="$SEC_MAX_NEW_VIDEO_KB"
+    fi
+    if [[ "$size" -gt $((limit * 1024)) ]]; then
+      sec__say "security gate: new file over ${limit} KiB: $f ($((size / 1024)) KiB)" \
         "  History keeps it forever and scanners skip it. Host it elsewhere, or raise SEC_MAX_NEW_FILE_KB with the operator."
       rc=1
     fi
