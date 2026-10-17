@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
+import io
+import json
 import os
 import subprocess
 import tempfile
@@ -132,6 +134,36 @@ class ReleasePlanTests(unittest.TestCase):
                 module.main()
             self.assertIn("changed=true", output.read_text())
             self.assertIn("should_release=false", output.read_text())
+
+    def test_local_run_previews_main_without_actions_environment(self):
+        replies = [
+            {"sha": "c" * 40},
+            {"tag_name": "v0.1.0", "draft": False, "prerelease": False},
+            {"commit": {"tree": {"sha": "old"}}},
+            {"commit": {"tree": {"sha": "new"}}},
+            {"workflow_runs": [{"head_sha": "c" * 40, "conclusion": "success", "event": "push"}]},
+            [{"name": "v0.1.0"}], [{"tag_name": "v0.1.0"}],
+        ]
+        with patch.dict(os.environ, {}, clear=True), patch.object(module, "api", side_effect=replies) as api, \
+                patch("sys.stdout", new_callable=io.StringIO) as out, patch("sys.stderr", new_callable=io.StringIO):
+            module.main()
+        self.assertEqual(api.call_args_list[0].args[0], "repos/cgfixit/CG-agent-harness/commits/main")
+        result = json.loads(out.getvalue())
+        self.assertEqual((result["tag"], result["source_sha"]), ("v0.1.1", "c" * 40))
+        self.assertEqual(result["should_release"], "false")
+
+    def test_actions_run_missing_environment_fails_closed(self):
+        for missing in ("GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_EVENT_NAME", "GITHUB_REF"):
+            env = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "example/repo", "GITHUB_SHA": "a" * 40,
+                   "GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main"}
+            del env[missing]
+            replies = [{"tag_name": "v0.1.0", "draft": False, "prerelease": False},
+                       {"commit": {"tree": {"sha": "old"}}}, {"commit": {"tree": {"sha": "new"}}},
+                       {"workflow_runs": []}]
+            with self.subTest(missing=missing), patch.dict(os.environ, env, clear=True), \
+                    patch.object(module, "api", side_effect=replies), \
+                    self.assertRaisesRegex(SystemExit, f"{missing} is not set"):
+                module.main()
 
     def test_tag_move_refused_before_outputs(self):
         replies = [

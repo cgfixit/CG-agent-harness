@@ -235,7 +235,8 @@ impl KeyStore {
         rows(&connect(&self.path)?)
     }
     /// Trusted local CLI authority supplies the namespace. No HTTP caller can choose it.
-    /// The owner must exist and be enabled. Auth-disabled homes may mint only `local`.
+    /// The owner must exist, be enabled and have replaced its initial password.
+    /// Auth-disabled homes may mint only `local`.
     pub fn mint(&self, owner: &str, label: &str, owners: OwnerCheck<'_>) -> anyhow::Result<(KeyInfo, String)> {
         if !super::structured_memory::valid_owner(owner)
             || label.trim().is_empty()
@@ -245,7 +246,7 @@ impl KeyStore {
             anyhow::bail!("MCP_KEY_INVALID: supply a valid owner ID and a label of 1-80 printable characters");
         }
         if !owners.allows(owner) {
-            anyhow::bail!("MCP_KEY_OWNER_REFUSED: owner must exist and be enabled");
+            anyhow::bail!("MCP_KEY_OWNER_REFUSED: owner must exist, be enabled and have replaced its initial password");
         }
         let mut conn = connect(&self.path)?;
         let tx = conn
@@ -428,7 +429,9 @@ pub fn run(command: KeyCommand) -> anyhow::Result<()> {
                 accounts
                     .list_users()
                     .into_iter()
-                    .filter(|user| !user.disabled)
+                    // An account still on its initial password may only replace
+                    // it; it gets no machine key either.
+                    .filter(|user| !user.disabled && !user.must_change_password)
                     .map(|user| user.user_id)
                     .collect::<Vec<_>>()
             } else {

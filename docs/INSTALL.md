@@ -23,7 +23,7 @@ works and installs only what is missing, in order: Command Line Tools; Homebrew
 (only for Ollama or `gh`); rustup with the pinned Rust; Ollama; optional `gh`. It then builds the standalone backend and downloads the latest
 release app, checks it against that release's `SHA256SUMS` and `codesign`, and
 copies it to `/Applications` (`~/Applications` when that is not writable). It never
-touches the home directory and pulls a model only with `--model`.
+touches the harness home (`~/.CGagentHarness`) and pulls a model only with `--model`.
 
 | Option | Effect |
 |---|---|
@@ -39,6 +39,87 @@ page). `curl` downloads skip Gatekeeper's quarantine prompt; compare
 
 [`start-macos.sh`](../scripts/start-macos.sh) is the everyday launcher, described
 in [section 7](#7-open-the-console-in-a-browser).
+
+### One command: `init.sh`
+
+On an Apple Silicon Mac, [`scripts/init.sh`](../scripts/init.sh) runs the steps
+below in order from a fresh clone or download, from zsh or bash:
+
+```bash
+cd CG-agent-harness && scripts/init.sh    # or: bash scripts/init.sh
+```
+
+It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped when
+`--check` passes), adds Homebrew and Rust to your login shell's profile
+(`~/.zprofile` for zsh, `~/.bash_profile` or `~/.profile` for bash), replaces
+admin's one-time setup code (it reads the code itself; in the app, **Cmd and +**
+shows it) with a new password and saves that in your login keychain as **CG Agent Harness
+admin password**, and grants the web allowlist. It then asks what to open:
+**1** the app, **2** the console in your browser (served from that Terminal until
+Ctrl-C, or the open app's console), **3** both, **0** nothing. A failed step offers retry,
+skip or quit. A rerun skips finished steps and signs in with the saved password.
+
+| Option | Effect |
+|---|---|
+| `--yes` | Asks nothing; generates the admin password (Keychain only) |
+| `--choice 0`–`3` | What opens at the end |
+| `--model TAG`, `--with-gh`, `--no-ollama`, `--app-dir DIR` | Passed to `install-macos.sh` |
+| `--trust-cert`, `--no-profile`, `--no-allowlist` | Trust the console certificate (choices 2 and 3 with the app); skip the profile or allowlist |
+
+Each line is logged with a time to `scripts/logs/install.log` (private, ignored by
+git); passwords and setup codes never are. Read the saved password with
+`security find-generic-password -a admin -s 'CGagentHarness admin (<home>)' -w`.
+
+### Step by step in Terminal
+
+Open **Terminal** (Applications → Utilities); on Apple Silicon leave its **Open
+using Rosetta** unchecked. Run every command from the clone, as your user.
+
+1. **Developer tools:** `xcode-select --install`, then finish the dialog. A rerun
+   only reports that they are installed.
+2. **Code:** `git clone https://github.com/cgfixit/CG-agent-harness.git && cd CG-agent-harness`.
+3. **Inventory:** `scripts/install-macos.sh --check` prints one line per tool and
+   exits 1 while something required is missing. It changes nothing.
+4. **Preview:** `scripts/install-macos.sh --dry-run --model <tag>` prints every
+   command the install would run. Pick the tag in [Models](MODELS.md); omit
+   `--model` to pull later (models are multi-GB). Add `--with-gh` for coding.
+5. **Install:** the same command without `--dry-run`. The Homebrew and rustup
+   installers may ask for your password and print "Next steps"; run those lines,
+   then open a new Terminal window so `brew` and `cargo` are on `PATH`. The first
+   backend build takes several minutes.
+6. **Confirm:** `scripts/install-macos.sh --check` ends with
+   `everything required is present`.
+7. **Start:** `scripts/start-macos.sh --trust-cert` starts Ollama with a
+   32768-token window, opens the app, and opens its console in your browser.
+   `--trust-cert` asks for your password once so the browser trusts this home's
+   certificate. Note the printed `CGagentHarness console: https://127.0.0.1:<port>/`.
+8. **Sign in:** user `admin` with the one-time setup code. To find it, put the
+   app window or the browser's console (`harness.html`) in focus and press
+   **Cmd and +** (technically Cmd, Shift and =). The app opens **Harness → Setup
+   and recovery**, which shows the code; the browser's sign-in card says where
+   the code is (the `setup-code` file in the harness home, read with
+   `cat ~/.CGagentHarness/setup-code`). Then choose a new password of at least 12
+   characters. Until you do, that session can only change its password or log
+   out: closing the password dialog leaves a lock card, and the CLI and API
+   answer `AUTH_PASSWORD_CHANGE_REQUIRED`. The browser needs its own sign-in.
+9. **Optional web allowlist:** with that console origin, sign the CLI in and grant
+   the technical-docs starter list:
+
+   ```bash
+   url=https://127.0.0.1:<port>          # the origin printed in step 7
+   target/release/cgagentharness account --url "$url" login admin
+   CGAH_BIN=target/release/cgagentharness CGAH_URL="$url" scripts/web-allowlist-bootstrap.sh
+   ```
+
+10. **Every day:** `scripts/start-macos.sh` (without the app:
+    `scripts/start-macos.sh --standalone`, port 8790, where the CLI needs no `--url`).
+11. **Update:** quit the app (Cmd-Q), `git pull --ff-only`, then
+    `scripts/install-macos.sh --replace-app`.
+12. **Uninstall:** see [update, backup, rollback and uninstall](#update-backup-rollback-and-uninstall).
+
+If `start-macos.sh` reports no usable app, rerun step 5. If it reports the home is
+already owned, quit that owner or use app mode. More fixes:
+[Troubleshooting](TROUBLESHOOTING.md).
 
 ## 2. Prerequisites
 
@@ -134,8 +215,9 @@ brew install --cask ollama
 
 Launch Ollama, then verify `ollama list` and the endpoint in [model setup](MODELS.md).
 If the CLI is unavailable, follow the
-[Ollama quickstart](https://docs.ollama.com/quickstart). The harness does not
-install Ollama or download a model automatically.
+[Ollama quickstart](https://docs.ollama.com/quickstart). The server never installs
+Ollama or downloads a model; `install-macos.sh` installs Ollama unless
+`--no-ollama` and pulls a model only with `--model`.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 `OLLAMA_CONTEXT_LENGTH=32768` is set **before** the Ollama process starts.
@@ -262,7 +344,10 @@ successful build do not prove native interaction acceptance; see
 
 Fresh homes enable login, role permissions, HTTPS and web fetch/search/research
 without a harness API key or configuration edit. The content allowlist starts
-empty; administrators grant sources through `/web allow`. Open the app from
+empty; administrators grant sources through `/web allow`, or grant a starter list
+of technical references with
+[`web-allowlist-bootstrap.sh`](../scripts/web-allowlist-bootstrap.sh)
+([step 9](#step-by-step-in-terminal)). Open the app from
 Finder, or start the standalone server:
 
 ```bash
@@ -272,8 +357,9 @@ Finder, or start the standalone server:
 Upgrades keep existing settings; to adopt the boundaries, merge
 `auth.enabled: true` and `tls.enabled: true` into the active configuration.
 A fresh home's `admin` signs in once with the code in private
-`<home>/setup-code` (the app and `start-web.sh` show it), then must replace the
-password. See
+`<home>/setup-code` (the app's **Cmd and +** window and `start-web.sh` show it),
+then must replace the password. No MCP machine key can be minted for an account
+that has not. See
 [TLS trust, migration and recovery](SECURE_RESEARCH.md).
 
 The standalone server prints its address, for example:
@@ -306,7 +392,7 @@ Fresh homes seed the bundled default `soul.md`; [soul](CONSOLE.md#72-default-sou
 and existing-home behavior.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
-(Cmd-,) shows its owned endpoint and model/tool diagnostics. Use **Check installed
+(**Cmd and +**, that is Cmd, Shift and =) shows the setup code and its owned endpoint and model/tool diagnostics. Use **Check installed
 chat and planner models** to check configured tag availability without downloading.
 For the standalone server, leave its terminal open and visit:
 
@@ -568,7 +654,19 @@ defaults, model selection, persona, or skills. Merge new fields instead of
 replacing `config.yaml` with `assets/config.default.yaml`. An older binary may
 not understand newer state, so inspect compatibility and restore its matching
 backup. Never delete a live owner's lock. To uninstall, quit and remove the app;
-home deletion is a separate destructive action.
+home deletion is a separate destructive action ([desktop uninstall](DESKTOP.md#update-recovery-and-uninstall)).
+What the scripts leave behind, all optional to remove:
+
+| Left by | Item | Remove with |
+|---|---|---|
+| `install-macos.sh --replace-app` | Previous app in `~/Library/Caches/CG-agent-harness-installer/previous` | `rm -rf` that directory |
+| `start-macos.sh --trust-cert` | "CG Agent Harness local portal" certificate trusted in the login keychain | Keychain Access |
+| `start-macos.sh` | `OLLAMA_CONTEXT_LENGTH` for GUI apps until logout; `~/Library/Logs/ollama-serve.log` | `launchctl unsetenv OLLAMA_CONTEXT_LENGTH`; `rm` the log |
+| The harness | Home and its Keychain credentials | `scripts/reset-macos.sh` (dry run), then `--yes` after a backup |
+| `init.sh` | "CG Agent Harness admin password" in the login keychain; marked lines in your shell profile; `scripts/logs/` | `reset-macos.sh --yes`; delete the lines under `# Added by CG-agent-harness`; `rm -rf scripts/logs` |
+
+Homebrew, rustup, Ollama, models and `gh` are general tools; the installer
+never removes them.
 
 To test a candidate without using your normal home, launch it explicitly with a
 new absolute temporary home (adjust the app path):

@@ -46,7 +46,7 @@ Load order: gate defaults, then `security.conf`, then `private.conf`, then
 | Your identifiers from `private.conf` | staged diff | every commit being published |
 | Absolute home-directory paths (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\`); placeholder users pass | staged diff | every commit being published |
 | Invisible bidi-override and Unicode tag characters (Trojan Source; hidden instructions in agent files) | staged diff | every commit being published |
-| New file over `SEC_MAX_NEW_FILE_KB` (default 2048); media with GPS/author metadata when `exiftool` is installed | staged | — |
+| New file over `SEC_MAX_NEW_FILE_KB` (default 2048; `SEC_VIDEO_GLOBS`: `SEC_MAX_NEW_VIDEO_KB`); GPS/author metadata in media (with `exiftool`) | staged | — |
 | Removed `.gitignore` rule | staged | every commit being published |
 | Personal address in author/committer (`SEC_AUTHOR_EMAIL_DENY`) | every commit | — |
 | Protected control file changed or deleted | staged | reminder only |

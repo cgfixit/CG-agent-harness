@@ -16,7 +16,7 @@ assert.ok(!html.includes('id="openSpend"'), 'Spend is folded into Analytics');
 const nodes = new Map();
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {id, hidden:buttons.includes(id), textContent:'', value:'', disabled:false, listeners:{},
-    addEventListener(event, handler) { this.listeners[event] = handler; }, focus() {}, contains() { return false; },
+    addEventListener(event, handler) { this.listeners[event] = handler; }, focus() {}, contains() { return false; }, scrollIntoView() {},
     replaceChildren() { this.textContent = ''; }});
   return nodes.get(id);
 };
@@ -28,7 +28,8 @@ const enabled = {'/api/notifications':{enabled:true,destinations:[],deliveries:[
 let replies = shipped, auth = {whoami:reply(503), setup:reply(200, {needs_password:false})}, probes = [];
 const classes = () => { const set = new Set(); return {add:n => set.add(n), remove:n => set.delete(n), contains:n => set.has(n),
   toggle:(n, on) => { if (on) set.add(n); else set.delete(n); return on; }}; };
-const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null};
+const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null, listeners:{},
+  addEventListener(event, handler) { this.listeners[event] = handler; }};
 const passwordPrompts = [], clearedTimers = []; let transcriptClears = 0, memoryRefreshes = 0;
 const context = vm.createContext({
   $:node, document:page, window:{}, CSRF_TOKEN:'fixture', sessionRevision:1, sendBtn:{disabled:false}, inflightChat:null,
@@ -52,7 +53,12 @@ vm.runInContext([
   between('if (hAuthLogin) {', 'if (hAuthLogout) {'),
   between('if (hAuthLogout) {', 'const hAuthSetupBtn'),
   between('const hAuthSetupBtn', 'function openPasswordChange('),
+  between("document.addEventListener('keydown'", 'refreshHarnessAuth();\nlet memoryRefreshTimer'),
 ].join('\n'), context);
+// Cmd/Ctrl and "+" on the sign-in card; returns whether the browser default was kept.
+const plus = (mods = {metaKey:true}) => { let kept = true;
+  page.listeners.keydown({key:'+', code:'Equal', shiftKey:true, altKey:false, metaKey:false, ctrlKey:false, ...mods, preventDefault() { kept = false; }});
+  return kept; };
 // Await every probe the real handlers start, without timers.
 const started = [], original = context.refreshHeaderFeatures;
 context.refreshHeaderFeatures = usable => { const probe = original(usable); started.push(probe); return probe; };
@@ -100,10 +106,21 @@ assert.equal(node('hAuthLoginBox').hidden, false);
 assert.equal(node('hAuthHint').hidden, true, 'no note unless setup-status reports setup_code');
 auth.setup = reply(200, {needs_password:false, setup_code:true});
 await context.refreshHarnessAuth(); await settle();
-assert.equal(node('hAuthHint').hidden, false, 'note shown while the shipped password is active');
+assert.equal(node('hAuthHint').hidden, false, 'note shown while the setup code is active');
+node('hAuthHint').hidden = true;
+assert.equal(plus(), false, 'Cmd and + is taken on the sign-in card');
+assert.equal(node('hAuthHint').hidden, false, 'Cmd and + shows where the setup code is');
+assert.equal(node('hAuthError').textContent, '');
+node('hAuthHint').hidden = true;
+assert.equal(plus({ctrlKey:true}), false, 'Ctrl and + works off macOS too');
+assert.equal(node('hAuthHint').hidden, false);
+assert.equal(plus({metaKey:false}), true, 'a bare + is typing, not the shortcut');
 auth.setup = reply(200, {needs_password:false, setup_code:false});
 await context.refreshHarnessAuth(); await settle();
 assert.equal(node('hAuthHint').hidden, true, 'note hidden once it changed');
+assert.equal(plus(), false);
+assert.match(node('hAuthError').textContent, /No setup code is pending/, 'without a code the shortcut says so');
+node('hAuthHint').hidden = true; node('hAuthError').textContent = '';
 assert.ok(!page.documentElement.classList.contains('auth-pending'));
 
 // Signed in: the account's features are probed; a pending password change shows nothing yet.
@@ -112,10 +129,16 @@ await context.refreshHarnessAuth(); await settle();
 assert.deepEqual(shown(), []);
 assert.deepEqual(probes, []);
 assert.deepEqual(passwordPrompts, [true]);
+assert.ok(page.body.classList.contains('password-required'), 'a pending replacement locks the console, dialog or not');
+assert.equal(node('passwordLockScreen').hidden, false);
+assert.equal(node('reloadLimits').hidden, true, 'Reload limits is not offered before the setup code is replaced');
 auth.whoami = reply(200, {username:'operator', role:'operator', must_change_password:false});
 await context.refreshHarnessAuth(); await settle();
 assert.deepEqual(shown(), buttons);
 assert.ok(!page.body.classList.contains('signed-out'), 'a session removes the sign-in card');
+assert.equal(plus(), true, 'signed in, Cmd and + keeps its browser meaning (zoom)');
+assert.ok(!page.body.classList.contains('password-required'), 'a replaced password unlocks the console');
+assert.equal(node('passwordLockScreen').hidden, true);
 
 // Login re-evaluates; so does bootstrap-password setup. Blank fields never reach the server.
 context.refreshHeaderFeatures(false); await settle();
@@ -129,6 +152,19 @@ assert.deepEqual(shown(), buttons);
 assert.equal(memoryRefreshes, 1, 'successful login refreshes the retained Memory pane');
 assert.equal(node('hAuthError').textContent, '', 'successful login completes without a swallowed fixture error');
 context.refreshHeaderFeatures(false); await settle();
+// The login form path locks too, and keeps Reload limits hidden for a setup-code admin.
+auth.login = reply(200, {username:'admin', role:'admin', must_change_password:true});
+node('hAuthUser').value = 'admin'; node('hAuthPass').value = 'setup-code-fixture';
+await node('hAuthLogin').listeners.click(); await settle();
+assert.deepEqual(shown(), []);
+assert.ok(page.body.classList.contains('password-required'));
+assert.equal(node('reloadLimits').hidden, true, 'a setup-code login never offers Reload limits');
+assert.equal(passwordPrompts.at(-1), true);
+// Signing out (or any return to the sign-in card) ends the lock.
+auth.whoami = reply(401);
+await context.refreshHarnessAuth(); await settle();
+assert.ok(!page.body.classList.contains('password-required'));
+assert.equal(node('passwordLockScreen').hidden, true);
 auth.login = reply(401);
 node('hAuthPass').value = 'wrong-password';
 await node('hAuthLogin').listeners.click(); await settle();
@@ -162,4 +198,4 @@ vm.runInContext("currentSession = 'second-session'", context);
 auth.logout = reply(401); auth.whoami = () => { throw new TypeError('Failed to fetch'); };
 await node('hAuthLogout').listeners.click(); await settle();
 assert.equal(context.currentSession, null, 'a 401 logout resets even when the probe fails');
-console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card and setup-code note passed');
+console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card, setup-code note and Cmd+ shortcut, and the setup-code lock passed');

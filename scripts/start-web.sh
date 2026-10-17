@@ -55,13 +55,13 @@ if [ ! -x "$bin" ]; then
   (cd "$root" && cargo build --release --locked)
 fi
 
-# Fresh homes serve HTTPS; only a literal `enabled: true` under tls: is on, so
-# an existing config with TLS off (or quoted "true") is reached over HTTP.
+# Fresh homes serve HTTPS. An existing config serves HTTPS only with a literal
+# `enabled: true` under tls:; a missing key (a home seeded before TLS) is HTTP.
 scheme=https
 cfg=$home/config.yaml
 if [ -f "$cfg" ]; then
   tls=$(awk '/^tls:/ {t=1; next} t && /^[^ #]/ {t=0} t && $1=="enabled:" {print $2; exit}' "$cfg")
-  [ "${tls:-true}" = true ] || scheme=http
+  [ "${tls:-false}" = true ] || scheme=http
 fi
 url=$scheme://$loopback:$port/
 

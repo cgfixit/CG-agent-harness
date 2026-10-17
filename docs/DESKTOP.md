@@ -10,12 +10,11 @@ checks need their configured tools. Native acceptance evidence lives in PR bodie
    (or a directory you own). Quit an existing copy before replacing it.
 2. Open it from Finder or the Dock. The app installs no login item or service.
 3. Fresh homes enable HTTPS, accounts, roles and web controls. Sign in as
-   `admin` with the setup code from **Setup and recovery**.
-   Signing in opens password replacement; closing it does not unlock the portal.
-   Replace the password with at least 12 characters.
+   `admin` with the setup code from **Harness → Setup and recovery**: with the app
+   in focus press **Cmd and +** (Cmd, Shift, =). Sign-in opens password
+   replacement; closing it leaves a lock card. Use at least 12 characters.
    The native webview verifies its owned certificate without system trust changes.
-   Existing home configuration is preserved. Use **Harness → Setup and recovery**
-   (Cmd-,) for diagnostics.
+   Existing configuration is preserved. That window also shows diagnostics.
 4. Administrators manage provider credentials in **API Keys**. SerpAPI saves
    apply immediately; other saved values need a restart. Inherited environment values win. A
    harness metadata key never grants account access. See [migration, roles and

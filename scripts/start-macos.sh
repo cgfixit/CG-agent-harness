@@ -7,6 +7,7 @@
 #   scripts/start-macos.sh --standalone [port]   # no app: start-web.sh runs `serve` itself
 #   scripts/start-macos.sh --trust-cert          # app mode, and trust the home's certificate in your login keychain
 #   scripts/start-macos.sh --no-ollama ...       # leave Ollama alone (chat uses LM Studio, another port or a remote model)
+#   scripts/start-macos.sh --no-browser          # app mode, but only print the console origin (scripts/init.sh uses it)
 # Env: CGAH_APP  app bundle (default /Applications, then ~/Applications)
 # Run scripts/install-macos.sh first. Full guide: docs/INSTALL.md.
 set -euo pipefail
@@ -19,14 +20,15 @@ ollama_api=http://$loopback:11434 # DevSkim: ignore DS137138 because Ollama's de
 export OLLAMA_HOST=$loopback:11434
 sidecar='/Contents/MacOS/cgagentharness desktop$'
 
-mode=app ollama=1 trust=0 port_arg=''
+mode=app ollama=1 trust=0 browser=1 port_arg=''
 # Options may come before or after the port; anything else is refused.
 while [ "$#" -gt 0 ]; do
   case $1 in
     --standalone) mode=standalone ;;
     --no-ollama) ollama=0 ;;
     --trust-cert) trust=1 ;;
-    -h | --help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-browser) browser=0 ;;
+    -h | --help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "start-macos: unknown option: $1" >&2; exit 3 ;;
     *) [ -z "$port_arg" ] || { echo "start-macos: unexpected argument: $1" >&2; exit 3; }; port_arg=$1 ;;
   esac
@@ -40,6 +42,7 @@ if [ "$mode" = standalone ]; then
   [ "$p" -ge 1024 ] && [ "$p" -le 65535 ] || { echo "start-macos: port must be 1024-65535: $p" >&2; exit 3; }
 fi
 [ "$mode" = app ] || [ "$trust" = 0 ] || { echo 'start-macos: --trust-cert needs app mode (the server must be running)' >&2; exit 3; }
+[ "$mode" = app ] || [ "$browser" = 1 ] || { echo 'start-macos: --no-browser needs app mode' >&2; exit 3; }
 [ "$(uname -s)" = Darwin ] || { echo 'start-macos: macOS only; elsewhere run scripts/start-web.sh' >&2; exit 3; }
 
 say() { printf '==> %s\n' "$*"; }
@@ -210,7 +213,7 @@ for _ in $(seq 1 120); do
   fi
   sleep 0.5
 done
-[ -n "$port" ] || { echo 'start-macos: the app backend did not start listening; open Harness → Setup and recovery in the app' >&2; exit 2; }
+[ -n "$port" ] || { echo 'start-macos: the app backend did not start listening; open Harness → Setup and recovery (Cmd and +) in the app' >&2; exit 2; }
 
 if [ "$scheme" = http ]; then
   origin=http://$loopback:$port # DevSkim: ignore DS137138 because an explicit legacy-HTTP home serves plain HTTP on loopback.
@@ -245,5 +248,9 @@ else
   else
     echo "start-macos: could not export the certificate of $home; see docs/SECURE_RESEARCH.md" >&2
   fi
+fi
+if [ "$browser" = 0 ]; then
+  echo "CGagentHarness console: $origin/"
+  exit 0
 fi
 bash "$root/scripts/start-web.sh" --desktop-url "$origin"
