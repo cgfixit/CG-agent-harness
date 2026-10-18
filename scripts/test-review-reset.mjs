@@ -109,7 +109,7 @@ const poll=deferred(), pollStarted=deferred();
 context.respond=path=>{if(path==='/api/agent/checks')return {poll_interval_ms:1};pollStarted.resolve();return poll.promise;};
 const watching=context.watchAgentJob('job');await pollStarted.promise;
 assert.equal(calls.at(-1)[0],'/api/agent/jobs/job','the deferred job response must be in flight');
-context.clearTranscript();poll.resolve({status:'complete',result:{parsed:record}});await watching;reset();
+context.clearTranscript();poll.resolve({status:'finished',result:{parsed:record}});await watching;reset();
 
 // Positive controls: fresh visible review and explicit approval still work.
 context.respond=()=>proposal;await context.runSlash('/soul review proposal');

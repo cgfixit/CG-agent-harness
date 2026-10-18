@@ -1,5 +1,12 @@
 // Native Chrome acceptance against an explicitly supplied disposable arithmetic
 // fixture server. No npm packages, real user profile, or stored API credentials.
+// Nothing in CI or a skill runs it. By hand, after `cargo build --release`:
+//   python3 scripts/browser-fixture.py DIR --model TAG --http
+// (DIR must not exist; TAG is a tag the local Ollama on 127.0.0.1:11434 serves).
+// It keeps serving in the foreground. In a second shell, set from its JSON line
+// CGAH_TEST_BASE_URL=<base_url>, CGAH_TEST_HOME=<home> and
+// CGAH_TEST_FIXTURE=disposable-arithmetic (plus CHROME_BIN off macOS), then run
+//   node --experimental-websocket scripts/browser-acceptance.mjs
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {readFile, writeFile, mkdtemp, rm} from 'node:fs/promises';
