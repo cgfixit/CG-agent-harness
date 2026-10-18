@@ -25,6 +25,11 @@ pub const REAL_REPO_RUN_FALLBACK_PLANNER_SEC: u64 = 720;
 pub const REAL_REPO_RUN_DEFAULT_ITERATIONS: u64 = 3;
 pub const REAL_REPO_RUN_CHECK_SEC: u64 = 120;
 pub const REAL_REPO_RUN_OVERHEAD_SEC: u64 = 300;
+/// `real-repo-run-push` and `real-repo-run-publish`: above the child's own git
+/// (each call preceded by a validating config read) and gh bounds, so a slow
+/// remote ends in the child's INDETERMINATE record rather than a shim kill.
+/// `tests/shim_and_agent_routes.rs` pins the sum.
+pub const REAL_REPO_RUN_WRITE_SEC: u64 = 420;
 /// A ceiling on the ceiling: a synchronous HTTP request held open longer than
 /// this is its own failure mode.
 pub const REAL_REPO_RUN_MAX_TIMEOUT_SEC: u64 = 3600;
@@ -436,14 +441,14 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
 
 /// Budget for a request: only `real-repo-run` gets a non-default timeout.
 pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
-    let secs = if req.action == "real-repo-run" {
-        real_repo_run_timeout_sec(
+    let secs = match req.action.as_str() {
+        "real-repo-run" => real_repo_run_timeout_sec(
             req.planner_timeout_sec.unwrap_or(ctx.planner_timeout_sec),
             req.max_iterations,
             req.checks.as_ref().map(|c| c.len()).unwrap_or(0),
-        )
-    } else {
-        DEFAULT_TIMEOUT_SEC
+        ),
+        "real-repo-run-push" | "real-repo-run-publish" => REAL_REPO_RUN_WRITE_SEC,
+        _ => DEFAULT_TIMEOUT_SEC,
     };
     Duration::from_secs(secs)
 }
