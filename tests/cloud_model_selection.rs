@@ -152,8 +152,8 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 - test-only loopback fixture.
     std::env::set_var(
         "CGAH_TEST_CLOUD_BASE_URL",
-        format!("http://{}", listener.local_addr().unwrap()),
-    ); // DevSkim: ignore DS137138 - synthetic loopback fixture.
+        format!("http://{}", listener.local_addr().unwrap()), // DevSkim: ignore DS137138 - synthetic loopback fixture.
+    );
     std::env::set_var("GROK_API_KEY", KEY);
     std::env::set_var("ANTHROPIC_API_KEY", KEY);
     let fixture_task = tokio::spawn(async {
