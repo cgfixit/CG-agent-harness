@@ -455,31 +455,31 @@ impl CloudChat {
                 status.as_u16()
             )));
         }
-        // A 2xx is billed even when its body is unusable: record it, then fail.
-        let billed_failure = |what: &str| {
-            self.record_cloud_spend(
-                config,
-                &json!({}),
-                spend::UsageTokens::default(),
-                source,
-                Some("failed_after_billing"),
-            );
-            err(format!("{} cloud chat {what}", config.provider.name()))
+        // A 2xx is billed even when its body is never parsed: interrupted,
+        // oversized, malformed, or the read cancelled by dropping this future.
+        let mut unparsed = UnparsedBill {
+            chat: self,
+            config,
+            source,
+            armed: true,
         };
+        let fail = |what: &str| err(format!("{} cloud chat {what}", config.provider.name()));
         let mut response = response;
         let mut bytes = Vec::new();
         loop {
             let chunk = match response.chunk().await {
                 Ok(Some(chunk)) => chunk,
                 Ok(None) => break,
-                Err(_) => return Err(billed_failure("response was interrupted")),
+                Err(_) => return Err(fail("response was interrupted")),
             };
             if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-                return Err(billed_failure("response exceeds limit"));
+                return Err(fail("response exceeds limit"));
             }
             bytes.extend_from_slice(&chunk);
         }
-        let body: Value = serde_json::from_slice(&bytes).map_err(|_| billed_failure("returned malformed JSON"))?;
+        let body: Value = serde_json::from_slice(&bytes).map_err(|_| fail("returned malformed JSON"))?;
+        // Parsed: the row below carries the reply's own usage.
+        unparsed.armed = false;
         let tokens = match config.provider {
             Provider::Grok => spend::parse_grok_usage(body.get("usage")),
             Provider::Claude => spend::parse_claude_usage(body.get("usage")),
@@ -548,6 +548,29 @@ impl CloudChat {
                 outcome,
             },
         );
+    }
+}
+
+/// Records one `failed_after_billing` row for a 2xx whose body was never
+/// parsed, including when the caller cancels the read by dropping it.
+struct UnparsedBill<'a> {
+    chat: &'a CloudChat,
+    config: &'a ProviderConfig,
+    source: &'a str,
+    armed: bool,
+}
+
+impl Drop for UnparsedBill<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.chat.record_cloud_spend(
+                self.config,
+                &json!({}),
+                UsageTokens::default(),
+                self.source,
+                Some("failed_after_billing"),
+            );
+        }
     }
 }
 
@@ -1165,6 +1188,53 @@ mod tests {
         chat.attach_spend(ledger.clone());
         let err = chat.chat("grok", "PRIVATE_PROMPT").await.unwrap_err();
         assert!(err.message.contains("interrupted"), "{}", err.message);
+        let rows = std::fs::read_to_string(&ledger).unwrap();
+        assert_eq!(rows.lines().count(), 1);
+        assert!(rows.contains("failed_after_billing"));
+        assert!(!rows.contains("PRIVATE_PROMPT"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_2xx_body_read_is_billed_once() {
+        let streaming = Arc::new(tokio::sync::Notify::new());
+        let started = streaming.clone();
+        let (origin, server) = serve(Router::new().route(
+            "/responses",
+            post(move || {
+                let started = started.clone();
+                async move {
+                    // Headers and a first chunk go out; the rest never arrives.
+                    Response::new(Body::from_stream(futures_util::stream::unfold(0, move |step| {
+                        let started = started.clone();
+                        async move {
+                            if step > 0 {
+                                started.notify_one();
+                                std::future::pending::<()>().await;
+                            }
+                            Some((Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"{")), 1))
+                        }
+                    })))
+                }
+            }),
+        ))
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("spend.jsonl");
+        let mut chat = enabled_chat();
+        chat.grok.endpoint = format!("{origin}/responses");
+        chat.attach_spend(ledger.clone());
+        let chat = Arc::new(chat);
+        let call_chat = chat.clone();
+        let call = tokio::spawn(async move { call_chat.chat("grok", "PRIVATE_PROMPT").await });
+        tokio::time::timeout(Duration::from_secs(5), streaming.notified())
+            .await
+            .unwrap();
+        // The server polls the body before the client reads the headers; let
+        // the 2xx status land so the cancel interrupts the body, not the send.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        chat.abort_in_flight();
+        assert!(call.await.unwrap().unwrap_err().message.contains("cancelled"));
         let rows = std::fs::read_to_string(&ledger).unwrap();
         assert_eq!(rows.lines().count(), 1);
         assert!(rows.contains("failed_after_billing"));
