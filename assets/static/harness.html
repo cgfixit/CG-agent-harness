@@ -3589,45 +3589,54 @@ async function runSlash(line, webCommand) {
           sys('a loop turn is already in flight — /loop stop to abort after it returns');
           break;
         }
+        /* Validate the count before anything is persisted: a usage error must
+           not leave a derived goal behind. */
+        if (sub && (!/^[1-9]\d*$/.test(sub) || parseInt(sub, 10) < 1)) {
+          sys('usage: /loop [--web off|fetch|all] [n] | /loop stop | /loop auto');
+          break;
+        }
+        /* A /loop stop typed while this setup awaits must win, as in maybeAutoLoop. */
+        const loopGeneration = loopCancelGeneration;
+        const loopSetupStale = function () { return staleReview() || loopCancelGeneration !== loopGeneration; };
         /* Reload the stored goal every time: each turn restates it, and another
            tab may have changed it since this page last read it. */
         if (currentSession) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
-          if (staleReview()) break;
+          if (loopSetupStale()) break;
           sessionGoal = typeof loaded.goal === 'string' ? loaded.goal : '';
           /* Eligibility first: a refused cloud /loop must not persist a goal
              or a web mode that outlives the refusal. */
           const status = await api('/api/status');
-          if (staleReview()) break;
+          if (loopSetupStale()) break;
           if (status.provider !== 'ollama' && status.base_url === null) { sys('Select a local model before /loop; cloud loops are unavailable.'); break; }
-          /* No stored goal: continue the last thing the operator asked. */
+          /* No stored goal: continue the last thing the operator asked. The
+             requested web mode rides the same write, so no intermediate goal
+             ever carries the default mode. */
+          let modeApplied = false;
           if (!sessionGoal) {
             const derived = loopGoalFromSession(loaded, MAX_GOAL_CHARS);
             if (derived) {
-              const seeded = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: derived });
-              if (staleReview()) break;
+              const seeded = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', loopWebMode ? { goal: derived, web_mode: loopWebMode } : { goal: derived });
+              if (loopSetupStale()) break;
               sessionGoal = seeded.goal || derived;
-              loaded.goal_web_mode = seeded.goal_web_mode;
+              loaded.goal_web_mode = seeded.goal_web_mode || loopWebMode;
+              modeApplied = !!loopWebMode;
               sys('goal set from your last prompt — /goal <text> to replace it:\n' + sessionGoal);
             }
           }
-          if (loopWebMode && sessionGoal) {
+          if (loopWebMode && sessionGoal && !modeApplied) {
             /* Re-set the stored goal with the new mode; it persists like /goal --web. */
             const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', { goal: sessionGoal, web_mode: loopWebMode });
-            if (staleReview()) break;
+            if (loopSetupStale()) break;
             loaded.goal_web_mode = set.goal_web_mode || loopWebMode;
           }
           paintGoalLoop();
           sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); goal web mode ' + (loaded.goal_web_mode || 'all') + '; web tools ' + (status.chat_tools_available && loaded.goal_web_mode !== 'off' ? (loaded.goal_web_mode === 'fetch' ? 'fetch only within current URL permissions' : 'available within current URL permissions') : 'off') + '. /session unpin clears pins.');
         }
         if (!sessionGoal) { sys('set a goal first: /goal <what you want done> — or send any prompt and /loop will continue it'); break; }
+        if (loopCancelGeneration !== loopGeneration) break;
         if (sub) {
-          const parsed = parseInt(sub, 10);
-          if (!/^[1-9]\d*$/.test(sub) || parsed < 1) {
-            sys('usage: /loop [--web off|fetch|all] [n] | /loop stop | /loop auto');
-            break;
-          }
-          const n = Math.min(parsed, MAX_LOOP_TURNS);
+          const n = Math.min(parseInt(sub, 10), MAX_LOOP_TURNS);
           loopState = {
             remaining: n, total: n, auto: loopAuto, stop: false,
             running: false, failures: 0, lastReply: '', completionTokens: 0,
@@ -3900,8 +3909,8 @@ async function runLoopTurns() {
       while ((inflightSearch || inflightChat) && loopState === activeLoop && !loopState.stop) await sleepMs(250);
       if (loopState !== activeLoop) return;
       if (activeLoop.stop) { stopLoop('loop stop honored'); return; }
-      let attachmentIds = retryAttachmentIds && retryAttachmentIds.session === currentSession ? retryAttachmentIds.ids : [];
-      const files = attachInput && attachInput.files ? Array.from(attachInput.files) : [];
+      let attachmentIds = !activeLoop.autoStarted && retryAttachmentIds && retryAttachmentIds.session === currentSession ? retryAttachmentIds.ids : [];
+      const files = !activeLoop.autoStarted && attachInput && attachInput.files ? Array.from(attachInput.files) : [];
       if (files.length) {
         const uploadSession = currentSession, uploadRevision = sessionRevision;
         try {
@@ -4005,20 +4014,28 @@ async function maybeAutoLoop() {
       loaded = await api('/api/sessions/' + encodeURIComponent(session));
     } catch (_) { return; }
     if (stale()) return;
-    const derived = loopGoalFromSession(loaded, MAX_GOAL_CHARS);
-    if (!derived) return;
-    let set = null;
-    try {
-      set = await api('/api/sessions/' + encodeURIComponent(session) + '/goal', 'POST', { goal: derived });
-    } catch (_) { return; }
-    if (stale()) return;
-    sessionGoal = set.goal || derived;
+    /* Another tab may have stored a goal this page never saw: keep it. */
+    const stored = loaded && typeof loaded.goal === 'string' ? loaded.goal : '';
+    if (stored) {
+      sessionGoal = stored;
+    } else {
+      const derived = loopGoalFromSession(loaded, MAX_GOAL_CHARS);
+      if (!derived) return;
+      let set = null;
+      try {
+        set = await api('/api/sessions/' + encodeURIComponent(session) + '/goal', 'POST', { goal: derived });
+      } catch (_) { return; }
+      if (stale()) return;
+      sessionGoal = set.goal || derived;
+    }
   }
   if (stale() || !sessionGoal) return;
+  /* autoStarted: files staged for the operator's next manual prompt stay
+     staged; only an explicit /loop sends them. */
   loopState = {
     remaining: DEFAULT_LOOP_TURNS, total: DEFAULT_LOOP_TURNS,
     auto: true, stop: false, running: false, failures: 0,
-    lastReply: '', completionTokens: 0,
+    lastReply: '', completionTokens: 0, autoStarted: true,
   };
   paintGoalLoop();
   sys('context budget reached — continuing with /loop auto (' + DEFAULT_LOOP_TURNS + ' turns toward the goal); /loop stop to halt');
