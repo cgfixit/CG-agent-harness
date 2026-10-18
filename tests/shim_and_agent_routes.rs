@@ -74,8 +74,11 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
     );
     // A speed-derived planner timeout budgets the child and crosses as one element.
     req.planner_timeout_sec = Some(150);
+    req.planner_identity = Some("--confirm".into());
     let (tuned, _) = shim::build_argv(&c, &req).unwrap();
     assert!(tuned.contains(&"--planner-timeout-sec=150".to_string()), "{tuned:?}");
+    assert!(tuned.contains(&"--planner-identity=--confirm".to_string()), "{tuned:?}");
+    assert!(!tuned.contains(&"--confirm".to_string()));
     assert_eq!(
         shim::timeout_for(&c, &req).as_secs(),
         shim::real_repo_run_timeout_sec(150, Some(2), 1)
@@ -294,6 +297,106 @@ fn run_body() -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn planner_settings_drift_refuses_sync_and_detached_runs() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("agentic.enabled", "true")
+            .with("agentic.deepagent_github.enabled", "true"),
+    )
+    .await;
+    for (key, value) in [
+        ("model", "other-model"),
+        ("base_url", "http://127.0.0.1:19001/v1"),
+        ("planner_timeout_sec", "1200"),
+        ("planner_max_tokens", "8192"),
+        ("provider", "openai_compatible"),
+    ] {
+        config_with(
+            &s.home,
+            &[
+                ("agentic.enabled", "true"),
+                ("agentic.deepagent_github.enabled", "true"),
+                (&format!("agentic.deepagent_github.{key}"), value),
+            ],
+        );
+        let (status, result) = s.post_json("/api/agent/run", run_body()).await;
+        assert_eq!(status, 200, "{key}: {result}");
+        assert_eq!(result["exit_code"], 3, "{key}: {result}");
+        assert!(
+            result["stderr"].as_str().unwrap().contains("restart required"),
+            "{result}"
+        );
+        let (status, job) = s.post_json("/api/agent/jobs", run_body()).await;
+        assert_eq!(status, 202, "{key}: {job}");
+        let path = format!("/api/agent/jobs/{}", job["job_id"].as_str().unwrap());
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let (_, job) = s.get_json(&path).await;
+                if job["result"].is_object() {
+                    break job["result"].clone();
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(result["exit_code"], 3, "{key}: {result}");
+        assert!(!s.state.generation_gate.is_held());
+    }
+    // An unchanged snapshot proceeds to the independent write gate.
+    cgagentharness::common::config::AppConfig::write_private(
+        &s.home.join("config.yaml"),
+        &serde_yaml_ng::to_string(&s.state.cfg.raw).unwrap(),
+    )
+    .unwrap();
+    let (_, result) = s.post_json("/api/agent/run", run_body()).await;
+    assert_eq!(result["exit_code"], 4, "{result}");
+    assert!(std::fs::read_dir(s.home.join("data/agentic/workspaces"))
+        .unwrap()
+        .next()
+        .is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn planner_edit_after_preparation_is_checked_by_the_real_child() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("edit-before-exec");
+    std::fs::write(
+        &exe,
+        format!("#!/bin/sh\ncp changed.yaml config.yaml\nexec '{BIN}' \"$@\"\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let model = start_mock_model().await;
+    let mut options = ServerOptions::default()
+        .with("agentic.enabled", "true")
+        .with("agentic.deepagent_github.enabled", "true");
+    options.shim_exe = Some(exe);
+    let s = spawn_server(&model.base_url(), options).await;
+    let mut changed = s.state.cfg.raw.clone();
+    changed["agentic"]["deepagent_github"]["planner_timeout_sec"] = 1200.into();
+    cgagentharness::common::config::AppConfig::write_private(
+        &s.home.join("changed.yaml"),
+        &serde_yaml_ng::to_string(&changed).unwrap(),
+    )
+    .unwrap();
+    let (_, result) = s.post_json("/api/agent/run", run_body()).await;
+    assert_eq!(result["exit_code"], 3, "{result}");
+    assert!(
+        result["stderr"].as_str().unwrap().contains("restart required"),
+        "{result}"
+    );
+    assert!(std::fs::read_dir(s.home.join("data/agentic/workspaces"))
+        .unwrap()
+        .next()
+        .is_none());
+}
+
+#[tokio::test]
 async fn a_request_can_never_carry_an_argv() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
@@ -302,6 +405,7 @@ async fn a_request_can_never_carry_an_argv() {
         json!({"checks": [{"name": "pytest", "argv": ["rm", "-rf", "/"]}]}),
         json!({"command": "rm -rf /"}),
         json!({"checks_file": "/etc/passwd"}),
+        json!({"planner_identity": "caller-controlled"}),
     ] {
         let mut body = run_body();
         for (k, v) in hostile.as_object().unwrap() {
