@@ -37,8 +37,8 @@ claims. Do not silently install Rosetta or change TCC settings to fill an eviden
 Before publication, complete local acceptance and inspect tracked files for
 secrets or machine-specific data. Use the PR template.
 Bundle calls reusable desktop CI; tagged releases reuse it too. Match remote SHA,
-workflow run, artifact COMMIT and checksums. For unmerged candidates, use PR
-Bundle artifacts. Scheduled/manual publication
+workflow run, artifact COMMIT and checksums. PRs produce no Bundle artifacts;
+for an unmerged candidate, run `desktop.yml` by hand on its branch. Scheduled/manual publication
 requires main and a successful Bundle run at that SHA. The release planner
 rejects prerelease tags. Check existing runs, tags and releases before dispatch.
 Publication follows explicit user authorization. Never overwrite release assets
