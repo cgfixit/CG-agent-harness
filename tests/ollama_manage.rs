@@ -796,6 +796,8 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
         &ollama.openai_url(),
         ServerOptions::default()
             .with("models.local_llm.auto_tune", "true")
+            .with("agentic.enabled", "true")
+            .with("agentic.deepagent_github.enabled", "true")
             .with("api.rate_limit.max_requests", "1000")
             .with("agentic.deepagent_github.base_url", &planner_url),
     )
@@ -806,7 +808,7 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
     let run = json!({"instruction": "fix the parser", "branch": "claude/parser-fix",
         "commit_message": "fix: parser", "reason": "triage", "max_iterations": 10,
         "checks": ["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]});
-    let (status, resp) = s.post_json("/api/agent/run", run).await;
+    let (status, resp) = s.post_json("/api/agent/run", run.clone()).await;
     assert_eq!(status, 422, "{resp}");
     let details = &resp["detail"]["details"];
     // Budgeted with 180 s per planner call instead of the configured 720.
@@ -815,6 +817,25 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
     assert_eq!(details["estimated_sec"], budget(180, 10), "{resp}");
     assert_eq!(details["max_iterations_that_fit"], fit(180), "{resp}");
     assert!(fit(180) > fit(720), "{resp}");
+    // The measured override cannot reach a different planner loaded by the child.
+    let mut changed = s.state.cfg.raw.clone();
+    changed["agentic"]["deepagent_github"]["model"] = "other-model".into();
+    changed["agentic"]["deepagent_github"]["planner_timeout_sec"] = 1200.into();
+    cgagentharness::common::config::AppConfig::write_private(
+        &s.home.join("config.yaml"),
+        &serde_yaml_ng::to_string(&changed).unwrap(),
+    )
+    .unwrap();
+    let mut run = run;
+    run["max_iterations"] = json!(1);
+    run["checks"] = json!(["cargo-fmt"]);
+    let (status, result) = s.post_json("/api/agent/run", run).await;
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["exit_code"], 3, "{result}");
+    assert!(
+        result["stderr"].as_str().unwrap().contains("restart required"),
+        "{result}"
+    );
 }
 
 #[tokio::test]

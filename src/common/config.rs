@@ -159,6 +159,22 @@ impl AppConfig {
             .unwrap_or(serde_json::Value::Null)
     }
 
+    /// Bind a console budget to restart-only planner inputs without exposing them in argv.
+    pub fn planner_identity(&self) -> Result<String> {
+        let inputs = [
+            "agentic.deepagent_github.model",
+            "agentic.deepagent_github.base_url",
+            "agentic.deepagent_github.provider",
+            "agentic.deepagent_github.planner_timeout_sec",
+            "agentic.deepagent_github.planner_max_tokens",
+            "models.local_llm.reasoning_effort",
+        ]
+        .map(|key| self.get(key));
+        let bytes =
+            serde_json::to_vec(&inputs).map_err(|_| HarnessError::config("cannot identify planner configuration"))?;
+        Ok(super::sha256_bytes_hex(&bytes))
+    }
+
     /// Dotted paths the shipped default turns on that this config omits.
     /// `flag_is_true` reads a missing key as off, so a home seeded before a
     /// flag existed silently loses it. A key set to anything, including
@@ -205,6 +221,16 @@ fn collect_true_flags(node: &Value, prefix: String, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn planner_identity_ignores_reloadable_limits_but_binds_reasoning() {
+        let mut config = cfg(AppConfig::embedded_default());
+        let identity = config.planner_identity().unwrap();
+        config.raw["web"]["chat_tool_calls"] = 1.into();
+        assert_eq!(config.planner_identity().unwrap(), identity);
+        config.raw["models"]["local_llm"]["reasoning_effort"] = "high".into();
+        assert_ne!(config.planner_identity().unwrap(), identity);
+    }
 
     #[test]
     fn private_config_roundtrip_and_content_free_diagnostics() {

@@ -235,6 +235,10 @@ data, never a tool command.
 `POST /api/agent/run` carries check profile NAMES; `src/server/agent_policy.rs`
 maps them to fixed argv. Free-text values cross the shim as `--opt=value`
 single elements or temp files, never as separate argv tokens.
+Console run, job and schedule budgets carry a digest of the startup local planner model, endpoint, provider,
+timeout, output limit and reasoning setting. The child checks its loaded config
+before repository work; a mismatch exits 3 and requires server restart. Reloadable
+web limits do not change that identity; I6 remains a child-process boundary.
 
 - Locked by: `tests/shim_and_agent_routes.rs` (hostile-argv matrix, run_id
   `\A[0-9a-f]{32}\z` fullmatch, branch namespace, `confirm` never defaulted).
