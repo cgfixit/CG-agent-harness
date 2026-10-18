@@ -513,6 +513,9 @@ with the session, scoped to model and backend URL: it starts at 1, stays within
 summary and cloud usage never train it. An `auto_tune`-verified window above 32768
 scales the compaction trigger up in proportion, within `chat.compact_max_prefill_sec`
 of measured prefill, unless `chat.compact_follow_window` is false.
+Chat, tool rounds and research retain whether their limits used tuning. Each late
+model call rechecks the live window even after tuning is cleared; limits that no
+longer fit are refused before dispatch.
 The send window is stored prompt history (user and assistant turns, persist
 cap `MAX_MESSAGES`); no 20-turn or 8000-char clip; compaction owns overflow.
 The effective trigger is
