@@ -401,8 +401,9 @@ Conditional refresh repeats network checks. Validators reduce bytes, not request
 
 Research asks the local model for at most 3 subqueries in 2 rounds, runs at most
 one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults:
-28,000 total model tokens, 300s discovery, 300s answering; smaller windows: see
-[MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
+28,000 total model tokens, 300s discovery including cold load, then 300s answering.
+Preload residency covers both budgets, capped at one hour; cancellation covers
+loading too. Smaller windows: [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
 usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete
 output conservatively. Synthesis drops unfitting low-ranked passages
 (`WEB_EVIDENCE_TRIMMED`). Bounded JSON output has no commands or privileged tools.
