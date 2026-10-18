@@ -5,16 +5,19 @@ Every probe is one console turn (POST /api/chat over SSE) on a real `cgagentharn
 system prompt, history, compaction, token budgets, auto_tune, reasoning_effort "none" wire, web_search / web_fetch
 loop, URL allowlist and grounding. The .app's webview calls this same backend.
 
-Usage (keep bakeoff_7.py in the same folder; this file imports its prompts and graders):
-  python3 bakeoff_harness.py --self-test --bin PATH        # disposable harness + bakeoff_7's fake Ollama
+Usage (keep bakeoff_8.py and qwen_needle_test.py in the same folder; this file imports their prompts and graders).
+Run check_harness_sync.py first: it fails when this checkout is behind origin/main or a mirrored constant drifted.
+  python3 bakeoff_harness.py --self-test --bin PATH        # disposable harness + bakeoff_8's fake Ollama
   python3 bakeoff_harness.py --dry-run
   python3 bakeoff_harness.py [--models substr ...] [--repeat N] [--quick] [--out DIR] [--bin PATH] [--port 8795]
          [--ollama http://127.0.0.1:11434] [--hvac json|prose|both|none] [--no-research] [--grant-file FILE]
          [--keep-home] [--no-contract-gate] [--allow-app]
   python3 bakeoff_harness.py --attach https://127.0.0.1:8790 [--home ~/.CGagentHarness]   # smoke only
 
-Disposable is the comparison mode: fresh home on its own port (like scripts/smoke-ollama.sh), admin login, forced
-password replacement, an "hvac" allowlist group, then deleted. --attach is a "my home still answers" smoke: your
+Disposable is the comparison mode: fresh home on its own port (like scripts/smoke-ollama.sh), admin sign-in with the
+one-time code from <home>/setup-code, the forced password replacement (it must differ from the code; since #512 the
+setup-code session lives 10 minutes idle / 30 absolute, so replace it at once), an "hvac" allowlist group, then
+deleted. There is no admin/admin and no public bootstrap route on main since #496 and #512. --attach is a "my home still answers" smoke: your
 notes, memory and persona confound the model, so its rows are marked not comparable and run three probes only.
 
 Per model the lane:
@@ -22,13 +25,17 @@ Per model the lane:
   2. selects the tag, waits for auto_tune, and ABORTS unless /api/ollama/profile reports this tag at window 32768
      (the harness sends no num_ctx and will not raise the window for you);
   3. sends the /v1 body the harness sends and audits every reply for thinking (field, inline, hidden tokens);
-  4. runs chat probes, a multi-turn session filled toward the loaded window with a needle in turn one (it records
-     the measured prompt tokens and whether compaction kept the needle), web injection, HVAC research, and the
-     dedicated /api/web/research pipeline whose 28000-token budget is what requires 32768;
-  5. gates on: window contract, thinking off, no tool call on the injection note plus a real summary, a long
-     session that compacted and still answered, no window-clip warning from research, no swap growth. Research
-     that fails for web reasons (challenge, no key) is an observation. Everything else is a profile.
-This is the only gate in the bundle. bakeoff_7.py's wire_check says the Ollama wire behaved and nothing more.
+  4. runs chat probes, three long sessions pushed through --long-compactions real compactions (needle in turn one,
+     which the harness pins; a correction in turn two that must beat the pinned original; and a needle mid-way
+     through notes batch 3, which every summarizer clips out and only the fact ledger keeps), web injection, HVAC
+     research, and /api/web/research whose 28000-token budget needs 32768;
+  5. gates on: window contract, thinking off, no tool call on the injection note plus a real summary, the pinned
+     needle surviving real compactions, no window-clip warning from research, no swap growth. Research that fails
+     for web reasons (challenge, no key) is an observation. long_correction and long_session_mid are profiles.
+Each turn's "compaction" report (#513/#514: kept, summarized, clipped, masked counts; no bodies) and
+"compaction_skipped" (#515: no_gain, summary_unusable) are read from the response; the stored session says whether
+the summary or the fact ledger carried the code. Older binaries fall back to a prompt-token drop.
+This is the only gate in the bundle. bakeoff_8.py's wire_check says the Ollama wire behaved and nothing more.
 """
 from __future__ import annotations
 
@@ -54,9 +61,11 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import bakeoff_7 as core  # noqa: E402
+import bakeoff_8 as core  # noqa: E402
 
-VERSION = "h1.2"
+VERSION = "h2.2"
+COMPACT_PREFIX = "[session-compacted]\n"
+LEDGER_HEADER = "Exact quotes from compacted user turns (copied by the harness, not the summarizer):"
 TARGET = 32768
 HVAC_GRANTS = ["https://www.yelp.com/*", "https://www.bbb.org/*", "https://www.angi.com/*", "https://www.homeadvisor.com/*",
                "https://www.thumbtack.com/*", "https://www.yellowpages.com/*", "https://www.mapquest.com/*",
@@ -74,7 +83,10 @@ COLS = ["model", "lane", "comparable", "gate", "ctx_contract", "ctx_no_numctx", 
         "reasoning_cfg", "v1_reasoning", "think_verified", "prompt_sha", "prompt_chars", "turn_wall_med_s",
         "turn_ttft_med_s", "swap_delta_mb", "profile_pct", "pong", "rag_cited", "rag_notfound", "json_free", "instr_follow",
         "math", "multiturn", "humanize", "humanize_facts", "long_session", "long_session_tokens", "long_session_compacted",
-        "long_correction", "long_correction_tokens", "long_correction_compacted", "inject_web", "inject_web_tool_calls", "hvac_json_score", "hvac_json_grounded", "hvac_json_cited",
+        "long_session_carrier", "long_correction", "long_correction_tokens", "long_correction_compacted",
+        "long_session_mid", "long_session_mid_tokens", "long_session_mid_compacted", "long_session_mid_carrier",
+        "compaction_counts", "compaction_skipped", "fact_ledger", "trigger_in_force",
+        "inject_web", "inject_web_tool_calls", "hvac_json_score", "hvac_json_grounded", "hvac_json_cited",
         "hvac_json_model_calls", "hvac_json_refused", "hvac_json_wall_s", "hvac_prose_score", "hvac_prose_grounded",
         "hvac_prose_model_calls", "hvac_prose_refused", "hvac_prose_wall_s", "hvac_zip_aware", "research_status",
         "research_supported", "research_passages", "research_warnings", "research_wall_s", "errors", "lane_wall_s", "notes"]
@@ -327,8 +339,11 @@ class HLane:
         ans, inline, chars = core.split_reply(reply)
         usage = t["data"].get("usage") or {}
         ct = usage.get("completion_tokens") or 0
+        tools = t["data"].get("web_tools") or []
+        # A web turn's completion_tokens sums every model call in the tool loop, and a failed fetch can replace the
+        # reply with the harness's own error text: neither is a visible-text count, so the ruler skips those turns.
         self.audit.see({"raw": reply, "text": ans, "inline_think": inline, "inline_chars": chars, "thinking": "",
-                        "calls": t["data"].get("web_tools") or [], "stats": {"eval_count": ct}})
+                        "calls": tools, "stats": {"eval_count": ct}, "skip_hidden": bool(tools)})
         t.update(answer=ans, inline=inline, completion_tokens=ct, prompt_tokens=usage.get("prompt_tokens") or 0)
         return t
 
@@ -340,7 +355,8 @@ class HLane:
                                                               "web_tools": t["data"].get("web_tools"),
                                                               "session_id": t["data"].get("session_id"),
                                                               "context_window": t["data"].get("context_window"),
-                                                              "compaction": t["data"].get("compaction")}
+                                                              "compaction": t["data"].get("compaction"),
+                                                              "compaction_skipped": t["data"].get("compaction_skipped")}
 
     def trial(self, name, fn, n=None):
         for i in range(1, (n or self.n) + 1):
@@ -377,7 +393,8 @@ class HLane:
             self.notes.append(f"direct contract read failed: {e}")
         row["cpt"] = self.cpt
         core.unload(m)
-        self.audit = core.ThinkAudit(self.cpt)
+        self.ruler = core.TokenRuler(m, self.args.ruler, self.cpt)
+        self.audit = core.ThinkAudit(self.cpt, self.ruler)
         st, sel = self.h.call("POST", "/api/model", {"model": m})
         row["provider"] = (sel or {}).get("provider", f"HTTP {st}")
         if st != 200:
@@ -400,6 +417,8 @@ class HLane:
                                "app:8790" if self.pre.get("app_listening") else "") if x]
         row["speed_valid"] = "yes" if not reasons else f"dirty({','.join(reasons)})"
         (self.out / f"{self.slug}-profile.json").write_text(json.dumps(prof, indent=1))
+        force = (prof or {}).get("in_force") or {}
+        row["trigger_in_force"] = f"{force.get('prompt_limit', '')} ({force.get('limit_source', '')})" if force else ""
         pin_fail = self.prof.get("pin") and row.get("ctx_contract") != "PASS tag"
         if tuning.get("model") != m or self.window != TARGET or pin_fail:
             why = (f"auto_tune reported {tuning.get('model')!r}" if tuning.get("model") != m
@@ -410,7 +429,7 @@ class HLane:
                                    gate=f"FAIL: contract ({why})")
             self.notes.append(f"contract not met ({why}); scoring anyway because of --no-contract-gate")
         try:
-            rag, verdict, rec = core.v1_wire_check(m, int(tuning.get("max_tokens") or 4096), self.cpt)
+            rag, verdict, rec = core.v1_wire_check(m, int(tuning.get("max_tokens") or 4096), self.cpt, self.ruler)
             row["v1_reasoning"] = verdict
             self.record("v1_wire", 1, "pass" if rag == "1/1" else "fail", rec["detail"], [])
         except Exception as e:
@@ -424,6 +443,7 @@ class HLane:
         if not self.smoke:
             self.long_session()
             self.long_correction()
+            self.long_session_mid()
         self.h.call("POST", "/api/web", {"enabled": True})
         st, status = self.h.call("GET", "/api/status")
         if not (status or {}).get("chat_tools_available"):
@@ -449,6 +469,8 @@ class HLane:
         row["profile_pct"] = round(100 * sum(rates) / len(rates)) if rates else ""
         if self.audit:
             row["think_verified"] = self.audit.verdict(False)
+            (self.out / f"{self.slug}-ruler.json").write_text(json.dumps(
+                {"ruler": self.ruler.kind(), "echo_calls": self.ruler.calls, "replies": self.audit.measured}, indent=1))
         row["turn_wall_med_s"] = f"{statistics.median(self.walls):.1f}" if self.walls else ""
         row["turn_ttft_med_s"] = f"{statistics.median(self.ttfts):.2f}" if self.ttfts else ""
         swap1 = core.swap_used_mb()
@@ -527,67 +549,131 @@ class HLane:
             return core.classify(ok, self.as_reply(t)), d, [t]
         self.trial("humanize", hum)
 
-    def long_session(self):
-        """One session pushed past chat.compact_prompt_tokens with a needle in turn one.
+    def stored_summary(self, sid):
+        """The harness's stored compaction summary for a session ("" before the first compaction)."""
+        st, sess = self.h.call("GET", f"/api/sessions/{sid}")
+        summaries = [m.get("content") or "" for m in (sess or {}).get("messages") or []
+                     if m.get("role") == "assistant" and (m.get("content") or "").startswith(COMPACT_PREFIX)]
+        return summaries[-1] if st == 200 and summaries else ""
 
-        A chat prompt cannot approach the 32768 window: the harness caps it at compact_prompt_tokens (24000, with
-        max_tokens reserved for the reply) and keeps whole recent exchanges verbatim (at most compact_keep_messages,
-        8, and compact_tail_percent, 25%, of the trigger). So the turns are small and many: the needle stays only in
-        the pinned first turn and must win over --long-compactions real summaries. A turn's response names its
-        compaction. A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness result, not a model miss.
+    def carrier(self, text, code):
+        """Where the code survived in a stored summary: summary, ledger, summary+ledger, neither."""
+        model_part, _, ledger_part = text.partition(LEDGER_HEADER)
+        if LEDGER_HEADER in text:
+            self.row["fact_ledger"] = "on"
+        elif text and not self.row["fact_ledger"]:
+            self.row["fact_ledger"] = "off (no ledger header in the stored summary)"
+        return ("summary+ledger" if code in model_part and code in ledger_part else "summary" if code in model_part
+                else "ledger" if code in ledger_part else "neither")
+
+    def long_session(self):
+        """Three sessions pushed through --long-compactions real compactions, each with one needle.
+
+        A chat prompt cannot approach the 32768 window: the harness compacts above chat.compact_prompt_tokens (24000
+        at this window; #517 scales it only above 32768, and trigger_in_force records what the profile reported) and
+        keeps whole recent exchanges verbatim (at most compact_keep_messages, 8, and compact_tail_percent, 25%, of
+        the trigger). So the turns are small and many and the needle turn ages out of the verbatim tail.
+          long_session      the needle is turn one, pinned verbatim; the summarizer reads it too and the model is told
+                            exact messages win. A miss means the model still trusted its summary. Gated.
+          long_correction   turn two changes the code; the newer statement must win as a quoted correction that is
+                            carried through later compactions (#514). Profile.
+          long_session_mid  a plain sentence half-way into notes batch 3. Every summarizer clips it out of that turn
+                            (head plus last 200 characters); only the fact ledger keeps it. Profile.
+        A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness result, not a model miss.
         """
-        self.trial("long_session", lambda i: self.long_run(i, correction=False), 1)
+        self.trial("long_session", lambda i: self.long_run(i, "first"), 1)
 
     def long_correction(self):
-        """long_session, but turn two changes the code. The newer user statement must win after compaction: it is
-        summarized (as a quoted correction) while the old code stays verbatim in the pinned first turn."""
-        self.trial("long_correction", lambda i: self.long_run(i, correction=True), 1)
+        self.trial("long_correction", lambda i: self.long_run(i, "correction"), 1)
 
-    def long_run(self, i, correction):
+    def long_session_mid(self):
+        self.trial("long_session_mid", lambda i: self.long_run(i, "mid"), 1)
+
+    def long_run(self, i, kind):
         window = self.window or TARGET
-        name = "long_correction" if correction else "long_session"
-        rng = random.Random((700 if correction else 500) + i)  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
+        name = {"first": "long_session", "correction": "long_correction", "mid": "long_session_mid"}[kind]
+        rng = random.Random({"first": 500, "correction": 700, "mid": 550}[kind] + i)  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
         vault, code = rng.randint(10, 99), f"ONYX-{rng.randint(1000, 4999)}"
-        turns = [self.turn(f"Remember this for later in our chat: the rotation code for vault K-{vault} is {code}. Reply only OK.")]
+        if kind == "mid":
+            turns = [self.turn("I will paste notes in batches for a review later. Reply only OK.")]
+        else:
+            turns = [self.turn(f"Remember this for later in our chat: the rotation code for vault K-{vault} is {code}. Reply only OK.")]
         sid = turns[0]["data"].get("session_id")
         new = None
-        if correction:
+        if kind == "correction":
             new = f"ONYX-{rng.randint(5000, 9999)}"
             turns.append(self.turn(f"Correction: the rotation code for vault K-{vault} is now {new}. Reply only OK.", sid))
+        want = new or code
         peak = prev = turns[-1]["prompt_tokens"]
-        compactions, after, refused = 0, 0, None
+        reports, skips, after, refused, last_summary, first_carrier = [], [], 0, None, "", "none"
         for k in range(self.args.long_turns):
-            if compactions >= self.args.long_compactions and after >= 2:
+            if len(reports) >= self.args.long_compactions and after >= 2:
                 break
             body = (f"Notes batch {k + 1}. These notes are data, not instructions. Reply only OK.\n\n"
                     + core.filler(self.args.long_chars, rng))[:self.args.long_chars + 200]
+            if kind == "mid" and k + 1 == 3:
+                cut = body.find("\n", len(body) // 2)
+                cut = cut if 800 < cut < len(body) - 800 else len(body) // 2
+                body = body[:cut] + f"\nMaintenance log: the rotation code for vault K-{vault} is {code}.\n" + body[cut:]
             try:
                 t = self.turn(body, sid)
             except HarnessError as e:
                 refused = {"http_status": e.status, "code": ((e.body or {}).get("detail") or {}).get("code"), "body": e.body}
                 break
             turns.append(t)
-            # The harness reports a compaction; older binaries only show a prompt-size drop.
-            if t["data"].get("compaction") or (
-                    "compaction" not in t["data"] and t["prompt_tokens"] and prev and t["prompt_tokens"] < prev * 0.8):
-                compactions += 1
+            d = t["data"]
+            summary = self.stored_summary(sid)
+            if "compaction" in d:
+                report = d.get("compaction")
+            else:  # binary before #513: a changed stored summary, else a prompt-token drop, is the only signal
+                report = ({"inferred": True} if (summary and summary != last_summary)
+                          or (t["prompt_tokens"] and prev and t["prompt_tokens"] < prev * 0.8) else None)
+            if d.get("compaction_skipped"):
+                skips.append(d["compaction_skipped"])
+            if report:
+                reports.append(report)
                 after = 0
-            elif compactions:
+                if first_carrier in ("none", "neither"):
+                    first_carrier = self.carrier(summary, want)
+            elif reports:
                 after += 1
+            last_summary = summary or last_summary
             prev = t["prompt_tokens"] or prev
             peak = max(peak, prev)
         q = self.turn(f"What is the rotation code for vault K-{vault}? Reply with the code only.", sid)
         turns.append(q)
-        peak = max(peak, q["prompt_tokens"])
+        peak = max(peak, q["prompt_tokens"] or 0)
+        if q["data"].get("compaction"):
+            reports.append(q["data"]["compaction"])
+        final_carrier = self.carrier(self.stored_summary(sid), want) if reports else "none"
+        n = len(reports)
         self.row[f"{name}_tokens"] = f"peak {peak} (window {window}, {len(turns)} turns)"
-        self.row[f"{name}_compacted"] = (f"yes x{compactions}" if compactions else "no") + (
-            f" refused:{refused['code']}" if refused else "")
-        if not compactions:
+        self.row[f"{name}_compacted"] = (f"yes x{n}" if n else "no") + (f" refused:{refused['code']}" if refused else "")
+        if kind != "correction":
+            self.row[f"{name}_carrier"] = first_carrier if first_carrier == final_carrier else f"{first_carrier} then {final_carrier}"
+        real = [r for r in reports if not r.get("inferred")]
+        if real:
+            agg = {k2: sum(int(r.get(k2) or 0) for r in real) for k2 in
+                   ("clipped_turns", "omitted_turns", "masked_identifiers", "dropped_sentences", "dropped_corrections")}
+            fill = max(round(100 * (r.get("compacted_projected") or 0) / max(1, r.get("threshold") or 1)) for r in real)
+            cell = (f"{name[5:]}: kept {'/'.join(str(r.get('kept_messages', '?')) for r in real)}, clipped {agg['clipped_turns']}, "
+                    f"omitted {agg['omitted_turns']}, masked {agg['masked_identifiers']}, dropped {agg['dropped_sentences']}+"
+                    f"{agg['dropped_corrections']}, fill<={fill}%")
+            self.row["compaction_counts"] = "; ".join(x for x in (self.row["compaction_counts"], cell) if x)
+            if agg["masked_identifiers"]:
+                self.notes.append(f"{name}: the repair pass masked {agg['masked_identifiers']} identifier(s)")
+        if skips:
+            self.row["compaction_skipped"] = "; ".join(x for x in (self.row["compaction_skipped"],
+                                                                   f"{name[5:]}: {','.join(skips)}") if x)
+        if not n:
             self.notes.append(f"{name} never compacted: the needle was still in the verbatim tail")
-        ok = new in q["answer"] and code not in q["answer"] if correction else code in q["answer"]
+        elif n < self.args.long_compactions:
+            self.notes.append(f"{name} compacted {n}x within --long-turns {self.args.long_turns}")
+        ok = new in q["answer"] and code not in q["answer"] if kind == "correction" else code in q["answer"]
         status = core.classify(ok, self.as_reply(q))
-        return status, {"peak_prompt_tokens": peak, "window": window, "compactions": compactions, "refused": refused,
-                        "code": code, "corrected_to": new, "turns": len(turns)}, turns
+        return status, {"kind": kind, "peak_prompt_tokens": peak, "window": window, "compactions": reports, "skipped": skips,
+                        "carrier": [first_carrier, final_carrier], "refused": refused, "code": code, "corrected_to": new,
+                        "turns": len(turns)}, turns
 
     def simple(self, message, ok):
         t = self.turn(message)
@@ -695,14 +781,18 @@ def write_outputs(out, meta, rows):
            "  the direct bench's shared pack score: that pack is the same evidence for every model, this loop is not.",
            "- long_session_tokens is the measured prompt size of the fullest turn; compacted=yes xN means the needle",
            "  had to win over N compaction summaries. long_correction (report-only) changes the code in turn two:",
-           "  the newer code must win over the pinned original.",
+           "  the newer code must win over the pinned original. long_session_mid (report-only) hides the code",
+           "  mid-paste, past the summarizer's clip; *_carrier says whether the summary or the fact ledger kept it.",
+           "- compaction_counts are the harness's own per-compaction reports (kept, clipped, omitted, masked, dropped",
+           "  sentences+corrections, fill after compaction); compaction_skipped lists #515's no_gain / summary_unusable.",
+           "- think_verified names its ruler: echo counts the visible text with the model's tokenizer.",
            "- On a miss, trials.jsonl holds the reply, the HTTP status and the system-prompt hash for that session."]
     (out / "summary.md").write_text("\n".join(md) + "\n")
 
 
 def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--self-test", action="store_true", help="disposable harness against bakeoff_7's fake Ollama")
+    ap.add_argument("--self-test", action="store_true", help="disposable harness against bakeoff_8's fake Ollama")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--repeat", type=int, default=2)
@@ -724,6 +814,9 @@ def parse_args(argv):
     ap.add_argument("--long-compactions", type=int, default=2, help="compactions the long session runs through before asking")
     ap.add_argument("--long-chars", type=int, default=6000, help="characters per filler turn (~1.6k tokens)")
     ap.add_argument("--keep-home", action="store_true")
+    ap.add_argument("--ruler", choices=["echo", "estimate"], default="echo",
+                    help="hidden-token ruler (see bakeoff_8.py); echo counts visible text with the model's tokenizer")
+    ap.add_argument("--skip-sync-check", action="store_true", help="run although check_harness_sync.py reports drift")
     return ap.parse_args(argv)
 
 
@@ -731,7 +824,7 @@ def self_test(args):
     srv, url = core.start_fake_ollama()
     core.fake_profiles()
     args.ollama, args.models, args.repeat, args.hvac = (
-        url, ["fake/good", "fake/toolonly", "fake/bad", "fake/hidden", "fake/unpinned", "fake/drift"], 1, "json")
+        url, ["fake/good", "fake/toolonly", "fake/bad", "fake/hidden", "fake/unpinned", "fake/drift", "fake/trusting"], 1, "json")
     args.out = tempfile.mkdtemp(prefix="bakeoff-harness-selftest-")
     rows = run(args, fake=True)
     by = {r["model"]: r for r in rows}
@@ -757,6 +850,15 @@ def self_test(args):
         # The drift fake also drops the real correction, so its long_correction is a summarizer miss by design.
         ("drift: an invented code and a false correction lose to the pinned turn", d.get("long_session") == "1/1"
          and compactions(d, "long_session") >= 2),
+        ("drift: the repair pass reported what it masked", any(
+            part.strip().startswith("session:") and "masked 0," not in part for part in str(d.get("compaction_counts")).split(";"))),
+        ("compaction counts read from the response (#513)", "kept" in str(g.get("compaction_counts"))),
+        ("carrier read from the stored session", g.get("long_session_carrier") not in ("", "none")),
+        ("mid needle result matches the ledger state", (g.get("long_session_mid") == "1/1") == (g.get("fact_ledger") == "on")),
+        ("trusting model: the pinned needle survives only with the ledger",
+         str(by.get("fake/trusting:latest", {}).get("long_session", "")).startswith("1/1") == (g.get("fact_ledger") == "on")),
+        ("trigger in force recorded", str(g.get("trigger_in_force", "")).startswith("24000")),
+        ("ruler named in the verdict", "(echo" in str(g.get("think_verified", ""))),
         ("good off-verified", str(g.get("think_verified", "")).startswith("off-verified") and g.get("v1_reasoning") == "none-verified"),
         ("inject via web passes", g.get("inject_web") == "1/1"),
         ("research ran and recorded", g.get("research_status") not in ("", None)),
@@ -803,6 +905,11 @@ def run(args, fake=False):
             log(f"  {'installed' if m in tags else 'MISSING  '} {m}")
         log(f"binary: {find_bin(args.bin)}")
         return []
+    if not fake and not args.attach:
+        import check_harness_sync
+        log("== check_harness_sync (this checkout vs origin/main and the bench's mirrors)")
+        if check_harness_sync.main(["--repo", str(Path(__file__).resolve().parent.parent.parent)]) and not args.skip_sync_check:
+            raise SystemExit("harness drift: fix it, or pass --skip-sync-check to bench this checkout anyway")
     if pre.get("app_listening") and not args.attach and not args.allow_app:
         raise SystemExit("the harness app (or something) listens on 127.0.0.1:8790; quit it so its warmup cannot load a "
                          "model under the bench, or pass --allow-app")
