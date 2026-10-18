@@ -249,18 +249,23 @@ impl Pattern {
         url
     }
 
-    fn permits(&self, target: &Url) -> bool {
+    /// Scheme/port/host match only, ignoring path and query: an origin's
+    /// robots.txt is politeness metadata the fetcher must read, never evidence.
+    fn permits_host(&self, target: &Url) -> bool {
         if self.url.scheme() != target.scheme() || self.url.port_or_known_default() != target.port_or_known_default() {
             return false;
         }
         let host = target.host_str().unwrap_or("");
         let allowed_host = self.url.host_str().unwrap_or("");
-        let host_ok = if self.subdomains {
+        if self.subdomains {
             host != allowed_host && host.ends_with(&format!(".{allowed_host}"))
         } else {
             host == allowed_host
-        };
-        host_ok
+        }
+    }
+
+    fn permits(&self, target: &Url) -> bool {
+        self.permits_host(target)
             && if self.subtree {
                 target.path().starts_with(self.url.path())
             } else {
@@ -471,6 +476,31 @@ impl Policy {
         }
         Ok(target)
     }
+
+    /// Authorize reading an origin's `/robots.txt` when any rule in the group
+    /// covers that origin, even a path-restricted one. Robots text feeds only
+    /// the allow/deny decision; discovery never caches it as evidence. Only the
+    /// literal `/robots.txt` path widens this way.
+    pub fn authorize_robots(&self, raw: &str, group: Option<&str>) -> Result<Url> {
+        let target = canonical_url(raw)?;
+        let covered = target.path() == "/robots.txt"
+            && target.query().is_none()
+            && self.rules.iter().any(|r| {
+                group.is_none_or(|g| r.group == g) && Pattern::parse(&r.pattern).is_ok_and(|p| p.permits_host(&target))
+            });
+        if !covered {
+            return Err(error("WEB_HOST_DENIED", "URL is not permitted by current policy"));
+        }
+        Ok(target)
+    }
+
+    /// The fetch pipeline's read boundary: content reads need `authorize`; an
+    /// origin's robots.txt is also fetchable so discovery can make the
+    /// politeness decision. Caching and evidence still require `authorize`.
+    pub fn authorize_read(&self, raw: &str, group: Option<&str>) -> Result<Url> {
+        self.authorize(raw, group)
+            .or_else(|_| self.authorize_robots(raw, group))
+    }
 }
 
 #[cfg(test)]
@@ -554,6 +584,48 @@ mod tests {
         assert!(Rule::new("https://example.com/*", "default", &[])
             .unwrap()
             .permits(&query));
+    }
+
+    #[test]
+    fn robots_txt_follows_origin_coverage_not_path_scope() {
+        let mut policy = Policy::empty();
+        policy
+            .rules
+            .push(Rule::new("https://example.com/docs/*", "docs", &[]).unwrap());
+        policy
+            .rules
+            .push(Rule::new("https://*.wild.example/*", "docs", &[]).unwrap());
+        // A path-restricted rule still covers its origin's robots.txt.
+        assert!(policy.authorize_robots("https://example.com/robots.txt", None).is_ok());
+        assert!(policy
+            .authorize_robots("https://example.com/robots.txt", Some("docs"))
+            .is_ok());
+        // A host wildcard covers each matched subdomain's robots.txt, not the apex.
+        assert!(policy
+            .authorize_robots("https://a.wild.example/robots.txt", Some("docs"))
+            .is_ok());
+        assert!(policy
+            .authorize_robots("https://wild.example/robots.txt", Some("docs"))
+            .is_err());
+        // The widening applies to the literal robots path only.
+        assert!(policy
+            .authorize_robots("https://example.com/other/robots.txt", None)
+            .is_err());
+        assert!(policy
+            .authorize_robots("https://example.com/robots.txt?x=1", None)
+            .is_err());
+        // Content reads are unchanged: path scope and group scope still bind.
+        assert!(policy.authorize("https://example.com/", None).is_err());
+        assert!(policy
+            .authorize_robots("https://example.com/robots.txt", Some("other"))
+            .is_err());
+        assert!(policy
+            .authorize_robots("https://elsewhere.test/robots.txt", None)
+            .is_err());
+        let denied = policy
+            .authorize_robots("https://elsewhere.test/robots.txt", None)
+            .unwrap_err();
+        assert_eq!(denied.code, "WEB_HOST_DENIED");
     }
 
     #[test]
