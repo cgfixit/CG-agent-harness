@@ -26,7 +26,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 105] = [
+pub const REGISTERED_PATHS: [&str; 104] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -126,7 +126,6 @@ pub const REGISTERED_PATHS: [&str; 105] = [
     "/api/agent/schedules/{schedule_id}/cancel",
     "/api/harness/runs",
     "/api/auth/setup-status",
-    "/api/auth/bootstrap-password",
     "/api/auth/login",
     "/api/auth/logout",
     "/api/auth/password",
@@ -180,8 +179,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // -> the per-router CSRF layer -> handler.
     // account_gate covers every `/api/` path: rate limit -> same-origin ->
     // direct loopback/no proxy -> account/RBAC (with auth enabled, only
-    // /api/status and the setup-status, login and bootstrap-password routes
-    // are reachable without a session). `/` and `/static/*` skip account_gate.
+    // /api/status and the setup-status and login routes are reachable
+    // without a session). `/` and `/static/*` skip account_gate.
     //
     // Reads: account_gate only, no CSRF.
     let open = Router::new()
@@ -353,7 +352,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // Session bootstrap and account reads: account_gate only, no CSRF.
     let auth_open = Router::new()
         .route("/api/auth/setup-status", get(auth::setup_status))
-        .route("/api/auth/bootstrap-password", post(auth::bootstrap_password))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/whoami", get(auth::whoami))
         .route("/api/auth/users", get(auth::list_users));
@@ -426,7 +424,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 105);
+        assert_eq!(REGISTERED_PATHS.len(), 104);
 
         let all = registered_paths();
         assert!(

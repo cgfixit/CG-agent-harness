@@ -699,8 +699,20 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
     let s = spawn_server(&model.base_url(), opts).await;
     let (status, body) = s.open_get("/api/auth/setup-status").await;
     assert_eq!(status, 200);
-    assert_eq!(body["needs_password"], false);
     assert_eq!(body["setup_code"], true);
+    assert!(
+        body.get("needs_password").is_none() && body.get("username").is_none(),
+        "only whether the setup code works is public: {body}"
+    );
+    // The legacy set-password route is retired, so it is no longer public.
+    let retired = s
+        .client
+        .post(s.url("/api/auth/bootstrap-password"))
+        .json(&json!({"password":"first-admin-password"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retired.status().as_u16(), 401);
     assert_eq!(s.open_get("/api/auth/whoami").await.0, 401);
     let shipped = s
         .client
@@ -733,6 +745,17 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         .next()
         .unwrap()
         .to_string();
+    // The setup code, in any spelling, cannot become the permanent password.
+    let reused = s
+        .client
+        .post(s.url("/api/auth/password"))
+        .header("cookie", &cookie)
+        .header(CSRF_HEADER, &s.csrf)
+        .json(&json!({"current_password":setup_code,"password":setup_code.replace('-', "").to_uppercase()}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reused.status().as_u16(), 422);
     let resp = s
         .client
         .post(s.url("/api/auth/password"))

@@ -494,7 +494,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         if !path.starts_with("/api/")
             || matches!(
                 path.as_str(),
-                "/api/status" | "/api/auth/setup-status" | "/api/auth/login" | "/api/auth/bootstrap-password"
+                "/api/status" | "/api/auth/setup-status" | "/api/auth/login"
             )
         {
             continue;
@@ -552,7 +552,6 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
                 "/api/status"
                     | "/api/auth/setup-status"
                     | "/api/auth/login"
-                    | "/api/auth/bootstrap-password"
                     | "/api/auth/whoami"
                     | "/api/auth/password"
                     | "/api/auth/logout"

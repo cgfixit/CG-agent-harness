@@ -30,8 +30,7 @@ check-profile names and run IDs, never browser-supplied commands.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/auth/setup-status` | Pending bootstrap replacement; `setup_code` while the one-time code works; public |
-| POST | `/api/auth/bootstrap-password` | Replace the fresh `admin` password (12+ characters) |
+| GET | `/api/auth/setup-status` | `setup_code` while the one-time code works; public |
 | POST | `/api/auth/login` | Login; public with early guards |
 | POST | `/api/auth/logout` | Revoke the current session |
 | GET | `/api/auth/whoami` | Current account, role, and `user_id` |

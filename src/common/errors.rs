@@ -79,9 +79,6 @@ impl HarnessError {
     pub fn auth_login_failed() -> Self {
         Self::new("AUTH_LOGIN_FAILED", "invalid username or password")
     }
-    pub fn auth_bootstrap_complete() -> Self {
-        Self::new("AUTH_BOOTSTRAP_COMPLETE", "admin password is already set")
-    }
     pub fn auth_locked(retry_after_sec: f64, username: &str) -> Self {
         Self::new(
             "AUTH_ACCOUNT_LOCKED",

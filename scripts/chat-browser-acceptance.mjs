@@ -68,7 +68,7 @@ const server=createServer(async(req,res)=>{
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
  if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
- if(path==='/api/auth/setup-status'){reply({needs_password:false,setup_code:authFixture&&mustChange});return;}
+ if(path==='/api/auth/setup-status'){reply({setup_code:authFixture&&mustChange});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
   const secondOwner=body.username==='memory-second'&&body.password==='browser-memory-password';

@@ -16,6 +16,8 @@ use super::errors::{HarnessError, Result};
 pub const BOOTSTRAP_USERNAME: &str = "admin";
 const DEFAULT_IDLE_TIMEOUT_SEC: f64 = 43200.0;
 const DEFAULT_ABSOLUTE_TIMEOUT_SEC: f64 = 604800.0;
+const DEFAULT_RESTRICTED_IDLE_TIMEOUT_SEC: f64 = 600.0;
+const DEFAULT_RESTRICTED_ABSOLUTE_TIMEOUT_SEC: f64 = 1800.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,6 +110,10 @@ pub struct AuthManager {
     path: PathBuf,
     idle_timeout_sec: f64,
     absolute_timeout_sec: f64,
+    /// Limits for a session whose account must still replace its password.
+    /// Never longer than the normal limits.
+    restricted_idle_timeout_sec: f64,
+    restricted_absolute_timeout_sec: f64,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
     fresh_bootstrap: std::sync::atomic::AtomicBool,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
@@ -122,17 +128,18 @@ impl std::fmt::Debug for AuthManager {
 impl AuthManager {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
         let (mut connection, mut db, fresh) = sqlite::open(path)?;
-        // Homes created before setup codes shipped `admin` / `admin`: the
-        // bootstrap account's password was its own username. While that account
-        // still must replace its password and its username still verifies,
-        // anyone on this machine could take it, so rotate it to a setup code.
-        // One scrypt check, only in that state.
+        // Two older first-run states move to a setup code. Homes created before
+        // setup codes shipped `admin` / `admin`: while that account still must
+        // replace its password and its username still verifies, anyone on this
+        // machine could take it (one scrypt check, only in that state). Older
+        // homes migrated from auth.json may hold a `pending$` admin record that
+        // only the retired public bootstrap route could set; it now signs in
+        // with a code and must replace it like a fresh home.
         if !fresh {
             let shipped = db.users.get_key_value(BOOTSTRAP_USERNAME).is_some_and(|(name, u)| {
                 !u.disabled
-                    && u.must_change_password
-                    && !authn::is_pending_password_record(&u.password_hash)
-                    && authn::verify_password(name, &u.password_hash).0
+                    && (authn::is_pending_password_record(&u.password_hash)
+                        || (u.must_change_password && authn::verify_password(name, &u.password_hash).0))
             });
             if shipped {
                 let code = authn::new_setup_code();
@@ -140,6 +147,7 @@ impl AuthManager {
                 let mut rotated = db.clone();
                 if let Some(u) = rotated.users.get_mut(BOOTSTRAP_USERNAME) {
                     u.password_hash = authn::hash_bootstrap_password(&code)?;
+                    u.must_change_password = true;
                     u.failed_count = 0;
                     u.locked_until_ts = None;
                 }
@@ -148,10 +156,24 @@ impl AuthManager {
                 db = rotated;
             }
         }
+        let idle_timeout_sec = cfg.f64_or("auth.session.idle_timeout_sec", DEFAULT_IDLE_TIMEOUT_SEC);
+        let absolute_timeout_sec = cfg.f64_or("auth.session.absolute_timeout_sec", DEFAULT_ABSOLUTE_TIMEOUT_SEC);
         let mgr = Self {
             path: path.to_path_buf(),
-            idle_timeout_sec: cfg.f64_or("auth.session.idle_timeout_sec", DEFAULT_IDLE_TIMEOUT_SEC),
-            absolute_timeout_sec: cfg.f64_or("auth.session.absolute_timeout_sec", DEFAULT_ABSOLUTE_TIMEOUT_SEC),
+            idle_timeout_sec,
+            absolute_timeout_sec,
+            restricted_idle_timeout_sec: cfg
+                .f64_or(
+                    "auth.session.password_change_idle_timeout_sec",
+                    DEFAULT_RESTRICTED_IDLE_TIMEOUT_SEC,
+                )
+                .min(idle_timeout_sec),
+            restricted_absolute_timeout_sec: cfg
+                .f64_or(
+                    "auth.session.password_change_absolute_timeout_sec",
+                    DEFAULT_RESTRICTED_ABSOLUTE_TIMEOUT_SEC,
+                )
+                .min(absolute_timeout_sec),
             state: Mutex::new((connection, db)),
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
             clock: Box::new(super::now_ts),
@@ -173,9 +195,18 @@ impl AuthManager {
     }
 
     /// How stale a live session's recorded activity may get: a minute, or 1% of
-    /// the idle timeout when that is shorter.
-    fn touch_interval_sec(&self) -> f64 {
-        (self.idle_timeout_sec / 100.0).min(SESSION_TOUCH_INTERVAL_SEC)
+    /// its idle timeout when that is shorter.
+    fn touch_interval_sec(idle_timeout_sec: f64) -> f64 {
+        (idle_timeout_sec / 100.0).min(SESSION_TOUCH_INTERVAL_SEC)
+    }
+
+    /// `(idle, absolute)` limits for a session of an account in this state.
+    fn session_limits(&self, must_change_password: bool) -> (f64, f64) {
+        if must_change_password {
+            (self.restricted_idle_timeout_sec, self.restricted_absolute_timeout_sec)
+        } else {
+            (self.idle_timeout_sec, self.absolute_timeout_sec)
+        }
     }
 
     fn persist(&self, stored: &mut (rusqlite::Connection, AuthDb), db: &AuthDb) -> Result<()> {
@@ -208,24 +239,18 @@ impl AuthManager {
         Ok(self.fresh_bootstrap.swap(false, std::sync::atomic::Ordering::SeqCst))
     }
 
-    pub fn needs_password_setup(&self) -> bool {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let db = &stored.1;
-        db.users
-            .get(BOOTSTRAP_USERNAME)
-            .map(|u| authn::is_pending_password_record(&u.password_hash))
-            .unwrap_or(false)
-    }
-
     /// True while the enabled `admin` account still signs in with its setup
     /// code: it must replace its password and the private code file exists.
     /// The sign-in screen then names the code, never shows it. Answers without
     /// hashing, so the public setup-status route stays cheap.
     pub fn setup_code_active(&self) -> bool {
         let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        stored.1.users.get(BOOTSTRAP_USERNAME).is_some_and(|u| {
-            !u.disabled && u.must_change_password && !authn::is_pending_password_record(&u.password_hash)
-        }) && setup_code_path(&self.path).is_file()
+        stored
+            .1
+            .users
+            .get(BOOTSTRAP_USERNAME)
+            .is_some_and(|u| !u.disabled && u.must_change_password)
+            && setup_code_path(&self.path).is_file()
     }
 
     /// What to verify for `username`: while `admin` still signs in with its
@@ -245,31 +270,6 @@ impl AuthManager {
         if username == BOOTSTRAP_USERNAME {
             let _ = std::fs::remove_file(setup_code_path(&self.path));
         }
-    }
-
-    pub fn bootstrap_set_password(&self, password: &str) -> Result<LoginResult> {
-        let record = authn::hash_password(password)?;
-        let now = self.now();
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
-        let pending = db
-            .users
-            .get(BOOTSTRAP_USERNAME)
-            .map(|u| authn::is_pending_password_record(&u.password_hash))
-            .unwrap_or(false);
-        if !pending {
-            return Err(HarnessError::auth_bootstrap_complete().detail("username", BOOTSTRAP_USERNAME));
-        }
-        if let Some(u) = db.users.get_mut(BOOTSTRAP_USERNAME) {
-            u.password_hash = record;
-            u.failed_count = 0;
-            u.locked_until_ts = None;
-        }
-        revoke_sessions_for(&mut db, BOOTSTRAP_USERNAME);
-        let result = self.create_session(&mut db, BOOTSTRAP_USERNAME, now)?;
-        self.persist(&mut stored, &db)?;
-        self.forget_setup_code(BOOTSTRAP_USERNAME);
-        Ok(result)
     }
 
     pub fn create_user(&self, username: &str, password: &str, role: &str) -> Result<String> {
@@ -437,9 +437,16 @@ impl AuthManager {
             .users
             .get_mut(&canonical)
             .ok_or_else(HarnessError::auth_login_failed)?;
-        if user.disabled || !authn::verify_password(&Self::credential(&canonical, user, current), &user.password_hash).0
-        {
+        let current = Self::credential(&canonical, user, current);
+        if user.disabled || !authn::verify_password(&current, &user.password_hash).0 {
             return Err(HarnessError::auth_login_failed());
+        }
+        // A forced change must actually change the credential: the setup code
+        // has been on screen and in a file, so it may not become the password.
+        if Self::credential(&canonical, user, password) == current {
+            return Err(HarnessError::password_policy(
+                "the new password must differ from the current one",
+            ));
         }
         user.password_hash = record;
         user.must_change_password = false;
@@ -453,6 +460,8 @@ impl AuthManager {
     }
 
     fn create_session(&self, db: &mut AuthDb, username: &str, now: f64) -> Result<LoginResult> {
+        let (_, absolute_timeout_sec) =
+            self.session_limits(db.users.get(username).is_some_and(|u| u.must_change_password));
         db.sessions
             .retain(|_, row| !row.revoked && row.expires_ts > now && row.last_seen_ts + self.idle_timeout_sec > now);
         if db.sessions.len() >= 4096 {
@@ -462,7 +471,7 @@ impl AuthManager {
         // The sessions schema still requires a csrf_hash. Nothing returns or
         // checks it: request CSRF is the process token in the console page.
         let csrf_hash = authn::hash_token(&authn::new_csrf_token());
-        let expires_ts = now + self.absolute_timeout_sec;
+        let expires_ts = now + absolute_timeout_sec;
         db.sessions.insert(
             authn::hash_token(&session_id),
             SessionRow {
@@ -532,12 +541,22 @@ impl AuthManager {
         let now = self.now();
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let row = stored.1.sessions.get(&key).filter(|row| !row.revoked)?;
-        let expired = now >= row.expires_ts || now >= row.last_seen_ts + self.idle_timeout_sec;
+        // Limits follow the account's current state, so a restricted account's
+        // older session cannot outlive the restricted window either.
+        let restricted = stored
+            .1
+            .users
+            .get(&row.username)
+            .is_some_and(|u| u.must_change_password);
+        let (idle_timeout_sec, absolute_timeout_sec) = self.session_limits(restricted);
+        let expired = now >= row.expires_ts
+            || now >= row.created_ts + absolute_timeout_sec
+            || now >= row.last_seen_ts + idle_timeout_sec;
         let username = row.username.clone();
         // Every guarded request lands here, so slide the idle window at most once
         // per interval instead of writing SQLite each time. A skipped slide can
         // only end a session sooner, never later; an expiry is always written.
-        if expired || now - row.last_seen_ts >= self.touch_interval_sec() {
+        if expired || now - row.last_seen_ts >= Self::touch_interval_sec(idle_timeout_sec) {
             let last_seen_ts = if expired { row.last_seen_ts } else { now };
             // Committed before visible, like `persist`, but only this row is written.
             sqlite::touch_session(&stored.0, &key, last_seen_ts, expired).ok()?;
