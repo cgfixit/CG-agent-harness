@@ -106,8 +106,14 @@ class ReleasePlanTests(unittest.TestCase):
             self.assertFalse(output.exists())
 
     def test_published_tag_cannot_be_reuploaded(self):
-        with self.assertRaises(ValueError):
-            self.plan(event="push", ref="refs/tags/v0.1.0")
+        # A newer tag whose release (or draft) already exists.
+        with self.assertRaisesRegex(ValueError, "Release already exists"):
+            self.plan(event="push", ref="refs/tags/v0.2.0", releases={"v0.1.0", "v0.2.0"})
+
+    def test_tag_not_newer_than_latest_refused(self):
+        for ref in ("refs/tags/v0.0.9", "refs/tags/v0.1.0"):
+            with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "newer than the latest"):
+                self.plan(event="push", ref=ref)
 
     def test_invalid_inputs_refused(self):
         for args in ({"sha": "main"}, {"event": "pull_request"},
