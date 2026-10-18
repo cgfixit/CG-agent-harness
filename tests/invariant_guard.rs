@@ -289,6 +289,55 @@ fn server_side_never_references_agentic() {
 }
 
 #[test]
+fn diag_reads_only_named_files_under_home_logs() {
+    // One reader opens files, and only `<home>/logs/<allowlisted name>`; the
+    // routes and prompt code never touch the filesystem or spawn anything.
+    let reader = strip_comment_lines(&std::fs::read_to_string(root().join("server/diag_reader.rs")).unwrap());
+    let code = &reader[..reader.find("#[cfg(test)]").expect("reader tests")];
+    assert_eq!(code.matches(".open(").count(), 1, "diag_reader opens one file kind");
+    assert!(
+        code.contains(".open(logs_dir.join(name))"),
+        "the path is logs_dir plus the allowlisted name"
+    );
+    assert!(
+        code.contains("libc::O_NOFOLLOW"),
+        "the leaf is opened without following links"
+    );
+    assert!(
+        code.contains("file.take(max_bytes)"),
+        "reads stay bounded after the metadata check"
+    );
+    let scan = code.find("scan_normalized").expect("output is scanned");
+    let redact = code.find("redactors.redact(").expect("output is redacted");
+    assert!(redact < scan, "redaction precedes the scanner");
+    for forbidden in [
+        "read_to_string",
+        "File::open",
+        "read_dir",
+        "Command",
+        "TcpStream",
+        "canonicalize",
+        "home.root",
+    ] {
+        assert!(!code.contains(forbidden), "diag_reader must not use {forbidden}");
+    }
+    let routes = strip_comment_lines(&std::fs::read_to_string(root().join("server/routes/diag.rs")).unwrap());
+    for forbidden in ["std::fs", "File::", "OpenOptions", "Command", "Path::new", "PathBuf"] {
+        assert!(!routes.contains(forbidden), "routes/diag.rs must not use {forbidden}");
+    }
+    assert!(
+        routes.contains("state.diag.config.allowed(&file)"),
+        "the file parameter is matched against the allowlist"
+    );
+    let paths = cgagentharness::server::routes::REGISTERED_PATHS;
+    for path in ["/api/diag", "/api/diag/read", "/api/diag/inject", "/api/diag/forget"] {
+        assert!(paths.contains(&path), "{path} must be in REGISTERED_PATHS");
+    }
+    let reload = std::fs::read_to_string(root().join("server/config_reload.rs")).unwrap();
+    assert!(!reload.contains("\"diagnostics"), "diagnostics stays restart-only");
+}
+
+#[test]
 fn netconnect_dials_only_through_the_budgeted_dialer() {
     // Sockets and name lookups. Only connect.rs may open a socket, and
     // nothing under src/netconnect may resolve a host name.
@@ -589,6 +638,8 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "netconnect.home_automation",
         "notifications.enabled",
         "agentic.deepagent_github.retrieval.enabled",
+        "diagnostics.logs_enabled",
+        "diagnostics.model_tool",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }
@@ -990,7 +1041,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
     // why: operator-approved +150 (2026-10-18), shared by the four compaction follow-up PRs (#513 fixes, hard limit, reply parity, window trigger).
     // why: operator-approved +10 (2026-10-18, #529) for the goal-less /loop and compaction auto-continue sentence; file at 6694.
-    ("INVARIANTS.md", Root, 6700),
+    // why: operator-approved (2026-10-18) /diag and portal_auditor contracts; 6893 words, set to 6900.
+    ("INVARIANTS.md", Root, 6900),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     ("README.md", Root, 1500),
@@ -1004,7 +1056,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved +33 (2026-10-18, #529/#534): main sits at 5963 words since #531, so the guard is red on main; #529 adds the /loop copy. File at 5963.
-    ("docs/CONSOLE.md", Guide, 5990),
+    // why: operator-approved (2026-10-18) /diag rows in 7.7 and 7.8; 6034 words, set to 6040.
+    ("docs/CONSOLE.md", Guide, 6040),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2480),
@@ -1028,13 +1081,15 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/RELEASING.md", Guide, 700),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
-    ("docs/SECURE_RESEARCH.md", Guide, 3550),
+    // why: operator-approved (2026-10-18) portal_auditor role row; 3577 words, set to 3580.
+    ("docs/SECURE_RESEARCH.md", Guide, 3580),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
     ("docs/STRUCTURED_MEMORY.md", Guide, 3440),
-    ("docs/TROUBLESHOOTING.md", Guide, 1300),
+    // why: operator-approved (2026-10-18) /diag diagnostics section and rows; 1442 words, set to 1450.
+    ("docs/TROUBLESHOOTING.md", Guide, 1450),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     ("docs/netconnect.md", Guide, 3300),
     ("docs/screenshots/README.md", Evidence, 200),
@@ -1079,7 +1134,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // ANALYTICS.md and USER_MANUAL.md were folded in; 64,500 keeps the gap under the 17,000 override); DOCS_GROUP_SLACK_OVERRIDES
 // lets this one group sit that far above its words.
 // why: operator-approved (2026-10-18) +200 Root words for the #494 first-run session contract in INVARIANTS.md.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_700), (Guide, 64_500), (Evidence, 500), (Agent, 21_500)];
+// why: operator-approved (2026-10-18) Root raise matching the INVARIANTS.md /diag row (+200; Root 8880).
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_900), (Guide, 64_500), (Evidence, 500), (Agent, 21_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

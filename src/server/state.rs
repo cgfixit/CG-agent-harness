@@ -100,6 +100,8 @@ pub struct AppState {
     pub shutdown: CancellationToken,
     pub attachments: AttachmentStore,
     pub notes_corpus: crate::server::notes_corpus::NotesCorpus,
+    /// `/diag` config, last reads and staged excerpts (restart-only config).
+    pub diag: crate::server::diag_reader::DiagState,
     pub notes_ingest_permits: Arc<tokio::sync::Semaphore>,
     pub backend: ResolvedLocalBackend,
     pub chat: ChatClient,

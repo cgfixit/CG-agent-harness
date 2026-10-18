@@ -38,6 +38,7 @@ const COMMANDS: &[&str] = &[
     "status",
     "users",
     "clear",
+    "diag",
 ];
 
 const FILLER: &[&str] = &[
@@ -93,6 +94,8 @@ pub struct SlashSuggestion {
 pub struct SlashParse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web: Option<super::web_command::WebCommand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diag: Option<DiagCommand>,
     pub kind: SlashKind,
     pub dispatch: bool,
     pub canonical: Option<String>,
@@ -147,6 +150,7 @@ pub fn parse_line(input: &str) -> SlashParse {
     if trimmed.is_empty() || !(trimmed.starts_with('/') || bom_slash) {
         return SlashParse {
             web: None,
+            diag: None,
             kind: SlashKind::NotSlash,
             dispatch: false,
             canonical: None,
@@ -246,6 +250,9 @@ fn parse_slash_primary(line: &str) -> SlashParse {
         if let Some(intent) = crate::netconnect::slash::interpret(&cmd_l, &tokens[1..], &preexisting_slash_names()) {
             return net_intent(intent);
         }
+    }
+    if cmd_l == "diag" || DIAG_ALIASES.contains(&cmd_l.as_str()) {
+        return parse_diag(&tokens[1..]);
     }
     let (cmd, aliased, cmd_score) = resolve_command(&cmd_l);
     let Some(cmd) = cmd else {
@@ -406,6 +413,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
     if dispatch {
         SlashParse {
             web,
+            diag: None,
             kind: SlashKind::Dispatch,
             dispatch: true,
             canonical: Some(canonical),
@@ -432,6 +440,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
         }));
         SlashParse {
             web: None,
+            diag: None,
             kind: SlashKind::Suggest,
             dispatch: false,
             canonical: Some(canonical),
@@ -449,7 +458,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
 /// against this set and dropped on a hit. `net` itself is excluded because
 /// this registry owns that root.
 pub fn preexisting_slash_names() -> std::collections::BTreeSet<&'static str> {
-    const EARLIER_ALIASES: &[&str] = &["cmds", "commands", "mem", "persona"];
+    const EARLIER_ALIASES: &[&str] = &["cmds", "commands", "mem", "persona", "diagnostics", "logs"];
     let mut names = std::collections::BTreeSet::new();
     for name in COMMANDS {
         if *name != "net" {
@@ -464,6 +473,7 @@ fn net_intent(intent: crate::netconnect::slash::Intent) -> SlashParse {
     match intent {
         crate::netconnect::slash::Intent::Dispatch { canonical, sub } => SlashParse {
             web: None,
+            diag: None,
             kind: SlashKind::Dispatch,
             dispatch: true,
             canonical: Some(canonical),
@@ -476,6 +486,7 @@ fn net_intent(intent: crate::netconnect::slash::Intent) -> SlashParse {
         },
         crate::netconnect::slash::Intent::Suggest { notice, suggestions } => SlashParse {
             web: None,
+            diag: None,
             kind: SlashKind::Suggest,
             dispatch: false,
             canonical: None,
@@ -827,9 +838,155 @@ fn echoable_args<'a>(cmd: &str, args: &'a [&'a str]) -> &'a [&'a str] {
     }
 }
 
+/// Exact `/diag` aliases. Each is a root only while no other root or alias
+/// uses the name (`diag_aliases_collide_with_no_slash_root`).
+const DIAG_ALIASES: &[&str] = &["diagnostics", "logs"];
+const DIAG_SUBS: &[&str] = &[
+    "status", "audit", "spend", "unslop", "errors", "inject", "forget", "help",
+];
+
+/// A parsed `/diag` line. Fixed actions and allowlisted file names only: no
+/// token becomes a path, and the server re-validates every field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiagCommand {
+    /// `status`, `read`, `inject`, `forget` or `help`.
+    pub action: &'static str,
+    pub file: Option<&'static str>,
+    pub last: Option<usize>,
+    pub event: Option<String>,
+    pub since: Option<String>,
+    pub errors: bool,
+}
+
+/// `/diag [sub] [--flag value | --flag=value]...`. Unknown, repeated or
+/// valueless flags and stray words refuse; a near-miss subcommand only suggests.
+fn parse_diag(args: &[&str]) -> SlashParse {
+    let refuse = |message: String| suggest_only(&message, &[("diag help", 100)]);
+    let sub = args
+        .first()
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_else(|| "status".into());
+    let Some(sub) = DIAG_SUBS.iter().copied().find(|known| *known == sub) else {
+        let mut parsed = suggest_only("unknown /diag subcommand; suggestions were not dispatched", &[]);
+        parsed.suggestions = nearby_tokens(&sub, DIAG_SUBS)
+            .into_iter()
+            .map(|(near, score)| SlashSuggestion {
+                line: format!("/diag {near}"),
+                score,
+            })
+            .collect();
+        if parsed.suggestions.is_empty() {
+            parsed.suggestions.push(SlashSuggestion {
+                line: "/diag help".into(),
+                score: 60,
+            });
+        }
+        return parsed;
+    };
+    let accepted: &[&str] = match sub {
+        "audit" => &["--last", "--event", "--since", "--rotated"],
+        "spend" | "errors" => &["--last", "--since", "--rotated"],
+        "unslop" => &["--last"],
+        _ => &[],
+    };
+    let mut command = DiagCommand {
+        action: match sub {
+            "audit" | "spend" | "unslop" | "errors" => "read",
+            other => other,
+        },
+        file: None,
+        last: None,
+        event: None,
+        since: None,
+        errors: sub == "errors",
+    };
+    let mut rotated = false;
+    let mut seen: Vec<&str> = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        let token = args[i];
+        let (flag, inline) = match token.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            _ => (token, None),
+        };
+        if !flag.starts_with("--") {
+            return refuse(format!("unexpected word {token:?} for /diag {sub}; see /diag help"));
+        }
+        let Some(flag) = accepted.iter().copied().find(|known| *known == flag) else {
+            let list = if accepted.is_empty() {
+                "none".to_string()
+            } else {
+                accepted.join(", ")
+            };
+            return refuse(format!("unsupported flag {flag} for /diag {sub}: {list}"));
+        };
+        if seen.contains(&flag) {
+            return refuse(format!("{flag} may appear once"));
+        }
+        seen.push(flag);
+        if flag == "--rotated" {
+            if inline.is_some() {
+                return refuse("--rotated takes no value".into());
+            }
+            rotated = true;
+            i += 1;
+            continue;
+        }
+        let value = match inline {
+            Some(value) => value,
+            None => {
+                i += 1;
+                match args.get(i) {
+                    Some(value) if !value.starts_with('-') => *value,
+                    _ => return refuse(format!("{flag} needs a value")),
+                }
+            }
+        };
+        match flag {
+            "--last" => match value.parse::<usize>() {
+                Ok(n) if (1..=1000).contains(&n) && value.bytes().all(|b| b.is_ascii_digit()) => command.last = Some(n),
+                _ => return refuse("--last must be an integer from 1 to 1000".into()),
+            },
+            "--event" if super::diag_reader::valid_event_name(value) => command.event = Some(value.to_string()),
+            "--event" => return refuse("--event must match [a-z][a-z0-9_.]{0,63}".into()),
+            "--since" if super::diag_reader::parse_since(value).is_some() => command.since = Some(value.to_string()),
+            _ => return refuse("--since must look like 15m, 2h or 1d, at most 30d".into()),
+        }
+        i += 1;
+    }
+    command.file = match (sub, rotated) {
+        ("audit" | "errors", false) => Some("audit.jsonl"),
+        ("audit" | "errors", true) => Some("audit.jsonl.1"),
+        ("spend", false) => Some("spend.jsonl"),
+        ("spend", true) => Some("spend.jsonl.1"),
+        ("unslop", _) => Some("unslop.jsonl"),
+        _ => None,
+    };
+    let rest = args.get(1..).unwrap_or_default().join(" ");
+    let canonical = if rest.is_empty() {
+        format!("/diag {sub}")
+    } else {
+        format!("/diag {sub} {rest}")
+    };
+    SlashParse {
+        web: None,
+        diag: Some(command),
+        kind: SlashKind::Dispatch,
+        dispatch: true,
+        canonical: Some(canonical),
+        command: Some("diag".to_string()),
+        sub: Some(sub.to_string()),
+        rest,
+        confidence: 100,
+        suggestions: Vec::new(),
+        notice: None,
+    }
+}
+
 fn suggest_only(notice: &str, near: &[(&str, u8)]) -> SlashParse {
     SlashParse {
         web: None,
+        diag: None,
         kind: SlashKind::Suggest,
         dispatch: false,
         canonical: None,
@@ -1527,6 +1684,107 @@ mod tests {
         let (kept, dropped) = crate::netconnect::slash::classify_aliases(&preexisting_slash_names());
         assert!(dropped.is_empty(), "{dropped:?}");
         assert_eq!(kept, crate::netconnect::slash::CANDIDATE_ALIASES);
+    }
+
+    #[test]
+    fn every_diag_form_parses_to_a_fixed_command() {
+        let cases: &[(&str, &str, Option<&str>)] = &[
+            ("/diag", "status", None),
+            ("/diag status", "status", None),
+            ("/diag help", "help", None),
+            ("/diag inject", "inject", None),
+            ("/diag forget", "forget", None),
+            ("/diag audit", "read", Some("audit.jsonl")),
+            ("/diag audit --rotated", "read", Some("audit.jsonl.1")),
+            ("/diag spend --since 2h", "read", Some("spend.jsonl")),
+            ("/diag spend --rotated --last=3", "read", Some("spend.jsonl.1")),
+            ("/diag unslop --last 4", "read", Some("unslop.jsonl")),
+            ("/diag errors --since=1d", "read", Some("audit.jsonl")),
+            ("/diagnostics audit", "read", Some("audit.jsonl")),
+            ("/logs errors", "read", Some("audit.jsonl")),
+            ("/DIAG AUDIT", "read", Some("audit.jsonl")),
+        ];
+        for (line, action, file) in cases {
+            let parsed = parse_line(line);
+            assert!(parsed.dispatch, "{line}: {parsed:?}");
+            assert_eq!(parsed.command.as_deref(), Some("diag"), "{line}");
+            let diag = parsed.diag.expect(line);
+            assert_eq!((diag.action, diag.file), (*action, *file), "{line}");
+        }
+        let full = parse_line("/diag audit --last 5 --event portal.request --since 15m")
+            .diag
+            .unwrap();
+        assert_eq!(full.last, Some(5));
+        assert_eq!(full.event.as_deref(), Some("portal.request"));
+        assert_eq!(full.since.as_deref(), Some("15m"));
+        assert!(parse_line("/diag errors").diag.unwrap().errors);
+        assert!(!parse_line("/diag audit").diag.unwrap().errors);
+    }
+
+    #[test]
+    fn diag_flag_grammar_refuses_and_near_misses_only_suggest() {
+        for line in [
+            "/diag audit --last",
+            "/diag audit --last 0",
+            "/diag audit --last 1001",
+            "/diag audit --last five",
+            "/diag audit --last 5 --last 6",
+            "/diag audit --event Portal",
+            "/diag audit --event ../x",
+            "/diag audit --since 31d",
+            "/diag audit --since 10s",
+            "/diag audit --file config.yaml",
+            "/diag audit ../config.yaml",
+            "/diag audit --confirm",
+            "/diag audit --dry-run",
+            "/diag spend --event x",
+            "/diag unslop --since 1h",
+            "/diag status --last 5",
+            "/diag inject --confirm",
+            "/diag audit --rotated=yes",
+            "/diag audit --rotated --rotated",
+            "/diag audit --last --event x",
+        ] {
+            let parsed = parse_line(line);
+            assert!(!parsed.dispatch, "{line}: {parsed:?}");
+            assert!(parsed.diag.is_none(), "{line}");
+        }
+        for (line, want) in [
+            ("/diag audti", "/diag audit"),
+            ("/diag injct", "/diag inject"),
+            ("/diag stat", "/diag status"),
+        ] {
+            let parsed = parse_line(line);
+            assert!(!parsed.dispatch && parsed.kind == SlashKind::Suggest, "{line}");
+            assert!(
+                parsed.suggestions.iter().any(|s| s.line == want),
+                "{line}: {:?}",
+                parsed.suggestions
+            );
+        }
+        let unknown = parse_line("/diag cat config.yaml");
+        assert!(!unknown.dispatch && unknown.diag.is_none());
+        let near_root = parse_line("/diagnose");
+        assert!(!near_root.dispatch);
+    }
+
+    #[test]
+    fn diag_aliases_collide_with_no_slash_root() {
+        for alias in DIAG_ALIASES.iter().chain(["diag"].iter()) {
+            assert_eq!(
+                COMMANDS.iter().filter(|c| *c == alias).count(),
+                usize::from(*alias == "diag"),
+                "{alias}"
+            );
+            assert!(!crate::netconnect::slash::CANDIDATE_ALIASES.contains(alias), "{alias}");
+            assert!(
+                !matches!(resolve_command(alias).0, Some(cmd) if cmd != "diag"),
+                "{alias}"
+            );
+        }
+        assert!(!DIAG_ALIASES.contains(&"log") && !DIAG_ALIASES.contains(&"loop"));
+        // /net diag stays the netconnect subcommand.
+        assert_eq!(parse_line("/net diag").command.as_deref(), Some("net"));
     }
 
     #[test]

@@ -23,7 +23,9 @@ pub const LOCKOUT_THRESHOLD: u32 = 5;
 pub const LOCKOUT_BASE_SEC: f64 = 2.0;
 pub const LOCKOUT_CEILING_SEC: f64 = 900.0;
 
-pub const ROLES: [&str; 3] = ["admin", "operator", "audit"];
+pub const ROLES: [&str; 4] = ["admin", "operator", "audit", PORTAL_AUDITOR_ROLE];
+/// Local chat plus read-only diagnostics; see `guards::portal_auditor_may`.
+pub const PORTAL_AUDITOR_ROLE: &str = "portal_auditor";
 pub const DEFAULT_ROLE: &str = "operator";
 pub const MIN_PASSWORD_LEN: usize = 12;
 pub const MAX_PASSWORD_LEN: usize = 1024;

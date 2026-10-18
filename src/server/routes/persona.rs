@@ -331,6 +331,24 @@ pub async fn preview(
     ValidJson(req): ValidJson<PreviewRequest>,
 ) -> ApiResult<PrivateJson> {
     let owner = super::auth::context_owner(user.clone());
+    // portal_auditor previews the prompt its chat would get: no persona
+    // candidate, memory, attachments, skills or web context.
+    let portal_auditor = user
+        .as_ref()
+        .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE);
+    if portal_auditor
+        && (req.soul_content.is_some()
+            || !req.attachment_ids.is_empty()
+            || req.retrieve
+            || req.retrieve_query.is_some()
+            || req.selected_facts.is_some())
+    {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "AUTH_PERMISSION_DENIED",
+            "portal_auditor previews only its own local chat prompt",
+        ));
+    }
     let session = req
         .session_id
         .as_deref()
@@ -344,23 +362,30 @@ pub async fn preview(
     let web_enabled = session.as_ref().map_or(settings.web_enabled, |s| {
         s.chat_web_mode(settings.web_enabled).enabled()
     });
-    let web = state.web_snapshot().context_text(web_enabled, &owner);
-    let selections = req
-        .selected_facts
-        .as_ref()
-        .map(|items| super::structured_memory::selections_from_items(items))
-        .unwrap_or_else(|| session.as_ref().map(|s| s.selected_facts.clone()).unwrap_or_default());
+    let web = if portal_auditor {
+        String::new()
+    } else {
+        state.web_snapshot().context_text(web_enabled, &owner)
+    };
+    let selections = if portal_auditor {
+        Vec::new()
+    } else {
+        req.selected_facts
+            .as_ref()
+            .map(|items| super::structured_memory::selections_from_items(items))
+            .unwrap_or_else(|| session.as_ref().map(|s| s.selected_facts.clone()).unwrap_or_default())
+    };
     // Fact recall and retrieval read SQLite: run them off the async worker.
     let (pinned, facts, memory_budget, recalled, retrieval_error) = {
         let (state, owner, selections) = (state.clone(), owner.clone(), selections.clone());
         let (force, query) = (req.retrieve, req.retrieve_query.clone());
-        let memory_enabled = settings.memory_enabled;
+        let memory_enabled = settings.memory_enabled && !portal_auditor;
         super::structured_memory::off_worker(move || {
             super::structured_memory::prompt_memory(
                 &state,
                 &owner,
                 memory_enabled,
-                false,
+                portal_auditor,
                 &selections,
                 crate::server::structured_memory::RetrievalIntent {
                     force,
@@ -373,11 +398,19 @@ pub async fn preview(
     };
     let assembled = crate::server::prompts::assemble_memory_sections(&pinned, &facts, memory_budget);
     let soul_path = state.home.soul_path();
-    let selected = super::skills::resolve(
-        &state,
-        session.as_ref().map(|s| s.selected_skills.as_slice()).unwrap_or(&[]),
-    )?;
-    let pinned_ids = session.as_ref().map(|s| s.pinned_ids_for(&owner)).unwrap_or_default();
+    let selected = if portal_auditor {
+        Vec::new()
+    } else {
+        super::skills::resolve(
+            &state,
+            session.as_ref().map(|s| s.selected_skills.as_slice()).unwrap_or(&[]),
+        )?
+    };
+    let pinned_ids = if portal_auditor {
+        Vec::new()
+    } else {
+        session.as_ref().map(|s| s.pinned_ids_for(&owner)).unwrap_or_default()
+    };
     crate::server::retrieval::refuse_forbidden_attachments(
         crate::server::retrieval::RetrievalSurface::PromptPreview,
         &req.attachment_ids,
@@ -390,15 +423,31 @@ pub async fn preview(
         .cloned()
         .collect();
     let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
-    let attachment_fence = crate::server::retrieval::assemble_local_untrusted(
-        crate::server::retrieval::RetrievalSurface::PromptPreview,
-        &state.attachments,
-        &state.notes_corpus,
-        &owner,
-        &ids,
-        req.retrieve_query.as_deref(),
-    )
-    .map_err(|e| crate::server::attachments::upload_error(&e))?;
+    let attachment_fence = if portal_auditor {
+        String::new()
+    } else {
+        crate::server::retrieval::assemble_local_untrusted(
+            crate::server::retrieval::RetrievalSurface::PromptPreview,
+            &state.attachments,
+            &state.notes_corpus,
+            &owner,
+            &ids,
+            req.retrieve_query.as_deref(),
+        )
+        .map_err(|e| crate::server::attachments::upload_error(&e))?
+    };
+    // Shown, not consumed: the next local chat turn of this session takes it.
+    let diag = match session.as_ref() {
+        Some(session) => state
+            .diag
+            .for_turn(
+                &owner,
+                &session.session_id,
+                crate::server::diag_reader::Surface::Preview,
+            )
+            .map_err(|e| super::diag::diag_error(&e))?,
+        None => None,
+    };
     let inputs = PromptInputs {
         selected_skills: &selected,
         soul_enabled: settings.soul_enabled,
@@ -411,20 +460,27 @@ pub async fn preview(
         memory_context: Some(&pinned),
         selected_facts_context: Some(&facts),
         memory_budget,
-        memory_enabled: settings.memory_enabled,
-        auto_suggest_chat: crate::server::structured_memory_suggest::available(
-            &state,
-            crate::server::structured_memory_suggest::Source::Chat,
-        ),
-        auto_suggest_coding: crate::server::structured_memory_suggest::available(
-            &state,
-            crate::server::structured_memory_suggest::Source::Coding,
-        ),
-        chat_web_mode: session
-            .as_ref()
-            .map_or(settings.web_enabled.into(), |s| s.chat_web_mode(settings.web_enabled)),
+        memory_enabled: settings.memory_enabled && !portal_auditor,
+        auto_suggest_chat: !portal_auditor
+            && crate::server::structured_memory_suggest::available(
+                &state,
+                crate::server::structured_memory_suggest::Source::Chat,
+            ),
+        auto_suggest_coding: !portal_auditor
+            && crate::server::structured_memory_suggest::available(
+                &state,
+                crate::server::structured_memory_suggest::Source::Coding,
+            ),
+        chat_web_mode: if portal_auditor {
+            crate::server::sessions::GoalWebMode::Off
+        } else {
+            session
+                .as_ref()
+                .map_or(settings.web_enabled.into(), |s| s.chat_web_mode(settings.web_enabled))
+        },
         web_enabled: settings.web_enabled,
         attachment_fence: Some(attachment_fence.as_str()),
+        diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
     };
     let composed = crate::server::prompts::compose_system_prompt_detailed(&inputs);
     let prompt = composed.prompt;
@@ -453,6 +509,7 @@ pub async fn preview(
             "unavailable_reason": style_load.as_ref().and_then(|load| load.unavailable_reason),
         },
         "candidate":req.soul_content.is_some(),
+        "diag": diag.as_ref().map(|staged| json!({"source":"diag","file":staged.file,"chars":staged.chars,"sha256":staged.sha256})),
         "limits":{"goal":2000,"web":4000,"memory":3000,"pinned_reserved":memory_budget.pinned_reserved,"facts_reserved":memory_budget.facts_reserved,"soul":max_chars(&state)},
         "structured_facts":{
             "explicit_recall": crate::server::structured_memory::recall_available(&state.cfg, state.structured_memory.is_some(), &crate::server::structured_memory::current_gates(&state)),

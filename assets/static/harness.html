@@ -1937,6 +1937,9 @@ const COMMANDS = [
   ['/api [set <KEY> <value>|clear <KEY>]', 'inspect or edit managed credentials; prefer API Keys password fields'],
   ['/clear', 'clear visible output, staged reviews and chat continuation; saved sessions remain'],
   ['/connectors', 'connector catalog'],
+  ['/diag [status]', 'log inspection state: gate, allowlisted files, last read and staged excerpt; admin or portal_auditor; off until diagnostics.logs_enabled'],
+  ['/diag audit|spend|unslop|errors [--last N] [--event NAME] [--since DUR] [--rotated]', 'bounded, redacted, scanner-checked tail of one allowlisted log; aliases /diagnostics /logs'],
+  ['/diag inject|forget', 'stage the last read for the next local chat turn of this session, or drop it'],
   ['/github', 'read-only agentic GitHub status'],
   ['/goal [--web off|fetch|all] [text]|clear', 'show, set or clear the session goal'],
   ['/goal stage <branch>', 'explicitly stage the goal as a coding request'],
@@ -2004,6 +2007,7 @@ const HELP_TOPICS = {
   memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory facts','/memory search backup preferences','/memory proposals','/soul status']},
   agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
   tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
+  diag: {title:'Diagnostics', roots:['diag'], note:'Admin and portal_auditor only, and off until diagnostics.logs_enabled is literal true. Reads only allowlisted files under the home logs/ folder; output is redacted and refused whole if the injection scanner matches. Excerpts are untrusted text: /diag inject stages one for your next local chat turn in this session; cloud chat and /agent refuse while one is staged and /loop never gets it.', examples:['/diag','/diag audit --last 20 --event portal.request','/diag errors --since 2h','/diag spend --rotated','/diag inject','/diag forget']},
   settings: {title:'Status & administration', roots:['status','analytics','api','users','help'], note:'Credentials belong in the API Keys password fields, not chat history. Administrator controls remain role- and CSRF-guarded.', examples:['/status','/analytics','/users','/help all']},
 };
 /* `web check https://…` or `memory facts` typed without the leading / goes to
@@ -2081,6 +2085,10 @@ const ARG_MEANINGS = {
   'id...': 'one or more skill ids separated by spaces',
 };
 const FLAG_MEANINGS = {
+  '--last': 'how many of the newest matching log lines to show, 1 to 1000, also capped by diagnostics.logs_max_lines',
+  '--event': 'an exact audit event name such as portal.request; /diag audit only',
+  '--since': 'a window such as 15m, 2h or 1d, at most 30d',
+  '--rotated': 'read the .1 generation of the audit or spend log',
   '--group': 'a named URL group; the operation is scoped to that group',
   '--seed': 'a starting URL for the group; repeat the flag for each one',
   '--url': 'a starting URL for research; repeat the flag for each one',
@@ -2117,6 +2125,9 @@ const COMMAND_MAN = {
   '/api [set <KEY> <value>|clear <KEY>]': {detail:'Alone, shows the credential store and every key masked. set saves a value and clear removes it. Saved values load after a restart, except SERPAPI_API_KEY, which applies at once; an explicit environment variable always wins.', notes:['A secret typed here lands in chat history. The API Keys pane’s password fields do not.']},
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
+  '/diag [status]': {detail:'Shows whether log inspection is on, each allowlisted file with size and modification time, the limits, your last read and any staged excerpt. Needs an admin or portal_auditor account; DIAG_DISABLED means diagnostics.logs_enabled is not literal true.', notes:['Nothing here reads file content.'], examples:['/diag']},
+  '/diag audit|spend|unslop|errors [--last N] [--event NAME] [--since DUR] [--rotated]': {detail:'Reads the tail of one allowlisted log: audit.jsonl, spend.jsonl, unslop.jsonl, or audit rows whose outcome, error_class, code, ok or status field records a failure (errors). Partial and malformed lines are dropped and counted, never echoed. The text is redacted and refused whole on an injection-scanner hit.', notes:['File names come from diagnostics.logs_allowed_files; no path is accepted.','--confirm and --dry-run are refused: nothing here authorizes anything.'], examples:['/diag audit --last 20','/diag audit --event mcp_refused --since 1d','/diag errors --since 2h','/diag spend --rotated --last 50','/diag unslop']},
+  '/diag inject|forget': {detail:'inject stages your last /diag read, clipped to diagnostics.logs_inject_max_chars, for the next local chat turn of this session, fenced as untrusted log text; /prompt shows it. That turn consumes it; a turn in another session, /clear, logout or an account change drops it. Cloud chat and /agent refuse while one is staged; /loop never receives it. forget drops it.', examples:['/diag inject','/diag forget']},
   '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
   '/goal [--web off|fetch|all] [text]|clear': {detail:'Alone, shows this session’s goal. With text, sets it (up to ' + MAX_GOAL_CHARS + ' characters), creating a session if none is open. Prefix --web off, --web fetch or --web all to set the chat web tools of every turn in this session while the goal is set; without it the configured web.goal_web_default applies (ships all: search plus permitted pages). --web with no text changes only the mode of the stored goal. clear removes it and stops chat continuation.', args:{text:'the goal, in plain words'}},
   '/goal stage <branch>': {detail:'Turns the session goal into a staged coding request on that branch. It still needs /agent confirm <reason>.'},
@@ -3685,6 +3696,44 @@ async function runSlash(line, webCommand) {
         }
         selectSideTab('netconnect');
         await showNetconnect();
+        break;
+      }
+
+      case 'diag': {
+        /* The server parser maps the line to a fixed action and an allowlisted
+           file name; only those fields are sent, never a path or argv. */
+        const parsed = await api('/api/slash/parse', 'POST', {line});
+        if (staleReview()) break;
+        const d = parsed && parsed.dispatch ? parsed.diag : null;
+        if (!d) { sys(parsed.notice || 'Command not dispatched; use /diag help.'); break; }
+        if (d.action === 'help') { sys(renderHelp('diag')); break; }
+        if (d.action === 'status') {
+          const s = await api('/api/diag');
+          const rows = (s.files || []).map(f => [f.file, f.present ? String(f.bytes) + ' bytes · ' + String(f.modified || '') : 'absent']);
+          rows.push(['limits', s.limits.max_lines + ' lines · ' + s.limits.max_bytes + ' bytes · inject ' + s.limits.inject_max_chars + ' chars']);
+          rows.push(['last read', s.last ? s.last.file + ' · ' + s.last.lines_returned + ' lines · sha256 ' + String(s.last.sha256).slice(0, 12) : '(none)']);
+          rows.push(['staged', s.staged ? s.staged.file + ' · ' + s.staged.chars + ' chars · session ' + s.staged.session_id : '(none)']);
+          sys(table(rows, ['diagnostics', 'state']), s.surfaces);
+          break;
+        }
+        if (d.action === 'inject') {
+          if (!currentSession) { sys('no active session; send a message or /session new first'); break; }
+          const r = await api('/api/diag/inject', 'POST', {session_id: currentSession});
+          sys('Staged ' + r.file + ' (' + r.chars + ' chars, sha256 ' + String(r.sha256).slice(0, 12) + ') for the next local chat turn of this session.', r.note);
+          break;
+        }
+        if (d.action === 'forget') {
+          const r = await api('/api/diag/forget', 'POST');
+          sys(r.cleared ? 'Cleared the staged /diag excerpt.' : 'No /diag excerpt was staged.');
+          break;
+        }
+        const q = new URLSearchParams({file: d.file});
+        if (d.last) q.set('last', String(d.last));
+        if (d.event) q.set('event', d.event);
+        if (d.since) q.set('since', d.since);
+        if (d.errors) q.set('errors', 'true');
+        const r = await api('/api/diag/read?' + q.toString());
+        sys(r.text || '(no matching lines)', r.file + ' · ' + r.lines_returned + ' lines · ' + r.lines_filtered + ' filtered · ' + r.malformed + ' malformed lines omitted · ' + r.bytes_read + ' bytes read' + (r.truncated ? ' · truncated' : '') + ' · redacted · sha256 ' + String(r.sha256).slice(0, 12) + ' · untrusted log text; /diag inject stages it');
         break;
       }
 

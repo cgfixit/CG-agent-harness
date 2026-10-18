@@ -107,7 +107,12 @@ legacy key-required mode is deprecated and ignored. Forwarded requests are refus
 Every API request passes rate limiting, exact same-origin and direct loopback
 checks. Operational reads and writes also need an enabled account and its
 server-side role. Mutations need the CSRF header/token; only
-status/static/login/setup-status are public, and none sets a password. A fresh
+status/static/login/setup-status are public, and none sets a password.
+`portal_auditor` reaches only local chat in its own sessions, prompt preview,
+`/api/audit` and `/diag` (`guards::portal_auditor_may`); its chat withholds
+memory, attachments, notes, skills, web tools, cloud, loops and model choice,
+including data owned under an earlier role. Storing that role first moves the
+account database to schema 2, which older binaries refuse. A fresh
 `admin` signs in with a one-time code in the owner-only `<home>/setup-code`
 (never shipped, never page content); older `admin`/`admin` and pending-password
 homes rotate to one at startup. Until replaced, any client (console, HTTP, CLI)
@@ -175,7 +180,8 @@ by the owned sidecar's private handshake. No global TLS bypass or root installat
 Cookies are Secure over HTTPS, HttpOnly and SameSite=Strict, including clearing.
 
 Locked by `tests/auth_guards.rs`, `tests/secure_portal.rs`,
-`tests/security_headers.rs`, transport/account units and native trust checks.
+`tests/security_headers.rs`, `tests/diag_routes.rs`, transport/account units
+and native trust checks.
 See [migration and operation](docs/SECURE_RESEARCH.md).
 
 ## Public web evidence requires current content permission
@@ -773,6 +779,26 @@ Audits contain recognized tools, public IDs and coarse outcomes, never content.
 All gateway settings remain restart-only, outside the 23-key reload allowlist.
 Remote exposure needs the deployment acceptance in `docs/MCP_SERVER.md`; nothing
 here opens a LAN/public service or tunnel.
+
+## /diag log inspection never widens authority
+
+`diagnostics.logs_enabled` is literal-true, default-off and restart-only. Routes
+need it and an `admin` or `portal_auditor` account: `DIAG_DISABLED` or
+`DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry
+byte for byte (bare names, distinct after case folding, checked at boot); the
+server joins that entry to `<home>/logs/`. Reads refuse linked or non-private
+leaves, stay within `logs_max_bytes` of the tail, drop partial lines, count
+malformed ones, redact, then refuse the whole result on a scanner hit. Windows
+refuses. `/diag inject` stages the last read in memory for the next local chat
+turn of that session, fenced as untrusted; cloud chat and `/agent` refuse while
+staged (`DIAG_SURFACE_FORBIDDEN`), `/loop` never receives it, and clear, logout
+or account changes drop it. Audits hold names, counts, hashes and codes, never
+log text. Chat still exposes exactly two model tools; `diagnostics.model_tool`
+registers nothing.
+
+- Locked by: `server::diag_reader` and `server::slash` tests, `tests/diag_routes.rs`,
+  `invariant_guard::diag_reads_only_named_files_under_home_logs` and
+  `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 
 ## Netconnect is fail-closed and LAN-scoped
 

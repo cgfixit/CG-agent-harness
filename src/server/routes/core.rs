@@ -324,6 +324,7 @@ pub async fn clear_sessions(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
     crate::server::structured_memory_suggest::clear_chat_queue(&state, &owner);
+    state.diag.forget(&owner);
     let _ = state.chat_owner.cancel_with(&owner, || state.abort_chat());
     let deleted = state
         .store
@@ -611,6 +612,31 @@ pub async fn chat(
     super::sse_from_channel(receiver, task)
 }
 
+/// `portal_auditor` chats with the selected local model only: no cloud, loop,
+/// model override, attachments or memory selection. Context the account owned
+/// under an earlier role is withheld in `chat_inner`, not merely unreachable.
+fn refuse_portal_auditor_extras(req: &ChatRequest, current_model: &str, cloud_selected: bool) -> ApiResult<()> {
+    let model_override = req
+        .model
+        .as_deref()
+        .is_some_and(|m| !m.trim().is_empty() && m != current_model);
+    if cloud_selected
+        || req.loop_turn
+        || model_override
+        || !req.attachment_ids.is_empty()
+        || req.retrieve
+        || req.retrieve_query.is_some()
+        || req.selected_facts.is_some()
+    {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "AUTH_PERMISSION_DENIED",
+            "portal_auditor chat is local-only, without loops, model selection, attachments or memory",
+        ));
+    }
+    Ok(())
+}
+
 /// How long a chat turn waits for a preempted memory suggestion to release the
 /// local model. Preemption aborts the suggestion's HTTP call, so the release
 /// normally takes milliseconds; the bound only covers a stalled store write.
@@ -660,6 +686,12 @@ async fn chat_inner(
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| state.current_model());
     let cloud_selected = state.cloud_chat.is_cloud_selection(&model);
+    let portal_auditor = user
+        .as_ref()
+        .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE);
+    if portal_auditor {
+        refuse_portal_auditor_extras(&req, &state.current_model(), cloud_selected)?;
+    }
     if cloud_selected && req.loop_turn {
         return Err(loop_error(
             "CLOUD_CHAT_LOOP",
@@ -669,9 +701,13 @@ async fn chat_inner(
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
     // Web tools need web on and a model that can take them (auto_tune may have
     // found it declares none, or that no web-chat prompt fits its window).
-    let chat_web_mode = session.chat_web_mode(settings.web_enabled && !state.chat_tools_unsupported(&model));
+    let chat_web_mode = if portal_auditor {
+        crate::server::sessions::GoalWebMode::Off
+    } else {
+        session.chat_web_mode(settings.web_enabled && !state.chat_tools_unsupported(&model))
+    };
     let chat_tools = chat_web_mode.enabled();
-    let selected_skills = if cloud_selected {
+    let selected_skills = if cloud_selected || portal_auditor {
         Vec::new()
     } else {
         super::skills::resolve(&state, &session.selected_skills)?
@@ -807,23 +843,41 @@ async fn chat_inner(
     } else {
         crate::server::retrieval::RetrievalSurface::LocalChat
     };
-    let live_pins: Vec<String> = session
-        .pinned_ids_for(&owner)
-        .into_iter()
-        .filter(|id| state.attachments.owned_blob(&owner, id).is_some())
-        .collect();
+    let live_pins: Vec<String> = if portal_auditor {
+        Vec::new()
+    } else {
+        session
+            .pinned_ids_for(&owner)
+            .into_iter()
+            .filter(|id| state.attachments.owned_blob(&owner, id).is_some())
+            .collect()
+    };
     crate::server::retrieval::refuse_forbidden_attachments(surface, &req.attachment_ids, &live_pins)
         .map_err(|e| attachments::upload_error(&e))?;
-    let web_context = if cloud_selected {
+    // A staged /diag excerpt: consumed by this local turn, withheld from /loop,
+    // refused on cloud chat (never silently dropped).
+    let diag_surface = match surface {
+        crate::server::retrieval::RetrievalSurface::CloudChat => crate::server::diag_reader::Surface::CloudChat,
+        crate::server::retrieval::RetrievalSurface::Loop => crate::server::diag_reader::Surface::Loop,
+        _ => crate::server::diag_reader::Surface::LocalChat,
+    };
+    let diag = state
+        .diag
+        .for_turn(&owner, &session.session_id, diag_surface)
+        .map_err(|e| super::diag::diag_error(&e))?;
+    let web_context = if cloud_selected || portal_auditor {
         String::new()
     } else {
         web.context_text(session.chat_web_mode(settings.web_enabled).enabled(), &owner)
     };
-    let selections = req
-        .selected_facts
-        .as_ref()
-        .map(|items| super::structured_memory::selections_from_items(items))
-        .unwrap_or_else(|| session.selected_facts.clone());
+    let selections = if portal_auditor {
+        Vec::new()
+    } else {
+        req.selected_facts
+            .as_ref()
+            .map(|items| super::structured_memory::selections_from_items(items))
+            .unwrap_or_else(|| session.selected_facts.clone())
+    };
     let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
     // Clients may abbreviate loop reminders; retrieve against the full stored goal.
     let attachment_query = if req.loop_turn {
@@ -831,15 +885,21 @@ async fn chat_inner(
     } else {
         req.message.clone()
     };
-    let attachment_fence = crate::server::retrieval::assemble_local_untrusted(
-        surface,
-        &state.attachments,
-        &state.notes_corpus,
-        &owner,
-        &ids,
-        Some(attachment_query.as_str()),
-    )
-    .map_err(|e| attachments::upload_error(&e))?;
+    // portal_auditor gets no attachment or notes-corpus bytes, including any it
+    // owned under an earlier role.
+    let attachment_fence = if portal_auditor {
+        String::new()
+    } else {
+        crate::server::retrieval::assemble_local_untrusted(
+            surface,
+            &state.attachments,
+            &state.notes_corpus,
+            &owner,
+            &ids,
+            Some(attachment_query.as_str()),
+        )
+        .map_err(|e| attachments::upload_error(&e))?
+    };
     // Fact recall and retrieval read SQLite: run them off the async worker.
     let (pinned, facts, memory_budget, recalled, retrieval_error) = {
         let (state, owner, selections) = (state.clone(), owner.clone(), selections.clone());
@@ -851,13 +911,14 @@ async fn chat_inner(
             req.message.clone()
         };
         let (force, query) = (req.retrieve, req.retrieve_query.clone());
-        let memory_enabled = settings.memory_enabled;
+        let memory_enabled = settings.memory_enabled && !portal_auditor;
         super::structured_memory::off_worker(move || {
             super::structured_memory::prompt_memory(
                 &state,
                 &owner,
                 memory_enabled,
-                cloud_selected,
+                // Withheld context, as for cloud: portal_auditor reads no memory.
+                cloud_selected || portal_auditor,
                 &selections,
                 crate::server::structured_memory::RetrievalIntent {
                     force,
@@ -885,12 +946,13 @@ async fn chat_inner(
             memory_context: Some(&pinned),
             selected_facts_context: Some(&facts),
             memory_budget,
-            memory_enabled: settings.memory_enabled,
-            auto_suggest_chat: crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Chat),
-            auto_suggest_coding: crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Coding),
+            memory_enabled: settings.memory_enabled && !portal_auditor,
+            auto_suggest_chat: !portal_auditor && crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Chat),
+            auto_suggest_coding: !portal_auditor && crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Coding),
             chat_web_mode,
             web_enabled: settings.web_enabled,
             attachment_fence: Some(attachment_fence.as_str()),
+            diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
         })
     };
     let max_tokens = if req.loop_turn {
@@ -1381,7 +1443,9 @@ async fn chat_inner(
             "normal"
         }
     };
-    let episode = {
+    let episode = if portal_auditor {
+        json!({"available": false, "staged": false, "reason": "portal_auditor"})
+    } else {
         let (state, owner, model) = (state.clone(), owner.clone(), reply.model.clone());
         let (user_chars, assistant_chars) = (req.message.chars().count(), reply.body_text.chars().count());
         super::structured_memory::off_worker(move || {
@@ -1393,6 +1457,8 @@ async fn chat_inner(
     // bounded suggestion queue with repeats of the same goal.
     let memory_suggestion = if req.loop_turn {
         json!({"queued": false, "reason": "loop_turn"})
+    } else if portal_auditor {
+        json!({"queued": false, "reason": "portal_auditor"})
     } else {
         crate::server::structured_memory_suggest::enqueue_for_model(
             &state,

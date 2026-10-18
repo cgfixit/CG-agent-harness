@@ -18,6 +18,7 @@ pub mod config_reload;
 pub mod console;
 #[cfg(unix)]
 pub mod desktop;
+pub mod diag_reader;
 mod docx;
 pub mod env_keys;
 pub mod errors;
@@ -263,6 +264,7 @@ pub async fn build_app_with_sources(
     let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
     let attachments = crate::server::attachments::AttachmentStore::open(&home.attachments_dir())?;
     let notes_limits = crate::server::notes_corpus::NotesLimits::from_config(&cfg)?;
+    let diag = crate::server::diag_reader::DiagState::new(&cfg)?;
     let notes_ingest_permits = Arc::new(tokio::sync::Semaphore::new(notes_limits.max_concurrent_ingests));
     let notes_corpus = crate::server::notes_corpus::NotesCorpus::open(&home.notes_corpus_dir(), notes_limits)?;
     // Startup recovery: files left behind when a crash cut off the manifest
@@ -315,6 +317,7 @@ pub async fn build_app_with_sources(
         store,
         attachments,
         notes_corpus,
+        diag,
         notes_ingest_permits,
         upload_permits,
         upload_body_timeout,
