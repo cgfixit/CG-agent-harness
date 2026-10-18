@@ -886,6 +886,8 @@ async fn chat_inner(
             selected_facts_context: Some(&facts),
             memory_budget,
             memory_enabled: settings.memory_enabled,
+            auto_suggest_chat: crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Chat),
+            auto_suggest_coding: crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Coding),
             chat_web_mode,
             web_enabled: settings.web_enabled,
             attachment_fence: Some(attachment_fence.as_str()),
