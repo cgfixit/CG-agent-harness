@@ -71,6 +71,26 @@ pub async fn status(
             json!({"version":crate::VERSION,"auth_enabled":true,"api_key_optional":true,"status":"login required for operational details"}),
         );
     }
+    // portal_auditor learns which model it chats with, not paths, backend URL,
+    // persona or memory state.
+    if user
+        .as_ref()
+        .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE)
+    {
+        let model = state.current_model();
+        let sessions = state.store.for_owner(&owner).list();
+        return Json(json!({
+            "version": crate::VERSION,
+            "auth_enabled": state.auth.is_some(),
+            "model": model,
+            "provider": state.provider_for(&model),
+            "chat_mode": "conversation",
+            "soul_enabled": false,
+            "memory_enabled": false,
+            "chat_tools_available": false,
+            "sessions": sessions.len(),
+        }));
+    }
     let sessions = state.store.for_owner(&owner).list();
     let total_tokens: u64 = sessions.iter().filter_map(|s| s["tokens"]["total"].as_u64()).sum();
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
@@ -1114,7 +1134,7 @@ async fn chat_inner(
     } else {
         compose_system_prompt(&PromptInputs {
             selected_skills: &selected_skills,
-            soul_enabled: settings.soul_enabled,
+            soul_enabled: settings.soul_enabled && !portal_auditor,
             soul_override: None,
             soul_path: &state.home.soul_path(),
             soul_max_chars: crate::server::prompts::effective_soul_max_chars(

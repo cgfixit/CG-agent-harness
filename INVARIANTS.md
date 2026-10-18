@@ -109,9 +109,10 @@ checks. Operational reads and writes also need an enabled account and its
 server-side role. Mutations need the CSRF header/token; only
 status/static/login/setup-status are public, and none sets a password.
 `portal_auditor` reaches only local chat in its own sessions, prompt preview,
-`/api/audit` and `/diag` (`guards::portal_auditor_may`); its chat withholds
-memory, attachments, notes, skills, web tools, cloud, loops and model choice,
-including data owned under an earlier role. Storing that role first moves the
+`/api/audit` and `/diag` (`guards::portal_auditor_may`); its chat and preview
+withhold persona, memory, attachments, notes, skills, web tools, cloud,
+loops and model choice, including earlier-role data;
+`/api/status` names only the model. Storing that role first moves the
 account database to schema 2, which older binaries refuse. A fresh
 `admin` signs in with a one-time code in the owner-only `<home>/setup-code`
 (never shipped, never page content); older `admin`/`admin` and pending-password

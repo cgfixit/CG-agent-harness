@@ -401,6 +401,12 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     let (status, session) = json_call(&s, &portal, Method::POST, "/api/sessions", Some(json!({"title":"p"}))).await;
     assert_eq!(status, 201, "{session}");
     let sid = session["session_id"].as_str().unwrap().to_string();
+    std::fs::write(s.home.join("soul.md"), "SHARED-PERSONA-MARKER").unwrap();
+    let (status, body) = json_call(&s, &portal, Method::GET, "/api/status", None).await;
+    assert_eq!(status, 200, "{body}");
+    for key in ["home", "layout", "base_url", "soul", "model_status"] {
+        assert!(body.get(key).is_none(), "status exposes {key}: {body}");
+    }
     let (status, body) = json_call(
         &s,
         &portal,
@@ -412,6 +418,10 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["memory_suggestion"]["reason"], "portal_auditor");
     let request = model.last_request().unwrap();
+    assert!(!request["messages"][0]["content"]
+        .as_str()
+        .unwrap_or("")
+        .contains("SHARED-PERSONA-MARKER"));
     assert!(request
         .get("tools")
         .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
@@ -459,6 +469,7 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     )
     .await;
     assert_eq!(status, 200, "{body}");
+    assert!(!body.to_string().contains("SHARED-PERSONA-MARKER"), "{body}");
     let (status, body) = json_call(
         &s,
         &portal,

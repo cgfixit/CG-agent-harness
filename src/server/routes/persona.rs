@@ -331,8 +331,8 @@ pub async fn preview(
     ValidJson(req): ValidJson<PreviewRequest>,
 ) -> ApiResult<PrivateJson> {
     let owner = super::auth::context_owner(user.clone());
-    // portal_auditor previews the prompt its chat would get: no persona
-    // candidate, memory, attachments, skills or web context.
+    // portal_auditor previews the prompt its chat would get: no persona,
+    // memory, attachments, skills or web context.
     let portal_auditor = user
         .as_ref()
         .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE);
@@ -450,7 +450,7 @@ pub async fn preview(
     };
     let inputs = PromptInputs {
         selected_skills: &selected,
-        soul_enabled: settings.soul_enabled,
+        soul_enabled: settings.soul_enabled && !portal_auditor,
         soul_path: &soul_path,
         soul_max_chars: max_chars(&state),
         soul_override: req.soul_content.as_deref(),
@@ -496,7 +496,7 @@ pub async fn preview(
         .collect();
     Ok(private(
         json!({"prompt":prompt,"discipline_sections":[],"selected_skill_sections":sections,
-        "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled, max_chars(&state)),
+        "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled && !portal_auditor, max_chars(&state)),
         // The effective load state, not just the persisted name: an overlay
         // that was deleted, made unreadable, oversized or now trips the
         // injection scanner is omitted from the prompt, and the preview says

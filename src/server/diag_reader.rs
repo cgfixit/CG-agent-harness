@@ -212,9 +212,13 @@ pub struct FileStatus {
 
 pub fn file_status(logs_dir: &Path, name: &str) -> FileStatus {
     // Callers pass boot-validated allowlist entries; re-check so a name that is
-    // not a bare file name never reaches the filesystem.
-    let meta = bare_file_name(name)
-        .then(|| std::fs::symlink_metadata(logs_dir.join(name)).ok())
+    // not a bare file name never reaches the filesystem. CodeQL
+    // rust/path-injection treats `contains("..") == false` as a barrier; the
+    // home is operator-set, but a traversing one is refused here anyway.
+    let path = logs_dir.join(name);
+    let raw = path.to_string_lossy();
+    let meta = (bare_file_name(name) && !raw.contains(".."))
+        .then(|| std::fs::symlink_metadata(Path::new(raw.as_ref())).ok())
         .flatten()
         .filter(|m| m.is_file());
     FileStatus {
@@ -372,7 +376,8 @@ fn finish(
 }
 
 /// The excerpt as staged for a prompt: the untrusted header, a metadata line
-/// and the newest whole lines that fit `max_chars`.
+/// and the newest whole lines that fit, so the whole block stays within
+/// `max_chars` (the boot floor of 512 leaves room for the header).
 pub fn prompt_block(result: &DiagResult, max_chars: usize) -> String {
     let mut lines: Vec<&str> = result.text.lines().collect();
     let mut body = lines.join("\n");
@@ -380,6 +385,17 @@ pub fn prompt_block(result: &DiagResult, max_chars: usize) -> String {
         lines.remove(0);
         body = lines.join("\n");
     }
+    loop {
+        let block = format_block(result, &lines, &body);
+        if block.chars().count() <= max_chars || lines.is_empty() {
+            return block;
+        }
+        lines.remove(0);
+        body = lines.join("\n");
+    }
+}
+
+fn format_block(result: &DiagResult, lines: &[&str], body: &str) -> String {
     let clipped = lines.len() < result.lines_returned;
     format!(
         "{UNTRUSTED_HEADER}\n### diag file={}, lines={}, filtered={}, malformed={} lines omitted, truncated={}, \
@@ -390,7 +406,7 @@ pub fn prompt_block(result: &DiagResult, max_chars: usize) -> String {
         result.malformed,
         result.truncated || clipped,
         result.generated_at,
-        crate::common::sha256_hex(&body),
+        crate::common::sha256_hex(body),
     )
 }
 
@@ -771,7 +787,8 @@ mod tests {
             .join("\n")
             + "\n";
         let out = run(&text, false, ReadFilter::default()).unwrap();
-        let block = prompt_block(&out, 100);
+        let block = prompt_block(&out, 600);
+        assert!(block.chars().count() <= 600, "the header counts against the cap");
         assert!(block.starts_with(UNTRUSTED_HEADER));
         assert!(block.contains("source=diag") && block.contains("truncated=true"));
         assert!(block.contains("e49") && !block.contains("\"e0\""));
