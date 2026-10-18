@@ -856,6 +856,7 @@ async fn chat_inner(
         super::skills::resolve(&state, &session.selected_skills)?
     };
 
+    let sized_tuned = state.tuning_for(&model).is_some();
     // A tuned model's caps follow the window Ollama reports right now, read
     // fresh before they are computed (a no-op for an untuned model).
     if !cloud_selected {
@@ -1276,7 +1277,7 @@ async fn chat_inner(
                 // The summary is a model call too: check the window first and
                 // size its input to the model's cap, not the 32768 default.
                 state
-                    .ensure_window_allows(&model, turn_prompt_limit, 0)
+                    .ensure_window_allows(&model, turn_prompt_limit, 0, sized_tuned)
                     .await
                     .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
                 let pinned = crate::server::compaction::PinnedContext {
@@ -1358,11 +1359,11 @@ async fn chat_inner(
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
     let spend_source = if req.loop_turn { "loop" } else { "chat" };
     // Compaction can take a while: the window must still allow what this turn
-    // was sized for before the reply is requested (a no-op within the defaults).
+    // was sized for before the reply is requested, even if tuning was cleared.
     if !cloud_selected {
         let web_total = if chat_tools { web.limits.total_tokens } else { 0 };
         state
-            .ensure_window_allows(&model, turn_prompt_limit, web_total)
+            .ensure_window_allows(&model, turn_prompt_limit, web_total, sized_tuned)
             .await
             .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
     }
@@ -1397,6 +1398,7 @@ async fn chat_inner(
             temperature,
             ratio,
             chat_web_mode,
+            sized_tuned,
             output,
         )
         .await

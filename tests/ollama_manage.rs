@@ -438,6 +438,52 @@ async fn research_preload_keeps_the_model_for_both_phase_budgets() {
 }
 
 #[tokio::test]
+async fn cleared_small_window_tuning_still_checks_the_live_window() {
+    let ollama = start_native_ollama().await;
+    *ollama.longctx_window.lock().unwrap() = 16_384;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.model", "longctx:q8")
+            .with("models.local_llm.auto_tune", "true"),
+    )
+    .await;
+    wait_for_tuning(&s, 16_384).await;
+    let prompt_cap = s.state.prompt_cap("longctx:q8");
+    assert_eq!(prompt_cap, 15_000);
+    s.state.set_tuning(None);
+    *ollama.longctx_window.lock().unwrap() = 8_192;
+    let refused = s
+        .state
+        .ensure_window_allows("longctx:q8", prompt_cap, 0, true)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED");
+    assert!(ollama.chats.lock().unwrap().is_empty());
+    let refused = s
+        .state
+        .ensure_window_allows("longctx:q8", 0, 16_000, true)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED");
+    *ollama.longctx_window.lock().unwrap() = 16_384;
+    s.state
+        .ensure_window_allows("longctx:q8", prompt_cap, 16_000, true)
+        .await
+        .unwrap();
+    *ollama.longctx_window.lock().unwrap() = 0;
+    assert!(s
+        .state
+        .ensure_window_allows("longctx:q8", 1_000, 0, true)
+        .await
+        .is_err());
+    s.state
+        .ensure_window_allows("longctx:q8", 30_000, 32_000, false)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow_budgets() {
     let ollama = start_native_ollama().await;
     // Raised past the old 32000 / 30000 code caps; untuned, the caps still hold them.
@@ -499,13 +545,19 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     *ollama.longctx_window.lock().unwrap() = 65536;
     let state = &s.state;
     state
-        .ensure_window_allows("longctx:q8", 48_000, 56_000)
+        .ensure_window_allows("longctx:q8", 48_000, 56_000, true)
         .await
         .expect("65536 still loaded");
     *ollama.longctx_window.lock().unwrap() = 32768;
-    let refused = state.ensure_window_allows("longctx:q8", 48_000, 0).await.unwrap_err();
+    let refused = state
+        .ensure_window_allows("longctx:q8", 48_000, 0, true)
+        .await
+        .unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
-    let refused = state.ensure_window_allows("longctx:q8", 0, 56_000).await.unwrap_err();
+    let refused = state
+        .ensure_window_allows("longctx:q8", 0, 56_000, true)
+        .await
+        .unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
     // Reloaded below the defaults: the caps shrink to the reported 16384, and a
     // call sized for the 30000 default is refused rather than truncated.
@@ -513,7 +565,10 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     let (_, small) = s.get_json("/api/ollama/profile").await;
     assert_eq!(small["in_force"]["prompt_cap"], 15000, "{small}");
     assert_eq!(small["in_force"]["web_total_ceiling"], 16000, "{small}");
-    let refused = state.ensure_window_allows("longctx:q8", 30_000, 0).await.unwrap_err();
+    let refused = state
+        .ensure_window_allows("longctx:q8", 30_000, 0, true)
+        .await
+        .unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
     // Ollama restarted with a 16384 default and has not reloaded the model.
     // The profile only reads: no load, and the defaults while it is not resident.
@@ -530,7 +585,7 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     // The check before a model call (under the caller's generation gate) loads it
     // with the warmup request and reads the window it now serves.
     state
-        .ensure_window_allows("longctx:q8", 15_000, 0)
+        .ensure_window_allows("longctx:q8", 15_000, 0, true)
         .await
         .expect("15000 fits the reloaded 16384 window");
     let loads = ollama.generates.lock().unwrap()[before..].to_vec();
@@ -546,7 +601,10 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     // 32768 defaults: the model was measured, so an unknown window is a failure.
     *ollama.longctx_window.lock().unwrap() = 0;
     *ollama.longctx_load_window.lock().unwrap() = 0;
-    let refused = state.ensure_window_allows("longctx:q8", 1_000, 0).await.unwrap_err();
+    let refused = state
+        .ensure_window_allows("longctx:q8", 1_000, 0, true)
+        .await
+        .unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
     assert!(refused.message.contains("even after loading it"), "{refused:?}");
     // The load under the gate refuses on its own failure, after one attempt, so
@@ -560,16 +618,19 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     *ollama.longctx_window.lock().unwrap() = 32768;
     let tuning = state.tuning_for("longctx:q8").expect("tuned");
     state.set_tuning(None);
-    let refused = state.ensure_window_allows("longctx:q8", 48_000, 0).await.unwrap_err();
+    let refused = state
+        .ensure_window_allows("longctx:q8", 48_000, 0, true)
+        .await
+        .unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
     state
-        .ensure_window_allows("longctx:q8", 30_000, 0)
+        .ensure_window_allows("longctx:q8", 30_000, 0, false)
         .await
         .expect("defaults need no tuning");
     state.set_tuning(Some((*tuning).clone()));
     // A window at the 32768 defaults allows calls sized for them.
     state
-        .ensure_window_allows("longctx:q8", 30_000, 32_000)
+        .ensure_window_allows("longctx:q8", 30_000, 32_000, true)
         .await
         .expect("32768 allows the defaults");
     *ollama.longctx_window.lock().unwrap() = 65536;
@@ -735,6 +796,8 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
         &ollama.openai_url(),
         ServerOptions::default()
             .with("models.local_llm.auto_tune", "true")
+            .with("agentic.enabled", "true")
+            .with("agentic.deepagent_github.enabled", "true")
             .with("api.rate_limit.max_requests", "1000")
             .with("agentic.deepagent_github.base_url", &planner_url),
     )
@@ -745,7 +808,7 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
     let run = json!({"instruction": "fix the parser", "branch": "claude/parser-fix",
         "commit_message": "fix: parser", "reason": "triage", "max_iterations": 10,
         "checks": ["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]});
-    let (status, resp) = s.post_json("/api/agent/run", run).await;
+    let (status, resp) = s.post_json("/api/agent/run", run.clone()).await;
     assert_eq!(status, 422, "{resp}");
     let details = &resp["detail"]["details"];
     // Budgeted with 180 s per planner call instead of the configured 720.
@@ -754,6 +817,25 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
     assert_eq!(details["estimated_sec"], budget(180, 10), "{resp}");
     assert_eq!(details["max_iterations_that_fit"], fit(180), "{resp}");
     assert!(fit(180) > fit(720), "{resp}");
+    // The measured override cannot reach a different planner loaded by the child.
+    let mut changed = s.state.cfg.raw.clone();
+    changed["agentic"]["deepagent_github"]["model"] = "other-model".into();
+    changed["agentic"]["deepagent_github"]["planner_timeout_sec"] = 1200.into();
+    cgagentharness::common::config::AppConfig::write_private(
+        &s.home.join("config.yaml"),
+        &serde_yaml_ng::to_string(&changed).unwrap(),
+    )
+    .unwrap();
+    let mut run = run;
+    run["max_iterations"] = json!(1);
+    run["checks"] = json!(["cargo-fmt"]);
+    let (status, result) = s.post_json("/api/agent/run", run).await;
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["exit_code"], 3, "{result}");
+    assert!(
+        result["stderr"].as_str().unwrap().contains("restart required"),
+        "{result}"
+    );
 }
 
 #[tokio::test]
