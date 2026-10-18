@@ -10,6 +10,12 @@ esac
 codesign --verify --deep --strict "$app"
 plutil -lint "$app/Contents/Info.plist"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Contents/Info.plist")" == com.cgfixit.agent-harness ]]
+version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")"
+build_version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$app/Contents/Info.plist")"
+expected_version="${3:-$version}"
+expected_version="${expected_version#v}"
+[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && "$version" == "$build_version" && "$version" == "$expected_version" ]] \
+  || { echo "Bundle version mismatch: short=$version build=$build_version expected=$expected_version" >&2; exit 1; }
 for binary in cgagentharness cg-agent-harness-desktop; do
   path="$app/Contents/MacOS/$binary"
   [[ -x "$path" ]]
