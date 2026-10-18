@@ -53,6 +53,11 @@ fn options() -> ServerOptions {
 }
 
 async fn select(s: &TestServer, model: &str) {
+    if s.state.cloud_chat.is_cloud_selection(model) {
+        // Memory routing never activates paid chat credentials; selection guards have their own HTTP coverage.
+        s.state.settings.lock().unwrap().selected_model = model.into();
+        return;
+    }
     let (status, response) = s.post_json("/api/model", json!({"model":model})).await;
     assert_eq!(status, 200, "{response}");
 }

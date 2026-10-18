@@ -140,6 +140,7 @@ async fn completed_chat_generates_owner_scoped_pending_drafts_until_explicit_app
     assert!(request.get("tools").is_none());
     assert_eq!(request["temperature"], 0.0);
     assert_eq!(request["max_tokens"], 1024);
+    assert_eq!(request["response_format"], json!({"type":"json_object"}));
     assert!(!request.to_string().contains("FOREIGN_FACT_MUST_NOT_BE_PROMPTED"));
     let payload: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
     assert!(payload.get("facts").is_none());
@@ -276,6 +277,49 @@ async fn invalid_summaries_do_not_consume_the_single_valid_summary_slot() {
         assert_eq!(run.proposal_count, 1);
         assert_eq!(run.rejected_count, 2);
     }
+    assert!(store.list_facts("local").unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn duplicate_insights_fit_one_proposal_slot_and_count_as_rejected() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        options("insights").with("structured_memory.max_proposals_per_owner", "1"),
+    )
+    .await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, "local");
+    let candidate = json!({
+        "action":"add", "category":"insight", "content":"The operator prefers metric units.",
+        "confidence":0.9, "sensitivity":"normal", "source_refs":[id]
+    });
+    let mut duplicate = candidate.clone();
+    duplicate["content"] = json!("  The operator prefers metric units.  ");
+    duplicate["source_refs"] = json!([id, id]);
+    model.set_reply(ok_reply(
+        &json!({"candidates":[candidate, duplicate]}).to_string(),
+        10,
+        20,
+    ));
+    suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&id),
+        "I prefer metric units.",
+        "Acknowledged.",
+    );
+    settled(&s, "local").await;
+    let runs = store.list_consolidation_runs("local").unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].state, "done");
+    assert_eq!(runs[0].candidate_count, 2);
+    assert_eq!(runs[0].rejected_count, 1);
+    assert_eq!(runs[0].proposal_count, 1);
+    let proposals = store.list_pending_proposals("local").unwrap();
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].source_episode_ids, [id]);
     assert!(store.list_facts("local").unwrap().is_empty());
 }
 

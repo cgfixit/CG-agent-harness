@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod cloud_chat;
+pub mod cloud_profile;
 pub mod inventory;
 pub mod ollama;
 pub mod openai_chat;
