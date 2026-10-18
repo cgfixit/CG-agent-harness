@@ -351,7 +351,7 @@ impl AppState {
             };
         }
         if self.probe_window_state(model).await == crate::llm::ollama::LoadedWindow::NotLoaded {
-            self.load_for_window(model).await;
+            self.load_for_window(model, 0).await;
         }
         let Some(window) = self.verified_window(model) else {
             return Err(unreported_window(model));
@@ -378,14 +378,14 @@ impl AppState {
     /// prompt that fits its tuned window is refused before anything wakes it. A
     /// load that leaves the window unreported is refused here, so the check
     /// before the model call does not run the same bounded load a second time.
-    pub async fn load_if_absent(&self, model: &str) -> Result<bool> {
+    pub async fn load_if_absent(&self, model: &str, min_keep_alive_sec: u64) -> Result<bool> {
         if self.tuning_for(model).is_none() || self.verified_window(model).is_some() {
             return Ok(false);
         }
         if self.probe_window_state(model).await != crate::llm::ollama::LoadedWindow::NotLoaded {
             return Ok(false);
         }
-        self.load_for_window(model).await;
+        self.load_for_window(model, min_keep_alive_sec).await;
         match self.verified_window(model) {
             Some(_) => Ok(true),
             None => Err(unreported_window(model)),
@@ -393,11 +393,13 @@ impl AppState {
     }
 
     /// Load `model` with the bounded warmup request, then read its window.
-    async fn load_for_window(&self, model: &str) {
+    async fn load_for_window(&self, model: &str, min_keep_alive_sec: u64) {
         let Some(native) = crate::llm::ollama::native_base_url(&self.chat.base_url) else {
             return;
         };
-        let keep_alive = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
+        let keep_alive = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600)
+            .max(min_keep_alive_sec)
+            .min(3600);
         let timeout = Duration::from_secs(crate::llm::ollama::clamped(
             &self.cfg,
             "models.local_llm.warmup.timeout_sec",
