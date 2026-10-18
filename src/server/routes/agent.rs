@@ -258,6 +258,12 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
         pr: req.pr,
         issue: req.issue,
         planner_timeout_sec: tuned_planner,
+        planner_identity: Some(
+            state
+                .cfg
+                .planner_identity()
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?,
+        ),
         ..Default::default()
     };
     Ok(PreparedRun {

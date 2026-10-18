@@ -368,6 +368,12 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     if !ctx.acfg.deepagent.enabled {
         return Ok(deepagent_disabled_noop());
     }
+    if let Some(expected) = opts.get("planner-identity") {
+        if expected != ctx.cfg.planner_identity()? {
+            err("planner settings changed after the server started; restart required before a coding run");
+            return Ok(EXIT_ENV);
+        }
+    }
     let instruction = opts.require("instruction").map_err(HarnessError::agentic)?;
     let checks_file = opts.require("checks-file").map_err(HarnessError::agentic)?;
     let branch = opts.require("branch").map_err(HarnessError::agentic)?;
