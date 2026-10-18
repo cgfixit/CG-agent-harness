@@ -57,8 +57,8 @@ pub struct Limits {
     pub stale_seconds: u64,
     pub chat_tool_calls: usize,
     /// The mode a `/goal` takes when the request names none (`web.goal_web_default`,
-    /// restart-only). Ships `fetch`: unattended loop turns read permitted pages but
-    /// never pick search queries unless the operator says `all`.
+    /// restart-only). Ships `all`: search is a read-only listing that grants no URL
+    /// permission, so unattended loop turns may search; fetches stay policy-gated.
     pub goal_web_default: super::sessions::GoalWebMode,
 }
 
@@ -101,7 +101,7 @@ impl Limits {
             chat_tool_calls: bound("chat_tool_calls", 10, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
             goal_web_default: match cfg.get("web.goal_web_default") {
-                None => super::sessions::GoalWebMode::Fetch,
+                None => super::sessions::GoalWebMode::All,
                 Some(serde_yaml_ng::Value::String(s)) => s
                     .parse()
                     .map_err(|_| HarnessError::config("web.goal_web_default must be off, fetch or all"))?,
@@ -1001,11 +1001,11 @@ mod tests {
     }
 
     #[test]
-    fn goal_web_default_ships_fetch_and_refuses_unknown_modes() {
+    fn goal_web_default_ships_all_and_refuses_unknown_modes() {
         use crate::server::sessions::GoalWebMode;
         for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
             let cfg = AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
-            assert_eq!(Limits::load(&cfg).unwrap().goal_web_default, GoalWebMode::Fetch);
+            assert_eq!(Limits::load(&cfg).unwrap().goal_web_default, GoalWebMode::All);
         }
         for (value, expected) in [
             ("off", Some(GoalWebMode::Off)),
