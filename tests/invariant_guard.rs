@@ -587,6 +587,8 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "netconnect.throughput",
         "netconnect.anomaly_detection",
         "netconnect.home_automation",
+        "notifications.enabled",
+        "agentic.deepagent_github.retrieval.enabled",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }

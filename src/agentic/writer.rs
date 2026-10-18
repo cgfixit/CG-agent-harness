@@ -14,7 +14,7 @@ use crate::common::identity;
 use crate::common::process::{self, RunSpec};
 
 use super::config::AgenticConfig;
-use super::gh_client::{gh_env, resolve_gh};
+use super::gh_client::{checked_gh_binary, gh_env};
 
 pub const EXECUTION_ENABLED: bool = true;
 pub const WRITE_DISABLE_ENV: &str = "CGAGENTHARNESS_AGENTIC_WRITE_DISABLE";
@@ -350,8 +350,9 @@ pub fn execute_write(ctx: &super::ctx::AgenticCtx, plan: &Value, confirm: bool, 
     };
     argv[index] = "--body-file".into();
     argv[index + 1] = body_file.path().display().to_string();
-    let binary =
-        resolve_gh().map_err(|_| HarnessError::agentic("gh binary not found on PATH").detail("op", op.clone()))?;
+    // The same version floor and pinned identity every read uses; a PATH
+    // lookup here would let the one executable write run an unchecked gh.
+    let binary = checked_gh_binary(cfg.gh_min_version).map_err(|e| e.detail("op", op.clone()))?;
     argv[0] = binary.display().to_string();
     audit.log(json!({"event": "agentic_write_execute_start", "op": op, "repo": cfg.repo, "reason": reason}));
     let env = gh_env();

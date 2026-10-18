@@ -29,22 +29,11 @@ pub const DEFAULT_GIT_WRITE_TIMEOUT_SEC: u64 = 30;
 pub const DEFAULT_PUSH_TIMEOUT_SEC: u64 = 120;
 
 /// Canonical repo-relative form, or `None` if unsafe (the WRITE-path rule).
+///
+/// The same rule as the read jail, so a path the pipeline can write is always
+/// a path the review diff can read back.
 pub fn canonical_repo_path(target: &str) -> Option<String> {
-    if target.is_empty() || target.contains('\0') {
-        return None;
-    }
-    let normalized = target.replace('\\', "/");
-    if normalized.starts_with('/')
-        || normalized.starts_with('-')
-        || crate::common::repo_paths::is_windows_absolute(target)
-    {
-        return None;
-    }
-    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
-    if parts.is_empty() || parts.iter().any(|p| *p == ".." || p.contains(':')) {
-        return None;
-    }
-    Some(parts.join("/"))
+    crate::common::repo_paths::canonical_repo_relative_path(target)
 }
 
 /// True when a filesystem could resolve `part` to the `.git` directory
