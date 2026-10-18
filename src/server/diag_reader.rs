@@ -211,8 +211,11 @@ pub struct FileStatus {
 }
 
 pub fn file_status(logs_dir: &Path, name: &str) -> FileStatus {
-    let meta = std::fs::symlink_metadata(logs_dir.join(name))
-        .ok()
+    // Callers pass boot-validated allowlist entries; re-check so a name that is
+    // not a bare file name never reaches the filesystem.
+    let meta = bare_file_name(name)
+        .then(|| std::fs::symlink_metadata(logs_dir.join(name)).ok())
+        .flatten()
         .filter(|m| m.is_file());
     FileStatus {
         file: name.to_string(),
@@ -848,6 +851,20 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.code, "DIAG_NOT_FOUND");
+    }
+
+    #[test]
+    fn file_status_never_touches_a_name_that_is_not_bare() {
+        let home = tempfile::tempdir().unwrap();
+        let logs = home.path().join("logs");
+        std::fs::create_dir(&logs).unwrap();
+        std::fs::write(home.path().join("config.yaml"), "x").unwrap();
+        std::fs::write(logs.join("audit.jsonl"), "{}\n").unwrap();
+        assert!(file_status(&logs, "audit.jsonl").present);
+        for bad in ["../config.yaml", "logs/audit.jsonl", ".hidden", "a/b", ""] {
+            let status = file_status(&logs, bad);
+            assert!(!status.present && status.bytes.is_none(), "{bad}");
+        }
     }
 
     #[cfg(unix)]
