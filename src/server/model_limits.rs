@@ -31,13 +31,17 @@ pub const TUNED_WINDOW: u64 = compaction::BASE_WINDOW;
 /// to read the input a window-scaled compaction trigger admits.
 pub const DEFAULT_MAX_PREFILL_SEC: u64 = 120;
 
-/// The compaction trigger for a model whose window auto_tune verified. A window
-/// above the 32768 the shipped budgets were sized for scales `configured` up in
-/// proportion, capped by `prompt_cap` and by the input the measured prefill
-/// reads in `max_prefill_sec`, plus one `reply`. It never goes below
-/// `configured`; at or below 32768, or without a speed sample, `configured` stands.
+/// The compaction trigger for a model whose window auto_tune verified. Above
+/// the 32768 the shipped budgets were sized for, `configured` (already
+/// tightened by tuning) rises to `proposed`, the tuning's trigger for this
+/// window (the shipped value scaled to it), capped by `prompt_cap` and by the
+/// input the measured prefill reads in `max_prefill_sec`, plus one `reply`.
+/// A value already sized for the window is not scaled again. It never goes
+/// below `configured`; at or below 32768, or without a speed sample,
+/// `configured` stands.
 pub fn window_trigger(
     configured: u64,
+    proposed: u64,
     window: u64,
     prompt_cap: u64,
     reply: u64,
@@ -50,9 +54,8 @@ pub fn window_trigger(
     if window <= TUNED_WINDOW {
         return configured;
     }
-    let scaled = configured.saturating_mul(window.min(compaction::MAX_WINDOW)) / TUNED_WINDOW;
     let readable = (prefill * max_prefill_sec as f64) as u64 + reply;
-    configured.max(scaled.min(prompt_cap).min(readable))
+    configured.max(proposed.min(prompt_cap).min(readable))
 }
 
 /// Margin over the estimated worst-case turn.
@@ -832,9 +835,12 @@ mod tests {
     fn a_larger_verified_window_scales_the_trigger_within_measured_prefill() {
         let qwen = json!({"prefill_tps": 414.0});
         let gemma = json!({"prefill_tps": 1579.0});
+        // The tuning's proposal: the shipped 24000 scaled to the window.
+        let proposed = |window: u64| 24_000 * window.min(compaction::MAX_WINDOW) / TUNED_WINDOW;
         let trigger = |window, speed: Option<&Value>| {
             window_trigger(
                 24_000,
+                proposed(window),
                 window,
                 compaction::prompt_cap(Some(window)),
                 4_096,
@@ -845,7 +851,7 @@ mod tests {
         // At or below the window the shipped budgets were sized for, nothing moves.
         assert_eq!(trigger(32_768, Some(&gemma)), 24_000);
         assert_eq!(trigger(16_384, Some(&gemma)), 24_000);
-        // A larger window scales it in proportion while prefill keeps up.
+        // A larger window lifts it to the window's proposal while prefill keeps up.
         assert_eq!(trigger(65_536, Some(&gemma)), 48_000);
         assert_eq!(trigger(131_072, Some(&gemma)), 96_000);
         assert_eq!(trigger(65_536, Some(&qwen)), 48_000);
@@ -858,6 +864,7 @@ mod tests {
         assert_eq!(
             window_trigger(
                 24_000,
+                96_000,
                 131_072,
                 120_000,
                 4_096,
@@ -867,6 +874,14 @@ mod tests {
             24_000
         );
         // The prompt cap still binds.
-        assert_eq!(window_trigger(24_000, 65_536, 40_000, 4_096, Some(&gemma), 120), 40_000);
+        assert_eq!(
+            window_trigger(24_000, 48_000, 65_536, 40_000, 4_096, Some(&gemma), 120),
+            40_000
+        );
+        // A value already sized for the window is not scaled again.
+        assert_eq!(
+            window_trigger(48_000, 48_000, 65_536, 60_000, 8_192, Some(&gemma), 120),
+            48_000
+        );
     }
 }

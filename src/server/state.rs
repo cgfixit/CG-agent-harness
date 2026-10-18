@@ -497,6 +497,7 @@ impl AppState {
         }
         super::model_limits::window_trigger(
             tightened,
+            tuning.compact_prompt_tokens,
             tuning.window,
             self.prompt_cap(model),
             self.chat_max_tokens(model),
