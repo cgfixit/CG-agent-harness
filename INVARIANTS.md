@@ -85,7 +85,9 @@ and require `confirm: true`. MCP stays off `/loop`. Local loops reuse owned atta
 and permitted web tools. Goal modes `off`/`fetch`/`all` restrict chat tools without granting
 URLs; a goal set without a mode takes `web.goal_web_default` (ships `all`, restart-only):
 search is a read-only listing that grants no URL permission, and operators withhold
-unattended search with `fetch` or `off`; token and cancellation bounds hold. Cloud loops remain refused. Owner-scoped
+unattended search with `fetch` or `off`; token and cancellation bounds hold. A goal-less
+loop takes the session's last prompt as its goal; a turn that needed compaction
+continues automatically; both stay within local-only bounds. Cloud loops remain refused. Owner-scoped
 unpinning excludes generation and retains blobs and messages. `GET /api/mcp`
 discloses declared server and tool names to authenticated accounts; declarations
 are shared. Calls and refusals are audited (`mcp_stdio_spawn`,

@@ -117,10 +117,11 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 ```
 
 `/loop 3` runs up to three follow-up turns toward the goal (default three,
-maximum five), each restating the bounded goal. Manual mode pauses after each
-turn; `/loop` continues. `/loop auto` only toggles automatic continuation; it
-starts nothing. `/loop stop` cancels generation or cooldown. Goal
-clear, session switching, token budgets, a 90%-identical reply and two
+maximum five), each restating the bounded goal. With no stored goal, `/loop`
+takes the last prompt as the goal. Manual mode pauses after each turn; `/loop`
+continues. `/loop auto` only toggles automatic continuation; it starts
+nothing. A turn that needed compaction continues the same way automatically.
+`/loop stop` cancels generation or cooldown. Goal clear, session switching, token budgets, a 90%-identical reply and two
 consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
