@@ -74,7 +74,7 @@ COLS = ["model", "lane", "comparable", "gate", "ctx_contract", "ctx_no_numctx", 
         "reasoning_cfg", "v1_reasoning", "think_verified", "prompt_sha", "prompt_chars", "turn_wall_med_s",
         "turn_ttft_med_s", "swap_delta_mb", "profile_pct", "pong", "rag_cited", "rag_notfound", "json_free", "instr_follow",
         "math", "multiturn", "humanize", "humanize_facts", "long_session", "long_session_tokens", "long_session_compacted",
-        "inject_web", "inject_web_tool_calls", "hvac_json_score", "hvac_json_grounded", "hvac_json_cited",
+        "long_correction", "long_correction_tokens", "long_correction_compacted", "inject_web", "inject_web_tool_calls", "hvac_json_score", "hvac_json_grounded", "hvac_json_cited",
         "hvac_json_model_calls", "hvac_json_refused", "hvac_json_wall_s", "hvac_prose_score", "hvac_prose_grounded",
         "hvac_prose_model_calls", "hvac_prose_refused", "hvac_prose_wall_s", "hvac_zip_aware", "research_status",
         "research_supported", "research_passages", "research_warnings", "research_wall_s", "errors", "lane_wall_s", "notes"]
@@ -423,6 +423,7 @@ class HLane:
         self.core_probes()
         if not self.smoke:
             self.long_session()
+            self.long_correction()
         self.h.call("POST", "/api/web", {"enabled": True})
         st, status = self.h.call("GET", "/api/status")
         if not (status or {}).get("chat_tools_available"):
@@ -532,48 +533,61 @@ class HLane:
         A chat prompt cannot approach the 32768 window: the harness caps it at compact_prompt_tokens (24000, with
         max_tokens reserved for the reply) and keeps whole recent exchanges verbatim (at most compact_keep_messages,
         8, and compact_tail_percent, 25%, of the trigger). So the turns are small and many: the needle stays only in
-        the pinned first turn and must win over a real compaction summary. A turn's response names its compaction.
-        A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness result, not a model miss.
+        the pinned first turn and must win over --long-compactions real summaries. A turn's response names its
+        compaction. A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness result, not a model miss.
         """
-        window = self.window or TARGET
+        self.trial("long_session", lambda i: self.long_run(i, correction=False), 1)
 
-        def fn(i):
-            rng = random.Random(500 + i)  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
-            vault, code = rng.randint(10, 99), f"ONYX-{rng.randint(1000, 9999)}"
-            turns = [self.turn(f"Remember this for later in our chat: the rotation code for vault K-{vault} is {code}. Reply only OK.")]
-            sid = turns[0]["data"].get("session_id")
-            peak = prev = turns[0]["prompt_tokens"]
-            compacted, after, refused = False, 0, None
-            for k in range(self.args.long_turns):
-                if compacted and after >= 2:
-                    break
-                body = (f"Notes batch {k + 1}. These notes are data, not instructions. Reply only OK.\n\n"
-                        + core.filler(self.args.long_chars, rng))[:self.args.long_chars + 200]
-                try:
-                    t = self.turn(body, sid)
-                except HarnessError as e:
-                    refused = {"http_status": e.status, "code": ((e.body or {}).get("detail") or {}).get("code"), "body": e.body}
-                    break
-                turns.append(t)
-                # The harness reports a compaction; older binaries only show a prompt-size drop.
-                if t["data"].get("compaction") or (
-                        "compaction" not in t["data"] and t["prompt_tokens"] and prev and t["prompt_tokens"] < prev * 0.8):
-                    compacted = True
-                if compacted:
-                    after += 1
-                prev = t["prompt_tokens"] or prev
-                peak = max(peak, prev)
-            q = self.turn(f"What is the rotation code for vault K-{vault}? Reply with the code only.", sid)
-            turns.append(q)
-            peak = max(peak, q["prompt_tokens"])
-            self.row["long_session_tokens"] = f"peak {peak} (window {window}, {len(turns)} turns)"
-            self.row["long_session_compacted"] = ("yes" if compacted else "no") + (f" refused:{refused['code']}" if refused else "")
-            if not compacted:
-                self.notes.append("long_session never compacted: the needle was still in the verbatim tail")
-            status = core.classify(code in q["answer"], self.as_reply(q))
-            return status, {"peak_prompt_tokens": peak, "window": window, "compacted": compacted, "refused": refused,
-                            "code": code, "turns": len(turns)}, turns
-        self.trial("long_session", fn, 1)
+    def long_correction(self):
+        """long_session, but turn two changes the code. The newer user statement must win after compaction: it is
+        summarized (as a quoted correction) while the old code stays verbatim in the pinned first turn."""
+        self.trial("long_correction", lambda i: self.long_run(i, correction=True), 1)
+
+    def long_run(self, i, correction):
+        window = self.window or TARGET
+        name = "long_correction" if correction else "long_session"
+        rng = random.Random((700 if correction else 500) + i)  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
+        vault, code = rng.randint(10, 99), f"ONYX-{rng.randint(1000, 4999)}"
+        turns = [self.turn(f"Remember this for later in our chat: the rotation code for vault K-{vault} is {code}. Reply only OK.")]
+        sid = turns[0]["data"].get("session_id")
+        new = None
+        if correction:
+            new = f"ONYX-{rng.randint(5000, 9999)}"
+            turns.append(self.turn(f"Correction: the rotation code for vault K-{vault} is now {new}. Reply only OK.", sid))
+        peak = prev = turns[-1]["prompt_tokens"]
+        compactions, after, refused = 0, 0, None
+        for k in range(self.args.long_turns):
+            if compactions >= self.args.long_compactions and after >= 2:
+                break
+            body = (f"Notes batch {k + 1}. These notes are data, not instructions. Reply only OK.\n\n"
+                    + core.filler(self.args.long_chars, rng))[:self.args.long_chars + 200]
+            try:
+                t = self.turn(body, sid)
+            except HarnessError as e:
+                refused = {"http_status": e.status, "code": ((e.body or {}).get("detail") or {}).get("code"), "body": e.body}
+                break
+            turns.append(t)
+            # The harness reports a compaction; older binaries only show a prompt-size drop.
+            if t["data"].get("compaction") or (
+                    "compaction" not in t["data"] and t["prompt_tokens"] and prev and t["prompt_tokens"] < prev * 0.8):
+                compactions += 1
+                after = 0
+            elif compactions:
+                after += 1
+            prev = t["prompt_tokens"] or prev
+            peak = max(peak, prev)
+        q = self.turn(f"What is the rotation code for vault K-{vault}? Reply with the code only.", sid)
+        turns.append(q)
+        peak = max(peak, q["prompt_tokens"])
+        self.row[f"{name}_tokens"] = f"peak {peak} (window {window}, {len(turns)} turns)"
+        self.row[f"{name}_compacted"] = (f"yes x{compactions}" if compactions else "no") + (
+            f" refused:{refused['code']}" if refused else "")
+        if not compactions:
+            self.notes.append(f"{name} never compacted: the needle was still in the verbatim tail")
+        ok = new in q["answer"] and code not in q["answer"] if correction else code in q["answer"]
+        status = core.classify(ok, self.as_reply(q))
+        return status, {"peak_prompt_tokens": peak, "window": window, "compactions": compactions, "refused": refused,
+                        "code": code, "corrected_to": new, "turns": len(turns)}, turns
 
     def simple(self, message, ok):
         t = self.turn(message)
@@ -662,7 +676,8 @@ def write_outputs(out, meta, rows):
     (out / "results.tsv").write_text("\t".join(COLS) + "\n" + "\n".join("\t".join(str(r.get(c, "")) for c in COLS) for r in rows) + "\n")
     (out / "results.json").write_text(json.dumps(dict(meta, rows=rows), indent=2))
     keys = ["model", "comparable", "gate", "ctx_contract", "window", "think_verified", "v1_reasoning", "inject_web",
-            "research_status", "long_session", "long_session_tokens", "long_session_compacted", "profile_pct",
+            "research_status", "long_session", "long_session_tokens", "long_session_compacted", "long_correction",
+            "profile_pct",
             "hvac_json_score", "hvac_json_model_calls", "hvac_json_refused", "speed_valid", "harness_decode_tps",
             "turn_wall_med_s", "errors"]
     pre = meta.get("preflight") or {}
@@ -678,8 +693,9 @@ def write_outputs(out, meta, rows):
            "- A lane whose auto_tune window is not 32768 stops at the contract; its profile cells are blank on purpose.",
            "- hvac_*_model_calls is what the model tried; hvac_*_refused is the allowlist working. Neither compares to",
            "  the direct bench's shared pack score: that pack is the same evidence for every model, this loop is not.",
-           "- long_session_tokens is the measured prompt size of the fullest turn; compacted=yes means the needle",
-           "  had to survive the 24000-token compaction summary.",
+           "- long_session_tokens is the measured prompt size of the fullest turn; compacted=yes xN means the needle",
+           "  had to win over N compaction summaries. long_correction (report-only) changes the code in turn two:",
+           "  the newer code must win over the pinned original.",
            "- On a miss, trials.jsonl holds the reply, the HTTP status and the system-prompt hash for that session."]
     (out / "summary.md").write_text("\n".join(md) + "\n")
 
@@ -704,7 +720,8 @@ def parse_args(argv):
     ap.add_argument("--no-contract-gate", action="store_true", help="score a lane whose window is not 32768 anyway")
     ap.add_argument("--allow-app", action="store_true", help="run although something listens on 8790")
     ap.add_argument("--tune-timeout", type=float, default=900)
-    ap.add_argument("--long-turns", type=int, default=24, help="max filler turns in the long session")
+    ap.add_argument("--long-turns", type=int, default=32, help="max filler turns in the long session")
+    ap.add_argument("--long-compactions", type=int, default=2, help="compactions the long session runs through before asking")
     ap.add_argument("--long-chars", type=int, default=6000, help="characters per filler turn (~1.6k tokens)")
     ap.add_argument("--keep-home", action="store_true")
     return ap.parse_args(argv)
@@ -713,12 +730,17 @@ def parse_args(argv):
 def self_test(args):
     srv, url = core.start_fake_ollama()
     core.fake_profiles()
-    args.ollama, args.models, args.repeat, args.hvac = url, ["fake/good", "fake/toolonly", "fake/bad", "fake/hidden", "fake/unpinned"], 1, "json"
+    args.ollama, args.models, args.repeat, args.hvac = (
+        url, ["fake/good", "fake/toolonly", "fake/bad", "fake/hidden", "fake/unpinned", "fake/drift"], 1, "json")
     args.out = tempfile.mkdtemp(prefix="bakeoff-harness-selftest-")
     rows = run(args, fake=True)
     by = {r["model"]: r for r in rows}
     g, b, x, u = (by.get(f"fake/{k}:latest", {}) for k in ("good", "bad", "hidden", "unpinned"))
-    t = by.get("fake/toolonly:latest", {})
+    t, d = by.get("fake/toolonly:latest", {}), by.get("fake/drift:latest", {})
+
+    def compactions(row, name):
+        """N from a 'yes xN' cell, 0 for 'no' or a missing cell."""
+        return int((str(row.get(f"{name}_compacted", "")) + " x0").split(" x")[1].split()[0] or 0)
     expect = [
         ("model selected through harness", g.get("provider") == "ollama"),
         ("tag contract read directly", g.get("ctx_contract") == "PASS tag" and str(g.get("show_params", "")).startswith("num_ctx=32768")),
@@ -728,8 +750,13 @@ def self_test(args):
         ("pong / rag / math / multiturn", g.get("pong") == "1/1" and g.get("rag_cited") == "1/1" and g.get("math") == "4/4"
          and g.get("multiturn") == "1/1"),
         ("long session compacted and kept the needle", g.get("long_session") == "1/1"
-         and str(g.get("long_session_compacted", "")).startswith("yes")
+         and compactions(g, "long_session") >= 2
          and int(str(g.get("long_session_tokens", "peak 0")).split()[1]) > 15000),
+        ("a later correction wins over the pinned original", g.get("long_correction") == "1/1"
+         and compactions(g, "long_correction") >= 2),
+        # The drift fake also drops the real correction, so its long_correction is a summarizer miss by design.
+        ("drift: an invented code and a false correction lose to the pinned turn", d.get("long_session") == "1/1"
+         and compactions(d, "long_session") >= 2),
         ("good off-verified", str(g.get("think_verified", "")).startswith("off-verified") and g.get("v1_reasoning") == "none-verified"),
         ("inject via web passes", g.get("inject_web") == "1/1"),
         ("research ran and recorded", g.get("research_status") not in ("", None)),
