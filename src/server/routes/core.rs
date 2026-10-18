@@ -1022,19 +1022,21 @@ async fn chat_inner(
             )
         };
         let projected = project(&history, reservation);
-        if project(&history, max_tokens) > threshold || projected > hard_limit {
+        let projected_trigger = project(&history, max_tokens);
+        if projected_trigger > threshold || projected > hard_limit {
             let (paste_trigger, paste_alone) = (project(&[], max_tokens), project(&[], reservation));
             if paste_trigger > threshold || paste_alone > hard_limit {
-                // Past the hard limit a larger trigger cannot help: name the hard limit.
-                let (limit, source, reply) = if paste_alone > hard_limit {
-                    (hard_limit, hard_source, reservation)
+                // Past the hard limit a larger trigger cannot help: name the hard
+                // limit. Each size counts the reply of the limit it is held to.
+                let (limit, source, reply, whole, size) = if paste_alone > hard_limit {
+                    (hard_limit, hard_source, reservation, projected, paste_alone)
                 } else {
-                    (threshold, limit_source, max_tokens)
+                    (threshold, limit_source, max_tokens, projected_trigger, paste_trigger)
                 };
                 return Err(too_large(
                     "the new message and system prompt alone exceed",
-                    projected,
-                    paste_alone,
+                    whole,
+                    size,
                     limit,
                     source,
                     reply,

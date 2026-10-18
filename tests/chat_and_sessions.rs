@@ -396,6 +396,51 @@ async fn every_backend_compacts_at_the_same_floored_trigger() {
     }
 }
 
+/// A new message past the trigger but under the hard limit is refused at the
+/// trigger, and the sizes the refusal reports count the trigger's one reply,
+/// not the doubled reservation of LM Studio/MLX.
+#[tokio::test]
+async fn a_message_past_only_the_trigger_reports_its_one_reply_size() {
+    use cgagentharness::server::compaction;
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("models.local_llm.provider", "lmstudio")
+            .with("models.local_llm.max_tokens", "4096")
+            .with("chat.compact_prompt_tokens", "8192"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled":false})).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":sid})).await;
+    let system = preview["prompt"].as_str().unwrap();
+    let base = compaction::projected_prompt_tokens(system, &[], "", 4096, 1.0, 0);
+    // One reply puts the message 100 tokens past the 8192 trigger; with the
+    // doubled reservation it is still far under the 30000 hard limit.
+    let message = "m".repeat(4 * (8_192 + 100 - base) as usize);
+    let one_reply = compaction::projected_prompt_tokens(system, &[], &message, 4096, 1.0, 0);
+    assert!(one_reply > 8_192 && one_reply + 4096 < 30_000, "{one_reply}");
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":message}))
+        .await;
+    assert_eq!(status, 422, "{body}");
+    let details = &body["detail"]["details"];
+    assert_eq!(details["limit_tokens"], 8192, "{body}");
+    assert_eq!(details["reply_reservation_tokens"], 4096, "{body}");
+    assert_eq!(details["projected_tokens"], one_reply, "{body}");
+    assert_eq!(details["compacted_tokens"], one_reply, "{body}");
+    let audit = s.audit_log();
+    assert!(
+        audit.lines().any(|l| l.contains("\"event\":\"chat_prompt_too_large\"")
+            && l.contains(&format!("\"projected\":{one_reply},"))
+            && l.contains(&format!("\"compacted_projected\":{one_reply},"))),
+        "{audit}"
+    );
+    assert!(model.requests.lock().unwrap().is_empty());
+}
+
 /// #212 F8. A backend that reserves the reply twice (LM Studio/MLX, or Ollama with
 /// thinking on) had that doubled reservation charged three times against
 /// `web.total_tokens`, so the shipped 28000 budget refused a 400-character message.
