@@ -74,14 +74,21 @@ for _ in $(seq 1 50); do
   sleep 0.1
  done
 curl_local() { curl --noproxy '*' --cacert "$CERT" "$@"; }
+# Capture, then match. In `producer | grep -q` grep exits at its first match, and
+# under pipefail the producer's SIGPIPE (curl 23, tee or echo 141) fails a passing
+# check, or hides a failing one behind `&&`.
+has() { grep -q -- "$1" <<<"$2"; }
 for _ in $(seq 1 50); do curl_local -fsS "$BASE/api/status" >/dev/null 2>&1 && break; sleep 0.1; done
 
-echo "== status"; curl_local -fsS "$BASE/api/status" | tee /dev/stderr | grep -q '"version"'; echo
-echo "== headers"; curl_local -sSI "$BASE/api/status" | grep -qi 'x-content-type-options: nosniff'
-curl_local -sSI "$BASE/api/status" | grep -qi "content-security-policy: default-src 'none'"
-CSRF=$(curl_local -fsS "$BASE/" | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' | head -1)
+echo "== status"; STATUS=$(curl_local -fsS "$BASE/api/status"); printf '%s' "$STATUS" >&2; has '"version"' "$STATUS"; echo
+echo "== headers"; HEADERS=$(curl_local -sSI "$BASE/api/status")
+grep -qi 'x-content-type-options: nosniff' <<<"$HEADERS"
+grep -qi "content-security-policy: default-src 'none'" <<<"$HEADERS"
+PAGE=$(curl_local -fsS "$BASE/")
+csrf_re='name="csrf-token" content="([^"]*)"'
+CSRF=""; if [[ $PAGE =~ $csrf_re ]]; then CSRF=${BASH_REMATCH[1]}; fi
 [ -n "$CSRF" ] || { echo "console did not embed a CSRF token"; exit 1; }
-curl_local -fsS "$BASE/" | grep -q '__CYCLAW_CSP_NONCE__' && { echo "nonce placeholder leaked"; exit 1; }
+if has '__CYCLAW_CSP_NONCE__' "$PAGE"; then echo "nonce placeholder leaked"; exit 1; fi
 
 echo "== negative controls"
 test "$(curl_local -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/chat" -H 'Content-Type: application/json' -d '{"message":"x"}')" = 401
@@ -104,17 +111,19 @@ curl_account() { curl_local --cookie "$COOKIE_FILE" "$@"; }
 test "$(curl_account -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/chat" -H 'Content-Type: application/json' -d '{"message":"x"}')" = 403
 
 echo "== subprocess contract (real child)"
-curl_account -fsS "$BASE/api/github/status" -H "X-CyClaw-CSRF: $CSRF" | tee /dev/stderr | grep -q '"label":"ok"'; echo
+GITHUB_STATUS=$(curl_account -fsS "$BASE/api/github/status" -H "X-CyClaw-CSRF: $CSRF")
+printf '%s' "$GITHUB_STATUS" >&2; has '"label":"ok"' "$GITHUB_STATUS"; echo
 set +e
 "$BIN" agentic --config /nonexistent.yaml status >/dev/null 2>&1; code=$?
 set -e
 [ "$code" -eq 3 ] || { echo "expected exit 3, got $code"; exit 1; }
-"$BIN" agentic --config "$CGAGENTHARNESS_HOME/config.yaml" status | grep -q "Agentic layer disabled"
+AGENTIC_STATUS=$("$BIN" agentic --config "$CGAGENTHARNESS_HOME/config.yaml" status)
+has "Agentic layer disabled" "$AGENTIC_STATUS"
 
 echo "== open panels"
-curl_account -fsS "$BASE/api/tools" | grep -q '"wired":70[,}]'
-curl_account -fsS "$BASE/api/skills" | grep -q 'ponytail'
-curl_account -fsS "$BASE/api/agent/checks" | grep -q 'cargo-test'
+TOOLS=$(curl_account -fsS "$BASE/api/tools"); has '"wired":70[,}]' "$TOOLS"
+SKILLS=$(curl_account -fsS "$BASE/api/skills"); has 'ponytail' "$SKILLS"
+CHECKS=$(curl_account -fsS "$BASE/api/agent/checks"); has 'cargo-test' "$CHECKS"
 
 echo "== live model turn ($MODEL_URL)"
 if ! curl -fsS -m 3 "$MODEL_URL/v1/models" >/dev/null 2>&1; then
@@ -132,11 +141,11 @@ curl_account -fsS -X POST "$BASE/api/model" -H "X-CyClaw-CSRF: $CSRF" -H 'Conten
 # a chat meanwhile answers 409 CHAT_BUSY. Retry only that answer, bounded.
 for attempt in $(seq 1 300); do
   REPLY=$(curl_account -sS -m 600 -X POST "$BASE/api/chat" -H "X-CyClaw-CSRF: $CSRF" -H 'Content-Type: application/json' -d '{"message":"Reply with the single word pong."}')
-  echo "$REPLY" | grep -q '"code":"CHAT_BUSY"' || break
+  has '"code":"CHAT_BUSY"' "$REPLY" || break
   [ "$attempt" -eq 1 ] && echo "model busy (auto_tune sample); retrying"
   sleep 2
 done
-echo "$REPLY" | tee /dev/stderr | grep -q '"reply"'; echo
+printf '%s' "$REPLY" >&2; has '"reply"' "$REPLY"; echo
 echo "$REPLY" | python3 -c '
 import json,sys
 d=json.load(sys.stdin);reply=d["reply"];model=sys.argv[1]
@@ -149,7 +158,7 @@ print("model:",d["model"],"tokens:",d["tally"]["total"])' "$MODEL" "${SMOKE_EXAC
 if [[ -n "${FINGERPRINT_OUT:-}" ]]; then
   echo "== fingerprint (${FINGERPRINT_MODELS:-$MODEL})"
   python3 scripts/live-ollama/fingerprint.py --base "$BASE" --cacert "$CERT" \
-    --session-file "$CGAGENTHARNESS_HOME/cli-session.json" --csrf "$CSRF" \
+    --session-file "$CGAGENTHARNESS_HOME/cli-session.json" --csrf="$CSRF" \
     --model-url "$MODEL_URL" --models "${FINGERPRINT_MODELS:-$MODEL}" --out "$FINGERPRINT_OUT"
 fi
 echo "== OK"
