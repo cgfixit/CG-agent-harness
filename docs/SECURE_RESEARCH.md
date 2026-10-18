@@ -174,8 +174,8 @@ listener, pass its origin with `--url` after `account` or `web`.
 ./target/release/cgagentharness account --url https://127.0.0.1:8790 password
 ./target/release/cgagentharness web status
 ./target/release/cgagentharness web allow 'https://example.com/docs/*' --group docs --seed https://example.com/docs/
-./target/release/cgagentharness web allow https://example.com/robots.txt --group docs
 ./target/release/cgagentharness web fetch https://example.com/docs/start
+./target/release/cgagentharness web fetch https://example.com/docs/start --crawl
 ./target/release/cgagentharness web search 'veeam software cve' --count 5
 ./target/release/cgagentharness web search 'widget_open' --group docs
 ./target/release/cgagentharness web research 'How does widget_open fail?' --group docs
@@ -270,7 +270,7 @@ Direct commands:
 /web check https://www.veeam.com/ https://example.org/ --group vendors
 /web research --group vendors Compare the backup approaches
 /web research --url https://www.veeam.com/ Summarize products and permitted internal links
-/web allow https://example.com/docs/* https://example.com/robots.txt --group docs
+/web allow https://example.com/docs/* --group docs
 /web pages --group docs widget_open
 /web research --group docs How does widget_open fail?
 /web cancel

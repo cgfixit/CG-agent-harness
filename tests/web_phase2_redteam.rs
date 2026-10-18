@@ -174,7 +174,8 @@ async fn concurrent_page_search_returns_busy_without_echoing_secrets() {
         },
     )
     .await;
-    // Exact URL: /robots.txt is not implicitly granted, so discover holds on /slow.
+    // Exact URL: the rule covers the origin, so robots.txt is read for the
+    // politeness decision; the explicit start proceeds and discover holds on /slow.
     assert_eq!(
         s.post_json("/api/web/allow", json!({"url": "http://docs.example/slow"}))
             .await

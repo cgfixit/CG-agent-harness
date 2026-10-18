@@ -106,11 +106,11 @@ separately, follow the [enable order](STRUCTURED_MEMORY.md#enable-order).
 
 ## Automatic suggestions and review
 
-With the store, capture, and either suggestion source enabled, a completed chat
-turn or successful coding run can produce pending `session_summary`, `insight`,
-or both according to `suggestion_mode`. Invalid modes, including non-string
-YAML values, disable suggestions. No setting approves proposals. Suggestions,
-human-summary consolidation, and retrieval are separate gates.
+With store, capture and source enabled, completed work can produce pending
+`session_summary`, `insight`, or both according to `suggestion_mode`. Invalid
+modes disable suggestions. Local chat and `/prompt` receive source eligibility,
+separate from pinned notes. Empty results are valid; no setting approves
+proposals. Human-summary consolidation and retrieval remain separate.
 
 Open **Memory** or `/memory proposals`. The pane refreshes proposals,
 queue state and outcomes without clearing review reasons. Cards show full text

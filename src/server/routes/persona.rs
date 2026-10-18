@@ -412,6 +412,14 @@ pub async fn preview(
         selected_facts_context: Some(&facts),
         memory_budget,
         memory_enabled: settings.memory_enabled,
+        auto_suggest_chat: crate::server::structured_memory_suggest::available(
+            &state,
+            crate::server::structured_memory_suggest::Source::Chat,
+        ),
+        auto_suggest_coding: crate::server::structured_memory_suggest::available(
+            &state,
+            crate::server::structured_memory_suggest::Source::Coding,
+        ),
         chat_web_mode: session
             .as_ref()
             .map_or(settings.web_enabled.into(), |s| s.chat_web_mode(settings.web_enabled)),
