@@ -101,7 +101,7 @@ keyfile.write_text(key)
 env.update(CGAGENTHARNESS_HOME=str(home), CGAGENTHARNESS_API_KEY=key,
            PATH=str(fakebin) + os.pathsep + env['PATH'])
 # --prepare-only binds nothing, so there is no base URL to report.
-base_url = None if args.prepare_only else f'{"http" if args.http else "https"}://127.0.0.1:{args.port}'
+base_url = None if args.prepare_only else f'{"http" if args.http else "https"}://127.0.0.1:{args.port}'  # DevSkim: ignore DS137138,DS162092 because the disposable fixture serves on loopback only.
 print(json.dumps({'base_url': base_url, 'home': str(home), 'key_file': str(keyfile), 'fixture': 'disposable-arithmetic'}), flush=True)
 if args.prepare_only:
     (home / '.env').touch(mode=0o600)

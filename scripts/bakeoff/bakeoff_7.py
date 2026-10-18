@@ -1334,7 +1334,7 @@ def preflight(app_port=8790):
         p["problems"].append(f"power {p['power']}" + (f" {p['battery_pct']}%" if p["battery_pct"] is not None else ""))
     if p["app_running"]:
         seen = " and ".join(x for x in ("its process" if proc else "",
-                                         f"something on 127.0.0.1:{app_port}" if listening else "") if x)
+                                         f"something on 127.0.0.1:{app_port}" if listening else "") if x)  # DevSkim: ignore DS162092 because this names the loopback port the preflight probed.
         p["problems"].append(f"the harness app runs ({seen}); its warmup can load a model under the bench")
     procs = [x for x in sh(["pgrep", "-fl", "ollama serve"]).splitlines() if x.strip()]
     p["ollama_serve_procs"] = len(procs) if procs else None

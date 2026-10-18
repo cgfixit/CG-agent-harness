@@ -817,7 +817,7 @@ def run(args, fake=False):
         log(f"binary: {find_bin(args.bin)}")
         return []
     if pre.get("app_running") and not args.attach and not args.allow_app:
-        raise SystemExit("the harness app runs (its process, or something on 127.0.0.1:8790); quit it so its warmup "
+        raise SystemExit("the harness app runs (its process, or something on 127.0.0.1:8790); quit it so its warmup "  # DevSkim: ignore DS162092 because this names the loopback port the preflight probed.
                          "cannot load a model under the bench, or pass --allow-app")
     out = Path(args.out or f"/tmp/bakeoff-harness-out/{datetime.now().strftime('%Y%m%d-%H%M%S')}")
     out.mkdir(parents=True, exist_ok=True)
