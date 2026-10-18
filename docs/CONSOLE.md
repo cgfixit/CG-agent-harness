@@ -14,7 +14,7 @@ persona, or reply never authorizes commands, commits, pushes, or publication.
 |---|---|
 | Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear my session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
 | Persona, memory and prompt context | Inspect `/prompt`, manage shared `soul.md`, select session prompt skills, and save literal `/memory` notes. `/memory on` includes only those notes; account-private structured memory has separate gates, and models propose but never approve ([memory guide](MEMORY_GUIDE.md)). |
-| Chat model selection | Select an installed local tag, or select `grok` or `claude` after an administrator saves its key and restarts. The unvalidated name persists. Cloud chat sends only the new message; local history, memory, skills, and web context stay local. `/loop` refuses cloud selection (`CLOUD_CHAT_LOOP`). [Cloud defaults](INSTALL.md#tunables-you-may-want-to-know-about). |
+| Chat model selection | Select local tags, `local`, `grok/xai`, or `claude/anthropic`. Cloud requires an enabled provider, active key and confirmation; restart resets to local. `/model status` shows key presence and profile sources. Only new text leaves; history, memory, skills and web context stay local. `/loop` refuses cloud (`CLOUD_CHAT_LOOP`). [Profiles](MODELS.md). |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
 | Chat web tools | Natural-language Google search and permitted URL fetch. API Keys accepts `SERPAPI_API_KEY`; no active key selects public Google. Actual tool outcomes and source links appear in chat. |
@@ -416,7 +416,7 @@ confirmation and persistence.
 | `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on the latest completed episode; no fact write |
 | `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List your active facts, force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
-| `/model`, `/model list`, `/model use <name>\|grok\|claude` | Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner |
+| `/model [status]`, `/model list`, `/model use <name>` | Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner |
 | `/net status`, `/net devices` | Read-only scope and gates, or passive neighbors. Aliases and refused tier words: [netconnect](netconnect.md) |
 | `/prompt` | Private preview of the next chat system prompt |
 | `/registry` | Combined skill, tool and connector catalog |

@@ -11,7 +11,7 @@ app:
 models:
   # Remote chat is opt-in per model selection. A cloud turn sends only its newly
   # typed message, never local history, skills, memory, or web context. Saving a
-  # provider key still requires restart.
+  # provider key still requires restart. Cloud selection resets to local on restart.
   cloud_chat:
     enabled: true
     max_tokens: 4096
@@ -22,9 +22,13 @@ models:
     grok:
       enabled: true
       model: "grok-4.6"
+      # Optional profile; absent keeps shared limits. No vendor limits are assumed.
+      # profile: {context_window: 32768, max_output_tokens: 2048, timeout_sec: 60, count_timeout_sec: 1, tool_support: false, rpm: 60}
     claude:
       enabled: true
       model: "claude-sonnet-5"
+      # Same optional profile keys as grok; temperature (0–1) is omitted by default.
+      # Newer Claude models reject temperatures other than 1; check vendor support.
   local_llm:
     provider: "ollama"
     base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
@@ -55,7 +59,7 @@ models:
     # times this loopback Ollama (no num_ctx; it loads the model like warmup) and
     # /api/ps gives the loaded window. Token budgets only tighten to fit it; the
     # chat timeout follows the measured speed (120–3600 s); a model declaring no
-    # tools gets none. Other providers are never tuned. See /model profile.
+    # tools gets none. Cloud uses config profiles, never this sample. See /model profile.
     auto_tune: true
     # Optional loopback failover (LM Studio or any OpenAI-compatible server).
     fallback:

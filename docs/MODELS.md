@@ -1,12 +1,10 @@
 # Select an installed model and check Ollama
 
-> https://github.com/cgfixit/CG-agent-harness/issues/391
-
 Index: [README.md](../README.md). Set `OLLAMA_CONTEXT_LENGTH=32768` before starting Ollama for seeded web budgets. The harness sends no `num_ctx`.
 
 ## 4. Select an installed model and check Ollama
 
-Inspect the local inventory before choosing a model:
+Inspect inventory:
 
 ```bash
 ollama --version
@@ -15,8 +13,7 @@ curl --fail --silent --show-error http://127.0.0.1:11434/v1/models
 ```
 
 If the endpoint is unavailable, start the existing Ollama app or `ollama serve`.
-Keep a terminal-started daemon running and use another terminal for the harness;
-never start a second daemon on an occupied port.
+Use another terminal for the harness; never start a second daemon on an occupied port.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 require a
 **32768-token** window. Chat, pulls and warmup inherit the window Ollama
@@ -67,9 +64,9 @@ parent tag already pins it) and the values to set, see the
 `SMOKE_MODEL=qwen3.8:27b-mlx-cg scripts/smoke-ollama.sh` selects it. Pinned
 models under `scripts/live-ollama/` are a separate fingerprint set.
 
-Choose the **exact installed identifier**. With an empty inventory, download a
-model suited to your hardware first; allow for network and disk use. An `-mlx`
-suffix proves no execution backend. Inspect the exact inventory tag:
+Choose an **exact installed identifier**. With empty inventory, deliberately download
+a model suited to your hardware. An `-mlx`
+suffix proves no execution backend. Inspect its tag:
 
 ```bash
 ollama show qwen3.8:27b
@@ -79,9 +76,8 @@ Configure both `models.local_llm.model` (chat) and
 `agentic.deepagent_github.model` (planner) with your chosen tag in [first run](INSTALL.md#6-first-run).
 `/model use <tag>` changes chat selection only; check `/status`.
 
-The shipped `qwen3.8:27b-mlx` default does not verify installation. Chat uses
-`models.local_llm.base_url`; the planner uses `agentic.deepagent_github.base_url`. Both local paths require a
-loopback OpenAI-compatible service.
+Installation is not verified by the default. Chat uses `models.local_llm.base_url`;
+the planner uses `agentic.deepagent_github.base_url`: both require loopback.
 
 ### Exact-model diagnostics and optional fallback
 
@@ -102,15 +98,24 @@ generate and applies per-model limits (budgets only tighten; chat and same-model
 planner timeouts and `web.synthesis_seconds` follow measured speed; a tool-less
 model gets none). Above 32768, proposals scale up; set them in `config.yaml`
 (`auto_tune` only lowers); caps follow the measured window, up to 131072.
-Startup warms and tunes the same selected local model; cloud selections skip both.
-A changed config model clears saved selections at restart; legacy mismatches clear too.
-Otherwise selections persist; `/status` and `/model` disclose overrides. For explicit cloud chat, use
-`/model use grok` (`grok-4.6`) or `/model use claude` (`claude-sonnet-5`) only
-after an administrator saves the matching key and restarts. Cloud selection sends
-only the newly typed message and does not change the coding planner. A cloud reply
-counts only when the provider reports a normal finish (Claude `stop_reason: end_turn`,
-Grok `status: completed`); a truncated one fails with HTTP 502 and is not saved.
-Raise `models.cloud_chat.max_tokens` (default 4096) if that recurs.
+Startup warms/tunes local selection. Changed config models and legacy mismatches
+clear saved selections. `/model use local` restores the configured local backend.
+
+Cloud aliases are case-insensitive: `grok|xai`, `claude|anthropic` (configured
+model IDs also work). Missing active keys or disabled providers refuse before
+saving. Save keys in Settings → API Keys and restart; never paste credentials
+into chat. First selection per account/provider/server run requires confirmation
+naming `api.x.ai` or `api.anthropic.com`. Restart resets cloud selection to local.
+Only the new message leaves; history, memory, attachments and tools stay local;
+`/loop` refuses cloud. The coding planner stays separate.
+
+`/model status` reports provider, key presence and effective profile sources
+(config/profile/default). Optional `models.cloud_chat.<provider>.profile` sets
+context, output, temperature, timeouts, tool-support metadata and RPM; see
+[config](../assets/config.default.yaml). Output/timeouts only tighten shared
+limits; spend gates remain unchanged. Profiles require restart, never sampling.
+A reply must finish normally (Claude `end_turn`, Grok `completed`); truncation
+fails with 502 and is not saved.
 
 **Grok Build ACP is not shipped.** `scripts/grok-acp-probe.py` and its CI test
 check only a fake runtime's launch contract: isolated profile, answer-only ACP, no

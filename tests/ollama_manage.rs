@@ -256,8 +256,8 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
     assert_eq!(body["state"], "tag_missing", "{body}");
     assert!(!body.to_string().contains("fixture-private"), "{body}");
 
-    let (status, _) = s.post_json("/api/model", json!({"model": "grok"})).await;
-    assert_eq!(status, 200);
+    // Read-only profiling still refuses to probe a cloud selection, including a legacy saved one.
+    s.state.settings.lock().unwrap().selected_model = "grok".into();
     let (_, body) = s.get_json("/api/ollama/profile").await;
     assert_eq!(body["state"], "not_probed", "{body}");
 }
@@ -855,7 +855,7 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
         ("longctx:q8", None, "qwen3.8:27b-mlx"),
         ("qwen3.8:27b-mlx", None, "qwen3.8:27b-mlx"),
         ("", None, "qwen3.8:27b-mlx"),
-        ("grok", Some("qwen3.8:27b-mlx"), "grok"),
+        ("grok", Some("qwen3.8:27b-mlx"), "qwen3.8:27b-mlx"),
     ] {
         let ollama = start_native_ollama().await;
         let prepared = prepare_server(
@@ -877,23 +877,19 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
         let s = start_test_server(prepared.tmp, prepared.home_dir, prepared.api_key, router, state).await;
         assert_eq!(s.state.current_model(), expected);
         for _ in 0..200 {
-            if expected == "grok" || s.state.tuning_for(expected).is_some() {
+            if s.state.tuning_for(expected).is_some() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
         let gens = ollama.generates.lock().unwrap().clone();
-        if expected == "grok" {
-            assert!(gens.is_empty(), "cloud selection must not load local model: {gens:?}");
-        } else {
-            assert_eq!(gens.len(), 2, "{saved} / {previous:?}: {gens:?}");
-            assert_eq!(gens[0]["prompt"], "");
-            assert_eq!(gens[1]["raw"], true);
-            assert!(gens
-                .iter()
-                .all(|g| g["model"] == expected && !g.to_string().contains("num_ctx")));
-        }
+        assert_eq!(gens.len(), 2, "{saved} / {previous:?}: {gens:?}");
+        assert_eq!(gens[0]["prompt"], "");
+        assert_eq!(gens[1]["raw"], true);
+        assert!(gens
+            .iter()
+            .all(|g| g["model"] == expected && !g.to_string().contains("num_ctx")));
         let persisted: Value =
             serde_json::from_str(&std::fs::read_to_string(s.home.join("harness.json")).unwrap()).unwrap();
         assert_eq!(persisted["selected_model_config"], "qwen3.8:27b-mlx");

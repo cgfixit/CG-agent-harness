@@ -681,14 +681,15 @@ inference. If a later MCP tool bills a cloud model, it must record
   `src/server/routes/core.rs`,
   `tests/spend_ledger.rs`.
 
-Cloud chat prediction is a separate pre-generation operation. Guarded
+Cloud selection needs active keys and account/provider consent; restart resets local.
+Prediction precedes generation. Guarded
 `POST /api/spend/predict` accepts only the explicit message/model and shares the
 generation/cancellation gate. Claude counts the same model/message body at its
-fixed count endpoint, with a `count_timeout_sec` deadline (default 2 s, 0.1–10)
+fixed count endpoint, with `count_timeout_sec` (default 2 s, 0.1–10)
 and 4 MiB response cap;
 Grok and count failures use a labelled UTF-8 bytes/4 heuristic. No history,
 attachments, local context or tokenizer calibration reaches the cloud counter.
-The dated ledger rate table prices full configured output with no cache credit.
+The rate table prices reserved output without cache credit.
 A missing/null `models.cloud_chat.max_usd_per_call` leaves generation ungated;
 otherwise it must be finite and positive. Vendor estimates enforce a known-rate
 cap; heuristic estimates enforce it only with literal `budget_on_heuristic: true`.

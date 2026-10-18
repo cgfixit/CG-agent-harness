@@ -104,6 +104,8 @@ pub struct AppState {
     pub backend: ResolvedLocalBackend,
     pub chat: ChatClient,
     pub cloud_chat: CloudChat,
+    /// Account/provider consent for this server run; never persisted with settings.
+    pub cloud_consents: Mutex<BTreeSet<(String, String)>>,
     pub audit: Audit,
     pub rate_limiter: RateLimiter,
     pub loop_rate_limiter: RateLimiter,
@@ -573,7 +575,7 @@ impl AppState {
 
     pub fn chat_timeout_sec(&self, model: &str) -> f64 {
         if self.cloud_chat.is_cloud_selection(model) {
-            self.cloud_chat.timeout_sec()
+            self.cloud_chat.timeout_sec(model)
         } else {
             self.chat.timeout_for(model)
         }
