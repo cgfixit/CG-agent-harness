@@ -576,8 +576,8 @@ not the quality or cancellation scheduling of a real model.
 
 ### Local history compaction
 
-Before local chat or `/loop`, the harness estimates the next prompt and
-reply reservation. Above
+Before local chat or `/loop`, the harness estimates the next prompt plus
+one reply. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
 keeping the first user message, goal, and whole recent exchanges (at most
 `chat.compact_keep_messages`, 8, and `chat.compact_tail_percent`, 25% of the
