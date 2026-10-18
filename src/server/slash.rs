@@ -537,8 +537,8 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
         "model" => &["list", "use", "profile", "status"],
         "skill" => &["use", "clear", "status"],
         "web" => &[
-            "help", "status", "check", "on", "off", "allow", "deny", "fetch", "search", "pages", "research", "cancel",
-            "inject", "forget",
+            "help", "status", "check", "on", "off", "allow", "deny", "block", "unblock", "mode", "fetch", "search",
+            "pages", "research", "cancel", "inject", "forget",
         ],
         "agent" => &[
             "run",
@@ -635,7 +635,10 @@ fn is_mutation(cmd: &str, sub: Option<&str>) -> bool {
     match (cmd, sub) {
         ("agent", Some("status" | "runs" | "jobs" | "job")) => false,
         ("agent", _) => true,
-        ("web", Some("allow" | "deny" | "on" | "off" | "inject" | "forget" | "cancel")) => true,
+        (
+            "web",
+            Some("allow" | "deny" | "block" | "unblock" | "mode" | "on" | "off" | "inject" | "forget" | "cancel"),
+        ) => true,
         ("api", _) => true,
         ("soul", Some("apply" | "reject" | "edit" | "propose")) => true,
         ("soul", Some("on" | "off")) => true,

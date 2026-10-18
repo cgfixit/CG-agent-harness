@@ -97,7 +97,7 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_DISABLED" | "WEB_ALLOWLIST_EMPTY" | "WEB_BUSY" | crate::server::state::WINDOW_CHANGED => {
             StatusCode::CONFLICT
         }
-        "WEB_PERMISSION_DENIED" => StatusCode::FORBIDDEN,
+        "WEB_PERMISSION_DENIED" | "WEB_MODE_CONFIRM_REQUIRED" => StatusCode::FORBIDDEN,
         "WEB_RULE_UNKNOWN" => StatusCode::NOT_FOUND,
         "WEB_FETCH_FAILED" | "WEB_DNS" | "WEB_CLEAR_FAILED" => StatusCode::BAD_GATEWAY,
         _ => StatusCode::BAD_REQUEST,
@@ -106,6 +106,9 @@ fn web_err(e: &HarnessError) -> ApiError {
     let message = match e.code.as_str() {
         "WEB_BAD_URL" => "Use an exact HTTP(S) URL for fetch/check, not a wildcard or prose; /web allow takes patterns such as https://www.example.org/* or https://*.example.org/*. Use /web fetch URL --crawl or /web research --url URL <question> for permitted internal links; /help web shows examples.",
         "WEB_HOST_DENIED" => "This exact URL is outside the current shared-home allowlist. Run /web check URL; www and apex hosts are distinct. Only an administrator can grant a matching rule.",
+        "WEB_BLOCKED" => "This URL is on the shared-home web block list. /web status lists blocked rules; an administrator can remove one with /web unblock.",
+        "WEB_MODE_CONFIRM_REQUIRED" => "Switching to the block list lets every public URL that is not blocked be read. Confirm it in the console dialog, or pass --confirm to cgagentharness web mode denylist.",
+        "WEB_BLOCKLIST_FULL" => "The block list is at its rule cap (web.max_rules, restart-only); nothing was added. Remove entries with /web unblock, or raise web.max_rules in config.yaml and restart.",
         "WEB_ALLOWLIST_EMPTY" => "No content URLs are permitted. An administrator must add an exact URL or explicit wildcard using /web allow, e.g. /web allow https://www.example.org/*. For /web search, a SerpAPI key in API Keys needs no URL rule; public Google needs https://www.google.com/*.",
         "WEB_GROUP_UNKNOWN" => "Unknown source group. /web status lists groups; add rules with /web allow PATTERN --group NAME.",
         "WEB_POLICY_INVALID" => "Invalid URL rule, group or seed, or a saved policy over web.max_rules. Each seed must be inside a requested rule; the entire grant was refused. After lowering web.max_rules, raise it again and restart, then /web deny extra rules.",
@@ -193,6 +196,55 @@ pub async fn web_deny(
     let enabled = web_enabled(&state);
     let web = state.web_snapshot();
     web.deny(&req.url, enabled)
+        .and_then(|_| web.status(enabled, &owner))
+        .map(Json)
+        .map_err(|e| web_err(&e))
+}
+
+pub async fn web_mode(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<WebModeRequest>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    let enabled = web_enabled(&state);
+    let web = state.web_snapshot();
+    let result = web
+        .set_mode(req.mode, req.confirm, enabled)
+        .and_then(|_| web.status(enabled, &owner))
+        .map(Json)
+        .map_err(|e| web_err(&e));
+    if result.is_ok() {
+        state
+            .audit
+            .log(json!({"event": "web.policy_mode", "owner": owner, "mode": req.mode, "confirmed": req.confirm}));
+    }
+    result
+}
+
+pub async fn web_block(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<WebBlockRequest>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    let enabled = web_enabled(&state);
+    let web = state.web_snapshot();
+    web.block_rules(&req.urls, enabled)
+        .and_then(|_| web.status(enabled, &owner))
+        .map(Json)
+        .map_err(|e| web_err(&e))
+}
+
+pub async fn web_unblock(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<WebUrlRequest>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    let enabled = web_enabled(&state);
+    let web = state.web_snapshot();
+    web.unblock(&req.url, enabled)
         .and_then(|_| web.status(enabled, &owner))
         .map(Json)
         .map_err(|e| web_err(&e))

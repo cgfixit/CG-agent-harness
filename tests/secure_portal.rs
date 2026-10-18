@@ -127,6 +127,18 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
                 .status(),
             403
         );
+        // Web policy mode and the block list are administrator-only, like allow/deny.
+        for (path, body) in [
+            ("/api/web/mode", json!({"mode":"denylist","confirm":true})),
+            ("/api/web/block", json!({"urls":["https://example.com"]})),
+            ("/api/web/unblock", json!({"url":"https://example.com"})),
+        ] {
+            assert_eq!(
+                request(&server, &user, Method::POST, path, body).await.status(),
+                403,
+                "{role} {path}"
+            );
+        }
     }
     assert_eq!(
         server

@@ -3,7 +3,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::web_policy::{canonical_url, valid_group, Rule, MAX_BATCH_URLS};
+use super::web_policy::{canonical_url, valid_group, Policy, Rule, MAX_BATCH_URLS};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WebCommand {
@@ -214,6 +214,9 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                     "pages" => "it accepts --group; put -- before query words that start with --",
                     "research" => "it accepts --group and --url; put -- before question words that start with --",
                     "deny" => "deny takes one rule ID or pattern, with no flags",
+                    "block" => "block takes 1–32 URL patterns or hosts, with no flags",
+                    "unblock" => "unblock takes one blocked rule ID, pattern or host, with no flags",
+                    "mode" => "mode takes allowlist or denylist, with no flags",
                     _ => "it takes no flags",
                 };
                 return Err(format!(
@@ -358,6 +361,36 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
             };
             json!({"url":rule})
         }
+        "block" => {
+            if positional.is_empty() || positional.len() > MAX_BATCH_URLS {
+                return Err("Use /web block <pattern-or-host>… (1–32), e.g. /web block example.com.".into());
+            }
+            let mut patterns = Vec::new();
+            for raw in &positional {
+                let pattern = checked(raw)?;
+                Policy::block_rule(&pattern).map_err(|e| pattern_refused(raw, &e.message))?;
+                patterns.push(pattern);
+            }
+            json!({"urls":patterns})
+        }
+        "unblock" => {
+            if positional.len() != 1 {
+                return Err("Use /web unblock <blocked-rule-id-or-pattern>.".into());
+            }
+            let raw = &positional[0];
+            let rule = if raw.len() == 32 && raw.bytes().all(|c| c.is_ascii_hexdigit()) {
+                raw.clone()
+            } else {
+                let pattern = checked(raw)?;
+                Policy::block_rule(&pattern).map_err(|e| pattern_refused(raw, &e.message))?;
+                pattern
+            };
+            json!({"url":rule})
+        }
+        "mode" => match positional.as_slice() {
+            [mode] if matches!(mode.as_str(), "allowlist" | "denylist") => json!({"mode":mode}),
+            _ => return Err("Use /web mode allowlist or /web mode denylist.".into()),
+        },
         "search" | "pages" | "research" => {
             let query = positional.join(" ");
             let limit = if action == "research" {
@@ -406,6 +439,35 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn block_unblock_and_mode_parse_to_data_and_never_confirm() {
+        let block = parse(Some("block"), "example.com https://*.example.net/*").unwrap();
+        assert_eq!(
+            block.body,
+            json!({"urls":["https://example.com","https://*.example.net/*"]})
+        );
+        assert_eq!(
+            parse(Some("unblock"), "example.com").unwrap().body,
+            json!({"url":"https://example.com"})
+        );
+        let id = "a".repeat(32);
+        assert_eq!(parse(Some("unblock"), &id).unwrap().body, json!({"url":id}));
+        assert_eq!(
+            parse(Some("mode"), "denylist").unwrap().body,
+            json!({"mode":"denylist"})
+        );
+        for (sub, raw) in [
+            ("mode", "open"),
+            ("mode", "denylist --confirm"),
+            ("mode", ""),
+            ("block", ""),
+            ("block", "example.com --group x"),
+            ("block", "example.org,"),
+            ("unblock", "a b"),
+        ] {
+            assert!(parse(Some(sub), raw).is_err(), "{sub} {raw}");
+        }
+    }
     #[test]
     fn flags_quotes_and_multi_source_intent_are_data_not_authority() {
         let c = parse(

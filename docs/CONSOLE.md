@@ -433,6 +433,7 @@ confirmation and persistence.
 | `/users` | Administrator account panel; [accounts](SECURE_RESEARCH.md#accounts-and-roles) |
 | `/web [status\|help]`, `/web on`, `/web off` | Inspect shared-home rules; administrators enable/disable web |
 | `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>` | Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule |
+| `/web mode allowlist\|denylist`, `/web block <pattern-or-host> [...]`, `/web unblock <id-or-pattern>` | Administrator. The header globe (red X) switches modes after a confirmation dialog. `denylist` reads every public URL except blocked rules; a host with no path blocks it and its subdomains. Both lists persist across switches |
 | `/web check <URL> [URL ...] [--group name]` | Exact permission diagnostic, with no network request or grant |
 | `/web cancel`, `/web fetch <URL> [URL ...] [--group name]`, `/web forget`, `/web inject` | Cancel research, batch-read exact permitted URLs, clear or select your last extract |
 | `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>` | Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority |
