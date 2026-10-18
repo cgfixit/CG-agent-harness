@@ -21,12 +21,17 @@ fn accepted_publication_with_output_overflow_is_indeterminate_and_not_retried() 
     );
     let ctx = AgenticCtx::new(cfg, &tmp.path().join("config.yaml")).unwrap();
     let fake = tmp.path().join("gh");
-    std::fs::write(
-        &fake,
-        "#!/bin/sh\nprintf 'accepted\\n' >> \"${0%/*}/accepted\"\nexec /usr/bin/yes excessive-output\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let write_fake = |version: &str| {
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = --version ] && {{ echo 'gh version {version}'; exit 0; }}\nprintf 'accepted\\n' >> \"${{0%/*}}/accepted\"\nexec /usr/bin/yes excessive-output\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    write_fake("2.10.0");
     std::env::set_var("PATH", tmp.path());
     common::isolate_write_kill_switch();
     let plan = plan_write(
@@ -38,6 +43,11 @@ fn accepted_publication_with_output_overflow_is_indeterminate_and_not_retried() 
         json!({"head":"codex/fixture", "title":"fixture", "body":"fixture"}),
     )
     .unwrap();
+    // The write is held to the same gh floor as every read: an old gh never runs.
+    let err = execute_write(&ctx, &plan, true, 5).unwrap_err();
+    assert_eq!(err.code, "GH_VERSION_TOO_OLD");
+    assert!(!tmp.path().join("accepted").exists());
+    write_fake("2.60.0");
     let err = execute_write(&ctx, &plan, true, 5).unwrap_err();
     assert_eq!(err.details["indeterminate"], true);
     assert_eq!(err.details["op"], "pr_create");

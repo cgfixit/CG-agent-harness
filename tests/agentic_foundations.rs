@@ -186,7 +186,18 @@ fn seeded_clone(dir: &Path) -> std::path::PathBuf {
 fn canonical_and_dotgit_helpers() {
     assert_eq!(canonical_repo_path(".\\conftest.py").as_deref(), Some("conftest.py"));
     assert_eq!(canonical_repo_path("./a//b.rs").as_deref(), Some("a/b.rs"));
-    for bad in ["/etc/passwd", "-flag", "..", "a/../b", "C:\\x", "a:b", "", "x\0"] {
+    for bad in [
+        "/etc/passwd",
+        "-flag",
+        "..",
+        "a/../b",
+        "C:\\x",
+        "a:b",
+        "",
+        "x\0",
+        "docs/notes.",
+        "a/b ",
+    ] {
         assert_eq!(canonical_repo_path(bad), None, "{bad:?}");
     }
     for name in [".git", ".GIT", ".git.", ".git ", "git~1", ".git~2", ".gi\u{200C}t"] {
