@@ -169,6 +169,7 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
     let mut urls = Vec::new();
     let mut count = None;
     let mut engine = None;
+    let mut crawl = false;
     let mut literal = false;
     let mut notice = None;
     let mut i = 0;
@@ -199,12 +200,14 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                 "--seed" => action == "allow",
                 "--url" => action == "research",
                 "--count" | "--engine" => action == "search",
+                "--crawl" => action == "fetch",
                 _ => false,
             };
             if !allowed {
                 let accepted = match action {
                     "allow" => "/web allow accepts --group and --seed",
-                    "check" | "fetch" => "it accepts --group",
+                    "fetch" => "it accepts --group and --crawl",
+                    "check" => "it accepts --group",
                     "search" => {
                         "it accepts --count, --engine and --group; put -- before query words that start with --"
                     }
@@ -216,6 +219,14 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                 return Err(format!(
                     "Unsupported flag {flag} for /web {action}: {accepted}. See /help web."
                 ));
+            }
+            // --crawl is a bare switch: it never consumes the next word.
+            if flag == "--crawl" {
+                if crawl || inline.is_some() {
+                    return Err("Invalid or duplicate --crawl.".into());
+                }
+                crawl = true;
+                continue;
             }
             let value = if let Some(value) = inline {
                 value.to_string()
@@ -325,13 +336,13 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
             for (raw, url) in positional.iter().zip(&urls) {
                 canonical_url(url).map_err(|e| {
                     if raw.contains('*') {
-                        format!("{raw}: use exact HTTP(S) URLs, not wildcard patterns or prose. For permitted internal links use /web research --url URL <question>.")
+                        format!("{raw}: use exact HTTP(S) URLs, not wildcard patterns or prose. For permitted internal links use /web fetch URL --crawl or /web research --url URL <question>.")
                     } else {
                         pattern_refused(raw, &e.message)
                     }
                 })?;
             }
-            json!({"urls":urls,"group":group})
+            json!({"urls":urls,"group":group,"crawl":crawl})
         }
         "deny" => {
             if positional.len() != 1 {
@@ -436,6 +447,33 @@ mod tests {
             parse(Some("allow"), "https://example.com/* --help").unwrap().action,
             "help"
         );
+    }
+
+    #[test]
+    fn crawl_is_a_bare_fetch_switch_and_never_eats_a_url() {
+        let c = parse(Some("fetch"), "https://example.com/ --crawl https://example.com/docs/").unwrap();
+        assert_eq!(c.body["crawl"], true);
+        assert_eq!(
+            c.body["urls"].as_array().unwrap(),
+            &vec![json!("https://example.com/"), json!("https://example.com/docs/")]
+        );
+        let c = parse(Some("fetch"), "--crawl https://example.com/ --group docs").unwrap();
+        assert_eq!(c.body["crawl"], true);
+        assert_eq!(c.body["group"], "docs");
+        // Default and non-fetch actions are unchanged.
+        assert_eq!(
+            parse(Some("fetch"), "https://example.com/").unwrap().body["crawl"],
+            false
+        );
+        for arg in [
+            "--crawl --crawl https://example.com/",
+            "--crawl=true https://example.com/",
+        ] {
+            assert!(parse(Some("fetch"), arg).is_err(), "{arg}");
+        }
+        for (sub, arg) in [("check", "https://example.com/ --crawl"), ("search", "--crawl cats")] {
+            assert!(parse(Some(sub), arg).is_err(), "{sub} {arg}");
+        }
     }
 
     #[test]

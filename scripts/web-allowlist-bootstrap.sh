@@ -32,7 +32,8 @@ GRANTS=(
   "ref|https://en.wikipedia.org/wiki/*|https://en.wikipedia.org/wiki/Main_Page"
   # Personal lists: put lines like these in CGAH_GRANTS_FILE instead.
   # At most 32 patterns and 16 seeds per line; a wildcard-host pattern
-  # (https://*.example.com/*) needs a seed, and never covers the apex.
+  # (https://*.example.com/*) never covers the apex and starts research from
+  # seeds, or from pages already fetched under it once the cache has one.
   # "onetab|https://example.org/* https://docs.example.net/*|https://example.org/"
 )
 if [ -n "${CGAH_GRANTS_FILE:-}" ]; then

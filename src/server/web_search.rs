@@ -715,10 +715,10 @@ impl WebTool {
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "fetch cancelled"))?;
             let policy = self.policy()?;
-            let target = policy.authorize(raw, group)?;
+            let target = policy.authorize_read(raw, group)?;
             let client = self.pinned_client(&target).await?;
             let current = self.policy()?;
-            current.authorize(target.as_str(), group)?;
+            current.authorize_read(target.as_str(), group)?;
             if current.revision != policy.revision {
                 return Err(error("WEB_POLICY_CHANGED", "policy changed during request"));
             }
@@ -832,7 +832,7 @@ impl WebTool {
                 }
             };
             let current = self.policy()?;
-            current.authorize(&page.url, group)?;
+            current.authorize_read(&page.url, group)?;
             if current.revision != policy.revision {
                 return Err(error(
                     "WEB_POLICY_CHANGED",

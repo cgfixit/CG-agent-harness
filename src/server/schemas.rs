@@ -625,6 +625,9 @@ pub struct WebFetchRequest {
     pub urls: Vec<String>,
     #[serde(default)]
     pub group: Option<String>,
+    /// Recursive fetch: the exact URLs seed a bounded discovery crawl.
+    #[serde(default)]
+    pub crawl: bool,
 }
 impl Validate for WebFetchRequest {
     fn validate(&self) -> Vec<String> {
