@@ -555,7 +555,8 @@ and `chat_busy` store no bodies.
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,
   `src/server/compaction.rs::projection_uses_next_prompt_not_lifetime_tally`,
   `src/server/compaction.rs::the_sent_history_alternates_roles_for_every_keep_and_ranks_the_summary_below_exact_turns`,
-  `src/server/sessions.rs::the_message_cap_drops_whole_exchanges_after_the_pinned_turn_and_its_summary`.
+  `src/server/sessions.rs::the_message_cap_drops_whole_exchanges_after_the_pinned_turn_and_its_summary`,
+  `src/server/compaction.rs::fact_ledger_quotes_user_turns_past_the_clip_and_never_assistant_or_injected_text`.
 
 ## Signals weaker than their name
 

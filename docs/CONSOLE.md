@@ -573,27 +573,29 @@ not the quality or cancellation scheduling of a real model.
 
 ### Local history compaction
 
-Before local chat or `/loop`, the harness estimates the next prompt and
-reply reservation. Above
+Before local chat or `/loop`, the harness estimates prompt plus reply
+reservation. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
 keeping the first user message, goal, and whole recent exchanges (at most
 `chat.compact_keep_messages`, 8, and `chat.compact_tail_percent`, 25% of the
 trigger). The summarizer reads goal and first message, keeps the prior summary
 whole, clips other turns at 800 characters, within 24000 characters and its
 calibrated budget, else history stays. The model gets a lossy note yielding to
-exact messages; unsourced codes become `[unverified]`.
+exact messages; unsourced codes become `[unverified]`. Compacted user sentences
+holding codes or recall cues follow verbatim
+([`compaction.fact_ledger_max_bytes`](INSTALL.md#tunables-you-may-want-to-know-about)).
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
-`reasoning_effort: "none"`, or twice that otherwise: a conservative harness
+`reasoning_effort: "none"`, or twice that otherwise: a harness
 margin, not provider accounting. Startup accepts at most 25904 reply tokens on
 the first path or 12952 on the second for chat and `/loop`. The trigger floor,
-web-chat tightening and the bytes/4 estimate with its per-session calibration
-are specified in
+web-chat tightening and bytes/4 estimate with its per-session calibration
+are in
 [INVARIANTS.md](../INVARIANTS.md#local-chat-compaction-preserves-goal-and-the-first-user-turn).
-Calibration cannot predict language shifts or ratios above 3; verify the
-model window per [MODELS.md](MODELS.md).
+Calibration cannot predict language shifts or ratios above 3; verify
+windows per [MODELS.md](MODELS.md).
 
-`compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048. Tune
+`compaction.summary_max_tokens` defaults to 768 (128–2048). Tune
 these in home `config.yaml`, then restart. Compaction is inline;
 empty, failed, truncated, or cancelled output commits neither summary nor
 calibration. A prompt that still exceeds the limit returns

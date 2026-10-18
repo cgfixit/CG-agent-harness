@@ -1032,7 +1032,10 @@ async fn chat_inner(
                 ratio,
                 tool_tokens,
             );
-            let room = threshold.saturating_sub(fixed + summary_send + scaffold);
+            // The fact ledger is appended after the summary: keep its room out of the tail too.
+            let ledger_bytes = crate::server::compaction::fact_ledger_max_bytes(&state.cfg);
+            let ledger_reserve = crate::server::compaction::fact_ledger_reserve_tokens(ledger_bytes, ratio);
+            let room = threshold.saturating_sub(fixed + summary_send + scaffold + ledger_reserve);
             let tail_budget = (threshold * crate::server::compaction::tail_percent(&state.cfg) / 100).min(room);
             let keep = crate::server::compaction::tail_keep(&session.messages, keep_max, tail_budget, ratio);
             let retained = crate::server::compaction::retained_messages(&session.messages, keep);
@@ -1081,7 +1084,14 @@ async fn chat_inner(
                 .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
                 summary_prompt_tokens = summary_meta.prompt_tokens;
                 summary_completion_tokens = summary_meta.completion_tokens;
-                std::mem::take(&mut summary_meta.text)
+                // Quote what the clipped summary cannot carry: sentences with codes, host:port,
+                // URLs, paths or "remember" cues from the full compacted user turns.
+                crate::server::compaction::with_fact_ledger(
+                    &std::mem::take(&mut summary_meta.text),
+                    pinned.first_user.unwrap_or(""),
+                    middle,
+                    ledger_bytes,
+                )
             };
             let compacted = crate::server::compaction::compact_messages(&session.messages, keep, &summary);
             let compacted_history = prompt_history(&compacted);
