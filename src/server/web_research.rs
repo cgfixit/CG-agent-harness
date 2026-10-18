@@ -259,6 +259,7 @@ async fn model_call(
     body: &Value,
     cap: u64,
     total_budget: u64,
+    sized_tuned: bool,
     usage: &mut Vec<Usage>,
 ) -> Result<String> {
     authorize_owner(state, owner)?;
@@ -275,7 +276,7 @@ async fn model_call(
     }
     // Gathering sources can take minutes: the window must still allow this
     // budget. Checked before reserving, since a refused call sends nothing.
-    state.ensure_window_allows(model, 0, total_budget).await?;
+    state.ensure_window_allows(model, 0, total_budget, sized_tuned).await?;
     // Reserve before awaiting so cancellation, timeout and malformed upstream
     // responses still appear in total usage, explicitly estimated at the cap.
     usage.push(Usage {
@@ -423,6 +424,7 @@ pub async fn run_from(
     // The run keeps one model and one runtime-limit snapshot: a selection change
     // or config reload during a cold load below does not reach it.
     let model = state.current_model();
+    let sized_tuned = state.tuning_for(&model).is_some();
     // A web budget above 32000 needs a fresh read of the selected model's window.
     state.verify_window(&model).await;
     // The request deadline is part of that snapshot: a retune after a selection
@@ -517,6 +519,7 @@ pub async fn run_from(
                         &prompt,
                         384,
                         web.limits.total_tokens,
+                        sized_tuned,
                         &mut usage,
                     )
                     .await
@@ -615,6 +618,7 @@ pub async fn run_from(
                         &input,
                         web.limits.model_tokens,
                         web.limits.total_tokens,
+                        sized_tuned,
                         &mut usage,
                     )
                     .await
