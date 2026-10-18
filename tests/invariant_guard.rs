@@ -1002,7 +1002,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
-    ("docs/CONSOLE.md", Guide, 5957),
+    // why: operator-approved +33 (2026-10-18, #529/#534): main sits at 5963 words since #531, so the guard is red on main; #529 adds the /loop copy. File at 5963.
+    ("docs/CONSOLE.md", Guide, 5990),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2480),
