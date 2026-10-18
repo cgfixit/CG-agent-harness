@@ -478,11 +478,16 @@ class HLane:
         if not c or not c.n or c.passes != c.n:
             why.append("inject_web")
         ls = self.cells.get("long_session")
-        if not ls or not ls.n or ls.passes != ls.n:
-            why.append("long_session lost the needle" if ls and ls.n else "long_session not run")
-        elif not str(row.get("long_session_compacted", "")).startswith("yes"):
-            skipped = str(row.get("long_session_compacted", "")).partition(" skipped:")[2].split(" ")[0]
+        compacted = str(row.get("long_session_compacted", ""))
+        if not ls or not ls.n:
+            why.append("long_session not run")
+        elif ls.passes + ls.fails.get("incomplete", 0) != ls.n:
+            why.append("long_session lost the needle")
+        elif not compacted.startswith("yes"):
+            skipped = compacted.partition(" skipped:")[2].split(" ")[0]
             why.append(f"long_session never compacted ({'compaction skipped: ' + skipped if skipped else 'needle still in the verbatim tail'})")
+        elif ls.passes != ls.n:
+            why.append(f"long_session incomplete ({compacted}, needs x{self.args.long_compactions} unrefused)")
         if str(row.get("research_status", "")).startswith("window clipped"):
             why.append(f"research {row['research_status']}")
         if swap_delta is not None and swap_delta > 512:
@@ -538,8 +543,8 @@ class HLane:
         and compact_tail_percent, 25%, of the trigger). So the turns are small and many: the needle stays only in
         the pinned first turn and must win over --long-compactions real summaries. A turn's response names its
         compaction, or in compaction_skipped why it went uncompacted under the hard limit ("no_gain",
-        "summary_unusable"); skips are counted by reason. A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness
-        result, not a model miss.
+        "summary_unusable"); skips are counted by reason. A CHAT_PROMPT_TOO_LARGE refusal, or --long-turns running out
+        before --long-compactions, leaves a right answer incomplete: a harness result, not a gate pass.
         """
         self.trial("long_session", lambda i: self.long_run(i, correction=False), 1)
 
@@ -598,6 +603,9 @@ class HLane:
             self.notes.append(f"{name} sent {sum(skipped.values())} turn(s) uncompacted past the trigger ({skips})")
         ok = new in q["answer"] and code not in q["answer"] if correction else code in q["answer"]
         status = core.classify(ok, self.as_reply(q))
+        if status == "pass" and (refused or compactions < self.args.long_compactions):
+            # A right answer that skipped compactions the probe asked for (turns ran out, or a turn was refused).
+            status = "incomplete"
         return status, {"peak_prompt_tokens": peak, "window": window, "compactions": compactions, "refused": refused,
                         "compaction_skipped": skipped, "code": code, "corrected_to": new, "turns": len(turns)}, turns
 
@@ -754,6 +762,27 @@ def self_test(args):
     def compactions(row, name):
         """N from a 'yes xN' cell, 0 for 'no' or a missing cell."""
         return int((str(row.get(f"{name}_compacted", "")) + " x0").split(" x")[1].split()[0] or 0)
+
+    def short_long(compact_on, refuse_on=None):
+        """long_session on a serverless chat that compacts on the given calls and recalls the needle: (cell, gate)."""
+        sent = []
+
+        class Chat:
+            def chat(self, message, session_id=None):
+                sent.append(message)
+                if len(sent) == refuse_on:
+                    raise HarnessError(422, {"detail": {"code": "CHAT_PROMPT_TOO_LARGE"}})
+                reply = re.search(r"is (ONYX-\d+)", sent[0]).group(1) if "code only" in message else "OK"
+                return {"reply": reply, "ttft": None, "wall": 0.0, "data": {
+                    "session_id": "stub", "usage": {}, "compaction": {"stub": 1} if len(sent) in compact_on else None}}
+
+            def prompt_preview(self, session_id=None):
+                return {}
+        with open(os.devnull, "w") as fh:
+            lane = HLane(Chat(), "stub", parse_args(["--long-turns", "6"]), None, fh, "none", {})
+            lane.audit = core.ThinkAudit()
+            lane.long_session()
+        return lane.cell("long_session").text(), lane.gate(None)
     expect = [
         ("model selected through harness", g.get("provider") == "ollama"),
         ("tag contract read directly", g.get("ctx_contract") == "PASS tag" and str(g.get("show_params", "")).startswith("num_ctx=32768")),
@@ -783,6 +812,9 @@ def self_test(args):
         ("toolonly through harness", t.get("inject_web") == "1/1"),
         ("product gate PASS needs compaction, not research luck", g.get("gate") == "PASS"
          and str(g.get("research_status", "")).startswith(("ok", "observation"))),
+        ("fewer compactions than --long-compactions, or a refusal, is incomplete", short_long([2, 4])[0] == "1/1"
+         and all("long_session incomplete (yes x1" in short_long([2], r)[1] for r in (None, 3))
+         and "long_session never compacted (needle" in short_long([])[1]),
         ("rate limit survived", all(r.get("errors") == 0 for r in (g, b, x, t))),
     ]
     srv.shutdown()
