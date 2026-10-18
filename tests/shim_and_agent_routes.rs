@@ -80,6 +80,28 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
         shim::timeout_for(&c, &req).as_secs(),
         shim::real_repo_run_timeout_sec(150, Some(2), 1)
     );
+    // Push and publish outlast the child's own bounds: two 30 s git reads, the
+    // network git call, the gh version check (2 x 10 s + 1 s) and gh pr create.
+    // Killed earlier, the child never records an INDETERMINATE publication.
+    let child_bounds = 2 * 30
+        + cgagentharness::agentic::workspace::DEFAULT_PUSH_TIMEOUT_SEC
+        + 21
+        + cgagentharness::agentic::writer::DEFAULT_WRITE_TIMEOUT_SEC;
+    for action in ["real-repo-run-push", "real-repo-run-publish"] {
+        let budget = shim::timeout_for(&c, &OpsRequest::new(action)).as_secs();
+        assert!(
+            budget > child_bounds,
+            "{action}: {budget}s <= child bounds {child_bounds}s"
+        );
+    }
+    let console =
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/static/harness.html"))
+            .unwrap();
+    let wait_ms = (shim::REAL_REPO_RUN_WRITE_SEC + 10) * 1000;
+    assert!(
+        console.contains(&format!("const AGENT_WRITE_TIMEOUT_MS = {wait_ms};")),
+        "the console must wait out the push/publish budget"
+    );
     assert_eq!(temps.len(), 2, "checks file + plan file");
     let checks_idx = argv.iter().position(|a| a == "--checks-file").unwrap();
     let manifest: serde_json::Value =
