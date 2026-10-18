@@ -32,7 +32,7 @@ gh auth status
 
 ### 9.2 Edit the configuration file
 
-Restart after editing planner model, endpoint, provider, timeout, output limit or
+Restart after editing console local planner model, endpoint, provider, timeout, output limit or
 reasoning settings. Console runs, jobs and schedules bind their budget to the
 startup values; the child refuses changed settings with exit 3 (restart required)
 before repository work, including edits made while the request was preparing.
