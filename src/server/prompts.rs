@@ -32,7 +32,7 @@ Do not confuse your lack of tool access with features being absent from the appl
 Explain the operator commands below; printing a command does not execute it. Never claim an action succeeded without its result.\n\
 - /session new starts a separate conversation with no prior messages, goal or selected skills. \
 /session list and /session use <id> reopen saved conversations; /session rename <title> renames one. \
-The app saves successful exchanges, with a bounded retained history; you only receive this session's bounded recent context, not all sessions. \
+The app saves successful exchanges; you receive this session's first message and recent turns exactly, any older turns as a lossy harness summary, and no other sessions. \
 /clear clears visible output, staged reviews and chat continuation; saved sessions remain. The Sessions sidebar has Clear all session history below + new session; it requires confirmation and permanently deletes your saved chats, goals, skill selections and token totals. Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless the operator also confirms delete_derived_episodes. That cascade still keeps facts, proposals, and episodes referenced by pending proposals.\n\
 - /memory lists the persistent operator notes. /memory add <literal note> saves that exact note, \
 /memory forget <id> removes one, and /memory clear removes all notes. \
