@@ -104,7 +104,7 @@ fn web_err(e: &HarnessError) -> ApiError {
     };
     // Fixed public guidance only; upstream exception bodies never reach the UI.
     let message = match e.code.as_str() {
-        "WEB_BAD_URL" => "Use an exact HTTP(S) URL for fetch/check, not a wildcard or prose; /web allow takes patterns such as https://www.example.org/* or https://*.example.org/*. Use /web research --url URL <question> for permitted internal links; /help web shows examples.",
+        "WEB_BAD_URL" => "Use an exact HTTP(S) URL for fetch/check, not a wildcard or prose; /web allow takes patterns such as https://www.example.org/* or https://*.example.org/*. Use /web fetch URL --crawl or /web research --url URL <question> for permitted internal links; /help web shows examples.",
         "WEB_HOST_DENIED" => "This exact URL is outside the current shared-home allowlist. Run /web check URL; www and apex hosts are distinct. Only an administrator can grant a matching rule.",
         "WEB_ALLOWLIST_EMPTY" => "No content URLs are permitted. An administrator must add an exact URL or explicit wildcard using /web allow, e.g. /web allow https://www.example.org/*. For /web search, a SerpAPI key in API Keys needs no URL rule; public Google needs https://www.google.com/*.",
         "WEB_GROUP_UNKNOWN" => "Unknown source group. /web status lists groups; add rules with /web allow PATTERN --group NAME.",
@@ -206,6 +206,13 @@ pub async fn web_fetch(
     let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
     let web = state.web_snapshot();
+    if req.crawl {
+        return web
+            .crawl(&req.targets(), req.group.as_deref(), enabled, &state.audit)
+            .await
+            .map(Json)
+            .map_err(|e| web_err(&e));
+    }
     if let Some(url) = req.url.as_deref().filter(|_| req.group.is_none()) {
         return web
             .fetch(url, enabled, &state.audit, &owner)
