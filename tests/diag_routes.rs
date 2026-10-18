@@ -380,7 +380,7 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     let s = server(&model, true).await;
     let portal = account(&s, "ops-portal", "portal_auditor").await;
     let (status, session) = json_call(&s, &portal, Method::POST, "/api/sessions", Some(json!({"title":"p"}))).await;
-    assert_eq!(status, 200, "{session}");
+    assert_eq!(status, 201, "{session}");
     let sid = session["session_id"].as_str().unwrap().to_string();
     let (status, body) = json_call(
         &s,
