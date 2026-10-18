@@ -715,6 +715,8 @@ impl Validate for GoalRequest {
 #[serde(deny_unknown_fields)]
 pub struct ModelSelectRequest {
     pub model: String,
+    #[serde(default)]
+    pub confirm: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -735,7 +737,12 @@ impl Validate for OllamaPullRequest {
 
 impl Validate for ModelSelectRequest {
     fn validate(&self) -> Vec<String> {
-        if len_ok(&self.model, 1, MAX_TITLE_LEN) {
+        if len_ok(&self.model, 1, MAX_TITLE_LEN)
+            && !self.model.trim().chars().any(char::is_whitespace)
+            && !self.model.contains("sk-ant-")
+            && !self.model.contains("xai-")
+            && !self.model.contains('•')
+        {
             vec![]
         } else {
             vec!["model".into()]

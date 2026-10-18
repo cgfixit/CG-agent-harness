@@ -534,7 +534,7 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
             "status",
         ],
         "api" => &["set", "clear"],
-        "model" => &["list", "use", "profile"],
+        "model" => &["list", "use", "profile", "status"],
         "skill" => &["use", "clear", "status"],
         "web" => &[
             "help", "status", "check", "on", "off", "allow", "deny", "fetch", "search", "pages", "research", "cancel",
@@ -712,7 +712,7 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         | ("web", Some("on" | "off" | "inject" | "forget" | "cancel"))
         | ("agent", Some("cancel"))
         | ("loop", Some("auto" | "stop"))
-        | ("model", Some("list" | "profile"))
+        | ("model", Some("list" | "profile" | "status"))
         | ("clear", None) => Some(0),
         (
             "memory",
@@ -827,7 +827,7 @@ fn echoable_args<'a>(cmd: &str, args: &'a [&'a str]) -> &'a [&'a str] {
     }
 }
 
-fn suggest_only(notice: &str, near: &[(&str, u8)]) -> SlashParse {
+pub(super) fn suggest_only(notice: &str, near: &[(&str, u8)]) -> SlashParse {
     SlashParse {
         web: None,
         kind: SlashKind::Suggest,
@@ -851,6 +851,16 @@ fn suggest_only(notice: &str, near: &[(&str, u8)]) -> SlashParse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_status_is_read_only_and_rejects_extra_or_hidden_arguments() {
+        let parsed = parse_line("/MoDeL StAtUs");
+        assert!(parsed.dispatch);
+        assert_eq!(parsed.canonical.as_deref(), Some("/model status"));
+        for bad in ["/model status extra", "/model\u{2029}status", "/model sta\u{200b}tus"] {
+            assert!(!parse_line(bad).dispatch);
+        }
+    }
 
     #[test]
     fn loop_web_mode_goal_text_and_model_payloads_parse_as_documented() {

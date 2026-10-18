@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
+use crate::llm::cloud_profile::CloudProfile;
 use crate::llm::openai_chat::{ChatResult, LLM_ERROR_CODE};
 use crate::llm::spend::{self, UsageTokens};
 
@@ -62,21 +63,19 @@ impl Provider {
     }
 }
 
-#[derive(Clone)]
 struct ProviderConfig {
     provider: Provider,
     enabled: bool,
     model: String,
     api_key: String,
     endpoint: String,
+    profile: CloudProfile,
+    rate: crate::common::ratelimit::RateLimiter,
 }
 
 /// One explicitly selected paid provider. It is never selected as a fallback.
 pub struct CloudChat {
     enabled: bool,
-    timeout: Duration,
-    max_tokens: u64,
-    count_timeout: Duration,
     max_usd_per_call: Option<f64>,
     budget_on_heuristic: bool,
     grok: ProviderConfig,
@@ -112,6 +111,8 @@ fn provider_config(cfg: &AppConfig, provider: Provider, fallback_model: &str) ->
             "{root}.model must be non-empty when enabled"
         )));
     }
+    let profile = CloudProfile::from_config(cfg, provider.name())?;
+    let rate = crate::common::ratelimit::RateLimiter::new(profile.rpm.unwrap_or(100_000) as usize, 60.0);
     Ok(ProviderConfig {
         provider,
         enabled,
@@ -122,6 +123,8 @@ fn provider_config(cfg: &AppConfig, provider: Provider, fallback_model: &str) ->
             Provider::Claude => CLAUDE_ENDPOINT,
         }
         .into(),
+        profile,
+        rate,
     })
 }
 
@@ -192,7 +195,7 @@ impl CloudChat {
                 HarnessError::config("models.cloud_chat.max_usd_per_call must be null or a finite positive number")
             })?),
         };
-        let count_seconds = match cfg.get("models.cloud_chat.count_timeout_sec") {
+        match cfg.get("models.cloud_chat.count_timeout_sec") {
             None => 2.0,
             Some(value) => value
                 .as_f64()
@@ -214,9 +217,6 @@ impl CloudChat {
         };
         Ok(Self {
             enabled: cfg.flag_is_true("models.cloud_chat.enabled"),
-            timeout: Duration::from_secs_f64(timeout_sec),
-            max_tokens,
-            count_timeout: Duration::from_secs_f64(count_seconds),
             max_usd_per_call,
             budget_on_heuristic: cfg.flag_is_true("models.cloud_chat.budget_on_heuristic"),
             grok,
@@ -248,11 +248,15 @@ impl CloudChat {
 
     fn configured(&self, selection: &str) -> Option<&ProviderConfig> {
         let selected = selection.trim();
-        [(&self.grok, Provider::Grok), (&self.claude, Provider::Claude)]
+        if selected.eq_ignore_ascii_case("grok") || selected.eq_ignore_ascii_case("xai") {
+            return Some(&self.grok);
+        }
+        if selected.eq_ignore_ascii_case("claude") || selected.eq_ignore_ascii_case("anthropic") {
+            return Some(&self.claude);
+        }
+        [&self.grok, &self.claude]
             .into_iter()
-            .find_map(|(config, provider)| {
-                (selected.eq_ignore_ascii_case(provider.name()) || selected == config.model).then_some(config)
-            })
+            .find(|config| selected == config.model)
     }
 
     pub fn is_cloud_selection(&self, selection: &str) -> bool {
@@ -263,8 +267,31 @@ impl CloudChat {
         self.configured(selection).map(|config| config.provider.name())
     }
 
-    pub fn timeout_sec(&self) -> f64 {
-        (self.timeout + self.count_timeout).as_secs_f64()
+    pub fn timeout_sec(&self, selection: &str) -> f64 {
+        self.configured(selection)
+            .map_or(90.0, |c| c.profile.timeout_sec + c.profile.count_timeout_sec)
+    }
+
+    pub fn selection_status(&self, selection: &str) -> Option<Value> {
+        let c = self.configured(selection)?;
+        Some(json!({"model":c.model,"provider":c.provider.name(),"cloud":true,
+            "enabled":self.enabled && c.enabled,"key_name":c.provider.key_env(),
+            "key_present":!c.api_key.is_empty(),"tuning_profile":c.profile,
+            "egress_host":match c.provider {Provider::Grok => "api.x.ai", Provider::Claude => "api.anthropic.com"}}))
+    }
+
+    pub fn check_selection(&self, selection: &str) -> Result<()> {
+        self.ready(selection).map(|_| ())
+    }
+
+    fn reserve_request(&self, config: &ProviderConfig) -> Result<()> {
+        if config.profile.rpm.is_some() && !config.rate.allow("cloud") {
+            return Err(HarnessError::new(
+                "CLOUD_RATE_LIMITED",
+                "cloud provider requests-per-minute limit reached; try again later",
+            ));
+        }
+        Ok(())
     }
 
     pub fn abort_in_flight(&self) {
@@ -279,12 +306,14 @@ impl CloudChat {
 
     pub async fn chat_with_source(&self, selection: &str, message: &str, source: &str) -> Result<ChatResult> {
         let config = self.ready(selection)?;
+        self.reserve_request(config)?;
         self.cancellable(self.request(config, message, source)).await
     }
 
     /// Counts only the explicitly supplied cloud message, without generating or recording spend.
     pub async fn predict(&self, selection: &str, message: &str) -> Result<SpendPrediction> {
         let config = self.ready(selection)?;
+        self.reserve_request(config)?;
         self.cancellable(async { Ok(self.predict_request(config, message).await) })
             .await
     }
@@ -294,13 +323,19 @@ impl CloudChat {
             .configured(selection)
             .ok_or_else(|| err("selected cloud chat model is not configured"))?;
         if !self.enabled || !config.enabled {
-            return Err(err("cloud chat is disabled by local configuration"));
+            return Err(HarnessError::new(
+                "MODEL_PROVIDER_NOT_READY",
+                "cloud chat is disabled by local configuration; selection unchanged",
+            ));
         }
         if config.api_key.is_empty() {
-            return Err(err(format!(
-                "{} is not configured; save it in API Keys and restart",
-                config.provider.key_env()
-            )));
+            return Err(HarnessError::new(
+                "MODEL_PROVIDER_NOT_READY",
+                format!(
+                    "{} is not active; save it in Settings → API Keys and restart; selection unchanged",
+                    config.provider.key_env()
+                ),
+            ));
         }
         Ok(config)
     }
@@ -340,15 +375,16 @@ impl CloudChat {
         if config.provider != Provider::Claude {
             return None;
         }
+        let count_timeout = Duration::from_secs_f64(config.profile.count_timeout_sec);
         // One deadline covers headers, a trickled body, and decoding. Failures
         // discard provider bodies and use the explicitly labelled heuristic.
-        tokio::time::timeout(self.count_timeout, async {
+        tokio::time::timeout(count_timeout, async {
             let mut response = self
                 .client
                 .post(format!("{}/count_tokens", config.endpoint.trim_end_matches('/')))
                 .header("x-api-key", &config.api_key)
                 .header("anthropic-version", ANTHROPIC_VERSION)
-                .timeout(self.count_timeout)
+                .timeout(count_timeout)
                 .json(&claude_input(config, message))
                 .send()
                 .await
@@ -382,7 +418,7 @@ impl CloudChat {
             &config.model,
             &UsageTokens {
                 input_tokens: Some(input_tokens),
-                output_tokens: Some(self.max_tokens),
+                output_tokens: Some(config.profile.max_output_tokens),
                 ..UsageTokens::default()
             },
             config.provider.name(),
@@ -394,7 +430,7 @@ impl CloudChat {
             provider: config.provider.name(),
             model: config.model.clone(),
             input_tokens,
-            reserved_output_tokens: self.max_tokens,
+            reserved_output_tokens: config.profile.max_output_tokens,
             estimate_source: if counted.is_some() { "vendor_count" } else { "heuristic" },
             usd: estimate.usd,
             priced_as_of: estimate.priced_as_of,
@@ -418,17 +454,32 @@ impl CloudChat {
             )
             .detail("prediction", json!(prediction)));
         }
+        if config.profile.context_window.is_some_and(|window| {
+            prediction
+                .input_tokens
+                .saturating_add(prediction.reserved_output_tokens)
+                > window
+        }) {
+            return Err(HarnessError::new("CLOUD_CHAT_CONTEXT", "estimated message and reserved output exceed the configured cloud context window; nothing was generated"));
+        }
         let response = match config.provider {
             Provider::Grok => {
                 self.client
                     .post(&config.endpoint)
                     .bearer_auth(&config.api_key)
-                    .json(&json!({
+                    .timeout(Duration::from_secs_f64(config.profile.timeout_sec))
+                    .json(&{
+                        let mut body = json!({
                         "model": config.model,
                         "input": [{"role": "user", "content": message}],
-                        "max_output_tokens": self.max_tokens,
+                        "max_output_tokens": config.profile.max_output_tokens,
                         "store": false,
-                    }))
+                        });
+                        if let Some(t) = config.profile.temperature {
+                            body["temperature"] = json!(t);
+                        }
+                        body
+                    })
                     .send()
                     .await
             }
@@ -437,9 +488,13 @@ impl CloudChat {
                     .post(&config.endpoint)
                     .header("x-api-key", &config.api_key)
                     .header("anthropic-version", ANTHROPIC_VERSION)
+                    .timeout(Duration::from_secs_f64(config.profile.timeout_sec))
                     .json(&{
                         let mut body = claude_input(config, message);
-                        body["max_tokens"] = json!(self.max_tokens);
+                        body["max_tokens"] = json!(config.profile.max_output_tokens);
+                        if let Some(t) = config.profile.temperature {
+                            body["temperature"] = json!(t);
+                        }
                         body
                     })
                     .send()
@@ -726,6 +781,12 @@ mod tests {
                 model: "fixture".into(),
                 api_key: String::new(),
                 endpoint: String::new(),
+                profile: CloudProfile::from_config(
+                    &AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap(),
+                    provider.name(),
+                )
+                .unwrap(),
+                rate: crate::common::ratelimit::RateLimiter::new(100_000, 60.0),
             };
             (config(Provider::Grok), config(Provider::Claude))
         };
@@ -979,7 +1040,7 @@ mod tests {
         let mut chat = enabled_chat();
         chat.claude.model = "claude-sonnet-5".into();
         chat.claude.endpoint = format!("{origin}/messages");
-        chat.count_timeout = Duration::from_millis(100);
+        chat.claude.profile.count_timeout_sec = 0.1;
         chat.max_usd_per_call = Some(0.000001);
         for case in 0..8 {
             mode.store(case, Ordering::SeqCst);
@@ -1279,6 +1340,8 @@ mod tests {
         assert!(cloud.is_cloud_selection("grok"));
         assert!(cloud.is_cloud_selection("grok-4.6"));
         assert!(cloud.is_cloud_selection("claude"));
+        assert!(cloud.is_cloud_selection("aNtHrOpIc"));
+        assert!(cloud.is_cloud_selection("XaI"));
         assert!(cloud.is_cloud_selection("claude-sonnet-5"));
         assert!(!cloud.is_cloud_selection("qwen3.8:27b-mlx"));
     }

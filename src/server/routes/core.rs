@@ -20,8 +20,21 @@ use crate::server::sessions::TokenTally;
 use crate::server::slash::{parse_line, SlashParseRequest};
 use crate::server::state::{AppState, HARNESS_LOOP_TOOL};
 
-pub async fn slash_parse(ValidJson(req): ValidJson<SlashParseRequest>) -> Json<Value> {
-    Json(parse_line(&req.line).to_json())
+pub async fn slash_parse(
+    State(state): State<Arc<AppState>>,
+    ValidJson(req): ValidJson<SlashParseRequest>,
+) -> Json<Value> {
+    let parsed = parse_line(&req.line).to_json();
+    if state.audit.redactors().contains_secret_json(&parsed) || req.line.contains('•') {
+        return Json(
+            crate::server::slash::suggest_only(
+                "Credentials belong in Settings → API Keys; command not dispatched.",
+                &[],
+            )
+            .to_json(),
+        );
+    }
+    Json(parsed)
 }
 
 const DEFAULT_TEMPERATURE: f64 = 0.3;
@@ -69,13 +82,15 @@ pub async fn status(
         settings.selected_model.clone()
     };
     let cloud = state.cloud_chat.is_cloud_selection(&model);
+    let model_status = model_status(&state, &owner, &model);
     Json(json!({
         "version": crate::VERSION,
-        "model": model,
+        "model": model_status["model"],
         "configured_model": state.cfg.str_or("models.local_llm.model", &state.backend.model),
         "selection_overrides_config": !settings.selected_model.trim().is_empty()
             && settings.selected_model != state.cfg.str_or("models.local_llm.model", &state.backend.model).trim(),
         "provider": state.provider_for(&model),
+        "model_status": model_status,
         "api_key_optional": state.api_key_optional,
         "base_url": if cloud { Value::Null } else { json!(state.backend.base_url) },
         "soul_enabled": settings.soul_enabled,
@@ -172,6 +187,7 @@ pub async fn spend_predict(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<SpendPredictRequest>,
 ) -> ApiResult<Json<crate::llm::cloud_chat::SpendPrediction>> {
+    let owner = super::auth::context_owner(user.clone());
     let model = req.model.unwrap_or_else(|| state.current_model());
     if !state.cloud_chat.is_cloud_selection(&model) {
         return Err(ApiError::bad_request(
@@ -179,6 +195,7 @@ pub async fn spend_predict(
             "local inference is unpriced; select a cloud model to estimate its cost",
         ));
     }
+    require_cloud_consent(&state, &owner, &model)?;
     let _gate = state.generation_gate.claim("chat").ok_or_else(|| {
         ApiError::new(
             StatusCode::CONFLICT,
@@ -186,11 +203,15 @@ pub async fn spend_predict(
             "a model operation is already running",
         )
     })?;
-    let prediction = state
-        .cloud_chat
-        .predict(&model, &req.message)
-        .await
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let lease = state
+        .chat_owner
+        .start(&owner)
+        .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
+    let prediction = tokio::select! {
+        biased;
+        _ = lease.token.cancelled() => return Err(ApiError::new(StatusCode::BAD_GATEWAY,"WEB_CANCELLED","prediction cancelled")),
+        result = state.cloud_chat.predict(&model, &req.message) => result.map_err(|e| ApiError::from_err(llm_status(&e), &e))?,
+    };
     state.audit.log(
         json!({"event":"cloud_chat_prediction", "owner":super::auth::context_owner(user),
         "provider":prediction.provider, "model":prediction.model, "estimate_source":prediction.estimate_source,
@@ -446,6 +467,17 @@ pub async fn record_prompt(
     Path(session_id): Path<String>,
     ValidJson(req): ValidJson<PromptHistoryRequest>,
 ) -> ApiResult<Json<Value>> {
+    if state
+        .audit
+        .redactors()
+        .contains_secret(&crate::server::sessions::redacted_prompt(&req.text))
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "PROMPT_HISTORY_REJECTED",
+            "credentials cannot be saved in prompt recall",
+        ));
+    }
     let owner = super::auth::context_owner(user);
     state
         .store
@@ -520,25 +552,85 @@ pub async fn soul_toggle(
 
 pub async fn model_select(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     ValidJson(req): ValidJson<ModelSelectRequest>,
 ) -> ApiResult<Json<Value>> {
-    let snapshot = {
+    let owner = super::auth::context_owner(user);
+    let selected = req.model.trim();
+    if state.audit.redactors().contains_secret(selected) {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "MODEL_SELECTION_REJECTED",
+            "credentials are not model names; use Settings → API Keys",
+        ));
+    }
+    let cloud = state.cloud_chat.selection_status(selected);
+    let mut from_provider = state.current_provider();
+    let model = cloud
+        .as_ref()
+        .and_then(|c| c["model"].as_str())
+        .unwrap_or(if selected.eq_ignore_ascii_case("local") {
+            &state.backend.model
+        } else {
+            selected
+        })
+        .to_string();
+    let to_provider = cloud
+        .as_ref()
+        .and_then(|c| c["provider"].as_str())
+        .unwrap_or(&state.backend.provider)
+        .to_string();
+    let result = (|| -> ApiResult<()> {
+        if cloud.is_some() {
+            check_cloud_ready(&state, selected)?;
+            if !req.confirm {
+                require_cloud_consent(&state, &owner, selected)?;
+            }
+        }
+        state
+            .chat_owner
+            .cancel_with(&owner, || state.abort_chat())
+            .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
         let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
-        s.selected_model = req.model.trim().to_string();
-        s.selected_model_config = Some(
+        from_provider = state.provider_for(&s.selected_model);
+        let mut snapshot = s.clone();
+        snapshot.selected_model = if selected.eq_ignore_ascii_case("local") {
+            String::new()
+        } else if cloud.is_some() {
+            // Persist provider identity, so changing its model ID cannot turn a saved cloud selection into a local tag.
+            to_provider.clone()
+        } else {
+            model.clone()
+        };
+        snapshot.selected_model_config = Some(
             state
                 .cfg
                 .str_or("models.local_llm.model", &state.backend.model)
                 .trim()
                 .to_string(),
         );
-        s.clone()
-    };
-    snapshot
-        .save(&state.home)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    let model = state.current_model();
-    let tuning = if state.cfg.flag_is_true("models.local_llm.auto_tune") {
+        snapshot
+            .save(&state.home)
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+        *s = snapshot;
+        let mut consents = state.cloud_consents.lock().unwrap_or_else(|p| p.into_inner());
+        if cloud.is_some() {
+            consents.insert((owner.clone(), to_provider.clone()));
+        } else {
+            consents.retain(|(account, _)| account != &owner);
+        }
+        state.set_tuning(None);
+        Ok(())
+    })();
+    state.audit.log(
+        json!({"event":"model_switched","from_provider":from_provider,"to_provider":to_provider,
+        "model":model,"cloud":cloud.is_some(),"tuning_profile":cloud.as_ref().map(|c| &c["tuning_profile"]),
+        "result":if result.is_ok() {"selected"} else {"refused"}}),
+    );
+    result?;
+    let tuning = if cloud.is_some() {
+        "profile"
+    } else if state.cfg.flag_is_true("models.local_llm.auto_tune") {
         // tune() also clears stale limits for a cloud selection, but measures
         // (and loads) only a local Ollama model.
         tokio::spawn(crate::server::model_limits::tune(state.clone(), model.clone()));
@@ -550,9 +642,96 @@ pub async fn model_select(
     } else {
         "off"
     };
-    Ok(Json(
-        json!({"model": model, "provider": state.current_provider(), "tuning": tuning}),
-    ))
+    Ok(Json(json!({"model": model, "provider": to_provider, "tuning": tuning,
+            "egress_notice":cloud.as_ref().map(|c| format!("Only your newly typed message leaves this machine for {}.",c["egress_host"].as_str().unwrap_or(""))),
+            "model_status":model_status(&state, &owner, if cloud.is_some() {&to_provider} else {&model})})))
+}
+
+fn cloud_presence(state: &AppState, cloud: &Value) -> Value {
+    crate::server::env_keys::active_presence(
+        cloud["key_name"].as_str().unwrap_or(""),
+        &state.key_file_sources,
+        !state.cfg.flag_is_true("security.allow_plaintext_key_file"),
+    )
+}
+
+fn check_cloud_ready(state: &AppState, model: &str) -> ApiResult<()> {
+    state
+        .cloud_chat
+        .check_selection(model)
+        .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
+    let cloud = state
+        .cloud_chat
+        .selection_status(model)
+        .expect("configured cloud selection");
+    if cloud_presence(state, &cloud)["active_configured"] != true {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "MODEL_PROVIDER_NOT_READY",
+            format!(
+                "{} is not active; save it in Settings → API Keys and restart; selection unchanged",
+                cloud["key_name"].as_str().unwrap_or("provider key")
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn require_cloud_consent(state: &AppState, owner: &str, model: &str) -> ApiResult<()> {
+    check_cloud_ready(state, model)?;
+    let cloud = state
+        .cloud_chat
+        .selection_status(model)
+        .expect("configured cloud selection");
+    let provider = cloud["provider"].as_str().unwrap_or("");
+    if !state
+        .cloud_consents
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .contains(&(owner.to_string(), provider.to_string()))
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "CLOUD_CHAT_CONFIRM_REQUIRED",
+            format!(
+                "Only your newly typed message leaves this machine for {}. Confirm /model use {provider} first.",
+                cloud["egress_host"].as_str().unwrap_or("")
+            ),
+        )
+        .details(json!({"provider":provider,"egress_host":cloud["egress_host"]})));
+    }
+    Ok(())
+}
+
+fn model_status(state: &AppState, owner: &str, model: &str) -> Value {
+    if let Some(mut cloud) = state.cloud_chat.selection_status(model) {
+        cloud["key"] = cloud_presence(state, &cloud);
+        cloud["key_present"] = json!(cloud["key"]["active_configured"] == true && cloud["key_present"] == true);
+        cloud["consent_required"] = json!(!state
+            .cloud_consents
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(&(owner.to_string(), state.provider_for(model))));
+        return cloud;
+    }
+    let tuning = state.tuning_for(model);
+    let source = |key: &str, tuned: bool| {
+        if tuned {
+            "profile"
+        } else if state.cfg.get(key).is_some() {
+            "config"
+        } else {
+            "default"
+        }
+    };
+    json!({"model":model,"provider":state.provider_for(model),"cloud":false,"key_present":null,
+        "tuning_profile":{"context_window":tuning.as_ref().map(|t| t.window),"max_output_tokens":state.chat_max_tokens(model),
+            "temperature":state.cfg.f64_or("models.local_llm.temperature",DEFAULT_TEMPERATURE),"timeout_sec":state.chat_timeout_sec(model),
+            "count_timeout_sec":null,"tool_support":!state.chat_tools_unsupported(model),"rpm":null,
+            "sources":{"model":"config","context_window":if tuning.is_some() {"profile"} else {"default"},
+                "max_output_tokens":source("models.local_llm.max_tokens", tuning.as_ref().is_some_and(|t| t.max_tokens <= state.cfg.u64_or("models.local_llm.max_tokens", super::super::compaction::DEFAULT_REPLY_TOKENS))),
+                "temperature":source("models.local_llm.temperature",false),
+                "timeout_sec":source("models.local_llm.timeout_sec",tuning.as_ref().is_some_and(|t| t.timeout_sec.is_some())),"count_timeout_sec":"default","tool_support":if tuning.is_some() {"profile"} else {"default"},"rpm":"default"}}})
 }
 
 /// One turn's compaction: what was kept and summarized, for persistence,
@@ -1172,6 +1351,7 @@ async fn chat_inner(
             .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
     }
     let (mut reply, web_tools) = if cloud_selected {
+        require_cloud_consent(&state, &owner, &model)?;
         (
             state
                 .cloud_chat
@@ -1184,7 +1364,7 @@ async fn chat_inner(
                             .log(json!({"event":"cloud_chat_budget_refused", "owner":owner, "model":model}));
                         ApiError::from_err(StatusCode::UNPROCESSABLE_ENTITY, &e)
                     } else {
-                        ApiError::from_err(StatusCode::BAD_GATEWAY, &e)
+                        ApiError::from_err(llm_status(&e), &e)
                     }
                 })?,
             Vec::new(),
@@ -1443,10 +1623,13 @@ async fn chat_inner(
     }
 }
 
-/// 409 when the loaded window shrank below what a request was sized for (send
-/// it again); any other model failure is the upstream's, 502.
+/// Keep window, quota and context refusals distinct from upstream failures (502).
 fn llm_status(error: &crate::common::errors::HarnessError) -> StatusCode {
-    if error.code == crate::server::state::WINDOW_CHANGED {
+    if error.code == "CLOUD_RATE_LIMITED" {
+        StatusCode::TOO_MANY_REQUESTS
+    } else if error.code == "CLOUD_CHAT_CONTEXT" {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else if error.code == crate::server::state::WINDOW_CHANGED {
         StatusCode::CONFLICT
     } else {
         StatusCode::BAD_GATEWAY

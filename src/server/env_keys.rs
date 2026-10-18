@@ -154,6 +154,15 @@ pub fn read_status(path: &Path, loaded_from_file: &BTreeSet<String>) -> Result<V
     Ok(status_rows(&stored, loaded_from_file, false))
 }
 
+/// The active `/api/keys` presence fields, without reading saved credentials or returning masks.
+pub fn active_presence(name: &str, loaded_from_saved: &BTreeSet<String>, from_store: bool) -> Value {
+    let present = std::env::var(name).is_ok_and(|value| !value.trim().is_empty());
+    json!({"configured":present,"source":if present {"env"} else {"unset"},
+        "active_configured":present,"active_source":if loaded_from_saved.contains(name) {
+            if from_store {"startup_store"} else {"startup_file"}
+        } else if std::env::var_os(name).is_some() {"environment"} else {"unset"}})
+}
+
 pub fn status_rows(
     stored: &BTreeMap<String, String>,
     loaded_from_saved: &BTreeSet<String>,
@@ -161,7 +170,6 @@ pub fn status_rows(
 ) -> Vec<Value> {
     let saved_label = if from_store { "os_store" } else { "file" };
     let hot_saved = if from_store { "saved_store" } else { "saved_file" };
-    let startup_saved = if from_store { "startup_store" } else { "startup_file" };
     MANAGED_KEYS
         .iter()
         .map(|spec| {
@@ -181,6 +189,7 @@ pub fn status_rows(
             } else {
                 "unset"
             };
+            let active = active_presence(spec.name, loaded_from_saved, from_store);
             json!({
                 "name": spec.name,
                 "label": spec.label,
@@ -191,9 +200,9 @@ pub fn status_rows(
                 "source": source,
                 "saved_configured": !saved.is_empty(),
                 "saved_masked": if saved.is_empty() { String::new() } else { mask(&saved) },
-                "active_configured": !live.is_empty(),
+                "active_configured": if hot_reload && from_saved { !live.is_empty() } else { active["active_configured"].as_bool().unwrap_or(false) },
                 "active_masked": if live.is_empty() { String::new() } else { mask(&live) },
-                "active_source": if hot_reload && from_saved { hot_saved } else if loaded_from_saved.contains(spec.name) { startup_saved } else if std::env::var_os(spec.name).is_some() { "environment" } else { "unset" },
+                "active_source": if hot_reload && from_saved { hot_saved } else { active["active_source"].as_str().unwrap_or("unset") },
                 "environment_override": !loaded_from_saved.contains(spec.name) && std::env::var_os(spec.name).is_some(),
                 "pending_restart": !hot_reload && saved != live,
             })

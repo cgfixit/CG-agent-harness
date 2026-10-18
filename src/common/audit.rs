@@ -164,6 +164,23 @@ impl Redactors {
         self
     }
 
+    pub fn contains_secret(&self, text: &str) -> bool {
+        self.rules
+            .iter()
+            .any(|(pattern, label)| *label == SECRET_LABEL && pattern.is_match(text))
+    }
+
+    pub fn contains_secret_json(&self, value: &Value) -> bool {
+        match value {
+            Value::String(text) => self.contains_secret(text),
+            Value::Array(values) => values.iter().any(|v| self.contains_secret_json(v)),
+            Value::Object(values) => values
+                .iter()
+                .any(|(key, v)| self.contains_secret(key) || self.contains_secret_json(v)),
+            _ => false,
+        }
+    }
+
     /// Apply every rule to the original text and replace the union of their
     /// matches. Matching sequentially would let a narrow rule rewrite part of
     /// a value before a broader rule sees it (a built-in `Bearer` shape would
@@ -545,6 +562,15 @@ impl Sink {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn secret_presence_checks_decoded_json_without_treating_ip_addresses_as_credentials() {
+        let cfg = AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml")).unwrap();
+        let secret = "synthetic-quoted-credential-\"-\\";
+        let redactors = Redactors::from_config(&cfg).with_literal_secrets([secret]);
+        assert!(redactors.contains_secret_json(&json!({"nested":[{"model":secret}]})));
+        assert!(!redactors.contains_secret_json(&json!({"url":"127.0.0.1","count":5})));
+    }
 
     fn audit(dir: &Path, yaml: &str) -> Audit {
         let cfg = AppConfig::from_str(yaml, &dir.join("config.yaml")).unwrap();
