@@ -455,44 +455,31 @@ impl CloudChat {
                 status.as_u16()
             )));
         }
+        // A 2xx is billed even when its body is unusable: record it, then fail.
+        let billed_failure = |what: &str| {
+            self.record_cloud_spend(
+                config,
+                &json!({}),
+                spend::UsageTokens::default(),
+                source,
+                Some("failed_after_billing"),
+            );
+            err(format!("{} cloud chat {what}", config.provider.name()))
+        };
         let mut response = response;
         let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| err(format!("{} cloud chat returned malformed JSON", config.provider.name())))?
-        {
+        loop {
+            let chunk = match response.chunk().await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(_) => return Err(billed_failure("response was interrupted")),
+            };
             if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-                self.record_cloud_spend(
-                    config,
-                    &json!({}),
-                    spend::UsageTokens::default(),
-                    source,
-                    Some("failed_after_billing"),
-                );
-                return Err(err(format!(
-                    "{} cloud chat response exceeds limit",
-                    config.provider.name()
-                )));
+                return Err(billed_failure("response exceeds limit"));
             }
             bytes.extend_from_slice(&chunk);
         }
-        let body: Value = match serde_json::from_slice(&bytes) {
-            Ok(v) => v,
-            Err(_) => {
-                self.record_cloud_spend(
-                    config,
-                    &json!({}),
-                    spend::UsageTokens::default(),
-                    source,
-                    Some("failed_after_billing"),
-                );
-                return Err(err(format!(
-                    "{} cloud chat returned malformed JSON",
-                    config.provider.name()
-                )));
-            }
-        };
+        let body: Value = serde_json::from_slice(&bytes).map_err(|_| billed_failure("returned malformed JSON"))?;
         let tokens = match config.provider {
             Provider::Grok => spend::parse_grok_usage(body.get("usage")),
             Provider::Claude => spend::parse_claude_usage(body.get("usage")),
@@ -1149,6 +1136,39 @@ mod tests {
         assert_eq!(rows.lines().count(), 2);
         assert_eq!(rows.matches("failed_after_billing").count(), 2);
         assert!(!rows.contains("PARTIAL_ANSWER") && !rows.contains("PRIVATE_PROMPT"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn interrupted_2xx_body_is_billed_and_named_as_interrupted() {
+        let (origin, server) = serve(Router::new().route(
+            "/responses",
+            post(|| async {
+                // Headers and a first chunk reach the client; then the body dies.
+                Response::new(Body::from_stream(futures_util::stream::unfold(0, |step| async move {
+                    match step {
+                        0 => Some((Ok(axum::body::Bytes::from_static(b"{\"status\":")), 1)),
+                        1 => {
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            Some((Err(std::io::Error::other("reset")), 2))
+                        }
+                        _ => None,
+                    }
+                })))
+            }),
+        ))
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("spend.jsonl");
+        let mut chat = enabled_chat();
+        chat.grok.endpoint = format!("{origin}/responses");
+        chat.attach_spend(ledger.clone());
+        let err = chat.chat("grok", "PRIVATE_PROMPT").await.unwrap_err();
+        assert!(err.message.contains("interrupted"), "{}", err.message);
+        let rows = std::fs::read_to_string(&ledger).unwrap();
+        assert_eq!(rows.lines().count(), 1);
+        assert!(rows.contains("failed_after_billing"));
+        assert!(!rows.contains("PRIVATE_PROMPT"));
         server.abort();
     }
 
